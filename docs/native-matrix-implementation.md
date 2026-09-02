@@ -1,7 +1,13 @@
 # Native matrix BFS implementation status
 
 This is the standalone implementation approved on 2026-09-02. CayleyPy at
-`f0f2b8e` is an external, unchanged torchrun baseline. No remote/push is configured.
+`f0f2b8e` is an external, unchanged torchrun baseline. Following explicit approval
+on 2026-09-02, GitHub is the source of truth:
+`https://github.com/TryDotAtwo/MultiGPUBFS`, branch `codex/native-matrix-bfs`.
+The repository was created private. Kaggle runs must check out an immutable
+commit from GitHub; credentials must come from Kaggle Secrets, never notebook
+source or logged clone URLs. GitHub Actions checks CPU contracts only, not GPU
+correctness or performance.
 
 ## Required gates (not claims of completion)
 

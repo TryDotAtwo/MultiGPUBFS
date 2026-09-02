@@ -1,0 +1,25 @@
+name: Native CPU contracts
+
+on:
+  push:
+    branches: ['codex/**', main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.75.0 --profile minimal --component rustfmt
+      - name: Check native Rust formatting
+        run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -- --check
+      - name: Verify CPU contracts (not a GPU or performance gate)
+        run: cargo +1.75.0 test --locked
