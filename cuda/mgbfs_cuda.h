@@ -24,6 +24,27 @@ void mgbfs_generate_destroy(void* plan);
 int mgbfs_route_create(uint32_t capacity,void** out,char* error,size_t error_capacity);
 int mgbfs_route_run(void* plan,const void* hashes,const uint64_t* refs,void* sorted_hashes,uint64_t* sorted_refs,uint32_t* output_count,uint32_t count,int pre_dedup,void* stream);
 void mgbfs_route_destroy(void* plan);
+typedef struct MgbfsOwnerState {
+  uint64_t last_epoch;
+  uint32_t count, initialized, fatal, reserved;
+} MgbfsOwnerState;
+/* Owner bucket primitive, not the rank scheduler. prev/curr and candidates are
+ * sorted Hash128 runs for ONE bucket. They may contain duplicate hashes.
+ * accepted is a caller-owned flat bucket span of bucket_capacity records;
+ * state must be zero-initialized before its first epoch. One scratch plan can
+ * process different spans serially; concurrent jobs require separate plans.
+ * candidate_count lives on device and is bounded by candidate_capacity.
+ * All output spans have candidate_capacity entries; accepted has bucket_capacity.
+ * state.fatal: 1 capacity, 2 epoch order, 3 unsorted input. Sticky until the
+ * enclosing failed run is destroyed. Fatal preserves accepted and publishes
+ * zero survivors. The host must treat any nonzero ABI return as group-fatal too.
+ * Successful publication follows all dense writes in the supplied stream.
+ */
+int mgbfs_owner_create(uint32_t candidate_capacity,uint32_t bucket_capacity,void** out,char* error,size_t error_capacity);
+int mgbfs_owner_run(void* plan,const void* prev,uint32_t prev_count,const void* curr,uint32_t curr_count,
+  void* accepted,MgbfsOwnerState* state,const void* candidates,const uint64_t* refs,const uint32_t* candidate_count,
+  void* survivors,uint64_t* survivor_refs,uint32_t* survivor_count,uint64_t epoch,void* stream);
+void mgbfs_owner_destroy(void* plan);
 #ifdef __cplusplus
 }
 #endif

@@ -19,6 +19,7 @@ performance.
 - [x] Checksummed archive codec, Linux physical preallocation and fault injection
 - [ ] Archive pinned ring, worker, shard/bucket directories and group RunCommit
 - [ ] One-GPU streaming DENSE/CUB implementation
+- [x] GPU owner bucket merge/commit primitive, immutable old runs, sticky fatal
 - [x] CUTLASS unsigned Tensor Core generation and GEMM hash, local RTX 3070 tests
 - [x] CUB full-128-bit source sort and stable pre-dedup ON/OFF, local RTX 3070 tests
 - [ ] Actual sm75 hardware validation (cross-compilation is not this gate)
@@ -99,8 +100,22 @@ statuses. A local test executable path is not portable to a different build.
 
 ## Next implementation dependency
 
-Implement and test the GPU owner accepted store and irreversible per-bucket
-commit, then connect device generation/hash/source-sort/owner stages into the
+Connect the tested device generation/hash/source-sort/owner primitives into the
 bounded one-GPU DENSE runtime. NCCL exchange, HASH_FIRST materialization,
 BMMA_BUCKET, complete memory sizing, CLI, mandatory archive integration and
 the real 2xT4 A/B are still required by the approved plan.
+
+### GPU owner primitive update
+
+`cuda/owner.cu` adds three stable tiled merges (prev+curr, then accepted, then
+incoming), CUB selection and guarded dense publication. Global binary search is
+performed at tile boundaries, followed by contiguous loads into shared memory;
+per-element merge decisions then operate in that shared tile. Accepted counts
+and candidate counts stay on device. Persistent bucket spans belong to the
+caller, not to individual heap containers. Scratch is fixed per concurrent job.
+
+Two tests passed locally, including cross-epoch duplicates, retained OriginRef,
+tile boundaries, no host sync between epochs, zero candidates, the maximum
+128-bit key, repeated epochs, unsorted input, and bucket/count overflow. The
+owner tests passed all four Compute Sanitizer tools with zero reported errors.
+This is not yet a scheduler, a full frontier allocator, or performance evidence.

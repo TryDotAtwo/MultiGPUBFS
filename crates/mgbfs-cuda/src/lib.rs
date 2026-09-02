@@ -2,7 +2,41 @@
 #[cfg(feature = "cuda")]
 pub mod ffi {
     use std::ffi::{c_char, c_void};
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug)]
+    pub struct OwnerState {
+        pub last_epoch: u64,
+        pub count: u32,
+        pub initialized: u32,
+        pub fatal: u32,
+        pub reserved: u32,
+    }
     extern "C" {
+        pub fn mgbfs_owner_create(
+            candidate_capacity: u32,
+            bucket_capacity: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_owner_run(
+            plan: *mut c_void,
+            prev: *const c_void,
+            prev_count: u32,
+            curr: *const c_void,
+            curr_count: u32,
+            accepted: *mut c_void,
+            state: *mut OwnerState,
+            candidates: *const c_void,
+            refs: *const u64,
+            candidate_count: *const u32,
+            survivors: *mut c_void,
+            survivor_refs: *mut u64,
+            survivor_count: *mut u32,
+            epoch: u64,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_owner_destroy(plan: *mut c_void);
         pub fn mgbfs_route_create(
             capacity: u32,
             out: *mut *mut c_void,
