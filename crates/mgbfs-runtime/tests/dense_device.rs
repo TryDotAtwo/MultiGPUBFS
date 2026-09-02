@@ -4,13 +4,25 @@ use mgbfs_runtime::dense_device::DenseDeviceStepper;
 
 #[test]
 fn gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers() {
-    for modulus in 2..=6 {
+    compare_moduli(2..=6);
+}
+
+// Bounded full-depth fixture for shared-memory instrumentation. The wider
+// m=2..6 sweep remains mandatory in plain/memcheck/initcheck/synccheck runs.
+#[test]
+fn gpu_feedback_small_full_depth_sanitizer_fixture() {
+    compare_moduli(2..=3);
+}
+
+fn compare_moduli(moduli: std::ops::RangeInclusive<u16>) {
+    for modulus in moduli {
         let group = MatrixGroup::unitriangular(4, modulus).unwrap();
         let oracle = group.exact_layers((modulus as usize).pow(6)).unwrap();
         let batches: &[u32] = if modulus <= 4 { &[7, 64] } else { &[257] };
         for &batch in batches {
             for seed in [0u128, 1, 20260828] {
                 for prededup in [false, true] {
+                    eprintln!("feedback m={modulus} seed={seed} batch={batch} prededup={prededup}");
                     let mut gpu = DenseDeviceStepper::new(
                         &group,
                         seed.to_le_bytes(),

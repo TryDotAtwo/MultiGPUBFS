@@ -152,6 +152,16 @@ OFF/ON: batches 7/64 for m=2..4, batch 257 for m=5..6 (48 combinations).
 The oracle supplies expected sets, not frontiers. Separate tests exercise fatal
 capacity, invalid references, exact-fit append and sticky failures.
 
+Sanitizer coverage is explicit: plain/memcheck/initcheck/synccheck retain the
+full m=2..6 sweep above; racecheck uses full-depth m=2..3, both batches, all three
+seeds and both pre-dedup modes (24 combinations). The unrestricted local
+m=2..6 racecheck was stopped after 15 minutes without a completion result;
+it is NOT counted as passed. Logs from that attempt are preserved separately.
+The smaller fixture still reaches exhaustion and exercises cross-batch owner
+commits; existing owner tests separately cover tiled merge boundaries. The gate
+checks the test inventory before filtering so a stale binary cannot silently
+pass by running only the capacity-failure test.
+
 This correctness executor deliberately lacks stream overlap, shard scheduling,
 StateRing reclamation, pinned archive, full memory/reserve planning and NCCL.
 It produces no durable RunCommit and is not suitable for performance comparison
