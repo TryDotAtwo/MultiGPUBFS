@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "95747c376355fa0fd9568f3d2b0d4a0720f0900b"
+SOURCE_COMMIT = "d63683f62837cf54ba778226db38f1cc2ac088ab"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
@@ -116,7 +116,7 @@ def main():
             entry = json.loads(line)
             if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"]:
                 executables[entry["target"]["name"]] = entry["executable"]
-        if set(executables) != {"generate", "hash", "route", "owner"}:
+        if set(executables) != {"generate", "hash", "route", "owner", "pipeline"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
         for gpu in summary["gpus"]:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
