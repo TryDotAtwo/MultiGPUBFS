@@ -22,7 +22,7 @@ performance.
 - [x] GPU owner bucket merge/commit primitive, immutable old runs, sticky fatal
 - [x] CUTLASS unsigned Tensor Core generation and GEMM hash, local RTX 3070 tests
 - [x] CUB full-128-bit source sort and stable pre-dedup ON/OFF, local RTX 3070 tests
-- [ ] Actual sm75 hardware validation (cross-compilation is not this gate)
+- [x] Actual sm75 primitive validation on both physical Kaggle T4 GPUs
 - [ ] Real 2xT4 native NCCL exchange with overlap
 - [ ] HASH_FIRST rematerialization and source leases
 - [ ] BMMA bucket implementation and equivalence
@@ -119,3 +119,10 @@ tile boundaries, no host sync between epochs, zero candidates, the maximum
 128-bit key, repeated epochs, unsorted input, and bucket/count overflow. The
 owner tests passed all four Compute Sanitizer tools with zero reported errors.
 This is not yet a scheduler, a full frontier allocator, or performance evidence.
+
+The GPU primitives have now passed on both physical T4s in private Kaggle
+version 1, with 40 successful executable invocations including all four
+sanitizer tools. See the [evidence and exact scope](validation/2026-09-02-t4-primitives.md).
+The connected generation/hash/route/owner test additionally passed locally
+against CPU full-state layers for m=2..6 and both pre-dedup modes. Real NCCL
+multi-rank BFS remains an unchecked gate.
