@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "af6b0a5de781b6d65d1a729eee7abedfdd43226d"
+SOURCE_COMMIT = "6049d9dac7a4af64cac50dc1c04ae96ba28320e2"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
@@ -119,16 +119,24 @@ def main():
                 executables[entry["target"]["name"]] = entry["executable"]
         if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
+        inventory = run([executables["dense_device"], "--list"], cwd=source, env=env, logs=logs, name="dense-device-test-inventory")
+        for fixture in ("gpu_feedback_small_full_depth_sanitizer_fixture", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers"):
+            if fixture + ": test" not in inventory:
+                raise RuntimeError("DENSE_DEVICE_TEST_INVENTORY_MISMATCH")
         for gpu in summary["gpus"]:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
             for name, executable in sorted(executables.items()):
                 for tool in ("plain",) + SANITIZERS:
                     label = f"gpu{gpu['index']}-{name}-{tool}"
-                    command = [executable, "--test-threads=1"]
+                    command = [executable, "--test-threads=1", "--nocapture"]
+                    fixture = "all"
+                    if name == "dense_device":
+                        fixture = "m2-m3-full-depth" if tool == "racecheck" else "m2-m6-full-depth"
+                        command += ["--skip", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers" if tool == "racecheck" else "gpu_feedback_small_full_depth_sanitizer_fixture"]
                     if tool != "plain":
                         command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
                     run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=900 if name == "dense_device" else 180)
-                    summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, status="PASS"))
+                    summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
                     (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         summary["status"] = "PASS_PRIMITIVE_GATE"
     except Exception as error:
