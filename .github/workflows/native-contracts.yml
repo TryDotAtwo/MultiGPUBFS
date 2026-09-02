@@ -23,3 +23,5 @@ jobs:
         run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -- --check
       - name: Verify CPU contracts (not a GPU or performance gate)
         run: cargo +1.75.0 test --locked
+      - name: Verify Kaggle hardware and immutable-source guards
+        run: python3 -m unittest discover -s tests -p test_native_kaggle_gate.py
