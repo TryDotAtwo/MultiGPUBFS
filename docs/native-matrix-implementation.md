@@ -120,9 +120,10 @@ tile boundaries, no host sync between epochs, zero candidates, the maximum
 owner tests passed all four Compute Sanitizer tools with zero reported errors.
 This is not yet a scheduler, a full frontier allocator, or performance evidence.
 
-The GPU primitives have now passed on both physical T4s in private Kaggle
-version 1, with 40 successful executable invocations including all four
-sanitizer tools. See the [evidence and exact scope](validation/2026-09-02-t4-primitives.md).
-The connected generation/hash/route/owner test additionally passed locally
-against CPU full-state layers for m=2..6 and both pre-dedup modes. Real NCCL
-multi-rank BFS remains an unchecked gate.
+The GPU primitives passed on both physical T4s in private Kaggle version 1
+(40 executable invocations), then the connected pipeline also passed in version
+2 (50 invocations). Both versions include all four sanitizer tools. See the
+[evidence and exact scope](validation/2026-09-02-t4-primitives.md).
+The connected generation/hash/route/owner test checks CPU full-state layers
+for m=2..6, first two expansion depths and both pre-dedup modes. Real NCCL
+multi-rank BFS remains an unchecked gate; no performance comparison is claimed.

@@ -44,3 +44,24 @@ replays to the corresponding full state. It passed on the local RTX 3070 with
 all four sanitizers. That integration test was added after the version 1 source
 commit and is **not** part of the T4 result above. Frontiers are supplied by the
 CPU oracle; the test is not a native exhaustive BFS runtime.
+
+## Version 2: connected pipeline also verified on both T4s
+
+Private kernel version 2 checked out
+`d63683f62837cf54ba778226db38f1cc2ac088ab` and included the `pipeline` executable.
+Kaggle reported COMPLETE, and downloaded artifacts report PASS_PRIMITIVE_GATE.
+All **50** executable invocations passed: 5 executables x 2 physical T4s x
+(plain + memcheck + racecheck + initcheck + synccheck). All 50 raw logs contain
+passing tests; all 40 sanitizer logs report zero errors/hazards/warnings.
+The 25 CPU contract tests also passed again in this Kaggle worker.
+
+This confirms the connected generation/hash/route/owner test described above
+on real sm75 hardware, including device-side route counts and pre-dedup ON/OFF.
+It still does **not** include a two-rank NCCL exchange, native frontier
+materialization/scheduling, archive overlap, or an exhaustive native BFS run.
+
+Raw evidence: `test_results/kaggle_native_primitives_v2/native-primitive-gate/`.
+SHA256 of the downloaded `summary.json`:
+`d36ce8c52240558fda328f2534cb9b2c9a5bde3af35ff7c83c3705a7523eec95`.
+Version 1 summary SHA256:
+`31d4f81ebe592fcd467906d74dacfcbec1f3a0b664f2c1c1c3caf7bc49e7afaa`.
