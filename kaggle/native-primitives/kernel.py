@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "6049d9dac7a4af64cac50dc1c04ae96ba28320e2"
+SOURCE_COMMIT = "7ad3d4390d1a889209854edc380854c32f349058"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
@@ -109,7 +109,7 @@ def main():
         run(["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT="+str(cutlass)], cwd=source, env=env, logs=logs, name="cmake-configure")
         run(["cmake", "--build", str(build), "--parallel", "2"], cwd=source, env=env, logs=logs, name="cuda-build")
         artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-cuda", "--features", "cuda", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-test-build")
-        artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
+        artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--test", "ping_pong", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
         executables = {}
         for line in artifacts.splitlines():
             if not line.startswith("{"):
@@ -117,7 +117,7 @@ def main():
             entry = json.loads(line)
             if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"]:
                 executables[entry["target"]["name"]] = entry["executable"]
-        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device"}:
+        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device", "ping_pong"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
         inventory = run([executables["dense_device"], "--list"], cwd=source, env=env, logs=logs, name="dense-device-test-inventory")
         for fixture in ("gpu_feedback_small_full_depth_sanitizer_fixture", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers"):
@@ -125,7 +125,8 @@ def main():
                 raise RuntimeError("DENSE_DEVICE_TEST_INVENTORY_MISMATCH")
         for gpu in summary["gpus"]:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
-            for name, executable in sorted(executables.items()):
+            # Complete leaf and pipelined tests before the costly serial sweep.
+            for name, executable in sorted(executables.items(), key=lambda item: (item[0] == "dense_device", item[0])):
                 for tool in ("plain",) + SANITIZERS:
                     label = f"gpu{gpu['index']}-{name}-{tool}"
                     command = [executable, "--test-threads=1", "--nocapture"]
@@ -133,9 +134,12 @@ def main():
                     if name == "dense_device":
                         fixture = "m2-m3-full-depth" if tool == "racecheck" else "m2-m6-full-depth"
                         command += ["--skip", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers" if tool == "racecheck" else "gpu_feedback_small_full_depth_sanitizer_fixture"]
+                    if name == "ping_pong" and tool != "plain":
+                        fixture = "six-small-full-depth-configs-and-capacity-failure"
+                        command += ["--skip", "full_u4_pipelined_sweep"]
                     if tool != "plain":
                         command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
-                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=900 if name == "dense_device" else 180)
+                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name == "ping_pong" else 180))
                     summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
                     (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         summary["status"] = "PASS_PRIMITIVE_GATE"
