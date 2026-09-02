@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "d63683f62837cf54ba778226db38f1cc2ac088ab"
+SOURCE_COMMIT = "af6b0a5de781b6d65d1a729eee7abedfdd43226d"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
@@ -77,7 +77,7 @@ def checkout(repo, commit, destination, env, logs, label):
 def main():
     logs = Path("/kaggle/working/native-primitive-gate")
     logs.mkdir(exist_ok=True)
-    summary = dict(schema=1, scope="independent GPU primitive tests; NOT multi-rank BFS", status="INCOMPLETE", source_commit=SOURCE_COMMIT, results=[])
+    summary = dict(schema=1, scope="GPU primitives and single-bucket full-depth feedback; NOT production archived or multi-rank BFS", status="INCOMPLETE", source_commit=SOURCE_COMMIT, results=[])
     try:
         validate_commit(SOURCE_COMMIT)
         root = Path(tempfile.mkdtemp(prefix="mgbfs-gate-", dir="/tmp"))
@@ -109,6 +109,7 @@ def main():
         run(["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT="+str(cutlass)], cwd=source, env=env, logs=logs, name="cmake-configure")
         run(["cmake", "--build", str(build), "--parallel", "2"], cwd=source, env=env, logs=logs, name="cuda-build")
         artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-cuda", "--features", "cuda", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-test-build")
+        artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
         executables = {}
         for line in artifacts.splitlines():
             if not line.startswith("{"):
@@ -116,7 +117,7 @@ def main():
             entry = json.loads(line)
             if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"]:
                 executables[entry["target"]["name"]] = entry["executable"]
-        if set(executables) != {"generate", "hash", "route", "owner", "pipeline"}:
+        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
         for gpu in summary["gpus"]:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
@@ -126,7 +127,7 @@ def main():
                     command = [executable, "--test-threads=1"]
                     if tool != "plain":
                         command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
-                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=180)
+                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=900 if name == "dense_device" else 180)
                     summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, status="PASS"))
                     (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         summary["status"] = "PASS_PRIMITIVE_GATE"
