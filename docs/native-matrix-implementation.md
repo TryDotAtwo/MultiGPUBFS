@@ -20,6 +20,8 @@ performance.
 - [ ] Archive pinned ring, worker, shard/bucket directories and group RunCommit
 - [ ] One-GPU streaming DENSE/CUB implementation
 - [x] GPU owner bucket merge/commit primitive, immutable old runs, sticky fatal
+- [x] GPU source-ordered materialization with guarded dense append
+- [x] Single-bucket GPU feedback through graph exhaustion, CPU full-layer parity
 - [x] CUTLASS unsigned Tensor Core generation and GEMM hash, local RTX 3070 tests
 - [x] CUB full-128-bit source sort and stable pre-dedup ON/OFF, local RTX 3070 tests
 - [x] Actual sm75 primitive validation on both physical Kaggle T4 GPUs
@@ -127,3 +129,30 @@ The GPU primitives passed on both physical T4s in private Kaggle version 1
 The connected generation/hash/route/owner test checks CPU full-state layers
 for m=2..6, first two expansion depths and both pre-dedup modes. Real NCCL
 multi-rank BFS remains an unchecked gate; no performance comparison is claimed.
+
+### Materialization and full-depth GPU feedback
+
+`cuda/materialize.cu` sorts committed source-row requests with CUB, then copies
+16-byte chunks into a dense state extent and keeps the corresponding hashes in
+the same order. Request count and append offset remain device-resident. Capacity
+and source-reference failures preserve destination bytes/count and poison the
+append state. Source addresses are monotonic, but sparse survivor gaps still
+require transaction profiling; sorting is not a claim of perfect coalescing.
+
+`mgbfs_runtime::dense_device::DenseDeviceStepper` is a CUDA-only development
+executor, **not** production `run`. It maintains two fixed state arenas, three
+sorted layer hash arenas, a materialization hash output and one bounded child
+slot. Children are generated from GPU materialized parents on every depth.
+There is no host count read between batches or between device stages. Only
+FinalizeDepth reads status/counts. Its optional snapshot is a test readback,
+never input to the next expansion. Fatal runs cannot publish/read a partial layer.
+
+Full-state parity tests exhaust U4 m=2..6 for seeds 0, 1, 20260828 and pre-dedup
+OFF/ON: batches 7/64 for m=2..4, batch 257 for m=5..6 (48 combinations).
+The oracle supplies expected sets, not frontiers. Separate tests exercise fatal
+capacity, invalid references, exact-fit append and sticky failures.
+
+This correctness executor deliberately lacks stream overlap, shard scheduling,
+StateRing reclamation, pinned archive, full memory/reserve planning and NCCL.
+It produces no durable RunCommit and is not suitable for performance comparison
+with the baseline. These missing contracts keep the production runtime gate open.

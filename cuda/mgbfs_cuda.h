@@ -45,6 +45,19 @@ int mgbfs_owner_run(void* plan,const void* prev,uint32_t prev_count,const void* 
   void* accepted,MgbfsOwnerState* state,const void* candidates,const uint64_t* refs,const uint32_t* candidate_count,
   void* survivors,uint64_t* survivor_refs,uint32_t* survivor_count,uint64_t epoch,void* stream);
 void mgbfs_owner_destroy(void* plan);
+typedef struct MgbfsFrontierState { uint32_t count, fatal; } MgbfsFrontierState;
+/* Materialize one committed batch from a live source slot. References are local
+ * source row indices, not global OriginRefs. Source stride is a multiple of 16.
+ * Requests are sorted by source index; output states and hashes share that order.
+ * All destination spans are disjoint from inputs. Append jobs serialize on one
+ * stream. Device count may be zero. fatal: 1 capacity, 2 invalid source ref.
+ * Failure is sticky and leaves destination bytes/count unchanged. The caller
+ * retains source and request leases until stream completion and aborts the run
+ * on any fatal (including a previous owner failure). No allocations in run.
+ */
+int mgbfs_materialize_create(uint32_t stride,uint32_t candidate_capacity,uint32_t frontier_capacity,void** out,char* error,size_t error_capacity);
+int mgbfs_materialize_run(void* plan,const uint8_t* source,uint32_t source_count,const void* hashes,const uint64_t* refs,const uint32_t* count,uint8_t* states,void* out_hashes,MgbfsFrontierState* state,void* stream);
+void mgbfs_materialize_destroy(void* plan);
 #ifdef __cplusplus
 }
 #endif

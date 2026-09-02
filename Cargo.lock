@@ -105,6 +105,7 @@ name = "mgbfs-runtime"
 version = "0.1.0"
 dependencies = [
  "mgbfs-core",
+ "mgbfs-cuda",
  "sha2",
 ]
 

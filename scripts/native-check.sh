@@ -17,3 +17,4 @@ cmake -S cuda -B build/native-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release \
   "-DCUTLASS_ROOT=${CUTLASS_ROOT:-/opt/cutlass}" 2>&1 | tee test_results/native/configure.log
 cmake --build build/native-cuda 2>&1 | tee test_results/native/build.log
 cargo test --locked -p mgbfs-cuda --features cuda 2>&1 | tee test_results/native/gpu-tests.log
+cargo test --locked -p mgbfs-runtime --features cuda --test dense_device -- --test-threads=1 2>&1 | tee test_results/native/gpu-feedback-tests.log
