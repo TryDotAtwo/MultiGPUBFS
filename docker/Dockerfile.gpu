@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+
+FROM gpu-dev-cutlass-nsight:2026-05-24 AS rust-toolchain
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cargo rustc rustfmt
+
+FROM rust-toolchain AS builder
+
+WORKDIR /src
+COPY gpu/ gpu/
+RUN cmake -S gpu -B /build/cuda -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CUDA_ARCHITECTURES=86 && \
+    cmake --build /build/cuda --parallel
+
+COPY Cargo.toml Cargo.toml
+COPY rust/ rust/
+COPY tests/ tests/
+ENV MULTIGPUBFS_CUDA_LIB_DIR=/build/cuda
+RUN --mount=type=cache,target=/src/target \
+    cargo fmt --check && \
+    cargo build --release && \
+    LD_LIBRARY_PATH=/build/cuda cargo test --release && \
+    cp /src/target/release/multigpubfs-gpu /build/multigpubfs-gpu
+
+FROM gpu-dev-cutlass-nsight:2026-05-24 AS runtime
+COPY --from=builder /build/cuda/libmultigpubfs_cuda.so /usr/local/lib/
+COPY --from=builder /build/multigpubfs-gpu /usr/local/bin/
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
+ENTRYPOINT ["/usr/local/bin/multigpubfs-gpu"]

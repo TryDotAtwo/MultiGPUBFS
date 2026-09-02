@@ -1,0 +1,42 @@
+{
+  "graphs": 4096,
+  "ordered_distinct_pairs_per_configuration": 49152,
+  "configurations": {
+    "p1_smaller_frontier": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    },
+    "p1_alternating": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    },
+    "p2_smaller_frontier": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    },
+    "p2_alternating": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    },
+    "p4_smaller_frontier": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    },
+    "p4_alternating": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "round_accounting_failures": 0
+    }
+  }
+}

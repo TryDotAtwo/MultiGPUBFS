@@ -1,0 +1,9 @@
+[package]
+name = "mgbfs-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+mgbfs-core = { path = "../mgbfs-core" }
+sha2 = "=0.10.8"

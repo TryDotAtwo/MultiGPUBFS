@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+build/
+target/
+
+# External/private evidence and independent baseline checkout.
+/cayleypy_fix/
+/external/
+/.plugin-backups/
+/plugin-src/
+/kaggle_debug/
+/kaggle_torchrun/
+/test_results/
+/.worktrees/
+/.agents/
+/.codex/
+/runs/
+*.nsys-rep
+*.ncu-rep

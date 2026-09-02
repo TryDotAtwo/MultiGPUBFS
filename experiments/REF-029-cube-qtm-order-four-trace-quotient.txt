@@ -1,0 +1,41 @@
+model,depth,candidate_records,states,shortest_words,trace_classes,trace_explained_extras,extras_after_trace,commutation_power_classes,extras_after_commutation_power,states_with_multiple_trace_classes,maximum_trace_classes_per_state
+unique,0,1,1,1,1,0,0,1,0,0,1
+unique,1,12,12,12,12,0,0,12,0,0,1
+unique,2,132,114,132,120,12,6,114,0,6,2
+sample,unique,2,0,B B = B' B'
+sample,unique,2,1,D D = D' D'
+sample,unique,2,2,F F = F' F'
+sample,unique,2,3,L L = L' L'
+sample,unique,2,4,R R = R' R'
+sample,unique,2,5,U U = U' U'
+unique,3,1236,1068,1416,1176,240,108,1068,0,108,2
+sample,unique,3,0,B B D = B' B' D
+sample,unique,3,1,B B D' = B' B' D'
+sample,unique,3,2,B B F = B' B' F
+sample,unique,3,3,B B F' = B' B' F'
+sample,unique,3,4,B B L = B' B' L
+sample,unique,3,5,B B L' = B' B' L'
+sample,unique,3,6,B B R = B' B' R
+sample,unique,3,7,B B R' = B' B' R'
+sample,unique,3,8,B B U = B' B' U
+sample,unique,3,9,B B U' = B' B' U'
+sample,unique,3,10,B D D = B D' D'
+sample,unique,3,11,B F F = B F' F'
+unique,4,11580,10011,15144,11532,3612,1521,10011,0,1467,4
+sample,unique,4,0,B B D B = B' B' D B
+sample,unique,4,1,B B D B' = B' B' D B'
+sample,unique,4,2,B B D D = B B D' D'
+sample,unique,4,3,B B D F = B' B' D F
+sample,unique,4,4,B B D F' = B' B' D F'
+sample,unique,4,5,B B D L = B' B' D L
+sample,unique,4,6,B B D L' = B' B' D L'
+sample,unique,4,7,B B D R = B' B' D R
+sample,unique,4,8,B B D R' = B' B' D R'
+sample,unique,4,9,B B D' B = B' B' D' B
+sample,unique,4,10,B B D' B' = B' B' D' B'
+sample,unique,4,11,B B D' F = B' B' D' F
+colors,0,1,1,1,1,0,0,1,0,0,1
+colors,1,12,12,12,12,0,0,12,0,0,1
+colors,2,132,114,132,120,12,6,114,0,6,2
+colors,3,1236,1068,1416,1176,240,108,1068,0,108,2
+colors,4,11580,10011,15144,11532,3612,1521,10011,0,1467,4

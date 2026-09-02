@@ -1,0 +1,205 @@
+# BFS, strong components, and condensation distance
+
+In a directed graph, one forward BFS answers reachability **from** its root. It
+does not answer which reached vertices can return. Strong connectivity needs
+both directions, and compressing strong components changes the distance being
+measured.
+
+This note isolates those semantics and then specializes them to directed
+Cayley graphs with a positive generator alphabet.
+
+## 1. One SCC from two BFS traversals
+
+For directed graph `G` and vertex `s`, define
+
+```text
+R_plus(s)  = {v : s reaches v in G},
+R_minus(s) = {v : v reaches s in G}.
+```
+
+A forward BFS from `s` computes `R_plus(s)`. A forward BFS from `s` in the
+transpose graph `G^T` computes `R_minus(s)`. Therefore
+
+```text
+SCC(s) = R_plus(s) intersect R_minus(s).
+```
+
+The proof is the definition: membership in both sets gives paths in both
+directions, while every vertex strongly connected to `s` must occur in both.
+
+Two traversals find the one SCC containing `s`; they do not by themselves
+partition every remaining vertex into all SCCs. Tarjan, Kosaraju-Sharir, and
+related SCC algorithms have a stronger whole-graph output contract.
+
+## 2. Forward reachability is not strong connectivity
+
+On directed path
+
+```text
+0 -> 1 -> 2,
+```
+
+forward BFS from `0` reaches all three vertices. Reverse reachability to `0`
+contains only `0`, so `SCC(0)={0}`. A complete forward traversal proves the
+reachable cone, not mutual reachability.
+
+Likewise, a multi-source BFS from many roots computes distance to their union,
+not pairwise return paths among those roots or SCC labels for the graph.
+
+## 3. Condensation is a DAG
+
+Contract every SCC to one quotient vertex. Add an arc `C -> D` between distinct
+components when some original arc goes from a vertex of `C` to a vertex of
+`D`. The result is the **condensation graph** `Q`.
+
+`Q` is acyclic. A directed cycle of distinct quotient components would let
+every component on that cycle reach every other; they would be one SCC,
+contradicting their separation.
+
+The SCC partition is canonical for a fixed directed graph, although IDs and
+topological order assigned to its components are representation choices.
+
+## 4. What BFS on the condensation measures
+
+Every original path projects to a quotient walk, so
+
+```text
+d_Q([u],[v]) <= d_G(u,v)
+```
+
+whenever `v` is reachable from `u`. The inequality can be strict because all
+motion inside one SCC is contracted to zero quotient steps.
+
+Conversely, every quotient path can be lifted to an original directed path:
+within each SCC, move from the current entry vertex to a witness tail for the
+next intercomponent arc, then cross that arc. The lift exists, but its original
+length need not equal the quotient length.
+
+Equivalently, give every original arc within one SCC cost zero and every arc
+between SCCs cost one. Then
+
+```text
+d_Q([u],[v])
+```
+
+equals the resulting 0-1 shortest-path cost. It counts the minimum number of
+SCC boundaries crossed, not the number of original moves.
+
+### Arbitrarily large distance collapse
+
+A directed cycle of length `N` is one SCC. Its condensation has one vertex, so
+the quotient distance between every pair of component images is zero, while
+directed original distances range through `0,...,N-1`.
+
+Thus SCC contraction preserves reachability but can erase essentially all
+within-component distance geometry.
+
+## 5. Condensation BFS layers are not a unique topological order
+
+BFS from one condensation source assigns the minimum number of component
+transitions. A topological order only requires every arc to point later in an
+ordering. These are different labels.
+
+Even in a DAG, an arc can go from a larger BFS depth to a smaller one: the
+shallower target may have a direct route from the source while the tail was
+reached through a long branch. Therefore condensation does not restore the
+undirected `absolute level difference <= 1` rule.
+
+## 6. Directed Cayley graphs with a positive alphabet
+
+Let a group `G` have right-action arcs
+
+```text
+g -> g s,  s in S,
+```
+
+where paths may use only positive letters from `S`. Let `M=<S>_+` be the
+submonoid of elements represented by positive words. Then
+
+```text
+g reaches h  iff  g^-1 h is in M.
+```
+
+Define
+
+```text
+H = M intersect M^-1.
+```
+
+`H` is a subgroup: it contains the identity and is closed under products and
+inverses. Two vertices are strongly connected exactly when
+
+```text
+g^-1 h is in H.
+```
+
+Hence the SCC containing `g` is the left coset `gH`. Left translation maps SCCs
+to SCCs, but the condensation need not be an ordinary quotient-group Cayley
+graph: `H` need not be normal, and a generator label need not act
+well-definedly on cosets independently of representatives.
+
+## 7. Finite and infinite Cayley behavior diverge
+
+If `G` is finite, every generator `s` has finite order and
+
+```text
+s^-1 = s^(ord(s)-1)
+```
+
+is a positive word. Therefore the positive monoid `M` is already the subgroup
+generated by `S`, so every directed generator arc is returnable. The SCCs are
+the left cosets of that generated subgroup. If `S` generates all of `G`, the
+directed Cayley graph is strongly connected even without explicitly listing
+inverse letters.
+
+This finite argument fails for infinite groups. For `G=Z` and `S={+1}`, the
+positive monoid is the nonnegative integers, `H={0}`, and every SCC is a
+singleton. The condensation is the directed infinite line.
+
+Thus “the generators generate the group” must state whether inverses are
+allowed in the algebraic definition and whether the directed traversal alphabet
+actually contains paths realizing them.
+
+## 8. Schreier and quotient cautions
+
+For a directed group action on states, strong components are determined by
+returnable positive words modulo the state stabilizer. Group-element coset
+formulas cannot be copied unchanged without deriving the action quotient.
+
+Likewise, canonicalizing several states together before SCC analysis can create
+return paths that exist only in the quotient. SCC identity, transition
+direction, generator alphabet, and graph snapshot belong to one search
+contract.
+
+## 9. Distributed evidence
+
+To certify `SCC(s)` by distributed traversals, both forward and transpose runs
+must be complete over the same graph epoch and exact state identity. A local
+rank's intersection or a union of locally completed sets is insufficient; the
+global sets must be assembled or queried under consistent ownership.
+
+For condensation construction, every cross-component arc must be classified
+after SCC labels finalize. In-flight transitions or stale component IDs can
+invent self-loops, omit DAG edges, or falsely merge reachability layers.
+
+These are correctness obligations, not a proposed multi-GPU SCC algorithm.
+
+## Sources
+
+- R. E. Tarjan,
+  [*Depth-First Search and Linear Graph Algorithms*](https://doi.org/10.1137/0201010),
+  SIAM Journal on Computing 1 (1972), 146-160. Gives a linear-work full SCC
+  algorithm and distinguishes SCC decomposition from ordinary reachability.
+- Notes 12, 16, 17, 21, 30, 40, 41, 42, 51, and 75 supply the 0-1 quotient,
+  Cayley/Schreier, quotient-lifting, connectivity, epoch, reverse-search,
+  directed-layer, bounded-unknown, ownership, and orientation contracts used
+  here.
+
+## Takeaway
+
+Forward and transpose BFS intersect to give exactly one root SCC. Contracting
+all SCCs yields a canonical DAG that preserves reachability, but its BFS metric
+counts intercomponent transitions and can collapse large original distances to
+zero. In a finite directed Cayley graph, positive powers recover generator
+inverses and generated cosets are strongly connected; infinite positive
+alphabets can behave completely differently.

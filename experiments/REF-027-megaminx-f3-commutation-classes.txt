@@ -1,0 +1,16 @@
+metric,value
+candidate_records,9216
+f3_endpoints,6208
+shortest_word_occurrences,12384
+commutation_classes,6208
+word_extras,6176
+commutation_explained_word_extras,6176
+extras_after_commutation,0
+endpoints_with_one_class,6208
+endpoints_with_multiple_classes,0
+maximum_classes_per_endpoint,1
+word_multiplicity_1,2880
+word_multiplicity_2,960
+word_multiplicity_3,2208
+word_multiplicity_6,160
+commutation_class_count_1,6208

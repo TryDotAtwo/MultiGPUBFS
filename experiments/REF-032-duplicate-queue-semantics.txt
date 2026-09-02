@@ -1,0 +1,23 @@
+REF-032 duplicate queue semantics raw output
+date=2026-08-28
+docker_server=29.3.1
+image=rust@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4
+rust_toolchain=1.85.1-x86_64-unknown-linux-gnu
+source_sha256=729abcbba8a4b8d0c455427402aad4cfb4cb326a9e92c0d2063a38cbae890990
+
+final command:
+docker run --rm -v "${PWD}:/work:ro" -w /tmp rust:1.85-bookworm sh -c "rustup component add rustfmt && rustfmt --check /work/experiments/ref032_duplicate_queue_semantics.rs && rustc --edition=2021 --test /work/experiments/ref032_duplicate_queue_semantics.rs -o /tmp/ref032_tests && /tmp/ref032_tests && rustc --edition=2021 /work/experiments/ref032_duplicate_queue_semantics.rs -o /tmp/ref032 && /tmp/ref032 && sha256sum /work/experiments/ref032_duplicate_queue_semantics.rs"
+
+running 3 tests
+test tests::stale_suppression_keeps_unique_expansion_linear ... ok
+test tests::expanding_every_occurrence_enumerates_exponentially_many_walks ... ok
+test tests::complete_bipartite_boundary_separates_unique_and_occurrence_queues ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+schedule,enqueued,expanded,stale_pops,peak_queue
+claim_before_enqueue,201,201,0,199
+settle_on_dequeue,10101,201,9900,10000
+layered_stale_suppressed,47,25,22,6
+layered_expand_every_occurrence=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+

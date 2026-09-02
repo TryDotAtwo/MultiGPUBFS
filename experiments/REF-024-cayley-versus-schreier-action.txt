@@ -1,0 +1,9 @@
+model,depth,frontier,occurrences,loops,parent_returns,visited_nonparent,candidate_occurrences,unique_candidates,candidate_convergence
+Cayley-S3,0,1,2,0,0,0,2,2,0
+Cayley-S3,1,2,4,0,2,0,2,2,0
+Cayley-S3,2,2,4,0,2,0,2,1,1
+Cayley-S3,3,1,2,0,1,1,0,0,0
+Schreier-S3-on-point,0,1,2,1,0,0,1,1,0
+Schreier-S3-on-point,1,1,2,0,1,0,1,1,0
+Schreier-S3-on-point,2,1,2,1,1,0,0,0,0
+distance,point-0-to-2,2,group-identity-to-chosen-representative,3

@@ -1,0 +1,11 @@
+[package]
+name = "mgbfs-cuda"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[features]
+cuda = []
+
+[dev-dependencies]
+mgbfs-core = { path = "../mgbfs-core" }

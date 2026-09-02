@@ -1,0 +1,41 @@
+metric,value
+candidate_records,139248
+f4_endpoints,90144
+shortest_word_occurrences,274224
+commutation_classes,90624
+commutation_explained_word_extras,183600
+extras_after_commutation,480
+endpoints_with_multiple_classes,480
+maximum_classes_per_endpoint,2
+cross_class_pairs,480
+generator_conjugate_commutator_pairs,480
+word_multiplicity_1,30480
+word_multiplicity_2,12960
+word_multiplicity_3,13440
+word_multiplicity_4,17280
+word_multiplicity_5,3840
+word_multiplicity_6,6864
+word_multiplicity_8,3840
+word_multiplicity_12,1440
+commutation_class_count_1,89664
+commutation_class_count_2,480
+sample_cross_class_equality_0,-B -BL -L BL = -BL -L BL -B
+sample_cross_class_equality_1,-B -BL L BL = -BL L BL -B
+sample_cross_class_equality_2,-B -BR -U BR = -BR -U BR -B
+sample_cross_class_equality_3,-B -BR B -DL = -DL -B -BR B
+sample_cross_class_equality_4,-B -BR B DL = DL -B -BR B
+sample_cross_class_equality_5,-B -BR U BR = -BR U BR -B
+sample_cross_class_equality_6,-B -D B -BR = -BR -B -D B
+sample_cross_class_equality_7,-B -D B BR = BR -B -D B
+sample_cross_class_equality_8,-B -DL -FL DL = -DL -FL DL -B
+sample_cross_class_equality_9,-B -DL B -DR = -DR -B -DL B
+sample_cross_class_equality_10,-B -DL B DR = DR -B -DL B
+sample_cross_class_equality_11,-B -DL FL DL = -DL FL DL -B
+sample_cross_class_equality_12,-B -DR -R DR = -DR -R DR -B
+sample_cross_class_equality_13,-B -DR B -BL = -BL -B -DR B
+sample_cross_class_equality_14,-B -DR B BL = BL -B -DR B
+sample_cross_class_equality_15,-B -DR R DR = -DR R DR -B
+sample_cross_class_equality_16,-B BL -U -BL = BL -U -BL -B
+sample_cross_class_equality_17,-B BL U -BL = BL U -BL -B
+sample_cross_class_equality_18,-B BR -R -BR = BR -R -BR -B
+sample_cross_class_equality_19,-B BR B -DL = -DL -B BR B

@@ -1,0 +1,64 @@
+//! Raw C ABI. CUDA is opt-in; there is no CPU implementation of these calls.
+#[cfg(feature = "cuda")]
+pub mod ffi {
+    use std::ffi::{c_char, c_void};
+    extern "C" {
+        pub fn mgbfs_route_create(
+            capacity: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_route_run(
+            plan: *mut c_void,
+            hashes: *const c_void,
+            refs: *const u64,
+            sorted_hashes: *mut c_void,
+            sorted_refs: *mut u64,
+            output_count: *mut u32,
+            count: u32,
+            pre_dedup: i32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_route_destroy(plan: *mut c_void);
+        pub fn mgbfs_generate_create(
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            capacity: u32,
+            generators: *const u8,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_generate_run(
+            plan: *mut c_void,
+            parents: *const u8,
+            children: *mut u8,
+            count: u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_generate_destroy(plan: *mut c_void);
+        pub fn mgbfs_hash_create(
+            bytes: u32,
+            capacity: u32,
+            limbs: *const u8,
+            offsets: *const u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_hash_run(
+            plan: *mut c_void,
+            input: *const u8,
+            output: *mut u32,
+            count: u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_hash_destroy(plan: *mut c_void);
+        pub fn cudaMalloc(ptr: *mut *mut c_void, bytes: usize) -> i32;
+        pub fn cudaFree(ptr: *mut c_void) -> i32;
+        pub fn cudaMemcpy(dst: *mut c_void, src: *const c_void, bytes: usize, kind: i32) -> i32;
+        pub fn cudaDeviceSynchronize() -> i32;
+    }
+}

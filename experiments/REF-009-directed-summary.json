@@ -1,0 +1,47 @@
+{
+  "graph_count": 4096,
+  "ordered_distinct_pairs": 49152,
+  "policy_disagreement_pairs": 19680,
+  "best_including_ties": {
+    "smaller_frontier": 31776,
+    "alternating": 33408,
+    "estimated_work": 49152
+  },
+  "strict_winners": {
+    "smaller_frontier": 0,
+    "alternating": 0,
+    "estimated_work": 13440
+  },
+  "policies": {
+    "smaller_frontier": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "generated_transitions": 102912,
+      "expanded_states": 70656,
+      "expansion_rounds": 70656,
+      "forward_rounds": 64512,
+      "reverse_rounds": 6144
+    },
+    "alternating": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "generated_transitions": 95232,
+      "expanded_states": 70656,
+      "expansion_rounds": 70656,
+      "forward_rounds": 52224,
+      "reverse_rounds": 18432
+    },
+    "estimated_work": {
+      "pairs": 49152,
+      "distance_mismatches": 0,
+      "replay_failures": 0,
+      "generated_transitions": 76416,
+      "expanded_states": 64608,
+      "expansion_rounds": 64512,
+      "forward_rounds": 42144,
+      "reverse_rounds": 22368
+    }
+  }
+}

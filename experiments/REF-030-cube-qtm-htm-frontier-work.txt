@@ -1,0 +1,9 @@
+metric,expanded_depth,degree,frontier,total_occurrences,backward,same_level,older,forward_candidates,unique_next,forward_duplicate_extras
+QTM,0,12,1,12,0,0,0,12,12,0
+QTM,1,12,12,144,12,0,0,132,114,18
+QTM,2,12,114,1368,132,0,0,1236,1068,168
+QTM,3,12,1068,12816,1236,0,0,11580,10011,1569
+HTM,0,18,1,18,0,0,0,18,18,0
+HTM,1,18,18,324,18,36,0,270,243,27
+HTM,2,18,243,4374,270,540,0,3564,3240,324
+HTM,3,18,3240,58320,3564,7128,0,47628,43239,4389

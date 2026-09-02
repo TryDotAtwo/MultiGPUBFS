@@ -1,0 +1,101 @@
+use mgbfs_runtime::archive::{verify, Archive, Extent};
+use std::io;
+#[derive(Default)]
+struct Disk {
+    bytes: Vec<u8>,
+    writes: usize,
+    short_at: Option<usize>,
+    full: bool,
+    sync_fail: bool,
+    syncs: usize,
+}
+#[test]
+fn rank_with_no_local_states_still_commits_empty_layers() {
+    let mut a = Archive::new(Disk::default(), 4096, 4, [0; 32]).unwrap();
+    a.layer_commit(0, 0).unwrap();
+    a.layer_commit(1, 0).unwrap();
+    a.run_commit().unwrap();
+    verify(&a.extent.bytes).unwrap();
+}
+impl Extent for Disk {
+    fn reserve(&mut self, n: u64) -> io::Result<()> {
+        if self.full {
+            return Err(io::Error::from_raw_os_error(28));
+        }
+        self.bytes.resize(n as usize, 0);
+        Ok(())
+    }
+    fn write_at(&mut self, o: u64, b: &[u8]) -> io::Result<usize> {
+        self.writes += 1;
+        let n = if self.short_at == Some(self.writes) {
+            b.len() / 2
+        } else {
+            b.len()
+        };
+        self.bytes[o as usize..o as usize + n].copy_from_slice(&b[..n]);
+        Ok(n)
+    }
+    fn sync(&mut self) -> io::Result<()> {
+        self.syncs += 1;
+        if self.sync_fail {
+            Err(io::Error::from_raw_os_error(5))
+        } else {
+            Ok(())
+        }
+    }
+}
+#[test]
+fn durable_chain_roundtrips_and_detects_corruption_and_truncation() {
+    let mut a = Archive::new(Disk::default(), 4096, 4, [7; 32]).unwrap();
+    a.records(0, &[1, 0, 0, 1], &[[1, 2, 3, 4]]).unwrap();
+    assert!(a.layer_commit(0, 2).is_err());
+    a.layer_commit(0, 1).unwrap();
+    a.records(1, &[1, 1, 0, 1, 1, 2, 0, 1], &[[5; 4], [6; 4]])
+        .unwrap();
+    a.layer_commit(1, 2).unwrap();
+    assert!(!a.is_complete());
+    a.run_commit().unwrap();
+    assert!(a.is_complete());
+    assert!(a.records(2, &[1, 0, 0, 1], &[[9; 4]]).is_err());
+    verify(&a.extent.bytes).unwrap();
+    assert!(a.extent.syncs >= 1);
+    let mut corrupt = a.extent.bytes.clone();
+    corrupt[40] ^= 1;
+    assert!(verify(&corrupt).is_err());
+    assert!(verify(&a.extent.bytes[..100]).is_err());
+}
+#[test]
+fn full_disk_short_write_and_sync_failure_never_commit() {
+    assert!(Archive::new(
+        Disk {
+            full: true,
+            ..Disk::default()
+        },
+        4096,
+        4,
+        [0; 32]
+    )
+    .is_err());
+    let mut a = Archive::new(Disk::default(), 4096, 4, [0; 32]).unwrap();
+    a.extent.short_at = Some(a.extent.writes + 1);
+    assert!(a.records(0, &[1; 4], &[[1; 4]]).is_err());
+    assert!(a.layer_commit(0, 0).is_err());
+    assert!(a.run_commit().is_err());
+    assert!(!a.is_complete());
+    let mut a = Archive::new(Disk::default(), 4096, 4, [0; 32]).unwrap();
+    a.records(0, &[1; 4], &[[1; 4]]).unwrap();
+    a.layer_commit(0, 1).unwrap();
+    a.extent.sync_fail = true;
+    assert!(a.run_commit().is_err());
+    assert!(!a.is_complete());
+}
+#[test]
+fn capacity_and_record_shape_are_checked_before_writing() {
+    let mut a = Archive::new(Disk::default(), 256, 4, [0; 32]).unwrap();
+    let before = a.extent.writes;
+    assert!(a.records(0, &[1; 3], &[[1; 4]]).is_err());
+    assert_eq!(a.extent.writes, before);
+    assert!(a.records(0, &[1; 128], &[[1; 4]; 32]).is_err());
+    assert_eq!(a.extent.writes, before);
+    assert!(!a.is_complete());
+}

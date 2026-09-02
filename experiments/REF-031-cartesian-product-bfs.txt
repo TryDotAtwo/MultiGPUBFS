@@ -1,0 +1,27 @@
+REF-031 Cartesian-product BFS raw output
+date=2026-08-28
+docker_server=29.3.1
+image=rust@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4
+rust_toolchain=1.85.1-x86_64-unknown-linux-gnu
+source_sha256=54658d2fa6b6766178770d8b64a08af53523385feb20d2c64bf6b7d056a993c9
+
+command:
+docker run --rm -v "${PWD}:/work:ro" -w /tmp rust:1.85-bookworm sh -c "rustup component add rustfmt && rustfmt --check /work/experiments/ref031_cartesian_product_bfs.rs && rustc --edition=2021 --test /work/experiments/ref031_cartesian_product_bfs.rs -o /tmp/ref031_tests && /tmp/ref031_tests && rustc --edition=2021 /work/experiments/ref031_cartesian_product_bfs.rs -o /tmp/ref031 && /tmp/ref031"
+
+info: downloading component 'rustfmt'
+info: installing component 'rustfmt'
+
+running 4 tests
+test tests::cartesian_distances_are_coordinate_sums ... ok
+test tests::cartesian_spheres_are_a_convolution ... ok
+test tests::the_same_sum_formula_fails_for_the_strong_product ... ok
+test tests::shortest_paths_include_coordinate_interleavings ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+P3 spheres: [1, 1, 1]
+C4 spheres: [1, 2, 1]
+Cartesian convolution: [1, 3, 4, 3, 1]
+Cartesian observed:    [1, 3, 4, 3, 1]
+far endpoint (2,2): Cartesian distance=4, shortest paths=12
+diagonal (1,1): Cartesian distance=2, strong distance=1

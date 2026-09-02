@@ -1,0 +1,16 @@
+section,metric,value
+words,reduced_word_occurrences,552
+words,unique_states,408
+words,convergence_extra,144
+words,multiplicity_two_states,144
+words,higher_multiplicity_states,0
+words,commutation_groups,144
+words,other_collision_groups,0
+words,commuting_face_pairs,36
+words,face_pairs_with_all_four_orientations,36
+depth0,frontier,1;occurrences,24;backward,0;same_level,0;older_ball,0;candidate_occurrences,24;unique_next,24;candidate_convergence,0
+depth1,frontier,24;occurrences,576;backward,24;same_level,0;older_ball,0;candidate_occurrences,552;unique_next,408;candidate_convergence,144
+depth2,frontier,408;occurrences,9792;backward,552;same_level,24;older_ball,0;candidate_occurrences,9216;unique_next,6208;candidate_convergence,3008
+f2,directed_same_level_occurrences,24
+f2,order_five_power_occurrences,24
+f2,other_same_level_occurrences,0

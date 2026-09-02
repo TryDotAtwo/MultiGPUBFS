@@ -1,0 +1,13 @@
+metric,value
+state_len,120
+move_count,24
+central_is_identity,true
+inverse_pairs,12
+depth_one_loops,0
+depth_one_unique,24
+generator_order_5,24
+frontier_0,1
+frontier_1,24
+frontier_2,408
+frontier_3,6208
+frontier_4,90144
