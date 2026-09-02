@@ -124,6 +124,10 @@ pub mod ffi {
         pub fn cudaStreamCreateWithFlags(stream: *mut *mut c_void, flags: u32) -> i32;
         pub fn cudaStreamSynchronize(stream: *mut c_void) -> i32;
         pub fn cudaStreamDestroy(stream: *mut c_void) -> i32;
+        pub fn cudaEventCreateWithFlags(event: *mut *mut c_void, flags: u32) -> i32;
+        pub fn cudaEventRecord(event: *mut c_void, stream: *mut c_void) -> i32;
+        pub fn cudaEventDestroy(event: *mut c_void) -> i32;
+        pub fn cudaStreamWaitEvent(stream: *mut c_void, event: *mut c_void, flags: u32) -> i32;
         pub fn cudaMemsetAsync(
             ptr: *mut c_void,
             value: i32,

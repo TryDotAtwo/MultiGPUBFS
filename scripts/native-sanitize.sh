@@ -13,6 +13,9 @@ for binary in "$@"; do
   fi
   for tool in memcheck racecheck initcheck synccheck; do
     args=(--test-threads=1 --nocapture)
+    if [[ "$name" == ping_pong-* ]]; then
+      args+=(--skip full_u4_pipelined_sweep)
+    fi
     if [[ "$name" == dense_device-* ]]; then
       if [[ "$tool" == racecheck ]]; then
         args+=(--skip gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers)

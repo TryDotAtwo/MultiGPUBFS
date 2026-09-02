@@ -22,6 +22,7 @@ performance.
 - [x] GPU owner bucket merge/commit primitive, immutable old runs, sticky fatal
 - [x] GPU source-ordered materialization with guarded dense append
 - [x] Single-bucket GPU feedback through graph exhaustion, CPU full-layer parity
+- [x] Optional two-slot producer/consumer mode, local full-layer parity and measured kernel overlap
 - [x] CUTLASS unsigned Tensor Core generation and GEMM hash, local RTX 3070 tests
 - [x] CUB full-128-bit source sort and stable pre-dedup ON/OFF, local RTX 3070 tests
 - [x] Actual sm75 primitive validation on both physical Kaggle T4 GPUs
@@ -162,7 +163,13 @@ commits; existing owner tests separately cover tiled merge boundaries. The gate
 checks the test inventory before filtering so a stale binary cannot silently
 pass by running only the capacity-failure test.
 
-This correctness executor deliberately lacks stream overlap, shard scheduling,
+The serial reference executor deliberately lacks stream overlap, shard scheduling,
 StateRing reclamation, pinned archive, full memory/reserve planning and NCCL.
 It produces no durable RunCommit and is not suitable for performance comparison
 with the baseline. These missing contracts keep the production runtime gate open.
+
+Update 2026-09-03: an explicit `new_pipelined` constructor now implements two
+preallocated candidate banks with event-protected reuse on producer and consumer
+streams. The default constructor remains serial. Local Nsight shows kernel
+overlap; this does not establish a speedup or close the missing production
+contracts above. See [the boundary audit and evidence](validation/2026-09-03-ping-pong.md).

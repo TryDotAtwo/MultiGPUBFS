@@ -1,8 +1,8 @@
 //! Development single-bucket GPU stepper; not the production archived runtime.
-//! One stream, bounded child slot, two full-state arenas and three sorted hash
+//! Serial or two-slot producer/consumer mode, two state arenas and three hash
 //! arenas. All device allocation precedes depth zero. Only depth finalization
 //! reads counts on the host. Snapshot is an explicit verification-only readback.
-//! No archive, overlap, StateRing reclamation, reserve planner or rank exchange:
+//! No archive, StateRing reclamation, reserve planner or rank exchange:
 //! this API intentionally does not issue a RunCommit or expose production `run`.
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
 use mgbfs_cuda::ffi::*;
@@ -66,6 +66,13 @@ impl Drop for Plan {
     }
 }
 struct Stream(*mut c_void);
+impl Stream {
+    fn new() -> Result<Self> {
+        let mut p = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut p, 1) })?;
+        Ok(Self(p))
+    }
+}
 impl Drop for Stream {
     fn drop(&mut self) {
         unsafe {
@@ -74,8 +81,39 @@ impl Drop for Stream {
         }
     }
 }
+struct Event(*mut c_void);
+impl Event {
+    fn new() -> Result<Self> {
+        let mut p = std::ptr::null_mut();
+        check(unsafe { cudaEventCreateWithFlags(&mut p, 2) })?;
+        Ok(Self(p))
+    }
+}
+impl Drop for Event {
+    fn drop(&mut self) {
+        unsafe {
+            cudaEventDestroy(self.0);
+        }
+    }
+}
+struct Pipeline {
+    producer: Stream,
+    ready: [Event; 2],
+    released: [Event; 2],
+}
+impl Pipeline {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            producer: Stream::new()?,
+            ready: [Event::new()?, Event::new()?],
+            released: [Event::new()?, Event::new()?],
+        })
+    }
+}
 pub struct DenseDeviceStepper {
     stream: Stream,
+    pipeline: Option<Pipeline>,
+    slot_capacity: usize,
     generate: Plan,
     hash: Plan,
     route: Plan,
@@ -111,16 +149,38 @@ impl Drop for DenseDeviceStepper {
     fn drop(&mut self) {
         unsafe {
             cudaStreamSynchronize(self.stream.0);
+            if let Some(p) = &self.pipeline {
+                cudaStreamSynchronize(p.producer.0);
+            }
         }
     }
 }
 impl DenseDeviceStepper {
+    pub fn new_pipelined(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        batch: u32,
+        capacity: u32,
+        prededup: bool,
+    ) -> Result<Self> {
+        Self::new_mode(g, seed, batch, capacity, prededup, true)
+    }
     pub fn new(
         g: &MatrixGroup,
         seed: [u8; 16],
         batch: u32,
         capacity: u32,
         prededup: bool,
+    ) -> Result<Self> {
+        Self::new_mode(g, seed, batch, capacity, prededup, false)
+    }
+    fn new_mode(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        batch: u32,
+        capacity: u32,
+        prededup: bool,
+        pipelined: bool,
     ) -> Result<Self> {
         g.validate()?;
         let moves = g.generators.len() as u32;
@@ -173,6 +233,12 @@ impl DenseDeviceStepper {
             let f = capacity as usize;
             let result = Self {
                 stream,
+                pipeline: if pipelined {
+                    Some(Pipeline::new()?)
+                } else {
+                    None
+                },
+                slot_capacity: c,
                 generate,
                 hash,
                 route,
@@ -184,8 +250,8 @@ impl DenseDeviceStepper {
                 current_hashes: Buffer::new(f * 16)?,
                 next_hashes: Buffer::new(f * 16)?,
                 materialized_hashes: Buffer::new(f * 16)?,
-                children: Buffer::new(c * stride)?,
-                hashes: Buffer::new(c * 16)?,
+                children: Buffer::new(c * stride * if pipelined { 2 } else { 1 })?,
+                hashes: Buffer::new(c * 16 * if pipelined { 2 } else { 1 })?,
                 origins: Buffer::new(c * 8)?,
                 sorted: Buffer::new(c * 16)?,
                 sorted_refs: Buffer::new(c * 8)?,
@@ -261,26 +327,55 @@ impl DenseDeviceStepper {
             {
                 let n = self.batch.min(self.current_count - offset);
                 let children = n * self.moves;
+                let bank = if self.pipeline.is_some() {
+                    epoch % 2
+                } else {
+                    0
+                };
+                let child_ptr = self
+                    .children
+                    .0
+                    .cast::<u8>()
+                    .add(bank * self.slot_capacity * self.stride);
+                let hash_ptr = self
+                    .hashes
+                    .0
+                    .cast::<u8>()
+                    .add(bank * self.slot_capacity * 16);
+                let producer = if let Some(p) = &self.pipeline {
+                    // Capture the previously recorded release before re-recording
+                    // it for this epoch. No producer waits for a future record.
+                    if epoch >= 2 {
+                        check(cudaStreamWaitEvent(p.producer.0, p.released[bank].0, 0))?;
+                    }
+                    p.producer.0
+                } else {
+                    s
+                };
                 check(mgbfs_generate_run(
                     self.generate.0,
                     self.current
                         .0
                         .cast::<u8>()
                         .add(offset as usize * self.stride),
-                    self.children.0.cast(),
+                    child_ptr,
                     n,
-                    s,
+                    producer,
                 ))?;
                 check(mgbfs_hash_run(
                     self.hash.0,
-                    self.children.0.cast(),
-                    self.hashes.0.cast(),
+                    child_ptr,
+                    hash_ptr.cast(),
                     children,
-                    s,
+                    producer,
                 ))?;
+                if let Some(p) = &self.pipeline {
+                    check(cudaEventRecord(p.ready[bank].0, producer))?;
+                    check(cudaStreamWaitEvent(s, p.ready[bank].0, 0))?;
+                }
                 check(mgbfs_route_run(
                     self.route.0,
-                    self.hashes.0,
+                    hash_ptr.cast(),
                     self.origins.0.cast(),
                     self.sorted.0,
                     self.sorted_refs.0.cast(),
@@ -308,7 +403,7 @@ impl DenseDeviceStepper {
                 ))?;
                 check(mgbfs_materialize_run(
                     self.materialize.0,
-                    self.children.0.cast(),
+                    child_ptr,
                     children,
                     self.survivors.0,
                     self.survivor_refs.0.cast(),
@@ -318,6 +413,9 @@ impl DenseDeviceStepper {
                     self.frontier_state.0.cast(),
                     s,
                 ))?;
+                if let Some(p) = &self.pipeline {
+                    check(cudaEventRecord(p.released[bank].0, s))?;
+                }
             }
             check(cudaStreamSynchronize(s))?;
             let owner = self.owner_state.read::<OwnerState>(1)?[0];
