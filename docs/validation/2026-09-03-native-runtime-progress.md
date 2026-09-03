@@ -45,6 +45,17 @@ The two banks add 22024200 bytes; owner scratch remains I/J/K-bounded. A previou
 pipeline probe omitted the alternate bank from its printed accounting; the table
 uses the corrected counter and a fresh rerun.
 
+Later local-only additions (not part of the timed 4fea92d T4 source):
+
+- Native allocation queries and the full requested-byte sum now precede buffer
+  allocation, with a default 1 GiB untouched reserve and a post-allocation check.
+- Fixed generation IDs 0..4 can be selected before creation. The default stays
+  0. All four alternatives pass assembled small full-state feedback locally.
+- Generation 4 with batch 1048576 completed a local unarchived m16 probe in
+  0.6072 / 0.6190 s, requesting 3791970211 device bytes. This is not a T4 A/B.
+- Tiny owner plans cap tile concurrency at ceil(I/256), avoiding empty CTAs;
+  the large benchmark plans retain the previously measured concurrency.
+
 ## Hardware run boundaries
 
 Kaggle `trydotatwo/mgbfs-native-runtime-t4` v1 compiled source

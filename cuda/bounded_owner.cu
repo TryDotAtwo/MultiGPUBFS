@@ -13,6 +13,13 @@ struct Plan {
   uint32_t i,j,k; uint8_t* flags=nullptr; uint32_t* indices=nullptr; Key* merged=nullptr;
   ~Plan(){cudaFree(merged);cudaFree(indices);cudaFree(flags);}
 };
+unsigned tile_count(const Plan* p,unsigned j){
+  unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
+  // Fixed plan capacity bounds useful tile concurrency. Tiny validation/jobs
+  // must not launch dozens of empty CTAs per bucket.
+  unsigned capacity_tiles=(p->i+T-1)/T;
+  return tiles<capacity_tiles?tiles:capacity_tiles;
+}
 __device__ bool less(Key a,Key b){for(int w=3;w>=0;--w){if(a.w[w]!=b.w[w])return a.w[w]<b.w[w];}return false;}
 __device__ bool equal(Key a,Key b){return !less(a,b)&&!less(b,a);}
 struct Read {
@@ -130,7 +137,7 @@ extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,
      !buckets||!per_shard||(per_shard&(per_shard-1))||buckets%per_shard)return 1;
   validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,generation,pn,cn,control);
   initial<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),p->flags,control);
-  unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
+  unsigned tiles=tile_count(p,j);
   for(unsigned tag=2;tag<=4;++tag)merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
     static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted),p->k,p->flags,p->indices,p->merged,counts,control,tag);
   compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
@@ -143,7 +150,7 @@ extern "C" int mgbfs_bounded_owner_commit(void* raw,const MgbfsBucketJob* jobs,u
   auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
   if(!p||!jobs||!j||j>p->j||!in||!accepted||!lengths||!counts||!control||!grant||!selected)return 1;
   check_grant<<<1,1,0,s>>>(grant,control);
-  unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
+  unsigned tiles=tile_count(p,j);
   merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0);
   publish<<<dim3(j,tiles),T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control);
   finish_commit<<<1,1,0,s>>>(control);

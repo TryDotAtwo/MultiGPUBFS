@@ -193,6 +193,23 @@ impl NativeBfs {
         cfg: NativeConfig,
         reserve: u64,
     ) -> Result<Self> {
+        Self::new_with_generation_and_reserve(g, seed, cfg, 0, reserve)
+    }
+    pub fn new_with_generation(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        cfg: NativeConfig,
+        generation: u32,
+    ) -> Result<Self> {
+        Self::new_with_generation_and_reserve(g, seed, cfg, generation, 1 << 30)
+    }
+    pub fn new_with_generation_and_reserve(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        cfg: NativeConfig,
+        generation: u32,
+        reserve: u64,
+    ) -> Result<Self> {
         g.validate()?;
         let moves = u32::try_from(g.generators.len()).map_err(|_| "MOVES")?;
         let c = cfg.batch.checked_mul(moves).ok_or("CANDIDATE_OVERFLOW")?;
@@ -236,7 +253,7 @@ impl NativeBfs {
                 moves,
                 g.modulus as u32,
                 cfg.batch,
-                0,
+                generation,
                 &mut gb,
             ))?;
             check(mgbfs_hash_query(width as u32, c, &mut hb))?;
@@ -288,12 +305,13 @@ impl NativeBfs {
             check(cudaStreamCreateWithFlags(&mut producer, 1))?;
             let producer_stream = Stream(producer);
             let generate = Plan::new(mgbfs_generate_destroy, |p, e| {
-                mgbfs_generate_create(
+                mgbfs_generate_create_variant(
                     g.rows as u32,
                     moves,
                     g.modulus as u32,
                     cfg.batch,
                     gens.as_ptr(),
+                    generation,
                     p,
                     e,
                     512,

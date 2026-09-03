@@ -18,6 +18,31 @@ fn impossible_reserve_fails_preflight() {
         .expect("must reject impossible reserve");
     assert!(error.starts_with("VRAM_PREFLIGHT"), "{error}");
 }
+
+#[test]
+fn generation_variants_match_assembled_feedback() {
+    let g = MatrixGroup::unitriangular(4, 3).unwrap();
+    let oracle = g.exact_layers(729).unwrap();
+    let cfg = NativeConfig {
+        batch: 31,
+        layer_capacity: 729,
+        buckets: 8,
+        shards: 2,
+        job_buckets: 2,
+        bucket_capacity: 729,
+        prededup: true,
+    };
+    for variant in 1..=4 {
+        let mut bfs = NativeBfs::new_with_generation(&g, [0; 16], cfg, variant).unwrap();
+        for (depth, expected) in oracle.iter().enumerate() {
+            let mut actual = bfs.snapshot().unwrap();
+            actual.sort();
+            assert_eq!(&actual, expected, "generation={variant} depth={depth}");
+            assert_eq!(bfs.advance().unwrap(), depth + 1 < oracle.len());
+        }
+    }
+    assert!(NativeBfs::new_with_generation(&g, [0; 16], cfg, 99).is_err());
+}
 #[test]
 fn native_archive_roundtrip() {
     use mgbfs_runtime::{
@@ -202,8 +227,13 @@ fn native_large_full_layers() {
 fn native_timing_probe() {
     let m = 16u16;
     let g = MatrixGroup::unitriangular(4, m).unwrap();
+    let variant = std::env::var("MGBFS_PROBE_GENERATION")
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(0);
     let cfg = NativeConfig {
-        batch: 65536,
+        batch: std::env::var("MGBFS_PROBE_BATCH")
+            .map(|v| v.parse().unwrap())
+            .unwrap_or(65536),
         layer_capacity: (m as u32).pow(6),
         buckets: 256,
         shards: 16,
@@ -212,7 +242,8 @@ fn native_timing_probe() {
         prededup: true,
     };
     for iteration in 0..2 {
-        let mut bfs = NativeBfs::new(&g, 20260828u128.to_le_bytes(), cfg).unwrap();
+        let mut bfs =
+            NativeBfs::new_with_generation(&g, 20260828u128.to_le_bytes(), cfg, variant).unwrap();
         let start = std::time::Instant::now();
         let mut total = 1u64;
         while bfs.advance().unwrap() {
@@ -220,7 +251,8 @@ fn native_timing_probe() {
         }
         assert_eq!(total, g.expected_max_unique_states);
         eprintln!(
-            "LOCAL_UNARCHIVED_PROBE iteration={iteration} seconds={} requested_bytes={}",
+            "LOCAL_UNARCHIVED_PROBE iteration={iteration} generation={variant} batch={} seconds={} requested_bytes={}",
+            cfg.batch,
             start.elapsed().as_secs_f64(),
             bfs.requested_device_bytes()
         );

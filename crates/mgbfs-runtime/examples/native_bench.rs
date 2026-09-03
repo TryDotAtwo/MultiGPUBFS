@@ -24,6 +24,9 @@ fn env_u32(key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 fn execute<E: Extent + Send + 'static>(disk: E) -> Result<()> {
+    if env_u32("WORLD_SIZE", 1) != 1 || env_u32("LOCAL_WORLD_SIZE", 1) != 1 {
+        return Err("NATIVE_BENCH_SINGLE_RANK_ONLY".into());
+    }
     let args: Vec<_> = std::env::args().collect();
     let m: u16 = args[1].parse().map_err(|_| "MODULUS")?;
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
@@ -48,13 +51,14 @@ fn execute<E: Extent + Send + 'static>(disk: E) -> Result<()> {
         prededup,
     };
     let seed = 20260828u128.to_le_bytes();
+    let generation = env_u32("MGBFS_BENCH_GENERATION", 0);
     // Full same-workload CUDA warmup is excluded from both setup and BFS time.
-    let mut warm = NativeBfs::new(&g, seed, cfg)?;
+    let mut warm = NativeBfs::new_with_generation(&g, seed, cfg, generation)?;
     while warm.advance()? {}
     drop(warm);
     let context = used()?.0;
     let setup = Instant::now();
-    let description = format!("native-dense-v1;m={m};batch={batch};f={f};b={buckets};k={};j={};h={};pre={prededup};seed=20260828", cfg.bucket_capacity, cfg.job_buckets, cfg.shards);
+    let description = format!("native-dense-v1;m={m};batch={batch};f={f};b={buckets};k={};j={};h={};pre={prededup};generation={generation};seed=20260828", cfg.bucket_capacity, cfg.job_buckets, cfg.shards);
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     // Fixed extent: all state/hash payloads plus 64 MiB of frame/commit metadata.
     // Exceeding this explicit metadata allowance is fatal, never a resize.
@@ -72,7 +76,7 @@ fn execute<E: Extent + Send + 'static>(disk: E) -> Result<()> {
         env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
     )?;
     let pinned_bytes = archive.pinned_bytes();
-    let mut bfs = NativeBfs::new(&g, seed, cfg)?;
+    let mut bfs = NativeBfs::new_with_generation(&g, seed, cfg, generation)?;
     let device_requested = bfs.requested_device_bytes();
     let (allocated, free) = used()?;
     if free < (1usize << 30) {
@@ -110,7 +114,7 @@ fn execute<E: Extent + Send + 'static>(disk: E) -> Result<()> {
     archive.finish()?;
     let durable = start.elapsed().as_secs_f64();
     let peak = allocated.max(used()?.0);
-    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_dense_archived_reference\",\"archive_format\":\"MGBFSAR1\",\"modulus\":{m},\"batch\":{batch},\"verification_only\":{verify},\"search_seconds\":{seconds},\"search_complete_seconds\":{seconds},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"layer_sizes\":{layers:?},\"layer_sha256\":{digests:?},\"per_depth_seconds\":{times:?},\"requested_device_bytes\":{device_requested},\"cuda_context_used_bytes\":{context},\"cuda_peak_used_bytes\":{peak},\"pinned_bytes\":{pinned_bytes},\"disk_reserved_bytes\":{disk_bytes},\"bucket_capacity\":{},\"buckets\":{buckets},\"prededup\":{prededup}}}", cfg.bucket_capacity);
+    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_dense_archived_reference\",\"archive_format\":\"MGBFSAR1\",\"modulus\":{m},\"batch\":{batch},\"verification_only\":{verify},\"search_seconds\":{seconds},\"search_complete_seconds\":{seconds},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"layer_sizes\":{layers:?},\"layer_sha256\":{digests:?},\"per_depth_seconds\":{times:?},\"requested_device_bytes\":{device_requested},\"cuda_context_used_bytes\":{context},\"cuda_peak_used_bytes\":{peak},\"pinned_bytes\":{pinned_bytes},\"disk_reserved_bytes\":{disk_bytes},\"bucket_capacity\":{},\"buckets\":{buckets},\"generation_variant\":{generation},\"prededup\":{prededup}}}", cfg.bucket_capacity);
     Ok(())
 }
 #[cfg(target_os = "linux")]
