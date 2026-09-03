@@ -185,6 +185,14 @@ impl Drop for NativeBfs {
 }
 impl NativeBfs {
     pub fn new(g: &MatrixGroup, seed: [u8; 16], cfg: NativeConfig) -> Result<Self> {
+        Self::new_with_reserve(g, seed, cfg, 1 << 30)
+    }
+    pub fn new_with_reserve(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        cfg: NativeConfig,
+        reserve: u64,
+    ) -> Result<Self> {
         g.validate()?;
         let moves = u32::try_from(g.generators.len()).map_err(|_| "MOVES")?;
         let c = cfg.batch.checked_mul(moves).ok_or("CANDIDATE_OVERFLOW")?;
@@ -218,6 +226,61 @@ impl NativeBfs {
             .and_then(|v| v.checked_add(cap))
             .ok_or("RING_OVERFLOW")?;
         unsafe {
+            let (mut gb, mut hb, mut rb) = (
+                GenerateBytes::default(),
+                HashBytes::default(),
+                RouteBytes::default(),
+            );
+            check(mgbfs_generate_query(
+                g.rows as u32,
+                moves,
+                g.modulus as u32,
+                cfg.batch,
+                0,
+                &mut gb,
+            ))?;
+            check(mgbfs_hash_query(width as u32, c, &mut hb))?;
+            check(mgbfs_route_query(c, &mut rb))?;
+            let plan_bytes = [
+                gb.generators,
+                gb.packed_parents,
+                gb.products_s32,
+                gb.workspace,
+                hb.weights,
+                hb.offsets,
+                hb.partials_s32,
+                hb.workspace,
+                rb.sorted,
+                rb.refs,
+                rb.indices,
+                rb.selected,
+                rb.flags,
+                rb.scratch,
+            ]
+            .iter()
+            .map(|&n| u128::from(n))
+            .sum::<u128>()
+                + u128::from(c) * 5
+                + u128::from(cfg.job_buckets) * u128::from(cfg.bucket_capacity) * 16;
+            let buffers = ring_capacity as u128 * stride as u128
+                + f as u128 * 32
+                + b as u128 * u128::from(cfg.bucket_capacity) * 16
+                + 2 * cap as u128 * stride as u128
+                + cap as u128 * 92
+                + b as u128 * 36
+                + slots as u128 * 64
+                + u128::from(cfg.job_buckets) * 32
+                + 212;
+            let requested =
+                u64::try_from(plan_bytes + buffers).map_err(|_| "VRAM_PLAN_OVERFLOW")?;
+            let plan_bytes = u64::try_from(plan_bytes).map_err(|_| "VRAM_PLAN_OVERFLOW")?;
+            let (mut free, mut total) = (0usize, 0usize);
+            check(cudaMemGetInfo(&mut free, &mut total))?;
+            if u128::from(requested) + u128::from(reserve) > free as u128 {
+                return Err(format!(
+                    "VRAM_PREFLIGHT requested={requested} reserve={reserve} free={free}"
+                ));
+            }
             let mut s = std::ptr::null_mut();
             check(cudaStreamCreateWithFlags(&mut s, 1))?;
             let stream = Stream(s);
@@ -251,37 +314,6 @@ impl NativeBfs {
             let owner = Plan::new(mgbfs_bounded_owner_destroy, |p, _| {
                 mgbfs_bounded_owner_create(c, cfg.job_buckets, cfg.bucket_capacity, p)
             })?;
-            let (mut gb, mut hb, mut rb) = (
-                GenerateBytes::default(),
-                HashBytes::default(),
-                RouteBytes::default(),
-            );
-            check(mgbfs_generate_query(
-                g.rows as u32,
-                moves,
-                g.modulus as u32,
-                cfg.batch,
-                0,
-                &mut gb,
-            ))?;
-            check(mgbfs_hash_query(width as u32, c, &mut hb))?;
-            check(mgbfs_route_query(c, &mut rb))?;
-            let plan_bytes = gb.generators
-                + gb.packed_parents
-                + gb.products_s32
-                + gb.workspace
-                + hb.weights
-                + hb.offsets
-                + hb.partials_s32
-                + hb.workspace
-                + rb.sorted
-                + rb.refs
-                + rb.indices
-                + rb.selected
-                + rb.flags
-                + rb.scratch
-                + u64::from(c) * 5
-                + u64::from(cfg.job_buckets) * u64::from(cfg.bucket_capacity) * 16;
             let buffer = |bytes| Buffer::new(bytes, s);
             let mut result = Self {
                 cfg,
@@ -347,7 +379,14 @@ impl NativeBfs {
                 producer_stream,
                 stream,
             };
+            if result.requested_device_bytes() != requested {
+                return Err("VRAM_LEDGER_MISMATCH".into());
+            }
             check(cudaDeviceSynchronize())?;
+            check(cudaMemGetInfo(&mut free, &mut total))?;
+            if (free as u128) < u128::from(reserve) {
+                return Err("VRAM_RESERVE_AFTER_ALLOCATION".into());
+            }
             let mut start = vec![0; stride];
             start[..width].copy_from_slice(&g.start);
             result.states.put(&start)?;

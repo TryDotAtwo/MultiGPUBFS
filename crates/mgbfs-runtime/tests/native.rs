@@ -2,6 +2,23 @@
 use mgbfs_core::matrix::MatrixGroup;
 use mgbfs_runtime::native::{NativeBfs, NativeConfig};
 #[test]
+fn impossible_reserve_fails_preflight() {
+    let g = MatrixGroup::unitriangular(4, 2).unwrap();
+    let cfg = NativeConfig {
+        batch: 31,
+        layer_capacity: 64,
+        buckets: 8,
+        shards: 2,
+        job_buckets: 2,
+        bucket_capacity: 64,
+        prededup: true,
+    };
+    let error = NativeBfs::new_with_reserve(&g, [0; 16], cfg, u64::MAX)
+        .err()
+        .expect("must reject impossible reserve");
+    assert!(error.starts_with("VRAM_PREFLIGHT"), "{error}");
+}
+#[test]
 fn native_archive_roundtrip() {
     use mgbfs_runtime::{
         archive::{verify, Extent},

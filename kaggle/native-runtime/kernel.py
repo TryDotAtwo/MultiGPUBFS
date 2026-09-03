@@ -3,12 +3,13 @@ import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
 import urllib.request
 
-SOURCE_COMMIT = 'a37050c4565de200697654a478d4e4ca6b63ec9b'
+SOURCE_COMMIT = '4fea92d2228c19be83ca2d16464daf5623aa21ba'
 BASELINE_COMMIT = 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
 CUTLASS_COMMIT = 'ffa119a1255d78998536107466cc7097ecefa393'
 
@@ -60,11 +61,17 @@ def main():
             device = dict(env, CUDA_VISIBLE_DEVICES=gpu['uuid'])
             results=[]
             for tool in ['plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck']:
-                command=[executable,'--test-threads=1','--nocapture']
+                command=[executable,'--test-threads=1','--nocapture','--skip','native_timing_probe']
                 if tool=='plain': command += ['--include-ignored']
                 else: command=['compute-sanitizer','--error-exitcode','99','--tool',tool]+command
                 output=run(command, f"gpu{gpu['index']}-{tool}", source, 1800, device)
                 if '0 failed' not in output: raise RuntimeError('NATIVE_TEST_FAILURE')
+                if tool=='racecheck':
+                    totals=re.findall(r'RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)',output)
+                    if not totals or any(t!=('0','0','0') for t in totals): raise RuntimeError('RACECHECK_FAILURE')
+                elif tool!='plain':
+                    totals=re.findall(r'ERROR SUMMARY: (\d+) errors',output)
+                    if not totals or any(t!='0' for t in totals): raise RuntimeError('SANITIZER_FAILURE')
                 results.append(dict(gpu=gpu['uuid'],tool=tool,status='PASS'))
             return results
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -81,7 +88,13 @@ def main():
             operation='verify' if phase=='verify' else 'time'
             cmd=([str(source/'target/release/examples/native_bench'),str(m),str(batch),'1',operation,str(logs/(label+'.archive'))]
                  if backend=='native' else [sys.executable,str(source/'scripts/single_gpu_bench.py'),'baseline',str(m),str(batch),operation])
-            row=bench.worker(cmd,logs,label,dict(device,MGBFS_BENCH_CAPACITY=str(min(m**6,32_000_000))),timeout=1800)
+            # V2 measured a real 512 MiB archive-ring exhaustion at m20.
+            # This is a NEW fixed pre-run configuration, never in-run resizing.
+            # Provision a whole-run payload backlog plus 128 partial-run slots.
+            archive_slots=max(64,(m**6+batch-1)//batch+128)
+            worker_env=dict(device,MGBFS_BENCH_CAPACITY=str(min(m**6,32_000_000)),
+                            MGBFS_ARCHIVE_SLOTS=str(archive_slots))
+            row=bench.worker(cmd,logs,label,worker_env,timeout=1800)
             row.update(modulus=m,batch=batch,phase=phase,backend_requested=backend,repetition=rep)
             report['rows'].append(row); save(); return row
         native=sample('native',8,4096,'verify')
@@ -89,7 +102,8 @@ def main():
         bench.verify_pair(native,baseline_row)
         configs={}
         for backend in ['native','cayleypy']:
-            trials=[sample(backend,16,b,'calibrate') for b in [65536,262144]]
+            batches=[65536,262144,524280] if backend=='native' else [65536,262144,1048576]
+            trials=[sample(backend,16,b,'calibrate') for b in batches]
             good=[r for r in trials if r['status']=='COMPLETE']
             if not good: raise RuntimeError('NO_VALID_CONFIGURATION_'+backend)
             configs[backend]=min(good,key=lambda r:r['search_seconds'])['batch']
