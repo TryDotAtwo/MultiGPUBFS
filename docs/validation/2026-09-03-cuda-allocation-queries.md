@@ -112,7 +112,9 @@ df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f:
   df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f.
 
 This certifies the generation/hash C ABI implementation at that source commit,
-not the later Rust report adapter or CUB route query. Those are in the separate
-version10 run on77bc9a1. Production archived multi-rank BFS remains outside this
+not the later Rust report adapter or CUB route query. Those subsequently passed
+the separate version10 gate on77bc9a1; see
+[route allocation query](2026-09-03-route-allocation-query.md).
+Production archived multi-rank BFS remains outside this
 primitive gate. The CayleyPy baseline was rechecked clean at
 f0f2b8e5ee61173039ab9742f3a7756c9b6365e6.
