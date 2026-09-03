@@ -15,3 +15,7 @@ mgbfs-cuda = { path = "../mgbfs-cuda", optional = true }
 [[example]]
 name = "single_gpu_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "native_bench"
+required-features = ["cuda"]

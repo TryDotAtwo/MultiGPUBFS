@@ -1,5 +1,27 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent};
 use std::io;
+#[test]
+fn prepacked_records_match_reference_codec() {
+    let mut reference = Archive::new(Disk::default(), 4096, 4, [7; 32]).unwrap();
+    let mut packed = Archive::new(Disk::default(), 4096, 4, [7; 32]).unwrap();
+    let states = [1, 0, 0, 1, 1, 1, 0, 1];
+    let hashes = [[1u32, 2, 3, 4], [5, 6, 7, 8]];
+    reference.records(0, &states, &hashes).unwrap();
+    let mut wire = states.to_vec();
+    for hash in hashes {
+        for word in hash {
+            wire.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    assert!(packed.records_wire(0, 3, &wire).is_err());
+    packed.records_wire(0, 2, &wire).unwrap();
+    for a in [&mut reference, &mut packed] {
+        a.layer_commit(0, 2).unwrap();
+        a.run_commit().unwrap();
+    }
+    assert_eq!(reference.extent.bytes, packed.extent.bytes);
+    verify(&packed.extent.bytes).unwrap();
+}
 #[derive(Default)]
 struct Disk {
     bytes: Vec<u8>,

@@ -1,5 +1,6 @@
 //! Raw C ABI. CUDA is opt-in; there is no CPU implementation of these calls.
 pub mod allocation;
+pub mod native_owner;
 #[cfg(feature = "cuda")]
 pub mod ffi {
     pub use crate::allocation::{GenerateBytes, HashBytes, RouteBytes};

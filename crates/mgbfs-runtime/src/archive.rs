@@ -120,12 +120,15 @@ impl<E: Extent> Archive<E> {
     }
     fn frame(&mut self, kind: u64, depth: u64, count: u64, payload: &[u8]) -> Result<()> {
         self.live()?;
-        let mut header = Vec::with_capacity(80);
-        header.extend_from_slice(b"MGBFSFR1");
-        for x in [kind, depth, count, payload.len() as u64, self.sequence] {
-            header.extend_from_slice(&x.to_le_bytes());
+        let mut header = [0u8; 80];
+        header[..8].copy_from_slice(b"MGBFSFR1");
+        for (i, x) in [kind, depth, count, payload.len() as u64, self.sequence]
+            .iter()
+            .enumerate()
+        {
+            header[8 + i * 8..16 + i * 8].copy_from_slice(&x.to_le_bytes());
         }
-        header.extend_from_slice(&self.chain);
+        header[48..].copy_from_slice(&self.chain);
         let next = self
             .sequence
             .checked_add(1)
@@ -202,6 +205,24 @@ impl<E: Extent> Archive<E> {
             }
         }
         self.frame(1, depth, count, &payload)?;
+        self.layer_records = next;
+        Ok(())
+    }
+    /// Prepacked canonical state plane followed by little-endian Hash128 plane.
+    /// No allocation or payload copy; intended for preallocated pinned slots.
+    pub fn records_wire(&mut self, depth: u64, count: u64, payload: &[u8]) -> Result<()> {
+        self.live()?;
+        if depth != self.depth
+            || count == 0
+            || count.checked_mul(self.width as u64 + 16) != Some(payload.len() as u64)
+        {
+            return Err("ARCHIVE_RECORD_SHAPE_OR_DEPTH".into());
+        }
+        let next = self
+            .layer_records
+            .checked_add(count)
+            .ok_or("ARCHIVE_COUNT_OVERFLOW")?;
+        self.frame(1, depth, count, payload)?;
         self.layer_records = next;
         Ok(())
     }

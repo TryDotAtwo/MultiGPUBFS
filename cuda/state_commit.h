@@ -21,6 +21,8 @@ typedef struct MgbfsStateExtent {
 } MgbfsStateExtent;
 int mgbfs_state_reserve(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
+int mgbfs_state_reserve_layer(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent, uint32_t* layer_count, uint32_t layer_capacity, void* stream);
 /* Dense input is source-order, sorted_refs maps sorted hashes to those rows.
  * All output rows and indices are validated before any state copy. Hash commit
  * must already have completed on this stream. Extent.ready publishes StateReady.

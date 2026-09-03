@@ -55,9 +55,18 @@ __global__ void copy_states(const uint4* input,const uint64_t* refs,const uint32
   }
 }
 __global__ void publish_ready(const MgbfsOwnerControl* o,MgbfsStateExtent* e){if(!o->error)e->ready=1;}
+__global__ void guard_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,const uint32_t*n,uint32_t cap){
+ if(!o->error&&(*n>cap||o->survivors>cap-*n))fatal(r,o,16);
+}
+__global__ void count_layer(const MgbfsOwnerControl*o,uint32_t*n){if(!o->error)*n+=o->survivors;}
 }
 extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
   if(!r||!o||!e)return 1;reserve<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_reserve_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,MgbfsStateExtent*e,uint32_t*n,uint32_t cap,void*stream){
+ if(!r||!o||!e||!n)return 1;auto s=static_cast<cudaStream_t>(stream);
+ guard_layer<<<1,1,0,s>>>(r,o,n,cap);reserve<<<1,1,0,s>>>(r,o,e);count_layer<<<1,1,0,s>>>(o,n);
+ return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_materialize(const uint8_t* input,uint32_t candidates,const uint64_t* refs,uint32_t sorted,
     const uint32_t* selected,uint32_t capacity,uint32_t stride,uint8_t* output,MgbfsStateRingControl* r,
