@@ -27,10 +27,29 @@ Local verification on Windows:
   Public query execution launches no GPU kernels and does not validate runtime
   numeric results or performance.
 - Python hardware/source guards: 2 passed; Rust formatting passed.
-- Local Rust regression could not run: Docker Desktop failed during startup
+- Initial local Rust regression could not run: Docker Desktop failed during startup
   on inaccessible sailor-ingest.sock; native cargo dependency download failed
   with Schannel SEC_E_NO_CREDENTIALS. No Docker reset, WSL shutdown or network
-  reconfiguration was performed. Linux CI and target tests are required.
+  reconfiguration was performed. Retrying native `cargo test --locked` outside
+  the sandbox resolved Schannel access and passed all 55 Windows CPU tests
+  (the Linux-only file extent test is not compiled on Windows).
+
+Linux CI passed on df42c51 and launcher pin288d43d: all 56 Rust CPU tests,
+two Python guards and the new g++ geometry fixture. Private Kaggle kernel
+`trydotatwo/mgbfs-native-matrix-primitives-t4`, version7, was launched against
+df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f. Its results must be checked separately;
+RUNNING does not certify either GPU identity or test success.
+
+Version7 hardware evidence: two distinct Tesla T4 UUIDs, 15360MiB each,
+CUDA12.8.93. Linux CUDA build and public-query CTest passed. GPU0 generation
+plain and memcheck passed (including new FFI query test); memcheck reported
+zero errors. Generation racecheck printed four passing Rust tests in186.14s,
+but the enclosing180s watchdog killed the sanitizer before final exit/summary.
+Therefore racecheck is NOT counted PASS and the run is INCOMPLETE. Preserved
+artifacts: `test_results/native-query-v7/native-primitive-gate/`.
+The repeated gate increases generation timeout to900s, keeps all tests and all
+sanitizer modes, and keeps the exact same CUDA source commit. No algorithm
+change or skipped sanitizer is used to resolve this harness timeout.
 
 The shared C++ geometry fixture is added to CPU CI. CMake also builds a public
 query executable and registers a CTest test; the private Kaggle primitive gate

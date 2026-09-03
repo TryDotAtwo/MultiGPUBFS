@@ -140,7 +140,7 @@ def main():
                         command += ["--skip", "full_u4_pipelined_sweep"]
                     if tool != "plain":
                         command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
-                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name == "ping_pong" else 180))
+                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name in ("ping_pong", "generate") else 180))
                     summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
                     (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         summary["status"] = "PASS_PRIMITIVE_GATE"
