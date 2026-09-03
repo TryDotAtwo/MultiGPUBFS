@@ -73,4 +73,32 @@ native retains only rolling frontier buffers.
 
 ## Result
 
-Pending download and validation. Launch success alone is not a benchmark result.
+Kaggle v1 completed: 63/63 worker rows COMPLETE (6 verification, 27 calibration,
+30 measured). Downloaded and independently checked all 63 raw worker JSON logs;
+all three full-layer SHA-256 pairs match. PyTorch 2.10.0+cu128, CUDA 12.8;
+CayleyPy used `_make_hashes_older_gpu`.
+
+| m | States | Native median +/- MAD ms | CayleyPy median +/- MAD ms | Native allocation delta MiB | PyTorch peak allocated / reserved MiB | External max native / CayleyPy MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| 5 | 15,625 | 5.189 +/- 0.057 | 16.991 +/- 0.224 | 50 | 11.887 / 24 | 157 / 145 |
+| 8 | 262,144 | 31.590 +/- 0.795 | 45.195 +/- 2.693 | 130 | 180.436 / 378 | 237 / 499 |
+| 12 | 2,985,984 | 331.042 +/- 0.609 | 288.547 +/- 3.604 | 1106 | 1584.243 / 3072 | 1213 / 3193 |
+
+Best calibrated native batches: 16384,16384,65536, pre-dedup ON in all cases.
+CayleyPy batches: 1048576,262144,1048576. Five new repetitions for each selected
+configuration. Native speed ratios: 3.27x and 1.43x faster at m5/m8, 14.73% slower
+at m12. At m12 the external sampled peak is 62.0% lower, while allocation delta
+versus Torch peak allocated gives a smaller difference (different counter semantics).
+
+The m5 native search is shorter than the sampler interval: some individual
+native rows miss the allocation plateau (107 versus actual 156.875 MiB). Table
+uses the maximum over all five processes; the cudaMemGetInfo plateau independently
+confirms the native allocation. Do not present this sampler as exact peak capture.
+
+Evidence: `test_results/kaggle_single_gpu_benchmark_v1/single-gpu-bench/`.
+Summary SHA-256:
+`3a63bd2176333e6091616481bfe77ca4c295f04db1372c5e51a878f030cb494b`.
+
+These are short-run results only. The user requested larger, minute-scale graphs
+before drawing sustained-load conclusions. A separate size escalation follows;
+these small timings do not establish sustained performance or a production win.

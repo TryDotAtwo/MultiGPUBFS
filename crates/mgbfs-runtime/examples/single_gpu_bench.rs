@@ -17,14 +17,20 @@ fn used_bytes() -> usize {
     total - free
 }
 fn make(g: &MatrixGroup, batch: u32, pre: bool) -> DenseDeviceStepper {
-    DenseDeviceStepper::new_pipelined(
-        g,
-        20260828u128.to_le_bytes(),
-        batch,
-        u32::try_from(g.expected_max_unique_states).unwrap(),
-        pre,
-    )
-    .unwrap()
+    let capacity = std::env::var("MGBFS_BENCH_CAPACITY")
+        .map(|s| s.parse::<u32>().unwrap())
+        .unwrap_or(u32::try_from(g.expected_max_unique_states).unwrap());
+    let result =
+        DenseDeviceStepper::new_pipelined(g, 20260828u128.to_le_bytes(), batch, capacity, pre)
+            .unwrap();
+    if std::env::var_os("MGBFS_BENCH_RESERVE_GIB").is_some() {
+        let (mut free, mut total) = (0usize, 0usize);
+        unsafe {
+            assert_eq!(cudaMemGetInfo(&mut free, &mut total), 0);
+        }
+        assert!(free >= 1usize << 30, "BENCH_UNTOUCHED_RESERVE");
+    }
+    result
 }
 fn main() {
     let args: Vec<String> = std::env::args().collect();
