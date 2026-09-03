@@ -1,5 +1,11 @@
 # Native matrix BFS implementation status
 
+> Architecture reset, 2026-09-03: production source of truth is
+> [matrix runtime v2](matrix-runtime-architecture-v2.md). The existing global
+> single-bucket owner/feedback path is a test prototype and must not be promoted
+> to production by parameter tuning. Architecture/model gates precede further
+> runtime implementation and performance optimization.
+
 This is the standalone implementation approved on 2026-09-02. CayleyPy at
 `f0f2b8e` is an external, unchanged torchrun baseline. Following explicit approval
 on 2026-09-02, GitHub is the source of truth:
