@@ -285,6 +285,10 @@ impl DenseDeviceStepper {
             Ok(result)
         }
     }
+    /// Published depth-finalization count; no device readback.
+    pub fn frontier_len(&self) -> u32 {
+        self.current_count
+    }
     pub fn snapshot(&self) -> Result<Vec<Vec<u8>>> {
         if self.failed {
             return Err("STEPPER_FAILED".into());

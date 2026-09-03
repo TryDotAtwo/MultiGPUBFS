@@ -11,3 +11,7 @@ cuda = ["dep:mgbfs-cuda", "mgbfs-cuda/cuda"]
 mgbfs-core = { path = "../mgbfs-core" }
 sha2 = "=0.10.8"
 mgbfs-cuda = { path = "../mgbfs-cuda", optional = true }
+
+[[example]]
+name = "single_gpu_bench"
+required-features = ["cuda"]
