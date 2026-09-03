@@ -147,7 +147,7 @@ def main():
         env["LD_LIBRARY_PATH"] = str(build) + ":/usr/local/cuda/lib64:" + env.get("LD_LIBRARY_PATH", "")
         run(["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT="+str(cutlass)], cwd=source, env=env, logs=logs, name="cmake-configure")
         run(["cmake", "--build", str(build), "--parallel", "2"], cwd=source, env=env, logs=logs, name="cuda-build")
-        run(["ctest", "--test-dir", str(build), "--output-on-failure"], cwd=source, env=env, logs=logs, name="allocation-queries")
+        run(["ctest", "--test-dir", str(build), "-R", "^(allocation-query|route-query)$", "--output-on-failure"], cwd=source, env=env, logs=logs, name="allocation-queries")
         artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-cuda", "--features", "cuda", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-test-build")
         artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--test", "ping_pong", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
         executables = {}

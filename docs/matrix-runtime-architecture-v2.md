@@ -520,7 +520,15 @@ test-only global owner, test-only two-slot feedback, CPU contract models.
 Measured: two independent T4 primitive checks, generator variants, experimental
 unarchived one-GPU comparisons. Production architecture above is designed,
 not implemented; neither real multi-rank runtime nor production Pareto win exists.
-No performance kernel changes or new GPU launches are part of this revision.
+The original architecture-only revision made no kernel changes or GPU launches.
+
+Implementation update: the sorted-input bounded CUDA owner leaf now implements
+Compare, stable compaction, credit checking and merge/copyback Commit using
+I/J/K-bounded scratch. Its independent two-T4 checks and four sanitizer modes
+passed; see [owner evidence](validation/2026-09-03-bounded-cuda-owner.md).
+Upstream multi-source merge/job splitting, Rust scheduling and real reservation
+integration remain pending. This is not completion of production architecture
+or of the full-state/multi-rank gate in section 14.
 
 Official runtime references checked 2026-09-03:
 [NCCL group ordering](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/groups.html),
