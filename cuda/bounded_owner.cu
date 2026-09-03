@@ -59,7 +59,9 @@ template<bool Commit> __global__ void merge_tiles(const MgbfsBucketJob* jobs,con
     b={old,nullptr,r.begin};n=uint32_t(r.count);
   }
   __shared__ Key sa[T],sb[T];__shared__ uint32_t ab[4];
-  for(uint64_t base=0;base<uint64_t(m)+n;base+=T){
+  // Independent merge-path tiles own disjoint output positions. Multiple CTAs
+  // per bucket expose parallelism even when a job contains few large buckets.
+  for(uint64_t base=uint64_t(blockIdx.y)*T;base<uint64_t(m)+n;base+=uint64_t(gridDim.y)*T){
     uint64_t end=base+T<uint64_t(m)+n?base+T:uint64_t(m)+n;
     if(threadIdx.x==0){ab[0]=rank_a(base,a,m,b,n);ab[1]=uint32_t(base-ab[0]);
       ab[2]=rank_a(end,a,m,b,n);ab[3]=uint32_t(end-ab[2]);}
@@ -102,9 +104,11 @@ __global__ void check_grant(const uint32_t* grant,MgbfsOwnerControl* c){
 __global__ void publish(const MgbfsBucketJob* jobs,uint32_t k,const Key* merged,Key* accepted,
     uint32_t* lengths,const uint32_t* local_indices,uint32_t* indices,const MgbfsOwnerCounts* counts,const MgbfsOwnerControl* c){
   if(c->error)return;auto d=jobs[blockIdx.x];auto x=counts[blockIdx.x];
-  for(uint32_t r=threadIdx.x;r<x.new_count;r+=T)accepted[uint64_t(d.bucket)*k+r]=merged[uint64_t(blockIdx.x)*k+r];
-  for(uint32_t r=threadIdx.x;r<x.survivors;r+=T)indices[x.output_offset+r]=local_indices[d.incoming.begin+r];
-  __syncthreads();if(threadIdx.x==0)lengths[d.bucket]=x.new_count;
+  for(uint64_t r=uint64_t(blockIdx.y)*T+threadIdx.x;r<x.new_count;r+=uint64_t(gridDim.y)*T)accepted[uint64_t(d.bucket)*k+r]=merged[uint64_t(blockIdx.x)*k+r];
+  for(uint64_t r=uint64_t(blockIdx.y)*T+threadIdx.x;r<x.survivors;r+=uint64_t(gridDim.y)*T)indices[x.output_offset+r]=local_indices[d.incoming.begin+r];
+  // No concurrent consumer: stream completion of this whole kernel publishes
+  // both data and count before finish_commit or the next owner's job can read.
+  if(blockIdx.y==0&&threadIdx.x==0)lengths[d.bucket]=x.new_count;
 }
 __global__ void finish_commit(MgbfsOwnerControl* c){if(!c->error)c->stage=2;}
 }
@@ -126,7 +130,8 @@ extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,
      !buckets||!per_shard||(per_shard&(per_shard-1))||buckets%per_shard)return 1;
   validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,generation,pn,cn,control);
   initial<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),p->flags,control);
-  for(unsigned tag=2;tag<=4;++tag)merge_tiles<false><<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),
+  unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
+  for(unsigned tag=2;tag<=4;++tag)merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
     static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted),p->k,p->flags,p->indices,p->merged,counts,control,tag);
   compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
   finish_compare<<<1,1,0,s>>>(jobs,j,p->k,counts,control);
@@ -138,8 +143,9 @@ extern "C" int mgbfs_bounded_owner_commit(void* raw,const MgbfsBucketJob* jobs,u
   auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
   if(!p||!jobs||!j||j>p->j||!in||!accepted||!lengths||!counts||!control||!grant||!selected)return 1;
   check_grant<<<1,1,0,s>>>(grant,control);
-  merge_tiles<true><<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0);
-  publish<<<j,T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control);
+  unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
+  merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0);
+  publish<<<dim3(j,tiles),T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control);
   finish_commit<<<1,1,0,s>>>(control);
   return cudaGetLastError()==cudaSuccess?0:2;
 }

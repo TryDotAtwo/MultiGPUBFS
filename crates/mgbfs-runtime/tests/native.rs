@@ -43,7 +43,37 @@ fn native_archive_roundtrip() {
         }
     }
     archive.finish().unwrap();
-    verify(&bytes.lock().unwrap()).unwrap();
+    let data = bytes.lock().unwrap();
+    verify(&data).unwrap();
+    let hash = mgbfs_core::hash::GemmHash::from_seed(16, [0; 16]).unwrap();
+    let oracle = g.exact_layers(729).unwrap();
+    let mut layers = vec![Vec::new(); oracle.len()];
+    let mut at = 48;
+    loop {
+        let word = |offset| {
+            u64::from_le_bytes(data[at + offset..at + offset + 8].try_into().unwrap()) as usize
+        };
+        let (kind, depth, count, size) = (word(8), word(16), word(24), word(32));
+        if kind == 3 {
+            break;
+        }
+        if kind == 1 {
+            let payload = &data[at + 80..at + 80 + size];
+            for row in 0..count {
+                let state = &payload[row * 16..(row + 1) * 16];
+                assert_eq!(
+                    hash.hash(state).unwrap().to_le_bytes(),
+                    payload[count * 16 + row * 16..count * 16 + (row + 1) * 16]
+                );
+                layers[depth].push(state.to_vec());
+            }
+        }
+        at += 112 + size;
+    }
+    for layer in &mut layers {
+        layer.sort();
+    }
+    assert_eq!(layers, oracle);
 }
 #[test]
 fn native_feedback_full_layers() {
@@ -95,6 +125,34 @@ fn layer_capacity_failure_is_terminal() {
 }
 
 #[test]
+fn padded_states_and_ping_pong_slot_reuse() {
+    for (n, m) in [(2, 7), (3, 3), (4, 2)] {
+        let mut g = MatrixGroup::unitriangular(n, m).unwrap();
+        g.start = g.successor(&g.start, 0).unwrap();
+        let capacity = g.expected_max_unique_states as u32;
+        let oracle = g.exact_layers(capacity as usize).unwrap();
+        for (batch, seed) in [(1, 0u128), (2, 1), (7, 20260828)] {
+            let cfg = NativeConfig {
+                batch,
+                layer_capacity: capacity,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: capacity,
+                prededup: true,
+            };
+            let mut bfs = NativeBfs::new(&g, seed.to_le_bytes(), cfg).unwrap();
+            for (depth, expected) in oracle.iter().enumerate() {
+                let mut actual = bfs.snapshot().unwrap();
+                actual.sort();
+                assert_eq!(&actual, expected, "n={n} m={m} batch={batch} depth={depth}");
+                assert_eq!(bfs.advance().unwrap(), depth + 1 < oracle.len());
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "larger full-state oracle gate"]
 fn native_large_full_layers() {
     for m in 5..=8 {
@@ -119,5 +177,35 @@ fn native_large_full_layers() {
             }
             eprintln!("FULL_STATE_PASS m={m} pre={pre}");
         }
+    }
+}
+
+#[test]
+#[ignore = "local optimization probe, not archived A/B"]
+fn native_timing_probe() {
+    let m = 16u16;
+    let g = MatrixGroup::unitriangular(4, m).unwrap();
+    let cfg = NativeConfig {
+        batch: 65536,
+        layer_capacity: (m as u32).pow(6),
+        buckets: 256,
+        shards: 16,
+        job_buckets: 16,
+        bucket_capacity: (m as u32).pow(6) / 128 + 256,
+        prededup: true,
+    };
+    for iteration in 0..2 {
+        let mut bfs = NativeBfs::new(&g, 20260828u128.to_le_bytes(), cfg).unwrap();
+        let start = std::time::Instant::now();
+        let mut total = 1u64;
+        while bfs.advance().unwrap() {
+            total += u64::from(bfs.frontier_len());
+        }
+        assert_eq!(total, g.expected_max_unique_states);
+        eprintln!(
+            "LOCAL_UNARCHIVED_PROBE iteration={iteration} seconds={} requested_bytes={}",
+            start.elapsed().as_secs_f64(),
+            bfs.requested_device_bytes()
+        );
     }
 }

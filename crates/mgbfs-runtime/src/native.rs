@@ -95,6 +95,31 @@ impl Drop for Plan {
     }
 }
 struct Stream(*mut c_void);
+struct Event(*mut c_void);
+impl Event {
+    fn new() -> Result<Self> {
+        let mut event = std::ptr::null_mut();
+        check(unsafe { cudaEventCreateWithFlags(&mut event, 2) })?;
+        Ok(Self(event))
+    }
+}
+impl Drop for Event {
+    fn drop(&mut self) {
+        unsafe {
+            cudaEventDestroy(self.0);
+        }
+    }
+}
+struct ProducerBuffers {
+    children: Buffer,
+    hashes: Buffer,
+    sorted: Buffer,
+    refs: Buffer,
+    routed_count: Buffer,
+    directory: Buffer,
+    fatal: Buffer,
+    ready: Event,
+}
 impl Drop for Stream {
     fn drop(&mut self) {
         unsafe {
@@ -145,11 +170,15 @@ pub struct NativeBfs {
     front_count: u32,
     prev_count: u32,
     plan_bytes: u64,
+    alternate: ProducerBuffers,
+    ready: Event,
+    producer_stream: Stream,
     stream: Stream,
 }
 impl Drop for NativeBfs {
     fn drop(&mut self) {
         unsafe {
+            cudaStreamSynchronize(self.producer_stream.0);
             cudaStreamSynchronize(self.stream.0);
         }
     }
@@ -192,6 +221,9 @@ impl NativeBfs {
             let mut s = std::ptr::null_mut();
             check(cudaStreamCreateWithFlags(&mut s, 1))?;
             let stream = Stream(s);
+            let mut producer = std::ptr::null_mut();
+            check(cudaStreamCreateWithFlags(&mut producer, 1))?;
+            let producer_stream = Stream(producer);
             let generate = Plan::new(mgbfs_generate_destroy, |p, e| {
                 mgbfs_generate_create(
                     g.rows as u32,
@@ -301,6 +333,18 @@ impl NativeBfs {
                 front_count: 1,
                 prev_count: 0,
                 plan_bytes,
+                alternate: ProducerBuffers {
+                    children: buffer(cap * stride)?,
+                    hashes: buffer(cap * 16)?,
+                    sorted: buffer(cap * 16)?,
+                    refs: buffer(cap * 8)?,
+                    routed_count: buffer(4)?,
+                    directory: buffer(b * 16)?,
+                    fatal: buffer(4)?,
+                    ready: Event::new()?,
+                },
+                ready: Event::new()?,
+                producer_stream,
                 stream,
             };
             check(cudaDeviceSynchronize())?;
@@ -370,6 +414,13 @@ impl NativeBfs {
                 &self.ring,
                 &self.extent,
                 &self.layer_count,
+                &self.alternate.children,
+                &self.alternate.hashes,
+                &self.alternate.sorted,
+                &self.alternate.refs,
+                &self.alternate.routed_count,
+                &self.alternate.directory,
+                &self.alternate.fatal,
             ]
             .iter()
             .map(|b| b.bytes.max(1) as u64)
@@ -480,6 +531,81 @@ impl NativeBfs {
         }
         r
     }
+    fn swap_producer_banks(&mut self) {
+        std::mem::swap(&mut self.children, &mut self.alternate.children);
+        std::mem::swap(&mut self.hashes, &mut self.alternate.hashes);
+        std::mem::swap(&mut self.sorted, &mut self.alternate.sorted);
+        std::mem::swap(&mut self.refs, &mut self.alternate.refs);
+        std::mem::swap(&mut self.routed_count, &mut self.alternate.routed_count);
+        std::mem::swap(&mut self.directory, &mut self.alternate.directory);
+        std::mem::swap(&mut self.fatal, &mut self.alternate.fatal);
+        std::mem::swap(&mut self.ready, &mut self.alternate.ready);
+    }
+    fn produce(&self, begin: u64, rows: u32, alternate: bool) -> Result<()> {
+        let (children, hashes, sorted, refs, count, directory, fatal, ready) = if alternate {
+            let a = &self.alternate;
+            (
+                &a.children,
+                &a.hashes,
+                &a.sorted,
+                &a.refs,
+                &a.routed_count,
+                &a.directory,
+                &a.fatal,
+                &a.ready,
+            )
+        } else {
+            (
+                &self.children,
+                &self.hashes,
+                &self.sorted,
+                &self.refs,
+                &self.routed_count,
+                &self.directory,
+                &self.fatal,
+                &self.ready,
+            )
+        };
+        let n = rows * self.moves;
+        let s = self.producer_stream.0;
+        unsafe {
+            check(mgbfs_generate_run(
+                self.generate.0,
+                self.states.at(begin as usize * self.stride).cast(),
+                children.p.cast(),
+                rows,
+                s,
+            ))?;
+            check(mgbfs_hash_run(
+                self.hash.0,
+                children.p.cast(),
+                hashes.p.cast(),
+                n,
+                s,
+            ))?;
+            check(mgbfs_route_run(
+                self.route.0,
+                hashes.p,
+                self.origins.p.cast(),
+                sorted.p,
+                refs.p.cast(),
+                count.p.cast(),
+                n,
+                self.cfg.prededup as i32,
+                s,
+            ))?;
+            check(mgbfs_bucket_directory(
+                sorted.p,
+                count.p.cast(),
+                self.candidates,
+                self.cfg.buckets,
+                directory.p.cast(),
+                fatal.p.cast(),
+                s,
+            ))?;
+            check(cudaEventRecord(ready.0, s))
+        }
+    }
     fn advance_inner(&mut self) -> Result<bool> {
         unsafe {
             let s = self.stream.0;
@@ -491,49 +617,34 @@ impl NativeBfs {
             ))?;
             check(cudaMemsetAsync(self.layer_count.p, 0, 4, s))?;
             self.next.clear();
+            let first = self.front[0];
+            self.produce(
+                first.begin,
+                u64::from(self.cfg.batch).min(first.count) as u32,
+                false,
+            )?;
             for fi in 0..self.front.len() {
                 let parent = self.front[fi];
                 let mut offset = 0;
                 while offset < parent.count {
                     let n = u64::from(self.cfg.batch).min(parent.count - offset) as u32;
                     let children = n * self.moves;
-                    check(mgbfs_generate_run(
-                        self.generate.0,
-                        self.states
-                            .at((parent.begin + offset) as usize * self.stride)
-                            .cast(),
-                        self.children.p.cast(),
-                        n,
-                        s,
-                    ))?;
-                    check(mgbfs_hash_run(
-                        self.hash.0,
-                        self.children.p.cast(),
-                        self.hashes.p.cast(),
-                        children,
-                        s,
-                    ))?;
-                    check(mgbfs_route_run(
-                        self.route.0,
-                        self.hashes.p,
-                        self.origins.p.cast(),
-                        self.sorted.p,
-                        self.refs.p.cast(),
-                        self.routed_count.p.cast(),
-                        children,
-                        self.cfg.prededup as i32,
-                        s,
-                    ))?;
-                    check(mgbfs_bucket_directory(
-                        self.sorted.p,
-                        self.routed_count.p.cast(),
-                        self.candidates,
-                        self.cfg.buckets,
-                        self.directory.p.cast(),
-                        self.fatal.p.cast(),
-                        s,
-                    ))?;
-                    check(cudaStreamSynchronize(s))?;
+                    let next_position = if offset + u64::from(n) < parent.count {
+                        Some((
+                            parent.begin + offset + u64::from(n),
+                            u64::from(self.cfg.batch).min(parent.count - offset - u64::from(n))
+                                as u32,
+                        ))
+                    } else {
+                        self.front
+                            .get(fi + 1)
+                            .map(|e| (e.begin, u64::from(self.cfg.batch).min(e.count) as u32))
+                    };
+                    // Fill the other bank while this bank is consumed by owner jobs.
+                    if let Some((begin, rows)) = next_position {
+                        self.produce(begin, rows, true)?;
+                    }
+                    check(cudaEventSynchronize(self.ready.0))?;
                     if self.fatal.one::<u32>()? != 0 {
                         return Err("DIRECTORY_FATAL".into());
                     }
@@ -648,6 +759,7 @@ impl NativeBfs {
                             }
                         }
                     }
+                    self.swap_producer_banks();
                     offset += u64::from(n);
                 }
                 // DENSE: child buffers no longer depend on this parent. Archive integration
