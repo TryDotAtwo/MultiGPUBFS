@@ -29,7 +29,8 @@ class GateTests(unittest.TestCase):
         self.assertEqual({(r["gpu"], r["test"], r["tool"]) for r in results}, expected)
         for command, kwargs in calls:
             gpu = kwargs["env"]["CUDA_VISIBLE_DEVICES"]
-            self.assertTrue(kwargs["name"].startswith("gpu" + gpu + "-"))
+            self.assertIn(gpu, ("GPU-0", "GPU-1"))
+            self.assertTrue(kwargs["name"].startswith("gpu" + gpu.removeprefix("GPU-") + "-"))
             self.assertIn("--test-threads=1", command)
 
     def test_independent_gpu_suites_overlap_and_propagate_failure(self):

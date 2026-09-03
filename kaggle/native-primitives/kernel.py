@@ -94,7 +94,8 @@ def checkout(repo, commit, destination, env, logs, label):
         raise RuntimeError("Checkout commit mismatch")
 
 def execute_gpu_suite(gpu, executables, source, env, logs, record):
-    device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
+    # Bind the physical UUID, not an assumed CUDA ordinal/NVML-index mapping.
+    device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
     for name, executable in sorted(executables.items(), key=lambda item: (item[0] == "dense_device", item[0])):
         for tool in ("plain",) + SANITIZERS:
             label = f"gpu{gpu['index']}-{name}-{tool}"
