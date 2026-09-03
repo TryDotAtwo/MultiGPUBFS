@@ -26,9 +26,14 @@ pub struct StateRing {
     head: u64,
     tail: u64,
     next_id: u64,
+    peak: u64,
     live: VecDeque<Live>,
 }
 impl StateRing {
+    /// Physical high-water including wrap padding, in records (not bytes).
+    pub fn peak_records(&self) -> u64 {
+        self.peak
+    }
     pub fn new(records: u64, descriptors: usize) -> Result<Self> {
         if records == 0 || descriptors == 0 {
             return Err("STATE_RING_CAPACITY".into());
@@ -39,6 +44,7 @@ impl StateRing {
             head: 0,
             tail: 0,
             next_id: 0,
+            peak: 0,
             live: VecDeque::with_capacity(descriptors),
         })
     }
@@ -83,6 +89,7 @@ impl StateRing {
         self.head = head;
         self.tail = end;
         self.next_id = next_id;
+        self.peak = self.peak.max(end - head);
         Ok(extent)
     }
     fn find(&mut self, id: u64) -> Result<&mut Live> {

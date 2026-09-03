@@ -70,3 +70,28 @@ fn ring_rejects_unmaterialized_publish_and_descriptor_exhaustion() {
     assert!(r.reserve(1).is_err());
     assert!(r.archived(a.id).is_err());
 }
+
+#[test]
+fn ring_peak_counts_wrap_padding_and_does_not_change_after_failed_reservation() {
+    let mut r = StateRing::new(10, 8).unwrap();
+    let a = r.reserve(6).unwrap();
+    r.materialized(a.id).unwrap();
+    r.publish(a.id).unwrap();
+    r.enumerated(a.id).unwrap();
+    r.archived(a.id).unwrap();
+    r.reclaim();
+    let b = r.reserve(3).unwrap();
+    let c = r.reserve(4).unwrap(); // physical 6..9 and 0..4: 8 including wrap gap
+    assert_eq!(r.peak_records(), 8);
+    assert!(r.reserve(3).is_err());
+    assert_eq!(r.peak_records(), 8);
+    for x in [b, c] {
+        r.materialized(x.id).unwrap();
+        r.publish(x.id).unwrap();
+        r.enumerated(x.id).unwrap();
+        r.archived(x.id).unwrap();
+    }
+    r.reclaim();
+    r.reserve(10).unwrap();
+    assert_eq!(r.peak_records(), 10);
+}

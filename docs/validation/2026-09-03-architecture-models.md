@@ -146,3 +146,50 @@ not pinned/disk queue draining; existing disk fault tests remain separate.
 CPU Vec/BTree containers hold reference values, not proposed GPU allocations.
 No BMMA execution, CUDA scratch query, schema2 codec, general fault-injected
 whole-system schedule or production StateRef ABI is validated here.
+
+## Concurrent event integration (subsequent change)
+
+`simulation::run_concurrent` adds a bounded window of admitted parent batches.
+Unlike the serial reference above, admission, transport issue, each rank's ACK,
+owner consumption, request/response processing and archive D2H completion are
+independently selected ready events. Three parent batches may be live together.
+Multiple tickets remain in flight; completed receives may wait for their owner.
+Candidate consumption preserves ticket order per prefix bucket. Owner compare,
+reservation and commit are atomic semantic events, not modeled CUDA instructions.
+
+Reference messages connect actual parent states and move ordinals to target
+extents. Batch work is registered before sending candidates, response ownership
+is established before candidate receive retirement, and origin leases close
+only after receipts and response completions. Every queued archive copy carries
+a separate outstanding-work count. Finalize cannot succeed with live messages,
+batches, targets or archive jobs; all full next-layer states must be materialized.
+
+Concurrent sweep: U3 mod3 and U4 mod2, both profiles, maps [0], [0,1], [1,0],
+12 schedule/hash seeds per combination, pre-dedup alternating ON/OFF:
+144 complete-graph schedules. Tests compare every full state layer with the
+visited-set oracle, check generated/committed/request/response conservation,
+and require observed peak batch count=3 and peak in-flight tickets>=2.
+Window zero, bucket overflow and state-ring overflow must return errors.
+
+StateRing now tracks physical high-water including wrap padding. A literal
+fixture checks 6-record allocation/reclaim, then simultaneous 3+4 records with
+a one-record wrap gap: peak8, not7. Failed reservation does not increase peak;
+after drain, a full ten-record reservation raises peak to10. Concurrent runs
+return per-rank peak records and check each against configured R. Multiplying
+this count by storage stride gives state-pool physical usage, NOT total VRAM.
+
+Remaining limits: this is sampled CPU interleaving, not exhaustive model
+checking, kernel race detection, or evidence of measured GPU overlap. Multiple
+microbuckets inside one writer shard are not modeled as a shared exclusion
+domain yet. Queue capacities are sized for the bounded fixture window; the
+adversarial tiny-credit cases remain separate transport tests. Archive events
+model D2H only, without the production pinned/disk pipeline or hash arena leases.
+Allocation plans still need actual generation/hash/CUB/NCCL accounting; the
+new high-water counter must not be reported as a complete CUDA memory plan.
+
+Validation: **45 CPU tests passed**, no failures, using
+`cargo fmt --all && cargo test --locked --offline` in the cached Docker
+toolchain. The concurrent model first failed with
+`CONCURRENT_MODEL_NOT_IMPLEMENTED`; the high-water fixture first failed with
+actual0 versus expected8. Both passed after implementation. CUDA-feature tests
+were not enabled; this change provides no new hardware or performance result.

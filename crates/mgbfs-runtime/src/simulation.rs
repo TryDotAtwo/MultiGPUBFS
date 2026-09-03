@@ -1,10 +1,12 @@
 //! Small-graph CPU integration oracle, never an execution backend.
+mod concurrent;
 use crate::{
     owner::OwnerModel,
     receipts::BatchReceipts,
     ring::StateRing,
     transport::{Kind, Transport},
 };
+pub use concurrent::{run_concurrent, ConcurrentSimulation};
 use mgbfs_core::hash::{GemmHash, Hash128};
 use mgbfs_core::{matrix::MatrixGroup, Result};
 use std::collections::{BTreeMap, BTreeSet};
