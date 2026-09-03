@@ -37,8 +37,11 @@ def verify_inventory(text, test, tool):
     if test == "dense_device":
         expected.add("gpu_feedback_small_full_depth_sanitizer_fixture" if tool == "racecheck"
                      else "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers")
-    actual = re.findall(r"^test ([a-zA-Z0-9_]+) \.\.\. ok\s*$", text, re.MULTILINE)
-    if set(actual) != expected or len(actual) != len(expected):
+    # --nocapture lets eprintln interrupt the test header before its final ok.
+    # Require the exact headers AND the matching all-passed suite, not inline ok.
+    actual = re.findall(r"^test ([a-zA-Z0-9_]+) \.\.\. ", text, re.MULTILINE)
+    completed = re.findall(r"test result: ok\. ([0-9]+) passed; 0 failed; 0 ignored;", text)
+    if set(actual) != expected or len(actual) != len(expected) or completed != [str(len(expected))]:
         raise ValueError("FIXTURE_INVENTORY_MISMATCH")
 
 def verify_summary(summary, source_commit):

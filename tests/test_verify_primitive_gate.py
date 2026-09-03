@@ -29,7 +29,7 @@ class VerifyGateTests(unittest.TestCase):
             "generation_variants_small_feedback",
             "reused_slots_and_partial_tails_preserve_every_layer",
         ]
-        log = "\n".join(f"test {name} ... ok" for name in names)
+        log = "\n".join(f"test {name} ... ok" for name in names) + "\ntest result: ok. 3 passed; 0 failed; 0 ignored;"
         v.verify_inventory(log, "ping_pong", "racecheck")
         with self.assertRaises(ValueError):
             v.verify_inventory(log.splitlines()[0], "ping_pong", "racecheck")
@@ -37,6 +37,14 @@ class VerifyGateTests(unittest.TestCase):
             v.verify_inventory(log, "ping_pong", "plain")
         with self.assertRaises(ValueError):
             v.verify_inventory(log.replace(names[1], "unexpected_test"), "ping_pong", "racecheck")
+
+    def test_diagnostic_output_may_interrupt_rust_test_status_line(self):
+        log = ("test capacity_failure_poisoning_does_not_publish_a_partial_layer ... ok\n"
+               "test gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers ... feedback m=2\n"
+               "feedback m=3\nok\ntest result: ok. 2 passed; 0 failed; 0 ignored;\n")
+        v.verify_inventory(log, "dense_device", "plain")
+        with self.assertRaises(ValueError):
+            v.verify_inventory(log.replace("2 passed", "1 passed"), "dense_device", "plain")
 
     def test_full_matrix_requires_unique_results_for_two_distinct_t4_devices(self):
         s=fixture()

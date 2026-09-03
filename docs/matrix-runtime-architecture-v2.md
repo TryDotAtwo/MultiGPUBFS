@@ -15,8 +15,11 @@
 Они не являются реализацией production scheduling.
 
 Следующий исполняемый срез: [rank layout / StateRef / schema2 frames](validation/2026-09-03-rank-layout-wire.md).
-Он закрывает часть CPU-контрактов; реальные query adapters и production data plane
-по-прежнему не подтверждены.
+Он закрывает часть CPU-контрактов. Реальные query adapters для
+[generation/hash](validation/2026-09-03-cuda-allocation-queries.md) и
+[CUB route](validation/2026-09-03-route-allocation-query.md) реализованы отдельно;
+отчёты различают локальные проверки и hardware gates конкретных commits.
+Полный rank-wide query provider и production data plane пока не реализованы.
 
 ## 1. Что произошло и что запрещено повторять
 
