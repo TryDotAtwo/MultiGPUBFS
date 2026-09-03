@@ -72,3 +72,21 @@ evidence only; it does not run BFS or convert an incomplete gate into a pass.
 The shared C++ geometry fixture is added to CPU CI. CMake also builds a public
 query executable and registers a CTest test; the private Kaggle primitive gate
 runs it before CUDA test executables. No production multi-rank result is claimed.
+
+Version8 is INCOMPLETE: 22/80 combinations passed on GPU0, then the900s
+ping_pong/racecheck watchdog fired inside generation_variants_preserve_full_layers.
+Generation/hash/materialize/owner passed all five modes, including final clean
+sanitizer summaries; ping_pong passed plain and memcheck. GPU1 was not tested.
+Artifacts: test_results/native-query-v8/native-primitive-gate/.
+The generation timeout adjustment is verified: its racecheck finished164.66s
+with zero hazards. This is distinct from the new ping_pong fixture-selection bug.
+
+The sanitizer selector predates the new generation-variant tests: it excluded
+full_u4_pipelined_sweep but unintentionally included the second m2..m6 sweep.
+Its summary label also understated actual coverage. The next launcher explicitly
+selects generation_variants_small_feedback (m2..m3, all four variants, pre ON/OFF),
+slot-reuse and capacity-failure fixtures for ping_pong/racecheck. The larger
+variant sweep remains in plain/memcheck/initcheck/synccheck; no sanitizer tool
+is removed. This is bounded racecheck coverage, NOT m2..m6 racecheck certification.
+A RED/GREEN Python regression locks this selection; the immutable CUDA source
+remains df42c51. A new completed hardware run is still required.

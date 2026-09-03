@@ -17,6 +17,17 @@ CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
 
+def ping_pong_selection(tool):
+    if tool == "plain":
+        return (), "all"
+    if tool == "racecheck":
+        # All four generation variants still run through the small full-depth
+        # fixture. The m2..m6 variant sweep has its own plain/other-tool coverage.
+        return ("full_u4_pipelined_sweep", "generation_variants_preserve_full_layers"), "variants-m2-m3-plus-slot-reuse-and-capacity-failure"
+    if tool in SANITIZERS:
+        return ("full_u4_pipelined_sweep",), "variants-m2-m6-plus-small-feedback-slot-reuse-and-capacity-failure"
+    raise ValueError("Unknown sanitizer")
+
 def validate_gpus(csv_text):
     rows = []
     for row in csv.reader(io.StringIO(csv_text)):
@@ -135,9 +146,10 @@ def main():
                     if name == "dense_device":
                         fixture = "m2-m3-full-depth" if tool == "racecheck" else "m2-m6-full-depth"
                         command += ["--skip", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers" if tool == "racecheck" else "gpu_feedback_small_full_depth_sanitizer_fixture"]
-                    if name == "ping_pong" and tool != "plain":
-                        fixture = "six-small-full-depth-configs-and-capacity-failure"
-                        command += ["--skip", "full_u4_pipelined_sweep"]
+                    if name == "ping_pong":
+                        skips, fixture = ping_pong_selection(tool)
+                        for skip in skips:
+                            command += ["--skip", skip]
                     if tool != "plain":
                         command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
                     run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name in ("ping_pong", "generate") else 180))

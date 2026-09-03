@@ -7,6 +7,22 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 class GateTests(unittest.TestCase):
+    def test_racecheck_uses_small_variant_fixture_not_full_sweep(self):
+        names = {
+            "failure_with_both_slots_in_flight_is_sticky_and_drains_on_drop",
+            "full_u4_pipelined_sweep",
+            "generation_variants_preserve_full_layers",
+            "generation_variants_small_feedback",
+            "reused_slots_and_partial_tails_preserve_every_layer",
+        }
+        skips, fixture = gate.ping_pong_selection("racecheck")
+        self.assertEqual(names - set(skips), names - {
+            "full_u4_pipelined_sweep", "generation_variants_preserve_full_layers"})
+        self.assertIn("m2-m3", fixture)
+        self.assertEqual(gate.ping_pong_selection("plain"), ((), "all"))
+        for tool in ("memcheck", "initcheck", "synccheck"):
+            self.assertEqual(gate.ping_pong_selection(tool)[0], ("full_u4_pipelined_sweep",))
+
     def test_requires_two_distinct_t4_devices_and_reserve(self):
         good = "0, Tesla T4, GPU-a, 15360, 14000\n1, Tesla T4, GPU-b, 15360, 14000\n"
         self.assertEqual([r["index"] for r in gate.validate_gpus(good)], [0, 1])
