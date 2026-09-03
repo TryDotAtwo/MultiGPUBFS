@@ -87,12 +87,16 @@ def suite(native,out,env):
     def run(backend,n,batch,k,phase,rep=0):
         verify=phase=='verify';label=f's{n}-{backend}-b{batch}-k{k}-{phase}-{rep}'
         if backend=='native':
-            archive=out/(label+'.mgbfsar1')
+            archive=Path('/tmp')/(label+'.mgbfsar1')
             cmd=[str(native),f's{n}',str(batch),str(k),'1','verify' if verify else 'time',str(archive)]
-            runenv=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_SLOTS='16')
+            slots=(math_factorial(n)+batch-1)//batch+2
+            runenv=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_SLOTS=str(slots))
         else:
             cmd=[sys.executable,str(Path(__file__).resolve()),'baseline',str(n),str(batch),'verify' if verify else 'time'];runenv=env
-        row=worker(cmd,out,label,runenv);row.update(phase=phase,repetition=rep,config_backend=backend,macro_depth=k);report['rows'].append(row);save();return row
+        try: row=worker(cmd,out,label,runenv)
+        finally:
+            if backend=='native': archive.unlink(missing_ok=True)
+        row.update(phase=phase,repetition=rep,config_backend=backend,macro_depth=k);report['rows'].append(row);save();return row
     try:
         native_verify=run('native',8,65536,2,'verify');base_verify=run('cayleypy',8,65536,1,'verify')
         if native_verify['status']!='COMPLETE' or base_verify['status']!='COMPLETE' or native_verify['layer_sizes']!=base_verify['layer_sizes'] or native_verify['layer_sha256']!=base_verify['layer_sha256']:raise ValueError('S8 exact verification mismatch')
