@@ -32,3 +32,13 @@ Validation:
 Kaggle v9 is independently running source df42c51 and does NOT include this
 change. Its result cannot certify this route create-path change or Rust wrapper.
 No production multi-rank runtime or end-to-end A/B result is claimed.
+
+The next prepared launcher pins77bc9a1f8d8d8bd096912f4b2df2e34e5652fba5.
+It runs the same80 device/test/tool combinations concurrently across the two
+independent physical GPUs. Per-GPU command order and all fixtures remain fixed;
+each child gets a disjoint CUDA_VISIBLE_DEVICES. Per-command log paths are
+distinct and summary writes are locked. Worker failure prevents a final PASS;
+both workers drain before final reporting. This is not multi-rank communication.
+RED/GREEN CPU tests verify actual worker overlap, exception propagation and the
+complete80-command matrix with device isolation. Ten Python tests pass.
+The currently running v9 is unaffected; the next launcher has not run yet.

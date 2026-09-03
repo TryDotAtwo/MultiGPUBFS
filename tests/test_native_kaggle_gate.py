@@ -1,12 +1,52 @@
 import importlib.util
 import pathlib
 import unittest
+import threading
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("native_gate", pathlib.Path(__file__).parents[1] / "kaggle/native-primitives/kernel.py")
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 class GateTests(unittest.TestCase):
+    def test_concurrent_launch_preserves_all_eighty_device_test_tool_combinations(self):
+        names = ("generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device", "ping_pong")
+        executables = {name: "exe/" + name for name in names}
+        gpus = [{"index": i, "uuid": f"GPU-{i}"} for i in range(2)]
+        calls, results = [], []
+        lock = threading.Lock()
+        def fake_run(command, **kwargs):
+            with lock:
+                calls.append((command, kwargs))
+        def record(row):
+            with lock:
+                results.append(row)
+        with patch.object(gate, "run", side_effect=fake_run):
+            gate.run_gpu_suites(gpus, lambda gpu: gate.execute_gpu_suite(gpu, executables, ".", {}, ".", record))
+        expected = {(f"GPU-{i}", name, tool) for i in range(2) for name in names for tool in ("plain",) + gate.SANITIZERS}
+        self.assertEqual(len(calls), 80)
+        self.assertEqual(len(results), 80)
+        self.assertEqual({(r["gpu"], r["test"], r["tool"]) for r in results}, expected)
+        for command, kwargs in calls:
+            gpu = kwargs["env"]["CUDA_VISIBLE_DEVICES"]
+            self.assertTrue(kwargs["name"].startswith("gpu" + gpu + "-"))
+            self.assertIn("--test-threads=1", command)
+
+    def test_independent_gpu_suites_overlap_and_propagate_failure(self):
+        barrier = threading.Barrier(2, timeout=5)
+        def worker(gpu):
+            barrier.wait()
+            return gpu["index"]
+        gpus = [{"index": 0}, {"index": 1}]
+        self.assertEqual(gate.run_gpu_suites(gpus, worker), [0, 1])
+        def fails(gpu):
+            barrier.wait()
+            if gpu["index"] == 1:
+                raise RuntimeError("GPU1 failed")
+            return 0
+        with self.assertRaisesRegex(RuntimeError, "GPU1 failed"):
+            gate.run_gpu_suites(gpus, fails)
+
     def test_racecheck_uses_small_variant_fixture_not_full_sweep(self):
         names = {
             "failure_with_both_slots_in_flight_is_sticky_and_drains_on_drop",

@@ -1,5 +1,6 @@
 """GitHub-pinned T4 primitive gate; not a multi-rank BFS benchmark."""
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
@@ -8,14 +9,21 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f"
+SOURCE_COMMIT = "77bc9a1f8d8d8bd096912f4b2df2e34e5652fba5"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
+
+def run_gpu_suites(gpus, worker):
+    # Child processes have disjoint CUDA_VISIBLE_DEVICES. This is NOT NCCL or
+    # a multi-rank run. The executor drains both workers before returning/error.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        return list(pool.map(worker, gpus))
 
 def ping_pong_selection(tool):
     if tool == "plain":
@@ -85,6 +93,25 @@ def checkout(repo, commit, destination, env, logs, label):
     if actual != commit:
         raise RuntimeError("Checkout commit mismatch")
 
+def execute_gpu_suite(gpu, executables, source, env, logs, record):
+    device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
+    for name, executable in sorted(executables.items(), key=lambda item: (item[0] == "dense_device", item[0])):
+        for tool in ("plain",) + SANITIZERS:
+            label = f"gpu{gpu['index']}-{name}-{tool}"
+            command = [executable, "--test-threads=1", "--nocapture"]
+            fixture = "all"
+            if name == "dense_device":
+                fixture = "m2-m3-full-depth" if tool == "racecheck" else "m2-m6-full-depth"
+                command += ["--skip", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers" if tool == "racecheck" else "gpu_feedback_small_full_depth_sanitizer_fixture"]
+            if name == "ping_pong":
+                skips, fixture = ping_pong_selection(tool)
+                for skip in skips:
+                    command += ["--skip", skip]
+            if tool != "plain":
+                command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
+            run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name in ("ping_pong", "generate") else 180))
+            record(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
+
 def main():
     logs = Path("/kaggle/working/native-primitive-gate")
     logs.mkdir(exist_ok=True)
@@ -135,26 +162,13 @@ def main():
         for fixture in ("gpu_feedback_small_full_depth_sanitizer_fixture", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers"):
             if fixture + ": test" not in inventory:
                 raise RuntimeError("DENSE_DEVICE_TEST_INVENTORY_MISMATCH")
-        for gpu in summary["gpus"]:
-            device_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu["index"]))
-            # Complete leaf and pipelined tests before the costly serial sweep.
-            for name, executable in sorted(executables.items(), key=lambda item: (item[0] == "dense_device", item[0])):
-                for tool in ("plain",) + SANITIZERS:
-                    label = f"gpu{gpu['index']}-{name}-{tool}"
-                    command = [executable, "--test-threads=1", "--nocapture"]
-                    fixture = "all"
-                    if name == "dense_device":
-                        fixture = "m2-m3-full-depth" if tool == "racecheck" else "m2-m6-full-depth"
-                        command += ["--skip", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers" if tool == "racecheck" else "gpu_feedback_small_full_depth_sanitizer_fixture"]
-                    if name == "ping_pong":
-                        skips, fixture = ping_pong_selection(tool)
-                        for skip in skips:
-                            command += ["--skip", skip]
-                    if tool != "plain":
-                        command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
-                    run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name in ("ping_pong", "generate") else 180))
-                    summary["results"].append(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
-                    (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        summary["execution"] = "two-independent-concurrent-gpu-suites"
+        results_lock = threading.Lock()
+        def record(result):
+            with results_lock:
+                summary["results"].append(result)
+                (logs/"summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        run_gpu_suites(summary["gpus"], lambda gpu: execute_gpu_suite(gpu, executables, source, env, logs, record))
         summary["status"] = "PASS_PRIMITIVE_GATE"
     except Exception as error:
         summary["error"] = str(error)
