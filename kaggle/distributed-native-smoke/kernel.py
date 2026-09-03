@@ -32,7 +32,7 @@ def main():
     expected=oracle();checks=[]
     for rank_map in ['0,1','1,0']:
         bootstrap=root/f'bootstrap-{rank_map.replace(",","")}.bin';cfg=dict(env,MGBFS_RANK_MAP=rank_map,NCCL_DEBUG='INFO')
-        output=run(['torchrun','--standalone','--nproc-per-node=2',str(source/'target/release/examples/distributed_smoke'),str(bootstrap)],f'run-{rank_map.replace(",","")}',source,300,cfg)
+        output=run(['torchrun','--standalone','--nproc-per-node=2','--no-python',str(source/'target/release/examples/distributed_smoke'),str(bootstrap)],f'run-{rank_map.replace(",","")}',source,300,cfg)
         rows=[json.loads(line) for line in output.splitlines() if line.startswith('{"status"')];rows.sort(key=lambda x:x['rank'])
         if len(rows)!=2:raise ValueError('rank output inventory')
         actual=[]
