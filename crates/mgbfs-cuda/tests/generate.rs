@@ -1,4 +1,5 @@
 #![cfg(feature = "cuda")]
+use mgbfs_core::macro_generators::MacroGeneratorSet;
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup};
 use mgbfs_cuda::ffi::*;
 use std::ffi::{c_void, CStr};
@@ -327,4 +328,99 @@ fn tensor_generation_then_hash_matches_full_state_oracle_without_intermediate_ho
             );
         }
     }
+}
+
+#[test]
+fn one_macro_gemm_emits_weight_grouped_move_major_runs() {
+    let graph = MatrixGroup::symmetric_permutation_matrices(8).unwrap();
+    let macros = MacroGeneratorSet::compile(&graph, 3).unwrap();
+    let generators: Vec<_> = macros
+        .transitions
+        .iter()
+        .flat_map(|transition| transition.matrix.iter().copied())
+        .collect();
+    let weights: Vec<_> = macros
+        .transitions
+        .iter()
+        .map(|transition| transition.weight)
+        .collect();
+    assert!(weights.windows(2).all(|pair| pair[0] <= pair[1]));
+    let count = 2u32;
+    let stride = 64usize;
+    let parents = [
+        graph.start.clone(),
+        graph.successor(&graph.start, 2).unwrap(),
+    ]
+    .concat();
+    let input = Buffer::new(parents.len());
+    let output = Buffer::new(count as usize * macros.transitions.len() * stride);
+    assert_eq!(
+        unsafe { cudaMemcpy(input.0, parents.as_ptr().cast(), parents.len(), 1) },
+        0
+    );
+    let mut handle = std::ptr::null_mut();
+    let mut error = [0i8; 512];
+    assert_eq!(
+        unsafe {
+            mgbfs_generate_create_macro_variant(
+                8,
+                macros.transitions.len() as u32,
+                2,
+                count,
+                generators.as_ptr(),
+                weights.as_ptr(),
+                1,
+                &mut handle,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        },
+        0,
+        "{}",
+        unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy()
+    );
+    let plan = Plan(handle);
+    assert_eq!(
+        unsafe {
+            mgbfs_generate_run(
+                plan.0,
+                input.0.cast(),
+                output.0.cast(),
+                count,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { cudaDeviceSynchronize() }, 0);
+    let mut actual = vec![0u8; count as usize * macros.transitions.len() * stride];
+    assert_eq!(
+        unsafe { cudaMemcpy(actual.as_mut_ptr().cast(), output.0, actual.len(), 2) },
+        0
+    );
+    for (movement, transition) in macros.transitions.iter().enumerate() {
+        for parent in 0..count as usize {
+            let row = movement * count as usize + parent;
+            let want = super_multiply(
+                &transition.matrix,
+                &parents[parent * stride..(parent + 1) * stride],
+                8,
+                2,
+            );
+            assert_eq!(&actual[row * stride..(row + 1) * stride], want.as_slice());
+        }
+    }
+}
+
+fn super_multiply(a: &[u8], b: &[u8], n: usize, modulus: u16) -> Vec<u8> {
+    let mut result = vec![0u8; n * n];
+    for row in 0..n {
+        for column in 0..n {
+            let sum: u32 = (0..n)
+                .map(|k| a[row * n + k] as u32 * b[k * n + column] as u32)
+                .sum();
+            result[row * n + column] = (sum % modulus as u32) as u8;
+        }
+    }
+    result
 }

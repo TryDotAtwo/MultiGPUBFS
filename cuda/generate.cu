@@ -20,6 +20,7 @@ using MatrixGemm = cutlass::gemm::device::Gemm<
   cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,2>;
 struct GeneratePlan {
   uint32_t n{},moves{},modulus{},capacity{},k{},stride{},variant{},generator_rows{};
+  bool move_major{};
   int max_grid_x{},max_grid_y{};
   uint8_t* generators{};
   uint8_t* parents{};
@@ -58,30 +59,33 @@ __global__ void pack_parents(const uint8_t* input,uint8_t* packed,uint32_t n,uin
 }
 // Bounded materialization into parent-major / move-major canonical rows.
 // Zero padding makes this directly consumable by the following hash GEMM.
-template<bool Transposed>
+template<bool Transposed,bool MoveMajor>
 __global__ void modular_materialize(const int32_t* products,uint8_t* output,uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t columns,uint32_t generator_rows,uint32_t count){
   const size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;
   if(i>=size_t(count)*moves*stride)return;
   const uint32_t byte=i%stride;const size_t child=i/stride;
   if(byte>=n*n){output[i]=0;return;}
   const uint32_t parent=child/moves,move=child%moves;
+  const size_t destination=MoveMajor?size_t(move)*count+parent:child;
   const size_t index=Transposed
     ? size_t(parent*n+byte%n)*generator_rows+move*n+byte/n
     : size_t(move*n+byte/n)*columns+parent*n+byte%n;
-  output[i]=uint32_t(products[index])%modulus;
+  output[destination*stride+byte]=uint32_t(products[index])%modulus;
 }
 // U4-only alternative: four aligned 16-byte loads, register transpose, one
 // 16-byte state store per lane. Neighboring moves read adjacent vectors.
 __device__ uint32_t pack_row(uint32_t a,uint32_t b,uint32_t c,uint32_t d,uint32_t modulus){
   return (a%modulus)|((b%modulus)<<8)|((c%modulus)<<16)|((d%modulus)<<24);
 }
+template<bool MoveMajor>
 __global__ void materialize_u4_vectors(const uint4* products,uint4* output,uint32_t moves,uint32_t modulus,uint32_t count){
   const size_t child=size_t(blockIdx.x)*blockDim.x+threadIdx.x;
   if(child>=size_t(count)*moves)return;
   const size_t parent=child/moves,move=child%moves;
   const uint4 a=products[(parent*4+0)*moves+move],b=products[(parent*4+1)*moves+move];
   const uint4 c=products[(parent*4+2)*moves+move],d=products[(parent*4+3)*moves+move];
-  output[child]=make_uint4(pack_row(a.x,b.x,c.x,d.x,modulus),pack_row(a.y,b.y,c.y,d.y,modulus),
+  const size_t destination=MoveMajor?move*size_t(count)+parent:child;
+  output[destination]=make_uint4(pack_row(a.x,b.x,c.x,d.x,modulus),pack_row(a.y,b.y,c.y,d.y,modulus),
     pack_row(a.z,b.z,c.z,d.z,modulus),pack_row(a.w,b.w,c.w,d.w,modulus));
 }
 extern "C" int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,void** out,char* error,size_t error_capacity){
@@ -108,6 +112,21 @@ extern "C" int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t 
     checked(cudaMalloc(&p->products,bytes.products_s32));
     checked(cudaMemcpy(p->generators,stacked.data(),stacked.size(),cudaMemcpyHostToDevice));
     *out=p.release();return 0;
+  }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}
+}
+extern "C" int mgbfs_generate_create_macro_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,const uint32_t* weights,uint32_t variant,void** out,char* error,size_t error_capacity){
+  if(!out)return 1;*out=nullptr;
+  try {
+    if(!weights||moves==0)throw std::runtime_error("MACRO_WEIGHTS_MISSING");
+    uint32_t previous=0;
+    for(uint32_t i=0;i<moves;++i){
+      if(weights[i]==0||weights[i]<previous)throw std::runtime_error("MACRO_WEIGHTS_NOT_SORTED");
+      previous=weights[i];
+    }
+    void* raw=nullptr;
+    if(mgbfs_generate_create_variant(n,moves,modulus,capacity,generators,variant,&raw,error,error_capacity))return 1;
+    static_cast<GeneratePlan*>(raw)->move_major=true;
+    *out=raw;return 0;
   }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}
 }
 template<class Gemm>
@@ -146,9 +165,16 @@ static int generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint
   if(status)return status;
   if(marks&&cudaEventRecord(static_cast<cudaEvent_t>(marks[2]),stream)!=cudaSuccess)return 8;
   const size_t blocks=(size_t(count)*p->moves*p->stride+255)/256;
-  if(p->variant==4)materialize_u4_vectors<<<(size_t(count)*p->moves+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(p->products),reinterpret_cast<uint4*>(children),p->moves,p->modulus,count);
-  else if(p->variant)modular_materialize<true><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
-  else modular_materialize<false><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
+  if(p->variant==4){
+    if(p->move_major)materialize_u4_vectors<true><<<(size_t(count)*p->moves+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(p->products),reinterpret_cast<uint4*>(children),p->moves,p->modulus,count);
+    else materialize_u4_vectors<false><<<(size_t(count)*p->moves+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(p->products),reinterpret_cast<uint4*>(children),p->moves,p->modulus,count);
+  } else if(p->variant){
+    if(p->move_major)modular_materialize<true,true><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
+    else modular_materialize<true,false><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
+  } else {
+    if(p->move_major)modular_materialize<false,true><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
+    else modular_materialize<false,false><<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->modulus,p->stride,columns,p->generator_rows,count);
+  }
   if(marks&&cudaEventRecord(static_cast<cudaEvent_t>(marks[3]),stream)!=cudaSuccess)return 8;
   return cudaGetLastError()==cudaSuccess?0:6;
 }

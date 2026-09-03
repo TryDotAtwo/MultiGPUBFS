@@ -106,6 +106,18 @@ pub mod ffi {
             error: *mut c_char,
             error_capacity: usize,
         ) -> i32;
+        pub fn mgbfs_generate_create_macro_variant(
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            capacity: u32,
+            generators: *const u8,
+            weights: *const u32,
+            variant: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
         pub fn mgbfs_generate_profile_run(
             plan: *mut c_void,
             parents: *const u8,

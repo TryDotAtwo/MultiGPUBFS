@@ -209,3 +209,41 @@ impl OriginRef {
         Ok(o)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacroCandidateRef {
+    pub source_depth: u32,
+    pub weight: u32,
+    pub state_ref: u64,
+}
+impl MacroCandidateRef {
+    pub fn encode(self) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        bytes[..4].copy_from_slice(&self.source_depth.to_le_bytes());
+        bytes[4..8].copy_from_slice(&self.weight.to_le_bytes());
+        bytes[8..].copy_from_slice(&self.state_ref.to_le_bytes());
+        bytes
+    }
+    pub fn decode(bytes: &[u8], max_weight: u32, max_target_depth: u32) -> Result<Self> {
+        if bytes.len() != 16 {
+            return Err("WIRE_MACRO_REF_SIZE".into());
+        }
+        let value = Self {
+            source_depth: u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            weight: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+            state_ref: u64::from_le_bytes(bytes[8..].try_into().unwrap()),
+        };
+        if value.weight == 0 || value.weight > max_weight {
+            return Err("WIRE_MACRO_WEIGHT".into());
+        }
+        if value
+            .source_depth
+            .checked_add(value.weight)
+            .filter(|&depth| depth <= max_target_depth)
+            .is_none()
+        {
+            return Err("WIRE_MACRO_TARGET_DEPTH".into());
+        }
+        Ok(value)
+    }
+}

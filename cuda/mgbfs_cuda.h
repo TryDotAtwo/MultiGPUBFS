@@ -40,6 +40,13 @@ int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t ca
  * overflow before any enqueue/output write. Existing create selects 0.
  */
 int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,uint32_t variant,void** out,char* error,size_t error_capacity);
+/* Macro transitions must be sorted by nondecreasing positive original-edge
+ * weight. They are evaluated by one GEMM, but children are materialized in
+ * move-major order: [move][parent][canonical padded state]. Thus each weight
+ * run is already contiguous and needs no full-state transpose before routing.
+ */
+int mgbfs_generate_create_macro_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,
+  const uint8_t* generators,const uint32_t* weights,uint32_t variant,void** out,char* error,size_t error_capacity);
 int mgbfs_generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* stream);
 /* Measurement only: host array of four already-created CUDA timing events.
  * Records start, packed, GEMM done, children done. No synchronization/allocation.

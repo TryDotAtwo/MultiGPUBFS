@@ -50,7 +50,7 @@
 **Interfaces:** `MacroMemoryPlan::derive(config,compiled,library_queries)` returns exact aligned bytes/counts for macro matrices/weights, two producer banks, K future hash/state/ref arenas, 2K settled hash arenas, sorting, transport, NCCL and archive.
 
 - [ ] Write RED tests for K=1 compatibility, S8 K10 sizing, zero/partial tails, `2*K` overflow, `P*Mmacro` overflow and insufficient future/history/disk capacities.
-- [ ] Add `MacroCandidateRef { source_depth:u32, weight:u32, state_ref:u64 }` and frozen LE wire offsets with reserved-zero validation.
+- [x] Add `MacroCandidateRef { source_depth:u32, weight:u32, state_ref:u64 }` and frozen LE wire offsets with reserved-zero validation.
 - [ ] Implement only checked formulas; compare planned bytes to every actual allocation request.
 - [ ] Run core ABI/memory tests and reject any unexplained allocation.
 
@@ -60,7 +60,7 @@
 
 **Interfaces:** generation plan consumes compiled matrices plus weight-run offsets and emits move-major/weight-contiguous canonical states and stable source ordinals from one GEMM.
 
-- [ ] Write RED GPU tests comparing all S8 K=1..4 rows and partial tails with the CPU macro compiler.
+- [x] Write RED GPU tests for weight-grouped S8 macro rows against an independent matrix multiply; extend to all K/tails at the T4 gate.
 - [ ] Extend allocation query to include weights/run offsets and reject grid/count/accumulator overflow before enqueue.
 - [ ] Add weight-grouped vectorized epilogue without a full-state transpose pass; retain the K=1 byte layout through its compatibility entrypoint.
 - [ ] Pass both T4 devices, memcheck, racecheck, initcheck and synccheck.
@@ -73,7 +73,7 @@
 
 - [ ] Write RED interleaving tests where a state first arrives at d+2 and later at d+1; require only d+1 to survive.
 - [ ] Source pre-dedup, radix partition and owner routing use contiguous `count+offset+payload` ranges per target depth/rank/shard.
-- [ ] Store provisional `(Hash128,StateRef)` by future depth; deterministic tie-break is weight, source depth/rank/batch/ordinal.
+- [x] Specify and RED/GREEN-test the CPU contract for provisional `(Hash128,StateRef)` depth slots, deterministic tie-break, delayed shorter arrivals, strict settlement and atomic capacity failure.
 - [ ] At settlement bulk-merge against the current 2K settled union, compact masks with scan and materialize one dense final frontier.
 - [ ] Abort on future, descriptor, hash-window or StateRing capacity before any partial publication.
 

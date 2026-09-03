@@ -4,6 +4,7 @@ pub mod archive;
 pub mod dense_device;
 pub mod exchange;
 pub mod jobs;
+pub mod macro_owner;
 #[cfg(feature = "cuda")]
 pub mod native;
 pub mod owner;

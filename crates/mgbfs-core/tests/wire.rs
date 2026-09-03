@@ -108,3 +108,24 @@ fn origin_uses_absolute_parent_and_rejects_reserved_or_out_of_range_fields() {
     assert!(OriginRef::decode(&frozen, 1, 6).is_err());
     assert!(OriginRef::decode(&frozen, 2, 5).is_err());
 }
+
+#[test]
+fn macro_candidate_ref_freezes_source_depth_weight_and_absolute_state_ref() {
+    let reference = MacroCandidateRef {
+        source_depth: 3,
+        weight: 4,
+        state_ref: 0x0f0e0d0c0b0a0908,
+    };
+    let frozen = [3, 0, 0, 0, 4, 0, 0, 0, 8, 9, 10, 11, 12, 13, 14, 15];
+    assert_eq!(reference.encode(), frozen);
+    assert_eq!(MacroCandidateRef::decode(&frozen, 4, 7).unwrap(), reference);
+    assert_eq!(
+        MacroCandidateRef::decode(&frozen, 3, 7).unwrap_err(),
+        "WIRE_MACRO_WEIGHT"
+    );
+    assert_eq!(
+        MacroCandidateRef::decode(&frozen, 4, 6).unwrap_err(),
+        "WIRE_MACRO_TARGET_DEPTH"
+    );
+    assert!(MacroCandidateRef::decode(&frozen[..15], 8, 20).is_err());
+}
