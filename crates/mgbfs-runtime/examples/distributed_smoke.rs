@@ -17,7 +17,8 @@ fn hex(bytes:&[u8])->String{const H:&[u8;16]=b"0123456789abcdef";let mut out=Str
 fn run()->Result<()> {
     let rank=env_u32("RANK")?;let local=env_u32("LOCAL_RANK")?;let world=env_u32("WORLD_SIZE")?;if rank!=local{return Err("SINGLE_NODE_RANK_MAP".into())}
     let path=std::env::args().nth(1).ok_or("BOOTSTRAP_ARG")?;let id=bootstrap(Path::new(&path),rank,world)?;let graph=MatrixGroup::unitriangular(4,2)?;
-    let mut bfs=DistributedNativeBfs::new(&graph,20260828u128.to_le_bytes(),id,DistributedConfig{rank,world,logical_owner_to_rank:[0,1],batch:7,layer_capacity:64,future_capacity:64,prededup:true,generation_variant:1})?;
+    let rank_map=match std::env::var("MGBFS_RANK_MAP").as_deref(){Ok("1,0")=>[1,0],Ok("0,1")|Err(_)=>[0,1],_=>return Err("RANK_MAP".into())};
+    let mut bfs=DistributedNativeBfs::new(&graph,20260828u128.to_le_bytes(),id,DistributedConfig{rank,world,logical_owner_to_rank:rank_map,batch:7,layer_capacity:64,future_capacity:64,prededup:true,generation_variant:1})?;
     let mut counts=Vec::new();let mut states=Vec::new();loop{counts.push(bfs.frontier_len());let mut layer=bfs.snapshot()?;layer.sort();states.push(layer.iter().map(|x|hex(x)).collect::<Vec<_>>());if !bfs.advance()?{break}}
     println!("{{\"status\":\"COMPLETE\",\"rank\":{rank},\"layer_sizes\":{counts:?},\"states\":{states:?}}}");Ok(())
 }
