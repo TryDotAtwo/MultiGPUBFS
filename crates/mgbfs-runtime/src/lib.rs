@@ -6,4 +6,5 @@ pub mod exchange;
 pub mod owner;
 pub mod receipts;
 pub mod ring;
+pub mod simulation;
 pub mod transport;

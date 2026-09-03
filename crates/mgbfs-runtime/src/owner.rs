@@ -1,5 +1,6 @@
 use mgbfs_core::{hash::Hash128, Result};
 use std::collections::BTreeSet;
+#[derive(Clone)]
 pub struct OwnerModel {
     old: BTreeSet<Hash128>,
     accepted: BTreeSet<Hash128>,

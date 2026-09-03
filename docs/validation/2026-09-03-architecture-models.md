@@ -103,3 +103,46 @@ production caller must treat protocol errors as group-fatal. It does not model
 NCCL abort, TCP disconnects, wire codecs, bytes/plane packing, or whole-BFS jobs.
 External jobs must register work BEFORE consuming their parent receive ticket;
 the integrated dispatcher model must prove that ordering rather than assuming it.
+
+## Integrated small-graph BFS oracle (subsequent change)
+
+`simulation::run` now connects per-prefix-bucket OwnerModel, StateRing,
+BatchReceipts and typed Transport across complete BFS layers to exhaustion.
+It uses real matrix successors and seeded hashes, not canned layer counts.
+Ownership uses high hash bits and an explicit logical-to-physical rank map.
+Full canonical state sets are compared against the independent visited-set
+layer traversal (`MatrixGroup::exact_layers`); both traversals share the matrix
+successor contract, so this is not an independent matrix-arithmetic test.
+
+216 completed configurations: U3 mod2, U3 mod3, U4 mod2; DENSE/HASH_FIRST;
+pre-dedup OFF/ON; rank maps [0], [0,1], [1,0]; six schedule seeds, each paired
+with a corresponding hash seed 1..6 and immediate/delayed archive completion.
+Every full layer matches, generated=states*degree, committed=states-1,
+HASH_FIRST request/response counts=committed; DENSE sends no such requests.
+
+Candidate batches are one parent, grouped into bucket jobs. Owner preview is
+a clone of the CPU semantic oracle, allowing reservation before commit; it is
+NOT a proposed double-merge implementation. Target extents are reserved in
+request order; regenerated responses are checked against canonical state and
+committed hash. Receipts may precede requests/responses, but responses require
+their request. Pending work and archive leases prevent premature finalization.
+
+A two-state one-rank fixture with one state-ring record completes in DENSE
+after packing/reclaiming the parent. HASH_FIRST cannot reuse that record while
+origins are live, and DENSE with delayed archive cannot reuse it before D2H;
+both fail explicitly. Additional ring/bucket exhaustion and bad rank map cases
+return errors, never a completed Simulation. The semantic integration test was
+observed RED (SIMULATION_NOT_IMPLEMENTED), then GREEN.
+
+Full default suite now **42 CPU tests passed**, no failures, with
+`cargo fmt --all && cargo test --locked --offline` in the same cached toolchain.
+No GPU run or performance claim.
+
+Important remaining limits: parent batches and data transfers are serialized
+in this integration oracle. Event reordering is within a parent's materialization
+wave; independent transport tests exercise multiple in-flight tickets. This is
+not a full concurrent dispatcher/deadlock proof. Archive models D2H leases only,
+not pinned/disk queue draining; existing disk fault tests remain separate.
+CPU Vec/BTree containers hold reference values, not proposed GPU allocations.
+No BMMA execution, CUDA scratch query, schema2 codec, general fault-injected
+whole-system schedule or production StateRef ABI is validated here.
