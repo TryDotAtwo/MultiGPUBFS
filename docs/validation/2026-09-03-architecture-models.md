@@ -57,7 +57,8 @@ cargo test --locked --offline
   archive/control, runtime overhead and reserve.
 - New schema2 frozen config/wire/archive byte vectors and codecs.
 - Bounded sharded owner execution model with touched-range/byte accounting.
-- One typed transport sequencer for candidates/requests/responses/receipts.
+- Integrate the typed transport model below with owner/StateRing/receipt jobs;
+  TCP/NCCL realization and transport failure propagation remain pending.
 - Integrated whole-depth/multi-depth model for both profiles, including credit
   admission, failure propagation and drain. The 720-order test is one boundary
   fixture, not exhaustive model checking of that whole system.
@@ -66,3 +67,39 @@ cargo test --locked --offline
 The legacy StateRing model still uses monotonic extent IDs rather than the v2
 absolute-record StateRef wire encoding. Origin-lease behavior is usable evidence,
 but does not validate the new ABI. No architecture-ready promotion is made.
+
+## Typed transport gate (subsequent change)
+
+`transport::Transport` is a separate v2 CPU oracle; old candidate-only
+`exchange::Sequencer` remains unchanged for its existing fixtures.
+Candidate/request/response/receipt/finalize share one monotonically increasing
+sequence, including across depth rotation. Multiple tickets can be in flight;
+each rank completes them in its own comm-stream issue order. Empty ranks must
+acknowledge too. Send completion and receive consumption are distinct.
+
+Credits bound source offers, receive banks and live ticket metadata. They are
+partitioned by message kind. Candidate metadata cannot occupy response-reserved
+capacity, including when candidate payloads are empty. A RED test exposed that
+the initial shared metadata limit did not provide this guarantee; partitioning
+fixed it. The architectural contract now states that requirement explicitly.
+An additional RED case split ten records across two destinations under an
+eight-record offer limit. Validation now checks the checked SUM across peers,
+not only each destination count, before consuming any slot or sequence number.
+
+Response/request/receipt drain has priority over new candidates; eligible sources
+round-robin within a kind. Closed sources may still serve materialization.
+Finalization requires closed candidate sources, no pending/in-flight/received
+tickets and no registered external work. Finalization stops new admissions;
+depth rotation requires every rank's final acknowledgment and preserves seq.
+
+Seven new tests were observed failing before implementation, then passing.
+`cargo fmt --all && cargo test --locked --offline` in the same existing CPU
+toolchain now passes **39 tests**, zero failures; no GPU tests claimed.
+
+Limits: the model issues one source offer per ticket, no optimized multi-source
+aggregation. Metadata uses CPU collections, not a proposed GPU layout. Error
+calls return without partial mutation so fixtures can inspect invariants; the
+production caller must treat protocol errors as group-fatal. It does not model
+NCCL abort, TCP disconnects, wire codecs, bytes/plane packing, or whole-BFS jobs.
+External jobs must register work BEFORE consuming their parent receive ticket;
+the integrated dispatcher model must prove that ordering rather than assuming it.

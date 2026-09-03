@@ -369,6 +369,9 @@ accounted high-water, not secretly movable storage. Full ring -> fatal. Requests
 responses and receipts have separately reserved credits and dispatch priority
 over admission of new generation. Thus progress does not depend on freeing a
 candidate receive bank that is itself waiting for materialization credit.
+The same partition applies to ticket/descriptor metadata, including zero-payload
+tickets: candidate metadata cannot consume the reserved response/request/receipt
+ticket pools. Data-plane buffers alone do not establish this progress property.
 No global request-count barrier at end of depth.
 
 ## 11. Multi-GPU transport
