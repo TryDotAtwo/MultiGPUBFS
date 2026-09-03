@@ -80,10 +80,17 @@ def verify_log(text, tool):
     if tool=="racecheck" and not races or tool!="racecheck" and not errors:
         raise ValueError("SANITIZER_SUMMARY_MISSING")
 
+def verify_queries(text, require_route):
+    names = {"allocation-query", "route-query"} if require_route else {"allocation-query"}
+    passed = re.findall(r"Test #[0-9]+: ([a-z-]+) \.+\s+Passed", text)
+    if set(passed) != names or len(passed) != len(names) or f"100% tests passed, 0 tests failed out of {len(names)}" not in text:
+        raise ValueError("QUERY_CTEST_INCOMPLETE")
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("directory",type=Path)
     p.add_argument("--source",required=True)
+    p.add_argument("--require-route-query",action="store_true",help="Require the subsequent CUB allocation-query CTest too")
     args=p.parse_args()
     summary=json.loads((args.directory/"summary.json").read_text(encoding="utf-8"))
     entries=verify_summary(summary,args.source)
@@ -92,8 +99,7 @@ def main():
         verify_log(log,tool)
         verify_inventory(log,name.split("-")[1],tool)
     query=(args.directory/"allocation-queries.log").read_text(encoding="utf-8")
-    if "100% tests passed, 0 tests failed out of 1" not in query:
-        raise ValueError("QUERY_CTEST_INCOMPLETE")
+    verify_queries(query,args.require_route_query)
     print(json.dumps(dict(status="VERIFIED_PRIMITIVE_GATE",source=args.source,combinations=len(entries))))
 
 if __name__=="__main__":

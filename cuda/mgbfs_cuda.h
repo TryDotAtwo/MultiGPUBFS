@@ -48,6 +48,15 @@ int mgbfs_generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint3
 int mgbfs_generate_profile_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* stream,void* const* marks);
 void mgbfs_generate_destroy(void* plan);
 int mgbfs_route_create(uint32_t capacity,void** out,char* error,size_t error_capacity);
+/* CUB query uses the CURRENT CUDA device and compiled CUB policy. No kernels
+ * or explicit device allocation. Query/create/run must use the same device.
+ * sort/select share scratch sequentially: only max is allocated, not their sum.
+ * Caller input/output/count banks and CUDA context overhead are excluded.
+ */
+typedef struct MgbfsRouteBytes {
+  uint64_t sorted, refs, indices, selected, flags, scratch, sort_scratch, select_scratch;
+} MgbfsRouteBytes;
+int mgbfs_route_query(uint32_t capacity,MgbfsRouteBytes* out);
 int mgbfs_route_run(void* plan,const void* hashes,const uint64_t* refs,void* sorted_hashes,uint64_t* sorted_refs,uint32_t* output_count,uint32_t count,int pre_dedup,void* stream);
 void mgbfs_route_destroy(void* plan);
 typedef struct MgbfsOwnerState {

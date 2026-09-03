@@ -25,6 +25,52 @@ pub struct HashBytes {
     pub stride: u32,
     pub reserved: u32,
 }
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RouteBytes {
+    pub sorted: u64,
+    pub refs: u64,
+    pub indices: u64,
+    pub selected: u64,
+    pub flags: u64,
+    pub scratch: u64,
+    pub sort_scratch: u64,
+    pub select_scratch: u64,
+}
+impl RouteBytes {
+    pub fn report(self, capacity: u32) -> Result<QueryResult> {
+        let c = u64::from(capacity);
+        if capacity == 0
+            || capacity > i32::MAX as u32
+            || (
+                self.sorted,
+                self.refs,
+                self.indices,
+                self.selected,
+                self.flags,
+            ) != (c * 16, c * 8, c * 4, c * 4, c)
+            || self.sort_scratch == 0
+            || self.select_scratch == 0
+            || self.scratch != self.sort_scratch.max(self.select_scratch)
+        {
+            return Err("INVALID_ROUTE_QUERY".into());
+        }
+        Ok(report(
+            format!(
+                "mgbfs_route_query/v1;capacity={capacity};sort_scratch={};select_scratch={}",
+                self.sort_scratch, self.select_scratch
+            ),
+            [
+                ("sorted", self.sorted),
+                ("refs", self.refs),
+                ("indices", self.indices),
+                ("selected", self.selected),
+                ("flags", self.flags),
+                ("scratch", self.scratch),
+            ],
+        ))
+    }
+}
 impl GenerateBytes {
     pub fn report(self, variant: u32) -> Result<QueryResult> {
         if variant > 4
@@ -66,7 +112,7 @@ impl HashBytes {
         ))
     }
 }
-fn report(source: String, planes: [(&str, u64); 4]) -> QueryResult {
+fn report<const N: usize>(source: String, planes: [(&str, u64); N]) -> QueryResult {
     QueryResult {
         source,
         allocations: planes
@@ -104,4 +150,13 @@ pub fn query_hash(bytes: u32, candidates: u32) -> Result<QueryResult> {
         return Err(format!("HASH_QUERY:{status}"));
     }
     q.report()
+}
+#[cfg(feature = "cuda")]
+pub fn query_route(capacity: u32) -> Result<QueryResult> {
+    let mut q = RouteBytes::default();
+    let status = unsafe { crate::ffi::mgbfs_route_query(capacity, &mut q) };
+    if status != 0 {
+        return Err(format!("ROUTE_QUERY:{status}"));
+    }
+    q.report(capacity)
 }

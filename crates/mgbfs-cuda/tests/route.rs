@@ -28,6 +28,30 @@ impl Drop for Plan {
 #[test]
 fn cub_routes_all_128_bits_stably_and_optionally_deduplicates() {
     let cap = 4097usize;
+    assert_eq!(std::mem::size_of::<RouteBytes>(), 64);
+    let mut query = RouteBytes::default();
+    assert_eq!(unsafe { mgbfs_route_query(cap as u32, &mut query) }, 0);
+    assert_eq!(query.sorted, 65552);
+    assert_eq!(query.refs, 32776);
+    assert_eq!(
+        (query.indices, query.selected, query.flags),
+        (16388, 16388, 4097)
+    );
+    assert_eq!(query.scratch, query.sort_scratch.max(query.select_scratch));
+    assert!(query.scratch > 0);
+    let wrapped = mgbfs_cuda::allocation::query_route(cap as u32).unwrap();
+    let raw = query.report(cap as u32).unwrap();
+    assert_eq!(wrapped.source, raw.source);
+    let planes = |q: mgbfs_core::rank_plan::QueryResult| {
+        q.allocations
+            .into_iter()
+            .map(|p| (p.name, p.bytes, p.alignment))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(planes(wrapped), planes(raw));
+    assert_ne!(unsafe { mgbfs_route_query(0, &mut query) }, 0);
+    assert_eq!(query.sorted, 0);
+    assert_eq!(query.scratch, 0);
     let mut ptr = std::ptr::null_mut();
     let mut err = [0i8; 512];
     assert_eq!(

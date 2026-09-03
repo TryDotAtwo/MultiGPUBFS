@@ -2,7 +2,7 @@
 pub mod allocation;
 #[cfg(feature = "cuda")]
 pub mod ffi {
-    pub use crate::allocation::{GenerateBytes, HashBytes};
+    pub use crate::allocation::{GenerateBytes, HashBytes, RouteBytes};
     use std::ffi::{c_char, c_void};
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
@@ -75,6 +75,7 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_owner_destroy(plan: *mut c_void);
+        pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;
         pub fn mgbfs_route_create(
             capacity: u32,
             out: *mut *mut c_void,

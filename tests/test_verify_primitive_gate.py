@@ -15,6 +15,14 @@ def fixture():
             for tool in ["plain","memcheck","racecheck","initcheck","synccheck"]])
 
 class VerifyGateTests(unittest.TestCase):
+    def test_query_ctest_inventory_is_explicit(self):
+        old = "1/1 Test #1: allocation-query ... Passed 0.00 sec\n100% tests passed, 0 tests failed out of 1"
+        v.verify_queries(old, False)
+        with self.assertRaises(ValueError): v.verify_queries(old, True)
+        new = old.replace("out of 1", "out of 2") + "\n2/2 Test #2: route-query ... Passed 0.10 sec"
+        v.verify_queries(new, True)
+        with self.assertRaises(ValueError): v.verify_queries(new.replace("route-query", "other"), True)
+
     def test_pipeline_inventory_cannot_pass_with_only_one_successful_test(self):
         names = [
             "failure_with_both_slots_in_flight_is_sticky_and_drains_on_drop",
