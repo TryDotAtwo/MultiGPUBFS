@@ -20,6 +20,7 @@ fn run()->Result<()> {
     let rank_map=match std::env::var("MGBFS_RANK_MAP").as_deref(){Ok("1,0")=>[1,0],Ok("0,1")|Err(_)=>[0,1],_=>return Err("RANK_MAP".into())};
     let mut bfs=DistributedNativeBfs::new(&graph,20260828u128.to_le_bytes(),id,DistributedConfig{rank,world,logical_owner_to_rank:rank_map,batch:7,layer_capacity:64,future_capacity:64,prededup:true,generation_variant:1})?;
     let mut counts=Vec::new();let mut states=Vec::new();loop{counts.push(bfs.frontier_len());let mut layer=bfs.snapshot()?;layer.sort();states.push(layer.iter().map(|x|hex(x)).collect::<Vec<_>>());if !bfs.advance()?{break}}
-    println!("{{\"status\":\"COMPLETE\",\"rank\":{rank},\"layer_sizes\":{counts:?},\"states\":{states:?}}}");Ok(())
+    let record=format!("{{\"status\":\"COMPLETE\",\"rank\":{rank},\"layer_sizes\":{counts:?},\"states\":{states:?}}}");
+    if let Some(directory)=std::env::args().nth(2){std::fs::create_dir_all(&directory).map_err(|e|e.to_string())?;std::fs::write(Path::new(&directory).join(format!("rank-{rank}.json")),&record).map_err(|e|e.to_string())?}else{println!("{record}")}Ok(())
 }
 fn main(){if let Err(e)=run(){eprintln!("DISTRIBUTED_INCOMPLETE: {e}");std::process::exit(1)}}
