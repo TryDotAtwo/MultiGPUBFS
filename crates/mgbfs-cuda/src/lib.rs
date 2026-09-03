@@ -121,6 +121,27 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_macro_settle_destroy(plan: *mut c_void);
+        pub fn mgbfs_future_merge_create(
+            stride: u32,
+            future_capacity: u32,
+            incoming_capacity: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_future_merge_run(
+            plan: *mut c_void,
+            future_states: *mut u8,
+            future_hashes: *mut c_void,
+            future_state: *mut FrontierState,
+            source_states: *const u8,
+            source_count: u32,
+            incoming_hashes: *const c_void,
+            incoming_refs: *const u64,
+            incoming_count: *const u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_future_merge_destroy(plan: *mut c_void);
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;
         pub fn mgbfs_route_create(
             capacity: u32,

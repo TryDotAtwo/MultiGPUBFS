@@ -146,6 +146,7 @@ pub struct MacroNativeBfs {
     hash: Plan,
     route: Plan,
     materialize: Plan,
+    future_merge: Plan,
     settle: Plan,
     current_states: Buffer,
     next_states: Buffer,
@@ -268,6 +269,16 @@ impl MacroNativeBfs {
                 512,
             )
         })?;
+        let future_merge = Plan::new(mgbfs_future_merge_destroy, |out, error| unsafe {
+            mgbfs_future_merge_create(
+                stride as u32,
+                cfg.future_capacity_per_depth,
+                candidates,
+                out,
+                error,
+                512,
+            )
+        })?;
         let settle = Plan::new(mgbfs_macro_settle_destroy, |out, error| unsafe {
             mgbfs_macro_settle_create(
                 cfg.future_capacity_per_depth,
@@ -348,6 +359,7 @@ impl MacroNativeBfs {
             hash,
             route,
             materialize,
+            future_merge,
             settle,
             current_states,
             next_states,
@@ -505,16 +517,16 @@ impl MacroNativeBfs {
                         self.cfg.prededup as i32,
                         self.stream.0,
                     ))?;
-                    check(mgbfs_materialize_run(
-                        self.materialize.0,
+                    check(mgbfs_future_merge_run(
+                        self.future_merge.0,
+                        slot.states.ptr.cast(),
+                        slot.hashes.ptr,
+                        slot.state.ptr.cast(),
                         self.children.at(row_begin * self.stride).cast(),
                         count,
                         self.sorted_hashes.ptr,
                         self.sorted_refs.ptr.cast(),
                         self.route_count.ptr.cast(),
-                        slot.states.ptr.cast(),
-                        slot.hashes.ptr,
-                        &mut *(slot.state.ptr.cast::<FrontierState>()),
                         self.stream.0,
                     ))?;
                 }

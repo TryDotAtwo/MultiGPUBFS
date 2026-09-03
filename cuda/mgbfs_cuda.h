@@ -107,6 +107,15 @@ int mgbfs_macro_settle_run(void* plan,const void* future,const uint64_t* refs,co
   uint32_t* survivor_count,MgbfsMacroSettleState* state,uint64_t epoch,void* stream);
 void mgbfs_macro_settle_destroy(void* plan);
 typedef struct MgbfsFrontierState { uint32_t count, fatal; } MgbfsFrontierState;
+/* Incrementally commit one sorted candidate run into a sorted provisional
+ * target-depth set. Existing rows win equal hashes. State payloads are copied
+ * only for unique hashes; output is copied back densely into the fixed future
+ * slot. No host count read or allocation occurs in run. */
+int mgbfs_future_merge_create(uint32_t stride,uint32_t future_capacity,uint32_t incoming_capacity,void** out,char* error,size_t error_capacity);
+int mgbfs_future_merge_run(void* plan,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,
+  const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,const uint64_t* incoming_refs,
+  const uint32_t* incoming_count,void* stream);
+void mgbfs_future_merge_destroy(void* plan);
 /* Materialize one committed batch from a live source slot. References are local
  * source row indices, not global OriginRefs. Source stride is a multiple of 16.
  * Requests are sorted by source index; output states and hashes share that order.
