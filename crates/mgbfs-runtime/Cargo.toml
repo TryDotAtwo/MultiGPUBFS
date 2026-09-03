@@ -23,3 +23,7 @@ required-features = ["cuda"]
 [[example]]
 name = "macro_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "distributed_smoke"
+required-features = ["cuda"]
