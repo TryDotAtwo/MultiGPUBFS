@@ -16,6 +16,20 @@ extern "C" {
  * is four little-endian u32 residues, numerical order word3 through word0.
  */
 int mgbfs_hash_create(uint32_t bytes,uint32_t capacity,const uint8_t* limbs,const uint32_t* offsets,void** out,char* error,size_t error_capacity);
+/* Pre-allocation queries. Host outputs, no cudaMalloc or CUDA launches.
+ * Bytes exclude caller-owned input/output and allocator/runtime overhead.
+ * Failed query zeroes output. Workspace is queried from the compiled GEMM.
+ */
+typedef struct MgbfsGenerateBytes {
+  uint64_t generators, packed_parents, products_s32, workspace;
+  uint32_t k, stride, rows, columns;
+} MgbfsGenerateBytes;
+typedef struct MgbfsHashBytes {
+  uint64_t weights, offsets, partials_s32, workspace;
+  uint32_t stride, reserved;
+} MgbfsHashBytes;
+int mgbfs_generate_query(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,uint32_t variant,MgbfsGenerateBytes* out);
+int mgbfs_hash_query(uint32_t bytes,uint32_t capacity,MgbfsHashBytes* out);
 int mgbfs_hash_run(void* plan,const uint8_t* input,uint32_t* output,uint32_t count,void* stream);
 void mgbfs_hash_destroy(void* plan);
 int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,void** out,char* error,size_t error_capacity);

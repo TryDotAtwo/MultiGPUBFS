@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "mgbfs_cuda.h"
+#include "allocation_shape.h"
 #include <cstddef>
 #include <cstdio>
 #include <vector>
@@ -29,6 +30,24 @@ struct GeneratePlan {
   ~GeneratePlan(){cudaFree(products);cudaFree(parents);cudaFree(generators);}
 };
 static void checked(cudaError_t r){if(r!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(r));}
+template<class Gemm>
+static int generation_workspace(MgbfsGenerateBytes& q,bool transposed) {
+  const int m=transposed?q.columns:q.rows,n=transposed?q.rows:q.columns;
+  typename Gemm::Arguments args({m,n,int(q.k)},
+    {nullptr,int(q.k)},{nullptr,int(q.k)},{nullptr,n},{nullptr,n},{1,0},1);
+  q.workspace=Gemm::get_workspace_size(args);
+  // This policy has no split-K allocation. A changed library policy fails
+  // before allocation instead of hiding newly required scratch.
+  return q.workspace==0 && Gemm::can_implement(args)==cutlass::Status::kSuccess?0:2;
+}
+extern "C" int mgbfs_generate_query(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,uint32_t variant,MgbfsGenerateBytes* out) {
+  if(!out)return 1;*out={};MgbfsGenerateBytes q{};
+  if(generation_shape(n,moves,modulus,capacity,variant,&q))return 1;
+  const int status=variant==2?generation_workspace<MatrixGemm<128,32>>(q,true):
+    (variant==1||variant==4)?generation_workspace<MatrixGemm<64,32>>(q,true):
+    generation_workspace<MatrixGemm<64,64>>(q,variant!=0);
+  if(status)return status;*out=q;return 0;
+}
 
 // Concatenated parent columns: B[k, parent*n+column], column-major.
 __global__ void pack_parents(const uint8_t* input,uint8_t* packed,uint32_t n,uint32_t k,uint32_t stride,uint32_t columns,uint32_t count){
@@ -71,25 +90,22 @@ extern "C" int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,
 extern "C" int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,uint32_t variant,void** out,char* error,size_t error_capacity){
   if(!out)return 1;*out=nullptr;
   try {
-    if(variant>4||(variant==4&&n!=4))throw std::runtime_error("GENERATION_VARIANT");
-    if(n==0||uint64_t(n)*n>33025||moves==0||moves>65535||modulus<2||modulus>256||capacity==0||!generators||uint64_t(capacity)*n>INT32_MAX-3||uint64_t(n)*(modulus-1)*(modulus-1)>INT32_MAX)
+    MgbfsGenerateBytes bytes{};
+    if(!generators||mgbfs_generate_query(n,moves,modulus,capacity,variant,&bytes))
       throw std::runtime_error("GENERATION_SHAPE_OR_ACCUMULATOR_BOUND");
     int device;checked(cudaGetDevice(&device));cudaDeviceProp prop;checked(cudaGetDeviceProperties(&prop,device));
     if(prop.major*10+prop.minor<75)throw std::runtime_error("UNSUPPORTED_SM");
-    auto p=std::make_unique<GeneratePlan>();p->n=n;p->moves=moves;p->modulus=modulus;p->capacity=capacity;p->k=(n+15)&~15u;p->stride=(n*n+15)&~15u;
+    auto p=std::make_unique<GeneratePlan>();p->n=n;p->moves=moves;p->modulus=modulus;p->capacity=capacity;p->k=bytes.k;p->stride=bytes.stride;
     p->variant=variant;p->max_grid_x=prop.maxGridSize[0];p->max_grid_y=prop.maxGridSize[1];
-    p->generator_rows=variant?((moves*n+3)&~3u):moves*n;
-    const uint32_t columns=(capacity*n+3)&~3u;
-    const size_t product_bytes=size_t(p->generator_rows)*columns*sizeof(int32_t);
-    if(product_bytes/sizeof(int32_t)/columns!=p->generator_rows)throw std::runtime_error("GENERATION_BYTE_OVERFLOW");
-    std::vector<uint8_t> stacked(size_t(p->generator_rows)*p->k,0);
+    p->generator_rows=bytes.rows;
+    std::vector<uint8_t> stacked(bytes.generators,0);
     for(size_t row=0;row<size_t(moves)*n;++row)for(uint32_t c=0;c<n;++c){
       if(generators[row*n+c]>=modulus)throw std::runtime_error("GENERATOR_NONCANONICAL");
       stacked[row*p->k+c]=generators[row*n+c];
     }
-    checked(cudaMalloc(&p->generators,stacked.size()));
-    checked(cudaMalloc(&p->parents,size_t(columns)*p->k));
-    checked(cudaMalloc(&p->products,product_bytes));
+    checked(cudaMalloc(&p->generators,bytes.generators));
+    checked(cudaMalloc(&p->parents,bytes.packed_parents));
+    checked(cudaMalloc(&p->products,bytes.products_s32));
     checked(cudaMemcpy(p->generators,stacked.data(),stacked.size(),cudaMemcpyHostToDevice));
     *out=p.release();return 0;
   }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}

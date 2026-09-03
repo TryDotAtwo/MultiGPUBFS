@@ -2,6 +2,27 @@
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup};
 use mgbfs_cuda::ffi::*;
 use std::ffi::{c_void, CStr};
+#[test]
+fn allocation_query_matches_frozen_geometry_and_c_abi() {
+    assert_eq!(std::mem::size_of::<GenerateBytes>(), 48);
+    for variant in 0..5 {
+        let mut q = GenerateBytes::default();
+        assert_eq!(
+            unsafe { mgbfs_generate_query(4, 6, 256, 2, variant, &mut q) },
+            0
+        );
+        assert_eq!(
+            (q.generators, q.packed_parents, q.products_s32, q.workspace),
+            (384, 128, 768, 0)
+        );
+        assert_eq!((q.k, q.stride, q.rows, q.columns), (16, 16, 24, 8));
+        assert_ne!(
+            unsafe { mgbfs_generate_query(4, 6, 256, u32::MAX, variant, &mut q) },
+            0
+        );
+        assert_eq!((q.products_s32, q.rows), (0, 0));
+    }
+}
 struct Buffer(*mut c_void);
 impl Buffer {
     fn new(bytes: usize) -> Self {

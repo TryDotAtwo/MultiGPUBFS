@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "mgbfs_cuda.h"
+#include "allocation_shape.h"
 #include <cstddef>
 #include <cstdio>
 #include <vector>
@@ -26,6 +27,15 @@ struct HashPlan {
   Gemm gemm;
   ~HashPlan() {cudaFree(workspace);cudaFree(partials);cudaFree(offsets);cudaFree(weights);}
 };
+extern "C" int mgbfs_hash_query(uint32_t bytes,uint32_t capacity,MgbfsHashBytes* out) {
+  if(!out)return 1;*out={};MgbfsHashBytes q{};
+  if(hash_shape(bytes,capacity,&q))return 1;
+  Gemm::Arguments args({int(capacity),16,int(q.stride)}, {nullptr,int(q.stride)},
+    {nullptr,int(q.stride)}, {nullptr,16},{nullptr,16},{1,0},1);
+  q.workspace=Gemm::get_workspace_size(args);
+  if(q.workspace!=0||Gemm::can_implement(args)!=cutlass::Status::kSuccess)return 2;
+  *out=q;return 0;
+}
 
 static void check(cudaError_t result) {
   if(result!=cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
@@ -45,16 +55,17 @@ extern "C" int mgbfs_hash_create(uint32_t bytes,uint32_t capacity,const uint8_t*
   if(!out) return 1;
   *out=nullptr;
   try {
-    if(bytes==0||bytes>33025||capacity==0||capacity>INT32_MAX/16||!limbs||!offsets) throw std::runtime_error("HASH_SHAPE_OR_ACCUMULATOR_BOUND");
+    MgbfsHashBytes allocation{};
+    if(!limbs||!offsets||mgbfs_hash_query(bytes,capacity,&allocation)) throw std::runtime_error("HASH_SHAPE_OR_ACCUMULATOR_BOUND");
     for(int j=0;j<4;++j) if(offsets[j]>=4294967291ULL) throw std::runtime_error("HASH_OFFSET_RANGE");
     int device;check(cudaGetDevice(&device));cudaDeviceProp prop;check(cudaGetDeviceProperties(&prop,device));
     if(prop.major*10+prop.minor<75) throw std::runtime_error("UNSUPPORTED_SM");
-    auto p=std::make_unique<HashPlan>();p->width=bytes;p->stride=(bytes+15)&~15u;p->capacity=capacity;
-    std::vector<uint8_t> weights(size_t(p->stride)*16,0);
+    auto p=std::make_unique<HashPlan>();p->width=bytes;p->stride=allocation.stride;p->capacity=capacity;
+    std::vector<uint8_t> weights(allocation.weights,0);
     for(uint32_t i=0;i<bytes;++i) for(uint32_t j=0;j<16;++j) weights[j*p->stride+i]=limbs[i*16+j];
-    check(cudaMalloc(&p->weights,weights.size()));
-    check(cudaMalloc(&p->offsets,16));
-    check(cudaMalloc(&p->partials,size_t(capacity)*16*sizeof(int32_t)));
+    check(cudaMalloc(&p->weights,allocation.weights));
+    check(cudaMalloc(&p->offsets,allocation.offsets));
+    check(cudaMalloc(&p->partials,allocation.partials_s32));
     check(cudaMemcpy(p->weights,weights.data(),weights.size(),cudaMemcpyHostToDevice));
     check(cudaMemcpy(p->offsets,offsets,16,cudaMemcpyHostToDevice));
     // Split-K is fixed to one, hence this kernel has no semaphore workspace.

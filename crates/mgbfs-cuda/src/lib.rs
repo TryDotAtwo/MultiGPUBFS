@@ -4,6 +4,28 @@ pub mod ffi {
     use std::ffi::{c_char, c_void};
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
+    pub struct GenerateBytes {
+        pub generators: u64,
+        pub packed_parents: u64,
+        pub products_s32: u64,
+        pub workspace: u64,
+        pub k: u32,
+        pub stride: u32,
+        pub rows: u32,
+        pub columns: u32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug)]
+    pub struct HashBytes {
+        pub weights: u64,
+        pub offsets: u64,
+        pub partials_s32: u64,
+        pub workspace: u64,
+        pub stride: u32,
+        pub reserved: u32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug)]
     pub struct FrontierState {
         pub count: u32,
         pub fatal: u32,
@@ -18,6 +40,15 @@ pub mod ffi {
         pub reserved: u32,
     }
     extern "C" {
+        pub fn mgbfs_generate_query(
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            capacity: u32,
+            variant: u32,
+            out: *mut GenerateBytes,
+        ) -> i32;
+        pub fn mgbfs_hash_query(bytes: u32, capacity: u32, out: *mut HashBytes) -> i32;
         pub fn mgbfs_materialize_create(
             stride: u32,
             candidate_capacity: u32,

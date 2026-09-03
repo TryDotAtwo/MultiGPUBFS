@@ -2,6 +2,25 @@
 use mgbfs_core::hash::GemmHash;
 use mgbfs_cuda::ffi::*;
 use std::ffi::{c_void, CStr};
+#[test]
+fn allocation_query_matches_frozen_hash_buffers_and_c_abi() {
+    assert_eq!(std::mem::size_of::<HashBytes>(), 40);
+    let mut q = HashBytes::default();
+    assert_eq!(unsafe { mgbfs_hash_query(9, 12, &mut q) }, 0);
+    assert_eq!(
+        (
+            q.weights,
+            q.offsets,
+            q.partials_s32,
+            q.workspace,
+            q.stride,
+            q.reserved
+        ),
+        (256, 16, 768, 0, 16, 0)
+    );
+    assert_ne!(unsafe { mgbfs_hash_query(33026, 12, &mut q) }, 0);
+    assert_eq!((q.weights, q.partials_s32), (0, 0));
+}
 
 struct Buffer(*mut c_void);
 impl Buffer {
