@@ -62,6 +62,13 @@ Python guards, and `cargo check -p mgbfs-cuda --features cuda --tests` passed.
 This type-check does not link/run CUDA. Kaggle v8 remains pinned to df42c51:
 it validates the same C++ backend, not the subsequently added Rust report wrapper.
 
+`scripts/verify_primitive_gate.py` checks the saved final summary against the
+requested full source SHA, two distinct T4 devices and all80 unique combinations.
+It also requires nonempty passing Rust suites and final zero-error sanitizer
+summaries, plus the allocation-query CTest result. Synthetic validation fixtures
+pass; the real incomplete v7 archive is rejected with exit1. This checker audits
+evidence only; it does not run BFS or convert an incomplete gate into a pass.
+
 The shared C++ geometry fixture is added to CPU CI. CMake also builds a public
 query executable and registers a CTest test; the private Kaggle primitive gate
 runs it before CUDA test executables. No production multi-rank result is claimed.
