@@ -1,7 +1,7 @@
 """Physical 2xT4 exact-state gate for the native NCCL BFS runtime."""
 import importlib.util,json,os,tempfile,urllib.request
 from pathlib import Path
-SOURCE='fc6e184e3a0ea43d93ff73b6c6b427852b99f353';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
+SOURCE='d19dc4adbb12a4f467812c249a281d0ae814c68e';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
 def load(path):
     spec=importlib.util.spec_from_file_location('gate',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 def oracle():
