@@ -9,7 +9,7 @@ import sys
 import tempfile
 import urllib.request
 
-SOURCE_COMMIT = '4fea92d2228c19be83ca2d16464daf5623aa21ba'
+SOURCE_COMMIT = '5482f3bb9d20db5780bf6b5c915c4d93c8cd321c'
 BASELINE_COMMIT = 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
 CUTLASS_COMMIT = 'ffa119a1255d78998536107466cc7097ecefa393'
 

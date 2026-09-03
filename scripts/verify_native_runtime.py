@@ -6,7 +6,7 @@ from pathlib import Path
 
 TOOLS = ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck')
 
-def verify_gate(path, source):
+def verify_gate(path, source, require_async_archive=False):
     summary = json.loads((path/'summary.json').read_text())
     if not re.fullmatch('[0-9a-f]{40}', source) or summary['source_commit'] != source:
         raise ValueError('SOURCE_MISMATCH')
@@ -22,7 +22,10 @@ def verify_gate(path, source):
     for gpu in gpus:
         for tool in TOOLS:
             log = (path/f"gpu{gpu['index']}-{tool}.log").read_text(errors='replace')
-            for test in ('native_archive_roundtrip', 'native_feedback_full_layers', 'layer_capacity_failure_is_terminal'):
+            fixtures = ('native_archive_roundtrip', 'native_feedback_full_layers', 'layer_capacity_failure_is_terminal')
+            if require_async_archive:
+                fixtures += ('archive_overlap_survives_blocked_disk_and_ring_wrap', 'asynchronous_archive_disk_error_is_not_complete')
+            for test in fixtures:
                 if not re.search(r'^test '+test+r' \.\.\. ok\s*$', log, re.M):
                     raise ValueError('MISSING_FIXTURE_'+test)
             if not re.search(r'test result: ok\. \d+ passed; 0 failed;', log):
@@ -72,7 +75,8 @@ if __name__ == '__main__':
     parser.add_argument('path', type=Path)
     parser.add_argument('--source', required=True)
     parser.add_argument('--gate-only', action='store_true')
+    parser.add_argument('--require-async-archive', action='store_true')
     args = parser.parse_args()
-    summary = verify_gate(args.path, args.source)
+    summary = verify_gate(args.path, args.source, args.require_async_archive)
     if not args.gate_only: verify_measurements(args.path, summary)
     print('VERIFIED_NATIVE_RUNTIME_GATE_10/10' + ('' if args.gate_only else '_AND_AB'))

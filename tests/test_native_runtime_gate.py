@@ -29,6 +29,18 @@ class NativeEvidence(unittest.TestCase):
         self.save()
     def save(self): (self.path/'summary.json').write_text(json.dumps(self.summary))
     def test_complete_matrix(self): MODULE.verify_gate(self.path,self.source)
+    def test_async_gate_rejects_old_fixtures(self):
+        with self.assertRaisesRegex(ValueError, 'MISSING_FIXTURE_archive_overlap'):
+            MODULE.verify_gate(self.path,self.source,True)
+    def test_async_gate_requires_both_fixtures_on_every_device_and_tool(self):
+        for path in self.path.glob('gpu*.log'):
+            path.write_text(path.read_text()+'\ntest archive_overlap_survives_blocked_disk_and_ring_wrap ... ok\n'
+                +'test asynchronous_archive_disk_error_is_not_complete ... ok\n')
+        MODULE.verify_gate(self.path,self.source,True)
+        path=self.path/'gpu1-synccheck.log'
+        path.write_text(path.read_text().replace('test asynchronous_archive_disk_error_is_not_complete ... ok',''))
+        with self.assertRaisesRegex(ValueError, 'MISSING_FIXTURE_asynchronous_archive'):
+            MODULE.verify_gate(self.path,self.source,True)
     def test_source_binding(self):
         with self.assertRaises(ValueError): MODULE.verify_gate(self.path,'b'*40)
     def test_duplicate_gpu(self):
