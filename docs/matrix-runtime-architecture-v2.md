@@ -566,6 +566,11 @@ identity with the original BFS for macro depths 1,2,3,10 on U4(2..4). Native
 future-depth GPU settlement, `2*Km` hash ring and target-T4 performance remain
 unimplemented at this update and must not be described as runtime-green.
 
+Macro local pre-dedup orders representatives by original target depth and then
+the deterministic source key, not by physical first occurrence. One batch spans
+multiple parents and weights, so a longer arrival can precede a shorter one in
+the generated stream; first-row-wins would silently corrupt BFS distances.
+
 Implementation update: the sorted-input bounded CUDA owner leaf now implements
 Compare, stable compaction, credit checking and merge/copyback Commit using
 I/J/K-bounded scratch. Its independent two-T4 checks and four sanitizer modes

@@ -61,6 +61,9 @@ pub struct MacroOwner {
 }
 
 impl MacroOwner {
+    pub fn pending_records(&self) -> usize {
+        self.future.values().map(Vec::len).sum()
+    }
     pub fn new(
         macro_depth: u32,
         future_capacity_per_depth: usize,

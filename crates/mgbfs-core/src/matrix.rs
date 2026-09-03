@@ -75,6 +75,18 @@ impl MatrixGroup {
         let g = self.generators.get(move_id).ok_or("MOVE_ID")?;
         Ok(multiply(g, state, self.rows, self.modulus))
     }
+    pub fn apply_left(&self, transition: &[u8], state: &[u8]) -> Result<Vec<u8>> {
+        if transition.len() != self.start.len()
+            || state.len() != self.start.len()
+            || transition
+                .iter()
+                .chain(state)
+                .any(|&x| x as u16 >= self.modulus)
+        {
+            return Err("TRANSITION_OR_STATE_WIDTH_OR_RANGE".into());
+        }
+        Ok(multiply(transition, state, self.rows, self.modulus))
+    }
     pub fn unitriangular(n: usize, modulus: u16) -> Result<Self> {
         if n < 2 || n.checked_mul(n).unwrap_or(usize::MAX) > 33025 || !(2..=256).contains(&modulus)
         {
