@@ -20,9 +20,18 @@ fn make(g: &MatrixGroup, batch: u32, pre: bool) -> DenseDeviceStepper {
     let capacity = std::env::var("MGBFS_BENCH_CAPACITY")
         .map(|s| s.parse::<u32>().unwrap())
         .unwrap_or(u32::try_from(g.expected_max_unique_states).unwrap());
-    let result =
-        DenseDeviceStepper::new_pipelined(g, 20260828u128.to_le_bytes(), batch, capacity, pre)
-            .unwrap();
+    let generation_variant = std::env::var("MGBFS_BENCH_GENERATION")
+        .map(|s| s.parse::<u32>().unwrap())
+        .unwrap_or(0);
+    let result = DenseDeviceStepper::new_pipelined_with_generation(
+        g,
+        20260828u128.to_le_bytes(),
+        batch,
+        capacity,
+        pre,
+        generation_variant,
+    )
+    .unwrap();
     if std::env::var_os("MGBFS_BENCH_RESERVE_GIB").is_some() {
         let (mut free, mut total) = (0usize, 0usize);
         unsafe {

@@ -19,7 +19,19 @@ int mgbfs_hash_create(uint32_t bytes,uint32_t capacity,const uint8_t* limbs,cons
 int mgbfs_hash_run(void* plan,const uint8_t* input,uint32_t* output,uint32_t count,void* stream);
 void mgbfs_hash_destroy(void* plan);
 int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,void** out,char* error,size_t error_capacity);
+/* Explicit fixed generation variants: 0 legacy 64x32x64; 1 transposed
+ * 64x32x32; 2 transposed 128x32x32; 3 transposed 64x32x64;
+ * 4 transposed 64x32x32 with vector U4 output (requires n=4). No auto selection.
+ * Same parent/child wire layout and arithmetic. Run status 7 rejects grid
+ * overflow before any enqueue/output write. Existing create selects 0.
+ */
+int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,uint32_t variant,void** out,char* error,size_t error_capacity);
 int mgbfs_generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* stream);
+/* Measurement only: host array of four already-created CUDA timing events.
+ * Records start, packed, GEMM done, children done. No synchronization/allocation.
+ * Ordinary run does not record these events. count must be nonzero.
+ */
+int mgbfs_generate_profile_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* stream,void* const* marks);
 void mgbfs_generate_destroy(void* plan);
 int mgbfs_route_create(uint32_t capacity,void** out,char* error,size_t error_capacity);
 int mgbfs_route_run(void* plan,const void* hashes,const uint64_t* refs,void* sorted_hashes,uint64_t* sorted_refs,uint32_t* output_count,uint32_t count,int pre_dedup,void* stream);

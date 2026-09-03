@@ -163,7 +163,18 @@ impl DenseDeviceStepper {
         capacity: u32,
         prededup: bool,
     ) -> Result<Self> {
-        Self::new_mode(g, seed, batch, capacity, prededup, true)
+        Self::new_mode(g, seed, batch, capacity, prededup, true, 0)
+    }
+    /// Explicit experimental generation configuration, fixed before allocation.
+    pub fn new_pipelined_with_generation(
+        g: &MatrixGroup,
+        seed: [u8; 16],
+        batch: u32,
+        capacity: u32,
+        prededup: bool,
+        generation_variant: u32,
+    ) -> Result<Self> {
+        Self::new_mode(g, seed, batch, capacity, prededup, true, generation_variant)
     }
     pub fn new(
         g: &MatrixGroup,
@@ -172,7 +183,7 @@ impl DenseDeviceStepper {
         capacity: u32,
         prededup: bool,
     ) -> Result<Self> {
-        Self::new_mode(g, seed, batch, capacity, prededup, false)
+        Self::new_mode(g, seed, batch, capacity, prededup, false, 0)
     }
     fn new_mode(
         g: &MatrixGroup,
@@ -181,6 +192,7 @@ impl DenseDeviceStepper {
         capacity: u32,
         prededup: bool,
         pipelined: bool,
+        generation_variant: u32,
     ) -> Result<Self> {
         g.validate()?;
         let moves = g.generators.len() as u32;
@@ -198,12 +210,13 @@ impl DenseDeviceStepper {
             check(cudaStreamCreateWithFlags(&mut stream, 1))?;
             let stream = Stream(stream);
             let generate = Plan::create(mgbfs_generate_destroy, |p, e| {
-                mgbfs_generate_create(
+                mgbfs_generate_create_variant(
                     g.rows as u32,
                     moves,
                     g.modulus as u32,
                     batch,
                     generators.as_ptr(),
+                    generation_variant,
                     p,
                     e,
                     512,

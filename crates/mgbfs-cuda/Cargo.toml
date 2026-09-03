@@ -9,3 +9,7 @@ cuda = []
 
 [dev-dependencies]
 mgbfs-core = { path = "../mgbfs-core" }
+
+[[example]]
+name = "generation_bench"
+required-features = ["cuda"]

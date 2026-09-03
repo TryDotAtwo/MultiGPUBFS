@@ -3,6 +3,45 @@ use mgbfs_core::matrix::MatrixGroup;
 use mgbfs_runtime::dense_device::DenseDeviceStepper;
 
 #[test]
+fn generation_variants_preserve_full_layers() {
+    check_generation_variants(6);
+}
+#[test]
+fn generation_variants_small_feedback() {
+    check_generation_variants(3);
+}
+fn check_generation_variants(max_modulus: u16) {
+    for m in 2..=max_modulus {
+        let g = MatrixGroup::unitriangular(4, m).unwrap();
+        let oracle = g
+            .exact_layers(g.expected_max_unique_states as usize)
+            .unwrap();
+        for variant in 1..=4 {
+            for pre in [false, true] {
+                let mut bfs = DenseDeviceStepper::new_pipelined_with_generation(
+                    &g,
+                    20260828u128.to_le_bytes(),
+                    257,
+                    g.expected_max_unique_states as u32,
+                    pre,
+                    variant,
+                )
+                .unwrap();
+                for (d, expected) in oracle.iter().enumerate() {
+                    let mut states = bfs.snapshot().unwrap();
+                    states.sort();
+                    assert_eq!(
+                        &states, expected,
+                        "m={m} variant={variant} depth={d} pre={pre}"
+                    );
+                    assert_eq!(bfs.advance().unwrap(), d + 1 < oracle.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn full_u4_pipelined_sweep() {
     for m in 2..=6 {
         let g = MatrixGroup::unitriangular(4, m).unwrap();
