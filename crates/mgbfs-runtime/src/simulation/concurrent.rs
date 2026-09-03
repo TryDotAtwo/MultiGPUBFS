@@ -1,14 +1,17 @@
 use super::*;
+use mgbfs_core::wire::{payload_layout, ExpectedFrame, FrameHeader, FrameKind};
 pub struct ConcurrentSimulation {
     pub result: Simulation,
     pub peak_batches: usize,
     pub peak_tickets: usize,
     pub steps: usize,
     pub state_peak_records: Vec<u64>,
+    pub validated_wire_frames: u64,
 }
 struct Batch {
     source: usize,
     extent: u64,
+    parent_ref: u64,
     parent: Vec<u8>,
     remaining: Vec<usize>,
     accepted: Vec<u64>,
@@ -140,6 +143,7 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
         peak_tickets: 0,
         steps: 0,
         state_peak_records: vec![],
+        validated_wire_frames: 0,
     };
     loop {
         let mut layer: Vec<_> = current.iter().flat_map(|x| x.states.clone()).collect();
@@ -170,7 +174,7 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                 x.states
                     .iter()
                     .enumerate()
-                    .map(move |(i, s)| (x.rank, x.id, s.clone(), i + 1 == x.states.len()))
+                    .map(move |(i, s)| (x.rank, x.id, i as u64, s.clone(), i + 1 == x.states.len()))
             })
             .collect();
         let mut admitted = 0;
@@ -215,7 +219,8 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
             match action {
                 Action::Admit => {
                     let bid = admitted;
-                    let (source, extent, parent, last) = parents[bid].clone();
+                    let (source, extent, row, parent, last) = parents[bid].clone();
+                    let parent_ref = rings[source].state_ref(extent, row)?;
                     admitted += 1;
                     t.work(source, true)?;
                     if c.profile == Profile::HashFirst {
@@ -263,6 +268,7 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                         Batch {
                             source,
                             extent,
+                            parent_ref,
                             parent,
                             remaining,
                             accepted: vec![0; w],
@@ -287,6 +293,57 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                         let msg = if ticket.kind == Kind::Finalize {
                             None
                         } else {
+                            let kind = match ticket.kind {
+                                Kind::Candidate if c.profile == Profile::Dense => FrameKind::Dense,
+                                Kind::Candidate => FrameKind::HashFirst,
+                                Kind::Request => FrameKind::Request,
+                                Kind::Response => FrameKind::Response,
+                                Kind::Receipt => FrameKind::Receipt,
+                                Kind::Finalize => unreachable!(),
+                            };
+                            let stride = (g.start.len() as u64 + 15) & !15;
+                            let run_tag = u64::from_le_bytes(c.seed[..8].try_into().unwrap());
+                            let depth = u32::try_from(out.result.layers.len() - 1)
+                                .map_err(|_| "WIRE_DEPTH")?;
+                            for (dst, &count) in ticket.counts.iter().enumerate() {
+                                let count = u32::try_from(count).map_err(|_| "WIRE_COUNT")?;
+                                let h = FrameHeader {
+                                    kind,
+                                    run_tag,
+                                    sequence: ticket.seq,
+                                    batch: messages[&ticket.slot].batch() as u64,
+                                    depth,
+                                    source: ticket.source as u32,
+                                    destination: dst as u32,
+                                    count,
+                                };
+                                let raw = h.encode(stride)?;
+                                let decoded = FrameHeader::decode(
+                                    &raw,
+                                    &ExpectedFrame {
+                                        run_tag,
+                                        sequence: ticket.seq,
+                                        batch: h.batch,
+                                        depth,
+                                        source: ticket.source as u32,
+                                        destination: dst as u32,
+                                        world: w as u32,
+                                        kind,
+                                        max_records: g.generators.len() as u32,
+                                        max_payload: payload_layout(
+                                            kind,
+                                            g.generators.len() as u32,
+                                            stride,
+                                        )?
+                                        .bytes,
+                                        state_stride: stride,
+                                    },
+                                )?;
+                                if decoded != h {
+                                    return Err("WIRE_ROUNDTRIP".into());
+                                }
+                                out.validated_wire_frames += 1;
+                            }
                             Some(ticket.slot)
                         };
                         live.insert(ticket.seq, (msg, vec![false; w]));
@@ -379,6 +436,7 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                             }
                         }
                         Message::Request { job, .. } => {
+                            rings[batch.source].resolve(batch.parent_ref)?;
                             let (chunk, winners) = jobs.get(&job).ok_or("MODEL_REQUEST")?;
                             out.result.requests += winners.len() as u64;
                             enqueue(
@@ -394,6 +452,7 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                             )?;
                         }
                         Message::Response { job, .. } => {
+                            rings[batch.source].resolve(batch.parent_ref)?;
                             let (chunk, winners) = jobs.remove(&job).ok_or("MODEL_RESPONSE")?;
                             for child in &winners {
                                 let s = g.successor(&batch.parent, child.mv)?;

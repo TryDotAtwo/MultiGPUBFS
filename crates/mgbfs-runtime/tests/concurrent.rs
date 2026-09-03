@@ -47,6 +47,10 @@ fn overlapping_batches_tickets_and_archive_match_full_layers() {
                     assert!(r.state_peak_records.iter().all(|&n| n <= 256));
                     assert!(r.state_peak_records.iter().sum::<u64>() > 0);
                     assert!(r.steps > 0);
+                    assert_eq!(
+                        r.validated_wire_frames,
+                        (r.result.tickets - r.result.layers.len() as u64) * map.len() as u64
+                    );
                     peak_batches = peak_batches.max(r.peak_batches);
                     peak_tickets = peak_tickets.max(r.peak_tickets);
                 }

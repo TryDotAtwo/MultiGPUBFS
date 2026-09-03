@@ -14,6 +14,10 @@
 [architecture-models](validation/2026-09-03-architecture-models.md).
 Они не являются реализацией production scheduling.
 
+Следующий исполняемый срез: [rank layout / StateRef / schema2 frames](validation/2026-09-03-rank-layout-wire.md).
+Он закрывает часть CPU-контрактов; реальные query adapters и production data plane
+по-прежнему не подтверждены.
+
 ## 1. Что произошло и что запрещено повторять
 
 Проверочный `DenseDeviceStepper` был использован для большого performance test

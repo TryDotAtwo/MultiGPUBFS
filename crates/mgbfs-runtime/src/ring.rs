@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Extent {
     pub id: u64,
+    pub sequence: u64,
     pub begin: u64,
     pub count: u64,
 }
@@ -76,6 +77,7 @@ impl StateRing {
             .ok_or("STATE_RING_ID_OVERFLOW")?;
         let extent = Extent {
             id: self.next_id,
+            sequence: start,
             begin: start % self.capacity,
             count: records,
         };
@@ -91,6 +93,37 @@ impl StateRing {
         self.next_id = next_id;
         self.peak = self.peak.max(end - head);
         Ok(extent)
+    }
+    /// Absolute record address, not an extent descriptor ID or physical index.
+    pub fn state_ref(&self, id: u64, row: u64) -> Result<u64> {
+        let x = self
+            .live
+            .iter()
+            .find(|x| x.extent.id == id)
+            .ok_or("STALE_STATE_REF")?;
+        if row >= x.extent.count {
+            return Err("STATE_REF_ROW".into());
+        }
+        let reference = x
+            .extent
+            .sequence
+            .checked_add(row)
+            .ok_or("STATE_RING_COUNTER_OVERFLOW")?;
+        self.resolve(reference)?;
+        Ok(reference)
+    }
+    pub fn resolve(&self, reference: u64) -> Result<u64> {
+        // CPU contract model scans bounded extent metadata, never state bytes.
+        // Production lookup must operate on the flat extent directory.
+        let x = self
+            .live
+            .iter()
+            .find(|x| reference >= x.extent.sequence && reference < x.end)
+            .ok_or("STALE_STATE_REF")?;
+        if x.state != State::Current && !(x.state == State::Enumerated && x.origin_leases > 0) {
+            return Err("STATE_REF_NOT_READABLE".into());
+        }
+        Ok(reference % self.capacity)
     }
     fn find(&mut self, id: u64) -> Result<&mut Live> {
         self.live
