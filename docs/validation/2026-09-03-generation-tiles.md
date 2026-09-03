@@ -87,6 +87,53 @@ Local build/plain/oracle tests passed. All eight local sanitizer invocations
 passed: generation and small full-feedback fixtures under memcheck/racecheck/
 initcheck/synccheck. Racecheck feedback took 141.72 s, zero hazards; all other
 tools reported zero errors. Logs: `test_results/generation-tiles-local/`.
-Target T4 experiment is in preparation. No T4 speedup or default change is claimed.
+Target T4 experiment completed; results follow. Default remains unchanged.
 An earlier local diagnostic suggested output conversion dominates GEMM, motivating
 ID 4; local laptop timing does not select a T4 winner.
+
+## T4 result (private Kaggle version 1)
+
+Source `a8c18b57c2a480c8bc5ac99359fe543082f39db9`, CUTLASS
+`ffa119a1255d78998536107466cc7097ecefa393`, Rust 1.75.0.
+Timing GPU: `GPU-2bd9bbef-0cf0-1571-54c2-7fafbe216787` (Tesla T4).
+Second correctness GPU: `GPU-69339ed7-8ecd-6823-f05d-1172b158de60`.
+Both cards have 15360 MiB physical memory. These are independent one-GPU
+correctness runs, not validation of a multi-rank communication implementation.
+
+All 20 correctness/sanitizer invocations passed. Benchmark summary COMPLETE:
+24 microbenchmark workers, five full-state digest workers, 25 whole-BFS workers.
+The legacy 2^20-parent case is explicitly UNSUPPORTED_GRID. All five m5 full-state
+layer digest sequences agree; m16 layer counts agree through exhaustion.
+All 54 successful raw benchmark logs and all 20 raw gate logs were independently
+checked against the summary, including timing samples and final sanitizer reports.
+
+At 262144 parents (median of seven samples, milliseconds):
+
+| ID | Full generation | Pack | GEMM | Output conversion/write | Full BFS m16 seconds, median +/- MAD |
+|---|---:|---:|---:|---:|---:|
+| 0 | 2.053 | 0.461 | 0.639 | 0.989 | 1.9867 +/- 0.0704 |
+| 1 | 1.840 | 0.438 | 0.561 | 0.877 | 1.9697 +/- 0.0523 |
+| 2 | 1.836 | 0.429 | 0.559 | 0.858 | 1.9753 +/- 0.0180 |
+| 3 | 1.855 | 0.432 | 0.551 | 0.859 | 1.9862 +/- 0.0165 |
+| 4 | 1.497 | 0.404 | 0.561 | 0.539 | 1.9473 +/- 0.0220 |
+
+Stage medians are separate instrumented samples: they need not sum to the
+uninstrumented total. ID 4 reduces generation time by 27.1% (1.37x throughput)
+and output-stage time by 45.5% relative to ID 0. Every variant allocates 142 MiB
+in this isolated generation configuration. Whole-BFS allocation delta is
+5882 MiB for every variant; external process peak is 5989 MiB for every variant.
+
+The whole-BFS median reduction is only 1.98%, smaller than baseline MAD relative
+to its median. Five repetitions do not establish a robust end-to-end win. Keep
+ID 4 explicit and experimental, and do not change the general default. The
+measured generator improvement alone is not evidence that generation dominates
+the complete pipeline. New variants also remove the old batch/grid restriction;
+larger-batch whole-BFS performance has not yet been measured for these variants.
+
+Nsight Compute exists in the Kaggle image, but both attempted profiles failed
+with ERR_NVGPUCTRPERM (performance-counter access denied);
+no hardware-counter-based occupancy or transaction-efficiency claim is made.
+
+Evidence: `test_results/kaggle_generation_tiles_v1/generation-tiles/`.
+Summary SHA-256:
+`4bcfb56415c3c501231aaf2c84290a13234284fb8748314796cc71b26ff49964`.
