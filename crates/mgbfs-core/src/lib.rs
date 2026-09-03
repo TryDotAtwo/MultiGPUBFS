@@ -4,6 +4,7 @@ pub mod config;
 pub mod hash;
 pub mod matrix;
 pub mod memory;
+pub mod owner_job;
 pub mod rank_plan;
 pub mod wire;
 
