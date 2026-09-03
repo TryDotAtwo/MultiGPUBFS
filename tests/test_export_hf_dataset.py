@@ -60,6 +60,29 @@ class ExportDataset(unittest.TestCase):
             self.assertEqual(manifest["total_unique_states"], 2)
             self.assertEqual(manifest["max_depth"], 0)
             self.assertEqual(len(manifest["files"][0]["sha256"]), 64)
+            subprocess.run(
+                [sys.executable, str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
+                 "--sort-memory-records", "1"], check=True
+            )
+            verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
+            self.assertEqual(verification["status"], "PASS")
+            self.assertEqual(verification["unique_states"], 2)
+
+            state_path = output / "states" / "rank-00000-part-00000.parquet"
+            rows = states.to_pylist()
+            rows[1]["state"] = rows[0]["state"]
+            pq.write_table(states.from_pylist(rows, states.schema), state_path, compression="zstd")
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            item = next(item for item in manifest["files"] if item["path"].startswith("states/"))
+            item["bytes"] = state_path.stat().st_size
+            item["sha256"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+            (output / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            duplicate = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
+                 "--sort-memory-records", "1"], capture_output=True, text=True
+            )
+            self.assertNotEqual(duplicate.returncode, 0)
+            self.assertIn("DUPLICATE_STATE", duplicate.stderr)
 
     def test_rejects_corrupt_or_incomplete_archive(self):
         with tempfile.TemporaryDirectory() as folder:
