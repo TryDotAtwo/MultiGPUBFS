@@ -4,4 +4,5 @@ pub mod archive;
 pub mod dense_device;
 pub mod exchange;
 pub mod owner;
+pub mod receipts;
 pub mod ring;

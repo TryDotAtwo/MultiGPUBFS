@@ -1,6 +1,39 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 
+/// Owner-lane scratch only; library scratch is supplied by measured queries.
+pub fn bounded_owner_ledger(i: u64, j: u64, k: u64, library: [u64; 3]) -> Result<AllocationLedger> {
+    if i == 0 || j == 0 || k == 0 || i > i32::MAX as u64 {
+        return Err("OWNER_JOB_SHAPE".into());
+    }
+    let mut ledger = AllocationLedger::new(u64::MAX, 0)?;
+    for bank in 0..2 {
+        for (field, bytes) in [("hash", 16), ("payload", 8), ("ordinal", 4)] {
+            ledger.add(&format!("merge_{bank}_{field}"), i, bytes, 256)?;
+        }
+    }
+    ledger.add("indices", i, 4, 256)?;
+    for category in 0..4 {
+        ledger.add(&format!("flags_{category}"), i, 1, 256)?;
+    }
+    ledger.add(
+        "accepted_output",
+        j.checked_mul(k).ok_or("BYTE_OVERFLOW")?,
+        16,
+        256,
+    )?;
+    ledger.add("bucket_descriptors", j, 64, 256)?;
+    ledger.add("bucket_counts_offsets", j, 32, 256)?;
+    ledger.add("job_control", 1, 64, 256)?;
+    for (name, bytes) in ["merge_query", "select_query", "scan_query"]
+        .into_iter()
+        .zip(library)
+    {
+        ledger.add(name, bytes, 1, 256)?;
+    }
+    Ok(ledger)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Allocation {
     pub name: String,

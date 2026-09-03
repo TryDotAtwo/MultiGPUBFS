@@ -18,6 +18,7 @@ struct Live {
     end: u64,
     state: State,
     archived: bool,
+    origin_leases: u64,
 }
 pub struct StateRing {
     capacity: u64,
@@ -77,6 +78,7 @@ impl StateRing {
             end,
             state: State::Reserved,
             archived: false,
+            origin_leases: 0,
         });
         self.head = head;
         self.tail = end;
@@ -111,6 +113,25 @@ impl StateRing {
     pub fn enumerated(&mut self, id: u64) -> Result<()> {
         self.transition(id, State::Current, State::Enumerated)
     }
+    pub fn hold_origins(&mut self, id: u64) -> Result<()> {
+        let x = self.find(id)?;
+        if x.state != State::Current {
+            return Err("ORIGIN_LEASE_STATE".into());
+        }
+        x.origin_leases = x
+            .origin_leases
+            .checked_add(1)
+            .ok_or("ORIGIN_LEASE_OVERFLOW")?;
+        Ok(())
+    }
+    pub fn release_origins(&mut self, id: u64) -> Result<()> {
+        let x = self.find(id)?;
+        x.origin_leases = x
+            .origin_leases
+            .checked_sub(1)
+            .ok_or("ORIGIN_LEASE_UNDERFLOW")?;
+        Ok(())
+    }
     pub fn publish(&mut self, id: u64) -> Result<()> {
         self.transition(id, State::Materialized, State::Current)
     }
@@ -119,7 +140,7 @@ impl StateRing {
         while self
             .live
             .front()
-            .is_some_and(|x| x.state == State::Enumerated && x.archived)
+            .is_some_and(|x| x.state == State::Enumerated && x.archived && x.origin_leases == 0)
         {
             let x = self.live.pop_front().unwrap();
             self.head = x.end;
