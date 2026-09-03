@@ -44,6 +44,10 @@ large full-state m5..8), 65 default CPU tests, and 24 synthetic evidence-checker
 tests. Compute Sanitizer memcheck of all three archive fixtures passed with
 zero errors. Windows sandbox prevented initial checker process injection; the
 same command worked with approved execution outside that sandbox.
+Local racecheck then passed all three archive fixtures in 137.04 s with zero
+errors and warnings; initcheck (11.15 s) and synccheck (12.59 s) also passed all
+three, zero errors. Sanitizer diagnostics are in ignored
+`build/async-archive-{racecheck,initcheck,synccheck}.log`.
 
 Local Nsight Systems 2024.2.3 did not produce CUDA event data. An initial attempt
 failed parsing a Unicode working directory; an ASCII-directory retry produced
