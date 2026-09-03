@@ -2,7 +2,7 @@
 use mgbfs_cuda::ffi::*;
 use std::{
     ffi::{c_void, CStr},
-    mem::size_of,
+    mem::{size_of, size_of_val},
 };
 
 struct Buffer(*mut c_void);
