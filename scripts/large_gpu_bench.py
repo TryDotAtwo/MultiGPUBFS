@@ -9,13 +9,17 @@ import sys
 
 from single_gpu_bench import timing_stats, worker
 
+NATIVE_BATCHES = [65536, 262144, 524280]
+BASELINE_BATCHES = [65536, 262144, 1048576]
+
 
 def suite(native, out, env, moduli=(16, 20, 24, 28, 32)):
     out.mkdir(parents=True, exist_ok=True)
     report = dict(schema=1, status='INCOMPLETE', rows=[], comparisons=[],
         scope='single-GPU scaling; layer counts and total cardinality verified, not full-state digests on large graphs',
         capacity_policy='min(m**6, 32000000) state/hash rows, fixed before each worker; 1 GiB VRAM reserve',
-        requested_minimum_search_seconds=60, repeats=5)
+        requested_minimum_search_seconds=60, repeats=5,
+        native_batch_limit_reason='Sm75 GEMM grid.y <= 65535, n=4: at most 524280 parents')
     def save():
         (out/'summary.json').write_text(json.dumps(report, indent=2))
     def run(backend, m, batch, phase, rep=0):
@@ -33,9 +37,16 @@ def suite(native, out, env, moduli=(16, 20, 24, 28, 32)):
     try:
         last_common = None
         for m in moduli:
-            # Large batches avoid artificially stretching runtime with launch/merge overhead.
-            a = run('native', m, 1048576, 'size_probe')
-            b = run('cayleypy', m, 1048576, 'size_probe')
+            # Independent configuration trials, never fallback inside a BFS.
+            # One failed configuration does not establish a graph capacity limit.
+            probes = {}
+            for backend, batches in [('native', NATIVE_BATCHES), ('cayleypy', BASELINE_BATCHES)]:
+                for batch in reversed(batches):
+                    row = run(backend, m, batch, 'size_probe')
+                    probes[backend] = row
+                    if row['status'] == 'COMPLETE':
+                        break
+            a, b = probes['native'], probes['cayleypy']
             if a['status'] != 'COMPLETE' or b['status'] != 'COMPLETE':
                 report['first_common_capacity_boundary'] = m
                 break
@@ -51,7 +62,7 @@ def suite(native, out, env, moduli=(16, 20, 24, 28, 32)):
         configs = {}
         for backend in ['native', 'cayleypy']:
             trials = []
-            for batch in [65536, 262144, 1048576]:
+            for batch in (NATIVE_BATCHES if backend == 'native' else BASELINE_BATCHES):
                 row = run(backend, m, batch, 'calibrate')
                 if row['status'] == 'COMPLETE':
                     if row['layer_sizes'] != expected:
