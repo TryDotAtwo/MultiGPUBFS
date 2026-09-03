@@ -68,8 +68,9 @@ fn execute() -> Result<()> {
         .checked_mul((g.start.len() + 16) as u64)
         .and_then(|v| v.checked_add(64 << 20)).ok_or("DISK_OVERFLOW")?;
     let extent = FileExtent::create_new(Path::new(&args[6])).map_err(|e| e.to_string())?;
+    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
     let mut archive = PinnedArchive::new(
-        extent, disk_bytes, g.start.len(), digest, batch,
+        extent, disk_bytes, g.start.len(), digest, archive_rows,
         env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
     )?;
     let pinned_bytes = archive.pinned_bytes();
@@ -100,7 +101,7 @@ fn execute() -> Result<()> {
     if total != g.expected_max_unique_states { return Err(format!("CARDINALITY_{total}")); }
     archive.finish()?;
     let durable = start.elapsed().as_secs_f64();
-    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"batch\":{batch},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
+    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"batch\":{batch},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"archive_rows\":{archive_rows},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
     Ok(())
 }
 fn main() {

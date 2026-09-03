@@ -89,8 +89,8 @@ def suite(native,out,env):
         if backend=='native':
             archive=Path('/tmp')/(label+'.mgbfsar1')
             cmd=[str(native),f's{n}',str(batch),str(k),'1','verify' if verify else 'time',str(archive)]
-            slots=(math_factorial(n)+batch-1)//batch+2
-            runenv=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_SLOTS=str(slots))
+            archive_rows=min(batch,16384);slots=(math_factorial(n)+archive_rows-1)//archive_rows+64
+            runenv=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(archive_rows),MGBFS_ARCHIVE_SLOTS=str(slots))
         else:
             cmd=[sys.executable,str(Path(__file__).resolve()),'baseline',str(n),str(batch),'verify' if verify else 'time'];runenv=env
         try: row=worker(cmd,out,label,runenv)
