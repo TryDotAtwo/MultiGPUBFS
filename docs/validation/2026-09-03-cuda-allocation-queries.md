@@ -89,4 +89,30 @@ slot-reuse and capacity-failure fixtures for ping_pong/racecheck. The larger
 variant sweep remains in plain/memcheck/initcheck/synccheck; no sanitizer tool
 is removed. This is bounded racecheck coverage, NOT m2..m6 racecheck certification.
 A RED/GREEN Python regression locks this selection; the immutable CUDA source
-remains df42c51. A new completed hardware run is still required.
+remains df42c51. The required repeat subsequently completed as version9.
+
+Version9 PASSED the independently verified80-combination matrix on source
+df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f:
+
+- GPU0 Tesla T4: GPU-b117f3d5-c2d0-79dc-7bbd-c06d719ffa8c.
+- GPU1 Tesla T4: GPU-cdfa6d50-b30c-1d6f-86e4-b093ce0459b6.
+- Each device15360MiB total,14912MiB free at initial inventory.
+- All eight primitive/feedback executables passed plain, memcheck, racecheck,
+  initcheck and synccheck on both devices. All sanitizer final summaries were
+  zero-error; racecheck also had zero warnings/hazards. Query CTest passed.
+- The verifier checked the exact fixture names and nonempty all-passed Rust
+  summaries, including interleaved diagnostic output, not just exit codes.
+- ping_pong/racecheck: three bounded fixtures,290.30s on GPU0; dense_device
+  racecheck:943.61s on GPU0 and938.44s on GPU1. These are instrumentation times,
+  not BFS performance measurements. The m2..m6 sweeps remain in other modes;
+  bounded m2..m3 racecheck is not claimed to cover the larger graphs.
+- Preserved artifacts: test_results/native-query-v9/native-primitive-gate/.
+  Verification command: python scripts/verify_primitive_gate.py
+  test_results/native-query-v9/native-primitive-gate --source
+  df42c51df6d3b44b8ba620de6edcf0b3e0f68e5f.
+
+This certifies the generation/hash C ABI implementation at that source commit,
+not the later Rust report adapter or CUB route query. Those are in the separate
+version10 run on77bc9a1. Production archived multi-rank BFS remains outside this
+primitive gate. The CayleyPy baseline was rechecked clean at
+f0f2b8e5ee61173039ab9742f3a7756c9b6365e6.
