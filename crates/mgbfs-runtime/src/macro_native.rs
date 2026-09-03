@@ -105,6 +105,19 @@ impl Drop for Stream {
         }
     }
 }
+struct Event(*mut c_void);
+impl Event {
+    fn new() -> Result<Self> {
+        let mut event = std::ptr::null_mut();
+        check(unsafe { cudaEventCreateWithFlags(&mut event, 2) })?;
+        Ok(Self(event))
+    }
+}
+impl Drop for Event {
+    fn drop(&mut self) {
+        unsafe { cudaEventDestroy(self.0); }
+    }
+}
 struct FutureSlot {
     depth: Option<u32>,
     states: Buffer,
@@ -123,6 +136,12 @@ pub struct MacroNativeBfs {
     weight_runs: Vec<(u32, u32, u32)>,
     effective_depth: u32,
     stream: Stream,
+    archive_stream: Stream,
+    archive_done: [Event; 2],
+    archive_hash: Plan,
+    archive_hashes: Buffer,
+    archived_depth: Option<u32>,
+    current_bank: usize,
     generate: Plan,
     hash: Plan,
     route: Plan,
@@ -178,6 +197,9 @@ impl MacroNativeBfs {
         let mut raw_stream = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_stream, 1) })?;
         let stream = Stream(raw_stream);
+        let mut raw_archive_stream = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive_stream, 1) })?;
+        let archive_stream = Stream(raw_archive_stream);
         let matrices: Vec<u8> = macros
             .transitions
             .iter()
@@ -222,6 +244,17 @@ impl MacroNativeBfs {
                 512,
             )
         })?;
+        let archive_hash = Plan::new(mgbfs_hash_destroy, |out, error| unsafe {
+            mgbfs_hash_create(
+                width as u32,
+                cfg.batch,
+                limbs.as_ptr(),
+                hash_contract.offsets.as_ptr(),
+                out,
+                error,
+                512,
+            )
+        })?;
         let route = Plan::new(mgbfs_route_destroy, |out, error| unsafe {
             mgbfs_route_create(max_records, out, error, 512)
         })?;
@@ -254,6 +287,7 @@ impl MacroNativeBfs {
         let next_state = buffer(std::mem::size_of::<FrontierState>())?;
         let children = buffer(candidates as usize * stride)?;
         let child_hashes = buffer(candidates as usize * 16)?;
+        let archive_hashes = Buffer::new(cfg.batch as usize * 16, raw_archive_stream)?;
         let identity_refs = buffer(max_records as usize * 8)?;
         let sorted_hashes = buffer(max_records as usize * 16)?;
         let sorted_refs = buffer(max_records as usize * 8)?;
@@ -290,6 +324,9 @@ impl MacroNativeBfs {
                 raw_stream,
             )
         })?;
+        let archive_done = [Event::new()?, Event::new()?];
+        check(unsafe { cudaEventRecord(archive_done[0].0, raw_stream) })?;
+        check(unsafe { cudaEventRecord(archive_done[1].0, raw_stream) })?;
         check(unsafe { cudaStreamSynchronize(raw_stream) })?;
         Ok(Self {
             cfg,
@@ -301,6 +338,12 @@ impl MacroNativeBfs {
             weight_runs,
             effective_depth: effective,
             stream,
+            archive_stream,
+            archive_done,
+            archive_hash,
+            archive_hashes,
+            archived_depth: None,
+            current_bank: 0,
             generate,
             hash,
             route,
@@ -347,6 +390,73 @@ impl MacroNativeBfs {
             .chunks_exact(self.stride)
             .map(|row| row[..self.width].to_vec())
             .collect())
+    }
+    /// Enqueues dense state/hash records to the pinned archive lane. The next
+    /// reuse of this state bank waits on the D2H event, not on disk IO.
+    pub fn archive_current(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+    ) -> Result<()> {
+        if self.failed {
+            return Err("MACRO_NATIVE_FAILED".into());
+        }
+        let result = self.archive_inner(archive);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    fn archive_inner(&mut self, archive: &mut crate::pinned_archive::PinnedArchive) -> Result<()> {
+        if archive.width != self.width {
+            return Err("ARCHIVE_STATE_WIDTH".into());
+        }
+        if self.archived_depth == Some(self.depth) {
+            return Err("ARCHIVE_DEPTH_ALREADY_SUBMITTED".into());
+        }
+        let stream = self.archive_stream.0;
+        let mut offset = 0u32;
+        while offset < self.current_count {
+            let count = archive.rows.min(self.cfg.batch).min(self.current_count - offset);
+            let slot = archive.acquire()?;
+            let copied = (|| unsafe {
+                let states = self.current_states.at(offset as usize * self.stride);
+                check(mgbfs_hash_run(
+                    self.archive_hash.0,
+                    states.cast(),
+                    self.archive_hashes.ptr.cast(),
+                    count,
+                    stream,
+                ))?;
+                check(cudaMemcpy2DAsync(
+                    slot.ptr,
+                    self.width,
+                    states,
+                    self.stride,
+                    self.width,
+                    count as usize,
+                    2,
+                    stream,
+                ))?;
+                check(cudaMemcpyAsync(
+                    slot.ptr.cast::<u8>().add(count as usize * self.width).cast(),
+                    self.archive_hashes.ptr,
+                    count as usize * 16,
+                    2,
+                    stream,
+                ))?;
+                check(cudaEventRecord(slot.ready, stream))
+            })();
+            if let Err(error) = copied {
+                unsafe { cudaStreamSynchronize(stream); }
+                return Err(error);
+            }
+            archive.submit(slot, u64::from(self.depth), count)?;
+            offset += count;
+        }
+        check(unsafe { cudaEventRecord(self.archive_done[self.current_bank].0, stream) })?;
+        archive.layer(u64::from(self.depth), u64::from(self.current_count))?;
+        self.archived_depth = Some(self.depth);
+        Ok(())
     }
     fn produce(&mut self) -> Result<()> {
         let mut parent_offset = 0u32;
@@ -424,6 +534,9 @@ impl MacroNativeBfs {
         Ok(())
     }
     fn settle_depth(&mut self, target: u32) -> Result<u32> {
+        check(unsafe {
+            cudaStreamWaitEvent(self.stream.0, self.archive_done[self.current_bank ^ 1].0, 0)
+        })?;
         self.next_state.put(&[FrontierState::default()])?;
         let slot_index = (target % self.effective_depth) as usize;
         let (source_states, source_hashes, source_count) =
@@ -532,6 +645,7 @@ impl MacroNativeBfs {
         self.depth = target;
         if count > 0 {
             std::mem::swap(&mut self.current_states, &mut self.next_states);
+            self.current_bank ^= 1;
             self.current_count = count;
             return Ok(true);
         }

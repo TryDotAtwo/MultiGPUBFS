@@ -58,3 +58,48 @@ fn native_macro_runtime_capacity_failure_is_sticky() {
     assert!(bfs.advance().is_err());
     assert!(bfs.advance().is_err());
 }
+
+#[test]
+fn native_macro_archive_is_complete_and_verifiable() {
+    use mgbfs_runtime::{archive::{verify, Extent}, pinned_archive::PinnedArchive};
+    use std::sync::{Arc, Mutex};
+    struct MemoryExtent(Arc<Mutex<Vec<u8>>>);
+    impl Extent for MemoryExtent {
+        fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
+            self.0.lock().unwrap().resize(bytes as usize, 0);
+            Ok(())
+        }
+        fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap()[offset as usize..offset as usize + bytes.len()]
+                .copy_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn sync(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
+    let config = MacroNativeConfig {
+        macro_depth: 3,
+        batch: 7,
+        layer_capacity: 64,
+        future_capacity_per_depth: 256,
+        prededup: true,
+        generation_variant: 1,
+    };
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let mut archive = PinnedArchive::new(
+        MemoryExtent(bytes.clone()),
+        1_000_000,
+        graph.start.len(),
+        [7; 32],
+        7,
+        32,
+    ).unwrap();
+    let mut bfs = MacroNativeBfs::new(&graph, [3; 16], config).unwrap();
+    loop {
+        bfs.archive_current(&mut archive).unwrap();
+        if !bfs.advance().unwrap() { break; }
+    }
+    archive.finish().unwrap();
+    let data = bytes.lock().unwrap();
+    verify(&data).unwrap();
+}
