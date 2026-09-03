@@ -4,10 +4,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import urllib.request
 
-SOURCE_COMMIT = '791c1d647a7f8f63d3ee87904590ee5b47c8c641'
+SOURCE_COMMIT = '7b7137a3ffcc26300799df9857a06d33ce945376'
 BASELINE_COMMIT = 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
 CUTLASS_COMMIT = 'ffa119a1255d78998536107466cc7097ecefa393'
 
@@ -58,8 +59,11 @@ def main():
         env.pop(key, None)
     (logs/'environment.json').write_text(json.dumps(dict(native_commit=SOURCE_COMMIT, baseline_commit=BASELINE_COMMIT,
         cutlass_commit=CUTLASS_COMMIT, measured_gpu=gpus[0], unused_gpu=gpus[1], rust='1.75.0',
-        native_capacity='m**6', archive=False, hash_seed=20260828, sampler='nvidia-smi 50ms process lifetime; includes warmup'), indent=2))
-    bench = load(source/'scripts/single_gpu_bench.py', 'bench')
+        native_capacity='min(m**6,32000000), fixed per worker; 1 GiB reserve', archive=False,
+        workloads=[16,20,24,28,32], minimum_seconds=60, hash_seed=20260828,
+        sampler='nvidia-smi 50ms process lifetime; includes warmup'), indent=2))
+    sys.path.insert(0, str(source/'scripts'))
+    bench = load(source/'scripts/large_gpu_bench.py', 'bench')
     bench.suite(source/'target/release/examples/single_gpu_bench', logs, env)
     run(['nvidia-smi', '-q'], 'gpu-environment-after')
 
