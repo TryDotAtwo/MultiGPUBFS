@@ -87,6 +87,25 @@ int mgbfs_owner_run(void* plan,const void* prev,uint32_t prev_count,const void* 
   void* accepted,MgbfsOwnerState* state,const void* candidates,const uint64_t* refs,const uint32_t* candidate_count,
   void* survivors,uint64_t* survivor_refs,uint32_t* survivor_count,uint64_t epoch,void* stream);
 void mgbfs_owner_destroy(void* plan);
+typedef struct MgbfsMacroSettleBytes {
+  uint64_t indices, selected, flags, count, scratch;
+} MgbfsMacroSettleBytes;
+typedef struct MgbfsMacroSettleState {
+  uint64_t last_epoch;
+  uint32_t count, fatal;
+} MgbfsMacroSettleState;
+/* One target-depth/bucket settlement. Future and each fixed-stride history run
+ * are sorted Hash128 arrays. The kernel rejects duplicates inside future and
+ * membership in every one of the 2K history runs, then densely compacts hashes
+ * and StateRefs. history is [history_layers][history_capacity]. No allocation
+ * or host synchronization occurs in run. fatal: 1 capacity, 2 epoch, 3 sort.
+ */
+int mgbfs_macro_settle_query(uint32_t candidate_capacity,uint32_t history_layers,uint32_t history_capacity,MgbfsMacroSettleBytes* out);
+int mgbfs_macro_settle_create(uint32_t candidate_capacity,uint32_t history_layers,uint32_t history_capacity,void** out,char* error,size_t error_capacity);
+int mgbfs_macro_settle_run(void* plan,const void* future,const uint64_t* refs,const uint32_t* count,
+  const void* history,const uint32_t* history_counts,void* survivors,uint64_t* survivor_refs,
+  uint32_t* survivor_count,MgbfsMacroSettleState* state,uint64_t epoch,void* stream);
+void mgbfs_macro_settle_destroy(void* plan);
 typedef struct MgbfsFrontierState { uint32_t count, fatal; } MgbfsFrontierState;
 /* Materialize one committed batch from a live source slot. References are local
  * source row indices, not global OriginRefs. Source stride is a multiple of 16.

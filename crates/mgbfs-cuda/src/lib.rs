@@ -20,6 +20,22 @@ pub mod ffi {
         pub fatal: u32,
         pub reserved: u32,
     }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct MacroSettleBytes {
+        pub indices: u64,
+        pub selected: u64,
+        pub flags: u64,
+        pub count: u64,
+        pub scratch: u64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct MacroSettleState {
+        pub last_epoch: u64,
+        pub count: u32,
+        pub fatal: u32,
+    }
     extern "C" {
         pub fn mgbfs_generate_query(
             n: u32,
@@ -76,6 +92,35 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_owner_destroy(plan: *mut c_void);
+        pub fn mgbfs_macro_settle_query(
+            candidate_capacity: u32,
+            history_layers: u32,
+            history_capacity: u32,
+            out: *mut MacroSettleBytes,
+        ) -> i32;
+        pub fn mgbfs_macro_settle_create(
+            candidate_capacity: u32,
+            history_layers: u32,
+            history_capacity: u32,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_macro_settle_run(
+            plan: *mut c_void,
+            future: *const c_void,
+            refs: *const u64,
+            count: *const u32,
+            history: *const c_void,
+            history_counts: *const u32,
+            survivors: *mut c_void,
+            survivor_refs: *mut u64,
+            survivor_count: *mut u32,
+            state: *mut MacroSettleState,
+            epoch: u64,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_macro_settle_destroy(plan: *mut c_void);
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;
         pub fn mgbfs_route_create(
             capacity: u32,
