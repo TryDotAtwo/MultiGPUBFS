@@ -571,6 +571,11 @@ the deterministic source key, not by physical first occurrence. One batch spans
 multiple parents and weights, so a longer arrival can precede a shorter one in
 the generated stream; first-row-wins would silently corrupt BFS distances.
 
+Hardware update: source `6f2ebaa` compiled and its weight-grouped S8 K3 macro
+generation check passed plain plus all four Compute Sanitizer tools on two
+distinct Tesla T4 devices. This closes only the primitive layout gate; the
+future owner and end-to-end macro runtime remain unmeasured.
+
 Implementation update: the sorted-input bounded CUDA owner leaf now implements
 Compare, stable compaction, credit checking and merge/copyback Commit using
 I/J/K-bounded scratch. Its independent two-T4 checks and four sanitizer modes

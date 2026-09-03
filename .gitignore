@@ -15,5 +15,6 @@ target/
 /.agents/
 /.codex/
 /runs/
+/artifacts/
 *.nsys-rep
 *.ncu-rep
