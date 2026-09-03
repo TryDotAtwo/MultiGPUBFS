@@ -27,3 +27,5 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_native_kaggle_gate.py
       - name: Verify allocation geometry without CUDA (not a hardware gate)
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/allocation_shape.cpp cuda/allocation_shape.cpp -o /tmp/allocation-shape && /tmp/allocation-shape
+      - name: Verify CUDA query report adapter without GPU
+        run: cargo +1.75.0 test --locked -p mgbfs-cuda --test allocation_report

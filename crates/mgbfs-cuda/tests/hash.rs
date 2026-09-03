@@ -4,6 +4,9 @@ use mgbfs_cuda::ffi::*;
 use std::ffi::{c_void, CStr};
 #[test]
 fn allocation_query_matches_frozen_hash_buffers_and_c_abi() {
+    let report = mgbfs_cuda::allocation::query_hash(9, 12).unwrap();
+    assert_eq!(report.allocations[2].bytes, 768);
+    assert!(mgbfs_cuda::allocation::query_hash(0, 12).is_err());
     assert_eq!(std::mem::size_of::<HashBytes>(), 40);
     let mut q = HashBytes::default();
     assert_eq!(unsafe { mgbfs_hash_query(9, 12, &mut q) }, 0);

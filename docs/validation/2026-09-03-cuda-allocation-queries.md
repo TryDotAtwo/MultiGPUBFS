@@ -51,6 +51,17 @@ The repeated gate increases generation timeout to900s, keeps all tests and all
 sanitizer modes, and keeps the exact same CUDA source commit. No algorithm
 change or skipped sanitizer is used to resolve this harness timeout.
 
+Rust report adapter (subsequent change): `mgbfs_cuda::allocation` exposes named
+`QueryResult` values directly consumable as the Generation/Hash entries in
+`RankQueries`. It transfers returned byte counts; it does not repeat geometry
+formulas, invent missing owner/transport groups or certify a full rank plan.
+The optional-CUDA wrappers call the native queries and propagate failures.
+Report conversion passed RED/GREEN with frozen 48/40-byte ABI fixtures and named
+plane sizes. Windows validation: 55 existing CPU tests +1 adapter test, two
+Python guards, and `cargo check -p mgbfs-cuda --features cuda --tests` passed.
+This type-check does not link/run CUDA. Kaggle v8 remains pinned to df42c51:
+it validates the same C++ backend, not the subsequently added Rust report wrapper.
+
 The shared C++ geometry fixture is added to CPU CI. CMake also builds a public
 query executable and registers a CTest test; the private Kaggle primitive gate
 runs it before CUDA test executables. No production multi-rank result is claimed.

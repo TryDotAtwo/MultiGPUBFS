@@ -4,6 +4,9 @@ use mgbfs_cuda::ffi::*;
 use std::ffi::{c_void, CStr};
 #[test]
 fn allocation_query_matches_frozen_geometry_and_c_abi() {
+    let report = mgbfs_cuda::allocation::query_generation(4, 6, 256, 2, 0).unwrap();
+    assert_eq!(report.allocations[2].bytes, 768);
+    assert!(mgbfs_cuda::allocation::query_generation(0, 6, 256, 2, 0).is_err());
     assert_eq!(std::mem::size_of::<GenerateBytes>(), 48);
     for variant in 0..5 {
         let mut q = GenerateBytes::default();

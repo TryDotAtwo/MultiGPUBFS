@@ -116,7 +116,7 @@ def main():
             if not line.startswith("{"):
                 continue
             entry = json.loads(line)
-            if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"]:
+            if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"] and entry["target"]["name"] != "allocation_report":
                 executables[entry["target"]["name"]] = entry["executable"]
         if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device", "ping_pong"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")

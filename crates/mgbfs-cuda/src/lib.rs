@@ -1,29 +1,9 @@
 //! Raw C ABI. CUDA is opt-in; there is no CPU implementation of these calls.
+pub mod allocation;
 #[cfg(feature = "cuda")]
 pub mod ffi {
+    pub use crate::allocation::{GenerateBytes, HashBytes};
     use std::ffi::{c_char, c_void};
-    #[repr(C)]
-    #[derive(Clone, Copy, Default, Debug)]
-    pub struct GenerateBytes {
-        pub generators: u64,
-        pub packed_parents: u64,
-        pub products_s32: u64,
-        pub workspace: u64,
-        pub k: u32,
-        pub stride: u32,
-        pub rows: u32,
-        pub columns: u32,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy, Default, Debug)]
-    pub struct HashBytes {
-        pub weights: u64,
-        pub offsets: u64,
-        pub partials_s32: u64,
-        pub workspace: u64,
-        pub stride: u32,
-        pub reserved: u32,
-    }
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
     pub struct FrontierState {

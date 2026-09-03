@@ -7,7 +7,7 @@ build = "build.rs"
 [features]
 cuda = []
 
-[dev-dependencies]
+[dependencies]
 mgbfs-core = { path = "../mgbfs-core" }
 
 [[example]]
