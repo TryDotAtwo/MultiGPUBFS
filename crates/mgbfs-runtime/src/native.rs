@@ -138,6 +138,11 @@ pub struct NativeBfs {
     failed: bool,
     generate: Plan,
     hash: Plan,
+    archive_hash: Plan,
+    archive_hashes: Buffer,
+    archive_done: [Event; 2],
+    archived_depth: Option<u32>,
+    archive_stream: Stream,
     route: Plan,
     owner: Plan,
     states: Buffer,
@@ -180,6 +185,7 @@ impl Drop for NativeBfs {
         unsafe {
             cudaStreamSynchronize(self.producer_stream.0);
             cudaStreamSynchronize(self.stream.0);
+            cudaStreamSynchronize(self.archive_stream.0);
         }
     }
 }
@@ -257,6 +263,8 @@ impl NativeBfs {
                 &mut gb,
             ))?;
             check(mgbfs_hash_query(width as u32, c, &mut hb))?;
+            let mut ahb = HashBytes::default();
+            check(mgbfs_hash_query(width as u32, cfg.batch, &mut ahb))?;
             check(mgbfs_route_query(c, &mut rb))?;
             let plan_bytes = [
                 gb.generators,
@@ -267,6 +275,10 @@ impl NativeBfs {
                 hb.offsets,
                 hb.partials_s32,
                 hb.workspace,
+                ahb.weights,
+                ahb.offsets,
+                ahb.partials_s32,
+                ahb.workspace,
                 rb.sorted,
                 rb.refs,
                 rb.indices,
@@ -284,6 +296,7 @@ impl NativeBfs {
                 + b as u128 * u128::from(cfg.bucket_capacity) * 16
                 + 2 * cap as u128 * stride as u128
                 + cap as u128 * 92
+                + u128::from(cfg.batch) * 16
                 + b as u128 * 36
                 + slots as u128 * 64
                 + u128::from(cfg.job_buckets) * 32
@@ -304,6 +317,9 @@ impl NativeBfs {
             let mut producer = std::ptr::null_mut();
             check(cudaStreamCreateWithFlags(&mut producer, 1))?;
             let producer_stream = Stream(producer);
+            let mut archive_lane = std::ptr::null_mut();
+            check(cudaStreamCreateWithFlags(&mut archive_lane, 1))?;
+            let archive_stream = Stream(archive_lane);
             let generate = Plan::new(mgbfs_generate_destroy, |p, e| {
                 mgbfs_generate_create_variant(
                     g.rows as u32,
@@ -329,6 +345,17 @@ impl NativeBfs {
                 )
             })?;
             let route = Plan::new(mgbfs_route_destroy, |p, e| mgbfs_route_create(c, p, e, 512))?;
+            let archive_hash = Plan::new(mgbfs_hash_destroy, |p, e| {
+                mgbfs_hash_create(
+                    width as u32,
+                    cfg.batch,
+                    limbs.as_ptr(),
+                    h.offsets.as_ptr(),
+                    p,
+                    e,
+                    512,
+                )
+            })?;
             let owner = Plan::new(mgbfs_bounded_owner_destroy, |p, _| {
                 mgbfs_bounded_owner_create(c, cfg.job_buckets, cfg.bucket_capacity, p)
             })?;
@@ -343,6 +370,11 @@ impl NativeBfs {
                 failed: false,
                 generate,
                 hash,
+                archive_hash,
+                archive_hashes: buffer(cfg.batch as usize * 16)?,
+                archive_done: [Event::new()?, Event::new()?],
+                archived_depth: None,
+                archive_stream,
                 route,
                 owner,
                 states: buffer(
@@ -458,6 +490,7 @@ impl NativeBfs {
                 &self.lengths,
                 &self.children,
                 &self.hashes,
+                &self.archive_hashes,
                 &self.origins,
                 &self.sorted,
                 &self.refs,
@@ -486,8 +519,8 @@ impl NativeBfs {
     pub fn frontier_extents(&self) -> usize {
         self.front.len()
     }
-    /// Copy bounded current-frontier runs into exclusive pinned slots. Disk
-    /// writes run independently; no disk wait is permitted before search ends.
+    /// Enqueue bounded D2H runs without a host wait. Disk consumes ready slots;
+    /// advance overlaps generation/owner work and retires each parent only after D2H.
     /// V1 archive hashes are recomputed on GPU in state order (not CPU hashed).
     pub fn archive_current(
         &mut self,
@@ -502,25 +535,28 @@ impl NativeBfs {
         }
         result
     }
-    fn archive_inner(&self, archive: &mut crate::pinned_archive::PinnedArchive) -> Result<()> {
+    fn archive_inner(&mut self, archive: &mut crate::pinned_archive::PinnedArchive) -> Result<()> {
         if archive.width != self.width {
             return Err("ARCHIVE_STATE_WIDTH".into());
         }
-        let s = self.stream.0;
-        for extent in &self.front {
+        if self.archived_depth == Some(self.depth) {
+            return Err("ARCHIVE_DEPTH_ALREADY_SUBMITTED".into());
+        }
+        let s = self.archive_stream.0;
+        for (fi, extent) in self.front.iter().enumerate() {
             let mut offset = 0;
             while offset < extent.count {
                 let n =
-                    u64::from(archive.rows.min(self.candidates)).min(extent.count - offset) as u32;
+                    u64::from(archive.rows.min(self.cfg.batch)).min(extent.count - offset) as u32;
                 let slot = archive.acquire()?;
                 let copied = (|| unsafe {
                     let states = self
                         .states
                         .at((extent.begin + offset) as usize * self.stride);
                     check(mgbfs_hash_run(
-                        self.hash.0,
+                        self.archive_hash.0,
                         states.cast(),
-                        self.hashes.p.cast(),
+                        self.archive_hashes.p.cast(),
                         n,
                         s,
                     ))?;
@@ -536,20 +572,29 @@ impl NativeBfs {
                     ))?;
                     check(cudaMemcpyAsync(
                         slot.ptr.cast::<u8>().add(n as usize * self.width).cast(),
-                        self.hashes.p,
+                        self.archive_hashes.p,
                         n as usize * 16,
                         2,
                         s,
-                    ))
+                    ))?;
+                    check(cudaEventRecord(slot.ready, s))
                 })();
-                // Also drain on a submission error before freeing pinned storage.
-                let drained = check(unsafe { cudaStreamSynchronize(s) });
-                copied.and(drained)?;
+                // A failed enqueue might not have recorded the slot event.
+                // Drain that error path before its pinned storage can be freed.
+                if let Err(error) = copied {
+                    unsafe {
+                        cudaStreamSynchronize(s);
+                    }
+                    return Err(error);
+                }
                 archive.submit(slot, u64::from(self.depth), n)?;
                 offset += u64::from(n);
             }
+            check(unsafe { cudaEventRecord(self.archive_done[fi].0, s) })?;
         }
-        archive.layer(u64::from(self.depth), u64::from(self.front_count))
+        archive.layer(u64::from(self.depth), u64::from(self.front_count))?;
+        self.archived_depth = Some(self.depth);
+        Ok(())
     }
     pub fn snapshot(&self) -> Result<Vec<Vec<u8>>> {
         if self.failed {
@@ -819,8 +864,12 @@ impl NativeBfs {
                     self.swap_producer_banks();
                     offset += u64::from(n);
                 }
-                // DENSE: child buffers no longer depend on this parent. Archive integration
-                // must additionally discharge D2H leases before calling this release.
+                // Both consumers must release this physical range. This dependency
+                // waits for DMA, never the disk worker. ring.put orders the head update
+                // after the event, before any subsequent owner reserve can reuse it.
+                if self.archived_depth == Some(self.depth) {
+                    check(cudaStreamWaitEvent(s, self.archive_done[fi].0, 0))?;
+                }
                 let mut ring = self.ring.one::<Ring>()?;
                 ring.head = parent.sequence + parent.count;
                 ring.descriptor_head = parent.descriptor + 1;

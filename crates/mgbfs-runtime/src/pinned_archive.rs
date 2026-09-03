@@ -1,7 +1,10 @@
 //! Fixed pinned-slot disk queue. Exhaustion is fatal, never producer backpressure.
 use crate::archive::{Archive, Extent};
 use mgbfs_core::Result;
-use mgbfs_cuda::native_owner::{cudaFreeHost, cudaHostAlloc};
+use mgbfs_cuda::{
+    ffi::{cudaEventCreateWithFlags, cudaEventDestroy},
+    native_owner::*,
+};
 use std::{
     ffi::c_void,
     sync::mpsc::{self, Receiver, SyncSender},
@@ -11,9 +14,10 @@ use std::{
 pub(crate) struct Slot {
     pub ptr: *mut c_void,
     pub bytes: usize,
+    pub ready: *mut c_void,
 }
 // Exclusive ownership moves between the GPU producer and disk worker. The
-// producer synchronizes D2H before sending; the worker returns only after write.
+// Worker waits for the recorded D2H event before reading, returns after write.
 unsafe impl Send for Slot {}
 impl Slot {
     fn new(bytes: usize) -> Result<Self> {
@@ -22,12 +26,23 @@ impl Slot {
         if status != 0 {
             return Err(format!("ARCHIVE_PIN_ALLOC_{status}"));
         }
-        Ok(Self { ptr, bytes })
+        let mut ready = std::ptr::null_mut();
+        let status = unsafe { cudaEventCreateWithFlags(&mut ready, 2) };
+        if status != 0 {
+            unsafe {
+                cudaFreeHost(ptr);
+            }
+            return Err(format!("ARCHIVE_EVENT_ALLOC_{status}"));
+        }
+        Ok(Self { ptr, bytes, ready })
     }
 }
 impl Drop for Slot {
     fn drop(&mut self) {
         unsafe {
+            // Also protects queued slots dropped after a disk/queue failure.
+            cudaEventSynchronize(self.ready);
+            cudaEventDestroy(self.ready);
             cudaFreeHost(self.ptr);
         }
     }
@@ -70,6 +85,11 @@ impl PinnedArchive {
                 .map_err(|_| "ARCHIVE_INIT_QUEUE")?;
         }
         let mut archive = Archive::new(extent, disk_bytes, width, config_digest)?;
+        let mut device = 0;
+        let status = unsafe { cudaGetDevice(&mut device) };
+        if status != 0 {
+            return Err(format!("ARCHIVE_GET_DEVICE_{status}"));
+        }
         let (tx, rx) = mpsc::sync_channel(
             slots
                 .checked_mul(2)
@@ -79,9 +99,17 @@ impl PinnedArchive {
         let worker = std::thread::Builder::new()
             .name("mgbfs-archive".into())
             .spawn(move || {
+                let status = unsafe { cudaSetDevice(device) };
+                if status != 0 {
+                    return Err(format!("ARCHIVE_SET_DEVICE_{status}"));
+                }
                 while let Ok(message) = rx.recv() {
                     match message {
                         Message::Records(slot, depth, count) => {
+                            let status = unsafe { cudaEventSynchronize(slot.ready) };
+                            if status != 0 {
+                                return Err(format!("ARCHIVE_D2H_{status}"));
+                            }
                             let n = count as usize * (width + 16);
                             let bytes =
                                 unsafe { std::slice::from_raw_parts(slot.ptr.cast::<u8>(), n) };

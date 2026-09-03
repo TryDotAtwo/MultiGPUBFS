@@ -164,6 +164,8 @@ mod calls {
         ) -> i32;
         pub fn cudaFreeHost(ptr: *mut c_void) -> i32;
         pub fn cudaEventQuery(event: *mut c_void) -> i32;
+        pub fn cudaGetDevice(device: *mut i32) -> i32;
+        pub fn cudaSetDevice(device: i32) -> i32;
         pub fn cudaEventSynchronize(event: *mut c_void) -> i32;
         pub fn cudaMemGetInfo(free: *mut usize, total: *mut usize) -> i32;
     }
