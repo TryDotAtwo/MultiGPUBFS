@@ -103,6 +103,20 @@ fn symmetric_groups_are_non_toy_matrix_workloads_with_small_generator_sets() {
     assert_eq!(s12.expected_max_unique_states, 479_001_600);
     assert_eq!(s12.generators.len(), 3);
     let macros = MacroGeneratorSet::compile(&s12, 10).unwrap();
+    let counts = |set: &MacroGeneratorSet| {
+        (1..=10)
+            .map(|weight| {
+                set.transitions
+                    .iter()
+                    .filter(|item| item.weight == weight)
+                    .count()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        counts(&macros),
+        vec![3, 6, 12, 24, 48, 90, 168, 314, 572, 1033]
+    );
     assert_eq!(macros.transitions.len(), 2_270);
     assert_eq!(macros.effective_depth, 10);
     assert_eq!(
@@ -110,6 +124,10 @@ fn symmetric_groups_are_non_toy_matrix_workloads_with_small_generator_sets() {
         "17fb246bf0e30a8a8c33616a2f8f5563bc7cca707a2d5c740137daf035018141"
     );
     let s8_macros = MacroGeneratorSet::compile(&s8, 10).unwrap();
+    assert_eq!(
+        counts(&s8_macros),
+        vec![3, 6, 12, 23, 44, 80, 142, 247, 411, 662]
+    );
     assert_eq!(s8_macros.transitions.len(), 1_630);
     assert_eq!(
         hex(s8_macros.digest_v1()),
