@@ -151,3 +151,19 @@ fn round_robin_sources_and_empty_rank_participation() {
     t.consume(b.seq).unwrap();
     assert_eq!(t.issue().unwrap().unwrap().source, 0);
 }
+
+#[test]
+fn macro_candidate_tickets_preserve_target_depth_across_ready_reordering() {
+    let mut t = Transport::new(2, 3, 8).unwrap();
+    t.offer_at(Candidate, 3, 0, 10, vec![0, 2]).unwrap();
+    t.offer_at(Candidate, 1, 1, 11, vec![2, 0]).unwrap();
+    let first = t.issue().unwrap().unwrap();
+    let second = t.issue().unwrap().unwrap();
+    assert_eq!((first.source, first.target_depth), (0, 3));
+    assert_eq!((second.source, second.target_depth), (1, 1));
+    ack(&mut t, first.seq);
+    ack(&mut t, second.seq);
+    t.consume(first.seq).unwrap();
+    t.consume(second.seq).unwrap();
+    assert!(t.offer_at(Candidate, 0, 0, 12, vec![0, 1]).is_err());
+}

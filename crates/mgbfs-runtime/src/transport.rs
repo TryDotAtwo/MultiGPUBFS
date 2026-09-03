@@ -15,6 +15,7 @@ pub struct Ticket {
     pub kind: Kind,
     pub source: usize,
     pub slot: u64,
+    pub target_depth: u32,
     pub counts: Vec<u64>,
 }
 struct Live {
@@ -33,6 +34,7 @@ pub struct Transport {
     work: Vec<u64>,
     cursor: [usize; 4],
     next: u64,
+    depth: u32,
     finalizing: bool,
     finished: bool,
 }
@@ -56,6 +58,7 @@ impl Transport {
         self.closed.fill(false);
         self.finalizing = false;
         self.finished = false;
+        self.depth = self.depth.checked_add(1).ok_or("DEPTH_OVERFLOW")?;
         Ok(())
     }
     pub fn new(ranks: usize, slots: usize, records: u64) -> Result<Self> {
@@ -76,14 +79,27 @@ impl Transport {
             work: vec![0; ranks],
             cursor: [0; 4],
             next: 0,
+            depth: 0,
             finalizing: false,
             finished: false,
         })
     }
     pub fn offer(&mut self, kind: Kind, source: usize, slot: u64, counts: Vec<u64>) -> Result<()> {
+        let target_depth = self.depth.checked_add(1).ok_or("DEPTH_OVERFLOW")?;
+        self.offer_at(kind, target_depth, source, slot, counts)
+    }
+    pub fn offer_at(
+        &mut self,
+        kind: Kind,
+        target_depth: u32,
+        source: usize,
+        slot: u64,
+        counts: Vec<u64>,
+    ) -> Result<()> {
         let k = index(kind)?;
         let total = counts.iter().try_fold(0u64, |sum, &n| sum.checked_add(n));
         if self.finalizing
+            || target_depth <= self.depth
             || source >= self.ranks
             || counts.len() != self.ranks
             || counts.iter().any(|&n| n > self.records)
@@ -113,6 +129,7 @@ impl Transport {
             kind,
             source,
             slot,
+            target_depth,
             counts,
         });
         Ok(())
@@ -201,6 +218,7 @@ impl Transport {
                 kind: Kind::Finalize,
                 source: 0,
                 slot: 0,
+                target_depth: self.depth,
                 counts: vec![0; self.ranks],
             };
             self.next = next;
