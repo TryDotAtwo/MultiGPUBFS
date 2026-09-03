@@ -15,6 +15,21 @@ def fixture():
             for tool in ["plain","memcheck","racecheck","initcheck","synccheck"]])
 
 class VerifyGateTests(unittest.TestCase):
+    def test_pipeline_inventory_cannot_pass_with_only_one_successful_test(self):
+        names = [
+            "failure_with_both_slots_in_flight_is_sticky_and_drains_on_drop",
+            "generation_variants_small_feedback",
+            "reused_slots_and_partial_tails_preserve_every_layer",
+        ]
+        log = "\n".join(f"test {name} ... ok" for name in names)
+        v.verify_inventory(log, "ping_pong", "racecheck")
+        with self.assertRaises(ValueError):
+            v.verify_inventory(log.splitlines()[0], "ping_pong", "racecheck")
+        with self.assertRaises(ValueError):
+            v.verify_inventory(log, "ping_pong", "plain")
+        with self.assertRaises(ValueError):
+            v.verify_inventory(log.replace(names[1], "unexpected_test"), "ping_pong", "racecheck")
+
     def test_full_matrix_requires_unique_results_for_two_distinct_t4_devices(self):
         s=fixture()
         entries=v.verify_summary(s,"a"*40)

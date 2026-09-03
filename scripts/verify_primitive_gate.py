@@ -4,6 +4,43 @@ import json
 import re
 from pathlib import Path
 
+def verify_inventory(text, test, tool):
+    """Frozen fixture names: a successful subset must not certify a full gate."""
+    expected = {
+        "generate": {
+            "allocation_query_matches_frozen_geometry_and_c_abi",
+            "invalid_variant_and_legacy_grid_are_rejected_before_output_write",
+            "large_batch_crosses_old_grid_y_boundary",
+            "tensor_generation_then_hash_matches_full_state_oracle_without_intermediate_host_sync",
+        },
+        "hash": {
+            "allocation_query_matches_frozen_hash_buffers_and_c_abi",
+            "tensor_hash_matches_cpu_for_padding_unsigned_bytes_seeds_and_tail_counts",
+        },
+        "route": {"cub_routes_all_128_bits_stably_and_optionally_deduplicates"},
+        "owner": {
+            "owner_merges_old_layers_and_cross_epoch_duplicates_then_poison_on_overflow",
+            "owner_accepts_max_hash_once_without_host_sync_and_rejects_bad_epochs_and_runs",
+        },
+        "pipeline": {"generated_routed_owner_survivors_match_full_state_layers_for_both_prededup_modes"},
+        "materialize": {"appends_in_source_order_and_rejects_whole_invalid_batches"},
+        "ping_pong": {
+            "failure_with_both_slots_in_flight_is_sticky_and_drains_on_drop",
+            "generation_variants_small_feedback",
+            "reused_slots_and_partial_tails_preserve_every_layer",
+        },
+        "dense_device": {"capacity_failure_poisoning_does_not_publish_a_partial_layer"},
+    }[test]
+    if test == "ping_pong":
+        if tool != "racecheck": expected.add("generation_variants_preserve_full_layers")
+        if tool == "plain": expected.add("full_u4_pipelined_sweep")
+    if test == "dense_device":
+        expected.add("gpu_feedback_small_full_depth_sanitizer_fixture" if tool == "racecheck"
+                     else "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers")
+    actual = re.findall(r"^test ([a-zA-Z0-9_]+) \.\.\. ok\s*$", text, re.MULTILINE)
+    if set(actual) != expected or len(actual) != len(expected):
+        raise ValueError("FIXTURE_INVENTORY_MISMATCH")
+
 def verify_summary(summary, source_commit):
     if not re.fullmatch(r"[0-9a-f]{40}",source_commit):
         raise ValueError("IMMUTABLE_SOURCE_REQUIRED")
@@ -51,7 +88,9 @@ def main():
     summary=json.loads((args.directory/"summary.json").read_text(encoding="utf-8"))
     entries=verify_summary(summary,args.source)
     for name,tool in entries:
-        verify_log((args.directory/name).read_text(encoding="utf-8"),tool)
+        log=(args.directory/name).read_text(encoding="utf-8")
+        verify_log(log,tool)
+        verify_inventory(log,name.split("-")[1],tool)
     query=(args.directory/"allocation-queries.log").read_text(encoding="utf-8")
     if "100% tests passed, 0 tests failed out of 1" not in query:
         raise ValueError("QUERY_CTEST_INCOMPLETE")
