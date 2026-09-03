@@ -2,6 +2,8 @@
 
 pub mod config;
 pub mod hash;
+pub mod macro_generators;
+pub mod macro_memory;
 pub mod matrix;
 pub mod memory;
 pub mod owner_job;

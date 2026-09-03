@@ -95,6 +95,8 @@ pub struct RunConfigV1 {
     pub owner_backend: OwnerBackend,
     pub generation_backend: GenerationBackend,
     pub hash_backend: HashBackend,
+    #[serde(default = "default_macro_depth")]
+    pub macro_depth: u32,
     pub parent_batch: u64,
     pub capacities: Capacities,
 }
@@ -106,9 +108,11 @@ impl RunConfigV1 {
         self.graph.validate()?;
         self.topology.validate()?;
         let c = &self.capacities;
+        let macro_generators =
+            crate::macro_generators::MacroGeneratorSet::compile(&self.graph, self.macro_depth)?;
         let generated = self
             .parent_batch
-            .checked_mul(self.graph.generators.len() as u64)
+            .checked_mul(macro_generators.transitions.len() as u64)
             .ok_or("CANDIDATE_COUNT_OVERFLOW")?;
         if self.parent_batch == 0 || generated > c.route_slot_records {
             return Err("ROUTE_SLOT_CAPACITY".into());
@@ -161,6 +165,7 @@ impl RunConfigV1 {
             owner_backend: OwnerBackend::CubSortMerge,
             generation_backend: GenerationBackend::CutlassU8Sm75V1,
             hash_backend: HashBackend::GemmU8P32x4V1,
+            macro_depth: 1,
             parent_batch: 16384,
             capacities: Capacities {
                 state_ring_records: 1 << 20,
@@ -176,4 +181,8 @@ impl RunConfigV1 {
             },
         })
     }
+}
+
+fn default_macro_depth() -> u32 {
+    1
 }

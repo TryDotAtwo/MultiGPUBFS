@@ -1,5 +1,6 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +107,45 @@ impl MatrixGroup {
         group.validate()?;
         Ok(group)
     }
+    /// Matrix realization of S_n using the inverse-closed set consisting of
+    /// an n-cycle, its inverse, and the transposition (0 1).
+    pub fn symmetric_permutation_matrices(n: usize) -> Result<Self> {
+        if n < 2 || n.checked_mul(n).unwrap_or(usize::MAX) > 33025 {
+            return Err("SYMMETRIC_DEGREE".into());
+        }
+        let expected_max_unique_states = (2..=n).try_fold(1u64, |value, factor| {
+            value
+                .checked_mul(factor as u64)
+                .ok_or("SYMMETRIC_ORDER_OVERFLOW")
+        })?;
+        let cycle: Vec<_> = (0..n).map(|i| (i + 1) % n).collect();
+        let inverse_cycle: Vec<_> = (0..n).map(|i| (i + n - 1) % n).collect();
+        let mut transposition: Vec<_> = (0..n).collect();
+        transposition.swap(0, 1);
+        let permutation_matrix = |permutation: &[usize]| {
+            let mut matrix = vec![0u8; n * n];
+            for (row, &column) in permutation.iter().enumerate() {
+                matrix[row * n + column] = 1;
+            }
+            matrix
+        };
+        let group = Self {
+            schema: 1,
+            rows: n,
+            cols: n,
+            modulus: 2,
+            start: identity(n),
+            generators: vec![
+                permutation_matrix(&cycle),
+                permutation_matrix(&inverse_cycle),
+                permutation_matrix(&transposition),
+            ],
+            inverse_map: vec![1, 0, 2],
+            expected_max_unique_states,
+        };
+        group.validate()?;
+        Ok(group)
+    }
     /// Independent exact oracle: full canonical state bytes, never hashes.
     pub fn exact_layers(&self, capacity: usize) -> Result<Vec<Vec<Vec<u8>>>> {
         self.validate()?;
@@ -133,6 +173,58 @@ impl MatrixGroup {
             seen.extend(next.iter().cloned());
             layers.push(next.into_iter().collect());
         }
+    }
+
+    /// Exact small-graph oracle for the weighted macro-transition runtime.
+    /// Future buckets are provisional until their numerical depth is settled.
+    pub fn exact_layers_with_macros(
+        &self,
+        macros: &crate::macro_generators::MacroGeneratorSet,
+        capacity: usize,
+    ) -> Result<Vec<Vec<Vec<u8>>>> {
+        self.validate()?;
+        if capacity == 0 || macros.transitions.is_empty() {
+            return Err("ORACLE_CAPACITY_OR_MACROS".into());
+        }
+        let mut settled = BTreeSet::new();
+        let mut pending = BTreeMap::<usize, BTreeSet<Vec<u8>>>::new();
+        pending.entry(0).or_default().insert(self.start.clone());
+        let mut layers = Vec::new();
+        while let Some((&depth, _)) = pending.first_key_value() {
+            let candidates = pending.remove(&depth).unwrap();
+            let layer: Vec<_> = candidates
+                .into_iter()
+                .filter(|state| !settled.contains(state))
+                .collect();
+            if layer.is_empty() {
+                continue;
+            }
+            if settled
+                .len()
+                .checked_add(layer.len())
+                .ok_or("ORACLE_CAPACITY")?
+                > capacity
+            {
+                return Err("ORACLE_CAPACITY".into());
+            }
+            while layers.len() < depth {
+                layers.push(Vec::new());
+            }
+            for state in &layer {
+                settled.insert(state.clone());
+                for transition in &macros.transitions {
+                    let target = depth
+                        .checked_add(transition.weight as usize)
+                        .ok_or("DEPTH_OVERFLOW")?;
+                    let child = multiply(&transition.matrix, state, self.rows, self.modulus);
+                    if !settled.contains(&child) {
+                        pending.entry(target).or_default().insert(child);
+                    }
+                }
+            }
+            layers.push(layer);
+        }
+        Ok(layers)
     }
 }
 

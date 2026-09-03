@@ -75,12 +75,45 @@ OwnerCommit окончательно принимает состояние. До
 tie-break `(source_rank, source_batch_seq, candidate_ordinal)`.
 При коллизии представитель может зависеть от admission order; trace сохраняется.
 
+### 2.1. Macro lookahead: exact weighted semantics
+
+`macro_depth >= 1` — задаваемая пользователем глубина раскрытия исходного
+набора генераторов. Искусственного верхнего лимита нет. До GPU allocation CPU
+строит shortlex-BFS произведений исходных генераторов длины
+`1..macro_depth`, удаляет identity и одинаковые результирующие матрицы, оставляя
+для каждой матрицы минимальный вес и каноническое исходное слово. Исчерпание
+конечной группы раньше requested depth нормально; overflow счётчиков, ABI,
+route slots либо memory plan — явный preflight fatal.
+
+Один stacked GEMM применяет весь скомпилированный набор к parent batch. Каждая
+запись несёт `target_depth = parent_depth + macro_weight`. Это не unweighted BFS
+по расширенному набору: будущие depth buckets являются provisional. Запись
+становится окончательным `OwnerCommit` только при settlement её глубины, после
+drain всех меньших depth. Поздний более короткий путь не мутирует принятую
+запись: он принимается в меньшем bucket, а оставшаяся более длинная копия
+погибает при settlement против уже принятого hash.
+
+При максимальном эффективном весе `Km` endpoint кандидата для глубины D не
+может иметь истинную глубину меньше `D-2*Km` (triangle bound). Поэтому exact
+settlement требует resident hash-window последних `2*Km` финальных слоёв либо
+эквивалентного полного visited store. V1 macro runtime выбирает первое. Все
+future buckets, `2*Km` hash arenas, macro matrices/weights/word directory,
+route slots и archive ranges входят в checked preflight и выделяются до depth0.
+`macro_depth=1` сохраняет прежнюю трёхслойную реализацию и является oracle для
+остальных значений.
+
 ## 3. Реестр решений
 
 Сохранено из согласованного: два фиксированных профиля DENSE/HASH_FIRST,
 pre-dedup ON/OFF, CUB_SORT_MERGE/BMMA_BUCKET, prefix ownership, flat buckets,
 потоковая материализация, StateRing, async обязательный архив, fail-fast,
 один semantic cut между глубинами, отсутствие fallback.
+
+Подтверждено 2026-09-03: пользователь выбирает неограниченный конфигурацией
+`macro_depth`; генераторы всех длин компилируются в один weighted список и
+исполняются одной stacked GEMM. Транзакционная sort/route/owner архитектура
+сохраняется. Future settlement и `2*Km` history window обязательны для точной
+метрики исходного графа и не могут быть заменены постфактум unweighted labels.
 
 Конкретизации v2:
 
@@ -113,7 +146,10 @@ pre-dedup ON/OFF, CUB_SORT_MERGE/BMMA_BUCKET, prefix ownership, flat buckets,
 |---|---|
 | D, S | n*n logical bytes; S=align_up(D,16) storage stride |
 | W, H, B | ranks; shards/rank; total microbuckets/rank |
-| P, C | parent microbatch; C=P*move_count |
+| P, C | parent microbatch; C=P*macro_move_count |
+| Kr, Km | requested macro depth и максимальный реально найденный вес |
+| Mmacro | число уникальных non-identity transition matrices веса <=Kr |
+| Qfuture | records общего provisional future-depth pool |
 | K | максимальный count одного bucket в любом resident hash layer |
 | L | capacity compact hash arena, L<=B*K |
 | R | state ring records, не capacity каждого из двух фронтиров |
@@ -129,7 +165,7 @@ bound, не основание аллоцировать столько запи�
 
 W,H,B/H — степени двойки. Owner/shard/bucket — successive high prefix bits
 числового Hash128; `logical_owner_to_rank` — проверенная permutation.
-Rank map, GPU UUID map, seed128, all capacities, backend policy/build digest,
+Rank map, GPU UUID map, seed128, `macro_depth`, all capacities, backend policy/build digest,
 timeouts, archive extents, optional fusion mode входят в canonical config.
 
 RunConfig wire: schema u32, затем ordered field-wise LE encoding, counted
@@ -521,6 +557,14 @@ Measured: two independent T4 primitive checks, generator variants, experimental
 unarchived one-GPU comparisons. Production architecture above is designed,
 not implemented; neither real multi-rank runtime nor production Pareto win exists.
 The original architecture-only revision made no kernel changes or GPU launches.
+
+Macro implementation update: core contract now compiles deterministic shortlex
+macro transitions with minimal weights, removes identity/duplicate matrices,
+includes `macro_depth` in RunConfig digest and route-slot preflight, and provides
+an independent provisional-bucket weighted oracle. CPU gates prove exact layer
+identity with the original BFS for macro depths 1,2,3,10 on U4(2..4). Native
+future-depth GPU settlement, `2*Km` hash ring and target-T4 performance remain
+unimplemented at this update and must not be described as runtime-green.
 
 Implementation update: the sorted-input bounded CUDA owner leaf now implements
 Compare, stable compaction, credit checking and merge/copyback Commit using
