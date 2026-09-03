@@ -4,7 +4,9 @@ import json
 import re
 from pathlib import Path
 
-def verify(path, source):
+def verify(path, source, marker="BOUNDED_OWNER_PASS"):
+    if marker not in ("BOUNDED_OWNER_PASS", "STATE_COMMIT_PASS"):
+        raise ValueError("Unknown test marker")
     s = json.loads((path / "summary.json").read_text(encoding="utf-8"))
     if not re.fullmatch(r"[0-9a-f]{40}", source) or s["source"] != source or s["status"] != "COMPLETE":
         raise ValueError("Incomplete or different source")
@@ -25,7 +27,7 @@ def verify(path, source):
         if check["log"] != name:
             raise ValueError("Log binding")
         log = (path / name).read_text(encoding="utf-8", errors="replace")
-        if not re.search(r"^BOUNDED_OWNER_PASS\s*$", log, re.M):
+        if not re.search(r"^" + re.escape(marker) + r"\s*$", log, re.M):
             raise ValueError("No test completion")
         if key[1] == "racecheck":
             summaries = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", log)
@@ -37,11 +39,12 @@ def verify(path, source):
                 raise ValueError("Sanitizer failure/incomplete")
     if seen != expected:
         raise ValueError("Incomplete check matrix")
-    return "VERIFIED_BOUNDED_OWNER_GATE 10/10"
+    return "VERIFIED_" + marker.removesuffix("_PASS") + "_GATE 10/10"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("path", type=Path)
     parser.add_argument("--source", required=True)
+    parser.add_argument("--marker", choices=("BOUNDED_OWNER_PASS", "STATE_COMMIT_PASS"), default="BOUNDED_OWNER_PASS")
     args = parser.parse_args()
-    print(verify(args.path, args.source))
+    print(verify(args.path, args.source, args.marker))

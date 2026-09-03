@@ -530,6 +530,12 @@ Upstream multi-source merge/job splitting, Rust scheduling and real reservation
 integration remain pending. This is not completion of production architecture
 or of the full-state/multi-rank gate in section 14.
 
+The owner is also connected to GPU state reservation and dense materialization;
+full layer sets for U4(2)/U4(3) passed with all sanitizer modes on two independent
+T4s in a CPU-fed verification harness. See [state commit evidence](validation/2026-09-03-state-commit.md).
+This does not implement production job preparation, reclamation/archive leases
+or the native multi-rank scheduler.
+
 Official runtime references checked 2026-09-03:
 [NCCL group ordering](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/groups.html),
 [CUDA programming model](https://docs.nvidia.com/cuda/cuda-programming-guide/index.html).

@@ -10,6 +10,15 @@ SPEC.loader.exec_module(MODULE)
 SOURCE = "0c27d0a491cc733bc6d87d688de8adc396db880c"
 
 class GateTests(unittest.TestCase):
+    def test_state_gate_requires_its_own_test_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            s = self.fixture(p)
+            (p / "summary.json").write_text(json.dumps(s))
+            with self.assertRaises(ValueError): MODULE.verify(p, SOURCE, marker="STATE_COMMIT_PASS")
+            for log in p.glob("*.log"):
+                log.write_text(log.read_text().replace("BOUNDED_OWNER_PASS", "STATE_COMMIT_PASS"))
+            self.assertEqual(MODULE.verify(p, SOURCE, marker="STATE_COMMIT_PASS"), "VERIFIED_STATE_COMMIT_GATE 10/10")
     def fixture(self, path):
         gpus = [dict(index=i, uuid=f"GPU-{i}", name="Tesla T4") for i in range(2)]
         summary = dict(source=SOURCE, status="COMPLETE", gpus=gpus, checks=[])
