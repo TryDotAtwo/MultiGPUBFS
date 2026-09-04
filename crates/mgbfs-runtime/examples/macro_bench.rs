@@ -52,6 +52,7 @@ fn execute() -> Result<()> {
         future_capacity_per_depth,
         prededup,
         generation_variant: env_u32("MGBFS_BENCH_GENERATION", 1),
+        untouched_vram_reserve_bytes: 1 << 30,
     };
     let seed = 20260828u128.to_le_bytes();
     // Initialize context and every native primitive without repeating the measured graph.
@@ -59,6 +60,7 @@ fn execute() -> Result<()> {
     let mut warm = MacroNativeBfs::new(&warm_graph, seed, MacroNativeConfig {
         macro_depth: macro_depth.min(3), batch: 8, layer_capacity: 8,
         future_capacity_per_depth: 64, prededup, generation_variant: config.generation_variant,
+        untouched_vram_reserve_bytes: 1 << 30,
     })?;
     while warm.advance()? {}
     drop(warm);
@@ -77,6 +79,7 @@ fn execute() -> Result<()> {
     let pinned_bytes = archive.pinned_bytes();
     let setup = Instant::now();
     let mut bfs = MacroNativeBfs::new(&g, seed, config)?;
+    let requested_device_bytes = bfs.requested_device_bytes();
     let (allocated, free) = used()?;
     if free < (1usize << 30) { return Err("UNTOUCHED_VRAM_RESERVE".into()); }
     let setup_seconds = setup.elapsed().as_secs_f64();
@@ -102,7 +105,7 @@ fn execute() -> Result<()> {
     if total != g.expected_max_unique_states { return Err(format!("CARDINALITY_{total}")); }
     archive.finish()?;
     let durable = start.elapsed().as_secs_f64();
-    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"macro_move_count\":{macro_move_count},\"batch\":{batch},\"layer_capacity\":{layer_capacity},\"future_capacity_per_depth\":{future_capacity_per_depth},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"archive_rows\":{archive_rows},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
+    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"macro_move_count\":{macro_move_count},\"batch\":{batch},\"layer_capacity\":{layer_capacity},\"future_capacity_per_depth\":{future_capacity_per_depth},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"requested_device_bytes\":{requested_device_bytes},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"archive_rows\":{archive_rows},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
     Ok(())
 }
 fn main() {

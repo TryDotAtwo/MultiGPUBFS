@@ -14,6 +14,7 @@ pub struct MacroNativeConfig {
     pub future_capacity_per_depth: u32,
     pub prededup: bool,
     pub generation_variant: u32,
+    pub untouched_vram_reserve_bytes: u64,
 }
 
 fn check(status: i32) -> Result<()> {
@@ -166,6 +167,7 @@ pub struct MacroNativeBfs {
     history_counts_gpu: Buffer,
     history_counts: Vec<u32>,
     future: Vec<FutureSlot>,
+    requested_device_bytes: u64,
 }
 
 impl MacroNativeBfs {
@@ -220,6 +222,124 @@ impl MacroNativeBfs {
         }
         let hash_contract = GemmHash::from_seed(width, seed)?;
         let limbs = hash_contract.limbs();
+        let mut generation_bytes = GenerateBytes::default();
+        check(unsafe {
+            mgbfs_generate_query(
+                graph.rows as u32,
+                moves,
+                graph.modulus as u32,
+                cfg.batch,
+                cfg.generation_variant,
+                &mut generation_bytes,
+            )
+        })?;
+        let mut hash_bytes = HashBytes::default();
+        check(unsafe { mgbfs_hash_query(width as u32, candidates, &mut hash_bytes) })?;
+        let mut archive_hash_bytes = HashBytes::default();
+        check(unsafe { mgbfs_hash_query(width as u32, cfg.batch, &mut archive_hash_bytes) })?;
+        let mut route_bytes = RouteBytes::default();
+        check(unsafe { mgbfs_route_query(max_records, &mut route_bytes) })?;
+        let mut materialize_bytes = MaterializeBytes::default();
+        check(unsafe {
+            mgbfs_materialize_query(
+                stride as u32,
+                max_records,
+                cfg.future_capacity_per_depth.max(cfg.layer_capacity),
+                &mut materialize_bytes,
+            )
+        })?;
+        let mut future_merge_bytes = FutureMergeBytes::default();
+        check(unsafe {
+            mgbfs_future_merge_query(
+                stride as u32,
+                cfg.future_capacity_per_depth,
+                candidates,
+                &mut future_merge_bytes,
+            )
+        })?;
+        let mut settle_bytes = MacroSettleBytes::default();
+        check(unsafe {
+            mgbfs_macro_settle_query(
+                cfg.future_capacity_per_depth,
+                history_layers,
+                cfg.layer_capacity,
+                &mut settle_bytes,
+            )
+        })?;
+        let queried = [
+            generation_bytes.generators,
+            generation_bytes.packed_parents,
+            generation_bytes.products_s32,
+            generation_bytes.workspace,
+            hash_bytes.weights,
+            hash_bytes.offsets,
+            hash_bytes.partials_s32,
+            hash_bytes.workspace,
+            archive_hash_bytes.weights,
+            archive_hash_bytes.offsets,
+            archive_hash_bytes.partials_s32,
+            archive_hash_bytes.workspace,
+            route_bytes.sorted,
+            route_bytes.refs,
+            route_bytes.indices,
+            route_bytes.selected,
+            route_bytes.flags,
+            route_bytes.scratch,
+            materialize_bytes.keys,
+            materialize_bytes.sorted,
+            materialize_bytes.indices,
+            materialize_bytes.order,
+            materialize_bytes.scratch,
+            future_merge_bytes.merged,
+            future_merge_bytes.unique,
+            future_merge_bytes.tags,
+            future_merge_bytes.unique_tags,
+            future_merge_bytes.indices,
+            future_merge_bytes.selected,
+            future_merge_bytes.selected_count,
+            future_merge_bytes.flags,
+            future_merge_bytes.states,
+            future_merge_bytes.state,
+            future_merge_bytes.scratch,
+            settle_bytes.indices,
+            settle_bytes.selected,
+            settle_bytes.flags,
+            settle_bytes.count,
+            settle_bytes.scratch,
+        ]
+        .into_iter()
+        .map(u128::from)
+        .sum::<u128>();
+        let external = 2u128 * u128::from(cfg.layer_capacity) * stride as u128
+            + u128::from(cfg.layer_capacity) * 16
+            + 8
+            + u128::from(candidates) * (stride as u128 + 16)
+            + u128::from(cfg.batch) * 16
+            + u128::from(max_records) * (8 + 16 + 8)
+            + 4
+            + u128::from(cfg.future_capacity_per_depth) * (16 + 8)
+            + 4
+            + 16
+            + u128::from(history_layers) * u128::from(cfg.layer_capacity) * 16
+            + u128::from(history_layers) * 4
+            + u128::from(effective)
+                * (u128::from(cfg.future_capacity_per_depth) * (stride as u128 + 16) + 8);
+        let requested = u64::try_from(
+            queried
+                .checked_add(external)
+                .ok_or("VRAM_PLAN_OVERFLOW")?,
+        )
+        .map_err(|_| "VRAM_PLAN_OVERFLOW")?;
+        let (mut free, mut total) = (0usize, 0usize);
+        check(unsafe { cudaMemGetInfo(&mut free, &mut total) })?;
+        if u128::from(requested) + u128::from(cfg.untouched_vram_reserve_bytes)
+            > free as u128
+        {
+            return Err(format!(
+                "VRAM_PREFLIGHT requested={requested} reserve={} free={free}",
+                cfg.untouched_vram_reserve_bytes
+            ));
+        }
         let generate = Plan::new(mgbfs_generate_destroy, |out, error| unsafe {
             mgbfs_generate_create_macro_variant(
                 graph.rows as u32,
@@ -339,6 +459,13 @@ impl MacroNativeBfs {
         check(unsafe { cudaEventRecord(archive_done[0].0, raw_stream) })?;
         check(unsafe { cudaEventRecord(archive_done[1].0, raw_stream) })?;
         check(unsafe { cudaStreamSynchronize(raw_stream) })?;
+        check(unsafe { cudaMemGetInfo(&mut free, &mut total) })?;
+        if free as u128 < u128::from(cfg.untouched_vram_reserve_bytes) {
+            return Err(format!(
+                "VRAM_RESERVE_AFTER_ALLOCATION reserve={} free={free}",
+                cfg.untouched_vram_reserve_bytes
+            ));
+        }
         Ok(Self {
             cfg,
             width,
@@ -379,7 +506,11 @@ impl MacroNativeBfs {
             history_counts_gpu,
             history_counts,
             future,
+            requested_device_bytes: requested,
         })
+    }
+    pub fn requested_device_bytes(&self) -> u64 {
+        self.requested_device_bytes
     }
     pub fn frontier_len(&self) -> u32 {
         self.current_count

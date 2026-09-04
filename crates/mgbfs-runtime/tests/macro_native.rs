@@ -21,6 +21,7 @@ fn native_macro_layers_equal_full_state_oracle_for_k_and_partial_batches() {
                         future_capacity_per_depth: 16_384,
                         prededup,
                         generation_variant: 1,
+                        untouched_vram_reserve_bytes: 0,
                     },
                 )
                 .unwrap();
@@ -52,11 +53,34 @@ fn native_macro_runtime_capacity_failure_is_sticky() {
         future_capacity_per_depth: 128,
         prededup: false,
         generation_variant: 1,
+        untouched_vram_reserve_bytes: 0,
     };
     config.future_capacity_per_depth = 1;
     let mut bfs = MacroNativeBfs::new(&graph, [0; 16], config).unwrap();
     assert!(bfs.advance().is_err());
     assert!(bfs.advance().is_err());
+}
+
+#[test]
+fn native_macro_vram_preflight_fails_before_runtime_buffers_are_allocated() {
+    let graph = MatrixGroup::unitriangular(3, 2).unwrap();
+    let result = MacroNativeBfs::new(
+        &graph,
+        [0; 16],
+        MacroNativeConfig {
+            macro_depth: 1,
+            batch: 8,
+            layer_capacity: 8,
+            future_capacity_per_depth: 16,
+            prededup: true,
+            generation_variant: 1,
+            untouched_vram_reserve_bytes: u64::MAX,
+        },
+    );
+    match result {
+        Err(error) => assert!(error.starts_with("VRAM_PREFLIGHT")),
+        Ok(_) => panic!("preflight unexpectedly accepted an impossible reserve"),
+    }
 }
 
 #[test]
@@ -84,6 +108,7 @@ fn native_macro_archive_is_complete_and_verifiable() {
         future_capacity_per_depth: 256,
         prededup: true,
         generation_variant: 1,
+        untouched_vram_reserve_bytes: 0,
     };
     let bytes = Arc::new(Mutex::new(Vec::new()));
     let mut archive = PinnedArchive::new(
