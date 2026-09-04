@@ -74,6 +74,7 @@ class StreamArchive(unittest.TestCase):
             def upload_file(self, **kwargs):
                 source = kwargs["path_or_fileobj"]
                 if hasattr(source, "read"):
+                    self.assert_buffered = isinstance(source, io.BufferedIOBase)
                     payload = source.read()
                     self.assert_payload = payload[:4] == b"PAR1" and payload[-4:] == b"PAR1"
                 self.calls.append(kwargs)
@@ -90,6 +91,7 @@ class StreamArchive(unittest.TestCase):
             self.assertTrue(all(call["revision"] == "run-r1" for call in api.calls))
             self.assertTrue(all(call["path_in_repo"].startswith("pending/run-r1/") for call in api.calls))
             self.assertTrue(api.assert_payload)
+            self.assertTrue(api.assert_buffered)
             self.assertFalse(list((Path(folder) / "slots").glob("slot-*.parquet")))
 
     def test_hub_upload_failure_never_emits_rank_commit(self):

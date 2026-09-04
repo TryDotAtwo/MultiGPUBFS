@@ -162,15 +162,18 @@ class HubStagingSink:
             self.flush()
 
     def _upload(self, slot, size, remote_path):
-        reader = _MemoryViewReader(self.slot_buffers[slot], size)
-        self.api.upload_file(
-            repo_id=self.repo_id,
-            repo_type="dataset",
-            revision=self.branch,
-            path_or_fileobj=reader,
-            path_in_repo=remote_path,
-            commit_message=f"Stage {remote_path}",
-        )
+        # huggingface_hub intentionally accepts BufferedIOBase, not a bare
+        # RawIOBase. The wrapper remains bounded and reads the live slot
+        # without making a second bytes-sized copy.
+        with io.BufferedReader(_MemoryViewReader(self.slot_buffers[slot], size)) as reader:
+            self.api.upload_file(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                revision=self.branch,
+                path_or_fileobj=reader,
+                path_in_repo=remote_path,
+                commit_message=f"Stage {remote_path}",
+            )
         return slot
 
     def _reap(self):
