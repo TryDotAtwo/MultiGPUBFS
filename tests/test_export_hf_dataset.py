@@ -33,6 +33,28 @@ def archive(path):
 
 
 class ExportDataset(unittest.TestCase):
+    def test_independent_runs_have_disjoint_catalog_paths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "rank0.mgbfsar1"
+            archive(source)
+            summary = root / "summary.json"
+            summary.write_text(
+                json.dumps({"status": "COMPLETE", "group_id": "fixture", "config_digest": bytes(range(32)).hex()}),
+                encoding="utf-8",
+            )
+            paths = []
+            for run_id in ("s8-k1-seed0", "s10-k1-seed0"):
+                output = root / run_id
+                subprocess.run(
+                    [sys.executable, str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", run_id,
+                     "--summary", str(summary), "--archive", f"0={source}", "--output", str(output)],
+                    check=True,
+                )
+                manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+                paths.append({item["path"] for item in manifest["files"]})
+            self.assertTrue(paths[0].isdisjoint(paths[1]))
+
     def test_exports_every_unique_state_and_replay_metadata(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -49,12 +71,13 @@ class ExportDataset(unittest.TestCase):
                  "--summary", str(summary), "--archive", f"0={source}", "--output", str(output)],
                 check=True,
             )
-            states = pq.read_table(output / "states" / "rank-00000-part-00000.parquet")
+            state_path = next((output / "states").glob("*.parquet"))
+            states = pq.read_table(state_path)
             self.assertEqual(states.num_rows, 2)
             self.assertEqual(states.column("depth").to_pylist(), [0, 0])
             self.assertEqual(states.column("state").to_pylist(), [bytes([1, 0, 0, 1]), bytes([1, 1, 0, 1])])
             self.assertEqual(states.column("hash128_le").to_pylist(), [bytes(range(16)), bytes(range(16, 32))])
-            layers = pq.read_table(output / "layers" / "part-00000.parquet").to_pylist()
+            layers = pq.read_table(output / "layers").to_pylist()
             self.assertEqual(layers[0]["unique_states"], 2)
             manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["total_unique_states"], 2)
@@ -68,7 +91,6 @@ class ExportDataset(unittest.TestCase):
             self.assertEqual(verification["status"], "PASS")
             self.assertEqual(verification["unique_states"], 2)
 
-            state_path = output / "states" / "rank-00000-part-00000.parquet"
             rows = states.to_pylist()
             rows[1]["state"] = rows[0]["state"]
             pq.write_table(states.from_pylist(rows, states.schema), state_path, compression="zstd")

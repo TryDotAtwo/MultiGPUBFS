@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import struct
 from collections import defaultdict
 from pathlib import Path
@@ -87,8 +88,8 @@ def frames(path):
 
 
 class StateShards:
-    def __init__(self, root, rows_per_shard):
-        self.root, self.limit = root, rows_per_shard
+    def __init__(self, root, rows_per_shard, run_id):
+        self.root, self.limit, self.run_id = root, rows_per_shard, run_id
         self.rows, self.part, self.files = [], 0, []
         root.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +102,7 @@ class StateShards:
         if not self.rows:
             return
         rank = self.rows[0]["rank"]
-        path = self.root / f"rank-{rank:05d}-part-{self.part:05d}.parquet"
+        path = self.root / f"{self.run_id}-rank-{rank:05d}-part-{self.part:05d}.parquet"
         pq.write_table(pa.Table.from_pylist(self.rows, STATE_SCHEMA), path, compression="zstd", row_group_size=min(self.limit, 131072))
         self.files.append(path)
         self.rows.clear()
@@ -138,6 +139,8 @@ def main():
     args = parser.parse_args()
     if args.rows_per_shard <= 0 or args.output.exists():
         raise ValueError("EXPORT_OUTPUT_OR_SHARD_SIZE")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", args.run_id):
+        raise ValueError("RUN_ID_PATH")
     summary = json.loads(args.summary.read_text(encoding="utf-8"))
     if summary.get("status") != "COMPLETE":
         raise ValueError("RUN_NOT_COMPLETE")
@@ -160,7 +163,7 @@ def main():
     digests = defaultdict(hashlib.sha256)
     state_files = []
     for rank, path in archives:
-        writer = StateShards(args.output / "states", args.rows_per_shard)
+        writer = StateShards(args.output / "states", args.rows_per_shard, args.run_id)
         ordinal = 0
         for depth, width, count, payload, archive_config_digest in frames(path):
             if archive_config_digest != config_digest:
@@ -196,13 +199,15 @@ def main():
                        **{name: layer_metrics.get(str(depth), {}).get(name) for name in numeric_metrics},
                        metrics_json=json.dumps(layer_metrics.get(str(depth), {}), sort_keys=True, separators=(",", ":")))
                   for depth in sorted(counts)]
-    write_table(args.output / "layers" / "part-00000.parquet", layer_rows, LAYER_SCHEMA)
+    layer_path = args.output / "layers" / f"{args.run_id}.parquet"
+    write_table(layer_path, layer_rows, LAYER_SCHEMA)
     total = sum(counts.values()); maximum = max(counts)
     run_row = dict(run_id=args.run_id, group_id=group_id, config_digest=config_digest,
                    status="COMPLETE", total_unique_states=total, max_depth=maximum,
                    summary_json=json.dumps(summary, sort_keys=True, separators=(",", ":")))
-    write_table(args.output / "runs" / "part-00000.parquet", [run_row], RUN_SCHEMA)
-    all_files = state_files + [args.output / "layers" / "part-00000.parquet", args.output / "runs" / "part-00000.parquet"]
+    run_path = args.output / "runs" / f"{args.run_id}.parquet"
+    write_table(run_path, [run_row], RUN_SCHEMA)
+    all_files = state_files + [layer_path, run_path]
     manifest = dict(schema="MGBFS_HF_DATASET_V1", run_id=args.run_id, group_id=group_id,
                     config_digest=config_digest, total_unique_states=total, max_depth=maximum,
                     files=[dict(path=str(path.relative_to(args.output)).replace("\\", "/"), bytes=path.stat().st_size,

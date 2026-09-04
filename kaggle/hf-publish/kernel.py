@@ -104,6 +104,12 @@ def main():
     if verification.get("status") != "PASS" or verification.get("unique_states") != 3628800 or not verification.get("hash_state_pairs_verified"):
         raise RuntimeError("VERIFICATION_GATE")
 
+    catalog_upload = root / "catalog-upload"
+    run(
+        [sys.executable, "scripts/prepare_hf_catalog_upload.py", str(parquet), str(catalog_upload)],
+        "prepare-catalog-upload", source,
+    )
+
     try:
         from huggingface_hub import HfApi
     except ImportError:
@@ -112,10 +118,10 @@ def main():
     commit = HfApi(token=token).upload_folder(
         repo_id=REPO_ID,
         repo_type="dataset",
-        folder_path=str(parquet),
+        folder_path=str(catalog_upload),
         path_in_repo="",
         commit_message="Publish Kaggle-regenerated verified S10 Parquet dataset",
-        allow_patterns=["manifest.json", "verification.json", "layers/*.parquet", "runs/*.parquet", "states/*.parquet"],
+        allow_patterns=["manifests/*.json", "verification/*.json", "layers/*.parquet", "runs/*.parquet", "states/*.parquet"],
     )
     result = {
         "schema": 1,
