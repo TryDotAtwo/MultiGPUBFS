@@ -1,5 +1,5 @@
 use mgbfs_core::{matrix::MatrixGroup, Result};
-use mgbfs_cuda::{ffi::{cudaSetDevice,mgbfs_nccl_unique_id},native_owner::cudaMemGetInfo};
+use mgbfs_cuda::{ffi::mgbfs_nccl_unique_id,native_owner::{cudaMemGetInfo,cudaSetDevice}};
 use mgbfs_runtime::{archive::FileExtent,distributed_native::{DistributedConfig,DistributedNativeBfs},pinned_archive::PinnedArchive};
 use sha2::{Digest,Sha256};
 use std::{path::Path,time::{Duration,Instant}};
