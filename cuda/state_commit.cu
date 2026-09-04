@@ -61,7 +61,11 @@ __global__ void guard_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,const ui
 __global__ void count_layer(const MgbfsOwnerControl*o,uint32_t*n){if(!o->error)*n+=o->survivors;}
 __global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
   if(r->fatal)return;
-  if(!n||!e->ready||n>e->count||e->sequence!=r->head||
+  if(!r->capacity){atomicCAS(&r->fatal,0u,17u);return;}
+  uint64_t gap=e->sequence>=r->head?e->sequence-r->head:UINT64_MAX;
+  uint64_t wrap=r->capacity-r->head%r->capacity;
+  bool fifo=e->sequence==r->head||(gap==wrap&&e->begin==0);
+  if(!n||!e->ready||n>e->count||!fifo||
      e->descriptor!=r->descriptor_head||e->padding[1]<e->descriptor||
      e->padding[1]>=r->descriptor_tail||e->begin!=e->sequence%r->capacity){
     atomicCAS(&r->fatal,0u,17u);return;

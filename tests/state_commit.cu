@@ -62,6 +62,15 @@ static void retire_prefix(){
   Device<MgbfsStateExtent> next(1);
   req(mgbfs_state_reserve(ring.p,o.p,next.p,nullptr)==0,"reuse enqueue");ck(cudaDeviceSynchronize());
   auto n=next.get()[0];req(!o.get()[0].error&&n.begin==0&&n.count==3,"reuses retired prefix");
+
+  // Two live FIFO extents straddle the physical end. Retiring the first
+  // descriptor must also make the one-record wrap padding reclaimable.
+  ring.put({{6,14,0,2,10,4,0,0,0}});
+  MgbfsStateExtent before{};before.sequence=6;before.begin=6;before.count=3;before.granted_rows=3;before.ready=1;before.padding[1]=0;extent.put({before});
+  req(mgbfs_state_retire_dense_prefix(ring.p,extent.p,3,nullptr)==0,"retire before wrap");ck(cudaDeviceSynchronize());
+  MgbfsStateExtent after{};after.sequence=10;after.begin=0;after.count=4;after.descriptor=1;after.granted_rows=4;after.ready=1;after.padding[1]=1;extent.put({after});
+  req(mgbfs_state_retire_dense_prefix(ring.p,extent.p,1,nullptr)==0,"retire after wrap");ck(cudaDeviceSynchronize());
+  r=ring.get()[0];e=extent.get()[0];req(!r.fatal&&r.head==11&&e.sequence==11&&e.count==3,"wrap padding reclaimed");
 }
 // Verification harness only: CPU prepares candidates/descriptors and reads
 // snapshots. It is NOT a production CPU data plane or performance benchmark.
