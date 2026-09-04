@@ -1,16 +1,19 @@
-"""Regenerate, verify, and publish the complete S10 BFS dataset from Kaggle."""
+"""Live S8 FIFO -> bounded Parquet -> HF staging -> atomic main promotion gate."""
 import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "e209340050a23f470a845f931e8a493ee59695cb"
+SOURCE = "2b55531"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 RUST = "1.75.0"
@@ -24,13 +27,10 @@ def load(path, name):
 
 
 def main():
-    root = Path(tempfile.mkdtemp(prefix="mgbfs-hf-publish-", dir="/tmp"))
-    logs = Path("/kaggle/working/hf-publish")
+    root = Path(tempfile.mkdtemp(prefix="mgbfs-hf-stream-", dir="/tmp"))
+    logs = Path("/kaggle/working/hf-stream")
     logs.mkdir()
-    try:
-        token = UserSecretsClient().get_secret("HF_TOKEN")
-    except Exception as error:
-        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_UNAVAILABLE") from error
+    token = UserSecretsClient().get_secret("HF_TOKEN")
     if not token:
         raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
     helper = root / "gate.py"
@@ -42,6 +42,7 @@ def main():
     gate = load(helper, "gate")
     env = os.environ.copy()
     env["PATH"] = "/usr/local/cuda/bin:" + env.get("PATH", "")
+    env["HF_TOKEN"] = token
 
     def run(command, name, cwd=root, timeout=1800):
         return gate.run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
@@ -51,87 +52,119 @@ def main():
         "inventory",
     )
     gpus = gate.validate_gpus(inventory)
-    if shutil.disk_usage(root).free < 12 * 1024**3:
-        raise RuntimeError("DISK_PREFLIGHT_LT_12_GIB")
-
+    if shutil.disk_usage(root).free < 4 * 1024**3:
+        raise RuntimeError("DISK_PREFLIGHT_LT_4_GIB")
     source, cutlass = root / "source", root / "cutlass"
     gate.checkout("https://github.com/TryDotAtwo/MultiGPUBFS.git", SOURCE, source, env, logs, "source")
     gate.checkout("https://github.com/NVIDIA/cutlass.git", CUTLASS, cutlass, env, logs, "cutlass")
-    env["CARGO_HOME"] = str(root / "cargo")
-    env["RUSTUP_HOME"] = str(root / "rustup")
+    env["CARGO_HOME"], env["RUSTUP_HOME"] = str(root / "cargo"), str(root / "rustup")
     installer = root / "rustup.sh"
     urllib.request.urlretrieve("https://sh.rustup.rs", installer)
     run(["sh", str(installer), "-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", RUST], "rust-install")
     env["PATH"] = str(root / "cargo/bin") + ":" + env["PATH"]
     env["CUDA_VISIBLE_DEVICES"] = "0"
-    build = source / "build/hf-publish"
+    build = source / "build/hf-stream"
     env["MGBFS_CUDA_LIB_DIR"] = str(build)
     env["LD_LIBRARY_PATH"] = str(build) + ":/usr/local/cuda/lib64:" + env.get("LD_LIBRARY_PATH", "")
-    run(
-        ["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-         "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT=" + str(cutlass)],
-        "cmake", source,
-    )
+    run([
+        "cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT=" + str(cutlass),
+    ], "cmake", source)
     run(["cmake", "--build", str(build), "--parallel", "2"], "cuda-build", source)
-    run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda", "--example", "macro_bench"], "rust-build", source)
-
-    archive = root / "s10.mgbfsar1"
-    env.update(MGBFS_BENCH_CAPACITY="3628800", MGBFS_FUTURE_CAPACITY="3628800",
-               MGBFS_ARCHIVE_ROWS="16384", MGBFS_ARCHIVE_SLOTS="286")
-    raw_text = run(
-        [str(source / "target/release/examples/macro_bench"), "s10", "262144", "1", "1", "verify", str(archive)],
-        "native-s10", source,
-    )
-    raw = next(json.loads(line) for line in reversed(raw_text.splitlines()) if line.startswith("{"))
-    raw_path = root / "run-summary-raw.json"
-    raw_path.write_text(json.dumps(raw), encoding="utf-8")
-    summary = root / "run-summary.json"
-    run(
-        [sys.executable, "scripts/prepare_hf_run_summary.py", str(raw_path), str(summary),
-         "--source-commit", SOURCE, "--hardware", gpus[0]["name"],
-         "--run-id", "s10-native-k1-seed-20260828"],
-        "prepare-summary", source,
-    )
-    parquet = root / "parquet"
-    run(
-        [sys.executable, "scripts/export_hf_dataset.py", "--run-id", "s10-native-k1-seed-20260828",
-         "--summary", str(summary), "--archive", "0=" + str(archive), "--output", str(parquet),
-         "--rows-per-shard", "100000"],
-        "export-parquet", source,
-    )
-    run([sys.executable, "scripts/verify_hf_dataset.py", str(parquet), "--sort-memory-records", "500000"],
-        "verify-parquet", source, timeout=3600)
-    verification = json.loads((parquet / "verification.json").read_text())
-    if verification.get("status") != "PASS" or verification.get("unique_states") != 3628800 or not verification.get("hash_state_pairs_verified"):
-        raise RuntimeError("VERIFICATION_GATE")
-
-    catalog_upload = root / "catalog-upload"
-    run(
-        [sys.executable, "scripts/prepare_hf_catalog_upload.py", str(parquet), str(catalog_upload)],
-        "prepare-catalog-upload", source,
-    )
-
+    run([
+        "cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
+        "--example", "macro_bench",
+    ], "rust-build", source)
     try:
-        from huggingface_hub import HfApi
+        import huggingface_hub  # noqa: F401
     except ImportError:
         run([sys.executable, "-m", "pip", "install", "--quiet", "huggingface_hub>=0.34"], "install-hf")
-        from huggingface_hub import HfApi
-    commit = HfApi(token=token).upload_folder(
-        repo_id=REPO_ID,
-        repo_type="dataset",
-        folder_path=str(catalog_upload),
-        path_in_repo="",
-        commit_message="Publish Kaggle-regenerated verified S10 Parquet dataset",
-        allow_patterns=["manifests/*.json", "verification/*.json", "layers/*.parquet", "runs/*.parquet", "states/*.parquet"],
-    )
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_id = f"s8-native-stream-{stamp}"
+    branch = f"staging-{run_id}"
+    fifo = root / "rank-0.mgbfsar1.pipe"
+    os.mkfifo(fifo)
+    staging = root / "rank-0-slots"
+    stream_stdout = logs / "streamer.stdout.log"
+    stream_stderr = logs / "streamer.stderr.log"
+    stream_command = [
+        sys.executable, "scripts/stream_hf_archive.py", "--run-id", run_id, "--group-id", "s8",
+        "--rank", "0", "--input", str(fifo), "--staging-dir", str(staging), "--repo-id", REPO_ID,
+        "--branch", branch, "--rows-per-shard", "10000", "--slot-count", "3",
+        "--max-slot-bytes", str(16 * 1024**2), "--create-branch",
+    ]
+    with stream_stdout.open("wb") as stdout, stream_stderr.open("wb") as stderr:
+        streamer = subprocess.Popen(stream_command, cwd=source, env=env, stdout=stdout, stderr=stderr)
+        time.sleep(1)
+        if streamer.poll() is not None:
+            raise RuntimeError("STREAMER_EARLY_EXIT")
+        env.update(
+            MGBFS_BENCH_CAPACITY="40320",
+            MGBFS_FUTURE_CAPACITY="40320",
+            MGBFS_ARCHIVE_ROWS="4096",
+            MGBFS_ARCHIVE_SLOTS="4",
+            MGBFS_ARCHIVE_STREAM="1",
+        )
+        try:
+            raw_text = run([
+                str(source / "target/release/examples/macro_bench"), "s8", "32768", "1", "1",
+                "verify", str(fifo),
+            ], "native-s8-stream", source)
+        except Exception:
+            streamer.terminate()
+            streamer.wait(timeout=30)
+            raise
+        try:
+            stream_code = streamer.wait(timeout=900)
+        except subprocess.TimeoutExpired:
+            streamer.kill()
+            streamer.wait()
+            raise RuntimeError("STREAMER_TIMEOUT")
+    if stream_code != 0:
+        raise RuntimeError(f"STREAMER_FAILED_{stream_code}: {stream_stderr.read_text(errors='replace')[-4000:]}")
+    raw = next(json.loads(line) for line in reversed(raw_text.splitlines()) if line.startswith("{"))
+    commit_path = staging / "rank-00000-stream-commit.json"
+    rank_commit = json.loads(commit_path.read_text())
+    if raw.get("total_unique_states") != 40320 or rank_commit.get("total_unique_states") != 40320:
+        raise RuntimeError("S8_CARDINALITY_GATE")
+    promotion_text = run([
+        sys.executable, "scripts/promote_hf_stream.py", "--repo-id", REPO_ID, "--world-size", "1",
+        str(commit_path),
+    ], "promote", source)
+    promotion = json.loads(promotion_text.splitlines()[-1])
+    if promotion.get("status") != "COMPLETE" or not promotion.get("commit_url"):
+        raise RuntimeError("PROMOTION_GATE")
+
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+    expected = {
+        f"runs/{run_id}.json",
+        f"layers/{run_id}.parquet",
+        f"verification/{run_id}.json",
+    }
+    files = set(api.list_repo_files(repo_id=REPO_ID, repo_type="dataset"))
+    if not expected.issubset(files):
+        raise RuntimeError("PUBLISHED_METADATA_MISSING")
+    final_states = {
+        f"states/{run_id}-{Path(item['path']).name}" for item in rank_commit["files"]
+    }
+    if not final_states.issubset(files):
+        raise RuntimeError("PUBLISHED_STATE_SHARDS_MISSING")
+    api.delete_branch(repo_id=REPO_ID, repo_type="dataset", branch=branch)
     result = {
-        "schema": 1,
-        "status": "COMPLETE",
+        "schema": "MGBFS_KAGGLE_HF_STREAM_GATE_V1",
+        "status": "PASS",
         "source": SOURCE,
         "dataset": REPO_ID,
-        "commit_url": str(commit),
-        "verification": verification,
-        "parquet_bytes": sum(path.stat().st_size for path in parquet.rglob("*") if path.is_file()),
+        "run_id": run_id,
+        "commit_url": promotion["commit_url"],
+        "total_unique_states": 40320,
+        "state_shards": len(final_states),
+        "peak_live_slots": rank_commit["peak_live_slots"],
+        "slot_count": rank_commit["slot_count"],
+        "search_complete_seconds": raw["search_complete_seconds"],
+        "durable_run_commit_seconds": raw["durable_run_commit_seconds"],
         "gpu": gpus[0],
     }
     (logs / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
