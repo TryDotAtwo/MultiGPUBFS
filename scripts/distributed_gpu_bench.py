@@ -65,6 +65,11 @@ def suite(native,source,out,env):
     bootstrap.unlink(missing_ok=True)
   row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save();return row
  try:
+  if env.get('MGBFS_DIAGNOSTIC')=='1':
+   env=dict(env,MGBFS_TRACE_DEPTHS='1')
+   row=run('native',8,1024,'diagnostic')
+   report['status']=row['status']
+   return report
   expected=None;n=10;configs={};choices={'native':[16384,65536,262144],'cayleypy':[65536,262144,1048576]}
   for backend,batches in choices.items():
    trials=[]
