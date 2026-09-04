@@ -19,7 +19,7 @@ def run_group(command,out,label,env,timeout=7200):
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
  with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi:
-  sampler=subprocess.Popen(['nvidia-smi','--query-gpu=timestamp,index,uuid,memory.used,utilization.gpu,utilization.memory,clocks.sm,power.draw','--format=csv,noheader,nounits','-lms','50'],stdout=smi,stderr=subprocess.STDOUT)
+  sampler=subprocess.Popen(['stdbuf','-oL','nvidia-smi','--query-gpu=timestamp,index,uuid,memory.used,utilization.gpu,utilization.memory,clocks.sm,power.draw','--format=csv,noheader,nounits','-lms','50'],stdout=smi,stderr=subprocess.STDOUT)
   try:
    process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT);started=time.monotonic()
    while process.poll() is None:
