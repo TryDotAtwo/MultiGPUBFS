@@ -27,6 +27,12 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="mgbfs-hf-publish-", dir="/tmp"))
     logs = Path("/kaggle/working/hf-publish")
     logs.mkdir()
+    try:
+        token = UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception as error:
+        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_UNAVAILABLE") from error
+    if not token:
+        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
     helper = root / "gate.py"
     urllib.request.urlretrieve(
         "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
@@ -98,12 +104,6 @@ def main():
     if verification.get("status") != "PASS" or verification.get("unique_states") != 3628800 or not verification.get("hash_state_pairs_verified"):
         raise RuntimeError("VERIFICATION_GATE")
 
-    try:
-        token = UserSecretsClient().get_secret("HF_TOKEN")
-    except Exception as error:
-        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_UNAVAILABLE") from error
-    if not token:
-        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
     try:
         from huggingface_hub import HfApi
     except ImportError:
