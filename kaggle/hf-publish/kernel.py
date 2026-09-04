@@ -91,7 +91,7 @@ def main():
     stream_command = [
         sys.executable, "scripts/stream_hf_archive.py", "--run-id", run_id, "--group-id", "s8",
         "--rank", "0", "--input", str(fifo), "--staging-dir", str(staging), "--repo-id", REPO_ID,
-        "--branch", branch, "--rows-per-shard", "10000", "--slot-count", "3",
+        "--branch", branch, "--rows-per-shard", "10000", "--slot-count", "8",
         "--max-slot-bytes", str(16 * 1024**2), "--create-branch",
     ]
     with stream_stdout.open("wb") as stdout, stream_stderr.open("wb") as stderr:
