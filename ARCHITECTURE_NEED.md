@@ -680,11 +680,17 @@ finalize_stream
 
 ### 7.2. `GenerateHash`
 
-Логический layout всегда parent-major:
+Логическая идентичность candidate всегда parent-major:
 
 ```text
 candidate_ordinal = parent_local * move_count + move_id.
 ```
+
+Физический DENSE output K=1 может совпадать с этим порядком. Weighted macro
+producer имеет право писать `[move][parent]`, чтобы переходы одинакового веса
+сразу образовывали плотные диапазоны без транспонирования полных состояний.
+Такое размещение обязано нести явное отображение в логический ordinal/OriginRef;
+физический индекс сам по себе не является semantic identity.
 
 Ровно `parent_count * move_count` обязанностей создаются один раз.
 

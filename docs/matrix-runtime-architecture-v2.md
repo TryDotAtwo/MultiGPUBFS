@@ -309,7 +309,11 @@ No promise that unrelated streams have independent SM or bandwidth resources.
 ## 8. Generate, sort, route
 
 Generate P parents at a time; all G children of each parent are generated.
-Logical child ordinal parent_local*G+move. Matrix accumulation requires
+Logical child identity is `(parent_local, move_id)`. The DENSE K=1 wire path
+may encode it as `parent_local*G+move_id`; the weighted macro producer instead
+materializes `[move][parent]` so equal-weight transition runs remain contiguous
+without a full-state transpose. `OriginRef` carries the explicit pair, so the
+physical order is never used as semantic identity. Matrix accumulation requires
 `n*(q-1)^2 <= INT32_MAX`; hash requires `D*255^2 <= INT32_MAX`.
 Zero pad canonical input, never hash uninitialized storage.
 
