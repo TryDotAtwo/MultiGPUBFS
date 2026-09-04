@@ -75,15 +75,15 @@ def main():
     schedule += [(mode, f"measure-{i}") for i in range(5) for mode in (False, True)]
     for archive_enabled, phase in schedule:
         archive_prefix = root / "archive"
+        label = f"s11-{'archive' if archive_enabled else 'no-archive'}-{phase}"
         run_env = dict(base_env)
         if not archive_enabled:
             run_env["MGBFS_BENCH_SKIP_ARCHIVE"] = "1"
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
             str(source / "target/release/examples/distributed_bench"), "s11", str(BATCH),
-            str(root / "bootstrap"), str(archive_prefix), "{RANK_OUT}",
+            str(root / f"bootstrap-{label}"), str(archive_prefix), "{RANK_OUT}",
         ]
-        label = f"s11-{'archive' if archive_enabled else 'no-archive'}-{phase}"
         row = bench.run_group(command, logs, label, run_env, timeout=7200)
         if row["status"] != "COMPLETE" or sum(row["layer_sizes"]) != CARDINALITY:
             raise RuntimeError(f"A_B_GATE_{label}")
