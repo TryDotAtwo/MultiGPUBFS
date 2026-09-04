@@ -112,6 +112,7 @@ def main():
         if any(process.poll() is not None for process in streamers):
             raise RuntimeError("STREAMER_EARLY_EXIT")
 
+        sys.path.insert(0, str(source / "scripts"))
         bench = load(source / "scripts/distributed_gpu_bench.py", "bench")
         run_env = dict(
             env,
