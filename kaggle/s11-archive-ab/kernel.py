@@ -70,7 +70,7 @@ def main():
     # roughly eighty large transactions per rank.
     base_env = dict(env, MGBFS_CAPACITY_MODE="equal_global",
                     MGBFS_BENCH_CAPACITY="8000000", MGBFS_FUTURE_CAPACITY="8000000",
-                    MGBFS_ARCHIVE_ROWS=str(BATCH), MGBFS_ARCHIVE_SLOTS="80")
+                    MGBFS_ARCHIVE_ROWS=str(BATCH), MGBFS_ARCHIVE_SLOTS="128")
     rows = []
     # Alternation includes a warm-up pair and prevents all measurements of one
     # mode from occupying a different thermal/runtime phase.
