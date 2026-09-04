@@ -28,9 +28,10 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="mgbfs-symmetric-catalog-", dir="/tmp"))
     logs = Path("/kaggle/working/symmetric-catalog")
     logs.mkdir()
-    token = UserSecretsClient().get_secret("HF_TOKEN")
-    if not token:
-        raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
+    try:
+        token = UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception:
+        token = None
     helper = root / "gate.py"
     urllib.request.urlretrieve(
         "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
@@ -71,7 +72,8 @@ def main():
     except ImportError:
         run([sys.executable, "-m", "pip", "install", "--quiet", "huggingface_hub>=0.34"], "install-hf")
         from huggingface_hub import HfApi
-    api = HfApi(token=token)
+    api = HfApi(token=token) if token else None
+    pending_root = logs / "catalog-upload"
     results = []
     for group, cardinality in GROUPS:
         work = root / group
@@ -101,13 +103,19 @@ def main():
         staging = work / "catalog-upload"
         run([sys.executable, "scripts/prepare_hf_catalog_upload.py", str(package), str(staging)],
             f"catalog-{group}", source)
-        commit = api.upload_folder(repo_id=REPO_ID, repo_type="dataset", folder_path=str(staging), path_in_repo="",
-                                   commit_message=f"Add verified exhaustive {group.upper()} BFS graph")
+        commit = None
+        if api:
+            commit = api.upload_folder(repo_id=REPO_ID, repo_type="dataset", folder_path=str(staging), path_in_repo="",
+                                       commit_message=f"Add verified exhaustive {group.upper()} BFS graph")
+        else:
+            shutil.copytree(staging, pending_root, dirs_exist_ok=True)
         results.append({"group": group, "cardinality": cardinality, "run_id": run_id,
                         "search_seconds": raw["search_complete_seconds"], "durable_seconds": raw["durable_run_commit_seconds"],
                         "dataset_commit": str(commit), "verification": verification})
         shutil.rmtree(work)
-    result = {"schema": 1, "status": "COMPLETE", "source": SOURCE, "dataset": REPO_ID,
+    result = {"schema": 1, "status": "COMPLETE" if api else "COMPUTE_COMPLETE_UPLOAD_PENDING",
+              "upload_blocker": None if api else "KAGGLE_SECRET_HF_TOKEN_UNAVAILABLE",
+              "source": SOURCE, "dataset": REPO_ID,
               "gpu": gpus[0], "runs": results}
     (logs / "summary.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result), flush=True)
