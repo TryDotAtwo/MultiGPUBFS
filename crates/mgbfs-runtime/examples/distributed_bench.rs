@@ -116,7 +116,10 @@ fn run() -> Result<()> {
         Ok("0,1") | Err(_) => [0, 1],
         _ => return Err("RANK_MAP".into()),
     };
-    let description=format!("distributed-native-v1;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_future={declared_future};rank_capacity={capacity};rank_future={future};rank={rank};map={rank_map:?};seed=20260828");
+    // Archive config identity is cluster-wide.  Rank is already carried by the
+    // stream frames; including it here prevents otherwise compatible rank
+    // archives from being atomically combined.
+    let description=format!("distributed-native-v1;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_future={declared_future};global_capacity={};global_future={};map={rank_map:?};seed=20260828", capacity_plan.global_records, future_plan.global_records);
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let disk_bytes = graph
