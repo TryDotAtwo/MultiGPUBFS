@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -6,9 +7,16 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("prepare_hf_run_summary", ROOT / "scripts/prepare_hf_run_summary.py")
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
 
 
 class PrepareRunSummary(unittest.TestCase):
+    def test_accepts_multi_digit_symmetric_degrees(self):
+        self.assertEqual(MODULE.group_metadata("s10")["state_bytes"], 100)
+        self.assertEqual(MODULE.group_metadata("s12")["state_bytes"], 144)
+
     def test_derives_symmetric_group_metadata_without_s10_constants(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -8,8 +8,11 @@ from pathlib import Path
 
 
 def group_metadata(spec):
-    if re.fullmatch(r"s[2-9][0-9]*", spec):
-        degree = int(spec[1:])
+    match = re.fullmatch(r"s([0-9]+)", spec)
+    if match:
+        degree = int(match.group(1))
+        if degree < 2:
+            raise ValueError("GROUP_DEGREE")
         return {
             "group_id": f"S_{degree} cycle-inverse-transposition matrix Cayley graph over F2",
             "state_bytes": degree * degree,
