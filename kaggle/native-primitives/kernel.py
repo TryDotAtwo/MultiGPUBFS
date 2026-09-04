@@ -14,7 +14,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "076d6fe4f99181f1e17150d9196b70abe6bd5b32"
+SOURCE_COMMIT = "5fe0899262939a98938e46c8bbc761fdc638ec2d"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
@@ -149,7 +149,7 @@ def main():
         run(["cmake", "--build", str(build), "--parallel", "2"], cwd=source, env=env, logs=logs, name="cuda-build")
         run(["ctest", "--test-dir", str(build), "-R", "^(allocation-query|route-query)$", "--output-on-failure"], cwd=source, env=env, logs=logs, name="allocation-queries")
         artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-cuda", "--features", "cuda", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-test-build")
-        artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--test", "ping_pong", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
+        artifacts += "\n" + run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda", "--test", "dense_device", "--test", "ping_pong", "--test", "macro_native", "--no-run", "--message-format=json"], cwd=source, env=env, logs=logs, name="gpu-stepper-build")
         executables = {}
         for line in artifacts.splitlines():
             if not line.startswith("{"):
@@ -157,7 +157,7 @@ def main():
             entry = json.loads(line)
             if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"] and entry["target"]["name"] != "allocation_report":
                 executables[entry["target"]["name"]] = entry["executable"]
-        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "future_merge", "macro_settle", "dense_device", "ping_pong"}:
+        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "future_merge", "macro_settle", "dense_device", "ping_pong", "macro_native"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
         inventory = run([executables["dense_device"], "--list"], cwd=source, env=env, logs=logs, name="dense-device-test-inventory")
         for fixture in ("gpu_feedback_small_full_depth_sanitizer_fixture", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers"):
