@@ -81,3 +81,37 @@ fn abi_query_sizes_become_named_rank_ledger_inputs_without_recounting() {
     assert!(HashBytes { reserved: 1, ..h }.report().is_err());
     assert!(HashBytes::default().report().is_err());
 }
+
+#[test]
+fn macro_stage_reports_preserve_every_queried_plane() {
+    let materialize = MaterializeBytes {
+        keys: 80,
+        sorted: 80,
+        indices: 40,
+        order: 40,
+        scratch: 256,
+    };
+    let report = materialize.report(10).unwrap();
+    assert_eq!(report.allocations.len(), 5);
+    assert_eq!(report.allocations.iter().map(|x| x.bytes).sum::<u64>(), 496);
+    assert!(materialize.report(11).is_err());
+
+    let future = FutureMergeBytes {
+        merged: 160,
+        unique: 96,
+        tags: 80,
+        unique_tags: 48,
+        indices: 40,
+        selected: 40,
+        selected_count: 4,
+        flags: 10,
+        states: 384,
+        state: 8,
+        scratch: 256,
+    };
+    let report = future.report(64, 6, 4).unwrap();
+    assert_eq!(report.allocations.len(), 11);
+    assert_eq!(report.allocations.iter().map(|x| x.bytes).sum::<u64>(), 1126);
+    assert!(future.report(64, 6, 5).is_err());
+    assert!(FutureMergeBytes::default().report(64, 6, 4).is_err());
+}

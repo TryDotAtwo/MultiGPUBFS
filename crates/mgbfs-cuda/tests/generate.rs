@@ -27,6 +27,47 @@ fn allocation_query_matches_frozen_geometry_and_c_abi() {
         assert_eq!((q.products_s32, q.rows), (0, 0));
     }
 }
+
+#[test]
+fn materialize_and_future_merge_queries_cover_every_internal_allocation() {
+    assert_eq!(std::mem::size_of::<MaterializeBytes>(), 40);
+    let mut materialize = MaterializeBytes::default();
+    assert_eq!(
+        unsafe { mgbfs_materialize_query(64, 1024, 4096, &mut materialize) },
+        0
+    );
+    assert_eq!((materialize.keys, materialize.sorted), (8192, 8192));
+    assert_eq!((materialize.indices, materialize.order), (4096, 4096));
+    assert!(materialize.scratch > 0);
+    assert_ne!(
+        unsafe { mgbfs_materialize_query(63, 1024, 4096, &mut materialize) },
+        0
+    );
+    assert_eq!(materialize, MaterializeBytes::default());
+
+    assert_eq!(std::mem::size_of::<FutureMergeBytes>(), 88);
+    let mut future = FutureMergeBytes::default();
+    assert_eq!(
+        unsafe { mgbfs_future_merge_query(64, 2048, 1024, &mut future) },
+        0
+    );
+    assert_eq!((future.merged, future.tags), (49_152, 24_576));
+    assert_eq!((future.unique, future.unique_tags), (32_768, 16_384));
+    assert_eq!(
+        (future.indices, future.selected, future.flags),
+        (12_288, 12_288, 3072)
+    );
+    assert_eq!(
+        (future.selected_count, future.states, future.state),
+        (4, 131_072, 8)
+    );
+    assert!(future.scratch > 0);
+    assert_ne!(
+        unsafe { mgbfs_future_merge_query(64, u32::MAX, 1, &mut future) },
+        0
+    );
+    assert_eq!(future, FutureMergeBytes::default());
+}
 struct Buffer(*mut c_void);
 impl Buffer {
     fn new(bytes: usize) -> Self {

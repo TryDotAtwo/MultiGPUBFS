@@ -26,6 +26,30 @@ pub struct HashBytes {
     pub reserved: u32,
 }
 #[repr(C)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct MaterializeBytes {
+    pub keys: u64,
+    pub sorted: u64,
+    pub indices: u64,
+    pub order: u64,
+    pub scratch: u64,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct FutureMergeBytes {
+    pub merged: u64,
+    pub unique: u64,
+    pub tags: u64,
+    pub unique_tags: u64,
+    pub indices: u64,
+    pub selected: u64,
+    pub selected_count: u64,
+    pub flags: u64,
+    pub states: u64,
+    pub state: u64,
+    pub scratch: u64,
+}
+#[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct RouteBytes {
     pub sorted: u64,
@@ -108,6 +132,85 @@ impl HashBytes {
                 ("offsets", self.offsets),
                 ("partials_s32", self.partials_s32),
                 ("workspace", self.workspace),
+            ],
+        ))
+    }
+}
+impl MaterializeBytes {
+    pub fn report(self, capacity: u32) -> Result<QueryResult> {
+        let count = u64::from(capacity);
+        if capacity == 0
+            || (self.keys, self.sorted, self.indices, self.order)
+                != (count * 8, count * 8, count * 4, count * 4)
+            || self.scratch == 0
+        {
+            return Err("INVALID_MATERIALIZE_QUERY".into());
+        }
+        Ok(report(
+            format!("mgbfs_materialize_query/v1;capacity={capacity}"),
+            [
+                ("keys", self.keys),
+                ("sorted", self.sorted),
+                ("indices", self.indices),
+                ("order", self.order),
+                ("scratch", self.scratch),
+            ],
+        ))
+    }
+}
+impl FutureMergeBytes {
+    pub fn report(self, stride: u32, future: u32, incoming: u32) -> Result<QueryResult> {
+        let total = u64::from(future)
+            .checked_add(u64::from(incoming))
+            .ok_or("INVALID_FUTURE_MERGE_QUERY")?;
+        if stride == 0
+            || stride % 16 != 0
+            || future == 0
+            || incoming == 0
+            || total > i32::MAX as u64
+            || (
+                self.merged,
+                self.unique,
+                self.tags,
+                self.unique_tags,
+                self.indices,
+                self.selected,
+                self.selected_count,
+                self.flags,
+                self.states,
+                self.state,
+            ) != (
+                total * 16,
+                u64::from(future) * 16,
+                total * 8,
+                u64::from(future) * 8,
+                total * 4,
+                total * 4,
+                4,
+                total,
+                u64::from(future) * u64::from(stride),
+                8,
+            )
+            || self.scratch == 0
+        {
+            return Err("INVALID_FUTURE_MERGE_QUERY".into());
+        }
+        Ok(report(
+            format!(
+                "mgbfs_future_merge_query/v1;stride={stride};future={future};incoming={incoming}"
+            ),
+            [
+                ("merged", self.merged),
+                ("unique", self.unique),
+                ("tags", self.tags),
+                ("unique_tags", self.unique_tags),
+                ("indices", self.indices),
+                ("selected", self.selected),
+                ("selected_count", self.selected_count),
+                ("flags", self.flags),
+                ("states", self.states),
+                ("state", self.state),
+                ("scratch", self.scratch),
             ],
         ))
     }

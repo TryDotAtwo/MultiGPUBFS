@@ -39,14 +39,21 @@ __global__ void append_states(const uint4* source,const uint4* hashes,const uint
   }
 }
 __global__ void publish_append(const uint32_t* count,MgbfsFrontierState* state){if(!state->fatal)state->count+=*count;}
+extern "C" int mgbfs_materialize_query(uint32_t stride,uint32_t capacity,uint32_t frontier,MgbfsMaterializeBytes* out){
+  if(!out)return 1;*out={};
+  if(!stride||stride%16||!capacity||capacity>INT32_MAX||!frontier)return 1;
+  MgbfsMaterializeBytes q{};q.keys=uint64_t(capacity)*8;q.sorted=uint64_t(capacity)*8;
+  q.indices=uint64_t(capacity)*4;q.order=uint64_t(capacity)*4;
+  size_t scratch=0;if(cub::DeviceRadixSort::SortPairs(nullptr,scratch,(uint64_t*)nullptr,(uint64_t*)nullptr,(uint32_t*)nullptr,(uint32_t*)nullptr,int(capacity))!=cudaSuccess)return 2;
+  q.scratch=scratch;*out=q;return 0;
+}
 extern "C" int mgbfs_materialize_create(uint32_t stride,uint32_t capacity,uint32_t frontier,void** out,char* error,size_t error_capacity){
   if(!out)return 1;*out=nullptr;
   try{
-    if(!stride||stride%16||!capacity||capacity>INT32_MAX||!frontier)throw std::runtime_error("MATERIALIZE_CAPACITY_OR_STRIDE");
+    MgbfsMaterializeBytes q{};if(mgbfs_materialize_query(stride,capacity,frontier,&q))throw std::runtime_error("MATERIALIZE_CAPACITY_OR_STRIDE");
     auto p=std::make_unique<MaterializePlan>();p->stride=stride;p->capacity=capacity;p->frontier=frontier;
-    checked(cudaMalloc(&p->keys,size_t(capacity)*8));checked(cudaMalloc(&p->sorted,size_t(capacity)*8));
-    checked(cudaMalloc(&p->indices,size_t(capacity)*4));checked(cudaMalloc(&p->order,size_t(capacity)*4));
-    checked(cub::DeviceRadixSort::SortPairs(nullptr,p->scratch_bytes,p->keys,p->sorted,p->indices,p->order,int(capacity)));
+    p->scratch_bytes=q.scratch;checked(cudaMalloc(&p->keys,q.keys));checked(cudaMalloc(&p->sorted,q.sorted));
+    checked(cudaMalloc(&p->indices,q.indices));checked(cudaMalloc(&p->order,q.order));
     checked(cudaMalloc(&p->scratch,p->scratch_bytes));*out=p.release();return 0;
   }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}
 }

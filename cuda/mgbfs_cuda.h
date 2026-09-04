@@ -28,8 +28,17 @@ typedef struct MgbfsHashBytes {
   uint64_t weights, offsets, partials_s32, workspace;
   uint32_t stride, reserved;
 } MgbfsHashBytes;
+typedef struct MgbfsMaterializeBytes {
+  uint64_t keys, sorted, indices, order, scratch;
+} MgbfsMaterializeBytes;
+typedef struct MgbfsFutureMergeBytes {
+  uint64_t merged, unique, tags, unique_tags, indices, selected;
+  uint64_t selected_count, flags, states, state, scratch;
+} MgbfsFutureMergeBytes;
 int mgbfs_generate_query(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,uint32_t variant,MgbfsGenerateBytes* out);
 int mgbfs_hash_query(uint32_t bytes,uint32_t capacity,MgbfsHashBytes* out);
+int mgbfs_materialize_query(uint32_t stride,uint32_t capacity,uint32_t frontier,MgbfsMaterializeBytes* out);
+int mgbfs_future_merge_query(uint32_t stride,uint32_t future,uint32_t incoming,MgbfsFutureMergeBytes* out);
 int mgbfs_hash_run(void* plan,const uint8_t* input,uint32_t* output,uint32_t count,void* stream);
 void mgbfs_hash_destroy(void* plan);
 int mgbfs_generate_create(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,const uint8_t* generators,void** out,char* error,size_t error_capacity);

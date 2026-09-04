@@ -10,11 +10,14 @@ conversion and independent Parquet replay verifier all completed. These timings
 include the expensive per-layer verify snapshots and are correctness/catalog
 timings, not the tuned CayleyPy A/B benchmark.
 
-| Group | Unique states | Layers | Max depth | Search seconds | Durable seconds | Verification manifest SHA256 |
-|---|---:|---:|---:|---:|---:|---|
-| S8 | 40,320 | 29 | 28 | 0.077758579 | 0.287817267 | `a61265f13e0518e41d966ab825c32c0bbd6bd20da81f2b11f8cef1ca180d8290` |
-| S9 | 362,880 | 37 | 36 | 0.436525946 | 0.628297510 | `ae1a8e04929fe09204077b76c38a5077beae5f9ad68d5b09ce6056fd2b988406` |
-| S10 | 3,628,800 | 46 | 45 | 6.137391299 | 6.337196300 | `c70481bcaa087d69997a9c2c4ccb9f2230514335b5fa2f5ca4905edc97183fdf` |
+| Group | Unique states | Layers | Search s | Durable s | CUDA allocation | Pinned RAM | Disk extent | Verification manifest SHA256 |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| S8 | 40,320 | 29 | 0.077758579 | 0.287817267 | 642,646,016 B | 374,865,920 B | 70,334,464 B | `a61265f13e0518e41d966ab825c32c0bbd6bd20da81f2b11f8cef1ca180d8290` |
+| S9 | 362,880 | 37 | 0.436525946 | 0.628297510 | 915,275,776 B | 454,524,928 B | 102,308,224 B | `ae1a8e04929fe09204077b76c38a5077beae5f9ad68d5b09ce6056fd2b988406` |
+| S10 | 3,628,800 | 46 | 6.137391299 | 6.337196300 | 3,350,069,248 B | 543,555,584 B | 488,049,664 B | `c70481bcaa087d69997a9c2c4ccb9f2230514335b5fa2f5ca4905edc97183fdf` |
+
+Maximum depths were 28, 36 and 45 respectively. CUDA context usage was
+112,066,560 bytes in every run and is separate from the allocation column.
 
 Every run reports `hash_state_pairs_verified=true`. The catalog uploader is
 append-only and the verified Parquet package remains in Kaggle output under

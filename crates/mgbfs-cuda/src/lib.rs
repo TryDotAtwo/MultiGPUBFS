@@ -3,7 +3,9 @@ pub mod allocation;
 pub mod native_owner;
 #[cfg(feature = "cuda")]
 pub mod ffi {
-    pub use crate::allocation::{GenerateBytes, HashBytes, RouteBytes};
+    pub use crate::allocation::{
+        FutureMergeBytes, GenerateBytes, HashBytes, MaterializeBytes, RouteBytes,
+    };
     use std::ffi::{c_char, c_void};
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
@@ -46,6 +48,18 @@ pub mod ffi {
             out: *mut GenerateBytes,
         ) -> i32;
         pub fn mgbfs_hash_query(bytes: u32, capacity: u32, out: *mut HashBytes) -> i32;
+        pub fn mgbfs_materialize_query(
+            stride: u32,
+            capacity: u32,
+            frontier: u32,
+            out: *mut MaterializeBytes,
+        ) -> i32;
+        pub fn mgbfs_future_merge_query(
+            stride: u32,
+            future: u32,
+            incoming: u32,
+            out: *mut FutureMergeBytes,
+        ) -> i32;
         pub fn mgbfs_materialize_create(
             stride: u32,
             candidate_capacity: u32,
@@ -157,24 +171,47 @@ pub mod ffi {
         ) -> i32;
         pub fn mgbfs_future_merge_destroy(plan: *mut c_void);
         pub fn mgbfs_exchange_pack(
-            stride: u32, capacity: u32, source_states: *const u8, source_count: u32,
-            sorted_hashes: *const c_void, sorted_refs: *const u64, count: u32,
-            packed_states: *mut u8, owner_counts: *mut u32, stream: *mut c_void,
+            stride: u32,
+            capacity: u32,
+            source_states: *const u8,
+            source_count: u32,
+            sorted_hashes: *const c_void,
+            sorted_refs: *const u64,
+            count: u32,
+            packed_states: *mut u8,
+            owner_counts: *mut u32,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_unique_id(id128: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create(
-            rank: u32, world: u32, device: u32, id128: *const c_void,
-            out: *mut *mut c_void, error: *mut c_char, error_capacity: usize,
+            rank: u32,
+            world: u32,
+            device: u32,
+            id128: *const c_void,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
         ) -> i32;
         pub fn mgbfs_nccl_send_recv(
-            comm: *mut c_void, send: *const c_void, send_bytes: u64, peer: u32,
-            receive: *mut c_void, receive_bytes: u64, stream: *mut c_void,
+            comm: *mut c_void,
+            send: *const c_void,
+            send_bytes: u64,
+            peer: u32,
+            receive: *mut c_void,
+            receive_bytes: u64,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_all_gather_u32(
-            comm: *mut c_void, send: *const u32, receive: *mut u32, stream: *mut c_void,
+            comm: *mut c_void,
+            send: *const u32,
+            receive: *mut u32,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_all_reduce_max_u32(
-            comm: *mut c_void, send: *const u32, receive: *mut u32, stream: *mut c_void,
+            comm: *mut c_void,
+            send: *const u32,
+            receive: *mut u32,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_destroy(comm: *mut c_void);
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;

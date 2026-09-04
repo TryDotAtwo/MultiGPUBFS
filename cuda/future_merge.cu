@@ -44,9 +44,19 @@ __global__ void copy_back(const Key* keys,const uint8_t* states,const uint32_t* 
 }
 __global__ void publish(MgbfsFrontierState* state,const uint32_t* count,uint32_t cap){if(!state->fatal){if(*count>cap)state->fatal=1;else state->count=*count;}}
 }
+extern "C" int mgbfs_future_merge_query(uint32_t stride,uint32_t future,uint32_t incoming,MgbfsFutureMergeBytes* out){
+  if(!out)return 1;*out={};
+  if(!stride||stride%16||!future||!incoming||future>INT32_MAX-incoming)return 1;
+  const uint64_t total=uint64_t(future)+incoming;MgbfsFutureMergeBytes q{};
+  q.merged=total*16;q.unique=uint64_t(future)*16;q.tags=total*8;q.unique_tags=uint64_t(future)*8;
+  q.indices=total*4;q.selected=total*4;q.selected_count=4;q.flags=total;
+  q.states=uint64_t(future)*stride;q.state=sizeof(MgbfsFrontierState);
+  size_t scratch=0;if(cub::DeviceSelect::Flagged(nullptr,scratch,(uint32_t*)nullptr,(uint8_t*)nullptr,(uint32_t*)nullptr,(uint32_t*)nullptr,int(total))!=cudaSuccess)return 2;
+  q.scratch=scratch;*out=q;return 0;
+}
 extern "C" int mgbfs_future_merge_create(uint32_t stride,uint32_t future,uint32_t incoming,void** out,char* error,size_t error_capacity){
-  if(!out)return 1;*out=nullptr;try{if(!stride||stride%16||!future||!incoming||future>INT32_MAX-incoming)throw std::runtime_error("FUTURE_MERGE_SHAPE");auto p=std::make_unique<Plan>();p->stride=stride;p->future=future;p->incoming=incoming;p->total=future+incoming;
-    size_t n=p->total;checked(cudaMalloc(&p->merged,n*16));checked(cudaMalloc(&p->unique,size_t(future)*16));checked(cudaMalloc(&p->tags,n*8));checked(cudaMalloc(&p->unique_tags,size_t(future)*8));checked(cudaMalloc(&p->indices,n*4));checked(cudaMalloc(&p->selected,n*4));checked(cudaMalloc(&p->selected_count,4));checked(cudaMalloc(&p->flags,n));checked(cudaMalloc(&p->states,size_t(future)*stride));checked(cudaMalloc(&p->state,sizeof(MgbfsFrontierState)));checked(cub::DeviceSelect::Flagged(nullptr,p->scratch_bytes,p->indices,p->flags,p->selected,p->selected_count,int(n)));checked(cudaMalloc(&p->scratch,p->scratch_bytes));*out=p.release();return 0;
+  if(!out)return 1;*out=nullptr;try{MgbfsFutureMergeBytes q{};if(mgbfs_future_merge_query(stride,future,incoming,&q))throw std::runtime_error("FUTURE_MERGE_SHAPE");auto p=std::make_unique<Plan>();p->stride=stride;p->future=future;p->incoming=incoming;p->total=future+incoming;p->scratch_bytes=q.scratch;
+    checked(cudaMalloc(&p->merged,q.merged));checked(cudaMalloc(&p->unique,q.unique));checked(cudaMalloc(&p->tags,q.tags));checked(cudaMalloc(&p->unique_tags,q.unique_tags));checked(cudaMalloc(&p->indices,q.indices));checked(cudaMalloc(&p->selected,q.selected));checked(cudaMalloc(&p->selected_count,q.selected_count));checked(cudaMalloc(&p->flags,q.flags));checked(cudaMalloc(&p->states,q.states));checked(cudaMalloc(&p->state,q.state));checked(cudaMalloc(&p->scratch,q.scratch));*out=p.release();return 0;
   }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}}
 extern "C" int mgbfs_future_merge_run(void* raw,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,const uint64_t* incoming_refs,const uint32_t* incoming_count,void* raw_stream){
   auto*p=static_cast<Plan*>(raw);if(!p)return 1;
