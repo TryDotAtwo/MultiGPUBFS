@@ -7,11 +7,11 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "0acba04315ac41e58d286ee08052b09ecd858f04"
+SOURCE = "2cccb5ccbaec31c9028b2f08b5a0ef5f58ef8b3a"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 479_001_600
 BATCH = 262_144
-CAPACITIES_PER_RANK = [14_000_000, 15_000_000, 16_000_000]
+CAPACITIES_PER_RANK = [16_000_000]
 
 
 def load(path, name):
