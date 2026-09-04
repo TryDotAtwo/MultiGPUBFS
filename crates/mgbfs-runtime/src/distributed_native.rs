@@ -1,4 +1,5 @@
 //! Native two-rank NCCL DENSE BFS reference. Torchrun supplies only rank env.
+use crate::failure::attempt_all;
 use crate::jobs::{split, JobSpan};
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
 use mgbfs_cuda::{ffi::*, native_owner::*};
@@ -741,16 +742,23 @@ impl DistributedNativeBfs {
                 }
             }
             check(unsafe { cudaStreamSynchronize(s) })?;
-            self.commit_owner_batch(
-                unsafe {
-                    self.packed_states
-                        .at(local_offset as usize * self.stride)
-                        .cast()
-                },
-                unsafe { self.sorted_hashes.at(local_offset as usize * 16) },
-                owner_counts[local_owner],
-            )?;
-            self.commit_owner_batch(self.recv_states.ptr.cast(), self.recv_hashes.ptr, received)?;
+            let local_states = unsafe {
+                self.packed_states
+                    .at(local_offset as usize * self.stride)
+                    .cast()
+            };
+            let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
+            let batch_error = attempt_all(
+                [
+                    (local_states, local_hashes, owner_counts[local_owner]),
+                    (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
+                ],
+                |(states, hashes, rows)| self.commit_owner_batch(states, hashes, rows),
+            )
+            .err();
+            if self.all_max(u32::from(batch_error.is_some()))? != 0 {
+                return Err(batch_error.unwrap_or_else(|| "REMOTE_OWNER_BATCH_FATAL".into()));
+            }
             if let Some(extent) = parent {
                 extent_offset += u64::from(parents);
                 if extent_offset == extent.count {
