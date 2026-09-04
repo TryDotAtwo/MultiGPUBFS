@@ -69,6 +69,12 @@ class LocalStagingSink:
         if len(self.rows) >= self.rows_per_shard:
             self.flush()
 
+    def add_batch(self, table):
+        # Reference/test sink; production uses HubStagingSink's columnar path.
+        for batch in table.to_batches(max_chunksize=self.rows_per_shard):
+            for row in batch.to_pylist():
+                self.add(row)
+
     def flush(self):
         if not self.rows:
             return
@@ -144,7 +150,8 @@ class HubStagingSink:
         self.api = api
         self.rank = rank
         self.max_slot_bytes = max_slot_bytes
-        self.rows = []
+        self.tables = []
+        self.buffered_rows = 0
         self.part = 0
         self.free_slots = list(range(slot_count))
         try:
@@ -157,9 +164,20 @@ class HubStagingSink:
         self.peak_live_slots = 0
 
     def add(self, row):
-        self.rows.append(row)
-        if len(self.rows) >= self.rows_per_shard:
-            self.flush()
+        self.add_batch(pa.Table.from_pylist([row], STATE_SCHEMA))
+
+    def add_batch(self, table):
+        if table.schema != STATE_SCHEMA:
+            table = table.cast(STATE_SCHEMA)
+        offset = 0
+        while offset < table.num_rows:
+            room = self.rows_per_shard - self.buffered_rows
+            take = min(room, table.num_rows - offset)
+            self.tables.append(table.slice(offset, take))
+            self.buffered_rows += take
+            offset += take
+            if self.buffered_rows == self.rows_per_shard:
+                self.flush()
 
     def _upload(self, slot, size, remote_path):
         # huggingface_hub intentionally accepts BufferedIOBase, not a bare
@@ -195,7 +213,7 @@ class HubStagingSink:
         self._reap()
 
     def flush(self, final=False):
-        if not self.rows:
+        if not self.tables:
             return
         self._reap()
         if final and not self.free_slots:
@@ -205,11 +223,12 @@ class HubStagingSink:
         slot = self.free_slots.pop()
         writer = pa.FixedSizeBufferWriter(pa.py_buffer(self.slot_buffers[slot]))
         try:
+            table = self.tables[0] if len(self.tables) == 1 else pa.concat_tables(self.tables)
             pq.write_table(
-                pa.Table.from_pylist(self.rows, STATE_SCHEMA),
+                table,
                 writer,
                 compression="zstd",
-                row_group_size=min(self.rows_per_shard, 131072),
+                row_group_size=min(table.num_rows, 131072),
             )
             size = writer.tell()
         except Exception as error:
@@ -228,7 +247,8 @@ class HubStagingSink:
         })
         self.inflight[slot] = self.executor.submit(self._upload, slot, size, remote_path)
         self.peak_live_slots = max(self.peak_live_slots, len(self.inflight))
-        self.rows.clear()
+        self.tables.clear()
+        self.buffered_rows = 0
         self.part += 1
 
     def complete(self, result):
@@ -340,20 +360,27 @@ class ArchiveStream:
                 if count == 0 or count * (width + 16) != size:
                     raise ValueError("ARCHIVE_RECORD_SHAPE")
                 state_bytes = count * width
-                for index in range(count):
-                    state = payload[index * width:(index + 1) * width]
-                    hash128 = payload[state_bytes + index * 16:state_bytes + (index + 1) * 16]
-                    self.sink.add({
-                        "run_id": self.run_id,
-                        "group_id": self.group_id,
-                        "config_digest": config_digest,
-                        "rank": self.rank,
-                        "depth": depth,
-                        "rank_ordinal": ordinal,
-                        "state": state,
-                        "hash128_le": hash128,
-                    })
-                    ordinal += 1
+                states = pa.FixedSizeBinaryArray.from_buffers(
+                    pa.binary(width), count, [None, pa.py_buffer(memoryview(payload)[:state_bytes])]
+                )
+                hashes = pa.FixedSizeBinaryArray.from_buffers(
+                    pa.binary(16), count, [None, pa.py_buffer(memoryview(payload)[state_bytes:])]
+                )
+                table = pa.Table.from_arrays(
+                    [
+                        pa.repeat(pa.scalar(self.run_id), count),
+                        pa.repeat(pa.scalar(self.group_id), count),
+                        pa.repeat(pa.scalar(config_digest), count),
+                        pa.repeat(pa.scalar(self.rank, pa.uint32()), count),
+                        pa.repeat(pa.scalar(depth, pa.uint32()), count),
+                        pa.array(range(ordinal, ordinal + count), type=pa.uint64()),
+                        states,
+                        hashes,
+                    ],
+                    schema=STATE_SCHEMA,
+                )
+                self.sink.add_batch(table)
+                ordinal += count
                 layer_count += count
             elif kind == 2:
                 if size or count != layer_count:

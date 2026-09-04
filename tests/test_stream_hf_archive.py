@@ -34,6 +34,31 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_record_frames_are_delivered_as_columnar_batches(self):
+        class BatchOnlySink:
+            def __init__(self):
+                self.batches = []
+
+            def add(self, _row):
+                raise AssertionError("row-at-a-time archive path")
+
+            def add_batch(self, table):
+                self.batches.append(table)
+
+            def complete(self, _result):
+                pass
+
+        sink = BatchOnlySink()
+        ArchiveStream("r1", "fixture", rank=0, sink=sink).consume(
+            io.BytesIO(complete_archive())
+        )
+        self.assertEqual(len(sink.batches), 1)
+        self.assertEqual(sink.batches[0].num_rows, 2)
+        self.assertEqual(
+            sink.batches[0].column("state").to_pylist(),
+            [bytes([1, 0, 0, 1]), bytes([1, 1, 0, 1])],
+        )
+
     def test_complete_stream_emits_fixed_schema_shards_and_commit(self):
         with tempfile.TemporaryDirectory() as folder:
             sink = LocalStagingSink(Path(folder), rows_per_shard=1, slot_count=2)
