@@ -88,7 +88,8 @@ def main():
     summary = root / "run-summary.json"
     run(
         [sys.executable, "scripts/prepare_hf_run_summary.py", str(raw_path), str(summary),
-         "--source-commit", SOURCE, "--hardware", gpus[0]["name"]],
+         "--source-commit", SOURCE, "--hardware", gpus[0]["name"],
+         "--run-id", "s10-native-k1-seed-20260828"],
         "prepare-summary", source,
     )
     parquet = root / "parquet"

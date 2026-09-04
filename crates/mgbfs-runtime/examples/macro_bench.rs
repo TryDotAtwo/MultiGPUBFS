@@ -1,5 +1,5 @@
 //! Archived single-rank weighted macro BFS benchmark for matrix Cayley graphs.
-use mgbfs_core::{matrix::MatrixGroup, Result};
+use mgbfs_core::{macro_generators::MacroGeneratorSet, matrix::MatrixGroup, Result};
 use mgbfs_cuda::native_owner::cudaMemGetInfo;
 use mgbfs_runtime::{
     archive::FileExtent,
@@ -39,6 +39,7 @@ fn execute() -> Result<()> {
     let prededup = args[4] == "1";
     let verify = args[5] == "verify";
     let g = graph(group)?;
+    let macro_move_count = MacroGeneratorSet::compile(&g, macro_depth)?.transitions.len();
     let layer_capacity = env_u32(
         "MGBFS_BENCH_CAPACITY",
         u32::try_from(g.expected_max_unique_states).map_err(|_| "CAPACITY")?,
@@ -101,7 +102,7 @@ fn execute() -> Result<()> {
     if total != g.expected_max_unique_states { return Err(format!("CARDINALITY_{total}")); }
     archive.finish()?;
     let durable = start.elapsed().as_secs_f64();
-    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"batch\":{batch},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"archive_rows\":{archive_rows},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
+    println!("{{\"status\":\"COMPLETE\",\"backend\":\"native_macro_archived_reference\",\"group\":\"{group}\",\"macro_depth\":{macro_depth},\"macro_move_count\":{macro_move_count},\"batch\":{batch},\"layer_capacity\":{layer_capacity},\"future_capacity_per_depth\":{future_capacity_per_depth},\"prededup\":{prededup},\"verification_only\":{verify},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"unique_states\":{total},\"layer_sizes\":{layers:?},\"layer_sha256\":{layer_sha256:?},\"per_depth_seconds\":{times:?},\"cuda_context_used_bytes\":{context},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned_bytes},\"archive_rows\":{archive_rows},\"disk_reserved_bytes\":{disk_bytes}}}", used()?.0.max(allocated));
     Ok(())
 }
 fn main() {
