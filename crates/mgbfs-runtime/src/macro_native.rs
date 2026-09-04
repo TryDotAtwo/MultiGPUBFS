@@ -176,7 +176,7 @@ pub struct MacroNativeBfs {
     history_counts_gpu: Buffer,
     history_counts: Vec<u32>,
     future: Vec<FutureSlot>,
-    requested_device_bytes: u64,
+    memory_plan: MacroMemoryPlan,
 }
 
 impl MacroNativeBfs {
@@ -550,11 +550,14 @@ impl MacroNativeBfs {
             history_counts_gpu,
             history_counts,
             future,
-            requested_device_bytes: requested,
+            memory_plan: memory,
         })
     }
     pub fn requested_device_bytes(&self) -> u64 {
-        self.requested_device_bytes
+        self.memory_plan.requested_device_bytes
+    }
+    pub fn memory_plan(&self) -> MacroMemoryPlan {
+        self.memory_plan
     }
     pub fn frontier_len(&self) -> u32 {
         self.current_count
