@@ -4,7 +4,7 @@ use mgbfs_cuda::{
     native_owner::{cudaMemGetInfo, cudaSetDevice},
 };
 use mgbfs_runtime::{
-    archive::FileExtent,
+    archive::create_archive_extent,
     distributed_native::{DistributedConfig, DistributedNativeBfs},
     pinned_archive::PinnedArchive,
 };
@@ -109,8 +109,10 @@ fn run() -> Result<()> {
         .and_then(|x| x.checked_add(64 << 20))
         .ok_or("DISK")?;
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
+    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     let mut archive = PinnedArchive::new(
-        FileExtent::create_new(Path::new(&archive_path)).map_err(|e| e.to_string())?,
+        create_archive_extent(Path::new(&archive_path), stream_archive)
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?,
         disk_bytes,
         graph.start.len(),
         digest,

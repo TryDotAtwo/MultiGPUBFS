@@ -1,5 +1,56 @@
 use mgbfs_core::Result;
 use sha2::{Digest, Sha256};
+use std::io::Write;
+
+/// Strictly sequential archive target for a pipe-backed bounded downstream
+/// spooler. `reserve` freezes a logical byte limit; physical staging capacity
+/// belongs to the consumer and must be preflighted independently.
+pub struct StreamExtent<W: Write> {
+    writer: W,
+    capacity: Option<u64>,
+    cursor: u64,
+}
+impl<W: Write> StreamExtent<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer,
+            capacity: None,
+            cursor: 0,
+        }
+    }
+}
+impl<W: Write> Extent for StreamExtent<W> {
+    fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
+        if bytes == 0 || self.capacity.replace(bytes).is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "stream extent capacity already frozen or zero",
+            ));
+        }
+        Ok(())
+    }
+    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize> {
+        let end = offset.checked_add(bytes.len() as u64).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream overflow")
+        })?;
+        let within_capacity = self
+            .capacity
+            .map(|capacity| end <= capacity)
+            .unwrap_or(false);
+        if offset != self.cursor || !within_capacity {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "stream offset or capacity violation",
+            ));
+        }
+        self.writer.write_all(bytes)?;
+        self.cursor = end;
+        Ok(bytes.len())
+    }
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
 #[cfg(target_os = "linux")]
 pub struct FileExtent(std::fs::File);
 #[cfg(target_os = "linux")]
@@ -45,6 +96,37 @@ pub trait Extent {
     fn reserve(&mut self, bytes: u64) -> std::io::Result<()>;
     fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize>;
     fn sync(&mut self) -> std::io::Result<()>;
+}
+impl<T: Extent + ?Sized> Extent for Box<T> {
+    fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
+        (**self).reserve(bytes)
+    }
+    fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize> {
+        (**self).write_at(offset, bytes)
+    }
+    fn sync(&mut self) -> std::io::Result<()> {
+        (**self).sync()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn create_archive_extent(
+    path: &std::path::Path,
+    stream: bool,
+) -> std::io::Result<Box<dyn Extent + Send>> {
+    if !stream {
+        return FileExtent::create_new(path)
+            .map(|extent| Box::new(extent) as Box<dyn Extent + Send>);
+    }
+    use std::os::unix::fs::FileTypeExt;
+    if !std::fs::metadata(path)?.file_type().is_fifo() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "stream archive target is not a FIFO",
+        ));
+    }
+    let writer = std::fs::OpenOptions::new().write(true).open(path)?;
+    Ok(Box::new(StreamExtent::new(writer)))
 }
 /// Synchronous archive codec. The native scheduler must call this from its
 /// dedicated disk worker, never from a GPU progress thread.

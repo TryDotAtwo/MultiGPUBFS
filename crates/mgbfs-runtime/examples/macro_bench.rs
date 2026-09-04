@@ -2,7 +2,7 @@
 use mgbfs_core::{macro_generators::MacroGeneratorSet, matrix::MatrixGroup, Result};
 use mgbfs_cuda::native_owner::cudaMemGetInfo;
 use mgbfs_runtime::{
-    archive::FileExtent,
+    archive::create_archive_extent,
     macro_native::{MacroNativeBfs, MacroNativeConfig},
     pinned_archive::PinnedArchive,
 };
@@ -88,7 +88,9 @@ fn execute() -> Result<()> {
         .checked_mul((g.start.len() + 16) as u64)
         .and_then(|v| v.checked_add(64 << 20))
         .ok_or("DISK_OVERFLOW")?;
-    let extent = FileExtent::create_new(Path::new(&args[6])).map_err(|e| e.to_string())?;
+    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
+    let extent = create_archive_extent(Path::new(&args[6]), stream_archive)
+        .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
     let mut archive = PinnedArchive::new(
         extent,

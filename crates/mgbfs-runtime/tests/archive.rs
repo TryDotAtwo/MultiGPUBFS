@@ -1,5 +1,33 @@
-use mgbfs_runtime::archive::{verify, Archive, Extent};
-use std::io;
+use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
+use std::{
+    io::{self, Write},
+    sync::{Arc, Mutex},
+};
+
+#[derive(Clone, Default)]
+struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+impl Write for SharedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn sequential_extent_streams_exact_frames_without_materializing_capacity() {
+    let writer = SharedWriter::default();
+    let readable = writer.clone();
+    let mut archive = Archive::new(StreamExtent::new(writer), 4096, 4, [9; 32]).unwrap();
+    archive.records(0, &[1, 0, 0, 1], &[[1, 2, 3, 4]]).unwrap();
+    archive.layer_commit(0, 1).unwrap();
+    archive.run_commit().unwrap();
+    let bytes = readable.0.lock().unwrap();
+    verify(&bytes).unwrap();
+    assert!(bytes.len() < 4096);
+}
 #[test]
 fn prepacked_records_match_reference_codec() {
     let mut reference = Archive::new(Disk::default(), 4096, 4, [7; 32]).unwrap();
