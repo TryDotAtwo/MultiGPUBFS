@@ -10,9 +10,8 @@ sys.path.insert(0, str(ROOT))
 from scripts.promote_hf_stream import combine_rank_commits, promote
 
 
-def commit(rank, counts=(1, 2)):
+def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
     run_id = "s3-run"
-    branch = "mgbfs-s3-run"
     return {
         "schema": "MGBFS_HF_STREAM_COMMIT_V1",
         "status": "COMPLETE",
@@ -92,6 +91,32 @@ class PromoteStream(unittest.TestCase):
             {"layers/s3-run.parquet", "runs/s3-run.json", "verification/s3-run.json"},
         )
         self.assertEqual(combined["total_unique_states"], 6)
+
+    def test_promotion_accepts_one_staging_branch_per_rank(self):
+        class Copy:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class Add:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class Api:
+            def create_commit(self, **kwargs):
+                self.operations = kwargs["operations"]
+                return object()
+
+        api = Api()
+        combined, _ = promote(
+            api, "TryDotAtwo/results",
+            [commit(0, branch="s3-rank-0"), commit(1, branch="s3-rank-1")], 2,
+            copy_cls=Copy, add_cls=Add,
+        )
+        copies = [item for item in api.operations if isinstance(item, Copy)]
+        self.assertEqual([item.kwargs["src_revision"] for item in copies], [
+            "s3-rank-0", "s3-rank-1",
+        ])
+        self.assertEqual(combined["branches"], ["s3-rank-0", "s3-rank-1"])
 
 
 if __name__ == "__main__":

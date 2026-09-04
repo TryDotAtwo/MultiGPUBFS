@@ -17,7 +17,7 @@ def combine_rank_commits(commits, expected_world):
     if [item.get("rank") for item in commits] != list(range(expected_world)):
         raise ValueError("RANK_SET")
     first = commits[0]
-    keys = ("run_id", "group_id", "config_digest", "branch", "state_bytes", "max_depth")
+    keys = ("run_id", "group_id", "config_digest", "state_bytes", "max_depth")
     if (
         first.get("schema") != "MGBFS_HF_STREAM_COMMIT_V1"
         or first.get("status") != "COMPLETE"
@@ -31,6 +31,7 @@ def combine_rank_commits(commits, expected_world):
     destinations = set()
     total = 0
     rank_chains = []
+    branches = []
     for item in commits:
         if item.get("schema") != first["schema"] or item.get("status") != "COMPLETE":
             raise ValueError("STREAM_SCHEMA")
@@ -49,14 +50,18 @@ def combine_rank_commits(commits, expected_world):
         if not re.fullmatch(r"[0-9a-f]{64}", chain):
             raise ValueError("STREAM_CHAIN")
         rank_chains.append(chain)
-        prefix = f"pending/{first['branch']}/states/"
+        branch = str(item.get("branch", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", branch):
+            raise ValueError("STREAM_BRANCH")
+        branches.append(branch)
+        prefix = f"pending/{branch}/states/"
         for source in item.get("files", []):
             source_path = str(source.get("path", ""))
             checksum = str(source.get("sha256", ""))
             if (
                 not source_path.startswith(prefix)
                 or not source_path.endswith(".parquet")
-                or source_path in source_paths
+                or (branch, source_path) in source_paths
                 or not re.fullmatch(r"[0-9a-f]{64}", checksum)
                 or not isinstance(source.get("bytes"), int)
                 or source["bytes"] <= 0
@@ -65,10 +70,11 @@ def combine_rank_commits(commits, expected_world):
             destination = f"states/{first['run_id']}-{source_path.rsplit('/', 1)[-1]}"
             if destination in destinations:
                 raise ValueError("STREAM_FILE")
-            source_paths.add(source_path)
+            source_paths.add((branch, source_path))
             destinations.add(destination)
             files.append({
                 "source_path": source_path,
+                "source_revision": branch,
                 "path": destination,
                 "bytes": source["bytes"],
                 "sha256": checksum,
@@ -80,7 +86,11 @@ def combine_rank_commits(commits, expected_world):
         "run_id": first["run_id"],
         "group_id": first["group_id"],
         "config_digest": first["config_digest"],
-        "branch": first["branch"],
+        # `branch` is retained for V1 single-branch readers.  New multi-rank
+        # producers use an isolated branch per rank so concurrent Hub commits
+        # cannot race on one Git ref.
+        "branch": branches[0],
+        "branches": branches,
         "world_size": expected_world,
         "state_bytes": first["state_bytes"],
         "max_depth": first["max_depth"],
@@ -140,7 +150,7 @@ def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None):
         copy_cls(
             src_path_in_repo=item["source_path"],
             path_in_repo=item["path"],
-            src_revision=combined["branch"],
+            src_revision=item["source_revision"],
         )
         for item in combined["files"]
     ]
