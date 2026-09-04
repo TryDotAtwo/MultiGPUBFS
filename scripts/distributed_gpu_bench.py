@@ -58,7 +58,7 @@ def suite(native,source,out,env):
   if backend=='native':
    bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone','--nproc-per-node=2','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
   else:cfg=env;command=['torchrun','--standalone','--nproc-per-node=2',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
-  try:row=run_group(command,out,label,cfg)
+  try:row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
   finally:
    if backend=='native':
     for rank in range(2):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
@@ -66,7 +66,7 @@ def suite(native,source,out,env):
   row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save();return row
  try:
   if env.get('MGBFS_DIAGNOSTIC')=='1':
-   env=dict(env,MGBFS_TRACE_DEPTHS='1')
+   env=dict(env,MGBFS_TRACE_DEPTHS='1',MGBFS_RUN_TIMEOUT='600')
    row=run('native',8,1024,'diagnostic')
    report['status']=row['status']
    return report
