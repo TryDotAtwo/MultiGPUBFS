@@ -21,3 +21,18 @@ actual create paths, and the `generate`, `future_merge`, `macro_settle`,
 
 This proves the primitive and single-bucket feedback scope stated by the gate.
 It does not prove production archived multi-rank BFS or NCCL correctness.
+
+## Runtime-wide VRAM preflight follow-up
+
+Source commit under test: `fde724741935d3c6211855b6288e62b427c2fa0f`.
+Kaggle kernel version: 15.
+
+Result: `PASS_PRIMITIVE_GATE` on the same two physical Tesla T4 devices. The
+gate additionally built and ran the complete `macro_native` test binary on
+both devices under plain execution and all four Compute Sanitizer tools:
+`memcheck`, `racecheck`, `initcheck`, and `synccheck`.
+
+This validates the runtime-wide preallocation accounting and fail-fast VRAM
+reserve checks introduced after the allocation-query gate. The recorded scope
+is still the native single-rank macro runtime and primitive inventory; it does
+not extend the claim to NCCL or production archived multi-rank BFS.
