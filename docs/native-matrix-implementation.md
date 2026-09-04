@@ -23,7 +23,7 @@ performance.
 - [ ] Allocation ledger and complete kernel-query-backed memory planner
 - [x] StateRing / owner-commit / exchange-epoch CPU protocol models
 - [x] Checksummed archive codec, Linux physical preallocation and fault injection
-- [ ] Archive pinned ring, worker, shard/bucket directories and group RunCommit
+- [x] Bounded pinned archive ring, asynchronous Parquet/HF staging and atomic RunCommit (1-rank S8 gate)
 - [ ] One-GPU streaming DENSE/CUB implementation
 - [x] GPU owner bucket merge/commit primitive, immutable old runs, sticky fatal
 - [x] GPU source-ordered materialization with guarded dense append
@@ -136,6 +136,13 @@ The GPU primitives passed on both physical T4s in private Kaggle version 1
 The connected generation/hash/route/owner test checks CPU full-state layers
 for m=2..6, first two expansion depths and both pre-dedup modes. Real NCCL
 multi-rank BFS remains an unchecked gate; no performance comparison is claimed.
+
+The physical-T4 S8 streaming gate also passed end to end: all 40,320 states
+were archived into five Parquet shards, atomically promoted on Hugging Face and
+verified through the final repository file listing.  The fixed 20 MiB pinned
+ring absorbed the complete short producer burst; this is not yet a capacity or
+bandwidth proof for S13.  See
+[the exact evidence and boundary](validation/2026-09-04-hf-streaming-s8.md).
 
 ### Materialization and full-depth GPU feedback
 
