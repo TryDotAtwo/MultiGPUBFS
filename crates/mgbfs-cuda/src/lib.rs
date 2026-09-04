@@ -141,6 +141,20 @@ pub mod ffi {
             incoming_count: *const u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_future_merge_run_bounded(
+            plan: *mut c_void,
+            future_states: *mut u8,
+            future_hashes: *mut c_void,
+            future_state: *mut FrontierState,
+            old_count_bound: u32,
+            source_states: *const u8,
+            source_count: u32,
+            incoming_hashes: *const c_void,
+            incoming_refs: *const u64,
+            incoming_count: *const u32,
+            incoming_count_bound: u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_future_merge_destroy(plan: *mut c_void);
         pub fn mgbfs_exchange_pack(
             stride: u32, capacity: u32, source_states: *const u8, source_count: u32,

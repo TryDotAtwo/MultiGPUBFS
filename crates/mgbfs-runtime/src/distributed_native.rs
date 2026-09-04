@@ -67,9 +67,9 @@ impl DistributedNativeBfs {
     }
     pub fn depth(&self)->u32{self.depth} pub fn frontier_len(&self)->u32{self.current_count}
     fn all_max(&self,value:u32)->Result<u32>{self.collective_send.put(&[value])?;check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm.0,self.collective_send.ptr.cast(),self.collective_recv.ptr.cast(),self.stream.0)})?;check(unsafe{cudaStreamSynchronize(self.stream.0)})?;self.collective_recv.one()}
-    fn merge_run(&self,states:*const u8,source_count:u32,hashes:*const c_void,refs:*const u64,count:*const u32)->Result<()>{check(unsafe{mgbfs_future_merge_run(self.merge.0,self.future_states.ptr.cast(),self.future_hashes.ptr,self.future_state.ptr.cast(),states,source_count,hashes,refs,count,self.stream.0)})}
+    fn merge_run(&self,old_bound:u32,states:*const u8,source_count:u32,hashes:*const c_void,refs:*const u64,count:*const u32,incoming_bound:u32)->Result<()>{check(unsafe{mgbfs_future_merge_run_bounded(self.merge.0,self.future_states.ptr.cast(),self.future_hashes.ptr,self.future_state.ptr.cast(),old_bound,states,source_count,hashes,refs,count,incoming_bound,self.stream.0)})}
     fn produce(&mut self)->Result<()> {
-        self.future_state.put(&[FrontierState::default()])?;let mut offset=0u32;let trace=std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
+        self.future_state.put(&[FrontierState::default()])?;let mut offset=0u32;let mut future_bound=0u32;let trace=std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
         loop {
             let parents=if offset<self.current_count{self.cfg.batch.min(self.current_count-offset)}else{0};let count=parents*self.moves;
             if trace{eprintln!("MGBFS_BATCH_BEGIN rank={} depth={} offset={} parents={}",self.cfg.rank,self.depth,offset,parents);}
@@ -81,8 +81,8 @@ impl DistributedNativeBfs {
             self.collective_send.put(&[owner_counts[send_owner]])?;check(unsafe{mgbfs_nccl_send_recv(self.comm.0,self.collective_send.ptr,4,self.cfg.rank^1,self.recv_count.ptr,4,self.stream.0)})?;check(unsafe{cudaStreamSynchronize(self.stream.0)})?;let received=self.recv_count.one::<u32>()?;if received>self.candidates{return Err("EXCHANGE_CAPACITY".into())}
             check(unsafe{mgbfs_nccl_send_recv(self.comm.0,self.sorted_hashes.at(send_offset as usize*16),u64::from(owner_counts[send_owner])*16,self.cfg.rank^1,self.recv_hashes.ptr,u64::from(received)*16,self.stream.0)})?;
             check(unsafe{mgbfs_nccl_send_recv(self.comm.0,self.packed_states.at(send_offset as usize*self.stride),u64::from(owner_counts[send_owner])*self.stride as u64,self.cfg.rank^1,self.recv_states.ptr,u64::from(received)*self.stride as u64,self.stream.0)})?;
-            self.route_count.put(&[owner_counts[local_owner]])?;self.merge_run(unsafe{self.packed_states.at(local_offset as usize*self.stride).cast()},owner_counts[local_owner],unsafe{self.sorted_hashes.at(local_offset as usize*16)},self.identity_refs.ptr.cast(),self.route_count.ptr.cast())?;
-            self.merge_run(self.recv_states.ptr.cast(),received,self.recv_hashes.ptr,self.identity_refs.ptr.cast(),self.recv_count.ptr.cast())?;check(unsafe{cudaStreamSynchronize(self.stream.0)})?;let future=self.future_state.one::<FrontierState>()?;if future.fatal!=0{return Err(format!("FUTURE_FATAL_{}",future.fatal))}
+            self.route_count.put(&[owner_counts[local_owner]])?;self.merge_run(future_bound,unsafe{self.packed_states.at(local_offset as usize*self.stride).cast()},owner_counts[local_owner],unsafe{self.sorted_hashes.at(local_offset as usize*16)},self.identity_refs.ptr.cast(),self.route_count.ptr.cast(),owner_counts[local_owner])?;future_bound=future_bound.checked_add(owner_counts[local_owner]).ok_or("FUTURE_BOUND")?.min(self.cfg.future_capacity);
+            self.merge_run(future_bound,self.recv_states.ptr.cast(),received,self.recv_hashes.ptr,self.identity_refs.ptr.cast(),self.recv_count.ptr.cast(),received)?;future_bound=future_bound.checked_add(received).ok_or("FUTURE_BOUND")?.min(self.cfg.future_capacity);check(unsafe{cudaStreamSynchronize(self.stream.0)})?;let future=self.future_state.one::<FrontierState>()?;if future.fatal!=0{return Err(format!("FUTURE_FATAL_{}",future.fatal))}
             offset=offset.saturating_add(parents);let more=(offset<self.current_count) as u32;let any=self.all_max(more)?;if trace{eprintln!("MGBFS_BATCH_END rank={} depth={} offset={} future={} more={} any={}",self.cfg.rank,self.depth,offset,future.count,more,any);}if any==0{break}
         } Ok(())
     }

@@ -21,8 +21,8 @@ struct Plan {
   ~Plan(){cudaFree(scratch);cudaFree(state);cudaFree(states);cudaFree(flags);cudaFree(selected_count);cudaFree(selected);cudaFree(indices);cudaFree(unique_tags);cudaFree(tags);cudaFree(unique);cudaFree(merged);}
 };
 void checked(cudaError_t e){if(e!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(e));}
-__global__ void begin(const MgbfsFrontierState* old,const uint32_t* incoming,uint32_t old_cap,uint32_t in_cap,MgbfsFrontierState* out){
-  *out={}; if(old->fatal){out->fatal=old->fatal;return;} if(old->count>old_cap||*incoming>in_cap){out->fatal=1;return;}
+__global__ void begin(const MgbfsFrontierState* old,const uint32_t* incoming,uint32_t old_cap,uint32_t in_cap,uint32_t old_bound,uint32_t in_bound,MgbfsFrontierState* out){
+  *out={}; if(old->fatal){out->fatal=old->fatal;return;} if(old_bound>old_cap||in_bound>in_cap||old->count>old_bound||*incoming>in_bound){out->fatal=1;return;}
 }
 __global__ void merge_runs(const Key* a,const MgbfsFrontierState* old,const Key* b,const uint64_t* br,const uint32_t* incoming,Key* out,uint64_t* tags,MgbfsFrontierState* state){
   uint32_t i=blockIdx.x*blockDim.x+threadIdx.x,an=old->count,bn=*incoming;if(state->fatal)return;
@@ -49,7 +49,17 @@ extern "C" int mgbfs_future_merge_create(uint32_t stride,uint32_t future,uint32_
     size_t n=p->total;checked(cudaMalloc(&p->merged,n*16));checked(cudaMalloc(&p->unique,size_t(future)*16));checked(cudaMalloc(&p->tags,n*8));checked(cudaMalloc(&p->unique_tags,size_t(future)*8));checked(cudaMalloc(&p->indices,n*4));checked(cudaMalloc(&p->selected,n*4));checked(cudaMalloc(&p->selected_count,4));checked(cudaMalloc(&p->flags,n));checked(cudaMalloc(&p->states,size_t(future)*stride));checked(cudaMalloc(&p->state,sizeof(MgbfsFrontierState)));checked(cub::DeviceSelect::Flagged(nullptr,p->scratch_bytes,p->indices,p->flags,p->selected,p->selected_count,int(n)));checked(cudaMalloc(&p->scratch,p->scratch_bytes));*out=p.release();return 0;
   }catch(const std::exception& e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}}
 extern "C" int mgbfs_future_merge_run(void* raw,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,const uint64_t* incoming_refs,const uint32_t* incoming_count,void* raw_stream){
+  auto*p=static_cast<Plan*>(raw);if(!p)return 1;
+  return mgbfs_future_merge_run_bounded(raw,future_states,future_hashes,future_state,p->future,source_states,source_count,incoming_hashes,incoming_refs,incoming_count,p->incoming,raw_stream);
+}
+extern "C" int mgbfs_future_merge_run_bounded(void* raw,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,uint32_t old_bound,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,const uint64_t* incoming_refs,const uint32_t* incoming_count,uint32_t incoming_bound,void* raw_stream){
   auto*p=static_cast<Plan*>(raw);if(!p||!future_states||!future_hashes||!future_state||!source_states||!incoming_hashes||!incoming_refs||!incoming_count)return 1;auto s=static_cast<cudaStream_t>(raw_stream);auto* state=p->state;
-  begin<<<1,1,0,s>>>(future_state,incoming_count,p->future,p->incoming,state);merge_runs<<<(max(p->future,p->incoming)+255)/256,256,0,s>>>(static_cast<Key*>(future_hashes),future_state,static_cast<const Key*>(incoming_hashes),incoming_refs,incoming_count,p->merged,p->tags,state);
-  mark<<<(p->total+255)/256,256,0,s>>>(p->merged,future_state,incoming_count,p->total,p->indices,p->flags,state);size_t bytes=p->scratch_bytes;if(cub::DeviceSelect::Flagged(p->scratch,bytes,p->indices,p->flags,p->selected,p->selected_count,int(p->total),s)!=cudaSuccess)return 3;validate_refs<<<(p->future+255)/256,256,0,s>>>(p->tags,p->selected,p->selected_count,future_state,source_count,state,p->future);publish<<<1,1,0,s>>>(state,p->selected_count,p->future);gather<<<(uint64_t(p->future)*(p->stride/16)+255)/256,256,0,s>>>(p->merged,p->tags,p->selected,p->selected_count,future_states,source_states,p->stride/16,p->unique,p->unique_tags,p->states,state,p->future);copy_back<<<(uint64_t(p->future)*(p->stride/16)+255)/256,256,0,s>>>(p->unique,p->states,p->selected_count,static_cast<Key*>(future_hashes),future_states,state,p->stride/16,p->future);return cudaMemcpyAsync(future_state,state,sizeof(*state),cudaMemcpyDeviceToDevice,s)==cudaSuccess?0:4;}
+  if(old_bound>p->future||incoming_bound>p->incoming||old_bound>UINT32_MAX-incoming_bound)return 1;uint32_t active=old_bound+incoming_bound;uint32_t output_bound=min(p->future,active);
+  begin<<<1,1,0,s>>>(future_state,incoming_count,p->future,p->incoming,old_bound,incoming_bound,state);
+  if(active){merge_runs<<<(max(old_bound,incoming_bound)+255)/256,256,0,s>>>(static_cast<Key*>(future_hashes),future_state,static_cast<const Key*>(incoming_hashes),incoming_refs,incoming_count,p->merged,p->tags,state);mark<<<(active+255)/256,256,0,s>>>(p->merged,future_state,incoming_count,active,p->indices,p->flags,state);}
+  size_t bytes=p->scratch_bytes;if(cub::DeviceSelect::Flagged(p->scratch,bytes,p->indices,p->flags,p->selected,p->selected_count,int(active),s)!=cudaSuccess)return 3;
+  if(output_bound){validate_refs<<<(output_bound+255)/256,256,0,s>>>(p->tags,p->selected,p->selected_count,future_state,source_count,state,output_bound);}
+  publish<<<1,1,0,s>>>(state,p->selected_count,p->future);
+  if(output_bound){gather<<<(uint64_t(output_bound)*(p->stride/16)+255)/256,256,0,s>>>(p->merged,p->tags,p->selected,p->selected_count,future_states,source_states,p->stride/16,p->unique,p->unique_tags,p->states,state,output_bound);copy_back<<<(uint64_t(output_bound)*(p->stride/16)+255)/256,256,0,s>>>(p->unique,p->states,p->selected_count,static_cast<Key*>(future_hashes),future_states,state,p->stride/16,output_bound);}
+  return cudaMemcpyAsync(future_state,state,sizeof(*state),cudaMemcpyDeviceToDevice,s)==cudaSuccess?0:4;}
 extern "C" void mgbfs_future_merge_destroy(void* raw){delete static_cast<Plan*>(raw);}
