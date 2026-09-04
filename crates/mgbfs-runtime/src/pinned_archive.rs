@@ -59,6 +59,7 @@ pub struct PinnedArchive {
     pub(crate) width: usize,
     pub(crate) rows: u32,
     pinned_bytes: usize,
+    device: i32,
 }
 impl PinnedArchive {
     /// Disk extent is physically reserved by Archive::new before worker startup.
@@ -134,12 +135,18 @@ impl PinnedArchive {
             width,
             rows,
             pinned_bytes,
+            device,
         })
     }
     pub fn pinned_bytes(&self) -> usize {
         self.pinned_bytes
     }
     pub(crate) fn acquire(&self) -> Result<Slot> {
+        let mut current = -1;
+        let status = unsafe { cudaGetDevice(&mut current) };
+        if status != 0 || current != self.device {
+            return Err(format!("ARCHIVE_DEVICE_MISMATCH_{current}_{}", self.device));
+        }
         self.free
             .try_recv()
             .map_err(|e| format!("ARCHIVE_PIN_RING_FATAL: {e}"))
