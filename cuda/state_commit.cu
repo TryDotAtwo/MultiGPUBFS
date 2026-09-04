@@ -62,13 +62,14 @@ __global__ void count_layer(const MgbfsOwnerControl*o,uint32_t*n){if(!o->error)*
 __global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
   if(r->fatal)return;
   if(!n||!e->ready||n>e->count||e->sequence!=r->head||
-     e->descriptor!=r->descriptor_head||e->begin!=e->sequence%r->capacity){
+     e->descriptor!=r->descriptor_head||e->padding[1]<e->descriptor||
+     e->padding[1]>=r->descriptor_tail||e->begin!=e->sequence%r->capacity){
     atomicCAS(&r->fatal,0u,17u);return;
   }
   uint64_t next=e->sequence+n;
   r->head=next;e->sequence=next;e->begin=next%r->capacity;e->count-=n;
   e->granted_rows=unsigned(e->count);
-  if(!e->count){++r->descriptor_head;e->ready=0;}
+  if(!e->count){r->descriptor_head=e->padding[1]+1;e->ready=0;}
 }
 }
 extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){

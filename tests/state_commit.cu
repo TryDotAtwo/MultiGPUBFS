@@ -52,7 +52,7 @@ static void materialization(bool invalid){
 static void retire_prefix(){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsStateExtent> extent(1);
   ring.put({{0,8,0,1,8,4,0,0,0}});
-  MgbfsStateExtent current{};current.count=8;current.granted_rows=8;current.ready=1;extent.put({current});
+  MgbfsStateExtent current{};current.count=8;current.granted_rows=8;current.ready=1;current.padding[1]=0;extent.put({current});
   req(mgbfs_state_retire_dense_prefix(ring.p,extent.p,3,nullptr)==0,"retire enqueue");
   ck(cudaDeviceSynchronize());
   auto r=ring.get()[0];auto e=extent.get()[0];

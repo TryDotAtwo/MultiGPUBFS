@@ -1,4 +1,5 @@
 //! Native two-rank NCCL DENSE BFS reference. Torchrun supplies only rank env.
+use crate::jobs::{split, JobSpan};
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
@@ -10,7 +11,11 @@ pub struct DistributedConfig {
     pub logical_owner_to_rank: [u32; 2],
     pub batch: u32,
     pub layer_capacity: u32,
-    pub future_capacity: u32,
+    pub state_ring_capacity: u32,
+    pub buckets: u32,
+    pub shards: u32,
+    pub job_buckets: u32,
+    pub bucket_capacity: u32,
     pub prededup: bool,
     pub generation_variant: u32,
 }
@@ -131,25 +136,26 @@ pub struct DistributedNativeBfs {
     candidates: u32,
     depth: u32,
     current_count: u32,
+    prev_count: u32,
     failed: bool,
     stream: Stream,
     archive_stream: Stream,
     archive_done: [Event; 2],
-    current_bank: usize,
     archived_depth: Option<u32>,
     comm: Comm,
     generate: Plan,
     hash: Plan,
+    archive_hash: Plan,
     route: Plan,
-    merge: Plan,
-    settle: Plan,
-    materialize: Plan,
-    current_states: Buffer,
-    next_states: Buffer,
-    next_hashes: Buffer,
-    next_state: Buffer,
+    owner: Plan,
+    states: Buffer,
+    prev: Buffer,
+    curr: Buffer,
+    accepted: Buffer,
+    lengths: Buffer,
     children: Buffer,
     child_hashes: Buffer,
+    archive_hashes: Buffer,
     sorted_hashes: Buffer,
     sorted_refs: Buffer,
     route_count: Buffer,
@@ -159,16 +165,22 @@ pub struct DistributedNativeBfs {
     recv_hashes: Buffer,
     recv_count: Buffer,
     identity_refs: Buffer,
-    future_states: Buffer,
-    future_hashes: Buffer,
-    future_state: Buffer,
-    survivor_hashes: Buffer,
-    survivor_refs: Buffer,
-    survivor_count: Buffer,
-    settle_state: Buffer,
-    history: Buffer,
-    history_counts_gpu: Buffer,
-    history_counts: [u32; 2],
+    directory: Buffer,
+    fatal: Buffer,
+    jobs_gpu: Buffer,
+    counts: Buffer,
+    control: Buffer,
+    selected: Buffer,
+    ring: Buffer,
+    extent: Buffer,
+    layer_count: Buffer,
+    incoming_dir: Vec<Range>,
+    prev_dir: Vec<Range>,
+    curr_dir: Vec<Range>,
+    descriptors: Vec<BucketJob>,
+    spans: Vec<JobSpan>,
+    front: Vec<Extent>,
+    next: Vec<Extent>,
     collective_send: Buffer,
     collective_recv: Buffer,
 }
@@ -186,7 +198,13 @@ impl DistributedNativeBfs {
             || cfg.logical_owner_to_rank.iter().any(|&x| x >= 2)
             || cfg.batch == 0
             || cfg.layer_capacity == 0
-            || cfg.future_capacity == 0
+            || cfg.state_ring_capacity == 0
+            || !cfg.buckets.is_power_of_two()
+            || !cfg.shards.is_power_of_two()
+            || cfg.shards > cfg.buckets
+            || cfg.job_buckets == 0
+            || cfg.job_buckets > cfg.buckets / cfg.shards
+            || cfg.bucket_capacity == 0
         {
             return Err("DISTRIBUTED_CONFIG".into());
         }
@@ -252,31 +270,28 @@ impl DistributedNativeBfs {
                 512,
             )
         })?;
-        let max_records = candidates.max(cfg.future_capacity);
         let route = Plan::new(mgbfs_route_destroy, |out, e| unsafe {
-            mgbfs_route_create(max_records, out, e, 512)
+            mgbfs_route_create(candidates, out, e, 512)
         })?;
-        let merge = Plan::new(mgbfs_future_merge_destroy, |out, e| unsafe {
-            mgbfs_future_merge_create(stride as u32, cfg.future_capacity, candidates, out, e, 512)
-        })?;
-        let settle = Plan::new(mgbfs_macro_settle_destroy, |out, e| unsafe {
-            mgbfs_macro_settle_create(cfg.future_capacity, 2, cfg.layer_capacity, out, e, 512)
-        })?;
-        let materialize = Plan::new(mgbfs_materialize_destroy, |out, e| unsafe {
-            mgbfs_materialize_create(
-                stride as u32,
-                cfg.future_capacity,
-                cfg.layer_capacity,
+        let archive_hash = Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
+            mgbfs_hash_create(
+                width as u32,
+                cfg.batch,
+                limbs.as_ptr(),
+                contract.offsets.as_ptr(),
                 out,
                 e,
                 512,
             )
         })?;
+        let owner = Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
+            mgbfs_bounded_owner_create(candidates, cfg.job_buckets, cfg.bucket_capacity, out)
+        })?;
         let b = |n| Buffer::new(n, raw);
-        let state_bytes = cfg.layer_capacity as usize * stride;
-        let current_states = b(state_bytes)?;
-        let history = b(2 * cfg.layer_capacity as usize * 16)?;
-        let history_counts_gpu = b(8)?;
+        let state_bytes = cfg.state_ring_capacity as usize * stride;
+        let states = b(state_bytes)?;
+        let prev = b(cfg.layer_capacity as usize * 16)?;
+        let curr = b(cfg.layer_capacity as usize * 16)?;
         let start_hash = contract.hash(&graph.start)?;
         let start_owner = (start_hash.0[3] >> 31) as usize;
         let start_rank = cfg.logical_owner_to_rank[start_owner];
@@ -284,25 +299,56 @@ impl DistributedNativeBfs {
         if current_count == 1 {
             let mut start = vec![0u8; stride];
             start[..width].copy_from_slice(&graph.start);
-            current_states.put(&start)?;
-            check(unsafe {
-                cudaMemcpyAsync(
-                    history.ptr,
-                    start_hash.to_le_bytes().as_ptr().cast(),
-                    16,
-                    1,
-                    raw,
-                )
-            })?;
+            states.put(&start)?;
+            curr.put(&[start_hash.to_le_bytes()])?;
         }
-        let history_counts = [current_count, 0];
-        history_counts_gpu.put(&history_counts)?;
-        let identity_refs = b(max_records as usize * 8)?;
-        identity_refs.put(&(0..u64::from(max_records)).collect::<Vec<_>>())?;
+        let identity_refs = b(candidates as usize * 8)?;
+        identity_refs.put(&(0..u64::from(candidates)).collect::<Vec<_>>())?;
         let archive_done = [Event::new()?, Event::new()?];
         check(unsafe { cudaEventRecord(archive_done[0].0, raw) })?;
         check(unsafe { cudaEventRecord(archive_done[1].0, raw) })?;
         check(unsafe { cudaStreamSynchronize(raw) })?;
+        let buckets = cfg.buckets as usize;
+        let slots = buckets + 1;
+        let directory = b(buckets * std::mem::size_of::<Range>())?;
+        let fatal = b(4)?;
+        let route_count = b(4)?;
+        route_count.put(&[current_count])?;
+        check(unsafe {
+            mgbfs_bucket_directory(
+                curr.ptr,
+                route_count.ptr.cast(),
+                cfg.layer_capacity,
+                cfg.buckets,
+                directory.ptr.cast(),
+                fatal.ptr.cast(),
+                raw,
+            )
+        })?;
+        check(unsafe { cudaStreamSynchronize(raw) })?;
+        if fatal.one::<u32>()? != 0 {
+            return Err("INITIAL_DIRECTORY_FATAL".into());
+        }
+        let mut curr_dir = vec![Range::default(); buckets];
+        directory.read(&mut curr_dir)?;
+        let mut front = Vec::with_capacity(2);
+        if current_count != 0 {
+            front.push(Extent {
+                count: 1,
+                granted_rows: 1,
+                ready: 1,
+                padding: [0, 0, 0],
+                ..Extent::default()
+            });
+        }
+        let ring = b(std::mem::size_of::<Ring>())?;
+        ring.put(&[Ring {
+            tail: u64::from(current_count),
+            descriptor_tail: u64::from(current_count),
+            capacity: u64::from(cfg.state_ring_capacity),
+            descriptor_capacity: u64::from(cfg.state_ring_capacity),
+            ..Ring::default()
+        }])?;
         let result = Self {
             cfg,
             width,
@@ -311,44 +357,54 @@ impl DistributedNativeBfs {
             candidates,
             depth: 0,
             current_count,
+            prev_count: 0,
             failed: false,
             stream,
             archive_stream,
             archive_done,
-            current_bank: 0,
             archived_depth: None,
             comm,
             generate,
             hash,
+            archive_hash,
             route,
-            merge,
-            settle,
-            materialize,
-            current_states,
-            next_states: b(state_bytes)?,
-            next_hashes: b(cfg.layer_capacity as usize * 16)?,
-            next_state: b(8)?,
+            owner,
+            states,
+            prev,
+            curr,
+            accepted: b(buckets
+                .checked_mul(cfg.bucket_capacity as usize)
+                .and_then(|n| n.checked_mul(16))
+                .ok_or("ACCEPTED_BYTES_OVERFLOW")?)?,
+            lengths: b(buckets * 4)?,
             children: b(candidates as usize * stride)?,
             child_hashes: b(candidates as usize * 16)?,
-            sorted_hashes: b(max_records as usize * 16)?,
-            sorted_refs: b(max_records as usize * 8)?,
-            route_count: b(4)?,
+            archive_hashes: b(cfg.batch as usize * 16)?,
+            sorted_hashes: b(candidates as usize * 16)?,
+            sorted_refs: b(candidates as usize * 8)?,
+            route_count,
             packed_states: b(candidates as usize * stride)?,
             owner_counts: b(8)?,
             recv_states: b(candidates as usize * stride)?,
             recv_hashes: b(candidates as usize * 16)?,
             recv_count: b(4)?,
             identity_refs,
-            future_states: b(cfg.future_capacity as usize * stride)?,
-            future_hashes: b(cfg.future_capacity as usize * 16)?,
-            future_state: b(8)?,
-            survivor_hashes: b(cfg.future_capacity as usize * 16)?,
-            survivor_refs: b(cfg.future_capacity as usize * 8)?,
-            survivor_count: b(4)?,
-            settle_state: b(std::mem::size_of::<MacroSettleState>())?,
-            history,
-            history_counts_gpu,
-            history_counts,
+            directory,
+            fatal,
+            jobs_gpu: b(slots * std::mem::size_of::<BucketJob>())?,
+            counts: b(cfg.job_buckets as usize * std::mem::size_of::<Counts>())?,
+            control: b(std::mem::size_of::<Control>())?,
+            selected: b(candidates as usize * 4)?,
+            ring,
+            extent: b(std::mem::size_of::<Extent>())?,
+            layer_count: b(4)?,
+            incoming_dir: vec![Range::default(); buckets],
+            prev_dir: vec![Range::default(); buckets],
+            curr_dir,
+            descriptors: vec![BucketJob::default(); slots],
+            spans: vec![JobSpan::default(); slots],
+            front,
+            next: Vec::with_capacity(2),
             collective_send: b(4)?,
             collective_recv: b(8)?,
         };
@@ -374,258 +430,152 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         self.collective_recv.one()
     }
-    fn merge_run(
-        &self,
-        old_bound: u32,
-        states: *const u8,
-        source_count: u32,
-        hashes: *const c_void,
-        refs: *const u64,
-        count: *const u32,
-        incoming_bound: u32,
+    fn commit_owner_batch(
+        &mut self,
+        source_states: *const u8,
+        source_hashes: *const c_void,
+        rows: u32,
     ) -> Result<()> {
-        check(unsafe {
-            mgbfs_future_merge_run_bounded(
-                self.merge.0,
-                self.future_states.ptr.cast(),
-                self.future_hashes.ptr,
-                self.future_state.ptr.cast(),
-                old_bound,
-                states,
-                source_count,
-                hashes,
-                refs,
-                count,
-                incoming_bound,
-                self.stream.0,
-            )
-        })
-    }
-    fn produce(&mut self) -> Result<()> {
-        self.future_state.put(&[FrontierState::default()])?;
-        let mut offset = 0u32;
-        let mut future_bound = 0u32;
-        let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
-        loop {
-            let parents = if offset < self.current_count {
-                self.cfg.batch.min(self.current_count - offset)
-            } else {
-                0
-            };
-            let count = parents * self.moves;
-            if trace {
-                eprintln!(
-                    "MGBFS_BATCH_BEGIN rank={} depth={} offset={} parents={}",
-                    self.cfg.rank, self.depth, offset, parents
-                );
-            }
-            if parents > 0 {
-                unsafe {
-                    check(mgbfs_generate_run(
-                        self.generate.0,
-                        self.current_states.at(offset as usize * self.stride).cast(),
-                        self.children.ptr.cast(),
-                        parents,
-                        self.stream.0,
-                    ))?;
-                    check(mgbfs_hash_run(
-                        self.hash.0,
-                        self.children.ptr.cast(),
-                        self.child_hashes.ptr.cast(),
-                        count,
-                        self.stream.0,
-                    ))?;
-                }
-            }
-            unsafe {
-                check(mgbfs_route_run(
-                    self.route.0,
-                    self.child_hashes.ptr,
-                    self.identity_refs.ptr.cast(),
-                    self.sorted_hashes.ptr,
-                    self.sorted_refs.ptr.cast(),
-                    self.route_count.ptr.cast(),
-                    count,
-                    self.cfg.prededup as i32,
-                    self.stream.0,
-                ))?;
-                check(cudaStreamSynchronize(self.stream.0))?;
-            }
-            let routed = self.route_count.one::<u32>()?;
-            check(unsafe {
-                mgbfs_exchange_pack(
-                    self.stride as u32,
-                    self.candidates,
-                    self.children.ptr.cast(),
-                    count,
-                    self.sorted_hashes.ptr,
-                    self.sorted_refs.ptr.cast(),
-                    routed,
-                    self.packed_states.ptr.cast(),
-                    self.owner_counts.ptr.cast(),
-                    self.stream.0,
-                )
-            })?;
-            check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
-            let mut owner_counts = [0u32; 2];
-            self.owner_counts.read(&mut owner_counts)?;
-            if owner_counts[0] == u32::MAX {
-                return Err("EXCHANGE_SOURCE_REF".into());
-            }
-            let local_owner = self
-                .cfg
-                .logical_owner_to_rank
-                .iter()
-                .position(|&x| x == self.cfg.rank)
-                .unwrap();
-            let send_owner = local_owner ^ 1;
-            let local_offset = if local_owner == 0 { 0 } else { owner_counts[0] };
-            let send_offset = if send_owner == 0 { 0 } else { owner_counts[0] };
-            self.collective_send.put(&[owner_counts[send_owner]])?;
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.collective_send.ptr,
-                    4,
-                    self.cfg.rank ^ 1,
-                    self.recv_count.ptr,
-                    4,
-                    self.stream.0,
-                )
-            })?;
-            check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
-            let received = self.recv_count.one::<u32>()?;
-            if received > self.candidates {
-                return Err("EXCHANGE_CAPACITY".into());
-            }
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.sorted_hashes.at(send_offset as usize * 16),
-                    u64::from(owner_counts[send_owner]) * 16,
-                    self.cfg.rank ^ 1,
-                    self.recv_hashes.ptr,
-                    u64::from(received) * 16,
-                    self.stream.0,
-                )
-            })?;
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.packed_states.at(send_offset as usize * self.stride),
-                    u64::from(owner_counts[send_owner]) * self.stride as u64,
-                    self.cfg.rank ^ 1,
-                    self.recv_states.ptr,
-                    u64::from(received) * self.stride as u64,
-                    self.stream.0,
-                )
-            })?;
-            self.route_count.put(&[owner_counts[local_owner]])?;
-            self.merge_run(
-                future_bound,
-                unsafe {
-                    self.packed_states
-                        .at(local_offset as usize * self.stride)
-                        .cast()
-                },
-                owner_counts[local_owner],
-                unsafe { self.sorted_hashes.at(local_offset as usize * 16) },
-                self.identity_refs.ptr.cast(),
+        if rows == 0 {
+            return Ok(());
+        }
+        let s = self.stream.0;
+        self.route_count.put(&[rows])?;
+        unsafe {
+            check(mgbfs_bucket_directory(
+                source_hashes,
                 self.route_count.ptr.cast(),
-                owner_counts[local_owner],
-            )?;
-            future_bound = future_bound
-                .checked_add(owner_counts[local_owner])
-                .ok_or("FUTURE_BOUND")?
-                .min(self.cfg.future_capacity);
-            self.merge_run(
-                future_bound,
-                self.recv_states.ptr.cast(),
-                received,
-                self.recv_hashes.ptr,
-                self.identity_refs.ptr.cast(),
-                self.recv_count.ptr.cast(),
-                received,
-            )?;
-            future_bound = future_bound
-                .checked_add(received)
-                .ok_or("FUTURE_BOUND")?
-                .min(self.cfg.future_capacity);
-            check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
-            let future = self.future_state.one::<FrontierState>()?;
-            if future.fatal != 0 {
-                return Err(format!("FUTURE_FATAL_{}", future.fatal));
+                self.candidates,
+                self.cfg.buckets,
+                self.directory.ptr.cast(),
+                self.fatal.ptr.cast(),
+                s,
+            ))?;
+            check(cudaStreamSynchronize(s))?;
+        }
+        if self.fatal.one::<u32>()? != 0 {
+            return Err("DIRECTORY_FATAL".into());
+        }
+        self.directory.read(&mut self.incoming_dir)?;
+        let (descriptor_count, span_count) = split(
+            &self.incoming_dir,
+            &self.prev_dir,
+            &self.curr_dir,
+            self.candidates,
+            self.cfg.job_buckets,
+            self.cfg.buckets / self.cfg.shards,
+            self.depth,
+            &mut self.descriptors,
+            &mut self.spans,
+        )?;
+        self.jobs_gpu.put(&self.descriptors[..descriptor_count])?;
+        for span_index in 0..span_count {
+            let span = self.spans[span_index];
+            let jobs = unsafe { self.jobs_gpu.at(span.first * 64).cast::<BucketJob>() };
+            let hashes = unsafe {
+                source_hashes
+                    .cast::<u8>()
+                    .add(span.source_begin as usize * 16)
+            };
+            let refs = unsafe {
+                self.identity_refs
+                    .at(span.source_begin as usize * 8)
+                    .cast::<u64>()
+            };
+            let lane = self.descriptors[span.first].lane;
+            unsafe {
+                check(mgbfs_bind_owner_jobs(
+                    jobs,
+                    span.buckets,
+                    self.lengths.ptr.cast(),
+                    self.cfg.buckets,
+                    s,
+                ))?;
+                check(mgbfs_bounded_owner_compare(
+                    self.owner.0,
+                    jobs,
+                    span.buckets,
+                    span.rows,
+                    hashes.cast(),
+                    self.prev.ptr,
+                    u64::from(self.prev_count),
+                    self.curr.ptr,
+                    u64::from(self.current_count),
+                    self.accepted.ptr,
+                    self.lengths.ptr.cast(),
+                    self.cfg.buckets,
+                    self.cfg.buckets / self.cfg.shards,
+                    lane,
+                    self.depth,
+                    self.counts.ptr.cast(),
+                    self.control.ptr.cast(),
+                    s,
+                ))?;
+                check(mgbfs_state_reserve_layer(
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    self.layer_count.ptr.cast(),
+                    self.cfg.layer_capacity,
+                    s,
+                ))?;
+                let extent = self.extent.ptr.cast::<Extent>();
+                check(mgbfs_bounded_owner_commit(
+                    self.owner.0,
+                    jobs,
+                    span.buckets,
+                    hashes.cast(),
+                    self.accepted.ptr,
+                    self.lengths.ptr.cast(),
+                    self.counts.ptr.cast(),
+                    self.control.ptr.cast(),
+                    std::ptr::addr_of!((*extent).granted_rows),
+                    self.selected.ptr.cast(),
+                    s,
+                ))?;
+                check(mgbfs_state_materialize(
+                    source_states,
+                    rows,
+                    refs,
+                    span.rows,
+                    self.selected.ptr.cast(),
+                    self.candidates,
+                    self.stride as u32,
+                    self.states.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    extent,
+                    s,
+                ))?;
+                check(cudaStreamSynchronize(s))?;
             }
-            offset = offset.saturating_add(parents);
-            let more = (offset < self.current_count) as u32;
-            let any = self.all_max(more)?;
-            if trace {
-                eprintln!(
-                    "MGBFS_BATCH_END rank={} depth={} offset={} future={} more={} any={}",
-                    self.cfg.rank, self.depth, offset, future.count, more, any
-                );
+            let control = self.control.one::<Control>()?;
+            if control.error != 0 {
+                return Err(format!("NATIVE_OWNER_FATAL_{}", control.error));
             }
-            if any == 0 {
-                break;
+            let mut extent = self.extent.one::<Extent>()?;
+            if extent.ready != 1 {
+                return Err("STATE_NOT_READY".into());
+            }
+            if extent.count != 0 {
+                extent.padding[1] = extent.descriptor;
+                if self.next.last().is_some_and(|last| {
+                    last.begin + last.count == extent.begin
+                        && last.sequence + last.count == extent.sequence
+                }) {
+                    let last = self.next.last_mut().unwrap();
+                    last.count += extent.count;
+                    last.granted_rows = last.count as u32;
+                    last.padding[1] = extent.descriptor;
+                } else {
+                    if self.next.len() == self.next.capacity() {
+                        return Err("HOST_EXTENT_CAPACITY".into());
+                    }
+                    self.next.push(extent);
+                }
             }
         }
         Ok(())
-    }
-    fn settle(&mut self, target: u32) -> Result<u32> {
-        check(unsafe {
-            cudaStreamWaitEvent(self.stream.0, self.archive_done[self.current_bank ^ 1].0, 0)
-        })?;
-        self.next_state.put(&[FrontierState::default()])?;
-        let future = self.future_state.one::<FrontierState>()?;
-        self.route_count.put(&[future.count])?;
-        unsafe {
-            check(mgbfs_macro_settle_run(
-                self.settle.0,
-                self.future_hashes.ptr,
-                self.identity_refs.ptr.cast(),
-                self.route_count.ptr.cast(),
-                self.history.ptr,
-                self.history_counts_gpu.ptr.cast(),
-                self.survivor_hashes.ptr,
-                self.survivor_refs.ptr.cast(),
-                self.survivor_count.ptr.cast(),
-                self.settle_state.ptr.cast(),
-                u64::from(target) + 1,
-                self.stream.0,
-            ))?;
-            check(mgbfs_materialize_run(
-                self.materialize.0,
-                self.future_states.ptr.cast(),
-                future.count,
-                self.survivor_hashes.ptr,
-                self.survivor_refs.ptr.cast(),
-                self.survivor_count.ptr.cast(),
-                self.next_states.ptr.cast(),
-                self.next_hashes.ptr,
-                self.next_state.ptr.cast(),
-                self.stream.0,
-            ))?;
-            check(cudaStreamSynchronize(self.stream.0))?;
-        }
-        let state = self.next_state.one::<FrontierState>()?;
-        let settled = self.settle_state.one::<MacroSettleState>()?;
-        if state.fatal != 0 || settled.fatal != 0 || state.count != settled.count {
-            return Err(format!("SETTLE_FATAL_{}_{}", state.fatal, settled.fatal));
-        }
-        let slot = (target % 2) as usize;
-        check(unsafe {
-            cudaMemcpyAsync(
-                self.history
-                    .at(slot * self.cfg.layer_capacity as usize * 16),
-                self.survivor_hashes.ptr,
-                state.count as usize * 16,
-                3,
-                self.stream.0,
-            )
-        })?;
-        self.history_counts[slot] = state.count;
-        self.history_counts_gpu.put(&self.history_counts)?;
-        Ok(state.count)
     }
     pub fn advance(&mut self) -> Result<bool> {
         if self.failed {
@@ -638,13 +588,210 @@ impl DistributedNativeBfs {
         result
     }
     fn advance_inner(&mut self) -> Result<bool> {
-        self.produce()?;
-        let target = self.depth.checked_add(1).ok_or("DEPTH_OVERFLOW")?;
-        let count = self.settle(target)?;
-        self.depth = target;
-        std::mem::swap(&mut self.current_states, &mut self.next_states);
-        self.current_bank ^= 1;
+        let s = self.stream.0;
+        unsafe {
+            check(cudaMemsetAsync(
+                self.lengths.ptr,
+                0,
+                self.cfg.buckets as usize * 4,
+                s,
+            ))?;
+            check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
+        }
+        self.next.clear();
+        let local_owner = self
+            .cfg
+            .logical_owner_to_rank
+            .iter()
+            .position(|&rank| rank == self.cfg.rank)
+            .ok_or("OWNER_MAP")?;
+        let remote_owner = local_owner ^ 1;
+        let mut extent_index = 0usize;
+        let mut extent_offset = 0u64;
+        let mut archive_released = [false; 2];
+        loop {
+            let parent = self.front.get(extent_index).copied();
+            let parents = parent
+                .map(|extent| u64::from(self.cfg.batch).min(extent.count - extent_offset) as u32)
+                .unwrap_or(0);
+            let candidate_count = parents * self.moves;
+            if let Some(extent) = parent {
+                unsafe {
+                    check(mgbfs_generate_run(
+                        self.generate.0,
+                        self.states
+                            .at((extent.begin + extent_offset) as usize * self.stride)
+                            .cast(),
+                        self.children.ptr.cast(),
+                        parents,
+                        s,
+                    ))?;
+                    check(mgbfs_hash_run(
+                        self.hash.0,
+                        self.children.ptr.cast(),
+                        self.child_hashes.ptr.cast(),
+                        candidate_count,
+                        s,
+                    ))?;
+                }
+            }
+            unsafe {
+                check(mgbfs_route_run(
+                    self.route.0,
+                    self.child_hashes.ptr,
+                    self.identity_refs.ptr.cast(),
+                    self.sorted_hashes.ptr,
+                    self.sorted_refs.ptr.cast(),
+                    self.route_count.ptr.cast(),
+                    candidate_count,
+                    self.cfg.prededup as i32,
+                    s,
+                ))?;
+                check(cudaStreamSynchronize(s))?;
+            }
+            let routed = self.route_count.one::<u32>()?;
+            check(unsafe {
+                mgbfs_exchange_pack(
+                    self.stride as u32,
+                    self.candidates,
+                    self.children.ptr.cast(),
+                    candidate_count,
+                    self.sorted_hashes.ptr,
+                    self.sorted_refs.ptr.cast(),
+                    routed,
+                    self.packed_states.ptr.cast(),
+                    self.owner_counts.ptr.cast(),
+                    s,
+                )
+            })?;
+            check(unsafe { cudaStreamSynchronize(s) })?;
+            let mut owner_counts = [0u32; 2];
+            self.owner_counts.read(&mut owner_counts)?;
+            if owner_counts[0] == u32::MAX {
+                return Err("EXCHANGE_SOURCE_REF".into());
+            }
+            let local_offset = if local_owner == 0 { 0 } else { owner_counts[0] };
+            let remote_offset = if remote_owner == 0 {
+                0
+            } else {
+                owner_counts[0]
+            };
+            self.collective_send.put(&[owner_counts[remote_owner]])?;
+            check(unsafe {
+                mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    self.collective_send.ptr,
+                    4,
+                    self.cfg.rank ^ 1,
+                    self.recv_count.ptr,
+                    4,
+                    s,
+                )
+            })?;
+            check(unsafe { cudaStreamSynchronize(s) })?;
+            let received = self.recv_count.one::<u32>()?;
+            if received > self.candidates {
+                return Err("EXCHANGE_CAPACITY".into());
+            }
+            check(unsafe {
+                mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    self.sorted_hashes.at(remote_offset as usize * 16),
+                    u64::from(owner_counts[remote_owner]) * 16,
+                    self.cfg.rank ^ 1,
+                    self.recv_hashes.ptr,
+                    u64::from(received) * 16,
+                    s,
+                )
+            })?;
+            check(unsafe {
+                mgbfs_nccl_send_recv(
+                    self.comm.0,
+                    self.packed_states.at(remote_offset as usize * self.stride),
+                    u64::from(owner_counts[remote_owner]) * self.stride as u64,
+                    self.cfg.rank ^ 1,
+                    self.recv_states.ptr,
+                    u64::from(received) * self.stride as u64,
+                    s,
+                )
+            })?;
+            if let Some(parent_extent) = parent {
+                if self.archived_depth == Some(self.depth) && !archive_released[extent_index] {
+                    check(unsafe { cudaStreamWaitEvent(s, self.archive_done[extent_index].0, 0) })?;
+                    archive_released[extent_index] = true;
+                }
+                let mut live = parent_extent;
+                live.sequence += extent_offset;
+                live.begin = live.sequence % u64::from(self.cfg.state_ring_capacity);
+                live.count -= extent_offset;
+                live.granted_rows = live.count as u32;
+                self.extent.put(&[live])?;
+                check(unsafe {
+                    mgbfs_state_retire_dense_prefix(
+                        self.ring.ptr.cast(),
+                        self.extent.ptr.cast(),
+                        u64::from(parents),
+                        s,
+                    )
+                })?;
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                let ring = self.ring.one::<Ring>()?;
+                if ring.fatal != 0 {
+                    return Err(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
+                }
+            }
+            check(unsafe { cudaStreamSynchronize(s) })?;
+            self.commit_owner_batch(
+                unsafe {
+                    self.packed_states
+                        .at(local_offset as usize * self.stride)
+                        .cast()
+                },
+                unsafe { self.sorted_hashes.at(local_offset as usize * 16) },
+                owner_counts[local_owner],
+            )?;
+            self.commit_owner_batch(self.recv_states.ptr.cast(), self.recv_hashes.ptr, received)?;
+            if let Some(extent) = parent {
+                extent_offset += u64::from(parents);
+                if extent_offset == extent.count {
+                    extent_index += 1;
+                    extent_offset = 0;
+                }
+            }
+            let more = (extent_index < self.front.len()) as u32;
+            if self.all_max(more)? == 0 {
+                break;
+            }
+        }
+        unsafe {
+            check(mgbfs_compact_hash_layer(
+                self.accepted.ptr,
+                self.lengths.ptr.cast(),
+                self.cfg.buckets,
+                self.cfg.bucket_capacity,
+                self.prev.ptr,
+                self.cfg.layer_capacity,
+                self.directory.ptr.cast(),
+                self.route_count.ptr.cast(),
+                self.fatal.ptr.cast(),
+                s,
+            ))?;
+            check(cudaStreamSynchronize(s))?;
+        }
+        if self.fatal.one::<u32>()? != 0 {
+            return Err("FINALIZE_FATAL".into());
+        }
+        let count = self.route_count.one::<u32>()?;
+        if self.layer_count.one::<u32>()? != count {
+            return Err("LAYER_COUNT_MISMATCH".into());
+        }
+        self.directory.read(&mut self.prev_dir)?;
+        std::mem::swap(&mut self.prev_dir, &mut self.curr_dir);
+        std::mem::swap(&mut self.prev, &mut self.curr);
+        std::mem::swap(&mut self.front, &mut self.next);
+        self.prev_count = self.current_count;
         self.current_count = count;
+        self.depth = self.depth.checked_add(1).ok_or("DEPTH_OVERFLOW")?;
         Ok(self.all_max((count > 0) as u32)? != 0)
     }
     pub fn archive_current(
@@ -661,67 +808,77 @@ impl DistributedNativeBfs {
             return Err("ARCHIVE_DEPTH_ALREADY_SUBMITTED".into());
         }
         let s = self.archive_stream.0;
-        let hashes = unsafe {
-            self.history
-                .at((self.depth % 2) as usize * self.cfg.layer_capacity as usize * 16)
-        };
-        let mut offset = 0u32;
-        while offset < self.current_count {
-            let n = archive
-                .rows
-                .min(self.cfg.batch)
-                .min(self.current_count - offset);
-            let slot = archive.acquire()?;
-            let copied = (|| unsafe {
-                let states = self.current_states.at(offset as usize * self.stride);
-                check(cudaMemcpy2DAsync(
-                    slot.ptr,
-                    self.width,
-                    states,
-                    self.stride,
-                    self.width,
-                    n as usize,
-                    2,
-                    s,
-                ))?;
-                check(cudaMemcpyAsync(
-                    slot.ptr.cast::<u8>().add(n as usize * self.width).cast(),
-                    hashes.cast::<u8>().add(offset as usize * 16).cast(),
-                    n as usize * 16,
-                    2,
-                    s,
-                ))?;
-                check(cudaEventRecord(slot.ready, s))
-            })();
-            if let Err(e) = copied {
-                unsafe {
-                    cudaStreamSynchronize(s);
+        for (extent_index, extent) in self.front.iter().enumerate() {
+            let mut offset = 0u64;
+            while offset < extent.count {
+                let n =
+                    u64::from(archive.rows.min(self.cfg.batch)).min(extent.count - offset) as u32;
+                let slot = archive.acquire()?;
+                let copied = (|| unsafe {
+                    let states = self
+                        .states
+                        .at((extent.begin + offset) as usize * self.stride);
+                    check(mgbfs_hash_run(
+                        self.archive_hash.0,
+                        states.cast(),
+                        self.archive_hashes.ptr.cast(),
+                        n,
+                        s,
+                    ))?;
+                    check(cudaMemcpy2DAsync(
+                        slot.ptr,
+                        self.width,
+                        states,
+                        self.stride,
+                        self.width,
+                        n as usize,
+                        2,
+                        s,
+                    ))?;
+                    check(cudaMemcpyAsync(
+                        slot.ptr.cast::<u8>().add(n as usize * self.width).cast(),
+                        self.archive_hashes.ptr,
+                        n as usize * 16,
+                        2,
+                        s,
+                    ))?;
+                    check(cudaEventRecord(slot.ready, s))
+                })();
+                if let Err(e) = copied {
+                    unsafe {
+                        cudaStreamSynchronize(s);
+                    }
+                    self.failed = true;
+                    return Err(e);
                 }
-                self.failed = true;
-                return Err(e);
+                archive.submit(slot, u64::from(self.depth), n)?;
+                offset += u64::from(n);
             }
-            archive.submit(slot, u64::from(self.depth), n)?;
-            offset += n
+            check(unsafe { cudaEventRecord(self.archive_done[extent_index].0, s) })?;
         }
-        check(unsafe { cudaEventRecord(self.archive_done[self.current_bank].0, s) })?;
         archive.layer(u64::from(self.depth), u64::from(self.current_count))?;
         self.archived_depth = Some(self.depth);
         Ok(())
     }
     pub fn snapshot(&self) -> Result<Vec<Vec<u8>>> {
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
-        let mut bytes = vec![0u8; self.current_count as usize * self.stride];
-        check(unsafe {
-            cudaMemcpy(
-                bytes.as_mut_ptr().cast(),
-                self.current_states.ptr,
-                bytes.len(),
-                2,
-            )
-        })?;
-        Ok(bytes
-            .chunks_exact(self.stride)
-            .map(|x| x[..self.width].to_vec())
-            .collect())
+        let mut result = Vec::with_capacity(self.current_count as usize);
+        for extent in &self.front {
+            let mut bytes = vec![0u8; extent.count as usize * self.stride];
+            check(unsafe {
+                cudaMemcpy(
+                    bytes.as_mut_ptr().cast(),
+                    self.states.at(extent.begin as usize * self.stride),
+                    bytes.len(),
+                    2,
+                )
+            })?;
+            result.extend(
+                bytes
+                    .chunks_exact(self.stride)
+                    .map(|x| x[..self.width].to_vec()),
+            );
+        }
+        Ok(result)
     }
 }

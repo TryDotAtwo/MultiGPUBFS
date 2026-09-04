@@ -452,6 +452,7 @@ impl NativeBfs {
                 count: 1,
                 granted_rows: 1,
                 ready: 1,
+                padding: [0, 0, 0],
                 ..Extent::default()
             });
             result.layer_count.put(&[1u32])?;
@@ -865,11 +866,12 @@ impl NativeBfs {
                         if control.error != 0 {
                             return Err(format!("NATIVE_OWNER_FATAL_{}", control.error));
                         }
-                        let e = self.extent.one::<Extent>()?;
+                        let mut e = self.extent.one::<Extent>()?;
                         if e.ready != 1 {
                             return Err("STATE_NOT_READY".into());
                         }
                         if e.count != 0 {
+                            e.padding[1] = e.descriptor;
                             let adjacent = self.next.last().is_some_and(|last| {
                                 last.begin + last.count == e.begin
                                     && last.sequence + last.count == e.sequence
@@ -880,7 +882,7 @@ impl NativeBfs {
                                 last.granted_rows = last.count as u32;
                                 // One contiguous generation span retires all its
                                 // allocation descriptors through the last ticket.
-                                last.descriptor = e.descriptor;
+                                last.padding[1] = e.descriptor;
                             } else {
                                 if self.next.len() == self.next.capacity() {
                                     return Err("HOST_EXTENT_CAPACITY".into());
