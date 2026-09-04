@@ -111,7 +111,10 @@ fn macro_stage_reports_preserve_every_queried_plane() {
     };
     let report = future.report(64, 6, 4).unwrap();
     assert_eq!(report.allocations.len(), 11);
-    assert_eq!(report.allocations.iter().map(|x| x.bytes).sum::<u64>(), 1126);
+    assert_eq!(
+        report.allocations.iter().map(|x| x.bytes).sum::<u64>(),
+        1126
+    );
     assert!(future.report(64, 6, 5).is_err());
     assert!(FutureMergeBytes::default().report(64, 6, 4).is_err());
 }

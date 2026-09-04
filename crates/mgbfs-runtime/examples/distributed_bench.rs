@@ -1,15 +1,182 @@
 use mgbfs_core::{matrix::MatrixGroup, Result};
-use mgbfs_cuda::{ffi::mgbfs_nccl_unique_id,native_owner::{cudaMemGetInfo,cudaSetDevice}};
-use mgbfs_runtime::{archive::FileExtent,distributed_native::{DistributedConfig,DistributedNativeBfs},pinned_archive::PinnedArchive};
-use sha2::{Digest,Sha256};
-use std::{path::Path,time::{Duration,Instant}};
-fn env_u32(key:&str,default:u32)->u32{std::env::var(key).map(|x|x.parse().expect(key)).unwrap_or(default)}
-fn required(key:&str)->Result<u32>{std::env::var(key).map_err(|_|format!("ENV_{key}"))?.parse().map_err(|_|format!("ENV_{key}"))}
-fn bootstrap(path:&Path,rank:u32,world:u32)->Result<[u8;128]>{const MAGIC:&[u8;8]=b"MGBNCCL1";if rank==0{let mut id=[0;128];if unsafe{mgbfs_nccl_unique_id(id.as_mut_ptr().cast())}!=0{return Err("NCCL_ID".into())}let mut x=Vec::new();x.extend_from_slice(MAGIC);x.extend_from_slice(&world.to_le_bytes());x.extend_from_slice(&id);let tmp=path.with_extension("rank0.tmp");if tmp.exists()||path.exists(){return Err("BOOTSTRAP_EXISTS".into())}std::fs::write(&tmp,x).map_err(|e|e.to_string())?;std::fs::rename(tmp,path).map_err(|e|e.to_string())?;return Ok(id)}let start=Instant::now();loop{if let Ok(x)=std::fs::read(path){if x.len()!=140||&x[..8]!=MAGIC||u32::from_le_bytes(x[8..12].try_into().unwrap())!=world{return Err("BOOTSTRAP_FORMAT".into())}return Ok(x[12..].try_into().unwrap())}if start.elapsed()>Duration::from_secs(60){return Err("BOOTSTRAP_TIMEOUT".into())}std::thread::sleep(Duration::from_millis(10))}}
-fn used()->Result<usize>{let(mut free,mut total)=(0,0);let x=unsafe{cudaMemGetInfo(&mut free,&mut total)};if x!=0{return Err(format!("CUDA_MEMORY_{x}"))}Ok(total-free)}
-fn run()->Result<()> {
- let args:Vec<_>=std::env::args().collect();if args.len()!=6{return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into())}let n:usize=args[1].strip_prefix('s').ok_or("GROUP")?.parse().map_err(|_|"GROUP")?;let batch:u32=args[2].parse().map_err(|_|"BATCH")?;let rank=required("RANK")?;let local=required("LOCAL_RANK")?;let world=required("WORLD_SIZE")?;if world!=2||rank!=local{return Err("TOPOLOGY".into())}if unsafe{cudaSetDevice(local as i32)}!=0{return Err("CUDA_SET_DEVICE".into())}let graph=MatrixGroup::symmetric_permutation_matrices(n)?;let id=bootstrap(Path::new(&args[3]),rank,world)?;let capacity=env_u32("MGBFS_BENCH_CAPACITY",u32::try_from(graph.expected_max_unique_states).map_err(|_|"CAPACITY")?);let future=env_u32("MGBFS_FUTURE_CAPACITY",capacity);let rank_map=match std::env::var("MGBFS_RANK_MAP").as_deref(){Ok("1,0")=>[1,0],Ok("0,1")|Err(_)=>[0,1],_=>return Err("RANK_MAP".into())};
- let description=format!("distributed-native-v1;s{n};batch={batch};capacity={capacity};future={future};rank={rank};map={rank_map:?};seed=20260828");let digest:[u8;32]=Sha256::digest(description.as_bytes()).into();let archive_path=format!("{}-rank-{rank}.mgbfsar1",args[4]);let disk_bytes=graph.expected_max_unique_states.checked_mul((graph.start.len()+16)as u64).and_then(|x|x.checked_add(64<<20)).ok_or("DISK")?;let archive_rows=env_u32("MGBFS_ARCHIVE_ROWS",batch);let mut archive=PinnedArchive::new(FileExtent::create_new(Path::new(&archive_path)).map_err(|e|e.to_string())?,disk_bytes,graph.start.len(),digest,archive_rows,env_u32("MGBFS_ARCHIVE_SLOTS",64)as usize)?;let pinned=archive.pinned_bytes();
- let setup=Instant::now();let mut bfs=DistributedNativeBfs::new(&graph,20260828u128.to_le_bytes(),id,DistributedConfig{rank,world,logical_owner_to_rank:rank_map,batch,layer_capacity:capacity,future_capacity:future,prededup:true,generation_variant:1})?;let allocated=used()?;let setup_seconds=setup.elapsed().as_secs_f64();let trace=std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();let start=Instant::now();let mut layers=Vec::new();let mut times=Vec::new();loop{let tick=Instant::now();let depth=bfs.depth();let count=bfs.frontier_len();layers.push(count);if trace{eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");}bfs.archive_current(&mut archive)?;if trace{eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");}let alive=bfs.advance()?;let elapsed=tick.elapsed().as_secs_f64();times.push(elapsed);if trace{eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive}",bfs.frontier_len());}if !alive{break}}let search=start.elapsed().as_secs_f64();archive.finish()?;let durable=start.elapsed().as_secs_f64();std::fs::create_dir_all(&args[5]).map_err(|e|e.to_string())?;let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));std::fs::write(Path::new(&args[5]).join(format!("rank-{rank}.json")),record).map_err(|e|e.to_string())?;Ok(())
+use mgbfs_cuda::{
+    ffi::mgbfs_nccl_unique_id,
+    native_owner::{cudaMemGetInfo, cudaSetDevice},
+};
+use mgbfs_runtime::{
+    archive::FileExtent,
+    distributed_native::{DistributedConfig, DistributedNativeBfs},
+    pinned_archive::PinnedArchive,
+};
+use sha2::{Digest, Sha256};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
+fn env_u32(key: &str, default: u32) -> u32 {
+    std::env::var(key)
+        .map(|x| x.parse().expect(key))
+        .unwrap_or(default)
 }
-fn main(){if let Err(e)=run(){eprintln!("DISTRIBUTED_BENCH_INCOMPLETE: {e}");std::process::exit(1)}}
+fn required(key: &str) -> Result<u32> {
+    std::env::var(key)
+        .map_err(|_| format!("ENV_{key}"))?
+        .parse()
+        .map_err(|_| format!("ENV_{key}"))
+}
+fn bootstrap(path: &Path, rank: u32, world: u32) -> Result<[u8; 128]> {
+    const MAGIC: &[u8; 8] = b"MGBNCCL1";
+    if rank == 0 {
+        let mut id = [0; 128];
+        if unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) } != 0 {
+            return Err("NCCL_ID".into());
+        }
+        let mut x = Vec::new();
+        x.extend_from_slice(MAGIC);
+        x.extend_from_slice(&world.to_le_bytes());
+        x.extend_from_slice(&id);
+        let tmp = path.with_extension("rank0.tmp");
+        if tmp.exists() || path.exists() {
+            return Err("BOOTSTRAP_EXISTS".into());
+        }
+        std::fs::write(&tmp, x).map_err(|e| e.to_string())?;
+        std::fs::rename(tmp, path).map_err(|e| e.to_string())?;
+        return Ok(id);
+    }
+    let start = Instant::now();
+    loop {
+        if let Ok(x) = std::fs::read(path) {
+            if x.len() != 140
+                || &x[..8] != MAGIC
+                || u32::from_le_bytes(x[8..12].try_into().unwrap()) != world
+            {
+                return Err("BOOTSTRAP_FORMAT".into());
+            }
+            return Ok(x[12..].try_into().unwrap());
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            return Err("BOOTSTRAP_TIMEOUT".into());
+        }
+        std::thread::sleep(Duration::from_millis(10))
+    }
+}
+fn used() -> Result<usize> {
+    let (mut free, mut total) = (0, 0);
+    let x = unsafe { cudaMemGetInfo(&mut free, &mut total) };
+    if x != 0 {
+        return Err(format!("CUDA_MEMORY_{x}"));
+    }
+    Ok(total - free)
+}
+fn run() -> Result<()> {
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() != 6 {
+        return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
+    }
+    let n: usize = args[1]
+        .strip_prefix('s')
+        .ok_or("GROUP")?
+        .parse()
+        .map_err(|_| "GROUP")?;
+    let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
+    let rank = required("RANK")?;
+    let local = required("LOCAL_RANK")?;
+    let world = required("WORLD_SIZE")?;
+    if world != 2 || rank != local {
+        return Err("TOPOLOGY".into());
+    }
+    if unsafe { cudaSetDevice(local as i32) } != 0 {
+        return Err("CUDA_SET_DEVICE".into());
+    }
+    let graph = MatrixGroup::symmetric_permutation_matrices(n)?;
+    let id = bootstrap(Path::new(&args[3]), rank, world)?;
+    let capacity = env_u32(
+        "MGBFS_BENCH_CAPACITY",
+        u32::try_from(graph.expected_max_unique_states).map_err(|_| "CAPACITY")?,
+    );
+    let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity);
+    let rank_map = match std::env::var("MGBFS_RANK_MAP").as_deref() {
+        Ok("1,0") => [1, 0],
+        Ok("0,1") | Err(_) => [0, 1],
+        _ => return Err("RANK_MAP".into()),
+    };
+    let description=format!("distributed-native-v1;s{n};batch={batch};capacity={capacity};future={future};rank={rank};map={rank_map:?};seed=20260828");
+    let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
+    let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
+    let disk_bytes = graph
+        .expected_max_unique_states
+        .checked_mul((graph.start.len() + 16) as u64)
+        .and_then(|x| x.checked_add(64 << 20))
+        .ok_or("DISK")?;
+    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
+    let mut archive = PinnedArchive::new(
+        FileExtent::create_new(Path::new(&archive_path)).map_err(|e| e.to_string())?,
+        disk_bytes,
+        graph.start.len(),
+        digest,
+        archive_rows,
+        env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+    )?;
+    let pinned = archive.pinned_bytes();
+    let setup = Instant::now();
+    let mut bfs = DistributedNativeBfs::new(
+        &graph,
+        20260828u128.to_le_bytes(),
+        id,
+        DistributedConfig {
+            rank,
+            world,
+            logical_owner_to_rank: rank_map,
+            batch,
+            layer_capacity: capacity,
+            future_capacity: future,
+            prededup: true,
+            generation_variant: 1,
+        },
+    )?;
+    let allocated = used()?;
+    let setup_seconds = setup.elapsed().as_secs_f64();
+    let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
+    let start = Instant::now();
+    let mut layers = Vec::new();
+    let mut times = Vec::new();
+    loop {
+        let tick = Instant::now();
+        let depth = bfs.depth();
+        let count = bfs.frontier_len();
+        layers.push(count);
+        if trace {
+            eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
+        }
+        bfs.archive_current(&mut archive)?;
+        if trace {
+            eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
+        }
+        let alive = bfs.advance()?;
+        let elapsed = tick.elapsed().as_secs_f64();
+        times.push(elapsed);
+        if trace {
+            eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive}",bfs.frontier_len());
+        }
+        if !alive {
+            break;
+        }
+    }
+    let search = start.elapsed().as_secs_f64();
+    archive.finish()?;
+    let durable = start.elapsed().as_secs_f64();
+    std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
+    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));
+    std::fs::write(
+        Path::new(&args[5]).join(format!("rank-{rank}.json")),
+        record,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("DISTRIBUTED_BENCH_INCOMPLETE: {e}");
+        std::process::exit(1)
+    }
+}
