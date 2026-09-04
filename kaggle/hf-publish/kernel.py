@@ -129,7 +129,7 @@ def main():
     raw = next(json.loads(line) for line in reversed(raw_text.splitlines()) if line.startswith("{"))
     commit_path = staging / "rank-00000-stream-commit.json"
     rank_commit = json.loads(commit_path.read_text())
-    if raw.get("total_unique_states") != 40320 or rank_commit.get("total_unique_states") != 40320:
+    if raw.get("unique_states") != 40320 or rank_commit.get("total_unique_states") != 40320:
         raise RuntimeError("S8_CARDINALITY_GATE")
     promotion_text = run([
         sys.executable, "scripts/promote_hf_stream.py", "--repo-id", REPO_ID, "--world-size", "1",
