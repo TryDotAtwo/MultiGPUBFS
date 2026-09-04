@@ -8,7 +8,7 @@ use mgbfs_cuda::{
     native_owner::{cudaMemGetInfo, cudaSetDevice},
 };
 use mgbfs_runtime::{
-    archive::create_archive_extent,
+    archive::{create_archive_extent, Extent, StreamExtent},
     distributed_native::{DistributedConfig, DistributedNativeBfs},
     pinned_archive::PinnedArchive,
 };
@@ -131,9 +131,14 @@ fn run() -> Result<()> {
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     // Test-only A/B switch. Production runs retain the mandatory archive.
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
-    let mut archive = PinnedArchive::new(
+    let extent: Box<dyn Extent + Send> = if archive_enabled {
         create_archive_extent(Path::new(&archive_path), stream_archive)
-            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?,
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?
+    } else {
+        Box::new(StreamExtent::new(std::io::sink()))
+    };
+    let mut archive = PinnedArchive::new(
+        extent,
         disk_bytes,
         graph.start.len(),
         digest,
