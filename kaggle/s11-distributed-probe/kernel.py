@@ -69,6 +69,7 @@ def main():
     archive_prefix = root / "archive"
     run_env = dict(
         env,
+        MGBFS_CAPACITY_MODE="max_per_rank",
         MGBFS_BENCH_CAPACITY=str(PER_RANK_CAPACITY),
         MGBFS_FUTURE_CAPACITY=str(PER_RANK_CAPACITY),
         MGBFS_ARCHIVE_ROWS=str(ARCHIVE_ROWS),

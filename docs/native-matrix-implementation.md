@@ -21,6 +21,7 @@ performance.
 - [x] Matrix/config manifests, digest roundtrip, exact matrix oracle, frozen GEMM hash vectors
 - [ ] StateTraits integration and frozen complete config serialization vectors
 - [ ] Allocation ledger and complete kernel-query-backed memory planner
+- [x] Explicit `EQUAL_GLOBAL` versus `MAX_PER_RANK` cluster-capacity contract
 - [x] StateRing / owner-commit / exchange-epoch CPU protocol models
 - [x] Checksummed archive codec, Linux physical preallocation and fault injection
 - [x] Bounded pinned archive ring, asynchronous Parquet/HF staging and atomic RunCommit (1-rank S8 gate)

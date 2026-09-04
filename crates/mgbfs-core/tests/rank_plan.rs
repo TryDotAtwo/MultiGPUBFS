@@ -202,3 +202,30 @@ fn malformed_shapes_and_query_allocations_fail_closed() {
         assert!(plan(&s, &bad).is_err());
     }
 }
+
+#[test]
+fn cluster_capacity_modes_separate_equal_global_memory_from_max_capacity() {
+    let equal = cluster_capacity_plan(CapacityMode::EqualGlobal, 11, 2).unwrap();
+    assert_eq!(equal.per_rank_records, vec![6, 5]);
+    assert_eq!(equal.global_records, 11);
+    assert_eq!(equal.rank_records(0).unwrap(), 6);
+    assert_eq!(equal.rank_records(1).unwrap(), 5);
+
+    let max = cluster_capacity_plan(CapacityMode::MaxPerRank, 11, 2).unwrap();
+    assert_eq!(max.per_rank_records, vec![11, 11]);
+    assert_eq!(max.global_records, 22);
+}
+
+#[test]
+fn cluster_capacity_plan_fails_closed_on_empty_ranks_and_overflow() {
+    assert_eq!(
+        cluster_capacity_plan(CapacityMode::EqualGlobal, 1, 2).unwrap_err(),
+        "RANK_CAPACITY_ZERO"
+    );
+    assert_eq!(
+        cluster_capacity_plan(CapacityMode::MaxPerRank, u64::MAX, 2).unwrap_err(),
+        "BYTE_OVERFLOW"
+    );
+    let plan = cluster_capacity_plan(CapacityMode::EqualGlobal, 4, 2).unwrap();
+    assert_eq!(plan.rank_records(2).unwrap_err(), "RANK_OUT_OF_RANGE");
+}

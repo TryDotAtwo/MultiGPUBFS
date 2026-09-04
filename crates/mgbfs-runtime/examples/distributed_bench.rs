@@ -1,4 +1,8 @@
-use mgbfs_core::{matrix::MatrixGroup, Result};
+use mgbfs_core::{
+    matrix::MatrixGroup,
+    rank_plan::{cluster_capacity_plan, CapacityMode},
+    Result,
+};
 use mgbfs_cuda::{
     ffi::mgbfs_nccl_unique_id,
     native_owner::{cudaMemGetInfo, cudaSetDevice},
@@ -23,6 +27,13 @@ fn required(key: &str) -> Result<u32> {
         .map_err(|_| format!("ENV_{key}"))?
         .parse()
         .map_err(|_| format!("ENV_{key}"))
+}
+fn capacity_mode() -> Result<CapacityMode> {
+    match std::env::var("MGBFS_CAPACITY_MODE").as_deref() {
+        Ok("equal_global") => Ok(CapacityMode::EqualGlobal),
+        Ok("max_per_rank") | Err(_) => Ok(CapacityMode::MaxPerRank),
+        _ => Err("ENV_MGBFS_CAPACITY_MODE".into()),
+    }
 }
 fn bootstrap(path: &Path, rank: u32, world: u32) -> Result<[u8; 128]> {
     const MAGIC: &[u8; 8] = b"MGBNCCL1";
@@ -90,17 +101,22 @@ fn run() -> Result<()> {
     }
     let graph = MatrixGroup::symmetric_permutation_matrices(n)?;
     let id = bootstrap(Path::new(&args[3]), rank, world)?;
-    let capacity = env_u32(
+    let declared_capacity = env_u32(
         "MGBFS_BENCH_CAPACITY",
         u32::try_from(graph.expected_max_unique_states).map_err(|_| "CAPACITY")?,
     );
-    let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity);
+    let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity);
+    let mode = capacity_mode()?;
+    let capacity_plan = cluster_capacity_plan(mode, u64::from(declared_capacity), world)?;
+    let future_plan = cluster_capacity_plan(mode, u64::from(declared_future), world)?;
+    let capacity = u32::try_from(capacity_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
+    let future = u32::try_from(future_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
     let rank_map = match std::env::var("MGBFS_RANK_MAP").as_deref() {
         Ok("1,0") => [1, 0],
         Ok("0,1") | Err(_) => [0, 1],
         _ => return Err("RANK_MAP".into()),
     };
-    let description=format!("distributed-native-v1;s{n};batch={batch};capacity={capacity};future={future};rank={rank};map={rank_map:?};seed=20260828");
+    let description=format!("distributed-native-v1;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_future={declared_future};rank_capacity={capacity};rank_future={future};rank={rank};map={rank_map:?};seed=20260828");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let disk_bytes = graph
@@ -168,7 +184,7 @@ fn run() -> Result<()> {
     archive.finish()?;
     let durable = start.elapsed().as_secs_f64();
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
-    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));
+    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_future_records\":{declared_future},\"global_future_records\":{},\"rank_future_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,

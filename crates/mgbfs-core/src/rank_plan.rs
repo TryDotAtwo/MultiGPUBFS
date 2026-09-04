@@ -97,6 +97,69 @@ pub struct RankPlan {
     pub free_after_warmup: u64,
     pub queries: RankQueries,
 }
+
+/// Frozen before allocation. `EqualGlobal` keeps the cluster-wide record
+/// budget constant as ranks are added; `MaxPerRank` spends the declared budget
+/// independently on every rank to maximize the solvable graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CapacityMode {
+    EqualGlobal,
+    MaxPerRank,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterCapacityPlan {
+    pub mode: CapacityMode,
+    pub declared_records: u64,
+    pub global_records: u64,
+    pub per_rank_records: Vec<u64>,
+}
+
+impl ClusterCapacityPlan {
+    pub fn rank_records(&self, rank: u32) -> Result<u64> {
+        self.per_rank_records
+            .get(rank as usize)
+            .copied()
+            .ok_or_else(|| "RANK_OUT_OF_RANGE".into())
+    }
+}
+
+pub fn cluster_capacity_plan(
+    mode: CapacityMode,
+    declared_records: u64,
+    world_size: u32,
+) -> Result<ClusterCapacityPlan> {
+    if declared_records == 0 || world_size == 0 {
+        return Err("CLUSTER_CAPACITY_SHAPE".into());
+    }
+    let world = u64::from(world_size);
+    let (global_records, per_rank_records) = match mode {
+        CapacityMode::EqualGlobal => {
+            let base = declared_records / world;
+            if base == 0 {
+                return Err("RANK_CAPACITY_ZERO".into());
+            }
+            let remainder = declared_records % world;
+            let ranks = (0..world)
+                .map(|rank| base + u64::from(rank < remainder))
+                .collect();
+            (declared_records, ranks)
+        }
+        CapacityMode::MaxPerRank => {
+            let global = declared_records.checked_mul(world).ok_or("BYTE_OVERFLOW")?;
+            (global, vec![declared_records; world_size as usize])
+        }
+    };
+    Ok(ClusterCapacityPlan {
+        mode,
+        declared_records,
+        global_records,
+        per_rank_records,
+    })
+}
+
 pub fn rank_plan(
     shape: &RankShape,
     queries: &RankQueries,
