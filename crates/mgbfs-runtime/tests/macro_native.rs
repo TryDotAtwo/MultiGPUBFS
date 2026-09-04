@@ -84,8 +84,44 @@ fn native_macro_vram_preflight_fails_before_runtime_buffers_are_allocated() {
 }
 
 #[test]
+fn native_macro_exposes_the_exact_two_bank_allocation_contract() {
+    let graph = MatrixGroup::unitriangular(3, 2).unwrap();
+    let bfs = MacroNativeBfs::new(
+        &graph,
+        [9; 16],
+        MacroNativeConfig {
+            macro_depth: 2,
+            batch: 8,
+            layer_capacity: 8,
+            future_capacity_per_depth: 32,
+            prededup: true,
+            generation_variant: 1,
+            untouched_vram_reserve_bytes: 0,
+        },
+    )
+    .unwrap();
+    let plan = bfs.memory_plan();
+    assert_eq!(
+        plan.shape.producer_state_bytes,
+        2 * plan.shape.candidate_records * 16
+    );
+    assert_eq!(
+        plan.shape.producer_hash_bytes,
+        2 * plan.shape.candidate_records * 16
+    );
+    assert_eq!(
+        plan.requested_device_bytes,
+        plan.external_bytes + plan.library_bytes
+    );
+    assert_eq!(bfs.requested_device_bytes(), plan.requested_device_bytes);
+}
+
+#[test]
 fn native_macro_archive_is_complete_and_verifiable() {
-    use mgbfs_runtime::{archive::{verify, Extent}, pinned_archive::PinnedArchive};
+    use mgbfs_runtime::{
+        archive::{verify, Extent},
+        pinned_archive::PinnedArchive,
+    };
     use std::sync::{Arc, Mutex};
     struct MemoryExtent(Arc<Mutex<Vec<u8>>>);
     impl Extent for MemoryExtent {
@@ -98,7 +134,9 @@ fn native_macro_archive_is_complete_and_verifiable() {
                 .copy_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn sync(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn sync(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let config = MacroNativeConfig {
@@ -118,11 +156,14 @@ fn native_macro_archive_is_complete_and_verifiable() {
         [7; 32],
         7,
         32,
-    ).unwrap();
+    )
+    .unwrap();
     let mut bfs = MacroNativeBfs::new(&graph, [3; 16], config).unwrap();
     loop {
         bfs.archive_current(&mut archive).unwrap();
-        if !bfs.advance().unwrap() { break; }
+        if !bfs.advance().unwrap() {
+            break;
+        }
     }
     archive.finish().unwrap();
     let data = bytes.lock().unwrap();
