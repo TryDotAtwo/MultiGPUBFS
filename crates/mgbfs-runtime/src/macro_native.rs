@@ -460,7 +460,7 @@ impl MacroNativeBfs {
         check(unsafe { cudaEventRecord(archive_done[1].0, raw_stream) })?;
         check(unsafe { cudaStreamSynchronize(raw_stream) })?;
         check(unsafe { cudaMemGetInfo(&mut free, &mut total) })?;
-        if free as u128 < u128::from(cfg.untouched_vram_reserve_bytes) {
+        if (free as u128) < u128::from(cfg.untouched_vram_reserve_bytes) {
             return Err(format!(
                 "VRAM_RESERVE_AFTER_ALLOCATION reserve={} free={free}",
                 cfg.untouched_vram_reserve_bytes
