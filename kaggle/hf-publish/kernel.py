@@ -13,7 +13,7 @@ from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "2b55531"
+SOURCE = "2b555312a6e622754314244032c8ba99bb0ba54b"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 RUST = "1.75.0"
