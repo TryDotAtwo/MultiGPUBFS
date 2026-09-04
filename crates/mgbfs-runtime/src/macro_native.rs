@@ -143,14 +143,17 @@ pub struct MacroNativeBfs {
     weight_runs: Vec<(u32, u32, u32)>,
     effective_depth: u32,
     stream: Stream,
+    producer_streams: [Stream; 2],
+    producer_ready: [Event; 2],
+    producer_consumed: [Event; 2],
     archive_stream: Stream,
     archive_done: [Event; 2],
     archive_hash: Plan,
     archive_hashes: Buffer,
     archived_depth: Option<u32>,
     current_bank: usize,
-    generate: Plan,
-    hash: Plan,
+    generate: [Plan; 2],
+    hash: [Plan; 2],
     route: Plan,
     materialize: Plan,
     future_merge: Plan,
@@ -206,6 +209,11 @@ impl MacroNativeBfs {
         let mut raw_stream = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_stream, 1) })?;
         let stream = Stream(raw_stream);
+        let mut raw_producer_stream_0 = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut raw_producer_stream_0, 1) })?;
+        let mut raw_producer_stream_1 = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut raw_producer_stream_1, 1) })?;
+        let producer_streams = [Stream(raw_producer_stream_0), Stream(raw_producer_stream_1)];
         let mut raw_archive_stream = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive_stream, 1) })?;
         let archive_stream = Stream(raw_archive_stream);
@@ -294,13 +302,17 @@ impl MacroNativeBfs {
                     generation_bytes.packed_parents,
                     generation_bytes.products_s32,
                     generation_bytes.workspace,
-                ])?,
+                ])?
+                .checked_mul(2)
+                .ok_or("VRAM_PLAN_OVERFLOW")?,
                 candidate_hash: sum(&[
                     hash_bytes.weights,
                     hash_bytes.offsets,
                     hash_bytes.partials_s32,
                     hash_bytes.workspace,
-                ])?,
+                ])?
+                .checked_mul(2)
+                .ok_or("VRAM_PLAN_OVERFLOW")?,
                 archive_hash: sum(&[
                     archive_hash_bytes.weights,
                     archive_hash_bytes.offsets,
@@ -353,31 +365,37 @@ impl MacroNativeBfs {
                 cfg.untouched_vram_reserve_bytes
             ));
         }
-        let generate = Plan::new(mgbfs_generate_destroy, |out, error| unsafe {
-            mgbfs_generate_create_macro_variant(
-                graph.rows as u32,
-                moves,
-                graph.modulus as u32,
-                cfg.batch,
-                matrices.as_ptr(),
-                weights.as_ptr(),
-                cfg.generation_variant,
-                out,
-                error,
-                512,
-            )
-        })?;
-        let hash = Plan::new(mgbfs_hash_destroy, |out, error| unsafe {
-            mgbfs_hash_create(
-                width as u32,
-                candidates,
-                limbs.as_ptr(),
-                hash_contract.offsets.as_ptr(),
-                out,
-                error,
-                512,
-            )
-        })?;
+        let make_generate = || {
+            Plan::new(mgbfs_generate_destroy, |out, error| unsafe {
+                mgbfs_generate_create_macro_variant(
+                    graph.rows as u32,
+                    moves,
+                    graph.modulus as u32,
+                    cfg.batch,
+                    matrices.as_ptr(),
+                    weights.as_ptr(),
+                    cfg.generation_variant,
+                    out,
+                    error,
+                    512,
+                )
+            })
+        };
+        let generate = [make_generate()?, make_generate()?];
+        let make_hash = || {
+            Plan::new(mgbfs_hash_destroy, |out, error| unsafe {
+                mgbfs_hash_create(
+                    width as u32,
+                    candidates,
+                    limbs.as_ptr(),
+                    hash_contract.offsets.as_ptr(),
+                    out,
+                    error,
+                    512,
+                )
+            })
+        };
+        let hash = [make_hash()?, make_hash()?];
         let archive_hash = Plan::new(mgbfs_hash_destroy, |out, error| unsafe {
             mgbfs_hash_create(
                 width as u32,
@@ -467,7 +485,7 @@ impl MacroNativeBfs {
         history_counts_gpu.put(&history_counts)?;
         check(unsafe {
             mgbfs_hash_run(
-                hash.0,
+                archive_hash.0,
                 current_states.ptr.cast(),
                 history.ptr.cast(),
                 1,
@@ -475,8 +493,12 @@ impl MacroNativeBfs {
             )
         })?;
         let archive_done = [Event::new()?, Event::new()?];
+        let producer_ready = [Event::new()?, Event::new()?];
+        let producer_consumed = [Event::new()?, Event::new()?];
         check(unsafe { cudaEventRecord(archive_done[0].0, raw_stream) })?;
         check(unsafe { cudaEventRecord(archive_done[1].0, raw_stream) })?;
+        check(unsafe { cudaEventRecord(producer_consumed[0].0, raw_stream) })?;
+        check(unsafe { cudaEventRecord(producer_consumed[1].0, raw_stream) })?;
         check(unsafe { cudaStreamSynchronize(raw_stream) })?;
         check(unsafe { cudaMemGetInfo(&mut free, &mut total) })?;
         if (free as u128) < u128::from(cfg.untouched_vram_reserve_bytes) {
@@ -495,6 +517,9 @@ impl MacroNativeBfs {
             weight_runs,
             effective_depth: effective,
             stream,
+            producer_streams,
+            producer_ready,
+            producer_consumed,
             archive_stream,
             archive_done,
             archive_hash,
@@ -636,22 +661,37 @@ impl MacroNativeBfs {
             let all = parents
                 .checked_mul(self.weight_runs.iter().map(|run| run.2).sum::<u32>())
                 .ok_or("COUNT_OVERFLOW")?;
+            let producer_stream = self.producer_streams[producer_bank].0;
             unsafe {
+                check(cudaStreamWaitEvent(
+                    producer_stream,
+                    self.producer_consumed[producer_bank].0,
+                    0,
+                ))?;
                 check(mgbfs_generate_run(
-                    self.generate.0,
+                    self.generate[producer_bank].0,
                     self.current_states
                         .at(parent_offset as usize * self.stride)
                         .cast(),
                     self.children[producer_bank].ptr.cast(),
                     parents,
-                    self.stream.0,
+                    producer_stream,
                 ))?;
                 check(mgbfs_hash_run(
-                    self.hash.0,
+                    self.hash[producer_bank].0,
                     self.children[producer_bank].ptr.cast(),
                     self.child_hashes[producer_bank].ptr.cast(),
                     all,
+                    producer_stream,
+                ))?;
+                check(cudaEventRecord(
+                    self.producer_ready[producer_bank].0,
+                    producer_stream,
+                ))?;
+                check(cudaStreamWaitEvent(
                     self.stream.0,
+                    self.producer_ready[producer_bank].0,
+                    0,
                 ))?;
             }
             for &(weight, move_begin, move_count) in &self.weight_runs {
@@ -692,6 +732,9 @@ impl MacroNativeBfs {
                     ))?;
                 }
             }
+            check(unsafe {
+                cudaEventRecord(self.producer_consumed[producer_bank].0, self.stream.0)
+            })?;
             parent_offset += parents;
             producer_bank ^= 1;
         }
