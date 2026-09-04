@@ -63,6 +63,7 @@ def main():
     run(["cmake", "--build", str(build), "--parallel", "2"], "cuda-build", source)
     run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime",
          "--features", "cuda", "--example", "distributed_bench"], "rust-build", source)
+    sys.path.insert(0, str(source / "scripts"))
     bench = load(source / "scripts/distributed_gpu_bench.py", "bench")
     bootstrap = root / "bootstrap"
     archive_prefix = root / "archive"
