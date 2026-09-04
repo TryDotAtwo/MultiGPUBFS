@@ -2,7 +2,7 @@
 mod concurrent;
 use crate::{
     owner::OwnerModel,
-    receipts::BatchReceipts,
+    receipts::HashFirstLease,
     ring::StateRing,
     transport::{Kind, Transport},
 };
@@ -181,9 +181,6 @@ pub fn run(graph: &MatrixGroup, c: &Config) -> Result<Simulation> {
             for parent in &parent_chunk.states {
                 let source = parent_chunk.rank;
                 t.work(source, true)?;
-                if c.profile == Profile::HashFirst {
-                    rings[source].hold_origins(parent_chunk.id)?;
-                }
                 let mut groups: BTreeMap<(usize, usize), Vec<Child>> = BTreeMap::new();
                 let mut local = BTreeSet::new();
                 let mut emitted = vec![0u64; w];
@@ -201,7 +198,15 @@ pub fn run(graph: &MatrixGroup, c: &Config) -> Result<Simulation> {
                         .or_default()
                         .push(Child { hash: h, state, mv });
                 }
-                let mut receipts = BatchReceipts::new(&emitted)?;
+                let mut lease = if c.profile == Profile::HashFirst {
+                    Some(HashFirstLease::begin(
+                        &mut rings[source],
+                        parent_chunk.id,
+                        &emitted,
+                    )?)
+                } else {
+                    None
+                };
                 let mut accepted = vec![0u64; w];
                 let mut commits: Vec<(Chunk, Vec<Child>)> = vec![];
                 for (key, children) in groups {
@@ -278,7 +283,11 @@ pub fn run(graph: &MatrixGroup, c: &Config) -> Result<Simulation> {
                         if kind == 2 {
                             let seq =
                                 send(&mut t, Kind::Receipt, i, source, 1, w, &mut slot, &mut rng)?;
-                            receipts.receipt(i, emitted[i], accepted[i])?;
+                            lease.as_mut().ok_or("HASH_FIRST_LEASE")?.receipt(
+                                i,
+                                emitted[i],
+                                accepted[i],
+                            )?;
                             t.consume(seq)?;
                         } else {
                             let (chunk, winners) = &commits[i];
@@ -315,7 +324,10 @@ pub fn run(graph: &MatrixGroup, c: &Config) -> Result<Simulation> {
                                     {
                                         return Err("MATERIALIZE_IDENTITY".into());
                                     }
-                                    receipts.served(owner, child.mv as u64)?;
+                                    lease
+                                        .as_mut()
+                                        .ok_or("HASH_FIRST_LEASE")?
+                                        .served(owner, child.mv as u64)?;
                                 }
                                 rings[owner].materialized(chunk.id)?;
                                 archive(
@@ -331,10 +343,13 @@ pub fn run(graph: &MatrixGroup, c: &Config) -> Result<Simulation> {
                             }
                         }
                     }
-                    if !receipts.closed() {
+                    if !lease
+                        .as_mut()
+                        .ok_or("HASH_FIRST_LEASE")?
+                        .try_close(&mut rings[source])?
+                    {
                         return Err("UNCLOSED_ORIGINS".into());
                     }
-                    rings[source].release_origins(parent_chunk.id)?;
                     next.extend(commits.into_iter().map(|x| x.0));
                 }
                 t.work(source, false)?;

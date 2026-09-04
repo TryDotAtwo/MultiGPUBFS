@@ -1,4 +1,5 @@
 use super::*;
+use crate::receipts::HashFirstLease;
 use mgbfs_core::wire::{payload_layout, ExpectedFrame, FrameHeader, FrameKind};
 pub struct ConcurrentSimulation {
     pub result: Simulation,
@@ -10,13 +11,12 @@ pub struct ConcurrentSimulation {
 }
 struct Batch {
     source: usize,
-    extent: u64,
     parent_ref: u64,
     parent: Vec<u8>,
     remaining: Vec<usize>,
     accepted: Vec<u64>,
     emitted: Vec<u64>,
-    receipts: BatchReceipts,
+    lease: Option<HashFirstLease>,
 }
 enum Message {
     Candidate {
@@ -223,9 +223,6 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                     let parent_ref = rings[source].state_ref(extent, row)?;
                     admitted += 1;
                     t.work(source, true)?;
-                    if c.profile == Profile::HashFirst {
-                        rings[source].hold_origins(extent)?;
-                    }
                     let mut groups: BTreeMap<(usize, usize), Vec<Child>> = BTreeMap::new();
                     let mut unique = BTreeSet::new();
                     let mut emitted = vec![0u64; w];
@@ -262,18 +259,21 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                             },
                         )?;
                     }
-                    let receipts = BatchReceipts::new(&emitted)?;
+                    let lease = if c.profile == Profile::HashFirst {
+                        Some(HashFirstLease::begin(&mut rings[source], extent, &emitted)?)
+                    } else {
+                        None
+                    };
                     batches.insert(
                         bid,
                         Batch {
                             source,
-                            extent,
                             parent_ref,
                             parent,
                             remaining,
                             accepted: vec![0; w],
                             emitted,
-                            receipts,
+                            lease,
                         },
                     );
                     if last {
@@ -459,7 +459,11 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                                 if s != child.state || hasher.hash(&s)? != child.hash {
                                     return Err("MATERIALIZE_IDENTITY".into());
                                 }
-                                batch.receipts.served(chunk.rank, child.mv as u64)?;
+                                batch
+                                    .lease
+                                    .as_mut()
+                                    .ok_or("HASH_FIRST_LEASE")?
+                                    .served(chunk.rank, child.mv as u64)?;
                             }
                             rings[chunk.rank].materialized(chunk.id)?;
                             archive(
@@ -475,16 +479,23 @@ pub fn run_concurrent(g: &MatrixGroup, c: &Config, window: usize) -> Result<Conc
                         }
                         Message::Receipt {
                             owner, accepted, ..
-                        } => batch
-                            .receipts
-                            .receipt(owner, batch.emitted[owner], accepted)?,
+                        } => batch.lease.as_mut().ok_or("HASH_FIRST_LEASE")?.receipt(
+                            owner,
+                            batch.emitted[owner],
+                            accepted,
+                        )?,
                     }
-                    let done = batch.remaining.iter().all(|&n| n == 0)
-                        && (c.profile == Profile::Dense || batch.receipts.closed());
+                    let obligations_closed = if c.profile == Profile::Dense {
+                        true
+                    } else {
+                        batch
+                            .lease
+                            .as_mut()
+                            .ok_or("HASH_FIRST_LEASE")?
+                            .try_close(&mut rings[batch.source])?
+                    };
+                    let done = batch.remaining.iter().all(|&n| n == 0) && obligations_closed;
                     if done {
-                        if c.profile == Profile::HashFirst {
-                            rings[batch.source].release_origins(batch.extent)?;
-                        }
                         rings[batch.source].reclaim();
                         t.work(batch.source, false)?;
                         batches.remove(&bid);

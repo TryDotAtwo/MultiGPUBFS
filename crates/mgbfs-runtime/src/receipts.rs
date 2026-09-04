@@ -1,5 +1,6 @@
 //! CPU oracle for one source batch's HASH_FIRST terminal obligations.
 //! Not the transport implementation or a GPU fallback.
+use crate::ring::StateRing;
 use mgbfs_core::Result;
 use std::collections::BTreeSet;
 struct Owner {
@@ -65,5 +66,54 @@ impl BatchReceipts {
                 .owners
                 .iter()
                 .all(|o| o.accepted == Some(o.served.len() as u64))
+    }
+}
+
+/// Source-side HASH_FIRST lifetime contract for one emitted parent batch.
+/// The parent extent remains readable until every owner has published its
+/// terminal receipt and every accepted materialization response has completed.
+pub struct HashFirstLease {
+    parent_extent: u64,
+    receipts: BatchReceipts,
+    origin_held: bool,
+    closed: bool,
+}
+
+impl HashFirstLease {
+    pub fn begin(ring: &mut StateRing, parent_extent: u64, emitted: &[u64]) -> Result<Self> {
+        let receipts = BatchReceipts::new(emitted)?;
+        let origin_held = emitted.iter().any(|&count| count != 0);
+        if origin_held {
+            ring.hold_origins(parent_extent)?;
+        }
+        Ok(Self {
+            parent_extent,
+            receipts,
+            origin_held,
+            closed: false,
+        })
+    }
+
+    pub fn receipt(&mut self, owner: usize, emitted: u64, accepted: u64) -> Result<()> {
+        self.receipts.receipt(owner, emitted, accepted)
+    }
+
+    pub fn served(&mut self, owner: usize, request: u64) -> Result<()> {
+        self.receipts.served(owner, request)
+    }
+
+    /// Returns true exactly once, when this call closes the lease.
+    pub fn try_close(&mut self, ring: &mut StateRing) -> Result<bool> {
+        if self.receipts.failed {
+            return Err("RECEIPT_BATCH_FAILED".into());
+        }
+        if self.closed || !self.receipts.closed() {
+            return Ok(false);
+        }
+        if self.origin_held {
+            ring.release_origins(self.parent_extent)?;
+        }
+        self.closed = true;
+        Ok(true)
     }
 }
