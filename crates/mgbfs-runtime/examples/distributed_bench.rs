@@ -129,6 +129,8 @@ fn run() -> Result<()> {
         .ok_or("DISK")?;
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
+    // Test-only A/B switch. Production runs retain the mandatory archive.
+    let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
     let mut archive = PinnedArchive::new(
         create_archive_extent(Path::new(&archive_path), stream_archive)
             .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?,
@@ -169,7 +171,9 @@ fn run() -> Result<()> {
         if trace {
             eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
         }
-        bfs.archive_current(&mut archive)?;
+        if archive_enabled {
+            bfs.archive_current(&mut archive)?;
+        }
         if trace {
             eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
         }
@@ -184,10 +188,12 @@ fn run() -> Result<()> {
         }
     }
     let search = start.elapsed().as_secs_f64();
-    archive.finish()?;
+    if archive_enabled {
+        archive.finish()?;
+    }
     let durable = start.elapsed().as_secs_f64();
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
-    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_future_records\":{declared_future},\"global_future_records\":{},\"rank_future_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
+    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_future_records\":{declared_future},\"global_future_records\":{},\"rank_future_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,
