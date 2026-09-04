@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "a1d8025ce67d108a06c737b83e1c1603e74d6386"
+SOURCE = "2cccb5ccbaec31c9028b2f08b5a0ef5f58ef8b3a"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 39_916_800
 PER_RANK_CAPACITY = 8_000_000
