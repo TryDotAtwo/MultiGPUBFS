@@ -106,7 +106,7 @@ def main():
             # S8 completes in a sub-second burst.  Keep the no-backpressure
             # contract by preallocating enough pinned slots for that entire
             # acceptance burst while the first Parquet upload is in flight.
-            MGBFS_ARCHIVE_SLOTS="16",
+            MGBFS_ARCHIVE_SLOTS="64",
             MGBFS_ARCHIVE_STREAM="1",
         )
         try:
