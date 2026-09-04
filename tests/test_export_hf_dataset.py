@@ -40,7 +40,7 @@ class ExportDataset(unittest.TestCase):
             archive(source)
             summary = root / "summary.json"
             summary.write_text(
-                json.dumps({"status": "COMPLETE", "group_id": "fixture", "config_digest": "ab" * 32}),
+                json.dumps({"status": "COMPLETE", "group_id": "fixture", "config_digest": bytes(range(32)).hex()}),
                 encoding="utf-8",
             )
             output = root / "dataset"

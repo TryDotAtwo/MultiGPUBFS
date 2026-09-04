@@ -47,6 +47,7 @@ def frames(path):
         if len(header) != 48 or header[:8] != b"MGBFSAR1":
             raise ValueError("ARCHIVE_HEADER")
         width = u64(header, 8)
+        config_digest = header[16:48].hex()
         if not 0 < width <= 33025:
             raise ValueError("ARCHIVE_WIDTH")
         chain = hashlib.sha256(header).digest()
@@ -69,7 +70,7 @@ def frames(path):
                 if count == 0 or count * (width + 16) != size:
                     raise ValueError("ARCHIVE_RECORD_SHAPE")
                 layer_count += count
-                yield depth, width, count, payload
+                yield depth, width, count, payload, config_digest
             elif kind == 2:
                 if size or count != layer_count:
                     raise ValueError("ARCHIVE_LAYER_COUNT")
@@ -142,6 +143,8 @@ def main():
         raise ValueError("RUN_NOT_COMPLETE")
     group_id = str(summary.get("group_id", "unknown"))
     config_digest = str(summary.get("config_digest", ""))
+    if len(config_digest) != 64:
+        raise ValueError("SUMMARY_CONFIG_DIGEST")
     topology = summary.get("topology") or summary.get("config", {}).get("topology")
     archives = []
     for value in args.archive:
@@ -159,7 +162,9 @@ def main():
     for rank, path in archives:
         writer = StateShards(args.output / "states", args.rows_per_shard)
         ordinal = 0
-        for depth, width, count, payload in frames(path):
+        for depth, width, count, payload, archive_config_digest in frames(path):
+            if archive_config_digest != config_digest:
+                raise ValueError("ARCHIVE_CONFIG_DIGEST")
             widths.setdefault(depth, width)
             if widths[depth] != width:
                 raise ValueError("CROSS_RANK_STATE_WIDTH")
