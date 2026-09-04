@@ -145,6 +145,11 @@ ring absorbed the complete short producer burst; this is not yet a capacity or
 bandwidth proof for S13.  See
 [the exact evidence and boundary](validation/2026-09-04-hf-streaming-s8.md).
 
+The two cluster capacity policies were then exercised on the complete S11
+graph. `EQUAL_GLOBAL` preserved all 39,916,800 states while reducing the CUDA
+peak from 7,107 MiB to 4,081 MiB per T4.  See the
+[full S11 A/B boundary](validation/2026-09-04-capacity-modes-s11-2xt4.md).
+
 ### Materialization and full-depth GPU feedback
 
 `cuda/materialize.cu` sorts committed source-row requests with CUB, then copies
