@@ -110,7 +110,7 @@ def execute_gpu_suite(gpu, executables, source, env, logs, record):
                     command += ["--skip", skip]
             if tool != "plain":
                 command = ["compute-sanitizer", "--error-exitcode", "99", "--tool", tool] + command
-            run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name == "dense_device" else (900 if name in ("ping_pong", "generate") else 180))
+            run(command, cwd=source, env=device_env, logs=logs, name=label, timeout=1800 if name in ("dense_device", "macro_native") else (900 if name in ("ping_pong", "generate") else 180))
             record(dict(gpu=gpu["uuid"], test=name, tool=tool, fixture=fixture, status="PASS"))
 
 def main():
