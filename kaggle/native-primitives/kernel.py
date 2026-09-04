@@ -157,7 +157,7 @@ def main():
             entry = json.loads(line)
             if entry.get("reason") == "compiler-artifact" and entry.get("executable") and "test" in entry["target"]["kind"] and entry["target"]["name"] != "allocation_report":
                 executables[entry["target"]["name"]] = entry["executable"]
-        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device", "ping_pong"}:
+        if set(executables) != {"generate", "hash", "route", "owner", "pipeline", "materialize", "future_merge", "macro_settle", "dense_device", "ping_pong"}:
             raise RuntimeError("GPU_TEST_INVENTORY_MISMATCH")
         inventory = run([executables["dense_device"], "--list"], cwd=source, env=env, logs=logs, name="dense-device-test-inventory")
         for fixture in ("gpu_feedback_small_full_depth_sanitizer_fixture", "gpu_feedback_exhausts_exact_layers_without_cpu_supplied_frontiers"):
