@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.promote_hf_stream import combine_rank_commits
+from scripts.promote_hf_stream import combine_rank_commits, promote
 
 
 def commit(rank, counts=(1, 2)):
@@ -55,6 +55,43 @@ class PromoteStream(unittest.TestCase):
         duplicate["files"][0]["path"] = commit(0)["files"][0]["path"]
         with self.assertRaisesRegex(ValueError, "STREAM_FILE"):
             combine_rank_commits([commit(0), duplicate], expected_world=2)
+
+    def test_promotion_is_one_atomic_commit_with_server_side_copies(self):
+        class Copy:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class Add:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class Api:
+            def __init__(self):
+                self.calls = []
+
+            def create_commit(self, **kwargs):
+                self.calls.append(kwargs)
+                return object()
+
+        api = Api()
+        combined, _ = promote(
+            api, "TryDotAtwo/results", [commit(0), commit(1)], 2,
+            copy_cls=Copy, add_cls=Add,
+        )
+        self.assertEqual(len(api.calls), 1)
+        call = api.calls[0]
+        copies = [item for item in call["operations"] if isinstance(item, Copy)]
+        adds = [item for item in call["operations"] if isinstance(item, Add)]
+        self.assertEqual(len(copies), 2)
+        self.assertEqual(len(adds), 3)
+        self.assertTrue(all(
+            item.kwargs["src_revision"] == "mgbfs-s3-run" for item in copies
+        ))
+        self.assertEqual(
+            {item.kwargs["path_in_repo"] for item in adds},
+            {"layers/s3-run.parquet", "runs/s3-run.json", "verification/s3-run.json"},
+        )
+        self.assertEqual(combined["total_unique_states"], 6)
 
 
 if __name__ == "__main__":

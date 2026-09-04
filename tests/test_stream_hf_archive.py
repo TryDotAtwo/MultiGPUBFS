@@ -2,6 +2,7 @@ import hashlib
 import io
 import struct
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 import sys
@@ -110,6 +111,37 @@ class StreamArchive(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "PARQUET_UPLOAD_FAILED"):
                 ArchiveStream("r1", "fixture", rank=0, sink=sink).consume(io.BytesIO(complete_archive()))
             self.assertFalse((root / "rank-00000-stream-commit.json").exists())
+
+    def test_tail_may_wait_for_receipt_only_after_search_is_complete(self):
+        class Api:
+            def __init__(self):
+                self.release = threading.Event()
+                self.calls = []
+
+            def upload_file(self, **kwargs):
+                if hasattr(kwargs["path_or_fileobj"], "read"):
+                    self.release.wait(timeout=2)
+                self.calls.append(kwargs)
+
+        with tempfile.TemporaryDirectory() as folder:
+            api = Api()
+            sink = HubStagingSink(
+                Path(folder) / "slots", rows_per_shard=3, slot_count=2,
+                repo_id="TryDotAtwo/results", branch="run-r1", api=api,
+                rank=0, max_slot_bytes=1_000_000,
+            )
+            # A full shard occupies a slot. The terminal partial shard is
+            # allowed to wait for a receipt because generation has ended.
+            for ordinal in range(7):
+                sink.add({
+                    "run_id": "r1", "group_id": "fixture", "config_digest": "00" * 32,
+                    "rank": 0, "depth": 0, "rank_ordinal": ordinal,
+                    "state": bytes([ordinal]), "hash128_le": bytes(16),
+                })
+            api.release.set()
+            manifest = sink.complete({"status": "COMPLETE"})
+            self.assertEqual(len(manifest["files"]), 3)
+            self.assertEqual(manifest["peak_live_slots"], 2)
 
 
 if __name__ == "__main__":

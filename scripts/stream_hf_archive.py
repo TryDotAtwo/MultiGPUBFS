@@ -13,6 +13,7 @@ import os
 import re
 import struct
 import sys
+from concurrent.futures import wait, FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -183,10 +184,19 @@ class HubStagingSink:
             self.free_slots.append(slot)
             del self.inflight[slot]
 
-    def flush(self):
+    def _drain_one(self):
+        """Wait for one receipt only during terminal archive finalization."""
+        if not self.inflight:
+            raise RuntimeError("PARQUET_SLOT_RING_FATAL")
+        wait(tuple(self.inflight.values()), return_when=FIRST_COMPLETED)
+        self._reap()
+
+    def flush(self, final=False):
         if not self.rows:
             return
         self._reap()
+        if final and not self.free_slots:
+            self._drain_one()
         if not self.free_slots:
             raise RuntimeError("PARQUET_SLOT_RING_FATAL")
         slot = self.free_slots.pop()
@@ -219,7 +229,9 @@ class HubStagingSink:
         self.part += 1
 
     def complete(self, result):
-        self.flush()
+        # Search is finished here, so waiting for one upload receipt is a
+        # durability wait, not runtime backpressure.
+        self.flush(final=True)
         for future in list(self.inflight.values()):
             try:
                 future.result()

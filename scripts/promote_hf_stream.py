@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Validate per-rank stream receipts before server-side Hub promotion."""
+"""Atomically promote validated per-rank staging objects on Hugging Face."""
+import argparse
+import hashlib
+import json
+import os
 import re
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 def combine_rank_commits(commits, expected_world):
@@ -82,3 +89,95 @@ def combine_rank_commits(commits, expected_world):
         "rank_archive_chains": rank_chains,
         "files": files,
     }
+
+
+def _metadata_payloads(global_commit):
+    run_id = global_commit["run_id"]
+    layers = pa.table({
+        "run_id": pa.array([run_id] * len(global_commit["layer_counts"]), pa.string()),
+        "group_id": pa.array(
+            [global_commit["group_id"]] * len(global_commit["layer_counts"]), pa.string()
+        ),
+        "depth": pa.array(range(len(global_commit["layer_counts"])), pa.uint32()),
+        "unique_states": pa.array(global_commit["layer_counts"], pa.uint64()),
+    })
+    output = pa.BufferOutputStream()
+    pq.write_table(layers, output, compression="zstd")
+    layer_bytes = output.getvalue().to_pybytes()
+    manifest = dict(global_commit)
+    manifest["files"] = [dict(item) for item in global_commit["files"]]
+    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+    verification = {
+        "schema": "MGBFS_HF_VERIFICATION_V1",
+        "run_id": run_id,
+        "config_digest": global_commit["config_digest"],
+        "rank_archive_chains": global_commit["rank_archive_chains"],
+        "objects": [
+            {"path": item["path"], "bytes": item["bytes"], "sha256": item["sha256"]}
+            for item in global_commit["files"]
+        ],
+        "metadata_sha256": {
+            f"layers/{run_id}.parquet": hashlib.sha256(layer_bytes).hexdigest(),
+            f"runs/{run_id}.json": hashlib.sha256(manifest_bytes).hexdigest(),
+        },
+    }
+    verification_bytes = json.dumps(verification, indent=2, sort_keys=True).encode("utf-8")
+    return {
+        f"layers/{run_id}.parquet": layer_bytes,
+        f"runs/{run_id}.json": manifest_bytes,
+        f"verification/{run_id}.json": verification_bytes,
+    }
+
+
+def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None):
+    """Create one default-branch commit; no state object is visible before it."""
+    if copy_cls is None or add_cls is None:
+        from huggingface_hub import CommitOperationAdd, CommitOperationCopy
+        copy_cls = CommitOperationCopy
+        add_cls = CommitOperationAdd
+    combined = combine_rank_commits(commits, expected_world)
+    operations = [
+        copy_cls(
+            src_path_in_repo=item["source_path"],
+            path_in_repo=item["path"],
+            src_revision=combined["branch"],
+        )
+        for item in combined["files"]
+    ]
+    operations.extend(
+        add_cls(path_in_repo=path, path_or_fileobj=payload)
+        for path, payload in _metadata_payloads(combined).items()
+    )
+    receipt = api.create_commit(
+        repo_id=repo_id,
+        repo_type="dataset",
+        operations=operations,
+        commit_message=f"Publish complete BFS run {combined['run_id']}",
+    )
+    return combined, receipt
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-id", required=True)
+    parser.add_argument("--world-size", type=int, required=True)
+    parser.add_argument("commits", nargs="+")
+    args = parser.parse_args()
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("HF_TOKEN_MISSING")
+    from huggingface_hub import HfApi
+    commits = []
+    for path in args.commits:
+        with open(path, "r", encoding="utf-8") as source:
+            commits.append(json.load(source))
+    combined, receipt = promote(HfApi(token=token), args.repo_id, commits, args.world_size)
+    print(json.dumps({
+        "status": combined["status"],
+        "run_id": combined["run_id"],
+        "commit_url": getattr(receipt, "commit_url", None),
+    }), flush=True)
+
+
+if __name__ == "__main__":
+    main()
