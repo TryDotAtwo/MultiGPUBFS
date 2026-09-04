@@ -1,4 +1,6 @@
-use mgbfs_core::macro_memory::{MacroMemoryInput, MacroMemoryShape};
+use mgbfs_core::macro_memory::{
+    MacroLibraryBytes, MacroMemoryInput, MacroMemoryPlan, MacroMemoryShape,
+};
 
 fn input() -> MacroMemoryInput {
     MacroMemoryInput {
@@ -81,5 +83,55 @@ fn checked_arithmetic_rejects_candidate_history_future_and_byte_overflow() {
     assert_eq!(
         MacroMemoryShape::derive(value).unwrap_err(),
         "MACRO_FUTURE_OVERFLOW"
+    );
+}
+
+#[test]
+fn plan_accounts_every_runtime_plane_and_library_query_once() {
+    let shape = MacroMemoryShape::derive(input()).unwrap();
+    let library = MacroLibraryBytes {
+        generation: 101,
+        candidate_hash: 102,
+        archive_hash: 103,
+        route: 104,
+        materialize: 105,
+        future_merge: 106,
+        settle: 107,
+    };
+    let plan = MacroMemoryPlan::derive(input(), library).unwrap();
+    let external = 2 * 40_320 * 64
+        + 40_320 * 16
+        + 8
+        + shape.producer_state_bytes
+        + shape.producer_hash_bytes
+        + 1024 * 16
+        + 45_056 * (8 + 16 + 8)
+        + 4
+        + 100_000 * (16 + 8)
+        + 4
+        + 16
+        + shape.history_hash_bytes
+        + 8 * 4
+        + shape.future_state_bytes
+        + 4 * 100_000 * 16
+        + 4 * 8;
+    assert_eq!(plan.external_bytes, external);
+    assert_eq!(plan.library_bytes, 101 + 102 + 103 + 104 + 105 + 106 + 107);
+    assert_eq!(plan.requested_device_bytes, external + plan.library_bytes);
+}
+
+#[test]
+fn plan_rejects_library_and_total_overflow() {
+    let mut library = MacroLibraryBytes::default();
+    library.generation = u64::MAX;
+    library.candidate_hash = 1;
+    assert_eq!(
+        MacroMemoryPlan::derive(input(), library).unwrap_err(),
+        "MACRO_LIBRARY_BYTE_OVERFLOW"
+    );
+    library.candidate_hash = 0;
+    assert_eq!(
+        MacroMemoryPlan::derive(input(), library).unwrap_err(),
+        "MACRO_TOTAL_BYTE_OVERFLOW"
     );
 }

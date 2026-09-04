@@ -1,7 +1,11 @@
 //! Single-rank CUDA reference for exact weighted macro lookahead.
 //! All device arenas are allocated before depth zero; CPU performs orchestration only.
 use mgbfs_core::{
-    hash::GemmHash, macro_generators::MacroGeneratorSet, matrix::MatrixGroup, Result,
+    hash::GemmHash,
+    macro_generators::MacroGeneratorSet,
+    macro_memory::{MacroLibraryBytes, MacroMemoryInput, MacroMemoryPlan},
+    matrix::MatrixGroup,
+    Result,
 };
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
@@ -116,7 +120,9 @@ impl Event {
 }
 impl Drop for Event {
     fn drop(&mut self) {
-        unsafe { cudaEventDestroy(self.0); }
+        unsafe {
+            cudaEventDestroy(self.0);
+        }
     }
 }
 struct FutureSlot {
@@ -153,8 +159,8 @@ pub struct MacroNativeBfs {
     next_states: Buffer,
     next_hashes: Buffer,
     next_state: Buffer,
-    children: Buffer,
-    child_hashes: Buffer,
+    children: [Buffer; 2],
+    child_hashes: [Buffer; 2],
     identity_refs: Buffer,
     sorted_hashes: Buffer,
     sorted_refs: Buffer,
@@ -266,75 +272,82 @@ impl MacroNativeBfs {
                 &mut settle_bytes,
             )
         })?;
-        let queried = [
-            generation_bytes.generators,
-            generation_bytes.packed_parents,
-            generation_bytes.products_s32,
-            generation_bytes.workspace,
-            hash_bytes.weights,
-            hash_bytes.offsets,
-            hash_bytes.partials_s32,
-            hash_bytes.workspace,
-            archive_hash_bytes.weights,
-            archive_hash_bytes.offsets,
-            archive_hash_bytes.partials_s32,
-            archive_hash_bytes.workspace,
-            route_bytes.sorted,
-            route_bytes.refs,
-            route_bytes.indices,
-            route_bytes.selected,
-            route_bytes.flags,
-            route_bytes.scratch,
-            materialize_bytes.keys,
-            materialize_bytes.sorted,
-            materialize_bytes.indices,
-            materialize_bytes.order,
-            materialize_bytes.scratch,
-            future_merge_bytes.merged,
-            future_merge_bytes.unique,
-            future_merge_bytes.tags,
-            future_merge_bytes.unique_tags,
-            future_merge_bytes.indices,
-            future_merge_bytes.selected,
-            future_merge_bytes.selected_count,
-            future_merge_bytes.flags,
-            future_merge_bytes.states,
-            future_merge_bytes.state,
-            future_merge_bytes.scratch,
-            settle_bytes.indices,
-            settle_bytes.selected,
-            settle_bytes.flags,
-            settle_bytes.count,
-            settle_bytes.scratch,
-        ]
-        .into_iter()
-        .map(u128::from)
-        .sum::<u128>();
-        let external = 2u128 * u128::from(cfg.layer_capacity) * stride as u128
-            + u128::from(cfg.layer_capacity) * 16
-            + 8
-            + u128::from(candidates) * (stride as u128 + 16)
-            + u128::from(cfg.batch) * 16
-            + u128::from(max_records) * (8 + 16 + 8)
-            + 4
-            + u128::from(cfg.future_capacity_per_depth) * (16 + 8)
-            + 4
-            + 16
-            + u128::from(history_layers) * u128::from(cfg.layer_capacity) * 16
-            + u128::from(history_layers) * 4
-            + u128::from(effective)
-                * (u128::from(cfg.future_capacity_per_depth) * (stride as u128 + 16) + 8);
-        let requested = u64::try_from(
-            queried
-                .checked_add(external)
-                .ok_or("VRAM_PLAN_OVERFLOW")?,
-        )
-        .map_err(|_| "VRAM_PLAN_OVERFLOW")?;
+        let sum = |parts: &[u64]| {
+            parts
+                .iter()
+                .try_fold(0u64, |total, bytes| total.checked_add(*bytes))
+                .ok_or("VRAM_PLAN_OVERFLOW")
+        };
+        let memory = MacroMemoryPlan::derive(
+            MacroMemoryInput {
+                state_stride: stride as u64,
+                parent_batch: u64::from(cfg.batch),
+                macro_count: u64::from(moves),
+                effective_depth: effective,
+                layer_capacity: u64::from(cfg.layer_capacity),
+                future_capacity_per_depth: u64::from(cfg.future_capacity_per_depth),
+                route_slot_records: u64::from(max_records),
+            },
+            MacroLibraryBytes {
+                generation: sum(&[
+                    generation_bytes.generators,
+                    generation_bytes.packed_parents,
+                    generation_bytes.products_s32,
+                    generation_bytes.workspace,
+                ])?,
+                candidate_hash: sum(&[
+                    hash_bytes.weights,
+                    hash_bytes.offsets,
+                    hash_bytes.partials_s32,
+                    hash_bytes.workspace,
+                ])?,
+                archive_hash: sum(&[
+                    archive_hash_bytes.weights,
+                    archive_hash_bytes.offsets,
+                    archive_hash_bytes.partials_s32,
+                    archive_hash_bytes.workspace,
+                ])?,
+                route: sum(&[
+                    route_bytes.sorted,
+                    route_bytes.refs,
+                    route_bytes.indices,
+                    route_bytes.selected,
+                    route_bytes.flags,
+                    route_bytes.scratch,
+                ])?,
+                materialize: sum(&[
+                    materialize_bytes.keys,
+                    materialize_bytes.sorted,
+                    materialize_bytes.indices,
+                    materialize_bytes.order,
+                    materialize_bytes.scratch,
+                ])?,
+                future_merge: sum(&[
+                    future_merge_bytes.merged,
+                    future_merge_bytes.unique,
+                    future_merge_bytes.tags,
+                    future_merge_bytes.unique_tags,
+                    future_merge_bytes.indices,
+                    future_merge_bytes.selected,
+                    future_merge_bytes.selected_count,
+                    future_merge_bytes.flags,
+                    future_merge_bytes.states,
+                    future_merge_bytes.state,
+                    future_merge_bytes.scratch,
+                ])?,
+                settle: sum(&[
+                    settle_bytes.indices,
+                    settle_bytes.selected,
+                    settle_bytes.flags,
+                    settle_bytes.count,
+                    settle_bytes.scratch,
+                ])?,
+            },
+        )?;
+        let requested = memory.requested_device_bytes;
         let (mut free, mut total) = (0usize, 0usize);
         check(unsafe { cudaMemGetInfo(&mut free, &mut total) })?;
-        if u128::from(requested) + u128::from(cfg.untouched_vram_reserve_bytes)
-            > free as u128
-        {
+        if u128::from(requested) + u128::from(cfg.untouched_vram_reserve_bytes) > free as u128 {
             return Err(format!(
                 "VRAM_PREFLIGHT requested={requested} reserve={} free={free}",
                 cfg.untouched_vram_reserve_bytes
@@ -416,8 +429,14 @@ impl MacroNativeBfs {
         let next_states = buffer(state_bytes)?;
         let next_hashes = buffer(cfg.layer_capacity as usize * 16)?;
         let next_state = buffer(std::mem::size_of::<FrontierState>())?;
-        let children = buffer(candidates as usize * stride)?;
-        let child_hashes = buffer(candidates as usize * 16)?;
+        let children = [
+            buffer(candidates as usize * stride)?,
+            buffer(candidates as usize * stride)?,
+        ];
+        let child_hashes = [
+            buffer(candidates as usize * 16)?,
+            buffer(candidates as usize * 16)?,
+        ];
         let archive_hashes = Buffer::new(cfg.batch as usize * 16, raw_archive_stream)?;
         let identity_refs = buffer(max_records as usize * 8)?;
         let sorted_hashes = buffer(max_records as usize * 16)?;
@@ -559,7 +578,10 @@ impl MacroNativeBfs {
         let stream = self.archive_stream.0;
         let mut offset = 0u32;
         while offset < self.current_count {
-            let count = archive.rows.min(self.cfg.batch).min(self.current_count - offset);
+            let count = archive
+                .rows
+                .min(self.cfg.batch)
+                .min(self.current_count - offset);
             let slot = archive.acquire()?;
             let copied = (|| unsafe {
                 let states = self.current_states.at(offset as usize * self.stride);
@@ -581,7 +603,10 @@ impl MacroNativeBfs {
                     stream,
                 ))?;
                 check(cudaMemcpyAsync(
-                    slot.ptr.cast::<u8>().add(count as usize * self.width).cast(),
+                    slot.ptr
+                        .cast::<u8>()
+                        .add(count as usize * self.width)
+                        .cast(),
                     self.archive_hashes.ptr,
                     count as usize * 16,
                     2,
@@ -590,7 +615,9 @@ impl MacroNativeBfs {
                 check(cudaEventRecord(slot.ready, stream))
             })();
             if let Err(error) = copied {
-                unsafe { cudaStreamSynchronize(stream); }
+                unsafe {
+                    cudaStreamSynchronize(stream);
+                }
                 return Err(error);
             }
             archive.submit(slot, u64::from(self.depth), count)?;
@@ -603,6 +630,7 @@ impl MacroNativeBfs {
     }
     fn produce(&mut self) -> Result<()> {
         let mut parent_offset = 0u32;
+        let mut producer_bank = 0usize;
         while parent_offset < self.current_count {
             let parents = self.cfg.batch.min(self.current_count - parent_offset);
             let all = parents
@@ -614,14 +642,14 @@ impl MacroNativeBfs {
                     self.current_states
                         .at(parent_offset as usize * self.stride)
                         .cast(),
-                    self.children.ptr.cast(),
+                    self.children[producer_bank].ptr.cast(),
                     parents,
                     self.stream.0,
                 ))?;
                 check(mgbfs_hash_run(
                     self.hash.0,
-                    self.children.ptr.cast(),
-                    self.child_hashes.ptr.cast(),
+                    self.children[producer_bank].ptr.cast(),
+                    self.child_hashes[producer_bank].ptr.cast(),
                     all,
                     self.stream.0,
                 ))?;
@@ -639,7 +667,7 @@ impl MacroNativeBfs {
                 unsafe {
                     check(mgbfs_route_run(
                         self.route.0,
-                        self.child_hashes.at(row_begin * 16),
+                        self.child_hashes[producer_bank].at(row_begin * 16),
                         self.identity_refs.ptr.cast(),
                         self.sorted_hashes.ptr,
                         self.sorted_refs.ptr.cast(),
@@ -653,7 +681,9 @@ impl MacroNativeBfs {
                         slot.states.ptr.cast(),
                         slot.hashes.ptr,
                         slot.state.ptr.cast(),
-                        self.children.at(row_begin * self.stride).cast(),
+                        self.children[producer_bank]
+                            .at(row_begin * self.stride)
+                            .cast(),
                         count,
                         self.sorted_hashes.ptr,
                         self.sorted_refs.ptr.cast(),
@@ -663,6 +693,7 @@ impl MacroNativeBfs {
                 }
             }
             parent_offset += parents;
+            producer_bank ^= 1;
         }
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         for slot in &mut self.future {
