@@ -14,7 +14,7 @@ import time
 import urllib.request
 
 # Immutable source and toolchain configuration. No token is used.
-SOURCE_COMMIT = "77bc9a1f8d8d8bd096912f4b2df2e34e5652fba5"
+SOURCE_COMMIT = "076d6fe4f99181f1e17150d9196b70abe6bd5b32"
 CUTLASS_COMMIT = "ffa119a1255d78998536107466cc7097ecefa393"
 RUST_VERSION = "1.75.0"
 SANITIZERS = ("memcheck", "racecheck", "initcheck", "synccheck")
