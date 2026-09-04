@@ -1,4 +1,4 @@
-"""Physical 2xT4 gate for equal-global and max-per-rank allocation modes."""
+"""Physical 2xT4 S11 A/B for equal-global and max-per-rank allocation modes."""
 import importlib.util
 import json
 import os
@@ -9,9 +9,9 @@ from pathlib import Path
 
 SOURCE = "3378317bfce34ed38c06a886d692c9f8f6a91769"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
-CARDINALITY = 40_320
-DECLARED_CAPACITY = 40_320
-BATCH = 32_768
+CARDINALITY = 39_916_800
+DECLARED_CAPACITY = 8_000_000
+BATCH = 262_144
 
 
 def load(path, name):
@@ -72,16 +72,16 @@ def main():
             MGBFS_CAPACITY_MODE=mode,
             MGBFS_BENCH_CAPACITY=str(DECLARED_CAPACITY),
             MGBFS_FUTURE_CAPACITY=str(DECLARED_CAPACITY),
-            MGBFS_ARCHIVE_ROWS="4096",
-            MGBFS_ARCHIVE_SLOTS="64",
+            MGBFS_ARCHIVE_ROWS="16384",
+            MGBFS_ARCHIVE_SLOTS="1400",
         )
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
-            str(source / "target/release/examples/distributed_bench"), "s8", str(BATCH),
+            str(source / "target/release/examples/distributed_bench"), "s11", str(BATCH),
             str(bootstrap), str(archive_prefix), "{RANK_OUT}",
         ]
         try:
-            row = bench.run_group(command, logs, f"s8-{mode}", run_env, timeout=1800)
+            row = bench.run_group(command, logs, f"s11-{mode}", run_env, timeout=3600)
         finally:
             for rank in range(2):
                 Path(f"{archive_prefix}-rank-{rank}.mgbfsar1").unlink(missing_ok=True)
@@ -100,7 +100,7 @@ def main():
         "status": "PASS",
         "source": SOURCE,
         "gpus": gpus,
-        "group": "s8",
+        "group": "s11",
         "declared_capacity_records": DECLARED_CAPACITY,
         "rows": rows,
     }
