@@ -95,3 +95,39 @@ fn ring_peak_counts_wrap_padding_and_does_not_change_after_failed_reservation() 
     r.reserve(10).unwrap();
     assert_eq!(r.peak_records(), 10);
 }
+
+#[test]
+fn dense_parent_prefix_is_reused_before_the_rest_of_the_frontier_is_enumerated() {
+    let mut ring = StateRing::new(8, 4).unwrap();
+    let current = ring.reserve(8).unwrap();
+    ring.materialized(current.id).unwrap();
+    ring.publish(current.id).unwrap();
+    ring.archived(current.id).unwrap();
+
+    assert_eq!(ring.retire_dense_prefix(current.id, 3).unwrap(), 3);
+    let next = ring.reserve(3).unwrap();
+    assert_eq!((next.begin, next.count), (0, 3));
+    assert_eq!(
+        ring.resolve(current.sequence + 2).unwrap_err(),
+        "STALE_STATE_REF"
+    );
+    assert_eq!(ring.resolve(current.sequence + 3).unwrap(), 3);
+}
+
+#[test]
+fn dense_parent_prefix_cannot_retire_archive_or_origin_live_bytes() {
+    let mut ring = StateRing::new(8, 4).unwrap();
+    let current = ring.reserve(8).unwrap();
+    ring.materialized(current.id).unwrap();
+    ring.publish(current.id).unwrap();
+    assert_eq!(
+        ring.retire_dense_prefix(current.id, 1).unwrap_err(),
+        "DENSE_PREFIX_ARCHIVE_LIVE"
+    );
+    ring.archived(current.id).unwrap();
+    ring.hold_origins(current.id).unwrap();
+    assert_eq!(
+        ring.retire_dense_prefix(current.id, 1).unwrap_err(),
+        "DENSE_PREFIX_ORIGIN_LIVE"
+    );
+}

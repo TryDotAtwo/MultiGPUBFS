@@ -49,6 +49,20 @@ static void materialization(bool invalid){
   if(invalid){req(owner.get()[0].error&&ring.get()[0].fatal&&!extent.get()[0].ready,"invalid materialize fatal");req(std::all_of(out.begin(),out.end(),[](uint8_t x){return x==0;}),"partial state copy");}
   else{req(!owner.get()[0].error&&extent.get()[0].ready==1,"state ready");for(unsigned i=0;i<16;++i){req(out[32+i]==data[48+i],"first state mapping");req(out[48+i]==data[i],"second state mapping");}}
 }
+static void retire_prefix(){
+  Device<MgbfsStateRingControl> ring(1);Device<MgbfsStateExtent> extent(1);
+  ring.put({{0,8,0,1,8,4,0,0,0}});
+  MgbfsStateExtent current{};current.count=8;current.granted_rows=8;current.ready=1;extent.put({current});
+  req(mgbfs_state_retire_dense_prefix(ring.p,extent.p,3,nullptr)==0,"retire enqueue");
+  ck(cudaDeviceSynchronize());
+  auto r=ring.get()[0];auto e=extent.get()[0];
+  req(!r.fatal&&r.head==3,"retire advances head");
+  req(e.sequence==3&&e.begin==3&&e.count==5,"retire shrinks current extent");
+  MgbfsOwnerControl owner{};owner.stage=1;owner.survivors=3;Device<MgbfsOwnerControl> o(1);o.put({owner});
+  Device<MgbfsStateExtent> next(1);
+  req(mgbfs_state_reserve(ring.p,o.p,next.p,nullptr)==0,"reuse enqueue");ck(cudaDeviceSynchronize());
+  auto n=next.get()[0];req(!o.get()[0].error&&n.begin==0&&n.count==3,"reuses retired prefix");
+}
 // Verification harness only: CPU prepares candidates/descriptors and reads
 // snapshots. It is NOT a production CPU data plane or performance benchmark.
 static void full_layers(unsigned modulus){
@@ -96,5 +110,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);for(unsigned m=0;m<6;++m)reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

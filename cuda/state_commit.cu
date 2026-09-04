@@ -59,6 +59,17 @@ __global__ void guard_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,const ui
  if(!o->error&&(*n>cap||o->survivors>cap-*n))fatal(r,o,16);
 }
 __global__ void count_layer(const MgbfsOwnerControl*o,uint32_t*n){if(!o->error)*n+=o->survivors;}
+__global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
+  if(r->fatal)return;
+  if(!n||!e->ready||n>e->count||e->sequence!=r->head||
+     e->descriptor!=r->descriptor_head||e->begin!=e->sequence%r->capacity){
+    atomicCAS(&r->fatal,0u,17u);return;
+  }
+  uint64_t next=e->sequence+n;
+  r->head=next;e->sequence=next;e->begin=next%r->capacity;e->count-=n;
+  e->granted_rows=unsigned(e->count);
+  if(!e->count){++r->descriptor_head;e->ready=0;}
+}
 }
 extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
   if(!r||!o||!e)return 1;reserve<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e);return cudaGetLastError()==cudaSuccess?0:2;
@@ -66,6 +77,10 @@ extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o
 extern "C" int mgbfs_state_reserve_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,MgbfsStateExtent*e,uint32_t*n,uint32_t cap,void*stream){
  if(!r||!o||!e||!n)return 1;auto s=static_cast<cudaStream_t>(stream);
  guard_layer<<<1,1,0,s>>>(r,o,n,cap);reserve<<<1,1,0,s>>>(r,o,e);count_layer<<<1,1,0,s>>>(o,n);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl*r,MgbfsStateExtent*e,uint64_t n,void*stream){
+ if(!r||!e||!n)return 1;retire_dense_prefix<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,e,n);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_materialize(const uint8_t* input,uint32_t candidates,const uint64_t* refs,uint32_t sorted,

@@ -175,6 +175,43 @@ impl StateRing {
     pub fn publish(&mut self, id: u64) -> Result<()> {
         self.transition(id, State::Materialized, State::Current)
     }
+    /// Retire an already archived DENSE parent prefix as soon as generation no
+    /// longer reads it. HASH_FIRST callers must keep using origin leases and
+    /// may not use this shortcut.
+    pub fn retire_dense_prefix(&mut self, id: u64, records: u64) -> Result<u64> {
+        if records == 0 {
+            return Ok(0);
+        }
+        let front = self.live.front_mut().ok_or("STALE_STATE_REF")?;
+        if front.extent.id != id {
+            return Err("DENSE_PREFIX_NOT_HEAD".into());
+        }
+        if front.state != State::Current || records > front.extent.count {
+            return Err("DENSE_PREFIX_RANGE".into());
+        }
+        if !front.archived {
+            return Err("DENSE_PREFIX_ARCHIVE_LIVE".into());
+        }
+        if front.origin_leases != 0 {
+            return Err("DENSE_PREFIX_ORIGIN_LIVE".into());
+        }
+        let new_sequence = front
+            .extent
+            .sequence
+            .checked_add(records)
+            .ok_or("STATE_RING_COUNTER_OVERFLOW")?;
+        front.extent.sequence = new_sequence;
+        front.extent.begin = new_sequence % self.capacity;
+        front.extent.count -= records;
+        self.head = new_sequence;
+        if front.extent.count == 0 {
+            self.live.pop_front();
+            if self.live.is_empty() {
+                self.head = self.tail;
+            }
+        }
+        Ok(records)
+    }
     pub fn reclaim(&mut self) -> u64 {
         let mut records = 0;
         while self

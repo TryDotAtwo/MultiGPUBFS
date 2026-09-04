@@ -727,6 +727,8 @@ impl NativeBfs {
             )?;
             for fi in 0..self.front.len() {
                 let parent = self.front[fi];
+                let mut live_parent = parent;
+                let mut archive_released = false;
                 let mut offset = 0;
                 while offset < parent.count {
                     let n = u64::from(self.cfg.batch).min(parent.count - offset) as u32;
@@ -749,6 +751,32 @@ impl NativeBfs {
                     check(cudaEventSynchronize(self.ready.0))?;
                     if self.fatal.one::<u32>()? != 0 {
                         return Err("DIRECTORY_FATAL".into());
+                    }
+                    // Generation has copied this parent batch into an independent
+                    // candidate slot. Once archive DMA is also done, the prefix
+                    // is dead and owner commits may immediately reuse it.
+                    if self.archived_depth == Some(self.depth) && !archive_released {
+                        check(cudaStreamWaitEvent(s, self.archive_done[fi].0, 0))?;
+                        archive_released = true;
+                    }
+                    self.extent.put(&[live_parent])?;
+                    check(mgbfs_state_retire_dense_prefix(
+                        self.ring.p.cast(),
+                        self.extent.p.cast(),
+                        u64::from(n),
+                        s,
+                    ))?;
+                    check(cudaStreamSynchronize(s))?;
+                    let ring_state = self.ring.one::<Ring>()?;
+                    if ring_state.fatal != 0 {
+                        return Err(format!("STATE_RING_RETIRE_FATAL_{}", ring_state.fatal));
+                    }
+                    live_parent.sequence += u64::from(n);
+                    live_parent.begin = live_parent.sequence % ring_state.capacity;
+                    live_parent.count -= u64::from(n);
+                    live_parent.granted_rows = live_parent.count as u32;
+                    if live_parent.count == 0 {
+                        live_parent.ready = 0;
                     }
                     self.directory.read_into(&mut self.incoming_dir)?;
                     let (nd, ns) = split(
@@ -864,16 +892,6 @@ impl NativeBfs {
                     self.swap_producer_banks();
                     offset += u64::from(n);
                 }
-                // Both consumers must release this physical range. This dependency
-                // waits for DMA, never the disk worker. ring.put orders the head update
-                // after the event, before any subsequent owner reserve can reuse it.
-                if self.archived_depth == Some(self.depth) {
-                    check(cudaStreamWaitEvent(s, self.archive_done[fi].0, 0))?;
-                }
-                let mut ring = self.ring.one::<Ring>()?;
-                ring.head = parent.sequence + parent.count;
-                ring.descriptor_head = parent.descriptor + 1;
-                self.ring.put(&[ring])?;
             }
             check(mgbfs_compact_hash_layer(
                 self.accepted.p,

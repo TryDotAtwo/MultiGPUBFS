@@ -61,6 +61,12 @@ mod calls {
             capacity: u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_retire_dense_prefix(
+            ring: *mut Ring,
+            extent: *mut Extent,
+            records: u64,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bounded_owner_create(i: u32, j: u32, k: u32, out: *mut *mut c_void) -> i32;
         pub fn mgbfs_bounded_owner_destroy(plan: *mut c_void);
         pub fn mgbfs_bounded_owner_compare(

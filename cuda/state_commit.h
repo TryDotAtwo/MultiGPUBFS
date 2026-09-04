@@ -23,6 +23,10 @@ int mgbfs_state_reserve(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
 int mgbfs_state_reserve_layer(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, uint32_t* layer_count, uint32_t layer_capacity, void* stream);
+/* DENSE-only FIFO reclamation after both generation and archive DMA have
+ * completed for this prefix. The caller owns those event dependencies. */
+int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl* ring,
+    MgbfsStateExtent* current, uint64_t records, void* stream);
 /* Dense input is source-order, sorted_refs maps sorted hashes to those rows.
  * All output rows and indices are validated before any state copy. Hash commit
  * must already have completed on this stream. Extent.ready publishes StateReady.
