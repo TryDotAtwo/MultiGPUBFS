@@ -17,7 +17,9 @@ SOURCE = "460b674bc87acddda1ed34f4ac67b60c1f236abe"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 CARDINALITY = 39_916_800
-PER_RANK_CAPACITY = 4_000_000
+# EQUAL_GLOBAL interprets the declared capacity as a cluster-wide budget and
+# splits it across ranks.  S11 needs 4M records on each rank, hence 8M global.
+GLOBAL_CAPACITY = 8_000_000
 BATCH = 262_144
 ARCHIVE_ROWS = 16_384
 ARCHIVE_SLOTS = 1_400
@@ -117,8 +119,8 @@ def main():
         run_env = dict(
             env,
             MGBFS_CAPACITY_MODE="equal_global",
-            MGBFS_BENCH_CAPACITY=str(PER_RANK_CAPACITY),
-            MGBFS_FUTURE_CAPACITY=str(PER_RANK_CAPACITY),
+            MGBFS_BENCH_CAPACITY=str(GLOBAL_CAPACITY),
+            MGBFS_FUTURE_CAPACITY=str(GLOBAL_CAPACITY),
             MGBFS_ARCHIVE_ROWS=str(ARCHIVE_ROWS),
             MGBFS_ARCHIVE_SLOTS=str(ARCHIVE_SLOTS),
             MGBFS_ARCHIVE_STREAM="1",
