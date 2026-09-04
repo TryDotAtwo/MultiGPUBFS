@@ -9,6 +9,19 @@ from collections import defaultdict
 from pathlib import Path
 
 import pyarrow.parquet as pq
+import numpy as np
+
+PRIME=4_294_967_291
+
+def gemm_hash_contract(width,seed):
+    shake=hashlib.shake_256(b"MGBFS/GEMM_U8_P32X4/V1\0"+width.to_bytes(4,"little")+seed.to_bytes(16,"little"))
+    raw=shake.digest((width*4+4)*4+4096);values=[]
+    for at in range(0,len(raw),4):
+        value=int.from_bytes(raw[at:at+4],"little")
+        if value<PRIME:values.append(value)
+        if len(values)==width*4+4:break
+    if len(values)!=width*4+4:raise ValueError("HASH_XOF_EXHAUSTED")
+    return np.asarray(values[:width*4],dtype=np.uint64).reshape(width,4),np.asarray(values[-4:],dtype=np.uint64)
 
 
 def records(path, width):
@@ -42,6 +55,12 @@ def main():
     if len(widths) != 1:
         raise ValueError("STATE_WIDTH_MISMATCH")
     width = widths.pop()
+    run_rows=pq.read_table(args.dataset / "runs").to_pylist()
+    if len(run_rows)!=1:raise ValueError("RUN_INVENTORY")
+    run_summary=json.loads(run_rows[0]["summary_json"]);hash_spec=run_summary.get("hash",{})
+    validate_hash=hash_spec.get("algorithm")=="GEMM_U8_P32X4_V1"
+    if validate_hash:
+        coefficients,offsets=gemm_hash_contract(width,int(hash_spec["seed_u128"]))
     counts = defaultdict(int)
     total = 0
     with tempfile.TemporaryDirectory(prefix="mgbfs-unique-") as folder:
@@ -58,8 +77,14 @@ def main():
 
         for parquet in sorted((args.dataset / "states").glob("*.parquet")):
             source = pq.ParquetFile(parquet)
-            for batch in source.iter_batches(columns=["depth", "state"], batch_size=131072):
-                for depth, state in zip(batch.column(0).to_pylist(), batch.column(1).to_pylist()):
+            for batch in source.iter_batches(columns=["depth", "state", "hash128_le"], batch_size=131072):
+                states=batch.column(1).to_pylist()
+                if validate_hash and states:
+                    matrix=np.frombuffer(b"".join(states),dtype=np.uint8).reshape(len(states),width).astype(np.uint64)
+                    expected_hashes=(matrix@coefficients+offsets)%PRIME
+                    actual=np.frombuffer(b"".join(batch.column(2).to_pylist()),dtype="<u4").reshape(len(states),4)
+                    if not np.array_equal(expected_hashes,actual):raise ValueError("HASH_STATE_MISMATCH")
+                for depth, state in zip(batch.column(0).to_pylist(), states):
                     if len(state) != width:
                         raise ValueError("STATE_WIDTH")
                     counts[depth] += 1; total += 1; pending.append(state)
@@ -76,7 +101,7 @@ def main():
         raise ValueError("DATASET_COUNTS")
     verification = {
         "schema": "MGBFS_HF_VERIFY_V1", "status": "PASS", "unique_states": unique,
-        "layers": len(counts), "max_depth": max(counts), "manifest_sha256": hashlib.sha256(
+        "layers": len(counts), "max_depth": max(counts), "hash_state_pairs_verified":validate_hash, "manifest_sha256": hashlib.sha256(
             (args.dataset / "manifest.json").read_bytes()).hexdigest(),
     }
     (args.dataset / "verification.json").write_text(json.dumps(verification, indent=2), encoding="utf-8")
