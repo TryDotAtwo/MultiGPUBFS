@@ -20,7 +20,12 @@ int main() {
   assert(g.rows==6 && g.columns==12 && g.products_s32==288 && g.generators==96);
   assert(generation_shape(3,2,3,3,1,&g)==0);
   assert(g.rows==8 && g.products_s32==384 && g.generators==128);
-  for(unsigned variant : {4u,5u}) {
+  // Compact generation5 packs one permutation vector per parent, not n
+  // matrix columns. Its output product is padded moves*n by padded batch.
+  assert(generation_shape(3,2,3,3,5,&g)==0);
+  assert(g.k==16 && g.stride==16 && g.rows==8 && g.columns==4);
+  assert(g.generators==128 && g.packed_parents==64 && g.products_s32==128);
+  for(unsigned variant : {4u,6u}) {
     assert(generation_shape(3,2,3,3,variant,&g)!=0);
     assert(g.products_s32==0 && g.rows==0);
   }
