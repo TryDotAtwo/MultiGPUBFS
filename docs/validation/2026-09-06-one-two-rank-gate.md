@@ -20,8 +20,12 @@ world sizes 1 and 2, each with DENSE, scalar HASH_FIRST and IMMA HASH_FIRST,
 both owner backends and pre-dedup ON/OFF. Every entry is PASS, with global
 S4 layer counts `[1,3,5,6,5,3,1]`. The pinned launcher requires full warmup,
 reported allocation/reserve fields and successful CLI verification per rank.
-Individual smoke rank JSON and verification logs have not been separately
-downloaded in this selected evidence set; their checks ran in the launcher.
+The subsequent selected download completed and its inventory was checked:
+72 rank JSON files (36 measured and 36 warmup) and 36 CLI verification logs.
+Every verification log reports VERIFIED. All measured records report COMPLETE,
+warmup completed, positive explicit payload no larger than aligned allocation,
+and exactly 1 GiB untouched reserve. Every measured rank's layer counts match
+its warmup record. No archive state payload was downloaded locally.
 
 This is a correctness/sanitizer gate, not performance evidence or proof of
 the final overlapped architecture. Conservative one-rank peer allocations,
