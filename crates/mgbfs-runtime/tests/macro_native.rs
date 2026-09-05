@@ -63,7 +63,8 @@ fn native_macro_nonidentity_source_preserves_original_layers() {
                     generation_variant: 1,
                     untouched_vram_reserve_bytes: 0,
                 },
-            ).unwrap();
+            )
+            .unwrap();
             let mut actual = Vec::new();
             loop {
                 let mut layer = bfs.snapshot().unwrap();

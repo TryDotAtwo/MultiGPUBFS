@@ -15,7 +15,14 @@ fn archive_encoding_rejects_non_bijective_or_non_binary_matrices() {
 
 #[test]
 fn compact_gemm_matches_matrix_composition_for_all_s3_pairs() {
-    let permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    let permutations = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
     for generator in permutations {
         for parent in permutations {
             let mut g = [0u8; 9];
@@ -34,7 +41,10 @@ fn compact_gemm_matches_matrix_composition_for_all_s3_pairs() {
                     }
                 }
             }
-            assert_eq!(encode_permutation_matrix(&matrix_child, 3).unwrap(), compact_child);
+            assert_eq!(
+                encode_permutation_matrix(&matrix_child, 3).unwrap(),
+                compact_child
+            );
         }
     }
 }

@@ -73,28 +73,76 @@ struct Buffer(*mut c_void);
 fn compact_permutation_generation_matches_gather() {
     for n in [3usize, 12, 17] {
         let stride = (n + 15) & !15;
-        let mut generators = vec![0u8; 2*n*n];
+        let mut generators = vec![0u8; 2 * n * n];
         for i in 0..n {
-            generators[i*n+(i+1)%n] = 1;
-            generators[n*n+i*n+(i+n-1)%n] = 1;
+            generators[i * n + (i + 1) % n] = 1;
+            generators[n * n + i * n + (i + n - 1) % n] = 1;
         }
         for count in [1usize, 7, 65] {
-            let mut parents = vec![0u8; count*stride];
-            for p in 0..count { for i in 0..n { parents[p*stride+i] = ((i+p)%n) as u8; } }
+            let mut parents = vec![0u8; count * stride];
+            for p in 0..count {
+                for i in 0..n {
+                    parents[p * stride + i] = ((i + p) % n) as u8;
+                }
+            }
             let input = Buffer::new(parents.len());
-            let output = Buffer::new(count*2*stride);
+            let output = Buffer::new(count * 2 * stride);
             let mut handle = std::ptr::null_mut();
-            let mut error = [0i8;512];
-            assert_eq!(unsafe { mgbfs_generate_create_variant(n as u32,2,2,count as u32,generators.as_ptr(),5,&mut handle,error.as_mut_ptr(),512) },0);
+            let mut error = [0i8; 512];
+            assert_eq!(
+                unsafe {
+                    mgbfs_generate_create_variant(
+                        n as u32,
+                        2,
+                        2,
+                        count as u32,
+                        generators.as_ptr(),
+                        5,
+                        &mut handle,
+                        error.as_mut_ptr(),
+                        512,
+                    )
+                },
+                0
+            );
             let plan = Plan(handle);
-            assert_eq!(unsafe { cudaMemcpy(input.0,parents.as_ptr().cast(),parents.len(),1) },0);
-            assert_eq!(unsafe { mgbfs_generate_run(plan.0,input.0.cast(),output.0.cast(),count as u32,std::ptr::null_mut()) },0);
-            let mut actual = vec![255u8;count*2*stride];
-            assert_eq!(unsafe { cudaMemcpy(actual.as_mut_ptr().cast(),output.0,actual.len(),2) },0);
-            for p in 0..count { for m in 0..2 { for i in 0..stride {
-                let expected = if i<n { parents[p*stride+(i+if m==0 {1} else {n-1})%n] } else {0};
-                assert_eq!(actual[(p*2+m)*stride+i],expected,"n={n} p={p} m={m} i={i}");
-            } } }
+            assert_eq!(
+                unsafe { cudaMemcpy(input.0, parents.as_ptr().cast(), parents.len(), 1) },
+                0
+            );
+            assert_eq!(
+                unsafe {
+                    mgbfs_generate_run(
+                        plan.0,
+                        input.0.cast(),
+                        output.0.cast(),
+                        count as u32,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            let mut actual = vec![255u8; count * 2 * stride];
+            assert_eq!(
+                unsafe { cudaMemcpy(actual.as_mut_ptr().cast(), output.0, actual.len(), 2) },
+                0
+            );
+            for p in 0..count {
+                for m in 0..2 {
+                    for i in 0..stride {
+                        let expected = if i < n {
+                            parents[p * stride + (i + if m == 0 { 1 } else { n - 1 }) % n]
+                        } else {
+                            0
+                        };
+                        assert_eq!(
+                            actual[(p * 2 + m) * stride + i],
+                            expected,
+                            "n={n} p={p} m={m} i={i}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
