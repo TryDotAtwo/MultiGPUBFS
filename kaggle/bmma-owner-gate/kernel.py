@@ -2,11 +2,12 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import urllib.request
 
-SOURCE = "cdb0fd460e6ff607fcc81fb8121cdc064e5592ae"
+SOURCE = "c65d9fc5f8e9e51688a2aac14cb31e7997f63065"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -41,7 +42,22 @@ def main():
         output = run([str(build / "mgbfs-bmma-owner-test")], "plain")
         if "BOUNDED_OWNER_PASS" not in output:
             raise RuntimeError("OWNER_FIXTURE_NOT_PASSED")
-        report["status"] = "PLAIN_PASS"
+        report["tests"] = [{"tool": "plain", "status": "PASS"}]
+        for tool in ["memcheck", "racecheck", "initcheck", "synccheck"]:
+            output = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
+                          str(build / "mgbfs-bmma-owner-test")], tool)
+            if "BOUNDED_OWNER_PASS" not in output:
+                raise RuntimeError("OWNER_FIXTURE_NOT_PASSED")
+            if tool == "racecheck":
+                results = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
+                clean = bool(results) and all(x == ("0", "0", "0") for x in results)
+            else:
+                results = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
+                clean = bool(results) and all(x == "0" for x in results)
+            if not clean:
+                raise RuntimeError("SANITIZER_NOT_CLEAN")
+            report["tests"].append({"tool": tool, "status": "PASS"})
+        report["status"] = "COMPLETE"
     except Exception as exc:
         report["error"] = str(exc)
         raise

@@ -34,3 +34,19 @@ deduplication, invalid ranges and insufficient grants/capacity. Evidence:
 `test_results/bmma-owner-v1/bmma-owner/build.log`. This establishes the missing
 implementation, not GPU BMMA correctness. The separate v19 distributed gate
 continues independently; no active run was restarted for this RED check.
+
+Implementation c65d9fc replaces membership passes with SM75 XOR.POPC while
+retaining the existing compact/reserve/commit contract. Each bucket CTA uses a
+fixed shared array of 129 range descriptors (24 bytes each), enough for binary
+prefix depth 128. Only nonempty candidate/reference intersections are pushed.
+Splits use the highest differing endpoint bit; each bounded leaf uses 8x8
+comparisons with masked tails. Identical endpoint runs use linear marking.
+No descriptor allocation occurs in a run. The constructor requires the declared
+refinement bound to cover candidate capacity and rejects non-SM75 hardware.
+One additional u32 error per bucket is allocated before execution; a separate
+kernel publishes errors to avoid concurrent read/write of owner control.
+
+Kaggle BMMA gate v2 pins c65d9fc and runs plain plus all four sanitizers. This
+is not yet integrated into DistributedNativeBfs, nor profiled. One CTA per
+bucket and serial metadata refinement are explicit performance risks requiring
+measurement; the implementation is not claimed to saturate the GPU.
