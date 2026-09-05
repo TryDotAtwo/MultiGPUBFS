@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "e3fd4870d32aa3aae7117fa915eb44c77e8fc6a3"
+SOURCE = "664327848f74130c87a0628342b88d2edfa88d8c"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -118,7 +118,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "10 passed; 0 failed" not in output:
+            if "11 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
@@ -172,6 +172,10 @@ def main():
                             raise RuntimeError("GENERATION_SELECTION_MISMATCH")
                         if row["warmup_completed"] is not True:
                             raise RuntimeError("WARMUP_NOT_COMPLETED")
+                        if not (0 < row["explicit_device_payload_bytes"] <= row["explicit_device_aligned_bytes"]):
+                            raise RuntimeError("DEVICE_LEDGER_NOT_REPORTED")
+                        if row["untouched_vram_reserve_bytes"] != 1 << 30:
+                            raise RuntimeError("VRAM_RESERVE_MISMATCH")
                         warm_row = json.loads(Path(str(output_dir) + ".warmup", f"rank-{rank}.json").read_text())
                         if warm_row["local_layer_sizes"] != row["local_layer_sizes"]:
                             raise RuntimeError("WARMUP_LAYER_MISMATCH")
