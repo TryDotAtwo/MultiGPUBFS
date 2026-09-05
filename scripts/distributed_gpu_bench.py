@@ -135,11 +135,13 @@ def suite(native,source,out,env):
    # This panel reserves n! records per rank through a u32 reference ABI.
    # Larger streaming-capacity experiments use their separate launcher.
    if not 2<=n<=12:raise ValueError('PROFILE_GROUP_CAPACITY')
+   archive_codec=env.get('MGBFS_PROFILE_ARCHIVE_CODEC','matrix_u8')
+   if archive_codec not in ('matrix_u8','permutation_u8'):raise ValueError('PROFILE_ARCHIVE_CODEC')
    for profile,generation in [('DENSE','SCALAR'),('HASH_FIRST','SCALAR'),('HASH_FIRST','INT_MMA_SM75')]:
     for owner in ['CUB_SORT_MERGE','BMMA_BUCKET']:
      for pre in ['OFF','ON']:
       key=f'{profile}-{generation}-{owner}-{pre}'
-      variants.append((key,dict(MGBFS_PROFILE=profile,MGBFS_HASH_FIRST_GENERATION=generation,MGBFS_OWNER_BACKEND=owner,MGBFS_PRE_DEDUP=pre,MGBFS_STATE_CODEC='matrix_u8',MGBFS_ARCHIVE_CODEC='matrix_u8',MGBFS_BENCH_SKIP_ARCHIVE='0',MGBFS_ARCHIVE_STREAM='0')))
+      variants.append((key,dict(MGBFS_PROFILE=profile,MGBFS_HASH_FIRST_GENERATION=generation,MGBFS_OWNER_BACKEND=owner,MGBFS_PRE_DEDUP=pre,MGBFS_STATE_CODEC='matrix_u8',MGBFS_ARCHIVE_CODEC=archive_codec,MGBFS_BENCH_SKIP_ARCHIVE='0',MGBFS_ARCHIVE_STREAM='0')))
    for batch in [65536,262144,1048576]:
     row=run('cayleypy',n,batch,'calibrate')
     if row['status']=='COMPLETE':

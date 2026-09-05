@@ -21,12 +21,16 @@ class RankMetrics(unittest.TestCase):
         launches = []
         def worker(command, out, label, env, timeout):
             launches.append(command)
+            if "--no-python" in command:
+                self.assertEqual(env["MGBFS_ARCHIVE_CODEC"], "permutation_u8")
+                self.assertEqual(env["MGBFS_STATE_CODEC"], "matrix_u8")
             return dict(status="COMPLETE", layer_sizes=[1, 39916799],
                         search_complete_seconds=2.0, smi_peak_mib_total=200,
                         smi_peak_mib_per_rank=[100, 100])
         with tempfile.TemporaryDirectory() as directory, patch("distributed_gpu_bench.run_group", worker):
             report = suite(Path("native"), Path("source"), Path(directory),
-                           {"MGBFS_PROFILE_SWEEP": "1", "MGBFS_PROFILE_SWEEP_N": "11"})
+                           {"MGBFS_PROFILE_SWEEP": "1", "MGBFS_PROFILE_SWEEP_N": "11",
+                            "MGBFS_PROFILE_ARCHIVE_CODEC": "permutation_u8"})
         self.assertEqual(report["status"], "COMPLETE")
         self.assertEqual(len(launches), 68)
         self.assertTrue(all("s11" in cmd or "11" in cmd for cmd in launches))
