@@ -121,3 +121,11 @@ coverage before state publication: reversed responses become dense writes into
 a wrapped ring extent, whereas duplicate/missing/foreign targets or group fatal
 leave all states untouched and StateReady unset. Planned reuse: CUB target sort
 and the already validated dense state materializer, without a second scratch.
+
+V15 RED confirmed: `apply-responses-build.log` shows successful CUDA compilation
+and missing `mgbfs_state_apply_responses` linkage at both calls.
+Implementation `36128135bcc7349f7359faa55fe0e1bd56f4e8cc` sorts response target
+StateRefs with existing MaterializePlan scratch, validates exact coverage and
+group fatal, reconstructs source-row order, then calls the checked dense state
+materializer. No persistent scatter writes or additional scratch allocation.
+V16 is the hardware gate. Full HASH_FIRST scheduler integration remains pending.
