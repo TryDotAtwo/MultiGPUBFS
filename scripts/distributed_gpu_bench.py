@@ -1,5 +1,5 @@
 """Two-T4 native NCCL versus immutable CayleyPy torchrun matrix BFS."""
-import argparse,gc,json,os,statistics,subprocess,sys,time
+import argparse,gc,json,math,os,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 
@@ -40,6 +40,18 @@ def baseline_worker(n,batch,out):
  row=dict(status='COMPLETE',backend='cayleypy_torchrun',rank=rank,group=f's{n}',batch=batch,search_complete_seconds=seconds,durable_run_commit_seconds=None,layer_sizes=result.layer_sizes,torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),cuda_before_used_bytes=total-before_free,cuda_after_used_bytes=total-after_free,output_contract='global counts; no archive')
  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/f'rank-{rank}.json').write_text(json.dumps(row))
 
+def smi_peaks(text):
+ peaks={0:[],1:[]}
+ for line in text.splitlines():
+  fields=line.split(',')
+  if len(fields)!=8:continue
+  try:rank=int(fields[1]);value=float(fields[3])
+  except ValueError:continue
+  if rank in peaks and math.isfinite(value) and value>=0:peaks[rank].append(value)
+ values=[max(peaks[rank]) if peaks[rank] else None for rank in range(2)]
+ # Sum of per-rank peaks, not necessarily a simultaneous device peak.
+ return values,sum(values) if all(x is not None for x in values) else None
+
 def run_group(command,out,label,env,timeout=7200):
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
@@ -66,15 +78,10 @@ def run_group(command,out,label,env,timeout=7200):
    if ranks[0]['layer_sizes']!=ranks[1]['layer_sizes']:raise ValueError('baseline rank count mismatch')
    row['layer_sizes']=ranks[0]['layer_sizes']
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']
- peaks={0:[],1:[]}
- for line in (out/(label+'-smi.csv')).read_text().splitlines():
-  f=line.split(',')
-  if len(f)==8:
-   try:peaks[int(f[1])].append(float(f[3]))
-   except ValueError:pass
- row['smi_peak_mib_per_rank']=[max(peaks[x]) if peaks[x] else None for x in range(2)];row['smi_peak_mib_total']=sum(x or 0 for x in row['smi_peak_mib_per_rank']);(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
+ row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text());row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
 
 def stats(rows):
+ if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')
  values=[x['search_complete_seconds'] for x in rows];median=statistics.median(values)
  return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(2)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
 
