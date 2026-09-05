@@ -32,3 +32,18 @@ be relaunched until the remote publication gate passes. Pinned-ring
 throughput remains a separate unverified constraint.
 
 API contract: https://huggingface.co/docs/huggingface_hub/guides/upload
+
+## Live gate v18 after cooldown
+
+PASS: S8 40320 states, two Parquet shards, one live upload slot/rank.
+Search 0.357291257s, native archive completion 1.28542754s, runner wall
+11.370417459s (not global promotion time), 437 MiB/device on physical 2xT4.
+Source remains 7f027f37553b2d9cfadd9e20e0794228fff2c4fa.
+HF run `s8-native-2xt4-20260905-124255` promoted at commit
+`d00f33b3a5ffde8ae8efdf182c823c8bc33190b6`.
+Evidence: `test_results/hf-editor-v18/s11-hf-stream/summary.json` and
+`promote.log`. CLI downloaded these successfully but failed encoding its
+final combined notebook log on Windows; this is not a remote run failure.
+This validates actual preupload and promotion, not S13 sustained throughput.
+S13 editor reconfiguration was attempted but browser timed out: verify the
+draft and saved versions before launching, to avoid duplicate runs.
