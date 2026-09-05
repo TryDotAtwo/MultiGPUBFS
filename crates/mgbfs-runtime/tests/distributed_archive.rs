@@ -401,6 +401,72 @@ fn hash_first_reference_preserves_full_archived_bfs_layers_on_two_devices() {
     archive_fixture_profile(false, true);
 }
 
+// A local capacity stop must poison both ranks, preserve a terminal failed
+// runtime, and leave archives without RunCommit. Removing the group fatal
+// vote or allowing failed runtimes to continue must fail this fixture.
+#[test]
+fn hash_first_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
+    for request_limited in [true, false] {
+        let mut id = [0u8; 128];
+        assert_eq!(
+            unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+            0
+        );
+        let workers: Vec<_> = (0..2u32)
+            .map(|rank| {
+                std::thread::spawn(move || {
+                    let g = MatrixGroup::unitriangular(3, 3).unwrap();
+                    let cfg = DistributedConfig {
+                        rank,
+                        world: 2,
+                        logical_owner_to_rank: [1, 0],
+                        batch: 7,
+                        layer_capacity: 27,
+                        state_ring_capacity: if request_limited { 27 } else { 1 },
+                        buckets: 8,
+                        shards: 2,
+                        job_buckets: 2,
+                        bucket_capacity: 27,
+                        prededup: true,
+                        generation_variant: 1,
+                    };
+                    let mut bfs = DistributedNativeBfs::new_hash_first_reference(
+                        &g,
+                        [0; 16],
+                        id,
+                        cfg,
+                        if request_limited { 1 } else { 64 },
+                    )
+                    .unwrap();
+                    let data = Arc::new(Mutex::new(Vec::new()));
+                    let mut archive =
+                        PinnedArchive::new(Disk(data.clone()), 100_000, 9, [0; 32], 3, 64).unwrap();
+                    let error = bfs
+                        .advance_archived(&mut archive)
+                        .expect_err("capacity must stop depth zero");
+                    assert_eq!(bfs.advance().unwrap_err(), "DISTRIBUTED_FAILED");
+                    drop(archive); // Drain records, but never send successful Complete.
+                    assert!(verify(&data.lock().unwrap()).is_err());
+                    error
+                })
+            })
+            .collect();
+        let errors: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+        let expected = if request_limited {
+            "HASH_FIRST_REQUEST_CAPACITY"
+        } else {
+            "NATIVE_OWNER_FATAL_11"
+        };
+        assert!(errors.iter().any(|e| e.starts_with(expected)), "{errors:?}");
+        assert!(
+            errors
+                .iter()
+                .all(|e| e.starts_with(expected) || e == "REMOTE_OWNER_BATCH_FATAL"),
+            "{errors:?}"
+        );
+    }
+}
+
 fn archive_fixture_profile(compact: bool, hash_first: bool) {
     archive_fixture_config(compact, hash_first, [0; 16], [1, 0], true);
 }
