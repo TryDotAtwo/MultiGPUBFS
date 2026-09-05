@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "f8f4b357c9a3dd67efd4e71f018c98b0a14aa1f0"
+SOURCE = "cdde19980e41de6aa55ffe991929465435848cc5"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -76,6 +76,13 @@ def main():
                     if line.startswith("{") and json.loads(line).get("executable")]
         if len(binaries) != 1:
             raise RuntimeError("AMBIGUOUS_TEST_BINARY")
+        macro_output = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
+                            "--test", "macro_native", "--no-run", "--message-format=json"], "macro-build", source)
+        macro_binaries = [json.loads(line)["executable"] for line in macro_output.splitlines()
+                          if line.startswith("{") and json.loads(line).get("executable")]
+        if len(macro_binaries) != 1:
+            raise RuntimeError("AMBIGUOUS_MACRO_TEST_BINARY")
+        report["macro_scope"] = "single T4 nonidentity UT(3,3) source; K=1,2,3,10; pre-dedup OFF/ON; full original layers"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
             if tool != "plain":
                 leaf = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
@@ -110,6 +117,14 @@ def main():
             if "9 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
+            macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
+                         "--exact", "--test-threads=1", "--nocapture"]
+            if tool != "plain":
+                macro_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + macro_cmd
+            macro_output = run(macro_cmd, "macro-" + tool, source)
+            if "1 passed; 0 failed" not in macro_output:
+                raise RuntimeError("MACRO_SOURCE_FIXTURE_NOT_PASSED")
+            require_clean(tool, macro_output)
             report["tests"].append({"tool": tool, "status": "PASS"})
             save()
         report["status"] = "COMPLETE"
