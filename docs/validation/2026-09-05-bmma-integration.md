@@ -73,3 +73,10 @@ all four sanitizers (15 passes; zero errors/hazards/warnings). SASS includes
 Tensor Core instruction. This does not measure its utilization or speedup.
 Evidence: `test_results/bmma-owner-v3/bmma-owner/summary.json`, `sass.log`,
 and `tile-*.log`. Full two-rank v20 remains a separate pending gate.
+
+V20 completed at f8f4b35 on two distinct T4s: all nine runtime fixtures pass
+plain and four sanitizers. Full archived BMMA BFS matches CPU layers for both
+DENSE and HASH_FIRST at the stated fixture configuration. No sanitizer errors
+or race hazards/warnings. Evidence: `test_results/distributed-sanitizer-v20/distributed-sanitizer/`.
+This is multi-GPU correctness on a small graph, not the full BMMA configuration
+matrix, macro coverage, continuous-overlap proof or a Pareto performance result.

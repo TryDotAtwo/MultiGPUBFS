@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/mgbfs-core", "crates/mgbfs-runtime", "crates/mgbfs-cuda"]
-default-members = ["crates/mgbfs-core", "crates/mgbfs-runtime"]
+members = ["crates/mgbfs-core", "crates/mgbfs-runtime", "crates/mgbfs-cuda", "crates/mgbfs-cli"]
+default-members = ["crates/mgbfs-core", "crates/mgbfs-runtime", "crates/mgbfs-cli"]
 resolver = "2"
 
 [package]

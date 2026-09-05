@@ -1,0 +1,13 @@
+[package]
+name = "mgbfs-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[[bin]]
+name = "mgbfs"
+path = "src/main.rs"
+
+[dependencies]
+mgbfs-runtime = { path = "../mgbfs-runtime" }
+serde_json = "=1.0.138"
