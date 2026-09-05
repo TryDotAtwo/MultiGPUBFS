@@ -37,7 +37,7 @@ def baseline_worker(n,batch,out):
  graph=CayleyGraph(definition,device='cuda',specific_devices=[local],batch_size=batch,random_seed=20260828,verbose=0)
  warm=graph.bfs(max_layer_size_to_store=1);assert warm.bfs_completed and sum(warm.layer_sizes)==math_factorial(n)
  del warm;gc.collect();torch.cuda.synchronize();torch.cuda.empty_cache();torch.cuda.reset_peak_memory_stats();dist.barrier();before_free,total=torch.cuda.mem_get_info();start=time.perf_counter();result=graph.bfs(max_layer_size_to_store=1);torch.cuda.synchronize();dist.barrier();seconds=time.perf_counter()-start;after_free,_=torch.cuda.mem_get_info();assert result.bfs_completed and sum(result.layer_sizes)==math_factorial(n)
- row=dict(status='COMPLETE',backend='cayleypy_torchrun',rank=rank,group=f's{n}',batch=batch,search_complete_seconds=seconds,durable_run_commit_seconds=None,layer_sizes=result.layer_sizes,torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),cuda_before_used_bytes=total-before_free,cuda_after_used_bytes=total-after_free,output_contract='global counts; no archive')
+ row=dict(status='COMPLETE',backend='cayleypy_torchrun',rank=rank,group=f's{n}',batch=batch,warmup_completed=True,search_complete_seconds=seconds,durable_run_commit_seconds=None,layer_sizes=result.layer_sizes,torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),cuda_before_used_bytes=total-before_free,cuda_after_used_bytes=total-after_free,output_contract='global counts; no archive')
  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/f'rank-{rank}.json').write_text(json.dumps(row))
 
 def smi_peaks(text):
@@ -105,7 +105,7 @@ def suite(native,source,out,env):
  def run(backend,n,batch,phase,rep=0):
   label=f's{n}-{backend}-b{batch}-{phase}-{rep}'
   if backend=='native':
-   bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone','--nproc-per-node=2','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
+   bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone','--nproc-per-node=2','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
   else:cfg=env;command=['torchrun','--standalone','--nproc-per-node=2',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
   try:row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
   finally:

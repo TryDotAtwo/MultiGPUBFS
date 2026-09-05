@@ -80,8 +80,7 @@ fn used() -> Result<usize> {
     }
     Ok(total - free)
 }
-fn run() -> Result<()> {
-    let args: Vec<_> = std::env::args().collect();
+fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
@@ -277,7 +276,7 @@ fn run() -> Result<()> {
         if compact_states { 5 } else { 1 },
         selection.materialization_capacity.unwrap_or(0), selection.tile_limit);
     let record = format!(
-        "{},\"hash_first_generation\":\"{hash_first_generation}\"}}",
+        "{},\"hash_first_generation\":\"{hash_first_generation}\",\"warmup_completed\":{warmup_completed}}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?
     );
     std::fs::write(
@@ -286,6 +285,39 @@ fn run() -> Result<()> {
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+fn run() -> Result<()> {
+    use mgbfs_runtime::benchmark::{run_phases, Phase};
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() != 6 {
+        return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
+    }
+    let warmup = match std::env::var("MGBFS_BENCH_WARMUP").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(_) => false,
+        _ => return Err("BENCH_WARMUP_CONFIG".into()),
+    };
+    if warmup && std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1") {
+        return Err("BENCH_WARMUP_REQUIRES_FILE_ARCHIVE".into());
+    }
+    run_phases(warmup, |phase| {
+        if phase == Phase::Measure {
+            return run_pass(&args, warmup);
+        }
+        let mut warm_args = args.clone();
+        for index in [3, 4, 5] {
+            warm_args[index].push_str(".warmup");
+        }
+        run_pass(&warm_args, false)?;
+        // FileExtent uses create_new: this exact rank-local warmup archive
+        // belongs to this completed pass. Keep its small timing JSON/logs.
+        if std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1") {
+            let rank = required("RANK")?;
+            std::fs::remove_file(format!("{}-rank-{rank}.mgbfsar1", warm_args[4]))
+                .map_err(|e| format!("WARMUP_ARCHIVE_RELEASE: {e}"))?;
+        }
+        Ok(())
+    })
 }
 fn main() {
     if let Err(e) = run() {
