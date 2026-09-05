@@ -142,13 +142,15 @@ def main():
         run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli"], "cli-build", source)
         report["reference_profile_smoke"] = []
         expected_layers = None
-        for profile in ("DENSE", "HASH_FIRST"):
+        for profile, generation in (("DENSE", "SCALAR"), ("HASH_FIRST", "SCALAR"),
+                                    ("HASH_FIRST", "INT_MMA_SM75")):
             for owner in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
                 for pre in ("OFF", "ON"):
-                    label = f"smoke-{profile}-{owner}-{pre}"
+                    label = f"smoke-{profile}-{generation}-{owner}-{pre}"
                     output_dir = logs / label
                     output_dir.mkdir()
                     env.update(MGBFS_PROFILE=profile, MGBFS_OWNER_BACKEND=owner, MGBFS_PRE_DEDUP=pre,
+                               MGBFS_HASH_FIRST_GENERATION=generation,
                                MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
                                MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
                                MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
@@ -161,6 +163,8 @@ def main():
                     for rank, row in enumerate(rows):
                         if (row["status"], row["frontier_profile"], row["owner_backend"], row["pre_dedup"], row["archive_enabled"]) != ("COMPLETE", profile, owner, pre, True):
                             raise RuntimeError("PROFILE_SELECTION_MISMATCH")
+                        if row["hash_first_generation"] != generation:
+                            raise RuntimeError("GENERATION_SELECTION_MISMATCH")
                         run([str(source / "target/release/mgbfs"), "verify", str(prefix) + f"-rank-{rank}.mgbfsar1"], label + f"-verify-{rank}", source)
                     if len(rows[0]["local_layer_sizes"]) != len(rows[1]["local_layer_sizes"]):
                         raise RuntimeError("PROFILE_DEPTH_MISMATCH")
@@ -168,7 +172,7 @@ def main():
                     if sum(layers) != 24 or (expected_layers is not None and layers != expected_layers):
                         raise RuntimeError("PROFILE_LAYER_MISMATCH")
                     expected_layers = layers
-                    report["reference_profile_smoke"].append(dict(profile=profile, owner=owner, pre_dedup=pre, layers=layers, status="PASS"))
+                    report["reference_profile_smoke"].append(dict(profile=profile, generation=generation, owner=owner, pre_dedup=pre, layers=layers, status="PASS"))
                     save()
         report["status"] = "COMPLETE"
     except Exception as exc:
