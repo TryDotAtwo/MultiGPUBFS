@@ -61,3 +61,21 @@ the consumer rate without overflowing its pinned ring.
 Evidence: `test_results/hf-editor-v24/s11-hf-stream/`.
 HF promotion:
 https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/2f77dce99de88f2d8eac20859305da5051d6187e
+
+## Hash compression experiment: v25, no demonstrated benefit
+
+Source d621ed4 used NONE on hash128_le only. S11 COMPLETE and GPU oracle
+passed. Encoding was 8.983/8.895 seconds, native archive 18.438 seconds and
+search 2.093 seconds. This separate run does not isolate CPU/network noise,
+but it provides no improvement over v24 (8.242/8.393 and 16.981 seconds).
+Total Parquet upload bytes were 918,146,419 versus 918,184,067 in v24:
+effectively unchanged. Keep the v24 ZSTD writer; do not promote an unproven
+optimization. Exact state/hash roundtrip tests remain.
+
+Evidence: `test_results/hf-editor-v25/s11-hf-stream/`.
+Publication: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/ffdc21ec0cf602617245c1c8cb645165f504f431
+
+Next investigation should measure column-level encoding costs in a bounded
+same-host replay (no GPU rerun for every codec hypothesis). Avoid repeated
+full builds and HF publications merely to compare writer options. Keep
+network validation as a separate gate after choosing the local writer.
