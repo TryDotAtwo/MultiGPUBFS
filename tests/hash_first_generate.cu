@@ -4,13 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-#include "../cuda/regenerate.h"
-extern "C" int mgbfs_generate_hash_only(
- uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t parent_capacity,
- uint32_t candidate_capacity,uint32_t source,uint64_t parent_begin,
- const uint8_t* parents,const uint8_t* generators,const uint32_t* coefficients,
- const uint32_t* offsets,const uint32_t* parent_count,uint32_t* hashes,
- MgbfsRegenerateOrigin* origins,uint32_t* candidate_count,uint32_t* fatal,void* stream);
+#include "../cuda/hash_first_generate.h"
 static void require(bool x){if(!x)std::abort();}
 template<class T> T* upload(const std::vector<T>& v){T* p=nullptr;require(cudaMalloc(&p,v.size()*sizeof(T))==cudaSuccess);require(cudaMemcpy(p,v.data(),v.size()*sizeof(T),cudaMemcpyHostToDevice)==cudaSuccess);return p;}
 int main(){
