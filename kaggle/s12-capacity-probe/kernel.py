@@ -10,6 +10,7 @@ from pathlib import Path
 SOURCE = "9f440a1ceff379f1c9df57fe97baa6ff98bd21c0"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 479_001_600
+GROUP = "s12"
 BATCH = 262_144
 CAPACITIES_PER_RANK = [32_000_000]
 
@@ -67,7 +68,7 @@ def main():
 
     results = []
     for capacity in CAPACITIES_PER_RANK:
-        label = f"s12-capacity-{capacity}"
+        label = f"{GROUP}-capacity-{capacity}"
         run_env = dict(env, MGBFS_CAPACITY_MODE="max_per_rank",
                        MGBFS_STATE_CODEC="permutation_u8",
                        MGBFS_BENCH_CAPACITY=str(capacity),
@@ -76,7 +77,7 @@ def main():
                        MGBFS_BENCH_SKIP_ARCHIVE="1", MGBFS_TRACE_DEPTHS="1")
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
-            str(source / "target/release/examples/distributed_bench"), "s12", str(BATCH),
+            str(source / "target/release/examples/distributed_bench"), GROUP, str(BATCH),
             str(root / f"bootstrap-{capacity}"), str(root / "unused-archive"), "{RANK_OUT}",
         ]
         row = bench.run_group(command, logs, label, run_env, timeout=1800)
@@ -84,13 +85,15 @@ def main():
         results.append(row)
         if row["status"] == "COMPLETE":
             if sum(row["layer_sizes"]) != CARDINALITY:
-                raise RuntimeError("S12_CARDINALITY")
+                raise RuntimeError(f"{GROUP}_CARDINALITY")
             break
 
     summary = {
         "schema": "MGBFS_S12_CAPACITY_PROBE_V1", "status": "COMPLETE",
         "source": SOURCE, "gpus": gpus, "cardinality": CARDINALITY,
         "results": results,
+        "group": GROUP,
+        "search_complete": any(row["status"] == "COMPLETE" for row in results),
     }
     (logs / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary), flush=True)
