@@ -35,3 +35,29 @@ HF publication:
 https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/17d2ef0337fcb00ecc381799314dcdd40bd5ea40
 
 No new S13 launch: its backlog remains unresolved.
+
+## Column-selective dictionaries: v24
+
+Source `915e59bf997c8fad5b2a28ca312bca19460f40d7`, same S11 capacity,
+batch, archive rows and slots. Only metadata columns retain dictionaries;
+ZSTD remains unchanged. COMPLETE, 40 shards / 39,916,800 records.
+All global layer counts match v23; the physical two-GPU oracle test passed.
+
+| Metric | v23 | v24 |
+|---|---:|---:|
+| Rank 0 encode seconds | 13.391 | 8.242 |
+| Rank 1 encode seconds | 13.248 | 8.393 |
+| Search seconds | 2.266 | 2.114 |
+| Native archive completion seconds | 22.560 | 16.981 |
+| Peak VRAM per rank, MiB | 699 | 699 |
+
+Encoding time fell 37–38%, native archive completion about 25%. These are
+single separate Kaggle runs, not repeated paired measurements on one host.
+No change in BFS throughput is attributed to this writer-only optimization.
+Rank read/checksum/Arrow times remain roughly 3.6/2.8/2.2 seconds; encoding
+is still the largest individual stage. No evidence yet that S13 can sustain
+the consumer rate without overflowing its pinned ring.
+
+Evidence: `test_results/hf-editor-v24/s11-hf-stream/`.
+HF promotion:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/2f77dce99de88f2d8eac20859305da5051d6187e
