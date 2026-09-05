@@ -66,3 +66,10 @@ then CUDA-feature cargo check passed after integration. Distributed gate v20
 pins this source and checks both profiles with BMMA, seed 20260828, owner map
 [0,1], pre-dedup OFF, plus the existing CUB/configuration/failure fixtures.
 GPU result is pending; no performance or complete-architecture claim.
+
+BMMA leaf v3 at 4cbf27a passes tile limits 1, 8 and 256, each plain and under
+all four sanitizers (15 passes; zero errors/hazards/warnings). SASS includes
+`BMMA.88128.XOR.POPC`, so the compiled membership kernel contains the intended
+Tensor Core instruction. This does not measure its utilization or speedup.
+Evidence: `test_results/bmma-owner-v3/bmma-owner/summary.json`, `sass.log`,
+and `tile-*.log`. Full two-rank v20 remains a separate pending gate.
