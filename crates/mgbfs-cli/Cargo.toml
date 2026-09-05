@@ -9,5 +9,6 @@ name = "mgbfs"
 path = "src/main.rs"
 
 [dependencies]
+mgbfs-core = { path = "../mgbfs-core" }
 mgbfs-runtime = { path = "../mgbfs-runtime" }
 serde_json = "=1.0.138"
