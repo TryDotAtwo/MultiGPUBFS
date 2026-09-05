@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <vector>
 #include "../cuda/hash_first_generate.h"
+#ifdef MGBFS_TEST_HASH_TC
+#define mgbfs_generate_hash_only mgbfs_generate_hash_only_tc
+#endif
 static void require(bool x){if(!x)std::abort();}
 template<class T> T* upload(const std::vector<T>& v){T* p=nullptr;require(cudaMalloc(&p,v.size()*sizeof(T))==cudaSuccess);require(cudaMemcpy(p,v.data(),v.size()*sizeof(T),cudaMemcpyHostToDevice)==cudaSuccess);return p;}
 int main(){

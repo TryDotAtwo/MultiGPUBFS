@@ -18,6 +18,15 @@ int mgbfs_generate_hash_only(
  const uint8_t* parents,const uint8_t* generators,const uint32_t* coefficients,
  const uint32_t* offsets,const uint32_t* parent_count,uint32_t* hashes,
  MgbfsRegenerateOrigin* origins,uint32_t* candidate_count,uint32_t* fatal,void* stream);
+/* Experimental SM75 integer-MMA generation with register-only modular/hash
+ * reduction. Same wire/lifetime contract; no materialized child-state buffer.
+ * This does not claim Tensor Core hash projection or a performance win. */
+int mgbfs_generate_hash_only_tc(
+ uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t parent_capacity,
+ uint32_t candidate_capacity,uint32_t source,uint64_t parent_begin,
+ const uint8_t* parents,const uint8_t* generators,const uint32_t* coefficients,
+ const uint32_t* offsets,const uint32_t* parent_count,uint32_t* hashes,
+ MgbfsRegenerateOrigin* origins,uint32_t* candidate_count,uint32_t* fatal,void* stream);
 #ifdef __cplusplus
 }
 #endif
