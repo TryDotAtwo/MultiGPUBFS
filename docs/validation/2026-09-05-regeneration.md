@@ -17,7 +17,9 @@ backend or a completed HASH_FIRST executor. Source-parent lifetime, owner
 request/response routing and hash-only generation still require integration.
 
 V5 adds zero-count, count-overflow, malformed-origin and sticky-fatal cases.
-Its terminal Kaggle status is COMPLETE; detailed outputs must be checked before
-claiming those additional gates passed. The next fixture consumes core wire
+Its downloaded outputs were checked: all four tools passed for both the leaf
+and the distributed fixtures, with zero errors and zero race warnings/hazards.
+Evidence: `test_results/distributed-sanitizer-v5/distributed-sanitizer/`.
+The next fixture consumes core wire
 OriginRef bytes through the Rust C ABI on each device; local cargo check proves
 type-checking only, not CUDA linkage or execution.
