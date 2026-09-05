@@ -25,3 +25,21 @@ absence of all inter-stream/global-memory races. Compact runtime coverage
 remains a separate required test.
 
 Evidence: `test_results/distributed-sanitizer-v1/distributed-sanitizer/`.
+
+## Compact path gate v2
+
+Source `8f04c4642470c8c48954ac705dda941e06b08625`, Kaggle v2 COMPLETE.
+Adds S4 compact generation variant 5, width 4, capacity 24, full archived
+state sets and hash comparison to independently generated matrix CPU layers.
+Both original and compact fixtures pass in each invocation (2 passed, 0 failed).
+
+| Tool | Result | Both fixtures seconds |
+|---|---|---:|
+| memcheck | 0 errors | 18.56 |
+| racecheck | 0 errors, warnings, hazards | 20.44 |
+| initcheck | 0 errors | 13.15 |
+| synccheck | 0 errors | 6.52 |
+
+Evidence: `test_results/distributed-sanitizer-v2/distributed-sanitizer/`.
+This covers the compact runtime path on S4, not an instrumented S13 run or
+all frontier sizes, profiles, rank maps and failure schedules.
