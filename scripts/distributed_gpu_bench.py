@@ -29,6 +29,12 @@ class ProgressRelay:
    self.pending=b'';self.dropping=False
 
 def baseline_worker(n,batch,out):
+ if int(os.environ['WORLD_SIZE'])==1:
+  from symmetric_gpu_bench import baseline
+  row=baseline(n,batch,False)
+  row.update(rank=0,world_size=1,warmup_completed=True)
+  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/'rank-0.json').write_text(json.dumps(row))
+  return
  import numpy as np,torch,torch.distributed as dist
  from cayleypy import CayleyGraph,CayleyGraphDef
  from cayleypy.cayley_graph_def import MatrixGenerator
@@ -75,6 +81,8 @@ def aggregate_rank_results(ranks,world=2):
  return row
 
 def run_group(command,out,label,env,timeout=7200):
+ world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
+ if world not in (1,2):raise ValueError('unsupported measurement world')
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
  with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi,(out/(label+'.log')).open('rb') as progress:
@@ -93,9 +101,9 @@ def run_group(command,out,label,env,timeout=7200):
   finally:sampler.terminate();sampler.wait()
  if row['exit_code']==0:
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
-  row.update(aggregate_rank_results(ranks))
+  row.update(aggregate_rank_results(ranks,world=world))
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']
- row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text());row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
+ row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text(),world=world);row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
 
 def stats(rows):
  if not rows:raise ValueError('EMPTY_MEASUREMENTS')
@@ -106,20 +114,24 @@ def stats(rows):
  return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
 
 def suite(native,source,out,env):
- out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',scope='physical 2xT4, same S_n matrix states, native mandatory archive, CayleyPy torchrun no archive',rows=[],comparisons=[])
+ world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
+ if world not in (1,2):raise ValueError('unsupported measurement world')
+ # Fixed physical device inventory also matches the nvidia-smi index sampler.
+ env=dict(env,CUDA_VISIBLE_DEVICES='0' if world==1 else '0,1')
+ out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',world_size=world,scope=f'physical {world}xT4, same S_n matrix states, native mandatory archive, CayleyPy no archive',rows=[],comparisons=[])
  def save():(out/'summary.json').write_text(json.dumps(report,indent=2))
  def run(backend,n,batch,phase,rep=0,selection=None):
   label=f's{n}-{backend}-b{batch}-{phase}-{rep}'
   if selection:label+='-'+selection[0]
   if backend=='native':
-   bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone','--nproc-per-node=2','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
-  else:cfg=env;command=['torchrun','--standalone','--nproc-per-node=2',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
+   bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_RANK_MAP='0' if world==1 else env.get('MGBFS_RANK_MAP','0,1'),MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone',f'--nproc-per-node={world}','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
+  else:cfg=env;command=['torchrun','--standalone',f'--nproc-per-node={world}',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
   if selection:cfg=dict(cfg,**selection[1])
   try:
    row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
    if backend=='native' and row['status']=='COMPLETE' and env.get('MGBFS_VERIFY_ARCHIVE')=='1':
     checks=[]
-    for rank in range(2):
+    for rank in range(world):
      result=subprocess.run([str(native.parent.parent/'mgbfs'),'verify',f'{prefix}-rank-{rank}.mgbfsar1'],capture_output=True,text=True)
      (out/f'{label}-verify-{rank}.log').write_text(result.stdout+result.stderr)
      if result.returncode!=0:raise ValueError('NATIVE_ARCHIVE_VERIFY_FAILED')
@@ -127,7 +139,7 @@ def suite(native,source,out,env):
     row['archive_verification']=checks
   finally:
    if backend=='native':
-    for rank in range(2):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
+    for rank in range(world):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
     bootstrap.unlink(missing_ok=True)
   row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save();return row
  try:

@@ -1,14 +1,48 @@
 import sys
 import unittest
 import tempfile
+import json
 from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats
+from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker
 
 
 class RankMetrics(unittest.TestCase):
+    def test_one_rank_baseline_uses_single_gpu_measurement_without_collectives(self):
+        def measured(n, batch, validate):
+            self.assertEqual((n, batch, validate), (4, 65536, False))
+            return dict(status='COMPLETE', backend='cayleypy_single_matrix',
+                        layer_sizes=[1, 23], search_complete_seconds=1.0)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict('os.environ', {'WORLD_SIZE':'1', 'RANK':'0', 'LOCAL_RANK':'0'}), \
+             patch('symmetric_gpu_bench.baseline', measured):
+            baseline_worker(4, 65536, directory)
+            result = json.loads((Path(directory)/'rank-0.json').read_text())
+        self.assertEqual(result['backend'], 'cayleypy_single_matrix')
+        self.assertEqual(result['world_size'], 1)
+        self.assertTrue(result['warmup_completed'])
+
+    def test_one_gpu_panel_launches_one_rank_and_records_topology(self):
+        launches = []
+        def worker(command, out, label, env, timeout):
+            launches.append(command)
+            self.assertIn('--nproc-per-node=1', command)
+            self.assertEqual(env['MGBFS_BENCH_WORLD_SIZE'], '1')
+            if '--no-python' in command:
+                self.assertEqual(env['MGBFS_RANK_MAP'], '0')
+            return dict(status='COMPLETE', layer_sizes=[1, 3628799],
+                        search_complete_seconds=1.0, smi_peak_mib_total=100,
+                        smi_peak_mib_per_rank=[100])
+        with tempfile.TemporaryDirectory() as directory, patch('distributed_gpu_bench.run_group', worker):
+            report = suite(Path('native'), Path('source'), Path(directory),
+                           {'MGBFS_PROFILE_SWEEP': '1', 'MGBFS_BENCH_WORLD_SIZE': '1'})
+        self.assertEqual(len(launches), 68)
+        self.assertEqual(report['world_size'], 1)
+        self.assertEqual(report['status'], 'COMPLETE')
+        self.assertEqual(report['comparisons'][0]['native']['peak_mib_per_rank'], [100])
+
     def test_one_rank_counts_require_explicit_world_inventory(self):
         row = self.rows()[0]
         result = aggregate_rank_results([row], world=1)
