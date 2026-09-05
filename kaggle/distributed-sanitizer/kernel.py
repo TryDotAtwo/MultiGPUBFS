@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "af8c3451f15c5f1231b8b6fce96e9d36c7f8967d"
+SOURCE = "e3fd4870d32aa3aae7117fa915eb44c77e8fc6a3"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -60,6 +60,10 @@ def main():
         run(["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT=" + str(cutlass)], "cmake", source)
         run(["cmake", "--build", str(build), "--target", "mgbfs_cuda", "--parallel", "2"], "cuda-build", source)
+        run(["cmake", "--build", str(build), "--target", "mgbfs-owner-memory-query-test", "--parallel", "2"], "owner-query-build", source)
+        query_output = run([str(build / "mgbfs-owner-memory-query-test")], "owner-query", source)
+        if "BOUNDED_OWNER_QUERY_PASS" not in query_output:
+            raise RuntimeError("OWNER_MEMORY_QUERY_FAILED")
         run(["cmake", "--build", str(build), "--target", "mgbfs-regenerate-test", "--parallel", "2"], "regenerate-build", source)
         run([str(build / "mgbfs-regenerate-test")], "regenerate-plain", source)
         run(["cmake", "--build", str(build), "--target", "mgbfs-hash-first-generate-test", "--parallel", "2"], "hash-first-build", source)
