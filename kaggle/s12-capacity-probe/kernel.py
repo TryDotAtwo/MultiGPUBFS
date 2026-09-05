@@ -11,6 +11,7 @@ SOURCE = "9f440a1ceff379f1c9df57fe97baa6ff98bd21c0"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 479_001_600
 GROUP = "s12"
+RUN_TIMEOUT = 1800
 BATCH = 262_144
 CAPACITIES_PER_RANK = [32_000_000]
 
@@ -80,7 +81,7 @@ def main():
             str(source / "target/release/examples/distributed_bench"), GROUP, str(BATCH),
             str(root / f"bootstrap-{capacity}"), str(root / "unused-archive"), "{RANK_OUT}",
         ]
-        row = bench.run_group(command, logs, label, run_env, timeout=1800)
+        row = bench.run_group(command, logs, label, run_env, timeout=RUN_TIMEOUT)
         row["capacity_per_rank"] = capacity
         results.append(row)
         if row["status"] == "COMPLETE":
