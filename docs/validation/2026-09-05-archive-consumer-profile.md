@@ -79,3 +79,36 @@ Next investigation should measure column-level encoding costs in a bounded
 same-host replay (no GPU rerun for every codec hypothesis). Avoid repeated
 full builds and HF publications merely to compare writer options. Keep
 network validation as a separate gate after choosing the local writer.
+
+## Compact metadata v26 and burst-capacity audit
+
+S11 source a1db12b COMPLETE; GPU oracle test and HF promotion passed.
+Encode 6.903/6.896s, Arrow construction 1.851/1.832s, native archive
+completion 15.753862937s, search 2.336173219s. This is another single run,
+not evidence of steady-state S13 throughput. HF commit:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/b8cb423f12ad0e8d3d03867146491f876acb57b2
+
+The remaining question is also buffer sizing, not only consumer speed.
+Using the recorded S13 search-only rank-0 layer counts and durations, a
+constant-rate fluid queue with arrivals uniform within each layer predicts:
+
+| Consumer records/s/rank | Peak queued records | Raw S13 bytes, GiB/rank |
+|---|---:|---:|
+| 1,000,000 | 259,157,592 | 7.00 |
+| 1,300,000 | 171,128,748 | 4.62 |
+| 1,550,000 | 129,016,260 | 3.48 |
+| 2,000,000 | 86,002,154 | 2.32 |
+| 3,000,000 | 42,668,831 | 1.15 |
+
+Recurrence q_next=max(0,q+layer_rows-rate*layer_seconds). Source:
+`test_results/s13-owner-local-v5/s12-capacity-probe/s13-capacity-220000000-ranks/rank-0.json`.
+This is a sizing model, NOT measured occupancy or a guaranteed bound. It
+ignores intra-layer bursts, partial slots and network stalls; S11 consumer
+speed cannot simply be asserted for S13. Current 256x262144 slots cover
+only 67,108,864 records/rank (~1.81GiB at 29 bytes), below several modeled
+peaks despite acceptable average full-run throughput.
+
+Before another S13 attempt, implement/test this replay calculation for both
+ranks and reserve host RAM explicitly (pinned rings, HF slots, Arrow/encoder
+scratch, OS reserve). A larger preallocated ring can be justified by that
+budget, not blind retries. No backpressure or runtime fallback is proposed.
