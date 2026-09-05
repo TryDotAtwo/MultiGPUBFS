@@ -290,10 +290,13 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         .sum();
     let record=format!("{},\"explicit_device_payload_bytes\":{owned_payload},\"explicit_device_aligned_bytes\":{},\"untouched_vram_reserve_bytes\":{},\"allocation_scope\":\"explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive\"}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?,bfs.owned_memory().total(),cfg.untouched_vram_reserve);
-    std::fs::write(
-        Path::new(&args[5]).join(format!("rank-{rank}.json")),
-        record,
-    )
+    std::fs::write(Path::new(&args[5]).join(format!("rank-{rank}.json")), {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+        value["device_allocation_plan"] =
+            mgbfs_runtime::distributed_memory::allocation_report(bfs.owned_memory());
+        serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
+    })
     .map_err(|e| e.to_string())?;
     Ok(())
 }

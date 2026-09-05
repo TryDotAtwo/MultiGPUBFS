@@ -1,5 +1,24 @@
 use mgbfs_runtime::distributed_memory::{shared_buffers, SharedBufferShape};
 
+#[test]
+fn allocation_report_preserves_named_payload_and_padding_without_device_addresses() {
+    use mgbfs_core::memory::AllocationLedger;
+    use mgbfs_runtime::distributed_memory::allocation_report;
+    let mut ledger = AllocationLedger::new(4096, 0).unwrap();
+    ledger.add("shared.states", 17, 16, 256).unwrap();
+    ledger.add("owner.flags", 3, 1, 256).unwrap();
+    let report = allocation_report(&ledger);
+    assert_eq!(report["payload_bytes"], 275);
+    assert_eq!(report["aligned_bytes"], 768);
+    assert_eq!(report["planes"][0]["name"], "shared.states");
+    assert_eq!(report["planes"][0]["payload_bytes"], 272);
+    assert_eq!(report["planes"][0]["reserved_bytes"], 512);
+    assert_eq!(report["planes"][1]["payload_bytes"], 3);
+    assert_eq!(report["planes"][1]["reserved_bytes"], 256);
+    assert!(report["planes"][0].get("offset").is_none());
+    assert_eq!(report["planes"].as_array().unwrap().len(), 2);
+}
+
 fn shape() -> SharedBufferShape {
     SharedBufferShape {
         state_stride: 32,

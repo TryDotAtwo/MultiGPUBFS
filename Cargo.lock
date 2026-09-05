@@ -115,6 +115,7 @@ version = "0.1.0"
 dependencies = [
  "mgbfs-core",
  "mgbfs-cuda",
+ "serde_json",
  "sha2",
 ]
 

@@ -10,6 +10,7 @@ cuda = ["mgbfs-cuda/cuda"]
 [dependencies]
 mgbfs-core = { path = "../mgbfs-core" }
 sha2 = "=0.10.8"
+serde_json = "=1.0.138"
 mgbfs-cuda = { path = "../mgbfs-cuda" }
 
 [[example]]

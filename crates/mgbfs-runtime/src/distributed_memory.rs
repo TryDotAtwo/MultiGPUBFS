@@ -4,6 +4,25 @@ use mgbfs_core::rank_plan::QueryResult;
 use mgbfs_core::{memory::AllocationLedger, Result};
 use mgbfs_cuda::native_owner::{BucketJob, Control, Counts, Extent, Range, Ring};
 
+/// Explicit allocations only; ledger offsets are not actual device addresses.
+pub fn allocation_report(ledger: &AllocationLedger) -> serde_json::Value {
+    let planes: Vec<_> = ledger
+        .allocations
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "name": a.name, "payload_bytes": a.payload_bytes,
+                "reserved_bytes": a.reserved_bytes
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "scope": "explicit_device_buffers_excludes_nccl_driver_and_pinned_archive",
+        "payload_bytes": ledger.allocations.iter().map(|a| a.payload_bytes).sum::<u64>(),
+        "aligned_bytes": ledger.total(), "planes": planes
+    })
+}
+
 pub fn device_admission(required: u64, reserve: u64, free: u64) -> Result<()> {
     if required.checked_add(reserve).map_or(true, |n| n > free) {
         return Err(format!(
