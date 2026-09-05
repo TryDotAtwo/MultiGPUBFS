@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "d9dc40fbd7adf7eef07be28c27580fe583ec9371"
+SOURCE = "f13ef1e514b680337177ad3b81962a8050681123"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 39_916_800
 PER_RANK_CAPACITY = 8_000_000
@@ -72,6 +72,9 @@ def main():
     for gpu in range(2):
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
         for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+            run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
+                 str(build / "mgbfs-directories-test")],
+                f"owner-directory-gpu{gpu}-{tool}", source)
             run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
                  str(executables[0]), "compact_permutation_generation_matches_gather"],
                 f"compact-gpu{gpu}-{tool}", source)
