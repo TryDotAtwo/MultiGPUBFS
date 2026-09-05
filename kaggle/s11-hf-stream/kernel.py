@@ -13,16 +13,14 @@ from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "b94f6be29124ad8fb709d58d2dfa69d6dbaa5ffa"
+SOURCE = "b23b0377713b1d82c72c44f20c7ac3a325f95e7c"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 CARDINALITY = 39_916_800
-# EQUAL_GLOBAL interprets the declared capacity as a cluster-wide budget and
-# splits it across ranks.  S11 needs 4M records on each rank, hence 8M global.
-GLOBAL_CAPACITY = 8_000_000
+PER_RANK_CAPACITY = 8_000_000
 BATCH = 262_144
-ARCHIVE_ROWS = 16_384
-ARCHIVE_SLOTS = 1_400
+ARCHIVE_ROWS = 262_144
+ARCHIVE_SLOTS = 96
 
 
 def load(path, name):
@@ -118,12 +116,13 @@ def main():
         bench = load(source / "scripts/distributed_gpu_bench.py", "bench")
         run_env = dict(
             env,
-            MGBFS_CAPACITY_MODE="equal_global",
-            MGBFS_BENCH_CAPACITY=str(GLOBAL_CAPACITY),
-            MGBFS_FUTURE_CAPACITY=str(GLOBAL_CAPACITY),
+            MGBFS_CAPACITY_MODE="max_per_rank",
+            MGBFS_BENCH_CAPACITY=str(PER_RANK_CAPACITY),
+            MGBFS_FUTURE_CAPACITY=str(PER_RANK_CAPACITY),
             MGBFS_ARCHIVE_ROWS=str(ARCHIVE_ROWS),
             MGBFS_ARCHIVE_SLOTS=str(ARCHIVE_SLOTS),
             MGBFS_ARCHIVE_STREAM="1",
+            MGBFS_ARCHIVE_CODEC="permutation_u8",
         )
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
@@ -151,7 +150,7 @@ def main():
         if sum(item["total_unique_states"] for item in rank_commits) != CARDINALITY:
             raise RuntimeError("S11_ARCHIVE_CARDINALITY_GATE")
         summary = {
-            "schema": "MGBFS_S11_HF_STREAM_V1", "status": "PASS", "source": SOURCE,
+            "schema": "MGBFS_S11_HF_STREAM_V2", "status": "PASS", "source": SOURCE,
             "dataset": REPO_ID, "run_id": run_id, "commit_url": promotion["commit_url"],
             "total_unique_states": CARDINALITY, "state_shards": sum(len(x["files"]) for x in rank_commits),
             "peak_live_slots": [x["peak_live_slots"] for x in rank_commits],
