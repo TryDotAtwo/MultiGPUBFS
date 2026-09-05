@@ -52,3 +52,22 @@ S13 v22 has now been submitted with source d690b46, 220M records/rank,
 262144 batch/archive rows and 256 pinned slots. It is a new implementation
 test, not a rerun of the failed whole-layer archiver. Final publication and
 capacity outcome remain pending.
+
+## S13 v22: INCOMPLETE, pinned ring exhausted again
+
+The revised implementation completed depth 35 and failed while processing
+depth 36 with `ARCHIVE_PIN_RING_FATAL: receiving on an empty channel`.
+Torchrun reports rank 1 exit 1 and peer termination at 13:56:26 UTC.
+Both streamers subsequently report `ARCHIVE_TRUNCATED`; no complete graph
+was promoted. Evidence: `test_results/hf-editor-v22/s11-hf-stream/`.
+
+Parent-batch submission removes the whole-layer enqueue burst but is not
+sufficient to keep the archive consumer up with S13. The same-size pinned
+ring still accumulates backlog. This run must not be repeated unchanged or
+described as fixed. Logs do not yet isolate time in FIFO/checksum, Arrow
+construction, Parquet encoding, and network preupload. Measure these stages
+on Kaggle before choosing a consumer optimization or capacity change.
+
+The two-device full-state archive test passed in the preceding gates; this
+failure concerns bounded throughput, not proof that the generated states
+are incorrect. The incomplete archive remains unsuitable as a full dataset.
