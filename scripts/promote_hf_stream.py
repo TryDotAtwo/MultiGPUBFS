@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -101,7 +103,7 @@ def combine_rank_commits(commits, expected_world):
     }
 
 
-def _metadata_payloads(global_commit):
+def _metadata_payloads(global_commit, layer_bytes=None):
     run_id = global_commit["run_id"]
     layers = pa.table({
         "run_id": pa.array([run_id] * len(global_commit["layer_counts"]), pa.string()),
@@ -111,9 +113,12 @@ def _metadata_payloads(global_commit):
         "depth": pa.array(range(len(global_commit["layer_counts"])), pa.uint32()),
         "unique_states": pa.array(global_commit["layer_counts"], pa.uint64()),
     })
-    output = pa.BufferOutputStream()
-    pq.write_table(layers, output, compression="zstd")
-    layer_bytes = output.getvalue().to_pybytes()
+    if layer_bytes is None:
+        output = pa.BufferOutputStream()
+        pq.write_table(layers, output, compression="zstd")
+        layer_bytes = output.getvalue().to_pybytes()
+    elif not pq.read_table(pa.BufferReader(layer_bytes)).equals(layers):
+        raise ValueError("PUBLICATION_CONFLICT layer contents")
     manifest = dict(global_commit)
     manifest["files"] = [dict(item) for item in global_commit["files"]]
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
@@ -139,7 +144,76 @@ def _metadata_payloads(global_commit):
     }
 
 
-def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None):
+def reconcile_publication(api, repo_id, combined, revision=None):
+    """Read one immutable revision; never download state payload or write."""
+    if revision is None:
+        revision = api.repo_info(repo_id=repo_id, repo_type="dataset").sha
+    manifest_path = f"runs/{combined['run_id']}.json"
+    present = api.get_paths_info(repo_id=repo_id, repo_type="dataset",
+                                revision=revision, paths=[manifest_path])
+    if not present:
+        return None
+    payloads = _metadata_payloads(combined)
+    layer_path = f"layers/{combined['run_id']}.parquet"
+    if layer_path in payloads:
+        info = api.get_paths_info(repo_id=repo_id, repo_type="dataset",
+                                  revision=revision, paths=[layer_path])
+        if len(info) != 1 or not 0 < info[0].size <= 16 * 1024 * 1024:
+            raise ValueError("PUBLICATION_CONFLICT layer metadata size")
+        # Only small layer metadata is downloaded. Parquet encoding can differ
+        # across Arrow versions; compare its typed contents, then its stored hash.
+        local = api.hf_hub_download(repo_id=repo_id, repo_type="dataset",
+                                    revision=revision, filename=layer_path)
+        payloads = _metadata_payloads(combined, layer_bytes=Path(local).read_bytes())
+    expected = {}
+    for path, payload in payloads.items():
+        blob = f"blob {len(payload)}\0".encode() + payload
+        expected[path] = (len(payload), hashlib.sha1(blob).hexdigest(),
+                          hashlib.sha256(payload).hexdigest())
+    for item in combined["files"]:
+        expected[item["path"]] = (item["bytes"], None, item["sha256"])
+    paths = list(expected)
+    for offset in range(0, len(paths), 500):
+        batch = paths[offset:offset + 500]
+        actual = {item.path: item for item in api.get_paths_info(
+            repo_id=repo_id, repo_type="dataset", revision=revision, paths=batch)}
+        for path in batch:
+            item = actual.get(path)
+            size, blob_sha, content_sha = expected[path]
+            if item is None or item.size != size:
+                raise ValueError(f"PUBLICATION_CONFLICT {path}")
+            lfs = item.lfs
+            if lfs is not None:
+                digest = lfs.get("sha256") if isinstance(lfs, dict) else lfs.sha256
+                valid = digest == content_sha
+            else:
+                valid = blob_sha is not None and item.blob_id == blob_sha
+            if not valid:
+                raise ValueError(f"PUBLICATION_CONFLICT {path}")
+    return SimpleNamespace(oid=revision, commit_url=(
+        f"https://huggingface.co/datasets/{repo_id}/commit/{revision}"))
+
+
+def promote_verified(api, repo_id, commits, expected_world):
+    combined = combine_rank_commits(commits, expected_world)
+    revision = api.repo_info(repo_id=repo_id, repo_type="dataset").sha
+    existing = reconcile_publication(api, repo_id, combined, revision=revision)
+    if existing is not None:
+        return combined, existing
+    try:
+        return promote(api, repo_id, commits, expected_world, parent_commit=revision)
+    except Exception:
+        # A gateway failure can follow a successful server-side commit.
+        # Read back once, never blindly repeat a write. Unavailable verification
+        # remains an error, not evidence of success.
+        existing = reconcile_publication(api, repo_id, combined)
+        if existing is not None:
+            return combined, existing
+        raise
+
+
+def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None,
+            parent_commit=None):
     """Create one default-branch commit; no state object is visible before it."""
     if copy_cls is None or add_cls is None:
         from huggingface_hub import CommitOperationAdd, CommitOperationCopy
@@ -163,6 +237,7 @@ def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None):
         repo_type="dataset",
         operations=operations,
         commit_message=f"Publish complete BFS run {combined['run_id']}",
+        **({"parent_commit": parent_commit} if parent_commit is not None else {}),
     )
     return combined, receipt
 
@@ -181,7 +256,7 @@ def main():
     for path in args.commits:
         with open(path, "r", encoding="utf-8") as source:
             commits.append(json.load(source))
-    combined, receipt = promote(HfApi(token=token), args.repo_id, commits, args.world_size)
+    combined, receipt = promote_verified(HfApi(token=token), args.repo_id, commits, args.world_size)
     print(json.dumps({
         "status": combined["status"],
         "run_id": combined["run_id"],
