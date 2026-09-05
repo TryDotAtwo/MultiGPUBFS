@@ -185,3 +185,12 @@ and warnings. Evidence: `test_results/distributed-sanitizer-v18/distributed-sani
 Racecheck took 246.70 seconds; this is instrumented test time, not BFS throughput.
 V19 pins 9568f86 and adds group-terminal request/StateRing capacity failure tests
 plus the HASH_FIRST allocation-query wiring. No larger graph or speed claim.
+
+V19 completed at 9568f86: eight runtime fixtures pass plain and all four
+sanitizers, including both request-capacity and StateRing-capacity failure
+scenarios. Both ranks terminate with the expected local/remote fatal, further
+advance is rejected, and dropped archives fail complete-archive verification.
+All sanitizer summaries are zero, including race hazards/warnings. Evidence:
+`test_results/distributed-sanitizer-v19/distributed-sanitizer/`.
+This covers the deliberate fixture failures, not arbitrary CUDA/NCCL process
+death or all capacity combinations. BMMA is still independently RED.
