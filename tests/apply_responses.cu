@@ -4,8 +4,6 @@
 #include <vector>
 #include "../cuda/mgbfs_cuda.h"
 #include "../cuda/state_commit.h"
-extern "C" int mgbfs_state_apply_responses(void*,const uint8_t*,const uint64_t*,
- const uint32_t*,const uint32_t*,uint8_t*,MgbfsStateRingControl*,MgbfsOwnerControl*,MgbfsStateExtent*,void*);
 static void require(bool x){if(!x)std::abort();}
 template<class T> T* upload(const std::vector<T>& v){T* p=nullptr;require(cudaMalloc(&p,v.size()*sizeof(T))==cudaSuccess);require(cudaMemcpy(p,v.data(),v.size()*sizeof(T),cudaMemcpyHostToDevice)==cudaSuccess);return p;}
 int main(){

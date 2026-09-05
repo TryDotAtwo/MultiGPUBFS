@@ -1,4 +1,5 @@
 #include "mgbfs_cuda.h"
+#include "state_commit.h"
 #include <cuda_runtime.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cstdio>
@@ -111,4 +112,42 @@ extern "C" int mgbfs_materialize_sort_origins(void* plan,uint32_t source,
        int(p->capacity),0,64,stream)!=cudaSuccess)return 3;
   sorted_origin_records<<<blocks,256,0,stream>>>(origins,targets,p->order,count,fatal,output,output_targets);
   return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+__device__ void response_fatal(MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
+  atomicCAS(&owner->error,0u,18u);atomicCAS(&ring->fatal,0u,18u);
+}
+__global__ void response_keys(const uint64_t* targets,const uint32_t* count,uint32_t capacity,
+ const uint32_t* group_fatal,uint64_t* keys,uint32_t* indices,MgbfsStateRingControl* ring,
+ MgbfsOwnerControl* owner,const MgbfsStateExtent* extent){
+  const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=capacity)return;
+  if(i==0&&(*count>capacity||*count!=extent->count||*group_fatal))response_fatal(ring,owner);
+  keys[i]=*count<=capacity&&i<*count?targets[i]:UINT64_MAX;
+  indices[i]=i;
+}
+__global__ void response_mapping(const uint64_t* sorted,const uint32_t* order,const uint32_t* count,
+ uint32_t capacity,uint64_t* refs,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
+ const MgbfsStateExtent* extent){
+  const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=capacity)return;
+  // No concurrent reads of error while other blocks can set it.
+  if(*count<=capacity&&i<*count&&
+     (extent->sequence>UINT64_MAX-i||sorted[i]!=extent->sequence+i))response_fatal(ring,owner);
+  refs[i]=order[i];
+}
+extern "C" int mgbfs_state_apply_responses(void* plan,const uint8_t* responses,const uint64_t* targets,
+ const uint32_t* count,const uint32_t* group_fatal,uint8_t* states,MgbfsStateRingControl* ring,
+ MgbfsOwnerControl* owner,MgbfsStateExtent* extent,void* raw_stream){
+  auto p=static_cast<MaterializePlan*>(plan);
+  if(!p||!responses||!targets||!count||!group_fatal||!states||!ring||!owner||!extent)return 1;
+  auto stream=static_cast<cudaStream_t>(raw_stream);
+  const uint32_t blocks=(p->capacity+255)/256;
+  response_keys<<<blocks,256,0,stream>>>(targets,count,p->capacity,group_fatal,p->keys,p->indices,ring,owner,extent);
+  if(cudaGetLastError()!=cudaSuccess)return 2;
+  size_t bytes=p->scratch_bytes;
+  if(cub::DeviceRadixSort::SortPairs(p->scratch,bytes,p->keys,p->sorted,p->indices,p->order,
+       int(p->capacity),0,64,stream)!=cudaSuccess)return 3;
+  response_mapping<<<blocks,256,0,stream>>>(p->sorted,p->order,count,p->capacity,p->keys,ring,owner,extent);
+  if(cudaGetLastError()!=cudaSuccess)return 2;
+  return mgbfs_state_materialize(responses,p->capacity,p->keys,p->capacity,p->indices,p->capacity,
+    p->stride,states,ring,owner,extent,raw_stream);
 }

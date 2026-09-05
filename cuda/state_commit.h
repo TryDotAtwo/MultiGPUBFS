@@ -50,6 +50,16 @@ int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t can
     uint32_t selected_capacity,MgbfsRegenerateOrigin* requests,uint64_t* target_refs,
     uint32_t* request_count,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent,void* stream);
+/* Apply all responses for one committed extent. Reuses MaterializePlan CUB
+ * scratch to sort absolute target refs; every target must occur exactly once.
+ * Any missing/duplicate/foreign ref or group fatal poisons owner/ring with 18
+ * before state writes. Dense writes and StateReady publication use the same
+ * checked materializer as DENSE. No allocation/host sync; plans are exclusive.
+ */
+int mgbfs_state_apply_responses(void* materialize_plan,const uint8_t* responses,
+    const uint64_t* targets,const uint32_t* count,const uint32_t* group_fatal,
+    uint8_t* states,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent,void* stream);
 #ifdef __cplusplus
 }
 #endif
