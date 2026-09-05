@@ -13,7 +13,7 @@ from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "48b1e12807e180f392e3d08b2279ad23fa8930d8"
+SOURCE = "971ab50ec529711e0d9707242468e1493e9675c3"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 GROUP = "s13"
@@ -38,6 +38,13 @@ def main():
     token = UserSecretsClient().get_secret("HF_TOKEN")
     if not token:
         raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
+    request = urllib.request.Request("https://huggingface.co/api/whoami-v2",
+                                     headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        identity = json.load(response)
+    if identity.get("name", "").lower() != "trydotatwo":
+        raise RuntimeError("HF_ACCOUNT_MISMATCH")
+    print("HF_AUTH_OK", flush=True)
     helper = root / "gate.py"
     urllib.request.urlretrieve(
         "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"

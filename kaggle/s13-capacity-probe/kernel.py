@@ -4,7 +4,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "04f0aa5cf032d9dec7e851cd025218ce9168aed7"
+SOURCE = "971ab50ec529711e0d9707242468e1493e9675c3"
 
 def main():
     with tempfile.TemporaryDirectory(prefix="s13-harness-", dir="/tmp") as directory:
