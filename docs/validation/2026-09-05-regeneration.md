@@ -35,3 +35,12 @@ The fixture supplies no child-state output, checks 514 parent-major candidates,
 four affine residues including reduction near p, 64-bit parent references,
 and device-count capacity rejection without output writes. Expected next
 failure is the missing symbol at link time, not a runtime regression.
+
+V7 RED was confirmed: CUDA fixture compiled, linking failed specifically on
+`mgbfs_generate_hash_only` at both calls. Log: `test_results/distributed-sanitizer-v7/distributed-sanitizer/hash-first-build.log`.
+Implementation `b607e983e29779ac96771344edc8fe8ac78f73e6` adds a warp-per-child
+CUDA reference, affine F_p projections with bounded 64-bit reductions, and
+device-side capacity validation before output writes. No child-state global
+buffer exists. This is not the requested Tensor Core implementation; it is
+the correctness reference for that backend and native HASH_FIRST integration.
+GPU execution remains unverified until the following gate completes.
