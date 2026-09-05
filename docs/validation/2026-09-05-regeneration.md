@@ -76,3 +76,14 @@ Implementation `804642c38ff07ef052ff8039fd9b08ae469be5c3` reuses owner-stage,
 reserved-extent and selection validation before compacting requests. It emits
 absolute sequence StateRefs (not physical ring indices), leaves ready unset,
 and returns zero requests after fatal. V11 validates it under all four tools.
+
+V11 completed; request extraction passed plain and all four sanitizer tools,
+with zero errors and race warnings/hazards. Evidence:
+`test_results/distributed-sanitizer-v11/distributed-sanitizer/requests-*.log`.
+
+V12 RED source `813845bf1bc0913d3017b210a6f65742a983e71b` requires stable
+per-source parent sorting while preserving the paired final target StateRef.
+The new operation will reuse the existing MaterializePlan CUB buffers rather
+than allocate another scratch arena. Mixed source ranks must reject the whole
+job before writes. Sorting is needed before regeneration; pairing is needed
+to restore final dense target order after request/response routing.
