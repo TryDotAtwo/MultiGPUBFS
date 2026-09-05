@@ -20,11 +20,13 @@ jobs:
       - name: Install pinned Rust
         run: rustup toolchain install 1.75.0 --profile minimal --component rustfmt
       - name: Check native Rust formatting
-        run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -- --check
+        run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -p mgbfs-cli -- --check
       - name: Verify CPU contracts (not a GPU or performance gate)
         run: cargo +1.75.0 test --locked
       - name: Verify Kaggle hardware and immutable-source guards
         run: python3 -m unittest discover -s tests -p 'test_*gate.py'
+      - name: Verify benchmark memory accounting without GPU
+        run: python3 -m unittest discover -s tests -p 'test_distributed_metrics.py'
       - name: Verify allocation geometry without CUDA (not a hardware gate)
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/allocation_shape.cpp cuda/allocation_shape.cpp -o /tmp/allocation-shape && /tmp/allocation-shape
       - name: Verify CUDA query report adapter without GPU
