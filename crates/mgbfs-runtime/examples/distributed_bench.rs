@@ -103,8 +103,8 @@ fn run() -> Result<()> {
     let id = bootstrap(Path::new(&args[3]), rank, world)?;
     let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
-        Err(std::env::VarError::NotPresent) =>
-            u32::try_from(graph.expected_max_unique_states).map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
+        Err(std::env::VarError::NotPresent) => u32::try_from(graph.expected_max_unique_states)
+            .map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
         Err(_) => return Err("CAPACITY".into()),
     };
     let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity);
@@ -200,13 +200,14 @@ fn run() -> Result<()> {
         if trace {
             eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
         }
-        if archive_enabled {
-            bfs.archive_current(&mut archive)?;
-        }
+        let alive = if archive_enabled {
+            bfs.advance_archived(&mut archive)?
+        } else {
+            bfs.advance()?
+        };
         if trace {
             eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
         }
-        let alive = bfs.advance()?;
         let elapsed = tick.elapsed().as_secs_f64();
         times.push(elapsed);
         if trace {

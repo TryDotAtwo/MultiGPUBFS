@@ -84,6 +84,9 @@ def main():
     run(["cmake", "--build", str(build), "--parallel", "2"], "cuda-build", source)
     run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime",
          "--features", "cuda", "--example", "distributed_bench"], "rust-build", source)
+    run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime",
+         "--features", "cuda", "--test", "distributed_archive", "--",
+         "--test-threads=1", "--nocapture"], "distributed-archive-test", source, timeout=180)
     try:
         import huggingface_hub
     except ImportError:

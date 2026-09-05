@@ -619,13 +619,42 @@ impl DistributedNativeBfs {
         if self.failed {
             return Err("DISTRIBUTED_FAILED".into());
         }
-        let result = self.advance_inner();
+        let result = self.advance_inner(None);
         if result.is_err() {
             self.failed = true
         }
         result
     }
-    fn advance_inner(&mut self) -> Result<bool> {
+    /// Archive each bounded parent slice before retiring its StateRing range.
+    pub fn advance_archived(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+    ) -> Result<bool> {
+        if self.failed {
+            return Err("DISTRIBUTED_FAILED".into());
+        }
+        let result = self.advance_inner(Some(archive));
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    fn advance_inner(
+        &mut self,
+        mut archive: Option<&mut crate::pinned_archive::PinnedArchive>,
+    ) -> Result<bool> {
+        if let Some(a) = archive.as_ref() {
+            let error = if self.archived_depth == Some(self.depth) {
+                Some("ARCHIVE_DEPTH_ALREADY_SUBMITTED".to_string())
+            } else if a.width != self.width && self.permutation_n != u32::try_from(a.width).ok() {
+                Some("ARCHIVE_STATE_WIDTH".to_string())
+            } else {
+                None
+            };
+            if self.all_max(u32::from(error.is_some()))? != 0 {
+                return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
+            }
+        }
         let s = self.stream.0;
         unsafe {
             check(cudaMemsetAsync(
@@ -653,6 +682,24 @@ impl DistributedNativeBfs {
                 .map(|extent| u64::from(self.cfg.batch).min(extent.count - extent_offset) as u32)
                 .unwrap_or(0);
             let candidate_count = parents * self.moves;
+            if let Some(a) = archive.as_deref_mut() {
+                let error = if let Some(extent) = parent {
+                    self.archive_range(
+                        a,
+                        extent.begin + extent_offset,
+                        u64::from(parents),
+                        extent_index,
+                    )
+                    .err()
+                } else {
+                    None
+                };
+                // Both ranks issue this epoch even when one has no parents.
+                // A local archive failure must not strand its peer in exchange.
+                if self.all_max(u32::from(error.is_some()))? != 0 {
+                    return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
+                }
+            }
             if let Some(extent) = parent {
                 unsafe {
                     check(mgbfs_generate_run(
@@ -754,7 +801,9 @@ impl DistributedNativeBfs {
                 )
             })?;
             if let Some(parent_extent) = parent {
-                if self.archived_depth == Some(self.depth) && !archive_released[extent_index] {
+                if archive.is_some()
+                    || (self.archived_depth == Some(self.depth) && !archive_released[extent_index])
+                {
                     check(unsafe { cudaStreamWaitEvent(s, self.archive_done[extent_index].0, 0) })?;
                     archive_released[extent_index] = true;
                 }
@@ -808,6 +857,15 @@ impl DistributedNativeBfs {
                 break;
             }
         }
+        if let Some(a) = archive.as_deref_mut() {
+            let error = a
+                .layer(u64::from(self.depth), u64::from(self.current_count))
+                .err();
+            if self.all_max(u32::from(error.is_some()))? != 0 {
+                return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_LAYER_FATAL".into()));
+            }
+            self.archived_depth = Some(self.depth);
+        }
         unsafe {
             check(mgbfs_compact_hash_layer(
                 self.accepted.ptr,
@@ -853,76 +911,85 @@ impl DistributedNativeBfs {
         if self.archived_depth == Some(self.depth) {
             return Err("ARCHIVE_DEPTH_ALREADY_SUBMITTED".into());
         }
-        let s = self.archive_stream.0;
-        for (extent_index, extent) in self.front.iter().enumerate() {
-            let mut offset = 0u64;
-            while offset < extent.count {
-                let n =
-                    u64::from(archive.rows.min(self.cfg.batch)).min(extent.count - offset) as u32;
-                let slot = archive.acquire()?;
-                let copied = (|| unsafe {
-                    let states = self
-                        .states
-                        .at((extent.begin + offset) as usize * self.stride);
-                    check(mgbfs_hash_run(
-                        self.archive_hash.0,
-                        states.cast(),
-                        self.archive_hashes.ptr.cast(),
-                        n,
-                        s,
-                    ))?;
-                    if compact_permutation && self.width != archive.width {
-                        check(mgbfs_archive_pack_permutation_u8(
-                            archive.width as u32,
-                            self.stride as u32,
-                            states.cast(),
-                            n,
-                            self.archive_states.ptr.cast(),
-                            self.ring.ptr.cast(),
-                            s,
-                        ))?;
-                        check(cudaMemcpyAsync(
-                            slot.ptr,
-                            self.archive_states.ptr,
-                            n as usize * archive.width,
-                            2,
-                            s,
-                        ))?;
-                    } else {
-                        check(cudaMemcpy2DAsync(
-                            slot.ptr,
-                            self.width,
-                            states,
-                            self.stride,
-                            self.width,
-                            n as usize,
-                            2,
-                            s,
-                        ))?;
-                    }
-                    check(cudaMemcpyAsync(
-                        slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
-                        self.archive_hashes.ptr,
-                        n as usize * 16,
-                        2,
-                        s,
-                    ))?;
-                    check(cudaEventRecord(slot.ready, s))
-                })();
-                if let Err(e) = copied {
-                    unsafe {
-                        cudaStreamSynchronize(s);
-                    }
-                    self.failed = true;
-                    return Err(e);
-                }
-                archive.submit(slot, u64::from(self.depth), n)?;
-                offset += u64::from(n);
-            }
-            check(unsafe { cudaEventRecord(self.archive_done[extent_index].0, s) })?;
+        for extent_index in 0..self.front.len() {
+            let extent = self.front[extent_index];
+            self.archive_range(archive, extent.begin, extent.count, extent_index)?;
         }
         archive.layer(u64::from(self.depth), u64::from(self.current_count))?;
         self.archived_depth = Some(self.depth);
+        Ok(())
+    }
+    fn archive_range(
+        &mut self,
+        archive: &mut crate::pinned_archive::PinnedArchive,
+        begin: u64,
+        count: u64,
+        extent_index: usize,
+    ) -> Result<()> {
+        let compact_permutation = self.permutation_n == u32::try_from(archive.width).ok();
+        let s = self.archive_stream.0;
+        let mut offset = 0u64;
+        while offset < count {
+            let n = u64::from(archive.rows.min(self.cfg.batch)).min(count - offset) as u32;
+            let slot = archive.acquire()?;
+            let copied = (|| unsafe {
+                let states = self.states.at((begin + offset) as usize * self.stride);
+                check(mgbfs_hash_run(
+                    self.archive_hash.0,
+                    states.cast(),
+                    self.archive_hashes.ptr.cast(),
+                    n,
+                    s,
+                ))?;
+                if compact_permutation && self.width != archive.width {
+                    check(mgbfs_archive_pack_permutation_u8(
+                        archive.width as u32,
+                        self.stride as u32,
+                        states.cast(),
+                        n,
+                        self.archive_states.ptr.cast(),
+                        self.ring.ptr.cast(),
+                        s,
+                    ))?;
+                    check(cudaMemcpyAsync(
+                        slot.ptr,
+                        self.archive_states.ptr,
+                        n as usize * archive.width,
+                        2,
+                        s,
+                    ))?;
+                } else {
+                    check(cudaMemcpy2DAsync(
+                        slot.ptr,
+                        self.width,
+                        states,
+                        self.stride,
+                        self.width,
+                        n as usize,
+                        2,
+                        s,
+                    ))?;
+                }
+                check(cudaMemcpyAsync(
+                    slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
+                    self.archive_hashes.ptr,
+                    n as usize * 16,
+                    2,
+                    s,
+                ))?;
+                check(cudaEventRecord(slot.ready, s))
+            })();
+            if let Err(e) = copied {
+                unsafe {
+                    cudaStreamSynchronize(s);
+                }
+                self.failed = true;
+                return Err(e);
+            }
+            archive.submit(slot, u64::from(self.depth), n)?;
+            offset += u64::from(n);
+        }
+        check(unsafe { cudaEventRecord(self.archive_done[extent_index].0, s) })?;
         Ok(())
     }
     pub fn snapshot(&self) -> Result<Vec<Vec<u8>>> {
