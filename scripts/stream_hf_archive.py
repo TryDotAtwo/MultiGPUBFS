@@ -353,7 +353,11 @@ class ArchiveStream:
                 raise ValueError("ARCHIVE_CHAIN")
             payload = _read_exact(source, size)
             digest = _read_exact(source, 32)
-            chain = hashlib.sha256(frame + payload).digest()
+            # Keep the wire checksum unchanged without allocating/copying a
+            # second complete payload for every archive frame.
+            checksum = hashlib.sha256(frame)
+            checksum.update(payload)
+            chain = checksum.digest()
             if digest != chain:
                 raise ValueError("ARCHIVE_CHECKSUM")
             if kind == 1:
