@@ -58,3 +58,13 @@ states and hashes are compared against CPU successors and GemmHash for seeds
 0, 1, 20260828 and matrix/modulus pairs (7,2), (7,5), (3,256), on each T4.
 This tests widths crossing the 32-lane boundary and byte modulus 256; it does
 not yet test remote owner commit or claim an end-to-end HASH_FIRST executor.
+
+V9 completed successfully: four Rust fixtures passed plain, memcheck,
+racecheck, initcheck and synccheck; all sanitizer summaries clean. The seeded
+hash-only-to-regeneration chain executed on each physical T4. Evidence:
+`test_results/distributed-sanitizer-v9/distributed-sanitizer/`.
+
+V10 is the next RED gate at `80197900aabc2f6bbffe6f28e2ae1fce4a5d3a49`:
+post-commit request extraction must compact only selected origins, preserve
+their final absolute StateRefs, reject malformed indices before any output
+write, and leave Extent.ready unset while states remain unmaterialized.
