@@ -23,3 +23,22 @@ origin through hash-only routing, commit winners once, return dense sorted
 materialization requests, retain source state until responses complete, and
 release the batch only when both local and remote obligations terminate.
 The existing single-rank materializer alone does not satisfy this protocol.
+
+## HASH_FIRST dependency audit
+
+Canonical sections 7/9.2 require hash + OriginRef without persistent child
+states, followed by regeneration only for committed survivors. Current
+`cuda/materialize.cu` copies rows from a previously materialized source slot;
+it cannot regenerate from parent + move and must not be relabeled HASH_FIRST.
+`distributed_native.rs` currently exchanges complete packed states before
+owner commit. Its `commit_owner_batch` constructs identity row references,
+so an OriginRef would be lost if only the packet format were changed.
+
+Next native leaf must regenerate selected parent/move requests into dense
+response order, validate source lifetime/ranges before stores, and preserve
+the request-to-target mapping. Test this against independent matrix successor
+states before connecting owner commit and NCCL requests. Then replace the
+candidate generator output with hash-only generation (not a full child buffer
+followed by discarding states). Both changes are required for the profile's
+memory contract. Existing CPU receipts and transport are verification oracles,
+not production native implementations.

@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "8f04c4642470c8c48954ac705dda941e06b08625"
+SOURCE = "28cb1a74f8dfaba485684204ae37d2a086f47d3a"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -49,6 +49,8 @@ def main():
         run(["cmake", "-S", "cuda", "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCUTLASS_ROOT=" + str(cutlass)], "cmake", source)
         run(["cmake", "--build", str(build), "--target", "mgbfs_cuda", "--parallel", "2"], "cuda-build", source)
+        run(["cmake", "--build", str(build), "--target", "mgbfs-regenerate-test", "--parallel", "2"], "regenerate-build", source)
+        run([str(build / "mgbfs-regenerate-test")], "regenerate-plain", source)
         output = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
                       "--test", "distributed_archive", "--no-run", "--message-format=json"], "test-build", source)
         binaries = [json.loads(line)["executable"] for line in output.splitlines()
@@ -56,6 +58,11 @@ def main():
         if len(binaries) != 1:
             raise RuntimeError("AMBIGUOUS_TEST_BINARY")
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            if tool != "plain":
+                leaf = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
+                            str(build / "mgbfs-regenerate-test")], "regenerate-" + tool, source)
+                if "REGENERATE_PASS" not in leaf:
+                    raise RuntimeError("REGENERATE_NOT_PASSED")
             cmd = [binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
