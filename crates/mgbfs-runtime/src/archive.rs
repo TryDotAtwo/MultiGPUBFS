@@ -1,6 +1,15 @@
 use mgbfs_core::Result;
 use sha2::{Digest, Sha256};
 use std::io::Write;
+use std::time::Instant;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ArchiveTimings {
+    pub checksum_seconds: f64,
+    pub write_seconds: f64,
+    pub sync_seconds: f64,
+    pub sync_calls: u64,
+}
 
 /// Strictly sequential archive target for a pipe-backed bounded downstream
 /// spooler. `reserve` freezes a logical byte limit; physical staging capacity
@@ -142,6 +151,8 @@ pub struct Archive<E: Extent> {
     total: u64,
     poisoned: bool,
     complete: bool,
+    sync_layers: bool,
+    pub timings: ArchiveTimings,
 }
 impl<E: Extent> Archive<E> {
     pub fn new(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
@@ -168,9 +179,17 @@ impl<E: Extent> Archive<E> {
             total: 0,
             poisoned: false,
             complete: false,
+            sync_layers: true,
+            timings: ArchiveTimings::default(),
         };
         a.write(&header)?;
         Ok(a)
+    }
+    /// No intermediate durability promise. RunCommit still requires successful sync.
+    pub fn new_run_durable(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+        let mut archive = Self::new(extent, capacity, state_bytes, config)?;
+        archive.sync_layers = false;
+        Ok(archive)
     }
     fn live(&self) -> Result<()> {
         if self.poisoned || self.complete {
@@ -189,7 +208,10 @@ impl<E: Extent> Archive<E> {
             self.poisoned = true;
             return Err("ARCHIVE_CAPACITY".into());
         }
-        match self.extent.write_at(self.cursor, bytes) {
+        let started = Instant::now();
+        let result = self.extent.write_at(self.cursor, bytes);
+        self.timings.write_seconds += started.elapsed().as_secs_f64();
+        match result {
             Ok(n) if n == bytes.len() => {
                 self.cursor = end;
                 Ok(())
@@ -225,10 +247,12 @@ impl<E: Extent> Archive<E> {
             self.poisoned = true;
             return Err("ARCHIVE_CAPACITY".into());
         }
+        let started = Instant::now();
         let mut digest = Sha256::new();
         digest.update(&header);
         digest.update(payload);
         let digest: [u8; 32] = digest.finalize().into();
+        self.timings.checksum_seconds += started.elapsed().as_secs_f64();
         self.write(&header)?;
         if !payload.is_empty() {
             self.write(payload)?;
@@ -239,7 +263,11 @@ impl<E: Extent> Archive<E> {
         Ok(())
     }
     fn sync(&mut self) -> Result<()> {
-        if let Err(e) = self.extent.sync() {
+        let started = Instant::now();
+        let result = self.extent.sync();
+        self.timings.sync_seconds += started.elapsed().as_secs_f64();
+        self.timings.sync_calls += 1;
+        if let Err(e) = result {
             self.poisoned = true;
             return Err(format!("ARCHIVE_SYNC: {e}"));
         }
@@ -319,7 +347,9 @@ impl<E: Extent> Archive<E> {
             .ok_or("ARCHIVE_COUNT_OVERFLOW")?;
         let next = self.depth.checked_add(1).ok_or("ARCHIVE_DEPTH_OVERFLOW")?;
         self.frame(2, depth, expected_records, &[])?;
-        self.sync()?;
+        if self.sync_layers {
+            self.sync()?;
+        }
         self.total = total;
         self.depth = next;
         self.layer_records = 0;

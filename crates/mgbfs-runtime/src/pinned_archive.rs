@@ -85,7 +85,7 @@ impl PinnedArchive {
                 .try_send(Slot::new(bytes)?)
                 .map_err(|_| "ARCHIVE_INIT_QUEUE")?;
         }
-        let mut archive = Archive::new(extent, disk_bytes, width, config_digest)?;
+        let mut archive = Archive::new_run_durable(extent, disk_bytes, width, config_digest)?;
         let mut device = 0;
         let status = unsafe { cudaGetDevice(&mut device) };
         if status != 0 {
@@ -121,6 +121,7 @@ impl PinnedArchive {
                         Message::Layer(depth, count) => archive.layer_commit(depth, count)?,
                         Message::Complete => {
                             archive.run_commit()?;
+                            eprintln!("MGBFS_ARCHIVE_TIMINGS {:?}", archive.timings);
                             return Ok(());
                         }
                     }

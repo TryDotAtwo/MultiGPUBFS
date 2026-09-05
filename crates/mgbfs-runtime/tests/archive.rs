@@ -60,6 +60,24 @@ struct Disk {
     syncs: usize,
 }
 #[test]
+fn run_durable_syncs_only_at_completion_and_propagates_failure() {
+    for fail in [false, true] {
+        let mut a = Archive::new_run_durable(Disk::default(), 4096, 4, [0; 32]).unwrap();
+        a.records(0, &[1, 0, 0, 1], &[[1; 4]]).unwrap();
+        a.layer_commit(0, 1).unwrap();
+        a.layer_commit(1, 0).unwrap();
+        assert_eq!(a.extent.syncs, 0);
+        assert!(!a.is_complete());
+        a.extent.sync_fail = fail;
+        assert_eq!(a.run_commit().is_err(), fail);
+        assert_eq!(a.extent.syncs, 1);
+        assert_eq!(a.timings.sync_calls, 1);
+        assert_eq!(a.is_complete(), !fail);
+        if !fail { verify(&a.extent.bytes).unwrap(); }
+        else { assert!(a.run_commit().is_err()); }
+    }
+}
+#[test]
 fn rank_with_no_local_states_still_commits_empty_layers() {
     let mut a = Archive::new(Disk::default(), 4096, 4, [0; 32]).unwrap();
     a.layer_commit(0, 0).unwrap();
