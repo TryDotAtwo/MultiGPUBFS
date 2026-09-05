@@ -101,10 +101,12 @@ fn run() -> Result<()> {
     }
     let graph = MatrixGroup::symmetric_permutation_matrices(n)?;
     let id = bootstrap(Path::new(&args[3]), rank, world)?;
-    let declared_capacity = env_u32(
-        "MGBFS_BENCH_CAPACITY",
-        u32::try_from(graph.expected_max_unique_states).map_err(|_| "CAPACITY")?,
-    );
+    let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
+        Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
+        Err(std::env::VarError::NotPresent) =>
+            u32::try_from(graph.expected_max_unique_states).map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
+        Err(_) => return Err("CAPACITY".into()),
+    };
     let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity);
     let mode = capacity_mode()?;
     let capacity_plan = cluster_capacity_plan(mode, u64::from(declared_capacity), world)?;
