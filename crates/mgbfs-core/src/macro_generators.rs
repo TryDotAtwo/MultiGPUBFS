@@ -43,9 +43,15 @@ impl MacroGeneratorSet {
         if requested_depth == 0 {
             return Err("MACRO_DEPTH_ZERO".into());
         }
-        let mut seen = BTreeMap::from([(graph.start.clone(), usize::MAX)]);
+        // Compile operators, not states reached from the requested BFS source.
+        // Starting at A would produce G*A, then apply (G*A)*state at runtime.
+        let mut identity = vec![0; graph.start.len()];
+        for row in 0..graph.rows {
+            identity[row * graph.cols + row] = 1;
+        }
+        let mut seen = BTreeMap::from([(identity.clone(), usize::MAX)]);
         let mut transitions = Vec::new();
-        let mut frontier = vec![(graph.start.clone(), Vec::<u16>::new())];
+        let mut frontier = vec![(identity, Vec::<u16>::new())];
         let mut effective_depth = 0;
         for depth in 1..=requested_depth {
             let mut next = Vec::new();

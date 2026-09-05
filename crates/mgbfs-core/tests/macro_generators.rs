@@ -18,6 +18,25 @@ fn depth_one_is_exactly_the_original_generator_order() {
 }
 
 #[test]
+fn macro_library_and_original_layers_are_valid_for_nonidentity_starts() {
+    let identity_graph = MatrixGroup::unitriangular(3, 3).unwrap();
+    for depth in [1, 2, 10] {
+        let expected_library = MacroGeneratorSet::compile(&identity_graph, depth).unwrap();
+        for start in identity_graph.exact_layers(27).unwrap().into_iter().flatten() {
+            let mut graph = identity_graph.clone();
+            graph.start = start;
+            let library = MacroGeneratorSet::compile(&graph, depth).unwrap();
+            assert_eq!(library, expected_library, "depth={depth} start={:?}", graph.start);
+            assert_eq!(
+                graph.exact_layers_with_macros(&library, 27).unwrap(),
+                graph.exact_layers(27).unwrap(),
+                "depth={depth} start={:?}", graph.start
+            );
+        }
+    }
+}
+
+#[test]
 fn deeper_compilation_removes_identity_and_keeps_shortest_canonical_word() {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let macros = MacroGeneratorSet::compile(&graph, 10).unwrap();
