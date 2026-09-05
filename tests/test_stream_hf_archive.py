@@ -73,6 +73,22 @@ class StreamArchive(unittest.TestCase):
                 ArchiveStream('r1', 'fixture', 0, sink).consume(io.BytesIO(complete_archive()))
             self.assertFalse((root / 'rank-00000-stream-commit.json').exists())
 
+    def test_failed_batch_commit_does_not_publish_complete_rank(self):
+        class Api:
+            def preupload_lfs_files(self, **kwargs):
+                for operation in kwargs['additions']:
+                    operation.path_or_fileobj = b''
+
+            def create_commit(self, **kwargs):
+                raise OSError('commit rejected')
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'slots'
+            sink = HubStagingSink(root, 1, 2, 'TryDotAtwo/results', 'run-r1', Api(), 0, 32768)
+            with self.assertRaisesRegex(OSError, 'commit rejected'):
+                ArchiveStream('r1', 'fixture', 0, sink).consume(io.BytesIO(complete_archive()))
+            self.assertFalse((root / 'rank-00000-stream-commit.json').exists())
+
     def test_corrupt_payload_is_rejected_before_any_batch_or_commit(self):
         class Sink:
             def add_batch(self, _table):
