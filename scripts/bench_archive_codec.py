@@ -17,6 +17,7 @@ def bench_table(table, repeats=3, slot_bytes=128 * 1024**2):
     projections = [('all', table)] + [(name, table.select([name])) for name in table.column_names]
     variants = [('zstd_dictionary', 'zstd', True),
                 ('zstd_selective', 'zstd', False),
+                ('zstd_arrow_dictionary', 'zstd', False),
                 ('snappy_selective', 'snappy', False),
                 ('lz4_selective', 'lz4', False)]
     for column, projected in projections:
@@ -26,7 +27,17 @@ def bench_table(table, repeats=3, slot_bytes=128 * 1024**2):
                 writer = pa.FixedSizeBufferWriter(buffer)
                 started = time.perf_counter()
                 try:
-                    pq.write_table(projected, writer, compression=codec,
+                    physical = projected
+                    compact = name == 'zstd_arrow_dictionary'
+                    if compact:
+                        # Include conversion cost; no free preprocessing win.
+                        for i, field in enumerate(projected.schema):
+                            if field.name in METADATA and pa.types.is_string(field.type):
+                                physical = physical.set_column(i, field.name,
+                                                               projected.column(i).dictionary_encode())
+                    pq.write_table(physical, writer, compression=codec,
+                                   # Do not expose Arrow dictionary types to consumers.
+                                   store_schema=not compact,
                                    use_dictionary=True if dictionary else
                                    [c for c in projected.column_names if c in METADATA],
                                    row_group_size=min(projected.num_rows, 131072))
@@ -42,6 +53,7 @@ def bench_table(table, repeats=3, slot_bytes=128 * 1024**2):
                                     rows=projected.num_rows, encode_seconds=elapsed,
                                     parquet_bytes=size, roundtrip_equal=equal,
                                     fixed_writer_bytes=slot_bytes,
+                                    physical_table_bytes=physical.nbytes,
                                     arrow_pool_bytes_observed=pa.total_allocated_bytes()))
                 del decoded
     return results

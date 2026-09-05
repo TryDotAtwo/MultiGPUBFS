@@ -10,10 +10,11 @@ class CodecBench(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('codec_bench', path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        table = pa.table({'state': [b'abc', b'def'], 'hash128_le': [bytes(16), bytes(range(16))],
+        table = pa.table({'run_id': ['same-run', 'same-run'], 'state': [b'abc', b'def'], 'hash128_le': [bytes(16), bytes(range(16))],
                           'rank_ordinal': pa.array([0, 1], pa.uint64())})
         rows = module.bench_table(table, repeats=2, slot_bytes=65536)
-        self.assertEqual(len(rows), 4 * 4 * 2)
+        self.assertEqual(len(rows), 5 * 5 * 2)
+        self.assertTrue(any(x['variant'] == 'zstd_arrow_dictionary' for x in rows))
         self.assertTrue(all(x['roundtrip_equal'] for x in rows))
         self.assertTrue(all(0 < x['parquet_bytes'] <= 65536 for x in rows))
         with self.assertRaises(ValueError):
