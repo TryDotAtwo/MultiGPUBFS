@@ -119,12 +119,17 @@ fn run() -> Result<()> {
     // Archive config identity is cluster-wide.  Rank is already carried by the
     // stream frames; including it here prevents otherwise compatible rank
     // archives from being atomically combined.
-    let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828", capacity_plan.global_records, future_plan.global_records);
+    let archive_width = match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
+        Ok("permutation_u8") => n,
+        Ok("matrix_u8") | Err(_) => graph.start.len(),
+        _ => return Err("ARCHIVE_CODEC".into()),
+    };
+    let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let disk_bytes = graph
         .expected_max_unique_states
-        .checked_mul((graph.start.len() + 16) as u64)
+        .checked_mul((archive_width + 16) as u64)
         .and_then(|x| x.checked_add(64 << 20))
         .ok_or("DISK")?;
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
@@ -140,7 +145,7 @@ fn run() -> Result<()> {
     let mut archive = PinnedArchive::new(
         extent,
         disk_bytes,
-        graph.start.len(),
+        archive_width,
         digest,
         archive_rows,
         env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
@@ -205,7 +210,7 @@ fn run() -> Result<()> {
     }
     let durable = start.elapsed().as_secs_f64();
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
-    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
+    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,

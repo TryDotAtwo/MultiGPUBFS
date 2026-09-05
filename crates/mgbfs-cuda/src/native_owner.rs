@@ -67,6 +67,15 @@ mod calls {
             records: u64,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_archive_pack_permutation_u8(
+            n: u32,
+            stride: u32,
+            states: *const u8,
+            count: u32,
+            permutations: *mut u8,
+            ring: *mut Ring,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bounded_owner_create(i: u32, j: u32, k: u32, out: *mut *mut c_void) -> i32;
         pub fn mgbfs_bounded_owner_destroy(plan: *mut c_void);
         pub fn mgbfs_bounded_owner_compare(

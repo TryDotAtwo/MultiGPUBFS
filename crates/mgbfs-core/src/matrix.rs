@@ -1,4 +1,27 @@
 use crate::Result;
+
+/// Encode a canonical one-hot permutation matrix as its row-to-column map.
+pub fn encode_permutation_matrix(matrix: &[u8], n: usize) -> Result<Vec<u8>> {
+    if n == 0 || n > u8::MAX as usize || matrix.len() != n.checked_mul(n).ok_or("PERM_SIZE")? {
+        return Err("PERM_SIZE".into());
+    }
+    let mut permutation = vec![0u8; n];
+    let mut columns = vec![false; n];
+    for row in 0..n {
+        let mut selected = None;
+        for column in 0..n {
+            match matrix[row * n + column] {
+                0 => {}
+                1 if selected.is_none() && !columns[column] => selected = Some(column),
+                _ => return Err("NOT_PERMUTATION_MATRIX".into()),
+            }
+        }
+        let column = selected.ok_or("NOT_PERMUTATION_MATRIX")?;
+        columns[column] = true;
+        permutation[row] = column as u8;
+    }
+    Ok(permutation)
+}
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

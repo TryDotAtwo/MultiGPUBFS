@@ -134,6 +134,8 @@ int mgbfs_future_merge_run_bounded(void* plan,uint8_t* future_states,void* futur
 void mgbfs_future_merge_destroy(void* plan);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
+int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,
+  uint8_t* permutations,void* ring,void* stream);
 int mgbfs_nccl_unique_id(void* id128);
 int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* id128,void** out,char* error,size_t error_capacity);
 int mgbfs_nccl_send_recv(void* comm,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* stream);

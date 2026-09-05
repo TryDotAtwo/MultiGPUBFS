@@ -1,7 +1,11 @@
 //! Native two-rank NCCL DENSE BFS reference. Torchrun supplies only rank env.
 use crate::failure::attempt_all;
 use crate::jobs::{split, JobSpan};
-use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
+use mgbfs_core::{
+    hash::GemmHash,
+    matrix::{encode_permutation_matrix, MatrixGroup},
+    Result,
+};
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
@@ -133,6 +137,7 @@ pub struct DistributedNativeBfs {
     cfg: DistributedConfig,
     width: usize,
     stride: usize,
+    permutation_n: Option<u32>,
     moves: u32,
     candidates: u32,
     depth: u32,
@@ -157,6 +162,7 @@ pub struct DistributedNativeBfs {
     children: Buffer,
     child_hashes: Buffer,
     archive_hashes: Buffer,
+    archive_states: Buffer,
     sorted_hashes: Buffer,
     sorted_refs: Buffer,
     route_count: Buffer,
@@ -212,6 +218,15 @@ impl DistributedNativeBfs {
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
         let width = graph.start.len();
         let stride = (width + 15) & !15;
+        let permutation_n = encode_permutation_matrix(&graph.start, graph.rows)
+            .ok()
+            .filter(|_| {
+                graph
+                    .generators
+                    .iter()
+                    .all(|g| encode_permutation_matrix(g, graph.rows).is_ok())
+            })
+            .map(|_| graph.rows as u32);
         let moves = graph.generators.len() as u32;
         let candidates = cfg.batch.checked_mul(moves).ok_or("CANDIDATE_OVERFLOW")?;
         if candidates > i32::MAX as u32 {
@@ -354,6 +369,7 @@ impl DistributedNativeBfs {
             cfg,
             width,
             stride,
+            permutation_n,
             moves,
             candidates,
             depth: 0,
@@ -381,6 +397,7 @@ impl DistributedNativeBfs {
             children: b(candidates as usize * stride)?,
             child_hashes: b(candidates as usize * 16)?,
             archive_hashes: b(cfg.batch as usize * 16)?,
+            archive_states: b(cfg.batch as usize * permutation_n.unwrap_or(1) as usize)?,
             sorted_hashes: b(candidates as usize * 16)?,
             sorted_refs: b(candidates as usize * 8)?,
             route_count,
@@ -809,7 +826,8 @@ impl DistributedNativeBfs {
         if self.failed {
             return Err("DISTRIBUTED_FAILED".into());
         }
-        if archive.width != self.width {
+        let compact_permutation = self.permutation_n == u32::try_from(archive.width).ok();
+        if archive.width != self.width && !compact_permutation {
             return Err("ARCHIVE_STATE_WIDTH".into());
         }
         if self.archived_depth == Some(self.depth) {
@@ -833,16 +851,35 @@ impl DistributedNativeBfs {
                         n,
                         s,
                     ))?;
-                    check(cudaMemcpy2DAsync(
-                        slot.ptr,
-                        self.width,
-                        states,
-                        self.stride,
-                        self.width,
-                        n as usize,
-                        2,
-                        s,
-                    ))?;
+                    if compact_permutation {
+                        check(mgbfs_archive_pack_permutation_u8(
+                            archive.width as u32,
+                            self.stride as u32,
+                            states.cast(),
+                            n,
+                            self.archive_states.ptr.cast(),
+                            self.ring.ptr.cast(),
+                            s,
+                        ))?;
+                        check(cudaMemcpyAsync(
+                            slot.ptr,
+                            self.archive_states.ptr,
+                            n as usize * archive.width,
+                            2,
+                            s,
+                        ))?;
+                    } else {
+                        check(cudaMemcpy2DAsync(
+                            slot.ptr,
+                            self.width,
+                            states,
+                            self.stride,
+                            self.width,
+                            n as usize,
+                            2,
+                            s,
+                        ))?;
+                    }
                     check(cudaMemcpyAsync(
                         slot.ptr.cast::<u8>().add(n as usize * self.width).cast(),
                         self.archive_hashes.ptr,
