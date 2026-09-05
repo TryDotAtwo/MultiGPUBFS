@@ -1,4 +1,4 @@
-"""Complete 2xT4 S11 BFS with direct bounded Parquet/HF archive streaming."""
+"""Complete 2xT4 S13 BFS with direct bounded Parquet/HF archive streaming."""
 import importlib.util
 import json
 import os
@@ -13,11 +13,12 @@ from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "b23b0377713b1d82c72c44f20c7ac3a325f95e7c"
+SOURCE = "48b1e12807e180f392e3d08b2279ad23fa8930d8"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
-CARDINALITY = 39_916_800
-PER_RANK_CAPACITY = 8_000_000
+GROUP = "s13"
+CARDINALITY = 6_227_020_800
+PER_RANK_CAPACITY = 160_000_000
 BATCH = 262_144
 ARCHIVE_ROWS = 262_144
 ARCHIVE_SLOTS = 96
@@ -83,7 +84,7 @@ def main():
         import huggingface_hub
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_id = f"s11-native-2xt4-{stamp}"
+    run_id = f"{GROUP}-native-2xt4-{stamp}"
     branches = [f"staging-{run_id}-rank-{rank}" for rank in range(2)]
     api = huggingface_hub.HfApi(token=token)
     for branch in branches:
@@ -102,7 +103,7 @@ def main():
             handles.extend((stdout, stderr))
             command = [
                 sys.executable, "scripts/stream_hf_archive.py", "--run-id", run_id,
-                "--group-id", "s11", "--rank", str(rank), "--input", str(fifo),
+                "--group-id", GROUP, "--rank", str(rank), "--input", str(fifo),
                 "--staging-dir", str(root / f"rank-{rank}-slots"), "--repo-id", REPO_ID,
                 "--branch", branches[rank], "--rows-per-shard", "1000000", "--slot-count", "8",
                 "--max-slot-bytes", str(128 * 1024**2),
@@ -123,10 +124,11 @@ def main():
             MGBFS_ARCHIVE_SLOTS=str(ARCHIVE_SLOTS),
             MGBFS_ARCHIVE_STREAM="1",
             MGBFS_ARCHIVE_CODEC="permutation_u8",
+            MGBFS_STATE_CODEC="permutation_u8",
         )
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
-            str(source / "target/release/examples/distributed_bench"), "s11", str(BATCH),
+            str(source / "target/release/examples/distributed_bench"), GROUP, str(BATCH),
             str(root / "bootstrap"), str(archive_prefix), "{RANK_OUT}",
         ]
         wall_start = time.perf_counter()
