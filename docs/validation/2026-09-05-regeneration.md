@@ -44,3 +44,17 @@ device-side capacity validation before output writes. No child-state global
 buffer exists. This is not the requested Tensor Core implementation; it is
 the correctness reference for that backend and native HASH_FIRST integration.
 GPU execution remains unverified until the following gate completes.
+
+V8 completed: hash-only fixture passed plain and all four sanitizer tools
+(zero errors, racecheck zero warnings/hazards). The regeneration leaf and
+three Rust fixtures also passed. Evidence:
+`test_results/distributed-sanitizer-v8/distributed-sanitizer/summary.json`
+and `hash-first-{memcheck,racecheck,initcheck,synccheck}.log`.
+
+V9 source `b3cb1666b80637ba9a8eb0cda85762626fb06bd9` adds a real-seed Rust
+oracle chain: hash-only device output origins/count feed selected regeneration
+on a nonblocking stream without host count readback between kernels. Full
+states and hashes are compared against CPU successors and GemmHash for seeds
+0, 1, 20260828 and matrix/modulus pairs (7,2), (7,5), (3,256), on each T4.
+This tests widths crossing the 32-lane boundary and byte modulus 256; it does
+not yet test remote owner commit or claim an end-to-end HASH_FIRST executor.
