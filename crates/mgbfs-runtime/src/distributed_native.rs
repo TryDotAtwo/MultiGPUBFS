@@ -136,6 +136,7 @@ impl Drop for Comm {
 // Fixed request/response storage, allocated before depth zero. Source groups
 // are kept separate because requests must return to the rank holding parents.
 struct HashFirstStorage {
+    ledger: mgbfs_core::memory::AllocationLedger,
     n: u32,
     modulus: u32,
     capacity: u32,
@@ -185,6 +186,21 @@ impl HashFirstStorage {
         frontier: u32,
         stream: *mut c_void,
     ) -> Result<Self> {
+        let mut query = MaterializeBytes::default();
+        check(unsafe { mgbfs_materialize_query(stride as u32, capacity, frontier, &mut query) })?;
+        let ledger = mgbfs_core::memory::hash_first_reference_ledger(
+            graph.start.len() as u64,
+            graph.generators.len() as u64,
+            u64::from(capacity),
+            stride as u64,
+            [
+                query.keys,
+                query.sorted,
+                query.indices,
+                query.order,
+                query.scratch,
+            ],
+        )?;
         let b = |rows: usize, bytes: usize| {
             Buffer::new(
                 rows.checked_mul(bytes).ok_or("HASH_FIRST_BYTES_OVERFLOW")?,
@@ -200,6 +216,7 @@ impl HashFirstStorage {
         offsets.put(&hash.offsets)?;
         let rows = capacity as usize;
         Ok(Self {
+            ledger,
             n: graph.rows as u32,
             modulus: graph.modulus as u32,
             capacity,
@@ -286,6 +303,11 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    /// Additional profile storage, not total rank VRAM. Includes CUB query
+    /// results captured before allocation; reserved bytes use 256B alignment.
+    pub fn hash_first_memory(&self) -> Option<&mgbfs_core::memory::AllocationLedger> {
+        self.hash_first.as_ref().map(|h| &h.ledger)
+    }
     pub fn new(
         graph: &MatrixGroup,
         seed: [u8; 16],

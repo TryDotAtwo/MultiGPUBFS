@@ -1,6 +1,66 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 
+/// Additional HASH_FIRST reference storage only. Shared StateRing, owner,
+/// routing, archive and NCCL storage belong to the enclosing rank plan.
+/// Query fields: materializer keys, sorted keys, indices, order, CUB scratch.
+pub fn hash_first_reference_ledger(
+    width: u64,
+    moves: u64,
+    capacity: u64,
+    stride: u64,
+    materialize_query: [u64; 5],
+) -> Result<AllocationLedger> {
+    if !(1..=33025).contains(&width)
+        || !(1..=65536).contains(&moves)
+        || capacity == 0
+        || capacity > i32::MAX as u64
+        || stride < width
+        || stride % 16 != 0
+    {
+        return Err("HASH_FIRST_MEMORY_SHAPE".into());
+    }
+    let mut plan = AllocationLedger::new(u64::MAX, 0)?;
+    plan.add("generators", width, moves, 256)?;
+    plan.add("coefficients", width, 16, 256)?;
+    plan.add("offsets", 4, 4, 256)?;
+    for name in [
+        "parent_count",
+        "request_count",
+        "local_fatal",
+        "group_fatal",
+    ] {
+        plan.add(name, 1, 4, 256)?;
+    }
+    for name in [
+        "local_requests",
+        "remote_requests",
+        "sorted_requests",
+        "received_requests",
+    ] {
+        plan.add(name, capacity, 16, 256)?;
+    }
+    for name in ["local_targets", "remote_targets", "sorted_targets"] {
+        plan.add(name, capacity, 8, 256)?;
+    }
+    for name in ["outgoing_responses", "incoming_responses"] {
+        plan.add(name, capacity, stride, 256)?;
+    }
+    for (name, bytes) in [
+        "materialize_keys",
+        "materialize_sorted",
+        "materialize_indices",
+        "materialize_order",
+        "materialize_scratch",
+    ]
+    .into_iter()
+    .zip(materialize_query)
+    {
+        plan.add(name, bytes, 1, 256)?;
+    }
+    Ok(plan)
+}
+
 /// Owner-lane scratch only; library scratch is supplied by measured queries.
 pub fn bounded_owner_ledger(i: u64, j: u64, k: u64, library: [u64; 3]) -> Result<AllocationLedger> {
     if i == 0 || j == 0 || k == 0 || i > i32::MAX as u64 {
