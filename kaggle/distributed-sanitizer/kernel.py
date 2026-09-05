@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "b5f7a1e57ff1a5402adc8c43d352a46e5c58e0e2"
+SOURCE = "4283bfaace5cdf648f1c3a658e4e6f8c7a078781"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -38,7 +38,7 @@ def main():
     def run(cmd, name, cwd=root, timeout=1200):
         return gate.run(cmd, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
     report = {"status": "INCOMPLETE", "source": SOURCE, "tests": [],
-              "scope": "unitriangular(3,3) generation1 and S4 compact generation5, two devices, NCCL, archive"}
+              "scope": "unitriangular(3,3) DENSE/HASH_FIRST scalar reference across 3 seeds, 2 owner maps, pre-dedup ON/OFF; S4 DENSE generation5; two T4, NCCL, full archive layers"}
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
     save()
@@ -107,7 +107,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "6 passed; 0 failed" not in output:
+            if "7 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             report["tests"].append({"tool": tool, "status": "PASS"})

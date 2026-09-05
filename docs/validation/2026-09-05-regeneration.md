@@ -165,3 +165,14 @@ archive events. Empty ranks enter the same request-count and fatal epochs.
 The temporary NOT_CONNECTED guard has been removed. Local CUDA-feature cargo
 check passes without warnings; full-runtime GPU correctness remains unproven
 until the new sixth archived BFS fixture passes on the pinned source.
+
+V17 completed on two distinct Tesla T4 devices at b5f7a1e. All six runtime
+fixtures passed plain and memcheck/racecheck/initcheck/synccheck, including the
+full HASH_FIRST archived BFS: every layer's full states and stored hashes match
+the CPU oracle for unitriangular(3,3), seed zero, reversed owner map, pre-dedup
+ON. All sanitizer summaries are zero, including race warnings/hazards.
+Evidence: `test_results/distributed-sanitizer-v17/distributed-sanitizer/`.
+One download failed through the proxy; retry retrieved the same completed run.
+This is a small reference correctness gate, not a throughput/overlap proof.
+V18 expands to source 4283bfa: three seeds, both rank maps, both pre-dedup modes,
+both profiles, with explicit per-rank archive ownership checks.
