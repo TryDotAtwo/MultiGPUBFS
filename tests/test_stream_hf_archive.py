@@ -34,6 +34,33 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_corrupt_payload_is_rejected_before_any_batch_or_commit(self):
+        class Sink:
+            def add_batch(self, _table):
+                raise AssertionError("corrupt payload escaped validation")
+
+            def complete(self, _result):
+                raise AssertionError("corrupt archive committed")
+
+        # Both planes must be covered by the incremental checksum.
+        for offset in (48 + 80, 48 + 80 + 8):
+            wire = bytearray(complete_archive())
+            wire[offset] ^= 1
+            with self.assertRaisesRegex(ValueError, "ARCHIVE_CHECKSUM"):
+                ArchiveStream("r1", "fixture", 0, Sink()).consume(io.BytesIO(wire))
+
+    def test_fragmented_pipe_preserves_checksum_and_records(self):
+        class Fragmented(io.BytesIO):
+            def read(self, size=-1):
+                return super().read(min(size, 7) if size >= 0 else 7)
+
+        with tempfile.TemporaryDirectory() as folder:
+            sink = LocalStagingSink(Path(folder), rows_per_shard=2, slot_count=2)
+            result = ArchiveStream("r1", "fixture", 0, sink).consume(
+                Fragmented(complete_archive()))
+            self.assertEqual(result["total_unique_states"], 2)
+            self.assertTrue((Path(folder) / "stream-commit.json").exists())
+
     def test_record_frames_are_delivered_as_columnar_batches(self):
         class BatchOnlySink:
             def __init__(self):
