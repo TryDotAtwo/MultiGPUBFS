@@ -11,7 +11,8 @@ static_assert(sizeof(MgbfsBucketJob)==64 && alignof(MgbfsBucketJob)==64);
 static_assert(sizeof(MgbfsOwnerCounts)==32 && sizeof(MgbfsOwnerControl)==64);
 struct Plan {
   uint32_t i,j,k; uint8_t* flags=nullptr; uint32_t* indices=nullptr; Key* merged=nullptr;
-  ~Plan(){cudaFree(merged);cudaFree(indices);cudaFree(flags);}
+  uint32_t backend=0,tile_limit=0; uint32_t* refinement_errors=nullptr;
+  ~Plan(){cudaFree(refinement_errors);cudaFree(merged);cudaFree(indices);cudaFree(flags);}
 };
 unsigned tile_count(const Plan* p,unsigned j){
   unsigned tiles=(128+j-1)/j;if(tiles>64)tiles=64;
@@ -54,6 +55,89 @@ __global__ void validate(const MgbfsBucketJob* jobs,uint32_t count,uint32_t rows
 __global__ void initial(const MgbfsBucketJob* jobs,const Key* in,uint8_t* flags,const MgbfsOwnerControl* c){
   if(c->error)return;auto d=jobs[blockIdx.x];
   for(uint64_t x=threadIdx.x;x<d.incoming.count;x+=T){uint64_t r=d.incoming.begin+x;flags[r]=x&&equal(in[r],in[r-1])?1:0;}
+}
+struct RefinedRange { uint64_t a,b; uint32_t m,n; };
+static_assert(sizeof(RefinedRange)==24);
+__device__ uint32_t bit_boundary(const Key* keys,uint64_t begin,uint32_t count,unsigned bit){
+  uint32_t lo=0,hi=count;
+  while(lo<hi){uint32_t mid=lo+(hi-lo)/2;
+    if((keys[begin+mid].w[bit/32]>>(bit%32))&1u)hi=mid;else lo=mid+1;
+  }return lo;
+}
+// One bounded metadata stack per bucket, no pointer nodes/global append or
+// allocation. A binary prefix path is at most 128 bits deep. Data work below
+// uses all warps, coalescing four adjacent words per candidate/reference key.
+__global__ void bmma_membership(const MgbfsBucketJob* jobs,const Key* in,const Key* old,
+    uint32_t k,uint32_t tile_limit,uint8_t* flags,uint32_t* errors,
+    const MgbfsOwnerControl* control,unsigned category){
+  __shared__ RefinedRange stack[129],work;
+  __shared__ unsigned top,action;
+  const unsigned tid=threadIdx.x,lane=tid&31,warp=tid>>5;
+  if(control->error){if(tid==0)errors[blockIdx.x]=0;return;}
+  if(tid==0){auto d=jobs[blockIdx.x];
+    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{uint64_t(d.bucket)*k,d.accepted_count};
+    stack[0]={d.incoming.begin,r.begin,uint32_t(d.incoming.count),uint32_t(r.count)};
+    top=1;errors[blockIdx.x]=0;
+  }__syncthreads();
+  while(true){
+    if(tid==0){action=0;
+      if(top){work=stack[--top];action=1;
+        if(!work.m||!work.n)action=0;
+        else if(work.m<=tile_limit&&work.n<=tile_limit)action=2;
+        else {
+          Key first=in[work.a],last=in[work.a+work.m-1];
+          Key rf=old[work.b],rl=old[work.b+work.n-1];int bit=-1;
+          // All four endpoints share every higher bit. Splitting at the first
+          // difference skips long common prefixes without 128 array passes.
+          for(int w=3;w>=0;--w){unsigned diff=(first.w[w]^last.w[w])|
+              (first.w[w]^rf.w[w])|(first.w[w]^rl.w[w]);
+            if(diff){bit=w*32+31-__clz(diff);break;}}
+          if(bit<0)action=3; // One identical full Hash128 run: linear marking.
+          else {
+            unsigned am=bit_boundary(in,work.a,work.m,unsigned(bit));
+            unsigned bn=bit_boundary(old,work.b,work.n,unsigned(bit));
+            bool left=am&&bn,right=am<work.m&&bn<work.n;
+            if(top+unsigned(left)+unsigned(right)>129){errors[blockIdx.x]=5;action=4;}
+            else {
+              if(right)stack[top++]={work.a+am,work.b+bn,work.m-am,work.n-bn};
+              if(left)stack[top++]={work.a,work.b,am,bn};
+            }
+          }
+        }
+      }else action=4;
+    }__syncthreads();
+    if(action==4)break;
+    if(action==3){
+      for(uint32_t i=tid;i<work.m;i+=T){auto row=work.a+i;if(!flags[row])flags[row]=uint8_t(category);}
+    }else if(action==2){
+      for(uint32_t base=warp*8;base<work.m;base+=(T/32)*8){
+        const uint32_t row=base+lane/4;bool found=false;
+        const uint32_t a=row<work.m?in[work.a+row].w[lane%4]:0;
+        for(uint32_t ref=0;ref<work.n;ref+=8){
+          const uint32_t br=ref+lane/4;
+          const uint32_t b=br<work.n?old[work.b+br].w[lane%4]:0;
+          int d0=0,d1=0;
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750 && __CUDA_ARCH__ < 900
+          asm volatile("mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
+            "{%0,%1}, {%2}, {%3}, {%4,%5};"
+            : "=r"(d0),"=r"(d1):"r"(a),"r"(b),"r"(0),"r"(0));
+#else
+          asm volatile("trap;");
+#endif
+          unsigned col=ref+(lane%4)*2;
+          found|=(col<work.n&&d0==0)||(col+1<work.n&&d1==0);
+        }
+        const unsigned mask=__ballot_sync(0xffffffffu,found);
+        if(lane%4==0&&row<work.m&&(mask&(15u<<(lane&~3u)))){
+          auto index=work.a+row;if(!flags[index])flags[index]=uint8_t(category);
+        }
+      }
+    }
+    __syncthreads();
+  }
+}
+__global__ void refinement_status(const uint32_t* errors,uint32_t count,MgbfsOwnerControl* c){
+  if(c->error)return;for(unsigned i=0;i<count;++i)if(errors[i]){c->error=errors[i];return;}
 }
 template<bool Commit> __global__ void merge_tiles(const MgbfsBucketJob* jobs,const Key* in,
     const Key* old,uint32_t k,uint8_t* flags,const uint32_t* indices,Key* merged,
@@ -128,6 +212,20 @@ extern "C" int mgbfs_bounded_owner_create(uint32_t i,uint32_t j,uint32_t k,void*
   *out=p.release();return 0;
 }
 extern "C" void mgbfs_bounded_owner_destroy(void* p){delete static_cast<Plan*>(p);}
+extern "C" int mgbfs_bounded_owner_create_backend(uint32_t i,uint32_t j,uint32_t k,
+    uint32_t backend,uint32_t refinement_capacity,uint32_t tile_limit,void** out){
+  if(!out)return 1;*out=nullptr;
+  if(backend==0)return mgbfs_bounded_owner_create(i,j,k,out);
+  if(backend!=1||refinement_capacity<i||!tile_limit||tile_limit>256)return 1;
+  int device;cudaDeviceProp prop{};
+  if(cudaGetDevice(&device)!=cudaSuccess||cudaGetDeviceProperties(&prop,device)!=cudaSuccess)return 2;
+  // V1 hardware policy is explicit SM75, never a silent scalar/CUB fallback.
+  if(prop.major!=7||prop.minor!=5)return 3;
+  void* raw=nullptr;int status=mgbfs_bounded_owner_create(i,j,k,&raw);if(status)return status;
+  std::unique_ptr<Plan> p(static_cast<Plan*>(raw));
+  if(cudaMalloc(&p->refinement_errors,uint64_t(j)*4)!=cudaSuccess)return 2;
+  p->backend=1;p->tile_limit=tile_limit;*out=p.release();return 0;
+}
 extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,
     const void* in,const void* prev,uint64_t pn,const void* curr,uint64_t cn,const void* accepted,
     const uint32_t* lengths,uint32_t buckets,uint32_t per_shard,uint32_t lane,uint32_t generation,
@@ -138,8 +236,15 @@ extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,
   validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,generation,pn,cn,control);
   initial<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),p->flags,control);
   unsigned tiles=tile_count(p,j);
-  for(unsigned tag=2;tag<=4;++tag)merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
-    static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted),p->k,p->flags,p->indices,p->merged,counts,control,tag);
+  for(unsigned tag=2;tag<=4;++tag){
+    const auto old=static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted);
+    if(p->backend==1){
+      bmma_membership<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),old,p->k,p->tile_limit,
+        p->flags,p->refinement_errors,control,tag);
+      refinement_status<<<1,1,0,s>>>(p->refinement_errors,j,control);
+    }else merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
+      old,p->k,p->flags,p->indices,p->merged,counts,control,tag);
+  }
   compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
   finish_compare<<<1,1,0,s>>>(jobs,j,p->k,counts,control);
   return cudaGetLastError()==cudaSuccess?0:2;
