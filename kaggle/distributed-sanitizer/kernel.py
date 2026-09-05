@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "36128135bcc7349f7359faa55fe0e1bd56f4e8cc"
+SOURCE = "b5f7a1e57ff1a5402adc8c43d352a46e5c58e0e2"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -107,7 +107,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "5 passed; 0 failed" not in output:
+            if "6 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             report["tests"].append({"tool": tool, "status": "PASS"})
