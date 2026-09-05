@@ -1,5 +1,6 @@
 #pragma once
 #include "bounded_owner.h"
+#include "regenerate.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -37,6 +38,18 @@ int mgbfs_state_materialize(const uint8_t* candidates, uint32_t candidate_count,
     uint32_t selected_capacity, uint32_t stride, uint8_t* states,
     MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
+/* HASH_FIRST after irreversible owner commit (stage 2). Compact selected
+ * origins and absolute target StateRefs into dense request order. Does not
+ * publish StateReady or release source origins. Caller preserves request/target
+ * pairing through routing and waits for all responses before materialization.
+ * All indices are validated before any request/target write; request_count=0
+ * on device fatal. Output buffers are disjoint, each selected_capacity rows.
+ */
+int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t candidate_count,
+    const uint64_t* sorted_refs,uint32_t sorted_count,const uint32_t* selected,
+    uint32_t selected_capacity,MgbfsRegenerateOrigin* requests,uint64_t* target_refs,
+    uint32_t* request_count,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent,void* stream);
 #ifdef __cplusplus
 }
 #endif

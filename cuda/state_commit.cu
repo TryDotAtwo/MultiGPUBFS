@@ -55,6 +55,18 @@ __global__ void copy_states(const uint4* input,const uint64_t* refs,const uint32
   }
 }
 __global__ void publish_ready(const MgbfsOwnerControl* o,MgbfsStateExtent* e){if(!o->error)e->ready=1;}
+__global__ void build_requests(const MgbfsRegenerateOrigin* origins,const uint64_t* refs,
+ const uint32_t* selected,MgbfsRegenerateOrigin* requests,uint64_t* targets,
+ const MgbfsOwnerControl* o,const MgbfsStateExtent* e){
+  if(o->error)return;
+  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<e->count;i+=uint64_t(gridDim.x)*blockDim.x){
+    requests[i]=origins[refs[selected[i]]];
+    targets[i]=e->sequence+i;
+  }
+}
+__global__ void publish_requests(const MgbfsOwnerControl* o,const MgbfsStateExtent* e,uint32_t* count){
+  *count=o->error?0:uint32_t(e->count);
+}
 __global__ void guard_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,const uint32_t*n,uint32_t cap){
  if(!o->error&&(*n>cap||o->survivors>cap-*n))fatal(r,o,16);
 }
@@ -98,4 +110,17 @@ extern "C" int mgbfs_state_materialize(const uint8_t* input,uint32_t candidates,
   validate_indices<<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
   copy_states<<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),refs,selected,stride/16,reinterpret_cast<uint4*>(output),o,e);
   publish_ready<<<1,1,0,s>>>(o,e);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t candidates,
+ const uint64_t* refs,uint32_t sorted,const uint32_t* selected,uint32_t capacity,
+ MgbfsRegenerateOrigin* requests,uint64_t* targets,uint32_t* count,
+ MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
+  if(!origins||!refs||!selected||!requests||!targets||!count||!r||!o||!e||!capacity||capacity>INT_MAX)return 1;
+  auto s=static_cast<cudaStream_t>(stream);unsigned blocks=(capacity+255)/256;if(blocks>4096)blocks=4096;
+  validate_extent<<<1,1,0,s>>>(r,o,e,capacity,16);
+  gate_rows<<<1,1,0,s>>>(o,e,&e->padding[0]);
+  validate_indices<<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
+  build_requests<<<blocks,256,0,s>>>(origins,refs,selected,requests,targets,o,e);
+  publish_requests<<<1,1,0,s>>>(o,e,count);
+  return cudaGetLastError()==cudaSuccess?0:2;
 }

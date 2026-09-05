@@ -131,6 +131,23 @@ mod calls {
             extent: *mut Extent,
             stream: *mut c_void,
         ) -> i32;
+        /// Build HASH_FIRST requests after owner commit, without publishing ready.
+        /// All pointers are device resident; target refs are absolute sequences.
+        pub fn mgbfs_state_build_requests(
+            origins: *const crate::ffi::RegenerateOrigin,
+            candidates: u32,
+            refs: *const u64,
+            sorted: u32,
+            selected: *const u32,
+            capacity: u32,
+            requests: *mut crate::ffi::RegenerateOrigin,
+            targets: *mut u64,
+            count: *mut u32,
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *mut Extent,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bucket_directory(
             sorted: *const c_void,
             count: *const u32,
