@@ -7,13 +7,13 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "2cccb5ccbaec31c9028b2f08b5a0ef5f58ef8b3a"
+SOURCE = "b23b0377713b1d82c72c44f20c7ac3a325f95e7c"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 39_916_800
 PER_RANK_CAPACITY = 8_000_000
 BATCH = 262_144
-ARCHIVE_ROWS = 16_384
-ARCHIVE_SLOTS = 1_400
+ARCHIVE_ROWS = 262_144
+ARCHIVE_SLOTS = 96
 
 
 def load(path, name):
@@ -74,6 +74,7 @@ def main():
         MGBFS_FUTURE_CAPACITY=str(PER_RANK_CAPACITY),
         MGBFS_ARCHIVE_ROWS=str(ARCHIVE_ROWS),
         MGBFS_ARCHIVE_SLOTS=str(ARCHIVE_SLOTS),
+        MGBFS_ARCHIVE_CODEC="permutation_u8",
     )
     command = [
         "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
