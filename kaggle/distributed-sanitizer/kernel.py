@@ -11,6 +11,17 @@ SOURCE = "28cb1a74f8dfaba485684204ae37d2a086f47d3a"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
+def require_clean(tool, output):
+    if tool == "racecheck":
+        matches = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
+        if not matches or any(x != ("0", "0", "0") for x in matches):
+            raise RuntimeError("RACECHECK_NOT_CLEAN")
+    elif tool != "plain":
+        matches = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
+        if not matches or any(x != "0" for x in matches):
+            raise RuntimeError("SANITIZER_NOT_CLEAN")
+
+
 def main():
     root = Path(tempfile.mkdtemp(prefix="mgbfs-sanitize-", dir="/tmp"))
     logs = Path("/kaggle/working/distributed-sanitizer")
@@ -63,20 +74,14 @@ def main():
                             str(build / "mgbfs-regenerate-test")], "regenerate-" + tool, source)
                 if "REGENERATE_PASS" not in leaf:
                     raise RuntimeError("REGENERATE_NOT_PASSED")
+                require_clean(tool, leaf)
             cmd = [binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
             if "2 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
-            if tool == "racecheck":
-                matches = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
-                if not matches or any(x != ("0", "0", "0") for x in matches):
-                    raise RuntimeError("RACECHECK_NOT_CLEAN")
-            elif tool != "plain":
-                matches = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
-                if not matches or any(x != "0" for x in matches):
-                    raise RuntimeError("SANITIZER_NOT_CLEAN")
+            require_clean(tool, output)
             report["tests"].append({"tool": tool, "status": "PASS"})
             save()
         report["status"] = "COMPLETE"

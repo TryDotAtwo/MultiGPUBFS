@@ -4,12 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-struct Origin { uint32_t source; uint16_t move, reserved; uint64_t parent; };
+#include "../cuda/regenerate.h"
+using Origin = MgbfsRegenerateOrigin;
 static_assert(sizeof(Origin)==16);
-extern "C" int mgbfs_regenerate_selected(uint32_t n,uint32_t moves,uint32_t modulus,
- uint32_t stride,uint32_t capacity,uint32_t source_rank,uint64_t parent_begin,
- uint32_t parent_count,const uint8_t* parents,const uint8_t* generators,
- const Origin* requests,const uint32_t* count,uint8_t* output,uint32_t* fatal,void* stream);
 static void require(bool x){if(!x)std::abort();}
 template<class T> T* upload(const std::vector<T>& v){T* p=nullptr;require(cudaMalloc(&p,v.size()*sizeof(T))==cudaSuccess);require(cudaMemcpy(p,v.data(),v.size()*sizeof(T),cudaMemcpyHostToDevice)==cudaSuccess);return p;}
 int main(){
@@ -35,6 +32,24 @@ int main(){
   require(cudaMemcpy(actual.data(),out,48,cudaMemcpyDeviceToHost)==cudaSuccess);
   require(cudaMemcpy(&error,fatal,4,cudaMemcpyDeviceToHost)==cudaSuccess);require(error!=0);
   for(auto x:actual)require(x==0xcc);
+  // Zero, overflow, malformed origin, and sticky-fatal batches cannot write.
+  for(unsigned scenario=0;scenario<6;++scenario){
+    req={{1,1,0,101},{1,0,0,100},{1,0,0,101}};
+    uint32_t rows=scenario==0?0:(scenario==1?4:3), initial=scenario==5?17:0;
+    if(scenario==2)req[1].source=0;
+    if(scenario==3)req[1].move=2;
+    if(scenario==4)req[1].reserved=1;
+    require(cudaMemcpy(r,req.data(),48,cudaMemcpyHostToDevice)==cudaSuccess);
+    require(cudaMemcpy(count,&rows,4,cudaMemcpyHostToDevice)==cudaSuccess);
+    require(cudaMemcpy(fatal,&initial,4,cudaMemcpyHostToDevice)==cudaSuccess);
+    require(cudaMemset(out,0xcc,48)==cudaSuccess);
+    require(mgbfs_regenerate_selected(2,2,5,16,3,1,100,2,p,g,r,count,out,fatal,nullptr)==0);
+    require(cudaDeviceSynchronize()==cudaSuccess);
+    require(cudaMemcpy(actual.data(),out,48,cudaMemcpyDeviceToHost)==cudaSuccess);
+    require(cudaMemcpy(&error,fatal,4,cudaMemcpyDeviceToHost)==cudaSuccess);
+    require(error==(scenario==0?0:(scenario==1?1:(scenario==5?17:2))));
+    for(auto x:actual)require(x==0xcc);
+  }
   cudaFree(out);cudaFree(fatal);cudaFree(count);cudaFree(r);cudaFree(g);cudaFree(p);
   std::puts("REGENERATE_PASS");
 }
