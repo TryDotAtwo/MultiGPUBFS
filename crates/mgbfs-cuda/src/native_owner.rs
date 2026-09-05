@@ -2,6 +2,15 @@
 pub use mgbfs_core::owner_job::{BucketJob, Range};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
+pub struct BoundedOwnerBytes {
+    pub flags: u64,
+    pub indices: u64,
+    pub merged: u64,
+    pub refinement_errors: u64,
+}
+const _: [(); 32] = [(); std::mem::size_of::<BoundedOwnerBytes>()];
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Counts {
     pub duplicates: u32,
     pub prev: u32,
@@ -75,6 +84,15 @@ mod calls {
             permutations: *mut u8,
             ring: *mut Ring,
             stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_bounded_owner_query(
+            i: u32,
+            j: u32,
+            k: u32,
+            backend: u32,
+            refinement_capacity: u32,
+            tile_limit: u32,
+            out: *mut BoundedOwnerBytes,
         ) -> i32;
         pub fn mgbfs_bounded_owner_create(i: u32, j: u32, k: u32, out: *mut *mut c_void) -> i32;
         pub fn mgbfs_bounded_owner_create_backend(

@@ -20,6 +20,15 @@ typedef struct MgbfsOwnerControl {
   uint32_t error, stage, survivors, reserved;
   uint64_t padding[6];
 } MgbfsOwnerControl;
+typedef struct MgbfsBoundedOwnerBytes {
+  uint64_t flags, indices, merged, refinement_errors;
+} MgbfsBoundedOwnerBytes;
+/* Allocation-free shape query. Byte counts are cudaMalloc payload requests,
+ * not driver residency. Shared-memory BMMA tiles are not VRAM allocations.
+ * Does not validate hardware support; failed queries zero their output. */
+int mgbfs_bounded_owner_query(uint32_t i, uint32_t j, uint32_t k,
+    uint32_t backend, uint32_t refinement_capacity, uint32_t tile_limit,
+    MgbfsBoundedOwnerBytes* out);
 int mgbfs_bounded_owner_create(uint32_t i, uint32_t j, uint32_t k, void** plan);
 /* Explicit backend: 0=CUB, 1=SM75 BMMA. Refinement descriptors and tile bound
  * are fixed before allocation. Unsupported backend/device is an error. */

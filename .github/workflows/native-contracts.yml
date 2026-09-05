@@ -33,3 +33,5 @@ jobs:
         run: cargo +1.75.0 test --locked -p mgbfs-cuda --test allocation_report
       - name: Verify bounded owner descriptor ABI without CUDA
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_job_abi.cpp -o /tmp/owner-job-abi && /tmp/owner-job-abi
+      - name: Verify actual bounded owner allocation shape without CUDA
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_memory_query.cpp cuda/bounded_owner_query.cpp -o /tmp/owner-memory-query && /tmp/owner-memory-query

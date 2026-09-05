@@ -205,10 +205,11 @@ __global__ void finish_commit(MgbfsOwnerControl* c){if(!c->error)c->stage=2;}
 }
 extern "C" int mgbfs_bounded_owner_create(uint32_t i,uint32_t j,uint32_t k,void** out){
   if(!out)return 1;*out=nullptr;
-  if(!i||i>INT_MAX||!j||j>i||!k||k>INT_MAX||uint64_t(j)*k>SIZE_MAX/sizeof(Key))return 1;
+  MgbfsBoundedOwnerBytes q{};
+  if(mgbfs_bounded_owner_query(i,j,k,0,0,0,&q))return 1;
   auto p=std::make_unique<Plan>();p->i=i;p->j=j;p->k=k;
-  if(cudaMalloc(&p->flags,i)!=cudaSuccess||cudaMalloc(&p->indices,uint64_t(i)*4)!=cudaSuccess||
-     cudaMalloc(&p->merged,uint64_t(j)*k*sizeof(Key))!=cudaSuccess)return 2;
+  if(cudaMalloc(&p->flags,q.flags)!=cudaSuccess||cudaMalloc(&p->indices,q.indices)!=cudaSuccess||
+     cudaMalloc(&p->merged,q.merged)!=cudaSuccess)return 2;
   *out=p.release();return 0;
 }
 extern "C" void mgbfs_bounded_owner_destroy(void* p){delete static_cast<Plan*>(p);}
@@ -216,14 +217,15 @@ extern "C" int mgbfs_bounded_owner_create_backend(uint32_t i,uint32_t j,uint32_t
     uint32_t backend,uint32_t refinement_capacity,uint32_t tile_limit,void** out){
   if(!out)return 1;*out=nullptr;
   if(backend==0)return mgbfs_bounded_owner_create(i,j,k,out);
-  if(backend!=1||refinement_capacity<i||!tile_limit||tile_limit>256)return 1;
+  MgbfsBoundedOwnerBytes q{};
+  if(mgbfs_bounded_owner_query(i,j,k,backend,refinement_capacity,tile_limit,&q))return 1;
   int device;cudaDeviceProp prop{};
   if(cudaGetDevice(&device)!=cudaSuccess||cudaGetDeviceProperties(&prop,device)!=cudaSuccess)return 2;
   // V1 hardware policy is explicit SM75, never a silent scalar/CUB fallback.
   if(prop.major!=7||prop.minor!=5)return 3;
   void* raw=nullptr;int status=mgbfs_bounded_owner_create(i,j,k,&raw);if(status)return status;
   std::unique_ptr<Plan> p(static_cast<Plan*>(raw));
-  if(cudaMalloc(&p->refinement_errors,uint64_t(j)*4)!=cudaSuccess)return 2;
+  if(cudaMalloc(&p->refinement_errors,q.refinement_errors)!=cudaSuccess)return 2;
   p->backend=1;p->tile_limit=tile_limit;*out=p.release();return 0;
 }
 extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,
