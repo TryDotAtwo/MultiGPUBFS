@@ -34,6 +34,45 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_preuploaded_shards_commit_in_bounded_batches(self):
+        class Api:
+            def __init__(self):
+                self.batches = []
+
+            def preupload_lfs_files(self, **kwargs):
+                for operation in kwargs['additions']:
+                    operation.path_or_fileobj = b''
+
+            def create_commit(self, **kwargs):
+                self.batches.append(len(kwargs['operations']))
+
+            def upload_file(self, **kwargs):
+                pass
+
+        with tempfile.TemporaryDirectory() as folder:
+            api = Api()
+            sink = HubStagingSink(Path(folder) / 'slots', 1, 258,
+                                  'TryDotAtwo/results', 'run-r1', api, 0, 32768)
+            for ordinal in range(257):
+                sink.add({'run_id': 'r1', 'group_id': 'fixture', 'config_digest': '00'*32,
+                          'rank': 0, 'depth': 0, 'rank_ordinal': ordinal,
+                          'state': b'x', 'hash128_le': bytes(16)})
+            self.assertEqual(api.batches, [])
+            sink.complete({'status': 'COMPLETE'})
+            self.assertEqual(api.batches, [256, 1])
+
+    def test_non_lfs_preupload_cannot_recycle_slot_or_commit(self):
+        class Api:
+            def preupload_lfs_files(self, **kwargs):
+                pass  # Server classified as regular Git: bytes still needed.
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'slots'
+            sink = HubStagingSink(root, 1, 2, 'TryDotAtwo/results', 'run-r1', Api(), 0, 32768)
+            with self.assertRaisesRegex(RuntimeError, 'PARQUET_PREUPLOAD_NOT_RELEASED'):
+                ArchiveStream('r1', 'fixture', 0, sink).consume(io.BytesIO(complete_archive()))
+            self.assertFalse((root / 'rank-00000-stream-commit.json').exists())
+
     def test_corrupt_payload_is_rejected_before_any_batch_or_commit(self):
         class Sink:
             def add_batch(self, _table):
@@ -123,6 +162,18 @@ class StreamArchive(unittest.TestCase):
         class Api:
             def __init__(self):
                 self.calls = []
+                self.preuploads = []
+
+            def preupload_lfs_files(self, **kwargs):
+                for operation in kwargs['additions']:
+                    payload = operation.path_or_fileobj.read()
+                    self.assert_payload = payload[:4] == b'PAR1' and payload[-4:] == b'PAR1'
+                    self.assert_buffered = isinstance(operation.path_or_fileobj, io.BufferedIOBase)
+                    operation.path_or_fileobj = b''
+                self.preuploads.append(kwargs)
+
+            def create_commit(self, **kwargs):
+                self.calls.append(kwargs)
 
             def upload_file(self, **kwargs):
                 source = kwargs["path_or_fileobj"]
@@ -140,9 +191,12 @@ class StreamArchive(unittest.TestCase):
                 rank=0, max_slot_bytes=1_000_000,
             )
             ArchiveStream("r1", "fixture", rank=0, sink=sink).consume(io.BytesIO(complete_archive()))
-            self.assertEqual(len(api.calls), 3)
+            self.assertEqual(len(api.preuploads), 2)
+            self.assertEqual(len(api.calls), 2)
+            self.assertEqual(len(api.calls[0]['operations']), 2)
+            self.assertTrue(all(op.path_or_fileobj == b'' for op in api.calls[0]['operations']))
             self.assertTrue(all(call["revision"] == "run-r1" for call in api.calls))
-            self.assertTrue(all(call["path_in_repo"].startswith("pending/run-r1/") for call in api.calls))
+            self.assertTrue(all(op.path_in_repo.startswith('pending/run-r1/') for op in api.calls[0]['operations']))
             self.assertTrue(api.assert_payload)
             self.assertTrue(api.assert_buffered)
             self.assertFalse(list((Path(folder) / "slots").glob("slot-*.parquet")))
@@ -152,10 +206,12 @@ class StreamArchive(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def upload_file(self, **_kwargs):
+            def preupload_lfs_files(self, **kwargs):
                 self.calls += 1
                 if self.calls == 2:
                     raise OSError("injected")
+                for operation in kwargs['additions']:
+                    operation.path_or_fileobj = b''
 
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "slots"
@@ -173,9 +229,15 @@ class StreamArchive(unittest.TestCase):
                 self.release = threading.Event()
                 self.calls = []
 
+            def preupload_lfs_files(self, **kwargs):
+                self.release.wait(timeout=2)
+                for operation in kwargs['additions']:
+                    operation.path_or_fileobj = b''
+
+            def create_commit(self, **kwargs):
+                self.calls.append(kwargs)
+
             def upload_file(self, **kwargs):
-                if hasattr(kwargs["path_or_fileobj"], "read"):
-                    self.release.wait(timeout=2)
                 self.calls.append(kwargs)
 
         with tempfile.TemporaryDirectory() as folder:

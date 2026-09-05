@@ -161,6 +161,7 @@ class HubStagingSink:
             raise RuntimeError("PARQUET_SLOT_ALLOCATION_FATAL") from error
         self.inflight = {}
         self.executor = ThreadPoolExecutor(max_workers=slot_count, thread_name_prefix="mgbfs-hf")
+        self.operations = []
         self.files = []
         self.peak_live_slots = 0
 
@@ -181,28 +182,34 @@ class HubStagingSink:
                 self.flush()
 
     def _upload(self, slot, size, remote_path):
+        from huggingface_hub import CommitOperationAdd
         # huggingface_hub intentionally accepts BufferedIOBase, not a bare
         # RawIOBase. The wrapper remains bounded and reads the live slot
         # without making a second bytes-sized copy.
         with io.BufferedReader(_MemoryViewReader(self.slot_buffers[slot], size)) as reader:
-            self.api.upload_file(
+            operation = CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=reader)
+            self.api.preupload_lfs_files(
                 repo_id=self.repo_id,
                 repo_type="dataset",
                 revision=self.branch,
-                path_or_fileobj=reader,
-                path_in_repo=remote_path,
-                commit_message=f"Stage {remote_path}",
+                additions=[operation],
+                free_memory=True,
             )
-        return slot
+            # Only an uploaded LFS object may release the backing slot. A
+            # regular Git file still needs its bytes at commit time.
+            if operation.path_or_fileobj != b'':
+                raise RuntimeError("PARQUET_PREUPLOAD_NOT_RELEASED")
+        return operation
 
     def _reap(self):
         for slot, future in list(self.inflight.items()):
             if not future.done():
                 continue
             try:
-                future.result()
+                operation = future.result()
             except Exception as error:
                 raise RuntimeError(f"PARQUET_UPLOAD_FAILED: {error}") from error
+            self.operations.append(operation)
             self.free_slots.append(slot)
             del self.inflight[slot]
 
@@ -263,6 +270,14 @@ class HubStagingSink:
                 raise RuntimeError(f"PARQUET_UPLOAD_FAILED: {error}") from error
         self._reap()
         self.executor.shutdown(wait=True)
+        # Metadata-only operations no longer reference recycled RAM slots.
+        # At most 256 files per commit, never one commit per shard.
+        for offset in range(0, len(self.operations), 256):
+            self.api.create_commit(
+                repo_id=self.repo_id, repo_type="dataset", revision=self.branch,
+                operations=self.operations[offset:offset + 256],
+                commit_message=f"Stage rank {self.rank} batch {offset // 256}",
+            )
         manifest = dict(result)
         manifest.update(
             schema="MGBFS_HF_STREAM_COMMIT_V1",
