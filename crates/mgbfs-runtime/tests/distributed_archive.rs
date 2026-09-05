@@ -393,6 +393,15 @@ fn compact_permutation_archive_preserves_full_layers_and_hashes_on_two_devices()
 }
 
 fn archive_fixture(compact: bool) {
+    archive_fixture_profile(compact, false);
+}
+
+#[test]
+fn hash_first_reference_preserves_full_archived_bfs_layers_on_two_devices() {
+    archive_fixture_profile(false, true);
+}
+
+fn archive_fixture_profile(compact: bool, hash_first: bool) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -422,7 +431,11 @@ fn archive_fixture(compact: bool) {
                     prededup: true,
                     generation_variant: if compact { 5 } else { 1 },
                 };
-                let mut bfs = DistributedNativeBfs::new(&g, [0; 16], id, cfg).unwrap();
+                let mut bfs = if hash_first {
+                    DistributedNativeBfs::new_hash_first_reference(&g, [0; 16], id, cfg, 64).unwrap()
+                } else {
+                    DistributedNativeBfs::new(&g, [0; 16], id, cfg).unwrap()
+                };
                 let data = Arc::new(Mutex::new(Vec::new()));
                 // Archive rows deliberately smaller than a compute batch.
                 let mut archive =

@@ -161,6 +161,12 @@ mod calls {
             extent: *mut Extent,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_apply_response_span(
+            plan: *mut c_void, responses: *const u8, targets: *const u64,
+            count: *const u32, sorted_offset: u32, group_fatal: *const u32,
+            states: *mut u8, ring: *mut Ring, control: *mut Control,
+            extent: *mut Extent, stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bucket_directory(
             sorted: *const c_void,
             count: *const u32,

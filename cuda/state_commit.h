@@ -60,6 +60,13 @@ int mgbfs_state_apply_responses(void* materialize_plan,const uint8_t* responses,
     const uint64_t* targets,const uint32_t* count,const uint32_t* group_fatal,
     uint8_t* states,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent,void* stream);
+/* Same validation for a subrange of the sorted packet, e.g. ring wrap splits.
+ * Caller enumerates disjoint extents covering the whole packet exactly once.
+ */
+int mgbfs_state_apply_response_span(void* materialize_plan,const uint8_t* responses,
+    const uint64_t* targets,const uint32_t* count,uint32_t sorted_offset,const uint32_t* group_fatal,
+    uint8_t* states,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent,void* stream);
 #ifdef __cplusplus
 }
 #endif

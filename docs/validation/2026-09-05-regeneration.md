@@ -129,3 +129,39 @@ StateRefs with existing MaterializePlan scratch, validates exact coverage and
 group fatal, reconstructs source-row order, then calls the checked dense state
 materializer. No persistent scatter writes or additional scratch allocation.
 V16 is the hardware gate. Full HASH_FIRST scheduler integration remains pending.
+
+V16 terminal status is COMPLETE. Downloaded inventory identifies two distinct
+Tesla T4 devices. Response application passed plain, memcheck, racecheck,
+initcheck and synccheck: zero errors, including zero race warnings/hazards.
+Evidence: `test_results/distributed-sanitizer-v16/distributed-sanitizer/apply-responses-*.log`.
+These tests cover dense publication, reversed target order and rejection of
+duplicate/missing/foreign targets or group fatal; they do not establish full
+HASH_FIRST BFS correctness or performance.
+
+The next full-runtime archive fixture is currently RED: local CUDA-feature
+`cargo check --locked -p mgbfs-runtime --features cuda --test distributed_archive`
+reports E0599 for missing `DistributedNativeBfs::new_hash_first_reference`.
+Do not bypass this fixture with DENSE generation: implementation must route
+origins, retain source parents through response completion, and publish the
+same archived BFS layers only after owner-side dedup and materialization.
+The uncommitted response-span extension is not covered by V16's pinned source.
+
+Integration work in progress: the reference constructor now allocates distinct
+HASH_FIRST storage before depth zero. Candidate/routed/received payloads use
+16-byte OriginRefs, and DENSE generation/hash plans are not allocated. Bounded
+request/response buffers and one shared materialization sort plan are explicit.
+Owner compare checks request credits before reservation/irreversible commit;
+selected origins and target StateRefs accumulate by source rank without marking
+states ready. CUDA-feature cargo check passes (unused integration fields remain).
+Full advance deliberately returns HASH_FIRST_SCHEDULER_NOT_CONNECTED until the
+request/response path and delayed parent retirement are connected. This is not
+a functional HASH_FIRST completion or a hardware correctness claim.
+
+The scheduler is now connected in the working tree: generation emits hashes
+and origins, routing exchanges 16-byte origins, owner commit builds bounded
+requests, source-local and remote materialization restore target order through
+the shared radix plan, and parent retirement follows completed responses and
+archive events. Empty ranks enter the same request-count and fatal epochs.
+The temporary NOT_CONNECTED guard has been removed. Local CUDA-feature cargo
+check passes without warnings; full-runtime GPU correctness remains unproven
+until the new sixth archived BFS fixture passes on the pinned source.
