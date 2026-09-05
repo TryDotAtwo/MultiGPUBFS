@@ -1,6 +1,7 @@
 #include "archive_pack.h"
 #include <cuda_runtime.h>
 #include <cassert>
+#include <cstdio>
 #include <vector>
 
 int main() {
@@ -32,4 +33,5 @@ int main() {
   assert(cudaMemcpy(&state,ring,sizeof(state),cudaMemcpyDeviceToHost)==cudaSuccess);
   assert(state.fatal==18);
   cudaFree(ring);cudaFree(output);cudaFree(states);
+  std::puts("ARCHIVE_PACK_PASS");
 }
