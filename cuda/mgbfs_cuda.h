@@ -2,6 +2,7 @@
 #define MGBFS_CUDA_H
 #include <stdint.h>
 #include <stddef.h>
+#include "regenerate.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -154,6 +155,15 @@ void mgbfs_nccl_destroy(void* comm);
 int mgbfs_materialize_create(uint32_t stride,uint32_t candidate_capacity,uint32_t frontier_capacity,void** out,char* error,size_t error_capacity);
 int mgbfs_materialize_run(void* plan,const uint8_t* source,uint32_t source_count,const void* hashes,const uint64_t* refs,const uint32_t* count,uint8_t* states,void* out_hashes,MgbfsFrontierState* state,void* stream);
 void mgbfs_materialize_destroy(void* plan);
+/* Stable per-source sort by absolute parent StateRef, preserving target pairing.
+ * Reuses MaterializePlan buffers/scratch, no allocation or host sync. All data
+ * pointers are device pointers. Count may be below capacity, including zero.
+ * fatal is sticky: 1=count overflow, 2=mixed source/reserved origin. Invalid
+ * input leaves output records untouched. Full uint64 parent range is supported.
+ */
+int mgbfs_materialize_sort_origins(void* plan,uint32_t source_rank,
+    const MgbfsRegenerateOrigin* origins,const uint64_t* targets,const uint32_t* count,
+    MgbfsRegenerateOrigin* sorted_origins,uint64_t* sorted_targets,uint32_t* fatal,void* stream);
 #ifdef __cplusplus
 }
 #endif

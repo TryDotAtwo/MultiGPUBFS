@@ -73,3 +73,42 @@ extern "C" int mgbfs_materialize_run(void* plan,const uint8_t* source,uint32_t s
   return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" void mgbfs_materialize_destroy(void* p){delete static_cast<MaterializePlan*>(p);}
+
+__global__ void origin_keys(uint32_t source,const MgbfsRegenerateOrigin* origins,
+ const uint32_t* count,uint32_t capacity,uint64_t* keys,uint32_t* indices,uint32_t* fatal){
+  const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;
+  if(i>=capacity)return;
+  const bool active=*count<=capacity&&i<*count;
+  uint64_t key=UINT64_MAX;
+  if(i==0&&*count>capacity)atomicCAS(fatal,0u,1u);
+  if(active){
+    const auto origin=origins[i];
+    if(origin.source!=source||origin.reserved)atomicCAS(fatal,0u,2u);
+    key=origin.parent;
+  }
+  keys[i]=key;indices[i]=i;
+}
+__global__ void sorted_origin_records(const MgbfsRegenerateOrigin* origins,const uint64_t* targets,
+ const uint32_t* order,const uint32_t* count,const uint32_t* fatal,
+ MgbfsRegenerateOrigin* output,uint64_t* output_targets){
+  if(*fatal)return;
+  const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;
+  if(i>=*count)return;
+  output[i]=origins[order[i]];output_targets[i]=targets[order[i]];
+}
+extern "C" int mgbfs_materialize_sort_origins(void* plan,uint32_t source,
+ const MgbfsRegenerateOrigin* origins,const uint64_t* targets,const uint32_t* count,
+ MgbfsRegenerateOrigin* output,uint64_t* output_targets,uint32_t* fatal,void* raw_stream){
+  auto p=static_cast<MaterializePlan*>(plan);
+  if(!p||!origins||!targets||!count||!output||!output_targets||!fatal)return 1;
+  auto stream=static_cast<cudaStream_t>(raw_stream);
+  const uint32_t blocks=(p->capacity+255)/256;
+  origin_keys<<<blocks,256,0,stream>>>(source,origins,count,p->capacity,p->keys,p->indices,fatal);
+  if(cudaGetLastError()!=cudaSuccess)return 2;
+  size_t bytes=p->scratch_bytes;
+  // Stable sort: valid UINT64_MAX parents remain ahead of inactive padding.
+  if(cub::DeviceRadixSort::SortPairs(p->scratch,bytes,p->keys,p->sorted,p->indices,p->order,
+       int(p->capacity),0,64,stream)!=cudaSuccess)return 3;
+  sorted_origin_records<<<blocks,256,0,stream>>>(origins,targets,p->order,count,fatal,output,output_targets);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}

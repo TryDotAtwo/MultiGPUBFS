@@ -138,6 +138,19 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_materialize_destroy(plan: *mut c_void);
+        /// Stable per-source parent sorting, preserving the target StateRef pair.
+        /// Reuses the materialize plan's scratch; device fatal is sticky.
+        pub fn mgbfs_materialize_sort_origins(
+            plan: *mut c_void,
+            source_rank: u32,
+            origins: *const RegenerateOrigin,
+            targets: *const u64,
+            count: *const u32,
+            sorted_origins: *mut RegenerateOrigin,
+            sorted_targets: *mut u64,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_owner_create(
             candidate_capacity: u32,
             bucket_capacity: u32,
