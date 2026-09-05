@@ -44,6 +44,41 @@ fn native_macro_layers_equal_full_state_oracle_for_k_and_partial_batches() {
 }
 
 #[test]
+fn native_macro_nonidentity_source_preserves_original_layers() {
+    let mut graph = MatrixGroup::unitriangular(3, 3).unwrap();
+    graph.start = graph.successor(&graph.start, 0).unwrap();
+    graph.start = graph.successor(&graph.start, 1).unwrap();
+    let expected = graph.exact_layers(27).unwrap();
+    for macro_depth in [1, 2, 3, 10] {
+        for prededup in [false, true] {
+            let mut bfs = MacroNativeBfs::new(
+                &graph,
+                [macro_depth as u8; 16],
+                MacroNativeConfig {
+                    macro_depth,
+                    batch: 7,
+                    layer_capacity: 27,
+                    future_capacity_per_depth: 1024,
+                    prededup,
+                    generation_variant: 1,
+                    untouched_vram_reserve_bytes: 0,
+                },
+            ).unwrap();
+            let mut actual = Vec::new();
+            loop {
+                let mut layer = bfs.snapshot().unwrap();
+                layer.sort();
+                actual.push(layer);
+                if !bfs.advance().unwrap() {
+                    break;
+                }
+            }
+            assert_eq!(actual, expected, "K={macro_depth} pre={prededup}");
+        }
+    }
+}
+
+#[test]
 fn native_macro_runtime_capacity_failure_is_sticky() {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut config = MacroNativeConfig {
