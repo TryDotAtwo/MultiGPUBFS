@@ -1,18 +1,30 @@
 # Remaining implementation gates (not a completion claim)
 
-Updated through `b5f7a1e`; v17 hardware gate is running. The published S13 dataset does not prove the
-whole architecture is implemented.
+Updated through `4d664d9`. The published S13 dataset does not prove the
+whole architecture is implemented. Historical sections below retain their
+original commit scope; this table supersedes their pending-status statements.
 
 | Requirement | Current evidence | Remaining work |
 |---|---|---|
 | DENSE compact, 2 T4, archive | Complete S13, verified remote objects | Repeated paired performance runs and broader adversarial correctness |
-| HASH_FIRST native | Scalar CUDA hash-only generation, NCCL requests/responses, selected regeneration and owner materialization connected in b5f7a1e | Full archive fixture v17 pending; seed/map/pre-dedup matrix next; Tensor Core generation/hash path and overlap still required |
-| BMMA_BUCKET native | Config enum and architecture contract | Actual SM75 backend, backend selection, equality/collision fixtures and end-to-end comparison |
+| HASH_FIRST native | v17 full archive; v18 24 profile/seed/map/pre-dedup combinations; v19 coordinated capacity failures, all four sanitizers | Tensor Core generation/hash path, overlap, larger workloads and full-rank allocation plan |
+| BMMA_BUCKET native | SM75 leaf v3: tile limits 1/8/256, real BMMA SASS, four sanitizers; v20 full two-rank archive in both profiles | Full configuration matrix, larger/adversarial equality fixtures and end-to-end performance comparison |
 | Continuous overlap | Distributed reference uses repeated stream synchronizations and synchronous count readback | Bounded route slots, sequenced independent streams, timeline evidence; current code is not the final pipeline |
 | 1 vs 2 ranks | DistributedConfig is two-rank-specific, separate single-rank executor exists | Same algorithm/output-contract benchmark; do not infer scaling from different executors |
-| CLI | Root legacy executable and benchmark examples | Agreed standalone production CLI and config-to-runtime wiring |
-| Macro expansion | CPU oracle and native macro components/tests | Audit multi-rank production wiring and all configured depths |
-| Sanitizers | v16 matrix/compact distributed archive and native HASH_FIRST stages pass four tools | v17 integrated HASH_FIRST pending; further lifetime/capacity/slot cases; primitive success is not universal safety |
+| CLI | Standalone mgbfs-cli `verify` streams committed archives with bounded memory | `run`, `preflight`, `calibrate`, `bench`, complete config-to-runtime wiring |
+| Macro expansion | CPU model and single-rank weighted native runtime; arbitrary-source compiler fix b36e5ac with CPU regression | No weighted macro schedule in DistributedNativeBfs; multi-rank production wiring remains. v21 checks nonidentity source K=1/2/3/10 on one T4, result pending |
+| Sanitizers | v20 nine two-rank runtime fixtures pass plain and all four tools, including compact generation5 and BMMA | v21 pending; broader lifetime/capacity/slot cases, production overlap and macro paths still need hardware gates |
+
+Evidence details: [HASH_FIRST gates](2026-09-05-regeneration.md),
+[BMMA gates](2026-09-05-bmma-integration.md),
+[macro source correction](2026-09-05-macro-source.md).
+
+Local full release CPU regression attempted after c7d2518 did not reach tests:
+Windows compilation exhausted disk space. Only newly created release build
+files were removed (203,444,863 bytes); no source or dataset was removed.
+Do not retry local full builds without a disk preflight. GitHub Actions run
+33989788234 at 4d664d9 passed formatting and is executing CPU contracts;
+its eventual result must be inspected, not inferred from that intermediate status.
 
 `cargo test --locked -p mgbfs-core -p mgbfs-runtime` completed with exit 0
 on Windows after the compact fixture addition. CUDA-feature tests are not
