@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "9f440a1ceff379f1c9df57fe97baa6ff98bd21c0"
+SOURCE = "d9dc40fbd7adf7eef07be28c27580fe583ec9371"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 39_916_800
 PER_RANK_CAPACITY = 8_000_000
@@ -96,6 +96,15 @@ def main():
         str(bootstrap), str(archive_prefix), "{RANK_OUT}",
     ]
     row = bench.run_group(command, logs, "s11-native-capacity", run_env, timeout=7200)
+    # Same build/GPU/config, fresh torchrun processes; no-archive is diagnostic only.
+    no_archive_env = dict(run_env, MGBFS_BENCH_SKIP_ARCHIVE="1")
+    no_archive_command = [str(root / "bootstrap-no-archive") if x == str(bootstrap)
+                          else str(root / "archive-no-archive") if x == str(archive_prefix)
+                          else x for x in command]
+    no_archive = bench.run_group(no_archive_command, logs, "s11-no-archive-diagnostic",
+                                 no_archive_env, timeout=7200)
+    if no_archive["status"] != "COMPLETE" or no_archive["layer_sizes"] != row["layer_sizes"]:
+        raise RuntimeError("ARCHIVE_AB_LAYER_MISMATCH")
     if row["status"] == "COMPLETE":
         if sum(row["layer_sizes"]) != CARDINALITY:
             raise RuntimeError("S11_CARDINALITY_MISMATCH")
@@ -110,6 +119,7 @@ def main():
         "batch": BATCH,
         "archive_slots_per_rank": ARCHIVE_SLOTS,
         "result": row,
+        "no_archive_diagnostic": no_archive,
     }
     (logs / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary), flush=True)
