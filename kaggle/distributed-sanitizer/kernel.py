@@ -1,4 +1,4 @@
-"""Full two-device archive fixture; not a compact-S13 or performance gate."""
+"""Two-device matrix and compact-permutation archive correctness gates."""
 import importlib.util
 import json
 import os
@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "420b8a7eea491f7cee4bab491e82f015323d16de"
+SOURCE = "8f04c4642470c8c48954ac705dda941e06b08625"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -27,7 +27,7 @@ def main():
     def run(cmd, name, cwd=root, timeout=1200):
         return gate.run(cmd, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
     report = {"status": "INCOMPLETE", "source": SOURCE, "tests": [],
-              "scope": "unitriangular(3,3), matrix generation 1, two devices, NCCL, archive"}
+              "scope": "unitriangular(3,3) generation1 and S4 compact generation5, two devices, NCCL, archive"}
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
     save()
@@ -60,7 +60,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "1 passed; 0 failed" not in output:
+            if "2 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             if tool == "racecheck":
                 matches = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
