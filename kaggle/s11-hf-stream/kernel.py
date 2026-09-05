@@ -87,6 +87,24 @@ def main():
     run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime",
          "--features", "cuda", "--test", "distributed_archive", "--",
          "--test-threads=1", "--nocapture"], "distributed-archive-test", source, timeout=180)
+    # Host reserve is independent of the untouched VRAM reserve. Never reduce
+    # rings dynamically if this fails. Account for both HF upload processes.
+    planner = load(source / 'scripts/archive_budget.py', 'archive_budget')
+    meminfo = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+    available = int(meminfo['MemAvailable'].split()[0]) * 1024
+    for maximum, current in [
+        ('/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory.current'),
+        ('/sys/fs/cgroup/memory/memory.limit_in_bytes', '/sys/fs/cgroup/memory/memory.usage_in_bytes'),
+    ]:
+        if Path(maximum).exists() and Path(current).exists():
+            limit = Path(maximum).read_text().strip()
+            if limit != 'max':
+                available = min(available, max(0, int(limit) - int(Path(current).read_text())))
+    budget = planner.host_budget(available, 2, ARCHIVE_ROWS, ARCHIVE_SLOTS,
+                                 int(GROUP[1:]), 2 * 8 * 128 * 1024**2,
+                                 3 * 1024**3, 4 * 1024**3)
+    (logs / 'host-budget.json').write_text(json.dumps(budget, indent=2))
+    print('HOST_RAM_PREFLIGHT_OK ' + json.dumps(budget), flush=True)
     try:
         import huggingface_hub
     except ImportError:
