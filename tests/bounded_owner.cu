@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <set>
 #include <random>
+#include <cstdlib>
+static unsigned test_tile_limit=256;
 struct alignas(16) Key { uint32_t w[4]; };
 static void ck(cudaError_t e) { if(e!=cudaSuccess) throw std::runtime_error(cudaGetErrorString(e)); }
 static void require(bool x, const char* s) { if(!x) throw std::runtime_error(s); }
 static int create_owner(unsigned i,unsigned j,unsigned k,void** plan){
 #ifdef MGBFS_TEST_BMMA
-  return mgbfs_bounded_owner_create_backend(i,j,k,1,i,256,plan);
+  return mgbfs_bounded_owner_create_backend(i,j,k,1,i,test_tile_limit,plan);
 #else
   return mgbfs_bounded_owner_create(i,j,k,plan);
 #endif
@@ -82,7 +84,9 @@ static void sweep(unsigned seed,unsigned mode) {
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main() { try {
+int main(int argc,char** argv) { try {
+  if(argc>1){char* end=nullptr;auto value=std::strtoul(argv[1],&end,10);
+    require(end&&!*end&&value>=1&&value<=256,"test tile limit");test_tile_limit=unsigned(value);}
   // Dropping any one of the four rejection categories changes this literal result.
   void* plan=nullptr; require(create_owner(16,2,8,&plan)==0,"create");
   Device<Key> in(16), prev(2), curr(2), accepted(16);
