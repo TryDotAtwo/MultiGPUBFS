@@ -577,7 +577,12 @@ impl DistributedNativeBfs {
             }
             let control = self.control.one::<Control>()?;
             if control.error != 0 {
-                return Err(format!("NATIVE_OWNER_FATAL_{}", control.error));
+                let ring = self.ring.one::<Ring>()?;
+                return Err(format!(
+                    "NATIVE_OWNER_FATAL_{} rank={} depth={} ring_head={} ring_tail={} ring_capacity={} requested_survivors={} descriptor_head={} descriptor_tail={}",
+                    control.error, self.cfg.rank, self.depth, ring.head, ring.tail,
+                    ring.capacity, control.survivors, ring.descriptor_head, ring.descriptor_tail
+                ));
             }
             let mut extent = self.extent.one::<Extent>()?;
             if extent.ready != 1 {
