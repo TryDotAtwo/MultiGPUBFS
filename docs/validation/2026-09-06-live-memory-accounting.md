@@ -27,3 +27,14 @@ Pending: GPU validation of the shared-buffer wiring; joining shared, library,
 HASH_FIRST-only, NCCL, pinned archive and disk accounting into one preflight;
 coordinated pre-allocation rejection on any rank; untouched VRAM reserve across
 the complete runtime. Do not label the partial ledgers a complete rank budget.
+
+Further integration: `owned_memory()` now combines the shared Buffer ledger
+with actual generation/hash/route/owner queries and the HASH_FIRST profile
+ledger, all before creating runtime streams or those allocations. HASH_FIRST
+Buffer allocations now consume their named ledger entries too. CUDA/NCCL
+internal residency and the separately constructed pinned archive remain outside
+this explicit-device-allocation ledger. No resource-capacity admission is
+claimed yet. The generation-query report adapter previously rejected supported
+compact variant 5; a failing compact-query test reproduced that stale guard,
+and the adapter now accepts 5 while rejecting 6. Five CUDA report adapter tests
+and three shared-memory composition tests pass; GPU gate remains pending.

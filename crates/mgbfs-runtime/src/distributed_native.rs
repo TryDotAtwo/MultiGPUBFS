@@ -186,60 +186,50 @@ impl HashFirstStorage {
         stride: usize,
         frontier: u32,
         stream: *mut c_void,
+        ledger: mgbfs_core::memory::AllocationLedger,
     ) -> Result<Self> {
-        let mut query = MaterializeBytes::default();
-        check(unsafe { mgbfs_materialize_query(stride as u32, capacity, frontier, &mut query) })?;
-        let ledger = mgbfs_core::memory::hash_first_reference_ledger(
-            graph.start.len() as u64,
-            graph.generators.len() as u64,
-            u64::from(capacity),
-            stride as u64,
-            [
-                query.keys,
-                query.sorted,
-                query.indices,
-                query.order,
-                query.scratch,
-            ],
-        )?;
-        let b = |rows: usize, bytes: usize| {
+        let b = |name: &str| {
+            let a = ledger
+                .allocations
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or("MISSING_HASH_FIRST_ALLOCATION")?;
             Buffer::new(
-                rows.checked_mul(bytes).ok_or("HASH_FIRST_BYTES_OVERFLOW")?,
+                usize::try_from(a.payload_bytes).map_err(|_| "BYTE_OVERFLOW")?,
                 stream,
             )
         };
         let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();
-        let generators = b(matrices.len(), 1)?;
+        let generators = b("generators")?;
         generators.put(&matrices)?;
-        let coefficients = b(hash.coefficients.len(), 16)?;
+        let coefficients = b("coefficients")?;
         coefficients.put(&hash.coefficients)?;
-        let offsets = b(4, 4)?;
+        let offsets = b("offsets")?;
         offsets.put(&hash.offsets)?;
-        let rows = capacity as usize;
         Ok(Self {
-            ledger,
             n: graph.rows as u32,
             modulus: graph.modulus as u32,
             capacity,
             generators,
             coefficients,
             offsets,
-            parent_count: b(1, 4)?,
-            requests: [b(rows, 16)?, b(rows, 16)?],
-            targets: [b(rows, 8)?, b(rows, 8)?],
-            sorted_requests: b(rows, 16)?,
-            sorted_targets: b(rows, 8)?,
-            received_requests: b(rows, 16)?,
-            outgoing_responses: b(rows, stride)?,
-            incoming_responses: b(rows, stride)?,
-            count: b(1, 4)?,
-            local_fatal: b(1, 4)?,
-            group_fatal: b(1, 4)?,
+            parent_count: b("parent_count")?,
+            requests: [b("local_requests")?, b("remote_requests")?],
+            targets: [b("local_targets")?, b("remote_targets")?],
+            sorted_requests: b("sorted_requests")?,
+            sorted_targets: b("sorted_targets")?,
+            received_requests: b("received_requests")?,
+            outgoing_responses: b("outgoing_responses")?,
+            incoming_responses: b("incoming_responses")?,
+            count: b("request_count")?,
+            local_fatal: b("local_fatal")?,
+            group_fatal: b("group_fatal")?,
             materialize: Plan::new(mgbfs_materialize_destroy, |out, e| unsafe {
                 mgbfs_materialize_create(stride as u32, capacity, frontier, out, e, 512)
             })?,
             pending_counts: [0; 2],
             pending_extents: [Vec::with_capacity(2), Vec::with_capacity(2)],
+            ledger,
         })
     }
 }
@@ -268,6 +258,7 @@ pub struct DistributedNativeBfs {
     route: Plan,
     owner: Plan,
     shared_memory: mgbfs_core::memory::AllocationLedger,
+    owned_memory: mgbfs_core::memory::AllocationLedger,
     states: Buffer,
     prev: Buffer,
     curr: Buffer,
@@ -310,6 +301,11 @@ impl DistributedNativeBfs {
     /// allocations. This is not the complete rank memory budget.
     pub fn shared_memory(&self) -> &mgbfs_core::memory::AllocationLedger {
         &self.shared_memory
+    }
+    /// All explicit runtime/library device allocations. Excludes CUDA/NCCL
+    /// internal residency, pinned archive and disk; not full hardware preflight.
+    pub fn owned_memory(&self) -> &mgbfs_core::memory::AllocationLedger {
+        &self.owned_memory
     }
     /// Additional profile storage, not total rank VRAM. Includes CUB query
     /// results captured before allocation; reserved bytes use 256B alignment.
@@ -485,6 +481,71 @@ impl DistributedNativeBfs {
                 archive_width: permutation_n.unwrap_or(1).into(),
             },
         )?;
+        let mut owned_memory = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
+        for a in &shared_memory.allocations {
+            owned_memory.add(&format!("shared.{}", a.name), a.payload_bytes, 1, 256)?;
+        }
+        use crate::distributed_memory::append_query;
+        use mgbfs_cuda::allocation::{query_generation, query_hash, query_route};
+        let hash_first_ledger = if let Some(capacity) = materialization_capacity {
+            let mut q = MaterializeBytes::default();
+            check(unsafe {
+                mgbfs_materialize_query(stride as u32, capacity, cfg.layer_capacity, &mut q)
+            })?;
+            let l = mgbfs_core::memory::hash_first_reference_ledger(
+                width as u64,
+                moves.into(),
+                capacity.into(),
+                stride as u64,
+                [q.keys, q.sorted, q.indices, q.order, q.scratch],
+            )?;
+            for a in &l.allocations {
+                owned_memory.add(&format!("hash_first.{}", a.name), a.payload_bytes, 1, 256)?;
+            }
+            Some(l)
+        } else {
+            append_query(
+                &mut owned_memory,
+                "generation",
+                &query_generation(
+                    graph.rows as u32,
+                    moves,
+                    graph.modulus as u32,
+                    cfg.batch,
+                    cfg.generation_variant,
+                )?,
+            )?;
+            append_query(
+                &mut owned_memory,
+                "hash",
+                &query_hash(width as u32, candidates)?,
+            )?;
+            None
+        };
+        append_query(
+            &mut owned_memory,
+            "archive_hash",
+            &query_hash(width as u32, cfg.batch)?,
+        )?;
+        append_query(&mut owned_memory, "route", &query_route(candidates)?)?;
+        let backend = u32::from(owner_backend == OwnerBackend::BmmaBucket);
+        let mut oq = BoundedOwnerBytes::default();
+        check(unsafe {
+            mgbfs_bounded_owner_query(
+                candidates,
+                cfg.job_buckets,
+                cfg.bucket_capacity,
+                backend,
+                candidates,
+                tile_limit,
+                &mut oq,
+            )
+        })?;
+        append_query(
+            &mut owned_memory,
+            "owner",
+            &oq.report(candidates, cfg.job_buckets, cfg.bucket_capacity, backend)?,
+        )?;
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
@@ -548,8 +609,17 @@ impl DistributedNativeBfs {
             })?)
         };
         let hash_first = materialization_capacity
-            .map(|capacity| {
-                HashFirstStorage::new(graph, &contract, capacity, stride, cfg.layer_capacity, raw)
+            .zip(hash_first_ledger)
+            .map(|(capacity, ledger)| {
+                HashFirstStorage::new(
+                    graph,
+                    &contract,
+                    capacity,
+                    stride,
+                    cfg.layer_capacity,
+                    raw,
+                    ledger,
+                )
             })
             .transpose()?;
         let route = Plan::new(mgbfs_route_destroy, |out, e| unsafe {
@@ -717,6 +787,7 @@ impl DistributedNativeBfs {
             collective_send: b("collective_send")?,
             collective_recv: b("collective_recv")?,
             shared_memory,
+            owned_memory,
         };
         result.all_max(0)?;
         Ok(result)

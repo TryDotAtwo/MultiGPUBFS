@@ -1,5 +1,48 @@
 use mgbfs_cuda::allocation::*;
 #[test]
+fn compact_generation5_query_can_feed_live_memory_plan() {
+    let g = GenerateBytes {
+        generators: 128,
+        packed_parents: 64,
+        products_s32: 128,
+        workspace: 0,
+        k: 16,
+        stride: 16,
+        rows: 8,
+        columns: 4,
+    };
+    let r = g.report(5).unwrap();
+    assert_eq!(r.allocations.iter().map(|x| x.bytes).sum::<u64>(), 320);
+    assert!(g.report(6).is_err());
+}
+#[test]
+fn owner_query_report_preserves_real_planes_and_rejects_wrong_backend_shape() {
+    use mgbfs_cuda::native_owner::BoundedOwnerBytes;
+    let q = BoundedOwnerBytes {
+        flags: 17,
+        indices: 68,
+        merged: 528,
+        refinement_errors: 12,
+    };
+    let r = q.report(17, 3, 11, 1).unwrap();
+    assert_eq!(
+        r.allocations
+            .iter()
+            .map(|x| (x.name.as_str(), x.bytes))
+            .collect::<Vec<_>>(),
+        vec![
+            ("flags", 17),
+            ("indices", 68),
+            ("merged", 528),
+            ("refinement_errors", 12)
+        ]
+    );
+    assert!(q.report(17, 3, 11, 0).is_err());
+    assert!(q.report(18, 3, 11, 1).is_err());
+    assert!(q.report(17, 3, 11, 2).is_err());
+    assert!(BoundedOwnerBytes::default().report(0, 0, 0, 0).is_err());
+}
+#[test]
 fn route_report_counts_shared_scratch_once_and_checks_query_identity() {
     assert_eq!(std::mem::size_of::<RouteBytes>(), 64);
     let q = RouteBytes {
@@ -77,7 +120,7 @@ fn abi_query_sizes_become_named_rank_ledger_inputs_without_recounting() {
         ]
     );
     assert!(GenerateBytes::default().report(0).is_err());
-    assert!(g.report(5).is_err());
+    assert!(g.report(6).is_err());
     assert!(HashBytes { reserved: 1, ..h }.report().is_err());
     assert!(HashBytes::default().report().is_err());
 }

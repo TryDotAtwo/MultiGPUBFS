@@ -3,6 +3,36 @@ use mgbfs_core::{
     rank_plan::{QueryAllocation, QueryResult},
     Result,
 };
+impl crate::native_owner::BoundedOwnerBytes {
+    pub fn report(self, i: u32, j: u32, k: u32, backend: u32) -> Result<QueryResult> {
+        let merged = u64::from(j)
+            .checked_mul(u64::from(k))
+            .and_then(|x| x.checked_mul(16));
+        if i == 0
+            || i > i32::MAX as u32
+            || j == 0
+            || j > i
+            || k == 0
+            || k > i32::MAX as u32
+            || backend > 1
+            || merged != Some(self.merged)
+            || self.flags != u64::from(i)
+            || self.indices != u64::from(i) * 4
+            || self.refinement_errors != if backend == 1 { u64::from(j) * 4 } else { 0 }
+        {
+            return Err("INVALID_OWNER_QUERY".into());
+        }
+        Ok(report(
+            format!("mgbfs_bounded_owner_query/v1;i={i};j={j};k={k};backend={backend}"),
+            [
+                ("flags", self.flags),
+                ("indices", self.indices),
+                ("merged", self.merged),
+                ("refinement_errors", self.refinement_errors),
+            ],
+        ))
+    }
+}
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct GenerateBytes {
@@ -97,7 +127,7 @@ impl RouteBytes {
 }
 impl GenerateBytes {
     pub fn report(self, variant: u32) -> Result<QueryResult> {
-        if variant > 4
+        if variant > 5
             || [self.generators, self.packed_parents, self.products_s32].contains(&0)
             || [self.k, self.stride, self.rows, self.columns].contains(&0)
         {

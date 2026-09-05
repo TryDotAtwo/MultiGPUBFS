@@ -16,6 +16,34 @@ fn shape() -> SharedBufferShape {
 }
 
 #[test]
+fn queried_storage_composition_keeps_alignment_and_rejects_duplicate_planes() {
+    use mgbfs_core::{
+        memory::AllocationLedger,
+        rank_plan::{QueryAllocation, QueryResult},
+    };
+    use mgbfs_runtime::distributed_memory::append_query;
+    let q = QueryResult {
+        source: "fixture actual query".into(),
+        allocations: vec![QueryAllocation {
+            name: "scratch".into(),
+            bytes: 257,
+            alignment: 256,
+        }],
+    };
+    let mut ledger = AllocationLedger::new(1024, 0).unwrap();
+    append_query(&mut ledger, "route", &q).unwrap();
+    assert_eq!(ledger.total(), 512);
+    assert_eq!(ledger.allocations[0].payload_bytes, 257);
+    assert!(append_query(&mut ledger, "route", &q).is_err());
+    assert!(append_query(&mut ledger, "", &q).is_err());
+    let q = QueryResult {
+        source: String::new(),
+        ..q
+    };
+    assert!(append_query(&mut ledger, "owner", &q).is_err());
+}
+
+#[test]
 fn physical_shared_planes_use_declared_strides_and_abi_sizes() {
     let ledger = shared_buffers(shape()).unwrap();
     let bytes = |name| {

@@ -1,5 +1,6 @@
 //! Actual shared Buffer allocations of the two-rank reference runtime.
 //! Excludes library plans, HASH_FIRST-only storage, NCCL and pinned archive.
+use mgbfs_core::rank_plan::QueryResult;
 use mgbfs_core::{memory::AllocationLedger, Result};
 use mgbfs_cuda::native_owner::{BucketJob, Control, Counts, Extent, Range, Ring};
 
@@ -84,4 +85,19 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
         l.add(name, count, stride, 256)?;
     }
     Ok(l)
+}
+
+/// Append real queried allocations without substituting architectural estimates.
+pub fn append_query(
+    ledger: &mut AllocationLedger,
+    prefix: &str,
+    query: &QueryResult,
+) -> Result<()> {
+    if prefix.is_empty() || query.source.trim().is_empty() {
+        return Err("MEMORY_QUERY_PROVENANCE".into());
+    }
+    for a in &query.allocations {
+        ledger.add(&format!("{prefix}.{}", a.name), a.bytes, 1, a.alignment)?;
+    }
+    Ok(())
 }
