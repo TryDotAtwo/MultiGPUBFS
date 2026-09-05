@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "2cccb5ccbaec31c9028b2f08b5a0ef5f58ef8b3a"
+SOURCE = "9f440a1ceff379f1c9df57fe97baa6ff98bd21c0"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 479_001_600
 BATCH = 262_144
@@ -69,6 +69,7 @@ def main():
     for capacity in CAPACITIES_PER_RANK:
         label = f"s12-capacity-{capacity}"
         run_env = dict(env, MGBFS_CAPACITY_MODE="max_per_rank",
+                       MGBFS_STATE_CODEC="permutation_u8",
                        MGBFS_BENCH_CAPACITY=str(capacity),
                        MGBFS_FUTURE_CAPACITY=str(capacity),
                        MGBFS_ARCHIVE_ROWS="1", MGBFS_ARCHIVE_SLOTS="2",

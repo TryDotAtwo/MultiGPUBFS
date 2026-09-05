@@ -7,7 +7,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "b23b0377713b1d82c72c44f20c7ac3a325f95e7c"
+SOURCE = "9f440a1ceff379f1c9df57fe97baa6ff98bd21c0"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 CARDINALITY = 39_916_800
 PER_RANK_CAPACITY = 8_000_000
@@ -63,6 +63,19 @@ def main():
     run(["cmake", "--build", str(build), "--parallel", "2"], "cuda-build", source)
     run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime",
          "--features", "cuda", "--example", "distributed_bench"], "rust-build", source)
+    run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-cuda",
+         "--features", "cuda", "--test", "generate", "compact_permutation_generation_matches_gather"], "compact-generation", source)
+    executables = [p for p in (source / "target/release/deps").glob("generate-*")
+                   if p.is_file() and os.access(p, os.X_OK) and p.suffix == ""]
+    if len(executables) != 1:
+        raise RuntimeError("AMBIGUOUS_GENERATION_TEST_BINARY")
+    for gpu in range(2):
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+            run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
+                 str(executables[0]), "compact_permutation_generation_matches_gather"],
+                f"compact-gpu{gpu}-{tool}", source)
+    env.pop("CUDA_VISIBLE_DEVICES", None)
     sys.path.insert(0, str(source / "scripts"))
     bench = load(source / "scripts/distributed_gpu_bench.py", "bench")
     bootstrap = root / "bootstrap"
@@ -75,6 +88,7 @@ def main():
         MGBFS_ARCHIVE_ROWS=str(ARCHIVE_ROWS),
         MGBFS_ARCHIVE_SLOTS=str(ARCHIVE_SLOTS),
         MGBFS_ARCHIVE_CODEC="permutation_u8",
+        MGBFS_STATE_CODEC="permutation_u8",
     )
     command = [
         "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
