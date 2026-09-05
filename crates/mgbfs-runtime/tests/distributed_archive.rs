@@ -525,6 +525,33 @@ fn archive_fixture_backend(
     prededup: bool,
     bmma: bool,
 ) {
+    archive_fixture_generator(compact, hash_first, seed, owners, prededup, bmma, false);
+}
+
+#[test]
+fn tensor_hash_first_preserves_archived_layers_with_both_owner_backends() {
+    for bmma in [false, true] {
+        archive_fixture_generator(
+            false,
+            true,
+            20260828u128.to_le_bytes(),
+            [1, 0],
+            true,
+            bmma,
+            true,
+        );
+    }
+}
+
+fn archive_fixture_generator(
+    compact: bool,
+    hash_first: bool,
+    seed: [u8; 16],
+    owners: [u32; 2],
+    prededup: bool,
+    bmma: bool,
+    tensor_generation: bool,
+) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -554,7 +581,22 @@ fn archive_fixture_backend(
                     prededup,
                     generation_variant: if compact { 5 } else { 1 },
                 };
-                let mut bfs = if bmma {
+                let mut bfs = if tensor_generation {
+                    DistributedNativeBfs::new_hash_first_tc_with_owner(
+                        &g,
+                        seed,
+                        id,
+                        cfg,
+                        64,
+                        if bmma {
+                            mgbfs_core::config::OwnerBackend::BmmaBucket
+                        } else {
+                            mgbfs_core::config::OwnerBackend::CubSortMerge
+                        },
+                        256,
+                    )
+                    .unwrap()
+                } else if bmma {
                     DistributedNativeBfs::new_reference_with_owner(
                         &g,
                         seed,

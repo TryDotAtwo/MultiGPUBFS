@@ -263,6 +263,7 @@ pub struct DistributedNativeBfs {
     generate: Option<Plan>,
     hash: Option<Plan>,
     hash_first: Option<HashFirstStorage>,
+    hash_first_tensor_generation: bool,
     archive_hash: Plan,
     route: Plan,
     owner: Plan,
@@ -315,7 +316,16 @@ impl DistributedNativeBfs {
         id: [u8; 128],
         cfg: DistributedConfig,
     ) -> Result<Self> {
-        Self::new_profile(graph, seed, id, cfg, None, OwnerBackend::CubSortMerge, 256)
+        Self::new_profile(
+            graph,
+            seed,
+            id,
+            cfg,
+            None,
+            OwnerBackend::CubSortMerge,
+            256,
+            false,
+        )
     }
     /// Explicit scalar CUDA HASH_FIRST reference; never silently uses DENSE.
     pub fn new_hash_first_reference(
@@ -333,6 +343,7 @@ impl DistributedNativeBfs {
             Some(materialization_capacity),
             OwnerBackend::CubSortMerge,
             256,
+            false,
         )
     }
     /// Explicit fixed owner policy; HASH_FIRST is selected by a nonzero
@@ -354,6 +365,29 @@ impl DistributedNativeBfs {
             materialization_capacity,
             owner,
             tile_limit,
+            false,
+        )
+    }
+    /// Explicit experimental Tensor Core generation; hash projection still
+    /// uses register reductions. No profile change or extra state allocation.
+    pub fn new_hash_first_tc_with_owner(
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: u32,
+        owner: OwnerBackend,
+        tile_limit: u32,
+    ) -> Result<Self> {
+        Self::new_profile(
+            graph,
+            seed,
+            id,
+            cfg,
+            Some(materialization_capacity),
+            owner,
+            tile_limit,
+            true,
         )
     }
     fn new_profile(
@@ -364,6 +398,7 @@ impl DistributedNativeBfs {
         materialization_capacity: Option<u32>,
         owner_backend: OwnerBackend,
         tile_limit: u32,
+        hash_first_tensor_generation: bool,
     ) -> Result<Self> {
         graph.validate()?;
         if let Some(capacity) = materialization_capacity {
@@ -608,6 +643,7 @@ impl DistributedNativeBfs {
             generate,
             hash,
             hash_first,
+            hash_first_tensor_generation,
             archive_hash,
             route,
             owner,
@@ -1130,7 +1166,12 @@ impl DistributedNativeBfs {
                     .map(|e| (e.sequence + extent_offset, e.begin + extent_offset))
                     .unwrap_or((0, 0));
                 unsafe {
-                    check(mgbfs_generate_hash_only(
+                    let generate = if self.hash_first_tensor_generation {
+                        mgbfs_generate_hash_only_tc
+                    } else {
+                        mgbfs_generate_hash_only
+                    };
+                    check(generate(
                         h.n,
                         self.moves,
                         h.modulus,
