@@ -8,10 +8,11 @@ from pathlib import Path
 import sys
 
 import pyarrow.parquet as pq
+import pyarrow as pa
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.stream_hf_archive import ArchiveStream, HubStagingSink, LocalStagingSink
+from scripts.stream_hf_archive import ArchiveStream, HubStagingSink, LocalStagingSink, STATE_SCHEMA
 
 
 def frame(chain, sequence, kind, depth, count, payload=b""):
@@ -34,6 +35,21 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_stream_metadata_stays_dictionary_encoded_until_writer(self):
+        class Sink:
+            table = None
+            def add_batch(self, table):
+                self.table = table
+            def complete(self, result):
+                pass
+        sink = Sink()
+        ArchiveStream('r1', 'fixture', 0, sink).consume(io.BytesIO(complete_archive()))
+        for name, value in [('run_id', 'r1'), ('group_id', 'fixture'),
+                            ('config_digest', bytes(range(32)).hex())]:
+            column = sink.table.column(name)
+            self.assertTrue(pa.types.is_dictionary(column.type))
+            self.assertEqual(column.to_pylist(), [value, value])
+
     def test_consumer_metrics_survive_truncated_stream(self):
         with tempfile.TemporaryDirectory() as folder:
             sink = LocalStagingSink(folder, 8, 2)
@@ -194,11 +210,13 @@ class StreamArchive(unittest.TestCase):
                 self.preuploads = []
                 self.decoded = []
                 self.unique_encodings = []
+                self.schemas = []
 
             def preupload_lfs_files(self, **kwargs):
                 for operation in kwargs['additions']:
                     payload = operation.path_or_fileobj.read()
                     parquet = pq.ParquetFile(io.BytesIO(payload))
+                    self.schemas.append(parquet.schema_arrow)
                     self.decoded.extend(parquet.read().to_pylist())
                     self.unique_encodings.extend(
                         parquet.metadata.row_group(0).column(i).encodings for i in (5, 6, 7))
@@ -234,6 +252,7 @@ class StreamArchive(unittest.TestCase):
             self.assertTrue(all(op.path_in_repo.startswith('pending/run-r1/') for op in api.calls[0]['operations']))
             self.assertTrue(api.assert_payload)
             self.assertTrue(api.assert_buffered)
+            self.assertTrue(all(schema == STATE_SCHEMA for schema in api.schemas))
             rows = sorted(api.decoded, key=lambda row: row['rank_ordinal'])
             self.assertEqual([row['state'] for row in rows], [bytes([1, 0, 0, 1]), bytes([1, 1, 0, 1])])
             self.assertEqual([row['hash128_le'] for row in rows], [bytes(range(16)), bytes(range(16, 32))])

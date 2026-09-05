@@ -33,6 +33,15 @@ STATE_SCHEMA = pa.schema([
     ("state", pa.binary()),
     ("hash128_le", pa.binary(16)),
 ])
+COMPACT_SCHEMA = pa.schema([
+    pa.field(field.name, pa.dictionary(pa.int8(), pa.string()))
+    if field.name in ('run_id', 'group_id', 'config_digest') else field
+    for field in STATE_SCHEMA
+])
+
+def _constant_string(value, count):
+    return pa.DictionaryArray.from_arrays(
+        pa.repeat(pa.scalar(0, pa.int8()), count), pa.array([value], pa.string()))
 
 
 def _read_exact(source, size):
@@ -171,7 +180,7 @@ class HubStagingSink:
         self.add_batch(pa.Table.from_pylist([row], STATE_SCHEMA))
 
     def add_batch(self, table):
-        if table.schema != STATE_SCHEMA:
+        if table.schema != STATE_SCHEMA and table.schema != COMPACT_SCHEMA:
             table = table.cast(STATE_SCHEMA)
         offset = 0
         while offset < table.num_rows:
@@ -243,6 +252,9 @@ class HubStagingSink:
                 table,
                 writer,
                 compression="zstd",
+                # Physical Arrow dictionaries are an internal representation;
+                # readers retain the original plain-string logical schema.
+                store_schema=False,
                 # These columns repeat. State, hash and ordinal are unique:
                 # avoid building dictionaries that immediately fall back.
                 use_dictionary=["run_id", "group_id", "config_digest", "rank", "depth"],
@@ -421,16 +433,16 @@ class ArchiveStream:
                 )
                 table = pa.Table.from_arrays(
                     [
-                        pa.repeat(pa.scalar(self.run_id), count),
-                        pa.repeat(pa.scalar(self.group_id), count),
-                        pa.repeat(pa.scalar(config_digest), count),
+                        _constant_string(self.run_id, count),
+                        _constant_string(self.group_id, count),
+                        _constant_string(config_digest, count),
                         pa.repeat(pa.scalar(self.rank, pa.uint32()), count),
                         pa.repeat(pa.scalar(depth, pa.uint32()), count),
                         pa.array(np.arange(ordinal, ordinal + count, dtype=np.uint64)),
                         states,
                         hashes,
                     ],
-                    schema=STATE_SCHEMA,
+                    schema=COMPACT_SCHEMA,
                 )
                 self.timings['arrow_seconds'] += time.perf_counter() - started
                 started = time.perf_counter()
