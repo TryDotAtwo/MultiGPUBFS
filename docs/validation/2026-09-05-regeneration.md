@@ -109,3 +109,15 @@ are agreed by the caller; source leases last through completion; responses
 cannot be published on group fatal. The two-device fixture covers asymmetric
 counts, one empty rank, both empty ranks, and an invalid request poisoning both.
 This stage is not yet connected to the exhaustive BFS scheduler.
+
+V14 completed: five Rust fixtures passed plain and all four sanitizer tools,
+including native NCCL request/response epochs with empty peers and group fatal.
+Evidence: `test_results/distributed-sanitizer-v14/distributed-sanitizer/`.
+Six CPU hash_first_lease/receipts tests also passed; those are lifetime oracles,
+not evidence that the exhaustive native scheduler enforces them yet.
+
+V15 RED at `bc247559ff9ce1eda2cf5b3a70715073c01f9833` requires complete target
+coverage before state publication: reversed responses become dense writes into
+a wrapped ring extent, whereas duplicate/missing/foreign targets or group fatal
+leave all states untouched and StateReady unset. Planned reuse: CUB target sort
+and the already validated dense state materializer, without a second scratch.
