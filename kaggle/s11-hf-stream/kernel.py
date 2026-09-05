@@ -13,15 +13,15 @@ from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
 
-SOURCE = "971ab50ec529711e0d9707242468e1493e9675c3"
+SOURCE = "75c4f01c5b8867227434d60a6f36de7fc9a77130"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 REPO_ID = "TryDotAtwo/multigpubfs-bfs-results"
 GROUP = "s13"
 CARDINALITY = 6_227_020_800
-PER_RANK_CAPACITY = 160_000_000
+PER_RANK_CAPACITY = 220_000_000
 BATCH = 262_144
 ARCHIVE_ROWS = 262_144
-ARCHIVE_SLOTS = 96
+ARCHIVE_SLOTS = 256
 
 
 def load(path, name):
@@ -132,6 +132,7 @@ def main():
             MGBFS_ARCHIVE_STREAM="1",
             MGBFS_ARCHIVE_CODEC="permutation_u8",
             MGBFS_STATE_CODEC="permutation_u8",
+            MGBFS_TRACE_DEPTHS="1",
         )
         command = [
             "torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
