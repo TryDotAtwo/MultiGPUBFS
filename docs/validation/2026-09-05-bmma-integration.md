@@ -25,3 +25,12 @@ satisfy the backend contract, even if a small tile test passed. Refined ranges
 must be flat, preallocated and bounded; identical full hashes need segmented
 reduction. No fallback to CUB under the BMMA backend name. Default remains CUB
 until measured end-to-end evidence supports changing it.
+
+RED confirmed on Kaggle `trydotatwo/mgbfs-bmma-owner-gate` v1 at cdb0fd4:
+both CUDA translation units compile, then linkage fails at both calls to
+missing `mgbfs_bounded_owner_create_backend`. The same fixture exercises
+category precedence, stable survivor indices, accepted merge, repeat-job
+deduplication, invalid ranges and insufficient grants/capacity. Evidence:
+`test_results/bmma-owner-v1/bmma-owner/build.log`. This establishes the missing
+implementation, not GPU BMMA correctness. The separate v19 distributed gate
+continues independently; no active run was restarted for this RED check.
