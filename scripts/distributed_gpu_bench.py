@@ -3,6 +3,31 @@ import argparse,gc,json,os,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 
+class ProgressRelay:
+ """Bounded, read-only tail of depth telemetry; retain the full log on disk."""
+ def __init__(self,source,output):
+  self.source=source;self.output=output;self.offset=0;self.pending=b'';self.dropping=False
+
+ def emit(self,line):
+  if line.startswith((b'MGBFS_DEPTH_',b'DISTRIBUTED_BENCH_INCOMPLETE')):
+   print(line.decode('utf-8',errors='replace'),file=self.output,flush=True)
+
+ def poll(self,final=False):
+  while True:
+   self.source.seek(self.offset);chunk=self.source.read(65536);self.offset+=len(chunk)
+   parts=chunk.split(b'\n')
+   for index,part in enumerate(parts):
+    if not self.dropping:
+     if len(self.pending)+len(part)>4096:self.pending=b'';self.dropping=True
+     else:self.pending+=part
+    if index<len(parts)-1:
+     if not self.dropping:self.emit(self.pending)
+     self.pending=b'';self.dropping=False
+   if not final or not chunk:break
+  if final:
+   if self.pending and not self.dropping:self.emit(self.pending)
+   self.pending=b'';self.dropping=False
+
 def baseline_worker(n,batch,out):
  import numpy as np,torch,torch.distributed as dist
  from cayleypy import CayleyGraph,CayleyGraphDef
@@ -18,16 +43,19 @@ def baseline_worker(n,batch,out):
 def run_group(command,out,label,env,timeout=7200):
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
- with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi:
+ with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi,(out/(label+'.log')).open('rb') as progress:
+  relay=ProgressRelay(progress,sys.stdout)
   sampler=subprocess.Popen(['stdbuf','-oL','nvidia-smi','--query-gpu=timestamp,index,uuid,memory.used,utilization.gpu,utilization.memory,clocks.sm,power.draw','--format=csv,noheader,nounits','-lms','50'],stdout=smi,stderr=subprocess.STDOUT)
   try:
    process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT);started=time.monotonic()
    while process.poll() is None:
     try:process.wait(timeout=20)
     except subprocess.TimeoutExpired:
+     relay.poll()
      print(f'RUNNING {label}: {time.monotonic()-started:.0f}s',flush=True)
      if time.monotonic()-started>timeout:process.kill();process.wait();row['status']='TIMEOUT';break
    row['exit_code']=process.returncode
+   relay.poll(final=True)
   finally:sampler.terminate();sampler.wait()
  if row['exit_code']==0:
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')];ranks.sort(key=lambda x:x['rank'])
