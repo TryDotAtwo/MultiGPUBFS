@@ -1,5 +1,5 @@
 //! Fixed pinned-slot disk queue. Exhaustion is fatal, never producer backpressure.
-use crate::archive::{Archive, Extent};
+use crate::archive::{Archive, ArchiveRingPlan, Extent};
 use mgbfs_core::Result;
 use mgbfs_cuda::{
     ffi::{cudaEventCreateWithFlags, cudaEventDestroy},
@@ -71,32 +71,23 @@ impl PinnedArchive {
         rows: u32,
         slots: usize,
     ) -> Result<Self> {
-        if rows == 0 || slots < 2 {
-            return Err("ARCHIVE_RING_SHAPE".into());
-        }
-        let bytes = width
-            .checked_add(16)
-            .and_then(|v| v.checked_mul(rows as usize))
-            .ok_or("ARCHIVE_PIN_OVERFLOW")?;
-        let pinned_bytes = bytes.checked_mul(slots).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+        let plan = ArchiveRingPlan::new(width, rows, slots)?;
+        let bytes = plan.slot_bytes;
+        let pinned_bytes = plan.pinned_bytes;
+        // Fail disk reservation/header validation before pinning host RAM.
+        let mut archive = Archive::new_run_durable(extent, disk_bytes, width, config_digest)?;
         let (free_tx, free) = mpsc::sync_channel(slots);
         for _ in 0..slots {
             free_tx
                 .try_send(Slot::new(bytes)?)
                 .map_err(|_| "ARCHIVE_INIT_QUEUE")?;
         }
-        let mut archive = Archive::new_run_durable(extent, disk_bytes, width, config_digest)?;
         let mut device = 0;
         let status = unsafe { cudaGetDevice(&mut device) };
         if status != 0 {
             return Err(format!("ARCHIVE_GET_DEVICE_{status}"));
         }
-        let (tx, rx) = mpsc::sync_channel(
-            slots
-                .checked_mul(2)
-                .and_then(|n| n.checked_add(2))
-                .ok_or("ARCHIVE_QUEUE_OVERFLOW")?,
-        );
+        let (tx, rx) = mpsc::sync_channel(plan.descriptor_capacity);
         let worker = std::thread::Builder::new()
             .name("mgbfs-archive".into())
             .spawn(move || {

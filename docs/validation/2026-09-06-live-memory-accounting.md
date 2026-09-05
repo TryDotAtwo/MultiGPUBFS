@@ -51,3 +51,12 @@ communicator establishment and unexpected CUDA/NCCL failures are not thereby
 proved coordinated. Admission does not reserve resources against other GPU
 processes or account for future driver/NCCL allocations; pinned/disk admission
 and complete rank startup protocol remain separate unfinished requirements.
+
+Archive startup now derives `ArchiveRingPlan` (slot bytes, total pinned payload,
+descriptor count) with checked arithmetic and validates width before allocating
+slots. Physical disk extent reservation/header initialization precedes pinned
+host allocation, so ENOSPC is not discovered only after pinning the full ring.
+Nine CPU archive tests pass, including the new ring geometry cases, and the
+CUDA runtime Rust check passes. This does not query Kaggle's platform quota or
+the OS pinned-memory allowance, and this archive-order change still needs its
+next hardware gate.

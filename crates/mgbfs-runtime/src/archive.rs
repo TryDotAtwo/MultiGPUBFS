@@ -3,6 +3,36 @@ use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::time::Instant;
 
+#[derive(Clone, Copy, Debug)]
+pub struct ArchiveRingPlan {
+    pub slot_bytes: usize,
+    pub pinned_bytes: usize,
+    pub descriptor_capacity: usize,
+}
+impl ArchiveRingPlan {
+    pub fn new(width: usize, rows: u32, slots: usize) -> Result<Self> {
+        if !(1..=33025).contains(&width) || rows == 0 || slots < 2 {
+            return Err("ARCHIVE_RING_SHAPE".into());
+        }
+        let slot_bytes = width
+            .checked_add(16)
+            .and_then(|x| x.checked_mul(rows as usize))
+            .ok_or("ARCHIVE_PIN_OVERFLOW")?;
+        let pinned_bytes = slot_bytes
+            .checked_mul(slots)
+            .ok_or("ARCHIVE_PIN_OVERFLOW")?;
+        let descriptor_capacity = slots
+            .checked_mul(2)
+            .and_then(|x| x.checked_add(2))
+            .ok_or("ARCHIVE_QUEUE_OVERFLOW")?;
+        Ok(Self {
+            slot_bytes,
+            pinned_bytes,
+            descriptor_capacity,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ArchiveTimings {
     pub checksum_seconds: f64,

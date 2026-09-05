@@ -1,4 +1,22 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
+
+#[test]
+fn archive_ring_plan_checks_all_storage_before_allocating_slots() {
+    use mgbfs_runtime::archive::ArchiveRingPlan;
+    let p = ArchiveRingPlan::new(11, 16384, 4).unwrap();
+    assert_eq!(p.slot_bytes, 442368);
+    assert_eq!(p.pinned_bytes, 1769472);
+    assert_eq!(p.descriptor_capacity, 10);
+    for (width, rows, slots) in [
+        (0, 1, 2),
+        (11, 0, 2),
+        (11, 1, 1),
+        (usize::MAX, 1, 2),
+        (11, 1, usize::MAX),
+    ] {
+        assert!(ArchiveRingPlan::new(width, rows, slots).is_err());
+    }
+}
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex},
