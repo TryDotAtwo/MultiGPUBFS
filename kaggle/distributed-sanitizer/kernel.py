@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "c042c2147840ca3440e7affbf9e024e86c7e7530"
+SOURCE = "a906232e949d672204ad8fe5137aafa9d317eefb"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -125,6 +125,14 @@ def main():
             if "1 passed; 0 failed" not in macro_output:
                 raise RuntimeError("MACRO_SOURCE_FIXTURE_NOT_PASSED")
             require_clean(tool, macro_output)
+            archive_cmd = [macro_binaries[0], "native_macro_archive_is_complete_and_verifiable",
+                           "--exact", "--test-threads=1", "--nocapture"]
+            if tool != "plain":
+                archive_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + archive_cmd
+            archive_output = run(archive_cmd, "macro-archive-" + tool, source)
+            if "1 passed; 0 failed" not in archive_output:
+                raise RuntimeError("MACRO_ARCHIVE_FIXTURE_NOT_PASSED")
+            require_clean(tool, archive_output)
             report["tests"].append({"tool": tool, "status": "PASS"})
             save()
         # Exercise the actual process-launcher/benchmark selection, not just
@@ -144,7 +152,7 @@ def main():
                                MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
                                MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
                                MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
-                               MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="1")
+                               MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
                     prefix = root / (label + "-archive")
                     run(["torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
                          str(source / "target/release/examples/distributed_bench"), "s4", "7",
