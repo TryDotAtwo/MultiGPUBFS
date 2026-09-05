@@ -1,6 +1,9 @@
 #![cfg(feature = "cuda")]
 //! Requires two real CUDA devices; run this test alone, with --test-threads=1.
-use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup};
+use mgbfs_core::{
+    hash::GemmHash,
+    matrix::{encode_permutation_matrix, MatrixGroup},
+};
 use mgbfs_runtime::{
     archive::{verify, Extent},
     distributed_native::{DistributedConfig, DistributedNativeBfs},
@@ -25,6 +28,17 @@ impl Extent for Disk {
 
 #[test]
 fn parent_batch_archive_preserves_full_layers_and_hashes_on_two_devices() {
+    archive_fixture(false);
+}
+
+#[test]
+fn compact_permutation_archive_preserves_full_layers_and_hashes_on_two_devices() {
+    archive_fixture(true);
+}
+
+fn archive_fixture(compact: bool) {
+    let width = if compact { 4 } else { 9 };
+    let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
     assert_eq!(
         unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
@@ -33,26 +47,30 @@ fn parent_batch_archive_preserves_full_layers_and_hashes_on_two_devices() {
     let workers: Vec<_> = (0..2)
         .map(|rank| {
             std::thread::spawn(move || {
-                let g = MatrixGroup::unitriangular(3, 3).unwrap();
+                let g = if compact {
+                    MatrixGroup::symmetric_permutation_matrices(4).unwrap()
+                } else {
+                    MatrixGroup::unitriangular(3, 3).unwrap()
+                };
                 let cfg = DistributedConfig {
                     rank,
                     world: 2,
                     logical_owner_to_rank: [1, 0],
                     batch: 7,
-                    layer_capacity: 27,
-                    state_ring_capacity: 27,
+                    layer_capacity: capacity,
+                    state_ring_capacity: capacity,
                     buckets: 8,
                     shards: 2,
                     job_buckets: 2,
-                    bucket_capacity: 27,
+                    bucket_capacity: capacity,
                     prededup: true,
-                    generation_variant: 1,
+                    generation_variant: if compact { 5 } else { 1 },
                 };
                 let mut bfs = DistributedNativeBfs::new(&g, [0; 16], id, cfg).unwrap();
                 let data = Arc::new(Mutex::new(Vec::new()));
                 // Archive rows deliberately smaller than a compute batch.
                 let mut archive =
-                    PinnedArchive::new(Disk(data.clone()), 100_000, 9, [0; 32], 3, 64).unwrap();
+                    PinnedArchive::new(Disk(data.clone()), 100_000, width, [0; 32], 3, 64).unwrap();
                 while bfs.advance_archived(&mut archive).unwrap() {}
                 archive.finish().unwrap();
                 let bytes = data.lock().unwrap().clone();
@@ -61,10 +79,22 @@ fn parent_batch_archive_preserves_full_layers_and_hashes_on_two_devices() {
             })
         })
         .collect();
-    let g = MatrixGroup::unitriangular(3, 3).unwrap();
-    let expected = g.exact_layers(27).unwrap();
+    let g = if compact {
+        MatrixGroup::symmetric_permutation_matrices(4).unwrap()
+    } else {
+        MatrixGroup::unitriangular(3, 3).unwrap()
+    };
+    let mut expected = g.exact_layers(capacity as usize).unwrap();
+    if compact {
+        for layer in &mut expected {
+            for state in layer.iter_mut() {
+                *state = encode_permutation_matrix(state, 4).unwrap();
+            }
+            layer.sort();
+        }
+    }
     let mut actual = vec![Vec::new(); expected.len()];
-    let hash = GemmHash::from_seed(9, [0; 16]).unwrap();
+    let hash = GemmHash::from_seed(width, [0; 16]).unwrap();
     for worker in workers {
         let data = worker.join().unwrap();
         let mut at = 48;
@@ -79,10 +109,10 @@ fn parent_batch_archive_preserves_full_layers_and_hashes_on_two_devices() {
                 assert!(count <= 3);
                 let payload = &data[at + 80..at + 80 + size];
                 for row in 0..count {
-                    let state = &payload[row * 9..(row + 1) * 9];
+                    let state = &payload[row * width..(row + 1) * width];
                     assert_eq!(
                         hash.hash(state).unwrap().to_le_bytes(),
-                        payload[count * 9 + row * 16..count * 9 + (row + 1) * 16]
+                        payload[count * width + row * 16..count * width + (row + 1) * 16]
                     );
                     actual[depth].push(state.to_vec());
                 }
