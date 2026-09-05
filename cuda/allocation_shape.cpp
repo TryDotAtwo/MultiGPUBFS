@@ -5,11 +5,12 @@ static_assert(sizeof(MgbfsHashBytes)==40);
 int generation_shape(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,uint32_t variant,MgbfsGenerateBytes* out) {
   if(!out)return 1;
   *out={};
-  if(variant>4||(variant==4&&n!=4)||n==0||uint64_t(n)*n>33025||moves==0||moves>65535||modulus<2||modulus>256||capacity==0||uint64_t(capacity)*n>INT32_MAX-3||uint64_t(n)*(modulus-1)*(modulus-1)>INT32_MAX)return 1;
+  if(variant>5||(variant==4&&n!=4)||(variant==5&&n>256)||n==0||uint64_t(n)*n>33025||moves==0||moves>65535||modulus<2||modulus>256||capacity==0||uint64_t(capacity)*n>INT32_MAX-3||uint64_t(n)*(modulus-1)*(modulus-1)>INT32_MAX)return 1;
   MgbfsGenerateBytes q{};
   q.k=(n+15)&~15u;q.stride=(n*n+15)&~15u;
   q.rows=variant?((moves*n+3)&~3u):moves*n;
   q.columns=(capacity*n+3)&~3u;
+  if(variant==5){q.stride=(n+15)&~15u;q.columns=(capacity+3)&~3u;}
   // Validated factors above bound every product below UINT64_MAX.
   q.generators=uint64_t(q.rows)*q.k;
   q.packed_parents=uint64_t(q.columns)*q.k;

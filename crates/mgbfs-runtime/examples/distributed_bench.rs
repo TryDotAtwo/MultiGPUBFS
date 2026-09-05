@@ -119,12 +119,22 @@ fn run() -> Result<()> {
     // Archive config identity is cluster-wide.  Rank is already carried by the
     // stream frames; including it here prevents otherwise compatible rank
     // archives from being atomically combined.
+    let compact_states = match std::env::var("MGBFS_STATE_CODEC").as_deref() {
+        Ok("permutation_u8") => true,
+        Ok("matrix_u8") | Err(_) => false,
+        _ => return Err("STATE_CODEC".into()),
+    };
     let archive_width = match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
         Ok("permutation_u8") => n,
+        Err(_) if compact_states => n,
         Ok("matrix_u8") | Err(_) => graph.start.len(),
         _ => return Err("ARCHIVE_CODEC".into()),
     };
+    if compact_states && archive_width != n {
+        return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
+    }
     let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
+    let description = format!("{description};compact_states={compact_states}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let disk_bytes = graph
@@ -171,7 +181,7 @@ fn run() -> Result<()> {
                 capacity.div_ceil(128).saturating_add(4096),
             ),
             prededup: true,
-            generation_variant: 1,
+            generation_variant: if compact_states { 5 } else { 1 },
         },
     )?;
     let allocated = used()?;

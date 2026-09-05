@@ -216,8 +216,6 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_CONFIG".into());
         }
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
-        let width = graph.start.len();
-        let stride = (width + 15) & !15;
         let permutation_n = encode_permutation_matrix(&graph.start, graph.rows)
             .ok()
             .filter(|_| {
@@ -227,6 +225,16 @@ impl DistributedNativeBfs {
                     .all(|g| encode_permutation_matrix(g, graph.rows).is_ok())
             })
             .map(|_| graph.rows as u32);
+        let start_state = if cfg.generation_variant == 5 {
+            if permutation_n.is_none() {
+                return Err("COMPACT_REQUIRES_PERMUTATION_GROUP".into());
+            }
+            encode_permutation_matrix(&graph.start, graph.rows)?
+        } else {
+            graph.start.clone()
+        };
+        let width = start_state.len();
+        let stride = (width + 15) & !15;
         let moves = graph.generators.len() as u32;
         let candidates = cfg.batch.checked_mul(moves).ok_or("CANDIDATE_OVERFLOW")?;
         if candidates > i32::MAX as u32 {
@@ -308,13 +316,13 @@ impl DistributedNativeBfs {
         let states = b(state_bytes)?;
         let prev = b(cfg.layer_capacity as usize * 16)?;
         let curr = b(cfg.layer_capacity as usize * 16)?;
-        let start_hash = contract.hash(&graph.start)?;
+        let start_hash = contract.hash(&start_state)?;
         let start_owner = (start_hash.0[3] >> 31) as usize;
         let start_rank = cfg.logical_owner_to_rank[start_owner];
         let current_count = (start_rank == cfg.rank) as u32;
         if current_count == 1 {
             let mut start = vec![0u8; stride];
-            start[..width].copy_from_slice(&graph.start);
+            start[..width].copy_from_slice(&start_state);
             states.put(&start)?;
             curr.put(&[start_hash.to_le_bytes()])?;
         }
@@ -851,7 +859,7 @@ impl DistributedNativeBfs {
                         n,
                         s,
                     ))?;
-                    if compact_permutation {
+                    if compact_permutation && self.width != archive.width {
                         check(mgbfs_archive_pack_permutation_u8(
                             archive.width as u32,
                             self.stride as u32,
@@ -881,7 +889,7 @@ impl DistributedNativeBfs {
                         ))?;
                     }
                     check(cudaMemcpyAsync(
-                        slot.ptr.cast::<u8>().add(n as usize * self.width).cast(),
+                        slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
                         self.archive_hashes.ptr,
                         n as usize * 16,
                         2,

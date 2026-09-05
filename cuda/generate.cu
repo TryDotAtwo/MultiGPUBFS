@@ -45,7 +45,7 @@ extern "C" int mgbfs_generate_query(uint32_t n,uint32_t moves,uint32_t modulus,u
   if(!out)return 1;*out={};MgbfsGenerateBytes q{};
   if(generation_shape(n,moves,modulus,capacity,variant,&q))return 1;
   const int status=variant==2?generation_workspace<MatrixGemm<128,32>>(q,true):
-    (variant==1||variant==4)?generation_workspace<MatrixGemm<64,32>>(q,true):
+    (variant==1||variant==4||variant==5)?generation_workspace<MatrixGemm<64,32>>(q,true):
     generation_workspace<MatrixGemm<64,64>>(q,variant!=0);
   if(status)return status;*out=q;return 0;
 }
@@ -58,6 +58,17 @@ __global__ void pack_parents(const uint8_t* input,uint8_t* packed,uint32_t n,uin
   packed[i]=(row<n&&parent<count)?input[size_t(parent)*stride+row*n+c]:0;
 }
 // Bounded materialization into parent-major / move-major canonical rows.
+__global__ void pack_compact(const uint8_t* input,uint8_t* packed,uint32_t n,uint32_t k,uint32_t stride,uint32_t columns,uint32_t count){
+  size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(i<size_t(columns)*k)packed[i]=(i/k<count&&i%k<n)?input[(i/k)*stride+i%k]:0;
+}
+__global__ void materialize_compact(const int32_t* products,uint8_t* output,uint32_t n,uint32_t moves,uint32_t stride,uint32_t rows,uint32_t count,bool move_major){
+  size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(i>=size_t(count)*moves*stride)return;
+  size_t child=i/stride;uint32_t byte=i%stride,parent=child/moves,move=child%moves;
+  size_t dst=move_major?size_t(move)*count+parent:child;
+  output[dst*stride+byte]=byte<n?uint8_t(products[size_t(parent)*rows+move*n+byte]):0;
+}
 // Zero padding makes this directly consumable by the following hash GEMM.
 template<bool Transposed,bool MoveMajor>
 __global__ void modular_materialize(const int32_t* products,uint8_t* output,uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t columns,uint32_t generator_rows,uint32_t count){
@@ -102,6 +113,20 @@ extern "C" int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t 
     auto p=std::make_unique<GeneratePlan>();p->n=n;p->moves=moves;p->modulus=modulus;p->capacity=capacity;p->k=bytes.k;p->stride=bytes.stride;
     p->variant=variant;p->max_grid_x=prop.maxGridSize[0];p->max_grid_y=prop.maxGridSize[1];
     p->generator_rows=bytes.rows;
+    if(variant==5){
+      for(uint32_t move=0;move<moves;++move){
+        std::vector<bool> used(n,false);
+        for(uint32_t row=0;row<n;++row){
+          unsigned ones=0;
+          for(uint32_t col=0;col<n;++col){
+            auto v=generators[(size_t(move)*n+row)*n+col];
+            if(v>1)throw std::runtime_error("NOT_PERMUTATION_GENERATOR");
+            if(v){if(used[col])throw std::runtime_error("NOT_PERMUTATION_GENERATOR");used[col]=true;++ones;}
+          }
+          if(ones!=1)throw std::runtime_error("NOT_PERMUTATION_GENERATOR");
+        }
+      }
+    }
     std::vector<uint8_t> stacked(bytes.generators,0);
     for(size_t row=0;row<size_t(moves)*n;++row)for(uint32_t c=0;c<n;++c){
       if(generators[row*n+c]>=modulus)throw std::runtime_error("GENERATOR_NONCANONICAL");
@@ -147,25 +172,28 @@ static int generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint
   if(!p||!parents||!children||count>p->capacity)return 1;
   if(count==0)return 0;
   auto stream=static_cast<cudaStream_t>(raw_stream);
-  const uint32_t columns=(count*p->n+3)&~3u;
+  const uint32_t columns=(count*(p->variant==5?1:p->n)+3)&~3u;
   const uint32_t tile_m=p->variant==2?128:64;
   const uint64_t grid_x=(uint64_t(p->variant?columns:p->generator_rows)+tile_m-1)/tile_m;
   const uint64_t grid_y=(uint64_t(p->variant?p->generator_rows:columns)+31)/32;
   if(grid_x>uint64_t(p->max_grid_x)||grid_y>uint64_t(p->max_grid_y))return 7;
   if(marks&&cudaEventRecord(static_cast<cudaEvent_t>(marks[0]),stream)!=cudaSuccess)return 8;
-  pack_parents<<<(size_t(columns)*p->k+255)/256,256,0,stream>>>(parents,p->parents,p->n,p->k,p->stride,columns,count);
+  if(p->variant==5)pack_compact<<<(size_t(columns)*p->k+255)/256,256,0,stream>>>(parents,p->parents,p->n,p->k,p->stride,columns,count);
+  else pack_parents<<<(size_t(columns)*p->k+255)/256,256,0,stream>>>(parents,p->parents,p->n,p->k,p->stride,columns,count);
   if(cudaGetLastError()!=cudaSuccess)return 2;
   if(marks&&cudaEventRecord(static_cast<cudaEvent_t>(marks[1]),stream)!=cudaSuccess)return 8;
   int status=0;
   switch(p->variant){
-    case 1:case 4:status=launch_gemm(p,p->gemm64k32,columns,stream);break;
+    case 1:case 4:case 5:status=launch_gemm(p,p->gemm64k32,columns,stream);break;
     case 2:status=launch_gemm(p,p->gemm128k32,columns,stream);break;
     default:status=launch_gemm(p,p->gemm64k64,columns,stream);break;
   }
   if(status)return status;
   if(marks&&cudaEventRecord(static_cast<cudaEvent_t>(marks[2]),stream)!=cudaSuccess)return 8;
   const size_t blocks=(size_t(count)*p->moves*p->stride+255)/256;
-  if(p->variant==4){
+  if(p->variant==5){
+    materialize_compact<<<blocks,256,0,stream>>>(p->products,children,p->n,p->moves,p->stride,p->generator_rows,count,p->move_major);
+  } else if(p->variant==4){
     if(p->move_major)materialize_u4_vectors<true><<<(size_t(count)*p->moves+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(p->products),reinterpret_cast<uint4*>(children),p->moves,p->modulus,count);
     else materialize_u4_vectors<false><<<(size_t(count)*p->moves+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(p->products),reinterpret_cast<uint4*>(children),p->moves,p->modulus,count);
   } else if(p->variant){
