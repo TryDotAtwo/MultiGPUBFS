@@ -96,3 +96,16 @@ and copies only the active records. Tests include UINT64_MAX as a real parent,
 duplicate-parent stability, mixed ranks, empty input, capacity overflow and
 sticky fatal. No request/target output may change on failure. V13 is the GPU
 gate; compilation of Rust bindings alone is not execution evidence.
+
+V13 completed, including stable origin sorting, with all four sanitizer tools
+clean. The first output download failed with transient TLS EOF; retry downloaded
+the same terminal run successfully, without rerunning computation. Evidence:
+`test_results/distributed-sanitizer-v13/distributed-sanitizer/`.
+
+V14 source `606b51cd7f347279be8afdc81bd8f6ca894dcbf2` adds native runtime
+`hash_first_exchange::enqueue_round_trip`: requests, regeneration, responses,
+and group-fatal reduction on one stream without allocation/host sync. Counts
+are agreed by the caller; source leases last through completion; responses
+cannot be published on group fatal. The two-device fixture covers asymmetric
+counts, one empty rank, both empty ranks, and an invalid request poisoning both.
+This stage is not yet connected to the exhaustive BFS scheduler.
