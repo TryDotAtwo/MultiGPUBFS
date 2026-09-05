@@ -57,3 +57,12 @@ two real T4s, but this leaf fixture executes on one device: this is single-GPU
 owner correctness, not multi-GPU BFS evidence. Downloaded artifacts:
 `test_results/bmma-owner-v2/bmma-owner/`. Next required gate is full archived
 DistributedNativeBfs using explicit BMMA selection with DENSE and HASH_FIRST.
+
+At f8f4b35, `new_reference_with_owner` freezes the existing OwnerBackend enum
+and BMMA tile limit before constructing the owner plan. Existing constructors
+remain CUB. HASH_FIRST capacity validation is shared by all constructors.
+The new full archived fixture was first compile-RED (missing constructor),
+then CUDA-feature cargo check passed after integration. Distributed gate v20
+pins this source and checks both profiles with BMMA, seed 20260828, owner map
+[0,1], pre-dedup OFF, plus the existing CUB/configuration/failure fixtures.
+GPU result is pending; no performance or complete-architecture claim.
