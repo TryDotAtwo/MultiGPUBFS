@@ -47,3 +47,18 @@ final combined notebook log on Windows; this is not a remote run failure.
 This validates actual preupload and promotion, not S13 sustained throughput.
 S13 editor reconfiguration was attempted but browser timed out: verify the
 draft and saved versions before launching, to avoid duplicate runs.
+
+## S13 v19 sustained-load failure
+
+Same source, S13/220M per rank/256 archive slots. FAILED at depth 35:
+native ARCHIVE_PIN_RING_FATAL, followed by ARCHIVE_TRUNCATED in both
+stream consumers. No HTTP 429 or upload failure is present in these
+streamer logs. This establishes that commit batching alone does not fix
+the archive throughput deficit. Both upload logs still report binary-IO
+Xet fallback to HTTP; this is not proof it is the limiting stage.
+
+Evidence: `test_results/hf-editor-v19/s11-hf-stream/`. No global promotion.
+Do not repeat this configuration or merely increase pinned slots again.
+Next measure the archive chain in isolation (native checksum/pipe write,
+Python validation/Arrow/Parquet, object upload) and its burst backlog;
+then introduce bounded disk staging if needed to decouple consumers.
