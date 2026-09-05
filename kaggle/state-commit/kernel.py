@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 
-SOURCE_COMMIT = "2cccb5ccbaec31c9028b2f08b5a0ef5f58ef8b3a"
+SOURCE_COMMIT = "446fe01f7ce53bd8799b90e7b0b3ff1d545842c1"
 
 def main():
     output = Path("/kaggle/working/state-commit-gate")
@@ -33,27 +33,29 @@ def main():
         run(["nvcc", "--version"], "nvcc")
         build = source / "owner-build"
         run(["cmake", "-S", str(source / "cuda"), "-B", str(build), "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_BUILD_TYPE=RelWithDebInfo"], "configure")
-        run(["cmake", "--build", str(build), "--target", "mgbfs-state-commit-test", "-j2"], "build")
+        run(["cmake", "--build", str(build), "--target", "mgbfs-state-commit-test", "mgbfs-archive-pack-test", "-j2"], "build")
         lock = threading.Lock()
         def worker(gpu):
             child_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
-            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
-                cmd = [str(build / "mgbfs-state-commit-test")]
-                if tool != "plain":
-                    cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
-                name = f"gpu{gpu['index']}-{tool}"
-                log = run(cmd, name, child_env)
-                if "STATE_COMMIT_PASS" not in log:
-                    raise RuntimeError("Missing test completion")
-                if tool == "racecheck":
-                    if "RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)" not in log:
-                        raise RuntimeError("Racecheck incomplete or nonzero")
-                elif tool != "plain" and "ERROR SUMMARY: 0 errors" not in log:
-                    raise RuntimeError("Sanitizer incomplete or nonzero")
-                with lock:
-                    summary["checks"].append({"gpu": gpu["index"], "uuid": gpu["uuid"], "tool": tool, "log": name + ".log"})
+            for binary, marker in (("mgbfs-state-commit-test", "STATE_COMMIT_PASS"),
+                                   ("mgbfs-archive-pack-test", "ARCHIVE_PACK_PASS")):
+                for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+                    cmd = [str(build / binary)]
+                    if tool != "plain":
+                        cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
+                    name = f"gpu{gpu['index']}-{binary}-{tool}"
+                    log = run(cmd, name, child_env)
+                    if marker not in log:
+                        raise RuntimeError("Missing test completion")
+                    if tool == "racecheck":
+                        if "RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)" not in log:
+                            raise RuntimeError("Racecheck incomplete or nonzero")
+                    elif tool != "plain" and "ERROR SUMMARY: 0 errors" not in log:
+                        raise RuntimeError("Sanitizer incomplete or nonzero")
+                    with lock:
+                        summary["checks"].append({"gpu": gpu["index"], "uuid": gpu["uuid"], "binary": binary, "tool": tool, "log": name + ".log"})
         helpers["run_gpu_suites"](gpus, worker)
-        if len(summary["checks"]) != 10:
+        if len(summary["checks"]) != 20:
             raise RuntimeError("Incomplete matrix")
         summary["status"] = "COMPLETE"
     except Exception as exc:
