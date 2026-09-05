@@ -68,3 +68,11 @@ V10 is the next RED gate at `80197900aabc2f6bbffe6f28e2ae1fce4a5d3a49`:
 post-commit request extraction must compact only selected origins, preserve
 their final absolute StateRefs, reject malformed indices before any output
 write, and leave Extent.ready unset while states remain unmaterialized.
+
+V10 RED confirmed: fixture compiled, linker reported only missing
+`mgbfs_state_build_requests` at the two calls. Downloaded evidence:
+`test_results/distributed-sanitizer-v10/distributed-sanitizer/requests-build.log`.
+Implementation `804642c38ff07ef052ff8039fd9b08ae469be5c3` reuses owner-stage,
+reserved-extent and selection validation before compacting requests. It emits
+absolute sequence StateRefs (not physical ring indices), leaves ready unset,
+and returns zero requests after fatal. V11 validates it under all four tools.
