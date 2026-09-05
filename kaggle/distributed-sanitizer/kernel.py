@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "cdde19980e41de6aa55ffe991929465435848cc5"
+SOURCE = "c042c2147840ca3440e7affbf9e024e86c7e7530"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -127,6 +127,41 @@ def main():
             require_clean(tool, macro_output)
             report["tests"].append({"tool": tool, "status": "PASS"})
             save()
+        # Exercise the actual process-launcher/benchmark selection, not just
+        # direct constructors. These tiny runs are correctness, not timing data.
+        run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
+             "--example", "distributed_bench"], "bench-build", source)
+        run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli"], "cli-build", source)
+        report["reference_profile_smoke"] = []
+        expected_layers = None
+        for profile in ("DENSE", "HASH_FIRST"):
+            for owner in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for pre in ("OFF", "ON"):
+                    label = f"smoke-{profile}-{owner}-{pre}"
+                    output_dir = logs / label
+                    output_dir.mkdir()
+                    env.update(MGBFS_PROFILE=profile, MGBFS_OWNER_BACKEND=owner, MGBFS_PRE_DEDUP=pre,
+                               MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
+                               MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                               MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
+                               MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="1")
+                    prefix = root / (label + "-archive")
+                    run(["torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
+                         str(source / "target/release/examples/distributed_bench"), "s4", "7",
+                         str(root / (label + "-bootstrap")), str(prefix), str(output_dir)], label, source)
+                    rows = [json.loads((output_dir / f"rank-{rank}.json").read_text()) for rank in range(2)]
+                    for rank, row in enumerate(rows):
+                        if (row["status"], row["frontier_profile"], row["owner_backend"], row["pre_dedup"], row["archive_enabled"]) != ("COMPLETE", profile, owner, pre, True):
+                            raise RuntimeError("PROFILE_SELECTION_MISMATCH")
+                        run([str(source / "target/release/mgbfs"), "verify", str(prefix) + f"-rank-{rank}.mgbfsar1"], label + f"-verify-{rank}", source)
+                    if len(rows[0]["local_layer_sizes"]) != len(rows[1]["local_layer_sizes"]):
+                        raise RuntimeError("PROFILE_DEPTH_MISMATCH")
+                    layers = [a + b for a, b in zip(rows[0]["local_layer_sizes"], rows[1]["local_layer_sizes"])]
+                    if sum(layers) != 24 or (expected_layers is not None and layers != expected_layers):
+                        raise RuntimeError("PROFILE_LAYER_MISMATCH")
+                    expected_layers = layers
+                    report["reference_profile_smoke"].append(dict(profile=profile, owner=owner, pre_dedup=pre, layers=layers, status="PASS"))
+                    save()
         report["status"] = "COMPLETE"
     except Exception as exc:
         report["error"] = str(exc)
