@@ -81,6 +81,7 @@ class StreamArchive(unittest.TestCase):
         )
         self.assertEqual(len(sink.batches), 1)
         self.assertEqual(sink.batches[0].num_rows, 2)
+        self.assertEqual(sink.batches[0].column("rank_ordinal").to_pylist(), [0, 1])
         self.assertEqual(
             sink.batches[0].column("state").to_pylist(),
             [bytes([1, 0, 0, 1]), bytes([1, 1, 0, 1])],

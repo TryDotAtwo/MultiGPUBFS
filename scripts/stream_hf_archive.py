@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import numpy as np
 
 
 STATE_SCHEMA = pa.schema([
@@ -377,7 +378,7 @@ class ArchiveStream:
                         pa.repeat(pa.scalar(config_digest), count),
                         pa.repeat(pa.scalar(self.rank, pa.uint32()), count),
                         pa.repeat(pa.scalar(depth, pa.uint32()), count),
-                        pa.array(range(ordinal, ordinal + count), type=pa.uint64()),
+                        pa.array(np.arange(ordinal, ordinal + count, dtype=np.uint64)),
                         states,
                         hashes,
                     ],
