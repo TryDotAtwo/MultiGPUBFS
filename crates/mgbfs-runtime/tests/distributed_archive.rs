@@ -591,6 +591,49 @@ fn archive_fixture_generator(
     bmma: bool,
     tensor_generation: bool,
 ) {
+    archive_fixture_world(
+        compact,
+        hash_first,
+        seed,
+        owners,
+        prededup,
+        bmma,
+        tensor_generation,
+        2,
+    );
+}
+
+#[test]
+fn single_rank_reference_profiles_preserve_full_archive_layers() {
+    for bmma in [false, true] {
+        for pre in [false, true] {
+            for (hash_first, tensor) in [(false, false), (true, false), (true, true)] {
+                archive_fixture_world(
+                    false,
+                    hash_first,
+                    20260828u128.to_le_bytes(),
+                    [0, 0],
+                    pre,
+                    bmma,
+                    tensor,
+                    1,
+                );
+            }
+            archive_fixture_world(true, false, [0; 16], [0, 0], pre, bmma, false, 1);
+        }
+    }
+}
+
+fn archive_fixture_world(
+    compact: bool,
+    hash_first: bool,
+    seed: [u8; 16],
+    owners: [u32; 2],
+    prededup: bool,
+    bmma: bool,
+    tensor_generation: bool,
+    world: u32,
+) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -598,7 +641,7 @@ fn archive_fixture_generator(
         unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
         0
     );
-    let workers: Vec<_> = (0..2)
+    let workers: Vec<_> = (0..world)
         .map(|rank| {
             std::thread::spawn(move || {
                 let g = if compact {
@@ -609,7 +652,7 @@ fn archive_fixture_generator(
                 let cfg = DistributedConfig {
                     untouched_vram_reserve: 1 << 30,
                     rank,
-                    world: 2,
+                    world,
                     logical_owner_to_rank: owners,
                     batch: 7,
                     layer_capacity: capacity,

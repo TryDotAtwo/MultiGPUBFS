@@ -23,4 +23,5 @@ pub mod pinned_archive;
 pub mod receipts;
 pub mod ring;
 pub mod simulation;
+pub mod topology;
 pub mod transport;

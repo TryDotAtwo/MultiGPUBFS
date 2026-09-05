@@ -1,4 +1,4 @@
-//! Native two-rank NCCL DENSE BFS reference. Torchrun supplies only rank env.
+//! Native one/two-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::failure::attempt_all;
 use crate::jobs::{split, JobSpan};
 use mgbfs_core::{
@@ -31,6 +31,23 @@ fn check(status: i32) -> Result<()> {
         Ok(())
     } else {
         Err(format!("CUDA_STATUS_{status}"))
+    }
+}
+unsafe fn rank_directory(
+    world: u32,
+    keys: *const c_void,
+    n: *const u32,
+    cap: u32,
+    b: u32,
+    owner: u32,
+    out: *mut Range,
+    f: *mut u32,
+    stream: *mut c_void,
+) -> i32 {
+    if world == 1 {
+        mgbfs_bucket_directory(keys, n, cap, b, out, f, stream)
+    } else {
+        mgbfs_owner_bucket_directory(keys, n, cap, b, owner, out, f, stream)
     }
 }
 struct Buffer {
@@ -447,16 +464,19 @@ impl DistributedNativeBfs {
         if owner_backend == OwnerBackend::BmmaBucket && !(1..=256).contains(&tile_limit) {
             return Err("BMMA_TILE_LIMIT".into());
         }
-        if cfg.world != 2
-            || cfg.rank >= 2
-            || cfg.logical_owner_to_rank[0] == cfg.logical_owner_to_rank[1]
-            || cfg.logical_owner_to_rank.iter().any(|&x| x >= 2)
-            || cfg.batch == 0
+        let (local_buckets, local_shards) = crate::topology::reference_owner_geometry(
+            cfg.world,
+            cfg.rank,
+            cfg.logical_owner_to_rank,
+            cfg.buckets,
+            cfg.shards,
+        )?;
+        if cfg.batch == 0
             || cfg.layer_capacity == 0
             || cfg.state_ring_capacity == 0
             || !cfg.buckets.is_power_of_two()
             || !cfg.shards.is_power_of_two()
-            || cfg.shards < 2
+            || cfg.shards < cfg.world
             || cfg.shards > cfg.buckets
             || cfg.job_buckets == 0
             || cfg.job_buckets > cfg.buckets / cfg.shards
@@ -465,9 +485,9 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_CONFIG".into());
         }
         // Public config retains global prefix geometry. Persistent storage and
-        // all owner jobs use only this owner's contiguous half of that space.
-        cfg.buckets /= 2;
-        cfg.shards /= 2;
+        // owner jobs use the whole space on one rank, or its half on two ranks.
+        cfg.buckets = local_buckets;
+        cfg.shards = local_shards;
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
         let permutation_n = encode_permutation_matrix(&graph.start, graph.rows)
             .ok()
@@ -729,7 +749,8 @@ impl DistributedNativeBfs {
         let route_count = b("route_count")?;
         route_count.put(&[current_count])?;
         check(unsafe {
-            mgbfs_owner_bucket_directory(
+            rank_directory(
+                cfg.world,
                 curr.ptr,
                 route_count.ptr.cast(),
                 cfg.layer_capacity,
@@ -861,7 +882,8 @@ impl DistributedNativeBfs {
         let s = self.stream.0;
         self.route_count.put(&[rows])?;
         unsafe {
-            check(mgbfs_owner_bucket_directory(
+            check(rank_directory(
+                self.cfg.world,
                 source_hashes,
                 self.route_count.ptr.cast(),
                 self.candidates,
@@ -1066,8 +1088,9 @@ impl DistributedNativeBfs {
         };
         // Preserve reservation order (local source, then remote source), so
         // final extents remain a FIFO StateRing frontier. Every rank enters
-        // both groups even when its pending request count is zero.
-        for group in 0..2 {
+        // both groups on two ranks even with no requests; one rank has only
+        // the local group and must not issue a call to nonexistent peer 1.
+        for group in 0..self.cfg.world as usize {
             let count = h.pending_counts[group];
             h.count.put(&[count])?;
             check(unsafe {
@@ -1395,52 +1418,61 @@ impl DistributedNativeBfs {
             if owner_counts[0] == u32::MAX {
                 return Err("EXCHANGE_SOURCE_REF".into());
             }
+            if self.cfg.world == 1 {
+                // Both sorted hash halves belong to this single physical rank.
+                owner_counts = [routed, 0];
+            }
             let local_offset = if local_owner == 0 { 0 } else { owner_counts[0] };
             let remote_offset = if remote_owner == 0 {
                 0
             } else {
                 owner_counts[0]
             };
-            self.collective_send.put(&[owner_counts[remote_owner]])?;
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.collective_send.ptr,
-                    4,
-                    self.cfg.rank ^ 1,
-                    self.recv_count.ptr,
-                    4,
-                    s,
-                )
-            })?;
-            check(unsafe { cudaStreamSynchronize(s) })?;
-            let received = self.recv_count.one::<u32>()?;
-            if received > self.candidates {
-                return Err("EXCHANGE_CAPACITY".into());
-            }
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.sorted_hashes.at(remote_offset as usize * 16),
-                    u64::from(owner_counts[remote_owner]) * 16,
-                    self.cfg.rank ^ 1,
-                    self.recv_hashes.ptr,
-                    u64::from(received) * 16,
-                    s,
-                )
-            })?;
-            check(unsafe {
-                mgbfs_nccl_send_recv(
-                    self.comm.0,
-                    self.packed_states
-                        .at(remote_offset as usize * packet_stride),
-                    u64::from(owner_counts[remote_owner]) * packet_stride as u64,
-                    self.cfg.rank ^ 1,
-                    self.recv_states.ptr,
-                    u64::from(received) * packet_stride as u64,
-                    s,
-                )
-            })?;
+            let received = if self.cfg.world == 1 {
+                0
+            } else {
+                self.collective_send.put(&[owner_counts[remote_owner]])?;
+                check(unsafe {
+                    mgbfs_nccl_send_recv(
+                        self.comm.0,
+                        self.collective_send.ptr,
+                        4,
+                        self.cfg.rank ^ 1,
+                        self.recv_count.ptr,
+                        4,
+                        s,
+                    )
+                })?;
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                let received = self.recv_count.one::<u32>()?;
+                if received > self.candidates {
+                    return Err("EXCHANGE_CAPACITY".into());
+                }
+                check(unsafe {
+                    mgbfs_nccl_send_recv(
+                        self.comm.0,
+                        self.sorted_hashes.at(remote_offset as usize * 16),
+                        u64::from(owner_counts[remote_owner]) * 16,
+                        self.cfg.rank ^ 1,
+                        self.recv_hashes.ptr,
+                        u64::from(received) * 16,
+                        s,
+                    )
+                })?;
+                check(unsafe {
+                    mgbfs_nccl_send_recv(
+                        self.comm.0,
+                        self.packed_states
+                            .at(remote_offset as usize * packet_stride),
+                        u64::from(owner_counts[remote_owner]) * packet_stride as u64,
+                        self.cfg.rank ^ 1,
+                        self.recv_states.ptr,
+                        u64::from(received) * packet_stride as u64,
+                        s,
+                    )
+                })?;
+                received
+            };
             if let Some(parent_extent) = parent.filter(|_| self.hash_first.is_none()) {
                 if archive.is_some()
                     || (self.archived_depth == Some(self.depth) && !archive_released[extent_index])

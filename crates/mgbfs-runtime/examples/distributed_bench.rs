@@ -93,7 +93,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let rank = required("RANK")?;
     let local = required("LOCAL_RANK")?;
     let world = required("WORLD_SIZE")?;
-    if world != 2 || rank != local {
+    if !(1..=2).contains(&world) || rank != local {
         return Err("TOPOLOGY".into());
     }
     if unsafe { cudaSetDevice(local as i32) } != 0 {
@@ -114,6 +114,8 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let capacity = u32::try_from(capacity_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
     let future = u32::try_from(future_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
     let rank_map = match std::env::var("MGBFS_RANK_MAP").as_deref() {
+        Ok("0") if world == 1 => [0, 0],
+        Err(_) if world == 1 => [0, 0],
         Ok("1,0") => [1, 0],
         Ok("0,1") | Err(_) => [0, 1],
         _ => return Err("RANK_MAP".into()),
@@ -277,7 +279,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         if compact_states { 5 } else { 1 },
         selection.materialization_capacity.unwrap_or(0), selection.tile_limit);
     let record = format!(
-        "{},\"hash_first_generation\":\"{hash_first_generation}\",\"warmup_completed\":{warmup_completed}}}",
+        "{},\"world_size\":{world},\"hash_first_generation\":\"{hash_first_generation}\",\"warmup_completed\":{warmup_completed}}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?
     );
     let owned_payload: u64 = bfs
