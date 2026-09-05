@@ -242,7 +242,10 @@ class HubStagingSink:
             pq.write_table(
                 table,
                 writer,
-                compression="zstd",
+                # Pseudorandom hashes have little compression opportunity.
+                # Keep state/metadata compression and the logical schema intact.
+                compression={name: ("NONE" if name == "hash128_le" else "zstd")
+                             for name in table.column_names},
                 # These columns repeat. State, hash and ordinal are unique:
                 # avoid building dictionaries that immediately fall back.
                 use_dictionary=["run_id", "group_id", "config_digest", "rank", "depth"],

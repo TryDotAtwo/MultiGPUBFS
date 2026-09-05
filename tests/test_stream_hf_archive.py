@@ -194,11 +194,13 @@ class StreamArchive(unittest.TestCase):
                 self.preuploads = []
                 self.decoded = []
                 self.unique_encodings = []
+                self.hash_codecs = []
 
             def preupload_lfs_files(self, **kwargs):
                 for operation in kwargs['additions']:
                     payload = operation.path_or_fileobj.read()
                     parquet = pq.ParquetFile(io.BytesIO(payload))
+                    self.hash_codecs.append(parquet.metadata.row_group(0).column(7).compression)
                     self.decoded.extend(parquet.read().to_pylist())
                     self.unique_encodings.extend(
                         parquet.metadata.row_group(0).column(i).encodings for i in (5, 6, 7))
@@ -239,6 +241,7 @@ class StreamArchive(unittest.TestCase):
             self.assertEqual([row['hash128_le'] for row in rows], [bytes(range(16)), bytes(range(16, 32))])
             self.assertTrue(all('RLE_DICTIONARY' not in enc and 'PLAIN_DICTIONARY' not in enc
                                 for enc in api.unique_encodings))
+            self.assertEqual(api.hash_codecs, ['UNCOMPRESSED', 'UNCOMPRESSED'])
             self.assertFalse(list((Path(folder) / "slots").glob("slot-*.parquet")))
 
     def test_hub_upload_failure_never_emits_rank_commit(self):
