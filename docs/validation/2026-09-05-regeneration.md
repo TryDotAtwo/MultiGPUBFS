@@ -23,3 +23,15 @@ Evidence: `test_results/distributed-sanitizer-v5/distributed-sanitizer/`.
 The next fixture consumes core wire
 OriginRef bytes through the Rust C ABI on each device; local cargo check proves
 type-checking only, not CUDA linkage or execution.
+
+V6 at `caf1728e62f051f07d1a7a202cdc9525118624c1` completed on Kaggle:
+all three Rust tests passed plain and under all four sanitizers. The wire
+OriginRef fixture executed on device 0 and device 1; all summaries were clean.
+Downloaded evidence: `test_results/distributed-sanitizer-v6/distributed-sanitizer/`.
+
+V7 is the deliberate RED gate for `mgbfs_generate_hash_only`, at source
+`12c4950af523bcb09ab2370169977d8e75dec6d3`. No implementation exists yet.
+The fixture supplies no child-state output, checks 514 parent-major candidates,
+four affine residues including reduction near p, 64-bit parent references,
+and device-count capacity rejection without output writes. Expected next
+failure is the missing symbol at link time, not a runtime regression.
