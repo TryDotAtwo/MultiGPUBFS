@@ -1,5 +1,5 @@
 """Two-T4 native NCCL versus immutable CayleyPy torchrun matrix BFS."""
-import argparse,gc,json,math,os,statistics,subprocess,sys,time
+import argparse,gc,json,math,os,shutil,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 
@@ -118,8 +118,17 @@ def suite(native,source,out,env):
  if world not in (1,2):raise ValueError('unsupported measurement world')
  # Fixed physical device inventory also matches the nvidia-smi index sampler.
  env=dict(env,CUDA_VISIBLE_DEVICES='0' if world==1 else '0,1')
- out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',world_size=world,scope=f'physical {world}xT4, same S_n matrix states, native mandatory archive, CayleyPy no archive',rows=[],comparisons=[])
+ out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',world_size=world,scope=f'physical {world}xT4, same S_n matrix states, native mandatory archive, CayleyPy no archive',rows=[],comparisons=[],disk_events=[])
  def save():(out/'summary.json').write_text(json.dumps(report,indent=2))
+ def disk_event(label,stage):
+  event=dict(label=label,stage=stage)
+  for name,path in [('tmp',Path('/tmp')),('output',out)]:
+   try:
+    usage=shutil.disk_usage(path)
+    event[name]=dict(total_bytes=usage.total,used_bytes=usage.used,free_bytes=usage.free)
+   except OSError as error:event[name]=dict(error=str(error))
+  report['disk_events'].append(event);save()
+  print('MGBFS_BENCH_DISK '+json.dumps(event),flush=True)
  def run(backend,n,batch,phase,rep=0,selection=None):
   label=f's{n}-{backend}-b{batch}-{phase}-{rep}'
   if selection:label+='-'+selection[0]
@@ -127,6 +136,7 @@ def suite(native,source,out,env):
    bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_RANK_MAP='0' if world==1 else env.get('MGBFS_RANK_MAP','0,1'),MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone',f'--nproc-per-node={world}','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
   else:cfg=env;command=['torchrun','--standalone',f'--nproc-per-node={world}',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
   if selection:cfg=dict(cfg,**selection[1])
+  disk_event(label,'before')
   try:
    row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
    if backend=='native' and row['status']=='COMPLETE' and env.get('MGBFS_VERIFY_ARCHIVE')=='1':
@@ -141,7 +151,10 @@ def suite(native,source,out,env):
    if backend=='native':
     for rank in range(world):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
     bootstrap.unlink(missing_ok=True)
-  row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save();return row
+   disk_event(label,'after_cleanup')
+  row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save()
+  print('MGBFS_BENCH_ROW '+json.dumps(dict(label=label,row=row)),flush=True)
+  return row
  try:
   if env.get('MGBFS_DIAGNOSTIC')=='1':
    env=dict(env,MGBFS_TRACE_DEPTHS='1',MGBFS_RUN_TIMEOUT='600')

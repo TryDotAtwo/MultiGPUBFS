@@ -97,6 +97,9 @@ class RankMetrics(unittest.TestCase):
         self.assertEqual(report["status"], "COMPLETE")
         self.assertEqual(len(report["comparisons"]), 12)
         self.assertEqual(len(report["rows"]), 68)  # three baseline calibration + 13*5
+        self.assertEqual(len(report['disk_events']), 136)
+        self.assertEqual([x['stage'] for x in report['disk_events'][:2]], ['before', 'after_cleanup'])
+        self.assertTrue(all('free_bytes' in x['output'] for x in report['disk_events']))
         self.assertTrue(all(x["native"]["repeats"] == 5 for x in report["comparisons"]))
         self.assertTrue(all(x["cayleypy"]["repeats"] == 5 for x in report["comparisons"]))
 
