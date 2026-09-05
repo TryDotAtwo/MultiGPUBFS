@@ -1,12 +1,29 @@
 import sys
 import unittest
+import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from distributed_gpu_bench import smi_peaks, aggregate_rank_results
+from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite
 
 
 class RankMetrics(unittest.TestCase):
+    def test_profile_suite_retains_all_modes_and_repetitions(self):
+        # GPU processes are unavailable to this CPU orchestration test. The
+        # boundary returns fixed measurements; real files/aggregation execute.
+        def worker(command, out, label, env, timeout):
+            return dict(status="COMPLETE", layer_sizes=[1, 3628799],
+                        search_complete_seconds=1.0, smi_peak_mib_total=200,
+                        smi_peak_mib_per_rank=[100, 100])
+        with tempfile.TemporaryDirectory() as directory, patch("distributed_gpu_bench.run_group", worker):
+            report = suite(Path("native"), Path("source"), Path(directory), {"MGBFS_PROFILE_SWEEP": "1"})
+        self.assertEqual(report["status"], "COMPLETE")
+        self.assertEqual(len(report["comparisons"]), 12)
+        self.assertEqual(len(report["rows"]), 68)  # three baseline calibration + 13*5
+        self.assertTrue(all(x["native"]["repeats"] == 5 for x in report["comparisons"]))
+        self.assertTrue(all(x["cayleypy"]["repeats"] == 5 for x in report["comparisons"]))
+
     def rows(self):
         return [dict(rank=r, status="COMPLETE", backend="native", search_complete_seconds=2+r,
                      durable_run_commit_seconds=4+r, local_layer_sizes=v)

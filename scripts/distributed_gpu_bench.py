@@ -102,12 +102,23 @@ def stats(rows):
 def suite(native,source,out,env):
  out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',scope='physical 2xT4, same S_n matrix states, native mandatory archive, CayleyPy torchrun no archive',rows=[],comparisons=[])
  def save():(out/'summary.json').write_text(json.dumps(report,indent=2))
- def run(backend,n,batch,phase,rep=0):
+ def run(backend,n,batch,phase,rep=0,selection=None):
   label=f's{n}-{backend}-b{batch}-{phase}-{rep}'
+  if selection:label+='-'+selection[0]
   if backend=='native':
    bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone','--nproc-per-node=2','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
   else:cfg=env;command=['torchrun','--standalone','--nproc-per-node=2',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
-  try:row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
+  if selection:cfg=dict(cfg,**selection[1])
+  try:
+   row=run_group(command,out,label,cfg,timeout=int(env.get('MGBFS_RUN_TIMEOUT','7200')))
+   if backend=='native' and row['status']=='COMPLETE' and env.get('MGBFS_VERIFY_ARCHIVE')=='1':
+    checks=[]
+    for rank in range(2):
+     result=subprocess.run([str(native.parent.parent/'mgbfs'),'verify',f'{prefix}-rank-{rank}.mgbfsar1'],capture_output=True,text=True)
+     (out/f'{label}-verify-{rank}.log').write_text(result.stdout+result.stderr)
+     if result.returncode!=0:raise ValueError('NATIVE_ARCHIVE_VERIFY_FAILED')
+     checks.append(json.loads(result.stdout))
+    row['archive_verification']=checks
   finally:
    if backend=='native':
     for rank in range(2):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
@@ -119,6 +130,32 @@ def suite(native,source,out,env):
    row=run('native',8,1024,'diagnostic')
    report['status']=row['status']
    return report
+  if env.get('MGBFS_PROFILE_SWEEP')=='1':
+   n=10;expected=None;trials=[];variants=[]
+   for profile,generation in [('DENSE','SCALAR'),('HASH_FIRST','SCALAR'),('HASH_FIRST','INT_MMA_SM75')]:
+    for owner in ['CUB_SORT_MERGE','BMMA_BUCKET']:
+     for pre in ['OFF','ON']:
+      key=f'{profile}-{generation}-{owner}-{pre}'
+      variants.append((key,dict(MGBFS_PROFILE=profile,MGBFS_HASH_FIRST_GENERATION=generation,MGBFS_OWNER_BACKEND=owner,MGBFS_PRE_DEDUP=pre,MGBFS_STATE_CODEC='matrix_u8',MGBFS_ARCHIVE_CODEC='matrix_u8',MGBFS_BENCH_SKIP_ARCHIVE='0',MGBFS_ARCHIVE_STREAM='0')))
+   for batch in [65536,262144,1048576]:
+    row=run('cayleypy',n,batch,'calibrate')
+    if row['status']=='COMPLETE':
+     expected=expected or row['layer_sizes']
+     if row['layer_sizes']!=expected or sum(expected)!=math_factorial(n):raise ValueError('BASELINE_LAYER_MISMATCH')
+     trials.append((row['search_complete_seconds'],batch))
+   if not trials:raise ValueError('NO_BASELINE_CONFIG')
+   baseline_batch=min(trials)[1];measured={key:[] for key,_ in variants};baseline=[]
+   for rep in range(5):
+    # Rotate the complete run order, retaining every sample, not the best run.
+    jobs=[None]+variants;shift=rep%len(jobs);jobs=jobs[shift:]+jobs[:shift]
+    for selection in jobs:
+     row=run('native' if selection else 'cayleypy',n,65536 if selection else baseline_batch,'measure',rep,selection)
+     if row['status']!='COMPLETE' or row['layer_sizes']!=expected:raise ValueError('PROFILE_RUN_NOT_COMPLETE')
+     (measured[selection[0]] if selection else baseline).append(row)
+   for key,selection in variants:
+    report['comparisons'].append(dict(group=f's{n}',unique_states=math_factorial(n),config=selection,native_batch=65536,baseline_batch=baseline_batch,native=stats(measured[key]),cayleypy=stats(baseline),layer_sizes=expected))
+   report['tuning_scope']='native fixed batch 65536 profile panel; baseline batch sweep; not final tuned Pareto acceptance'
+   report['status']='COMPLETE';return report
   expected=None;n=10;configs={};choices={'native':[16384,65536,262144],'cayleypy':[65536,262144,1048576]}
   for backend,batches in choices.items():
    trials=[]
