@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "b08d519bdcd1758cbc4f58a443396f8e5dca16ea"
+SOURCE = "af8c3451f15c5f1231b8b6fce96e9d36c7f8967d"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -151,6 +151,7 @@ def main():
                     output_dir.mkdir()
                     env.update(MGBFS_PROFILE=profile, MGBFS_OWNER_BACKEND=owner, MGBFS_PRE_DEDUP=pre,
                                MGBFS_HASH_FIRST_GENERATION=generation,
+                               MGBFS_BENCH_WARMUP="1",
                                MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
                                MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
                                MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
@@ -165,6 +166,13 @@ def main():
                             raise RuntimeError("PROFILE_SELECTION_MISMATCH")
                         if row["hash_first_generation"] != generation:
                             raise RuntimeError("GENERATION_SELECTION_MISMATCH")
+                        if row["warmup_completed"] is not True:
+                            raise RuntimeError("WARMUP_NOT_COMPLETED")
+                        warm_row = json.loads(Path(str(output_dir) + ".warmup", f"rank-{rank}.json").read_text())
+                        if warm_row["local_layer_sizes"] != row["local_layer_sizes"]:
+                            raise RuntimeError("WARMUP_LAYER_MISMATCH")
+                        if Path(str(prefix) + f".warmup-rank-{rank}.mgbfsar1").exists():
+                            raise RuntimeError("WARMUP_ARCHIVE_NOT_RELEASED")
                         run([str(source / "target/release/mgbfs"), "verify", str(prefix) + f"-rank-{rank}.mgbfsar1"], label + f"-verify-{rank}", source)
                     if len(rows[0]["local_layer_sizes"]) != len(rows[1]["local_layer_sizes"]):
                         raise RuntimeError("PROFILE_DEPTH_MISMATCH")
