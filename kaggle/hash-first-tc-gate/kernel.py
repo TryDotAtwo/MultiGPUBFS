@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "b3929cc3c8a2dbc4b1a0d84c1df39a2567cc1374"
+SOURCE = "c2ae53244b24a2c4382d2925071fb60165134e18"
 
 
 def main():
@@ -49,6 +49,15 @@ def main():
                 summaries = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
                 if not summaries or any(row != "0" for row in summaries):
                     raise RuntimeError("SANITIZER_NOT_CLEAN")
+        benchmark = root / "hash-first-bench"
+        run(["nvcc", "-O3", "-std=c++17", "-arch=sm_75", str(source / "tests/hash_first_bench.cu"), str(source / "cuda/hash_first_generate.cu"), "-o", str(benchmark)], "bench-build")
+        output = run([str(benchmark)], "bench")
+        rows = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+        if "HASH_FIRST_BENCH_PASS" not in output or len(rows) != 120:
+            raise RuntimeError("BENCH_INCOMPLETE")
+        (logs / "bench.json").write_text(json.dumps(rows, indent=2))
+        report["benchmark_scope"] = "synthetic matrix generation/hash stage only; not BFS speed; explicit payload excludes CUDA context"
+        report["benchmark_rows"] = len(rows)
         report["status"] = "COMPLETE"
     except Exception as exc:
         report["error"] = str(exc)
