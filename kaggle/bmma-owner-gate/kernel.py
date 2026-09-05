@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import urllib.request
 
-SOURCE = "c65d9fc5f8e9e51688a2aac14cb31e7997f63065"
+SOURCE = "4cbf27aa27385f3b7b981f0a2b0907fb32c2deda"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -39,24 +39,31 @@ def main():
              "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_CUDA_ARCHITECTURES=75",
              "-DCUTLASS_ROOT=" + str(cutlass)], "cmake")
         run(["cmake", "--build", str(build), "--target", "mgbfs-bmma-owner-test", "--parallel", "2"], "build")
-        output = run([str(build / "mgbfs-bmma-owner-test")], "plain")
-        if "BOUNDED_OWNER_PASS" not in output:
-            raise RuntimeError("OWNER_FIXTURE_NOT_PASSED")
-        report["tests"] = [{"tool": "plain", "status": "PASS"}]
-        for tool in ["memcheck", "racecheck", "initcheck", "synccheck"]:
-            output = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
-                          str(build / "mgbfs-bmma-owner-test")], tool)
-            if "BOUNDED_OWNER_PASS" not in output:
-                raise RuntimeError("OWNER_FIXTURE_NOT_PASSED")
-            if tool == "racecheck":
-                results = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
-                clean = bool(results) and all(x == ("0", "0", "0") for x in results)
-            else:
-                results = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
-                clean = bool(results) and all(x == "0" for x in results)
-            if not clean:
-                raise RuntimeError("SANITIZER_NOT_CLEAN")
-            report["tests"].append({"tool": tool, "status": "PASS"})
+        sass = run(["cuobjdump", "--dump-sass", str(build / "mgbfs-bmma-owner-test")], "sass")
+        instructions = [line.strip() for line in sass.splitlines() if re.search(r"\bBMMA\.", line)]
+        if not instructions:
+            raise RuntimeError("BMMA_MACHINE_INSTRUCTION_MISSING")
+        report["bmma_instructions"] = instructions
+        report["tests"] = []
+        for tile_limit in [1, 8, 256]:
+            for tool in ["plain", "memcheck", "racecheck", "initcheck", "synccheck"]:
+                cmd = [str(build / "mgbfs-bmma-owner-test"), str(tile_limit)]
+                if tool != "plain":
+                    cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
+                output = run(cmd, f"tile-{tile_limit}-{tool}")
+                if "BOUNDED_OWNER_PASS" not in output:
+                    raise RuntimeError("OWNER_FIXTURE_NOT_PASSED")
+                if tool == "racecheck":
+                    results = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
+                    clean = bool(results) and all(x == ("0", "0", "0") for x in results)
+                elif tool != "plain":
+                    results = re.findall(r"ERROR SUMMARY: (\d+) errors", output)
+                    clean = bool(results) and all(x == "0" for x in results)
+                else:
+                    clean = True
+                if not clean:
+                    raise RuntimeError("SANITIZER_NOT_CLEAN")
+                report["tests"].append({"tile_limit": tile_limit, "tool": tool, "status": "PASS"})
         report["status"] = "COMPLETE"
     except Exception as exc:
         report["error"] = str(exc)
