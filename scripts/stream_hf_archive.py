@@ -13,6 +13,7 @@ import os
 import re
 import struct
 import sys
+import time
 from concurrent.futures import wait, FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -162,6 +163,7 @@ class HubStagingSink:
         self.inflight = {}
         self.executor = ThreadPoolExecutor(max_workers=slot_count, thread_name_prefix="mgbfs-hf")
         self.operations = []
+        self.encode_seconds = 0.0
         self.files = []
         self.peak_live_slots = 0
 
@@ -183,6 +185,7 @@ class HubStagingSink:
 
     def _upload(self, slot, size, remote_path):
         from huggingface_hub import CommitOperationAdd
+        started = time.perf_counter()
         # huggingface_hub intentionally accepts BufferedIOBase, not a bare
         # RawIOBase. The wrapper remains bounded and reads the live slot
         # without making a second bytes-sized copy.
@@ -199,6 +202,9 @@ class HubStagingSink:
             # regular Git file still needs its bytes at commit time.
             if operation.path_or_fileobj != b'':
                 raise RuntimeError("PARQUET_PREUPLOAD_NOT_RELEASED")
+        print('MGBFS_PREUPLOAD_TIMINGS ' + json.dumps(dict(
+            rank=self.rank, bytes=size, seconds=time.perf_counter() - started)),
+            file=sys.stderr, flush=True)
         return operation
 
     def _reap(self):
@@ -230,6 +236,7 @@ class HubStagingSink:
             raise RuntimeError("PARQUET_SLOT_RING_FATAL")
         slot = self.free_slots.pop()
         writer = pa.FixedSizeBufferWriter(pa.py_buffer(self.slot_buffers[slot]))
+        started = time.perf_counter()
         try:
             table = self.tables[0] if len(self.tables) == 1 else pa.concat_tables(self.tables)
             pq.write_table(
@@ -244,6 +251,7 @@ class HubStagingSink:
             raise RuntimeError(f"PARQUET_SLOT_BYTES_FATAL_{self.max_slot_bytes}: {error}") from error
         finally:
             writer.close()
+            self.encode_seconds += time.perf_counter() - started
         remote_path = (
             f"pending/{self.branch}/states/"
             f"rank-{self.rank:05d}-part-{self.part:08d}.parquet"
@@ -345,9 +353,28 @@ class ArchiveStream:
         self.group_id = group_id
         self.rank = rank
         self.sink = sink
+        self.timings = dict(read_seconds=0.0, checksum_seconds=0.0,
+                            arrow_seconds=0.0, sink_seconds=0.0,
+                            records=0, record_frames=0)
+
+    def _read(self, source, size):
+        start = time.perf_counter()
+        try:
+            return _read_exact(source, size)
+        finally:
+            self.timings['read_seconds'] += time.perf_counter() - start
 
     def consume(self, source):
-        header = _read_exact(source, 48)
+        try:
+            return self._consume(source)
+        finally:
+            print('MGBFS_CONSUMER_TIMINGS ' + json.dumps(dict(
+                rank=self.rank, encode_seconds=getattr(self.sink, 'encode_seconds', None),
+                **self.timings)),
+                  file=sys.stderr, flush=True)
+
+    def _consume(self, source):
+        header = self._read(source, 48)
         if header[:8] != b"MGBFSAR1":
             raise ValueError("ARCHIVE_HEADER")
         width = struct.unpack_from("<Q", header, 8)[0]
@@ -358,7 +385,7 @@ class ArchiveStream:
         sequence = depth = layer_count = total = ordinal = 0
         layer_counts = []
         while True:
-            frame = _read_exact(source, 80)
+            frame = self._read(source, 80)
             kind, frame_depth, count, size, frame_sequence = struct.unpack_from("<QQQQQ", frame, 8)
             if (
                 frame[:8] != b"MGBFSFR1"
@@ -367,19 +394,22 @@ class ArchiveStream:
                 or frame_depth != depth
             ):
                 raise ValueError("ARCHIVE_CHAIN")
-            payload = _read_exact(source, size)
-            digest = _read_exact(source, 32)
+            payload = self._read(source, size)
+            digest = self._read(source, 32)
             # Keep the wire checksum unchanged without allocating/copying a
             # second complete payload for every archive frame.
+            started = time.perf_counter()
             checksum = hashlib.sha256(frame)
             checksum.update(payload)
             chain = checksum.digest()
+            self.timings['checksum_seconds'] += time.perf_counter() - started
             if digest != chain:
                 raise ValueError("ARCHIVE_CHECKSUM")
             if kind == 1:
                 if count == 0 or count * (width + 16) != size:
                     raise ValueError("ARCHIVE_RECORD_SHAPE")
                 state_bytes = count * width
+                started = time.perf_counter()
                 states = pa.FixedSizeBinaryArray.from_buffers(
                     pa.binary(width), count, [None, pa.py_buffer(memoryview(payload)[:state_bytes])]
                 )
@@ -399,7 +429,14 @@ class ArchiveStream:
                     ],
                     schema=STATE_SCHEMA,
                 )
-                self.sink.add_batch(table)
+                self.timings['arrow_seconds'] += time.perf_counter() - started
+                started = time.perf_counter()
+                try:
+                    self.sink.add_batch(table)
+                finally:
+                    self.timings['sink_seconds'] += time.perf_counter() - started
+                self.timings['records'] += count
+                self.timings['record_frames'] += 1
                 ordinal += count
                 layer_count += count
             elif kind == 2:

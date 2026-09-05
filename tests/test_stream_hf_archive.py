@@ -34,6 +34,18 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_consumer_metrics_survive_truncated_stream(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sink = LocalStagingSink(folder, 8, 2)
+            reader = ArchiveStream('r1', 'fixture', 0, sink)
+            with self.assertRaisesRegex(ValueError, 'ARCHIVE_TRUNCATED'):
+                reader.consume(io.BytesIO(complete_archive()[:-1]))
+            metrics = getattr(reader, 'timings', {})
+            self.assertEqual(metrics.get('records'), 2)
+            self.assertEqual(metrics.get('record_frames'), 1)
+            for key in ('read_seconds', 'checksum_seconds', 'arrow_seconds', 'sink_seconds'):
+                self.assertGreaterEqual(metrics.get(key, -1), 0)
+
     def test_preuploaded_shards_commit_in_bounded_batches(self):
         class Api:
             def __init__(self):
@@ -60,6 +72,7 @@ class StreamArchive(unittest.TestCase):
             self.assertEqual(api.batches, [])
             sink.complete({'status': 'COMPLETE'})
             self.assertEqual(api.batches, [256, 1])
+            self.assertGreater(getattr(sink, 'encode_seconds', 0), 0)
 
     def test_non_lfs_preupload_cannot_recycle_slot_or_commit(self):
         class Api:
