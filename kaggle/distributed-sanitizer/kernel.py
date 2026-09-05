@@ -64,6 +64,8 @@ def main():
         run([str(build / "mgbfs-regenerate-test")], "regenerate-plain", source)
         run(["cmake", "--build", str(build), "--target", "mgbfs-hash-first-generate-test", "--parallel", "2"], "hash-first-build", source)
         run([str(build / "mgbfs-hash-first-generate-test")], "hash-first-plain", source)
+        run(["cmake", "--build", str(build), "--target", "mgbfs-materialize-requests-test", "--parallel", "2"], "requests-build", source)
+        run([str(build / "mgbfs-materialize-requests-test")], "requests-plain", source)
         output = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
                       "--test", "distributed_archive", "--no-run", "--message-format=json"], "test-build", source)
         binaries = [json.loads(line)["executable"] for line in output.splitlines()
@@ -82,6 +84,11 @@ def main():
                 if "HASH_FIRST_GENERATE_PASS" not in hashed:
                     raise RuntimeError("HASH_FIRST_GENERATE_NOT_PASSED")
                 require_clean(tool, hashed)
+                requests = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
+                                str(build / "mgbfs-materialize-requests-test")], "requests-" + tool, source)
+                if "MATERIALIZE_REQUESTS_PASS" not in requests:
+                    raise RuntimeError("MATERIALIZE_REQUESTS_NOT_PASSED")
+                require_clean(tool, requests)
             cmd = [binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
