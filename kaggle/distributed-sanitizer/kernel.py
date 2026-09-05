@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "a906232e949d672204ad8fe5137aafa9d317eefb"
+SOURCE = "6e98fcf098ee0a1b03d8424e1d7ff723f5b1d0b9"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -114,7 +114,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "9 passed; 0 failed" not in output:
+            if "10 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
