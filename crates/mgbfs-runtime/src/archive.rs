@@ -186,7 +186,12 @@ impl<E: Extent> Archive<E> {
         Ok(a)
     }
     /// No intermediate durability promise. RunCommit still requires successful sync.
-    pub fn new_run_durable(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+    pub fn new_run_durable(
+        extent: E,
+        capacity: u64,
+        state_bytes: usize,
+        config: [u8; 32],
+    ) -> Result<Self> {
         let mut archive = Self::new(extent, capacity, state_bytes, config)?;
         archive.sync_layers = false;
         Ok(archive)
@@ -371,22 +376,40 @@ impl<E: Extent> Archive<E> {
     }
 }
 pub fn verify(bytes: &[u8]) -> Result<()> {
+    verify_reader(&mut std::io::Cursor::new(bytes))
+}
+
+/// Verify the committed prefix with bounded memory, including preallocated
+/// files with unused trailing capacity. Does not materialize state payloads.
+pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
+    fn read(reader: &mut impl std::io::Read, output: &mut [u8], eof: &str) -> Result<()> {
+        reader.read_exact(output).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                eof.into()
+            } else {
+                format!("ARCHIVE_READ: {e}")
+            }
+        })
+    }
     fn word(b: &[u8], i: usize) -> u64 {
         u64::from_le_bytes(b[i..i + 8].try_into().unwrap())
     }
-    if bytes.len() < 48 || &bytes[..8] != b"MGBFSAR1" {
+    let mut header = [0u8; 48];
+    read(reader, &mut header, "ARCHIVE_HEADER")?;
+    if &header[..8] != b"MGBFSAR1" {
         return Err("ARCHIVE_HEADER".into());
     }
-    let width = word(bytes, 8);
+    let width = word(&header, 8);
     if width == 0 || width > 33025 {
         return Err("ARCHIVE_WIDTH".into());
     }
-    let mut chain: [u8; 32] = Sha256::digest(&bytes[..48]).into();
-    let (mut at, mut sequence, mut depth, mut count, mut total) = (48usize, 0u64, 0u64, 0u64, 0u64);
+    let mut chain: [u8; 32] = Sha256::digest(header).into();
+    let (mut sequence, mut depth, mut count, mut total) = (0u64, 0u64, 0u64, 0u64);
+    let mut buffer = [0u8; 65536];
     loop {
-        let h = bytes
-            .get(at..at.checked_add(80).ok_or("ARCHIVE_OFFSET")?)
-            .ok_or("ARCHIVE_TRUNCATED")?;
+        let mut frame = [0u8; 80];
+        read(reader, &mut frame, "ARCHIVE_TRUNCATED")?;
+        let h = &frame;
         if &h[..8] != b"MGBFSFR1"
             || h[48..80] != chain
             || word(h, 40) != sequence
@@ -396,24 +419,25 @@ pub fn verify(bytes: &[u8]) -> Result<()> {
         }
         let kind = word(h, 8);
         let records = word(h, 24);
-        let size = usize::try_from(word(h, 32)).map_err(|_| "ARCHIVE_SIZE")?;
-        let end = at
-            .checked_add(80)
-            .and_then(|v| v.checked_add(size))
-            .ok_or("ARCHIVE_SIZE")?;
-        let payload = bytes.get(at + 80..end).ok_or("ARCHIVE_TRUNCATED")?;
-        let digest_end = end.checked_add(32).ok_or("ARCHIVE_SIZE")?;
-        let stored = bytes.get(end..digest_end).ok_or("ARCHIVE_TRUNCATED")?;
+        let size = word(h, 32);
         let mut sha = Sha256::new();
         sha.update(h);
-        sha.update(payload);
+        let mut remaining = size;
+        while remaining != 0 {
+            let n = remaining.min(buffer.len() as u64) as usize;
+            read(reader, &mut buffer[..n], "ARCHIVE_TRUNCATED")?;
+            sha.update(&buffer[..n]);
+            remaining -= n as u64;
+        }
+        let mut stored = [0u8; 32];
+        read(reader, &mut stored, "ARCHIVE_TRUNCATED")?;
         chain = sha.finalize().into();
         if stored != chain {
             return Err("ARCHIVE_CHECKSUM".into());
         }
         match kind {
             1 => {
-                if records == 0 || records.checked_mul(width + 16) != Some(size as u64) {
+                if records == 0 || records.checked_mul(width + 16) != Some(size) {
                     return Err("ARCHIVE_RECORD_SHAPE".into());
                 }
                 count = count.checked_add(records).ok_or("ARCHIVE_COUNT")?;
@@ -434,7 +458,6 @@ pub fn verify(bytes: &[u8]) -> Result<()> {
             }
             _ => return Err("ARCHIVE_FRAME_KIND".into()),
         }
-        at = digest_end;
         sequence = sequence.checked_add(1).ok_or("ARCHIVE_SEQUENCE")?;
     }
 }

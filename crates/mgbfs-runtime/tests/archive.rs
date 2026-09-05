@@ -59,6 +59,40 @@ struct Disk {
     sync_fail: bool,
     syncs: usize,
 }
+
+#[test]
+fn stream_verifier_handles_short_reads_with_bounded_memory_and_rejects_corruption() {
+    use std::io::{Cursor, Read};
+    struct ShortReader(Cursor<Vec<u8>>);
+    impl Read for ShortReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            assert!(
+                output.len() <= 65536,
+                "verifier requested an unbounded read"
+            );
+            let n = output.len().min(17);
+            self.0.read(&mut output[..n])
+        }
+    }
+    let mut a = Archive::new(Disk::default(), 300_000, 4, [0; 32]).unwrap();
+    a.records(0, &vec![1; 40_000], &vec![[1; 4]; 10_000])
+        .unwrap();
+    a.layer_commit(0, 10_000).unwrap();
+    a.run_commit().unwrap();
+    mgbfs_runtime::archive::verify_reader(&mut ShortReader(Cursor::new(a.extent.bytes.clone())))
+        .unwrap();
+    for cut in [0, 47, 48, 128, 200_383] {
+        assert!(
+            mgbfs_runtime::archive::verify_reader(&mut Cursor::new(&a.extent.bytes[..cut]))
+                .is_err()
+        );
+    }
+    a.extent.bytes[150] ^= 1;
+    assert_eq!(
+        mgbfs_runtime::archive::verify_reader(&mut Cursor::new(&a.extent.bytes)).unwrap_err(),
+        "ARCHIVE_CHECKSUM"
+    );
+}
 #[test]
 fn run_durable_syncs_only_at_completion_and_propagates_failure() {
     for fail in [false, true] {
@@ -73,8 +107,11 @@ fn run_durable_syncs_only_at_completion_and_propagates_failure() {
         assert_eq!(a.extent.syncs, 1);
         assert_eq!(a.timings.sync_calls, 1);
         assert_eq!(a.is_complete(), !fail);
-        if !fail { verify(&a.extent.bytes).unwrap(); }
-        else { assert!(a.run_commit().is_err()); }
+        if !fail {
+            verify(&a.extent.bytes).unwrap();
+        } else {
+            assert!(a.run_commit().is_err());
+        }
     }
 }
 #[test]
