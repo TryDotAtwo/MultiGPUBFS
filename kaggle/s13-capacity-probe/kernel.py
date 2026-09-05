@@ -4,7 +4,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-SOURCE = "f13ef1e514b680337177ad3b81962a8050681123"
+SOURCE = "0b2acdd5b9e4a6e27af13cc4f0c8c79190f23dcf"
 
 def main():
     with tempfile.TemporaryDirectory(prefix="s13-harness-", dir="/tmp") as directory:
@@ -16,7 +16,7 @@ def main():
         probe = runpy.run_path(str(path))
         config = probe["main"].__globals__
         config.update(SOURCE=SOURCE, GROUP="s13", CARDINALITY=6_227_020_800,
-                      CAPACITIES_PER_RANK=[220_000_000])
+                      CAPACITIES_PER_RANK=[220_000_000], RUN_TIMEOUT=7200)
         probe["main"]()
 
 if __name__ == "__main__":
