@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 
 root = Path(tempfile.mkdtemp(prefix='mgbfs-codec-', dir='/tmp'))
-source = '8c85a940611e88a0153c8fed0062a7b8cc6adc72'
+source = '14ec25e35cfce7c1f2019158203cca61215fa561'
 revision = '2f77dce99de88f2d8eac20859305da5051d6187e'
 repo = 'TryDotAtwo/multigpubfs-bfs-results'
 path = 'states/s11-native-2xt4-20260905-142232-rank-00000-part-00000000.parquet'
