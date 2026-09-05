@@ -21,6 +21,10 @@ typedef struct MgbfsOwnerControl {
   uint64_t padding[6];
 } MgbfsOwnerControl;
 int mgbfs_bounded_owner_create(uint32_t i, uint32_t j, uint32_t k, void** plan);
+/* Explicit backend: 0=CUB, 1=SM75 BMMA. Refinement descriptors and tile bound
+ * are fixed before allocation. Unsupported backend/device is an error. */
+int mgbfs_bounded_owner_create_backend(uint32_t i, uint32_t j, uint32_t k,
+    uint32_t backend, uint32_t refinement_capacity, uint32_t tile_limit, void** plan);
 void mgbfs_bounded_owner_destroy(void* plan);
 int mgbfs_bounded_owner_compare(void* plan, const MgbfsBucketJob* jobs,
     uint32_t job_count, uint32_t rows, const void* incoming,

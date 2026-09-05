@@ -9,6 +9,13 @@
 struct alignas(16) Key { uint32_t w[4]; };
 static void ck(cudaError_t e) { if(e!=cudaSuccess) throw std::runtime_error(cudaGetErrorString(e)); }
 static void require(bool x, const char* s) { if(!x) throw std::runtime_error(s); }
+static int create_owner(unsigned i,unsigned j,unsigned k,void** plan){
+#ifdef MGBFS_TEST_BMMA
+  return mgbfs_bounded_owner_create_backend(i,j,k,1,i,256,plan);
+#else
+  return mgbfs_bounded_owner_create(i,j,k,plan);
+#endif
+}
 template<class T> struct Device {
   T* p; size_t n;
   explicit Device(size_t count):n(count) { ck(cudaMalloc(&p,n*sizeof(T))); ck(cudaMemset(p,0,n*sizeof(T))); }
@@ -45,7 +52,7 @@ static void sweep(unsigned seed,unsigned mode) {
     std::set<uint32_t> merged=as;merged.insert(expected[b].begin(),expected[b].end());expected[b].assign(merged.begin(),merged.end());
     want[b].new_count=unsigned(expected[b].size());js.push_back(d);
   }
-  void* plan=nullptr;require(mgbfs_bounded_owner_create(I,J,K,&plan)==0,"sweep create");
+  void* plan=nullptr;require(create_owner(I,J,K,&plan)==0,"sweep create");
   Device<Key> in(I),prev(pv.size()),curr(cv.size()),accepted(J*K);
   Device<uint32_t> lens(J),grant(1),selected(I);Device<MgbfsBucketJob> jobs(J);
   Device<MgbfsOwnerCounts> counts(J);Device<MgbfsOwnerControl> control(1);
@@ -77,7 +84,7 @@ static void sweep(unsigned seed,unsigned mode) {
 }
 int main() { try {
   // Dropping any one of the four rejection categories changes this literal result.
-  void* plan=nullptr; require(mgbfs_bounded_owner_create(16,2,8,&plan)==0,"create");
+  void* plan=nullptr; require(create_owner(16,2,8,&plan)==0,"create");
   Device<Key> in(16), prev(2), curr(2), accepted(16);
   Device<uint32_t> lengths(2), grant(1), selected(16);
   Device<MgbfsBucketJob> jobs(2);
