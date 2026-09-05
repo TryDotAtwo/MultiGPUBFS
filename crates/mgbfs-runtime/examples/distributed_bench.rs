@@ -1,4 +1,5 @@
 use mgbfs_core::{
+    config::ReferenceSelection,
     matrix::MatrixGroup,
     rank_plan::{cluster_capacity_plan, CapacityMode},
     Result,
@@ -135,8 +136,25 @@ fn run() -> Result<()> {
     if compact_states && archive_width != n {
         return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
     }
+    let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
+    let owner = std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
+    let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
+    let selection = ReferenceSelection::parse(
+        &profile,
+        &owner,
+        &pre,
+        compact_states,
+        env_u32(
+            "MGBFS_MATERIALIZATION_CAPACITY",
+            batch
+                .checked_mul(graph.generators.len() as u32)
+                .ok_or("CANDIDATE_OVERFLOW")?,
+        ),
+        env_u32("MGBFS_BMMA_TILE_LIMIT", 256),
+    )?;
     let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
+    let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let disk_bytes = graph
@@ -164,7 +182,7 @@ fn run() -> Result<()> {
     )?;
     let pinned = archive.pinned_bytes();
     let setup = Instant::now();
-    let mut bfs = DistributedNativeBfs::new(
+    let mut bfs = DistributedNativeBfs::new_reference_with_owner(
         &graph,
         20260828u128.to_le_bytes(),
         id,
@@ -182,9 +200,12 @@ fn run() -> Result<()> {
                 "MGBFS_BUCKET_CAPACITY",
                 capacity.div_ceil(128).saturating_add(4096),
             ),
-            prededup: true,
+            prededup: selection.prededup,
             generation_variant: if compact_states { 5 } else { 1 },
         },
+        selection.materialization_capacity,
+        selection.owner,
+        selection.tile_limit,
     )?;
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
@@ -224,6 +245,19 @@ fn run() -> Result<()> {
     let durable = start.elapsed().as_secs_f64();
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
     let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
+    // Keep the existing timing schema, but never label HASH_FIRST as DENSE.
+    let record = if selection.materialization_capacity.is_some() {
+        record.replace(
+            "native_nccl_dense_ring_v2",
+            "native_nccl_hash_first_reference_v1",
+        )
+    } else {
+        record
+    };
+    let record = format!("{},\"frontier_profile\":\"{profile}\",\"owner_backend\":\"{owner}\",\"pre_dedup\":\"{pre}\",\"generation_variant\":{},\"materialization_capacity\":{},\"bmma_tile_limit\":{}}}",
+        record.strip_suffix('}').ok_or("RECORD_FORMAT")?,
+        if compact_states { 5 } else { 1 },
+        selection.materialization_capacity.unwrap_or(0), selection.tile_limit);
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,

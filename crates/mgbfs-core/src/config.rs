@@ -14,6 +14,61 @@ pub enum OwnerBackend {
     CubSortMerge,
     BmmaBucket,
 }
+
+/// Explicit selection for the current reference benchmark, not production
+/// RunConfig validation or a promise of Tensor Core HASH_FIRST generation.
+#[derive(Debug, Clone, Copy)]
+pub struct ReferenceSelection {
+    pub profile: FrontierProfile,
+    pub owner: OwnerBackend,
+    pub prededup: bool,
+    pub materialization_capacity: Option<u32>,
+    pub tile_limit: u32,
+}
+impl ReferenceSelection {
+    pub fn parse(
+        profile: &str,
+        owner: &str,
+        pre: &str,
+        compact: bool,
+        capacity: u32,
+        tile_limit: u32,
+    ) -> Result<Self> {
+        let profile = match profile {
+            "DENSE" => FrontierProfile::Dense,
+            "HASH_FIRST" if !compact => FrontierProfile::HashFirst,
+            _ => return Err("REFERENCE_PROFILE_OR_CODEC".into()),
+        };
+        let owner = match owner {
+            "CUB_SORT_MERGE" => OwnerBackend::CubSortMerge,
+            "BMMA_BUCKET" => OwnerBackend::BmmaBucket,
+            _ => return Err("REFERENCE_OWNER_BACKEND".into()),
+        };
+        let prededup = match pre {
+            "ON" => true,
+            "OFF" => false,
+            _ => return Err("REFERENCE_PRE_DEDUP".into()),
+        };
+        if !(1..=256).contains(&tile_limit) {
+            return Err("REFERENCE_TILE_LIMIT".into());
+        }
+        let materialization_capacity = if profile == FrontierProfile::HashFirst {
+            if capacity == 0 || capacity > i32::MAX as u32 {
+                return Err("REFERENCE_MATERIALIZATION_CAPACITY".into());
+            }
+            Some(capacity)
+        } else {
+            None
+        };
+        Ok(Self {
+            profile,
+            owner,
+            prededup,
+            materialization_capacity,
+            tile_limit,
+        })
+    }
+}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GenerationBackend {
     #[serde(rename = "CUTLASS_U8_SM75_V1")]
