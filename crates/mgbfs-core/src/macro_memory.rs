@@ -1,5 +1,35 @@
 use crate::Result;
 
+/// Storage contract shared by the weighted runtime and its archive producer.
+/// Compact generation applies permutation matrices directly to these vectors.
+pub struct MacroStateLayout {
+    pub start: Vec<u8>,
+    pub width: usize,
+    pub stride: usize,
+}
+impl MacroStateLayout {
+    pub fn derive(graph: &crate::matrix::MatrixGroup, generation: u32) -> Result<Self> {
+        graph.validate()?;
+        if generation > 5 {
+            return Err("MACRO_GENERATION_BACKEND".into());
+        }
+        let start = if generation == 5 {
+            for generator in &graph.generators {
+                crate::matrix::encode_permutation_matrix(generator, graph.rows)?;
+            }
+            crate::matrix::encode_permutation_matrix(&graph.start, graph.rows)?
+        } else {
+            graph.start.clone()
+        };
+        let width = start.len();
+        Ok(Self {
+            start,
+            width,
+            stride: (width + 15) & !15,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MacroMemoryInput {
     pub state_stride: u64,

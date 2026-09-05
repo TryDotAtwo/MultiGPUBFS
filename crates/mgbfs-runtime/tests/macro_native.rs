@@ -174,34 +174,65 @@ fn native_macro_archive_is_complete_and_verifiable() {
             Ok(())
         }
     }
-    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
-    let config = MacroNativeConfig {
-        macro_depth: 3,
-        batch: 7,
-        layer_capacity: 64,
-        future_capacity_per_depth: 256,
-        prededup: true,
-        generation_variant: 1,
-        untouched_vram_reserve_bytes: 0,
-    };
-    let bytes = Arc::new(Mutex::new(Vec::new()));
-    let mut archive = PinnedArchive::new(
-        MemoryExtent(bytes.clone()),
-        1_000_000,
-        graph.start.len(),
-        [7; 32],
-        7,
-        32,
-    )
-    .unwrap();
-    let mut bfs = MacroNativeBfs::new(&graph, [3; 16], config).unwrap();
-    loop {
-        bfs.archive_current(&mut archive).unwrap();
-        if !bfs.advance().unwrap() {
-            break;
+    for (graph, generation_variant) in [
+        (MatrixGroup::unitriangular(4, 2).unwrap(), 1),
+        (MatrixGroup::symmetric_permutation_matrices(4).unwrap(), 5),
+    ] {
+        let layout =
+            mgbfs_core::macro_memory::MacroStateLayout::derive(&graph, generation_variant).unwrap();
+        let expected: Vec<_> = graph
+            .exact_layers(64)
+            .unwrap()
+            .into_iter()
+            .map(|layer| {
+                let mut states: Vec<_> = layer
+                    .into_iter()
+                    .map(|state| {
+                        if generation_variant == 5 {
+                            mgbfs_core::matrix::encode_permutation_matrix(&state, graph.rows)
+                                .unwrap()
+                        } else {
+                            state
+                        }
+                    })
+                    .collect();
+                states.sort();
+                states
+            })
+            .collect();
+        let config = MacroNativeConfig {
+            macro_depth: 3,
+            batch: 7,
+            layer_capacity: 64,
+            future_capacity_per_depth: 256,
+            prededup: true,
+            generation_variant,
+            untouched_vram_reserve_bytes: 0,
+        };
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let mut archive = PinnedArchive::new(
+            MemoryExtent(bytes.clone()),
+            1_000_000,
+            layout.width,
+            [7; 32],
+            7,
+            32,
+        )
+        .unwrap();
+        let mut bfs = MacroNativeBfs::new(&graph, [3; 16], config).unwrap();
+        let mut actual = Vec::new();
+        loop {
+            let mut states = bfs.snapshot().unwrap();
+            states.sort();
+            actual.push(states);
+            bfs.archive_current(&mut archive).unwrap();
+            if !bfs.advance().unwrap() {
+                break;
+            }
         }
+        archive.finish().unwrap();
+        let data = bytes.lock().unwrap();
+        verify(&data).unwrap();
+        assert_eq!(actual, expected);
     }
-    archive.finish().unwrap();
-    let data = bytes.lock().unwrap();
-    verify(&data).unwrap();
 }

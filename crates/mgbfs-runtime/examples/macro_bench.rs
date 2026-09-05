@@ -62,9 +62,14 @@ fn execute() -> Result<()> {
         generation_variant: env_u32("MGBFS_BENCH_GENERATION", 1),
         untouched_vram_reserve_bytes: 1 << 30,
     };
+    let layout = mgbfs_core::macro_memory::MacroStateLayout::derive(&g, config.generation_variant)?;
     let seed = 20260828u128.to_le_bytes();
     // Initialize context and every native primitive without repeating the measured graph.
-    let warm_graph = MatrixGroup::unitriangular(3, 2)?;
+    let warm_graph = if config.generation_variant == 5 {
+        MatrixGroup::symmetric_permutation_matrices(3)?
+    } else {
+        MatrixGroup::unitriangular(3, 2)?
+    };
     let mut warm = MacroNativeBfs::new(
         &warm_graph,
         seed,
@@ -82,10 +87,14 @@ fn execute() -> Result<()> {
     drop(warm);
     let context = used()?.0;
     let description = format!("macro-native-v1;group={group};batch={batch};k={macro_depth};layer={layer_capacity};future={future_capacity_per_depth};pre={prededup};seed=20260828");
+    let description = format!(
+        "{description};generation={};state_width={}",
+        config.generation_variant, layout.width
+    );
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let disk_bytes = g
         .expected_max_unique_states
-        .checked_mul((g.start.len() + 16) as u64)
+        .checked_mul((layout.width + 16) as u64)
         .and_then(|v| v.checked_add(64 << 20))
         .ok_or("DISK_OVERFLOW")?;
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
@@ -95,7 +104,7 @@ fn execute() -> Result<()> {
     let mut archive = PinnedArchive::new(
         extent,
         disk_bytes,
-        g.start.len(),
+        layout.width,
         digest,
         archive_rows,
         env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,

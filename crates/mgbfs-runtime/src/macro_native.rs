@@ -3,7 +3,7 @@
 use mgbfs_core::{
     hash::GemmHash,
     macro_generators::MacroGeneratorSet,
-    macro_memory::{MacroLibraryBytes, MacroMemoryInput, MacroMemoryPlan},
+    macro_memory::{MacroLibraryBytes, MacroMemoryInput, MacroMemoryPlan, MacroStateLayout},
     matrix::MatrixGroup,
     Result,
 };
@@ -182,6 +182,7 @@ pub struct MacroNativeBfs {
 impl MacroNativeBfs {
     pub fn new(graph: &MatrixGroup, seed: [u8; 16], cfg: MacroNativeConfig) -> Result<Self> {
         graph.validate()?;
+        let layout = MacroStateLayout::derive(graph, cfg.generation_variant)?;
         let macros = MacroGeneratorSet::compile(graph, cfg.macro_depth)?;
         let moves = u32::try_from(macros.transitions.len()).map_err(|_| "MACRO_MOVES")?;
         let candidates = cfg
@@ -196,8 +197,8 @@ impl MacroNativeBfs {
         {
             return Err("MACRO_NATIVE_CONFIG".into());
         }
-        let width = graph.start.len();
-        let stride = (width + 15) & !15;
+        let width = layout.width;
+        let stride = layout.stride;
         let effective = macros.effective_depth;
         let history_layers = effective.checked_mul(2).ok_or("MACRO_HISTORY_OVERFLOW")?;
         let max_records = candidates
@@ -477,7 +478,7 @@ impl MacroNativeBfs {
             });
         }
         let mut start = vec![0u8; stride];
-        start[..width].copy_from_slice(&graph.start);
+        start[..width].copy_from_slice(&layout.start);
         current_states.put(&start)?;
         identity_refs.put(&(0..u64::from(max_records)).collect::<Vec<_>>())?;
         let mut history_counts = vec![0u32; history_layers as usize];
