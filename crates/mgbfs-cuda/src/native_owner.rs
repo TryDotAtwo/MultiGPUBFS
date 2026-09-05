@@ -140,6 +140,16 @@ mod calls {
             fatal: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_owner_bucket_directory(
+            sorted: *const c_void,
+            count: *const u32,
+            capacity: u32,
+            buckets: u32,
+            owner: u32,
+            dir: *mut Range,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bind_owner_jobs(
             jobs: *mut BucketJob,
             n: u32,

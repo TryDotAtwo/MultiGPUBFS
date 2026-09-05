@@ -196,7 +196,7 @@ impl DistributedNativeBfs {
         graph: &MatrixGroup,
         seed: [u8; 16],
         id: [u8; 128],
-        cfg: DistributedConfig,
+        mut cfg: DistributedConfig,
     ) -> Result<Self> {
         graph.validate()?;
         if cfg.world != 2
@@ -208,6 +208,7 @@ impl DistributedNativeBfs {
             || cfg.state_ring_capacity == 0
             || !cfg.buckets.is_power_of_two()
             || !cfg.shards.is_power_of_two()
+            || cfg.shards < 2
             || cfg.shards > cfg.buckets
             || cfg.job_buckets == 0
             || cfg.job_buckets > cfg.buckets / cfg.shards
@@ -215,6 +216,10 @@ impl DistributedNativeBfs {
         {
             return Err("DISTRIBUTED_CONFIG".into());
         }
+        // Public config retains global prefix geometry. Persistent storage and
+        // all owner jobs use only this owner's contiguous half of that space.
+        cfg.buckets /= 2;
+        cfg.shards /= 2;
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
         let permutation_n = encode_permutation_matrix(&graph.start, graph.rows)
             .ok()
@@ -339,11 +344,12 @@ impl DistributedNativeBfs {
         let route_count = b(4)?;
         route_count.put(&[current_count])?;
         check(unsafe {
-            mgbfs_bucket_directory(
+            mgbfs_owner_bucket_directory(
                 curr.ptr,
                 route_count.ptr.cast(),
                 cfg.layer_capacity,
                 cfg.buckets,
+                u32::from(cfg.logical_owner_to_rank[1] == cfg.rank),
                 directory.ptr.cast(),
                 fatal.ptr.cast(),
                 raw,
@@ -468,11 +474,12 @@ impl DistributedNativeBfs {
         let s = self.stream.0;
         self.route_count.put(&[rows])?;
         unsafe {
-            check(mgbfs_bucket_directory(
+            check(mgbfs_owner_bucket_directory(
                 source_hashes,
                 self.route_count.ptr.cast(),
                 self.candidates,
                 self.cfg.buckets,
+                u32::from(self.cfg.logical_owner_to_rank[1] == self.cfg.rank),
                 self.directory.ptr.cast(),
                 self.fatal.ptr.cast(),
                 s,

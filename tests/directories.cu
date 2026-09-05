@@ -18,5 +18,14 @@ int main(){try{
  std::vector<MgbfsBucketJob>j(2);j[0].bucket=2;j[1].bucket=0;jobs.put(j);
  req(mgbfs_bind_owner_jobs(jobs.p,2,counts.p,4,nullptr)==0,"bind enqueue");ck(cudaDeviceSynchronize());auto got=jobs.get();req(got[0].accepted_count==2&&got[1].accepted_count==1,"fresh counts");
  req(mgbfs_compact_hash_layer(keys.p,counts.p,4,2,out.p,3,dir.p,count.p,fatal.p,nullptr)==0,"overflow enqueue");ck(cudaDeviceSynchronize());req(fatal.get()[0]!=0,"missing capacity failure");
+ for(unsigned owner=0;owner<2;++owner){
+   fatal.put({0});count.put({3});
+   keys.put({{{1,0,0,(owner<<31)}},{{2,0,0,(owner<<31)|(2u<<29)}},{{3,0,0,(owner<<31)|(3u<<29)}}});
+   req(mgbfs_owner_bucket_directory(keys.p,count.p,8,4,owner,dir.p,fatal.p,nullptr)==0,"local enqueue");
+   ck(cudaDeviceSynchronize());auto local=dir.get();
+   req(!fatal.get()[0]&&local[0].count==1&&local[1].count==0&&local[2].begin==1&&local[2].count==1&&local[3].begin==2&&local[3].count==1,"local ranges");
+   req(mgbfs_owner_bucket_directory(keys.p,count.p,8,4,owner^1,dir.p,fatal.p,nullptr)==0,"wrong owner enqueue");
+   ck(cudaDeviceSynchronize());req(fatal.get()[0]==32,"wrong owner rejected");
+ }
  std::puts("DIRECTORIES_PASS");return 0;
  }catch(const std::exception&e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

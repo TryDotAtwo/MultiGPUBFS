@@ -4,11 +4,15 @@
 namespace {
 struct alignas(16) Key{uint32_t w[4];};
 __global__ void check_count(const uint32_t*n,uint32_t cap,uint32_t*f){if(*n>cap)*f=30;}
-__global__ void directory(const Key*keys,const uint32_t*count,uint32_t buckets,unsigned bits,MgbfsOwnerRange*out,const uint32_t*f){
+__global__ void directory(const Key*keys,const uint32_t*count,uint32_t buckets,unsigned bits,MgbfsOwnerRange*out,const uint32_t*f,unsigned base=0){
  if(*f)return;unsigned b=blockIdx.x*blockDim.x+threadIdx.x;if(b>=buckets)return;uint32_t n=*count;
- uint32_t lo=0,hi=n;while(lo<hi){uint32_t m=lo+(hi-lo)/2;uint32_t v=bits?keys[m].w[3]>>(32-bits):0;if(v<b)lo=m+1;else hi=m;}uint32_t begin=lo;
- hi=n;while(lo<hi){uint32_t m=lo+(hi-lo)/2;uint32_t v=bits?keys[m].w[3]>>(32-bits):0;if(v<=b)lo=m+1;else hi=m;}
+ uint32_t lo=0,hi=n;while(lo<hi){uint32_t m=lo+(hi-lo)/2;uint32_t v=bits?keys[m].w[3]>>(32-bits):0;if(v<b+base)lo=m+1;else hi=m;}uint32_t begin=lo;
+ hi=n;while(lo<hi){uint32_t m=lo+(hi-lo)/2;uint32_t v=bits?keys[m].w[3]>>(32-bits):0;if(v<=b+base)lo=m+1;else hi=m;}
  out[b]={begin,lo-begin};
+}
+__global__ void check_owner(const Key*keys,const uint32_t*n,uint32_t cap,unsigned owner,uint32_t*f){
+ if(*n>cap){*f=30;return;}
+ if(*n && ((keys[0].w[3]>>31)!=owner || (keys[*n-1].w[3]>>31)!=owner))*f=32;
 }
 __global__ void bind(MgbfsBucketJob*jobs,uint32_t n,const uint32_t*counts,uint32_t buckets){unsigned i=blockIdx.x*blockDim.x+threadIdx.x;if(i<n&&jobs[i].bucket<buckets)jobs[i].accepted_count=counts[jobs[i].bucket];}
 __global__ void prefix(const uint32_t*counts,uint32_t b,uint32_t k,uint32_t cap,MgbfsOwnerRange*dir,uint32_t*n,uint32_t*f){
@@ -24,6 +28,14 @@ __global__ void copy(const Key*in,uint32_t k,Key*out,const MgbfsOwnerRange*dir,c
 extern "C" int mgbfs_bucket_directory(const void*keys,const uint32_t*n,uint32_t cap,uint32_t b,MgbfsOwnerRange*out,uint32_t*f,void*stream){
  if(!keys||!n||!out||!f||!b||(b&(b-1))||b>INT_MAX||cap>INT_MAX)return 1;unsigned bits=0;for(unsigned v=b;v>1;v>>=1)++bits;auto s=static_cast<cudaStream_t>(stream);
  check_count<<<1,1,0,s>>>(n,cap,f);directory<<<(b+255)/256,256,0,s>>>(static_cast<const Key*>(keys),n,b,bits,out,f);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_bucket_directory(const void*keys,const uint32_t*n,uint32_t cap,uint32_t b,uint32_t owner,MgbfsOwnerRange*out,uint32_t*f,void*stream){
+ if(!keys||!n||!out||!f||!b||(b&(b-1))||b>(1u<<30)||cap>INT_MAX||owner>1)return 1;
+ unsigned bits=1;for(unsigned v=b;v>1;v>>=1)++bits;
+ auto s=static_cast<cudaStream_t>(stream);
+ check_owner<<<1,1,0,s>>>(static_cast<const Key*>(keys),n,cap,owner,f);
+ directory<<<(b+255)/256,256,0,s>>>(static_cast<const Key*>(keys),n,b,bits,out,f,owner*b);
+ return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_bind_owner_jobs(MgbfsBucketJob*jobs,uint32_t n,const uint32_t*counts,uint32_t b,void*stream){
  if(!jobs||!counts||!n||n>INT_MAX||!b)return 1;bind<<<(n+255)/256,256,0,static_cast<cudaStream_t>(stream)>>>(jobs,n,counts,b);return cudaGetLastError()==cudaSuccess?0:2;
