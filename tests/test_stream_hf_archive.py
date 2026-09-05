@@ -192,10 +192,16 @@ class StreamArchive(unittest.TestCase):
             def __init__(self):
                 self.calls = []
                 self.preuploads = []
+                self.decoded = []
+                self.unique_encodings = []
 
             def preupload_lfs_files(self, **kwargs):
                 for operation in kwargs['additions']:
                     payload = operation.path_or_fileobj.read()
+                    parquet = pq.ParquetFile(io.BytesIO(payload))
+                    self.decoded.extend(parquet.read().to_pylist())
+                    self.unique_encodings.extend(
+                        parquet.metadata.row_group(0).column(i).encodings for i in (5, 6, 7))
                     self.assert_payload = payload[:4] == b'PAR1' and payload[-4:] == b'PAR1'
                     self.assert_buffered = isinstance(operation.path_or_fileobj, io.BufferedIOBase)
                     operation.path_or_fileobj = b''
@@ -228,6 +234,11 @@ class StreamArchive(unittest.TestCase):
             self.assertTrue(all(op.path_in_repo.startswith('pending/run-r1/') for op in api.calls[0]['operations']))
             self.assertTrue(api.assert_payload)
             self.assertTrue(api.assert_buffered)
+            rows = sorted(api.decoded, key=lambda row: row['rank_ordinal'])
+            self.assertEqual([row['state'] for row in rows], [bytes([1, 0, 0, 1]), bytes([1, 1, 0, 1])])
+            self.assertEqual([row['hash128_le'] for row in rows], [bytes(range(16)), bytes(range(16, 32))])
+            self.assertTrue(all('RLE_DICTIONARY' not in enc and 'PLAIN_DICTIONARY' not in enc
+                                for enc in api.unique_encodings))
             self.assertFalse(list((Path(folder) / "slots").glob("slot-*.parquet")))
 
     def test_hub_upload_failure_never_emits_rank_commit(self):

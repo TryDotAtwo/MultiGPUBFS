@@ -243,6 +243,9 @@ class HubStagingSink:
                 table,
                 writer,
                 compression="zstd",
+                # These columns repeat. State, hash and ordinal are unique:
+                # avoid building dictionaries that immediately fall back.
+                use_dictionary=["run_id", "group_id", "config_digest", "rank", "depth"],
                 row_group_size=min(table.num_rows, 131072),
             )
             size = writer.tell()
