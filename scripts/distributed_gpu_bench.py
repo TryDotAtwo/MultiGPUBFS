@@ -52,6 +52,25 @@ def smi_peaks(text):
  # Sum of per-rank peaks, not necessarily a simultaneous device peak.
  return values,sum(values) if all(x is not None for x in values) else None
 
+def aggregate_rank_results(ranks):
+ ranks=sorted(ranks,key=lambda x:x['rank'])
+ if [x['rank'] for x in ranks]!=[0,1]:raise ValueError('rank result inventory')
+ if any(x['status']!='COMPLETE' or x['backend']!=ranks[0]['backend'] for x in ranks):raise ValueError('rank result contract mismatch')
+ search=[x['search_complete_seconds'] for x in ranks]
+ durable=[x.get('durable_run_commit_seconds') for x in ranks]
+ if any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in search):raise ValueError('invalid search timing')
+ if all(x is None for x in durable):durable_max=None
+ elif any(x is None or not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('incomplete durable timing')
+ else:durable_max=max(durable)
+ row=dict(status='COMPLETE',backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max)
+ if 'local_layer_sizes' in ranks[0]:
+  if any('local_layer_sizes' not in x or len(x['local_layer_sizes'])!=len(ranks[0]['local_layer_sizes']) for x in ranks):raise ValueError('rank depth mismatch')
+  row['layer_sizes']=[sum(values) for values in zip(*(x['local_layer_sizes'] for x in ranks))]
+ else:
+  if ranks[0]['layer_sizes']!=ranks[1]['layer_sizes']:raise ValueError('baseline rank count mismatch')
+  row['layer_sizes']=ranks[0]['layer_sizes']
+ return row
+
 def run_group(command,out,label,env,timeout=7200):
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
@@ -70,13 +89,8 @@ def run_group(command,out,label,env,timeout=7200):
    relay.poll(final=True)
   finally:sampler.terminate();sampler.wait()
  if row['exit_code']==0:
-  ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')];ranks.sort(key=lambda x:x['rank'])
-  if len(ranks)!=2:raise ValueError('rank result inventory')
-  row.update(status='COMPLETE',backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(x['search_complete_seconds'] for x in ranks),durable_run_commit_seconds=max((x.get('durable_run_commit_seconds') or 0) for x in ranks))
-  if 'local_layer_sizes' in ranks[0]:row['layer_sizes']=[sum(values) for values in zip(*(x['local_layer_sizes'] for x in ranks))]
-  else:
-   if ranks[0]['layer_sizes']!=ranks[1]['layer_sizes']:raise ValueError('baseline rank count mismatch')
-   row['layer_sizes']=ranks[0]['layer_sizes']
+  ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
+  row.update(aggregate_rank_results(ranks))
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']
  row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text());row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
 
