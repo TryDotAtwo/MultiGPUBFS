@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "664327848f74130c87a0628342b88d2edfa88d8c"
+SOURCE = "b520a788e1ad6de3202e77dadf7bf59662f941c3"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -118,7 +118,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "11 passed; 0 failed" not in output:
+            if "12 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
@@ -146,50 +146,51 @@ def main():
         run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli"], "cli-build", source)
         report["reference_profile_smoke"] = []
         expected_layers = None
-        for profile, generation in (("DENSE", "SCALAR"), ("HASH_FIRST", "SCALAR"),
-                                    ("HASH_FIRST", "INT_MMA_SM75")):
-            for owner in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
-                for pre in ("OFF", "ON"):
-                    label = f"smoke-{profile}-{generation}-{owner}-{pre}"
-                    output_dir = logs / label
-                    output_dir.mkdir()
-                    env.update(MGBFS_PROFILE=profile, MGBFS_OWNER_BACKEND=owner, MGBFS_PRE_DEDUP=pre,
-                               MGBFS_HASH_FIRST_GENERATION=generation,
-                               MGBFS_BENCH_WARMUP="1",
-                               MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
-                               MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
-                               MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
-                               MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
-                    prefix = root / (label + "-archive")
-                    run(["torchrun", "--standalone", "--nproc-per-node=2", "--no-python",
-                         str(source / "target/release/examples/distributed_bench"), "s4", "7",
-                         str(root / (label + "-bootstrap")), str(prefix), str(output_dir)], label, source)
-                    rows = [json.loads((output_dir / f"rank-{rank}.json").read_text()) for rank in range(2)]
-                    for rank, row in enumerate(rows):
-                        if (row["status"], row["frontier_profile"], row["owner_backend"], row["pre_dedup"], row["archive_enabled"]) != ("COMPLETE", profile, owner, pre, True):
-                            raise RuntimeError("PROFILE_SELECTION_MISMATCH")
-                        if row["hash_first_generation"] != generation:
-                            raise RuntimeError("GENERATION_SELECTION_MISMATCH")
-                        if row["warmup_completed"] is not True:
-                            raise RuntimeError("WARMUP_NOT_COMPLETED")
-                        if not (0 < row["explicit_device_payload_bytes"] <= row["explicit_device_aligned_bytes"]):
-                            raise RuntimeError("DEVICE_LEDGER_NOT_REPORTED")
-                        if row["untouched_vram_reserve_bytes"] != 1 << 30:
-                            raise RuntimeError("VRAM_RESERVE_MISMATCH")
-                        warm_row = json.loads(Path(str(output_dir) + ".warmup", f"rank-{rank}.json").read_text())
-                        if warm_row["local_layer_sizes"] != row["local_layer_sizes"]:
-                            raise RuntimeError("WARMUP_LAYER_MISMATCH")
-                        if Path(str(prefix) + f".warmup-rank-{rank}.mgbfsar1").exists():
-                            raise RuntimeError("WARMUP_ARCHIVE_NOT_RELEASED")
-                        run([str(source / "target/release/mgbfs"), "verify", str(prefix) + f"-rank-{rank}.mgbfsar1"], label + f"-verify-{rank}", source)
-                    if len(rows[0]["local_layer_sizes"]) != len(rows[1]["local_layer_sizes"]):
-                        raise RuntimeError("PROFILE_DEPTH_MISMATCH")
-                    layers = [a + b for a, b in zip(rows[0]["local_layer_sizes"], rows[1]["local_layer_sizes"])]
-                    if sum(layers) != 24 or (expected_layers is not None and layers != expected_layers):
-                        raise RuntimeError("PROFILE_LAYER_MISMATCH")
-                    expected_layers = layers
-                    report["reference_profile_smoke"].append(dict(profile=profile, generation=generation, owner=owner, pre_dedup=pre, layers=layers, status="PASS"))
-                    save()
+        for world in (1, 2):
+            for profile, generation in (("DENSE", "SCALAR"), ("HASH_FIRST", "SCALAR"),
+                                        ("HASH_FIRST", "INT_MMA_SM75")):
+                for owner in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                    for pre in ("OFF", "ON"):
+                        label = f"smoke-w{world}-{profile}-{generation}-{owner}-{pre}"
+                        output_dir = logs / label
+                        output_dir.mkdir()
+                        env.update(MGBFS_RANK_MAP="0" if world == 1 else "0,1", MGBFS_PROFILE=profile, MGBFS_OWNER_BACKEND=owner, MGBFS_PRE_DEDUP=pre,
+                                   MGBFS_HASH_FIRST_GENERATION=generation,
+                                   MGBFS_BENCH_WARMUP="1",
+                                   MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
+                                   MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                                   MGBFS_MATERIALIZATION_CAPACITY="42", MGBFS_BMMA_TILE_LIMIT="8",
+                                   MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
+                        prefix = root / (label + "-archive")
+                        run(["torchrun", "--standalone", f"--nproc-per-node={world}", "--no-python",
+                             str(source / "target/release/examples/distributed_bench"), "s4", "7",
+                             str(root / (label + "-bootstrap")), str(prefix), str(output_dir)], label, source)
+                        rows = [json.loads((output_dir / f"rank-{rank}.json").read_text()) for rank in range(world)]
+                        for rank, row in enumerate(rows):
+                            if (row["status"], row["frontier_profile"], row["owner_backend"], row["pre_dedup"], row["archive_enabled"]) != ("COMPLETE", profile, owner, pre, True):
+                                raise RuntimeError("PROFILE_SELECTION_MISMATCH")
+                            if row["hash_first_generation"] != generation:
+                                raise RuntimeError("GENERATION_SELECTION_MISMATCH")
+                            if row["warmup_completed"] is not True or row["world_size"] != world:
+                                raise RuntimeError("WARMUP_NOT_COMPLETED")
+                            if not (0 < row["explicit_device_payload_bytes"] <= row["explicit_device_aligned_bytes"]):
+                                raise RuntimeError("DEVICE_LEDGER_NOT_REPORTED")
+                            if row["untouched_vram_reserve_bytes"] != 1 << 30:
+                                raise RuntimeError("VRAM_RESERVE_MISMATCH")
+                            warm_row = json.loads(Path(str(output_dir) + ".warmup", f"rank-{rank}.json").read_text())
+                            if warm_row["local_layer_sizes"] != row["local_layer_sizes"]:
+                                raise RuntimeError("WARMUP_LAYER_MISMATCH")
+                            if Path(str(prefix) + f".warmup-rank-{rank}.mgbfsar1").exists():
+                                raise RuntimeError("WARMUP_ARCHIVE_NOT_RELEASED")
+                            run([str(source / "target/release/mgbfs"), "verify", str(prefix) + f"-rank-{rank}.mgbfsar1"], label + f"-verify-{rank}", source)
+                        if len({len(row["local_layer_sizes"]) for row in rows}) != 1:
+                            raise RuntimeError("PROFILE_DEPTH_MISMATCH")
+                        layers = [sum(values) for values in zip(*(row["local_layer_sizes"] for row in rows))]
+                        if sum(layers) != 24 or (expected_layers is not None and layers != expected_layers):
+                            raise RuntimeError("PROFILE_LAYER_MISMATCH")
+                        expected_layers = layers
+                        report["reference_profile_smoke"].append(dict(world_size=world, profile=profile, generation=generation, owner=owner, pre_dedup=pre, layers=layers, status="PASS"))
+                        save()
         report["status"] = "COMPLETE"
     except Exception as exc:
         report["error"] = str(exc)
