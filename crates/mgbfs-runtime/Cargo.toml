@@ -5,12 +5,12 @@ edition = "2021"
 rust-version = "1.75"
 
 [features]
-cuda = ["dep:mgbfs-cuda", "mgbfs-cuda/cuda"]
+cuda = ["mgbfs-cuda/cuda"]
 
 [dependencies]
 mgbfs-core = { path = "../mgbfs-core" }
 sha2 = "=0.10.8"
-mgbfs-cuda = { path = "../mgbfs-cuda", optional = true }
+mgbfs-cuda = { path = "../mgbfs-cuda" }
 
 [[example]]
 name = "single_gpu_bench"

@@ -267,6 +267,7 @@ pub struct DistributedNativeBfs {
     archive_hash: Plan,
     route: Plan,
     owner: Plan,
+    shared_memory: mgbfs_core::memory::AllocationLedger,
     states: Buffer,
     prev: Buffer,
     curr: Buffer,
@@ -305,6 +306,11 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    /// The 29 shared Buffer allocations, excluding library/profile/transport
+    /// allocations. This is not the complete rank memory budget.
+    pub fn shared_memory(&self) -> &mgbfs_core::memory::AllocationLedger {
+        &self.shared_memory
+    }
     /// Additional profile storage, not total rank VRAM. Includes CUB query
     /// results captured before allocation; reserved bytes use 256B alignment.
     pub fn hash_first_memory(&self) -> Option<&mgbfs_core::memory::AllocationLedger> {
@@ -460,6 +466,25 @@ impl DistributedNativeBfs {
         if candidates > i32::MAX as u32 {
             return Err("CANDIDATE_CAPACITY".into());
         }
+        let packet_stride = if materialization_capacity.is_some() {
+            16
+        } else {
+            stride
+        };
+        let shared_memory = crate::distributed_memory::shared_buffers(
+            crate::distributed_memory::SharedBufferShape {
+                state_stride: stride as u64,
+                packet_stride: packet_stride as u64,
+                batch: cfg.batch.into(),
+                candidates: candidates.into(),
+                layer_capacity: cfg.layer_capacity.into(),
+                state_ring_capacity: cfg.state_ring_capacity.into(),
+                buckets: cfg.buckets.into(),
+                bucket_capacity: cfg.bucket_capacity.into(),
+                job_buckets: cfg.job_buckets.into(),
+                archive_width: permutation_n.unwrap_or(1).into(),
+            },
+        )?;
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
@@ -527,7 +552,6 @@ impl DistributedNativeBfs {
                 HashFirstStorage::new(graph, &contract, capacity, stride, cfg.layer_capacity, raw)
             })
             .transpose()?;
-        let packet_stride = if hash_first.is_some() { 16 } else { stride };
         let route = Plan::new(mgbfs_route_destroy, |out, e| unsafe {
             mgbfs_route_create(candidates, out, e, 512)
         })?;
@@ -561,11 +585,20 @@ impl DistributedNativeBfs {
                 ),
             }
         })?;
-        let b = |n| Buffer::new(n, raw);
-        let state_bytes = cfg.state_ring_capacity as usize * stride;
-        let states = b(state_bytes)?;
-        let prev = b(cfg.layer_capacity as usize * 16)?;
-        let curr = b(cfg.layer_capacity as usize * 16)?;
+        let b = |name: &str| {
+            let entry = shared_memory
+                .allocations
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or("MISSING_SHARED_ALLOCATION")?;
+            Buffer::new(
+                usize::try_from(entry.payload_bytes).map_err(|_| "BYTE_OVERFLOW")?,
+                raw,
+            )
+        };
+        let states = b("states")?;
+        let prev = b("prev")?;
+        let curr = b("curr")?;
         let start_hash = contract.hash(&start_state)?;
         let start_owner = (start_hash.0[3] >> 31) as usize;
         let start_rank = cfg.logical_owner_to_rank[start_owner];
@@ -576,7 +609,7 @@ impl DistributedNativeBfs {
             states.put(&start)?;
             curr.put(&[start_hash.to_le_bytes()])?;
         }
-        let identity_refs = b(candidates as usize * 8)?;
+        let identity_refs = b("identity_refs")?;
         identity_refs.put(&(0..u64::from(candidates)).collect::<Vec<_>>())?;
         let archive_done = [Event::new()?, Event::new()?];
         check(unsafe { cudaEventRecord(archive_done[0].0, raw) })?;
@@ -584,9 +617,9 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamSynchronize(raw) })?;
         let buckets = cfg.buckets as usize;
         let slots = buckets + 1;
-        let directory = b(buckets * std::mem::size_of::<Range>())?;
-        let fatal = b(4)?;
-        let route_count = b(4)?;
+        let directory = b("directory")?;
+        let fatal = b("fatal")?;
+        let route_count = b("route_count")?;
         route_count.put(&[current_count])?;
         check(unsafe {
             mgbfs_owner_bucket_directory(
@@ -616,7 +649,7 @@ impl DistributedNativeBfs {
                 ..Extent::default()
             });
         }
-        let ring = b(std::mem::size_of::<Ring>())?;
+        let ring = b("ring")?;
         ring.put(&[Ring {
             tail: u64::from(current_count),
             descriptor_tail: u64::from(current_count),
@@ -650,33 +683,30 @@ impl DistributedNativeBfs {
             states,
             prev,
             curr,
-            accepted: b(buckets
-                .checked_mul(cfg.bucket_capacity as usize)
-                .and_then(|n| n.checked_mul(16))
-                .ok_or("ACCEPTED_BYTES_OVERFLOW")?)?,
-            lengths: b(buckets * 4)?,
-            children: b(candidates as usize * packet_stride)?,
-            child_hashes: b(candidates as usize * 16)?,
-            archive_hashes: b(cfg.batch as usize * 16)?,
-            archive_states: b(cfg.batch as usize * permutation_n.unwrap_or(1) as usize)?,
-            sorted_hashes: b(candidates as usize * 16)?,
-            sorted_refs: b(candidates as usize * 8)?,
+            accepted: b("accepted")?,
+            lengths: b("lengths")?,
+            children: b("children")?,
+            child_hashes: b("child_hashes")?,
+            archive_hashes: b("archive_hashes")?,
+            archive_states: b("archive_states")?,
+            sorted_hashes: b("sorted_hashes")?,
+            sorted_refs: b("sorted_refs")?,
             route_count,
-            packed_states: b(candidates as usize * packet_stride)?,
-            owner_counts: b(8)?,
-            recv_states: b(candidates as usize * packet_stride)?,
-            recv_hashes: b(candidates as usize * 16)?,
-            recv_count: b(4)?,
+            packed_states: b("packed_states")?,
+            owner_counts: b("owner_counts")?,
+            recv_states: b("recv_states")?,
+            recv_hashes: b("recv_hashes")?,
+            recv_count: b("recv_count")?,
             identity_refs,
             directory,
             fatal,
-            jobs_gpu: b(slots * std::mem::size_of::<BucketJob>())?,
-            counts: b(cfg.job_buckets as usize * std::mem::size_of::<Counts>())?,
-            control: b(std::mem::size_of::<Control>())?,
-            selected: b(candidates as usize * 4)?,
+            jobs_gpu: b("jobs_gpu")?,
+            counts: b("counts")?,
+            control: b("control")?,
+            selected: b("selected")?,
             ring,
-            extent: b(std::mem::size_of::<Extent>())?,
-            layer_count: b(4)?,
+            extent: b("extent")?,
+            layer_count: b("layer_count")?,
             incoming_dir: vec![Range::default(); buckets],
             prev_dir: vec![Range::default(); buckets],
             curr_dir,
@@ -684,8 +714,9 @@ impl DistributedNativeBfs {
             spans: vec![JobSpan::default(); slots],
             front,
             next: Vec::with_capacity(2),
-            collective_send: b(4)?,
-            collective_recv: b(8)?,
+            collective_send: b("collective_send")?,
+            collective_recv: b("collective_recv")?,
+            shared_memory,
         };
         result.all_max(0)?;
         Ok(result)

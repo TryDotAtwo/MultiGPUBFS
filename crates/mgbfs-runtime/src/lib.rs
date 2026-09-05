@@ -3,6 +3,7 @@ pub mod archive;
 pub mod benchmark;
 #[cfg(feature = "cuda")]
 pub mod dense_device;
+pub mod distributed_memory;
 #[cfg(feature = "cuda")]
 pub mod distributed_native;
 pub mod exchange;
