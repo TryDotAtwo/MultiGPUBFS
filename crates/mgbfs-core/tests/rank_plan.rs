@@ -96,11 +96,24 @@ fn rank_plan_counts_replicas_intermediates_and_separate_pinned_pool() {
     let mut hq = q.clone();
     hq.shape = hf.clone();
     let hp = plan(&hf, &hq).unwrap();
-    // Two-GEMM HASH_FIRST still pays for transient full children.
-    assert_eq!(
-        bytes(&hp, "generation_states"),
-        bytes(&p, "generation_states")
-    );
+    assert!(!hp.device.iter().any(|a| a.name == "generation_states"));
+    assert_eq!(bytes(&hp, "generation_origins"), 512);
+}
+
+#[test]
+fn hash_first_replaces_child_planes_with_aligned_origin_planes() {
+    let (mut s, mut q) = fixture();
+    s.n = 8;
+    q.shape = s.clone();
+    let dense = plan(&s, &q).unwrap();
+    assert_eq!(bytes(&dense, "generation_states"), 1536);
+    s.profile = FrontierProfile::HashFirst;
+    q.shape = s.clone();
+    let hf = plan(&s, &q).unwrap();
+    // Two lanes: 12*64-byte children vs align256(12*16-byte origins).
+    assert_eq!(bytes(&hf, "generation_origins"), 512);
+    assert_eq!(dense.device_bytes - hf.device_bytes, 1024);
+    assert_eq!(dense.pinned_bytes, hf.pinned_bytes);
 }
 
 #[test]

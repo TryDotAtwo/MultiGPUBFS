@@ -268,7 +268,6 @@ pub fn rank_plan(
     }
     for (name, lanes, count, size) in [
         ("parent_banks", s.generation_lanes, s.parents, stride),
-        ("generation_states", s.generation_lanes, c, stride),
         ("generation_hashes", s.generation_lanes, c, 16),
         ("route_hashes_0", s.route_lanes, c, 16),
         ("route_hashes_1", s.route_lanes, c, 16),
@@ -277,6 +276,19 @@ pub fn rank_plan(
     ] {
         plane(&mut device, name, lanes, mul(count, size)?, 256)?;
     }
+    // HASH_FIRST children remain in registers/shared memory. Its external
+    // candidate payload is the 16-byte OriginRef, not a full child state.
+    let (payload_name, payload_stride) = match s.profile {
+        FrontierProfile::Dense => ("generation_states", stride),
+        FrontierProfile::HashFirst => ("generation_origins", 16),
+    };
+    plane(
+        &mut device,
+        payload_name,
+        s.generation_lanes,
+        mul(c, payload_stride)?,
+        256,
+    )?;
     // The owner ledger knows only I,J,K, never L or the whole accepted arena.
     let owner = bounded_owner_ledger(s.incoming, s.touched_buckets, s.bucket_records, [0; 3])?;
     for a in owner
@@ -296,7 +308,9 @@ pub fn rank_plan(
     // hashes, response states and reconstruction scratch. Transport query owns
     // ALL typed send/receive banks, framing, directories and ticket metadata.
     // Generation/hash queries own their internal packed inputs, tables and
-    // int32 intermediates; the external state/hash banks above are excluded.
+    // int32 intermediates; the external state/origin/hash banks are excluded.
+    // Queries must correspond to the selected policy: a HASH_FIRST producer
+    // cannot be substituted with a full-child-materializing implementation.
     for k in REQUIRED_QUERIES {
         let (prefix, lanes) = match k {
             QueryKind::Generation | QueryKind::Hash => ("generation", s.generation_lanes),
