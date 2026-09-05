@@ -87,3 +87,12 @@ The new operation will reuse the existing MaterializePlan CUB buffers rather
 than allocate another scratch arena. Mixed source ranks must reject the whole
 job before writes. Sorting is needed before regeneration; pairing is needed
 to restore final dense target order after request/response routing.
+
+V12 RED confirmed in `sort-origins-build.log`: CUDA test compiled; both calls
+failed to link solely because `mgbfs_materialize_sort_origins` was missing.
+Implementation `495044d374dcd401e365f84e25789571d6519201` reuses MaterializePlan
+keys/indices/order/scratch, sorts fixed capacity with stable CUB radix sort,
+and copies only the active records. Tests include UINT64_MAX as a real parent,
+duplicate-parent stability, mixed ranks, empty input, capacity overflow and
+sticky fatal. No request/target output may change on failure. V13 is the GPU
+gate; compilation of Rust bindings alone is not execution evidence.
