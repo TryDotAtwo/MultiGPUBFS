@@ -402,6 +402,38 @@ fn hash_first_reference_preserves_full_archived_bfs_layers_on_two_devices() {
 }
 
 fn archive_fixture_profile(compact: bool, hash_first: bool) {
+    archive_fixture_config(compact, hash_first, [0; 16], [1, 0], true);
+}
+
+// Catches fixed-seed hashing, rank-vs-owner confusion, and dedup paths that
+// disagree about which layer receives an accepted state. Compare full states,
+// not only counts, and check each rank's ownership before combining archives.
+#[test]
+fn hash_first_and_dense_archive_match_oracle_across_seed_owner_and_prededup() {
+    for seed_value in [0u128, 1, 20260828] {
+        for owners in [[0, 1], [1, 0]] {
+            for prededup in [false, true] {
+                for hash_first in [false, true] {
+                    archive_fixture_config(
+                        false,
+                        hash_first,
+                        seed_value.to_le_bytes(),
+                        owners,
+                        prededup,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn archive_fixture_config(
+    compact: bool,
+    hash_first: bool,
+    seed: [u8; 16],
+    owners: [u32; 2],
+    prededup: bool,
+) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -420,7 +452,7 @@ fn archive_fixture_profile(compact: bool, hash_first: bool) {
                 let cfg = DistributedConfig {
                     rank,
                     world: 2,
-                    logical_owner_to_rank: [1, 0],
+                    logical_owner_to_rank: owners,
                     batch: 7,
                     layer_capacity: capacity,
                     state_ring_capacity: capacity,
@@ -428,13 +460,13 @@ fn archive_fixture_profile(compact: bool, hash_first: bool) {
                     shards: 2,
                     job_buckets: 2,
                     bucket_capacity: capacity,
-                    prededup: true,
+                    prededup,
                     generation_variant: if compact { 5 } else { 1 },
                 };
                 let mut bfs = if hash_first {
-                    DistributedNativeBfs::new_hash_first_reference(&g, [0; 16], id, cfg, 64).unwrap()
+                    DistributedNativeBfs::new_hash_first_reference(&g, seed, id, cfg, 64).unwrap()
                 } else {
-                    DistributedNativeBfs::new(&g, [0; 16], id, cfg).unwrap()
+                    DistributedNativeBfs::new(&g, seed, id, cfg).unwrap()
                 };
                 let data = Arc::new(Mutex::new(Vec::new()));
                 // Archive rows deliberately smaller than a compute batch.
@@ -463,8 +495,8 @@ fn archive_fixture_profile(compact: bool, hash_first: bool) {
         }
     }
     let mut actual = vec![Vec::new(); expected.len()];
-    let hash = GemmHash::from_seed(width, [0; 16]).unwrap();
-    for worker in workers {
+    let hash = GemmHash::from_seed(width, seed).unwrap();
+    for (rank, worker) in workers.into_iter().enumerate() {
         let data = worker.join().unwrap();
         let mut at = 48;
         loop {
@@ -479,8 +511,10 @@ fn archive_fixture_profile(compact: bool, hash_first: bool) {
                 let payload = &data[at + 80..at + 80 + size];
                 for row in 0..count {
                     let state = &payload[row * width..(row + 1) * width];
+                    let state_hash = hash.hash(state).unwrap();
+                    assert_eq!(owners[(state_hash.0[3] >> 31) as usize], rank as u32);
                     assert_eq!(
-                        hash.hash(state).unwrap().to_le_bytes(),
+                        state_hash.to_le_bytes(),
                         payload[count * width + row * 16..count * width + (row + 1) * 16]
                     );
                     actual[depth].push(state.to_vec());
