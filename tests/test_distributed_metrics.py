@@ -5,10 +5,24 @@ from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite
+from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats
 
 
 class RankMetrics(unittest.TestCase):
+    def test_one_rank_counts_require_explicit_world_inventory(self):
+        row = self.rows()[0]
+        result = aggregate_rank_results([row], world=1)
+        self.assertEqual(result['layer_sizes'], [1, 2])
+        self.assertEqual(result['search_complete_seconds'], 2)
+        self.assertEqual(result['world_size'], 1)
+        row = dict(rank=0, status='COMPLETE', backend='cayleypy_single_gpu',
+                   layer_sizes=[1, 5], search_complete_seconds=3)
+        self.assertEqual(aggregate_rank_results([row], world=1)['layer_sizes'], [1, 5])
+        with self.assertRaises(ValueError):
+            aggregate_rank_results([row])  # missing rank 1 is not a single GPU run
+        with self.assertRaises(ValueError):
+            aggregate_rank_results([dict(row, world_size=2)], world=1)
+
     def test_profile_group_rejected_before_launch_when_full_capacity_exceeds_u32(self):
         for value in ("0", "1", "-1", "13", "1000000"):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
@@ -88,6 +102,18 @@ class RankMetrics(unittest.TestCase):
 
 
 class MemoryMetrics(unittest.TestCase):
+    def test_single_gpu_does_not_charge_unused_device(self):
+        text = 't, 0, a, 500, 1, 1, 1, 1\nt, 1, b, 9000, 1, 1, 1, 1\n'
+        self.assertEqual(smi_peaks(text, world=1), ([500.0], 500.0))
+        self.assertEqual(smi_peaks('', world=1), ([None], None))
+        rows = [dict(search_complete_seconds=t, smi_peak_mib_per_rank=[m],
+                     smi_peak_mib_total=m) for t, m in [(1, 500), (3, 600)]]
+        result = stats(rows)
+        self.assertEqual(result['median_seconds'], 2)
+        self.assertEqual(result['peak_mib_per_rank'], [600])
+        with self.assertRaises(ValueError):
+            stats(rows + [dict(rows[0], smi_peak_mib_per_rank=[500, 500])])
+
     def test_missing_rank_is_unknown_not_zero(self):
         self.assertEqual(smi_peaks(""), ([None, None], None))
         self.assertEqual(smi_peaks("t, 0, uuid, 500, 1, 1, 1, 1\n"), ([500.0, None], None))

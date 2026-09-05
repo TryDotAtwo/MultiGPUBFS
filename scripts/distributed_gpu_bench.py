@@ -40,21 +40,24 @@ def baseline_worker(n,batch,out):
  row=dict(status='COMPLETE',backend='cayleypy_torchrun',rank=rank,group=f's{n}',batch=batch,warmup_completed=True,search_complete_seconds=seconds,durable_run_commit_seconds=None,layer_sizes=result.layer_sizes,torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),cuda_before_used_bytes=total-before_free,cuda_after_used_bytes=total-after_free,output_contract='global counts; no archive')
  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/f'rank-{rank}.json').write_text(json.dumps(row))
 
-def smi_peaks(text):
- peaks={0:[],1:[]}
+def smi_peaks(text,world=2):
+ if world not in (1,2):raise ValueError('unsupported measurement world')
+ peaks={r:[] for r in range(world)}
  for line in text.splitlines():
   fields=line.split(',')
   if len(fields)!=8:continue
   try:rank=int(fields[1]);value=float(fields[3])
   except ValueError:continue
   if rank in peaks and math.isfinite(value) and value>=0:peaks[rank].append(value)
- values=[max(peaks[rank]) if peaks[rank] else None for rank in range(2)]
+ values=[max(peaks[rank]) if peaks[rank] else None for rank in range(world)]
  # Sum of per-rank peaks, not necessarily a simultaneous device peak.
  return values,sum(values) if all(x is not None for x in values) else None
 
-def aggregate_rank_results(ranks):
+def aggregate_rank_results(ranks,world=2):
+ if world not in (1,2):raise ValueError('unsupported measurement world')
  ranks=sorted(ranks,key=lambda x:x['rank'])
- if [x['rank'] for x in ranks]!=[0,1]:raise ValueError('rank result inventory')
+ if [x['rank'] for x in ranks]!=list(range(world)):raise ValueError('rank result inventory')
+ if any(x.get('world_size',world)!=world for x in ranks):raise ValueError('rank world mismatch')
  if any(x['status']!='COMPLETE' or x['backend']!=ranks[0]['backend'] for x in ranks):raise ValueError('rank result contract mismatch')
  search=[x['search_complete_seconds'] for x in ranks]
  durable=[x.get('durable_run_commit_seconds') for x in ranks]
@@ -62,12 +65,12 @@ def aggregate_rank_results(ranks):
  if all(x is None for x in durable):durable_max=None
  elif any(x is None or not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('incomplete durable timing')
  else:durable_max=max(durable)
- row=dict(status='COMPLETE',backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max)
+ row=dict(status='COMPLETE',world_size=world,backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max)
  if 'local_layer_sizes' in ranks[0]:
   if any('local_layer_sizes' not in x or len(x['local_layer_sizes'])!=len(ranks[0]['local_layer_sizes']) for x in ranks):raise ValueError('rank depth mismatch')
   row['layer_sizes']=[sum(values) for values in zip(*(x['local_layer_sizes'] for x in ranks))]
  else:
-  if ranks[0]['layer_sizes']!=ranks[1]['layer_sizes']:raise ValueError('baseline rank count mismatch')
+  if any(x['layer_sizes']!=ranks[0]['layer_sizes'] for x in ranks):raise ValueError('baseline rank count mismatch')
   row['layer_sizes']=ranks[0]['layer_sizes']
  return row
 
@@ -95,9 +98,12 @@ def run_group(command,out,label,env,timeout=7200):
  row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text());row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
 
 def stats(rows):
+ if not rows:raise ValueError('EMPTY_MEASUREMENTS')
+ world=len(rows[0]['smi_peak_mib_per_rank'])
+ if world not in (1,2) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
  if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')
  values=[x['search_complete_seconds'] for x in rows];median=statistics.median(values)
- return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(2)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
+ return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
 
 def suite(native,source,out,env):
  out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',scope='physical 2xT4, same S_n matrix states, native mandatory archive, CayleyPy torchrun no archive',rows=[],comparisons=[])
