@@ -176,3 +176,12 @@ One download failed through the proxy; retry retrieved the same completed run.
 This is a small reference correctness gate, not a throughput/overlap proof.
 V18 expands to source 4283bfa: three seeds, both rank maps, both pre-dedup modes,
 both profiles, with explicit per-rank archive ownership checks.
+
+V18 completed at 4283bfa on two T4s. Seven fixtures pass plain and all four
+sanitizer tools, including 24 full-state oracle comparisons (DENSE/HASH_FIRST,
+seeds 0/1/20260828, both owner maps and pre-dedup OFF/ON). Every archived record
+is also checked against its owning rank. Zero sanitizer errors or race hazards
+and warnings. Evidence: `test_results/distributed-sanitizer-v18/distributed-sanitizer/`.
+Racecheck took 246.70 seconds; this is instrumented test time, not BFS throughput.
+V19 pins 9568f86 and adds group-terminal request/StateRing capacity failure tests
+plus the HASH_FIRST allocation-query wiring. No larger graph or speed claim.
