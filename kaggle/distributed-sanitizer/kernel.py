@@ -100,7 +100,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "4 passed; 0 failed" not in output:
+            if "5 passed; 0 failed" not in output:
                 raise RuntimeError("FIXTURE_NOT_PASSED")
             require_clean(tool, output)
             report["tests"].append({"tool": tool, "status": "PASS"})

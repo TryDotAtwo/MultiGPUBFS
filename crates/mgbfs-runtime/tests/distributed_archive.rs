@@ -14,6 +14,139 @@ use std::sync::{Arc, Mutex};
 struct Disk(Arc<Mutex<Vec<u8>>>);
 
 #[test]
+fn native_request_response_epochs_include_empty_ranks_and_group_fatal() {
+    use mgbfs_core::wire::OriginRef;
+    use mgbfs_cuda::ffi::*;
+    use mgbfs_runtime::hash_first_exchange::{enqueue_round_trip, ExchangeBuffers, MatrixSource};
+    use std::ffi::c_void;
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let workers: Vec<_> = (0..2u32)
+        .map(|rank| {
+            std::thread::spawn(move || unsafe {
+                let peer = rank ^ 1;
+                let mut comm = std::ptr::null_mut();
+                let mut error = [0i8; 512];
+                assert_eq!(
+                    mgbfs_nccl_create(
+                        rank,
+                        2,
+                        rank,
+                        id.as_ptr().cast(),
+                        &mut comm,
+                        error.as_mut_ptr(),
+                        error.len()
+                    ),
+                    0
+                );
+                let mut stream = std::ptr::null_mut();
+                assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                let mut allocations = Vec::<*mut c_void>::new();
+                let mut upload = |bytes: &[u8]| {
+                    let mut p = std::ptr::null_mut();
+                    assert_eq!(cudaMalloc(&mut p, bytes.len()), 0);
+                    allocations.push(p);
+                    assert_eq!(cudaMemcpy(p, bytes.as_ptr().cast(), bytes.len(), 1), 0);
+                    p
+                };
+                let mut parents = [0u8; 32];
+                parents[..4].copy_from_slice(&[1, 0, 0, 1]);
+                parents[16..20].copy_from_slice(&[1, rank as u8 + 1, 0, 1]);
+                let p = upload(&parents);
+                let g = upload(&[1, 1, 0, 1, 1, 0, 1, 1]);
+                let send_requests = upload(&[0u8; 48]);
+                let recv_requests = upload(&[0u8; 48]);
+                let send_states = upload(&[0u8; 48]);
+                let recv_states = upload(&[0u8; 48]);
+                let count = upload(&0u32.to_le_bytes());
+                let fatal = upload(&0u32.to_le_bytes());
+                let group_fatal = upload(&0u32.to_le_bytes());
+                let source = MatrixSource {
+                    n: 2,
+                    moves: 2,
+                    modulus: 5,
+                    stride: 16,
+                    rank,
+                    parent_begin: 100 + u64::from(rank) * 10,
+                    parent_count: 2,
+                    parents: p.cast(),
+                    generators: g.cast(),
+                };
+                for (epoch, counts) in [[3u32, 2], [0, 2], [0, 0], [1, 1]].into_iter().enumerate() {
+                    let outgoing = counts[rank as usize];
+                    let incoming = counts[peer as usize];
+                    let begin = 100 + u64::from(peer) * 10;
+                    let mut origins = [
+                        OriginRef {
+                            source: peer,
+                            movement: 1,
+                            parent: begin + 1,
+                        },
+                        OriginRef {
+                            source: peer,
+                            movement: 0,
+                            parent: begin,
+                        },
+                        OriginRef {
+                            source: peer,
+                            movement: 0,
+                            parent: begin + 1,
+                        },
+                    ];
+                    if epoch == 3 && rank == 0 {
+                        origins[0].source = rank;
+                    }
+                    let bytes: Vec<u8> = origins.into_iter().flat_map(|x| x.encode()).collect();
+                    assert_eq!(cudaMemcpy(send_requests, bytes.as_ptr().cast(), 48, 1), 0);
+                    assert_eq!(cudaMemcpy(count, (&incoming as *const u32).cast(), 4, 1), 0);
+                    let buffers = ExchangeBuffers {
+                        capacity: 3,
+                        outgoing_count: outgoing,
+                        incoming_count: incoming,
+                        incoming_count_device: count.cast(),
+                        outgoing_requests: send_requests.cast(),
+                        incoming_requests: recv_requests.cast(),
+                        outgoing_responses: send_states.cast(),
+                        incoming_responses: recv_states.cast(),
+                        local_fatal: fatal.cast(),
+                        group_fatal: group_fatal.cast(),
+                    };
+                    enqueue_round_trip(comm, peer, &source, &buffers, stream).unwrap();
+                    assert_eq!(cudaStreamSynchronize(stream), 0);
+                    let mut status = 99u32;
+                    assert_eq!(
+                        cudaMemcpy((&mut status as *mut u32).cast(), group_fatal, 4, 2),
+                        0
+                    );
+                    assert_eq!(status, if epoch == 3 { 2 } else { 0 });
+                    if epoch != 3 {
+                        let mut actual = [0u8; 48];
+                        assert_eq!(
+                            cudaMemcpy(actual.as_mut_ptr().cast(), recv_states, 48, 2),
+                            0
+                        );
+                        let a = peer as u8 + 1;
+                        let matrices = [[1, a, 1, a + 1], [1, 1, 0, 1], [1, a + 1, 0, 1]];
+                        for i in 0..outgoing as usize {
+                            assert_eq!(&actual[i * 16..i * 16 + 4], &matrices[i]);
+                            assert!(actual[i * 16 + 4..(i + 1) * 16].iter().all(|&x| x == 0));
+                        }
+                    }
+                }
+                assert_eq!(cudaStreamDestroy(stream), 0);
+                for allocation in allocations {
+                    assert_eq!(cudaFree(allocation), 0);
+                }
+                mgbfs_nccl_destroy(comm);
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
 fn hash_only_origins_regenerate_cpu_successors_without_host_count_readback() {
     use mgbfs_cuda::ffi::*;
     use mgbfs_cuda::native_owner::cudaSetDevice;

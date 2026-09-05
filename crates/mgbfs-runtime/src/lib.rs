@@ -6,6 +6,8 @@ pub mod dense_device;
 pub mod distributed_native;
 pub mod exchange;
 pub mod failure;
+#[cfg(feature = "cuda")]
+pub mod hash_first_exchange;
 pub mod jobs;
 #[cfg(feature = "cuda")]
 pub mod macro_native;
