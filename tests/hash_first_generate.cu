@@ -20,7 +20,7 @@ int main(){
  for(unsigned i=0;i<parents_n;++i){parents[i*16]=parents[i*16+3]=1;if(i%2)parents[i*16+1]=2;}
  auto p=upload(parents),g=upload<uint8_t>({1,1,0,1,1,0,1,1});
  // Per state-byte, four affine projection coefficients. Last lane tests F_p.
- auto w=upload<uint32_t>({1,2,3,P-1,1,2,3,P-1,1,2,3,P-1,1,2,3,P-1});
+ auto w=upload<uint32_t>({1,2,3,P-1,2,5,13,P-2,3,7,17,P-3,4,11,19,P-4});
  auto b=upload<uint32_t>({7,11,13,1});
  auto count=upload<uint32_t>({parents_n}),out_count=upload<uint32_t>({99}),fatal=upload<uint32_t>({0});
  auto hashes=upload<uint32_t>(std::vector<uint32_t>(cap*4,0));
@@ -30,9 +30,9 @@ int main(){
  std::vector<uint32_t> actual(cap*4);std::vector<MgbfsRegenerateOrigin> refs(cap);
  require(cudaMemcpy(actual.data(),hashes,actual.size()*4,cudaMemcpyDeviceToHost)==cudaSuccess);
  require(cudaMemcpy(refs.data(),origins,refs.size()*16,cudaMemcpyDeviceToHost)==cudaSuccess);
- const uint32_t expected[3][4]={{10,17,22,P-2},{12,21,28,P-4},{14,25,34,P-6}};
+ const uint32_t expected[4][4]={{14,29,48,P-6},{15,31,52,P-7},{18,39,74,P-10},{27,63,116,P-19}};
  for(unsigned i=0;i<cap;++i){
-   unsigned kind=(i/2)%2?(i%2?2:1):0;
+   unsigned kind=((i/2)%2)*2+i%2;
    for(unsigned lane=0;lane<4;++lane)require(actual[i*4+lane]==expected[kind][lane]);
    require(refs[i].source==1&&refs[i].move==i%2&&refs[i].reserved==0&&refs[i].parent==begin+i/2);
  }
