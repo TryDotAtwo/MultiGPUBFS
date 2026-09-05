@@ -9,6 +9,30 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite
 
 
 class RankMetrics(unittest.TestCase):
+    def test_profile_group_rejected_before_launch_when_full_capacity_exceeds_u32(self):
+        for value in ("0", "1", "-1", "13", "1000000"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                with patch("distributed_gpu_bench.run_group", side_effect=AssertionError("unexpected launch")):
+                    with self.assertRaisesRegex(ValueError, "PROFILE_GROUP_CAPACITY"):
+                        suite(Path("native"), Path("source"), Path(directory),
+                              {"MGBFS_PROFILE_SWEEP": "1", "MGBFS_PROFILE_SWEEP_N": value})
+
+    def test_profile_suite_runs_requested_group_not_fixed_s10(self):
+        launches = []
+        def worker(command, out, label, env, timeout):
+            launches.append(command)
+            return dict(status="COMPLETE", layer_sizes=[1, 39916799],
+                        search_complete_seconds=2.0, smi_peak_mib_total=200,
+                        smi_peak_mib_per_rank=[100, 100])
+        with tempfile.TemporaryDirectory() as directory, patch("distributed_gpu_bench.run_group", worker):
+            report = suite(Path("native"), Path("source"), Path(directory),
+                           {"MGBFS_PROFILE_SWEEP": "1", "MGBFS_PROFILE_SWEEP_N": "11"})
+        self.assertEqual(report["status"], "COMPLETE")
+        self.assertEqual(len(launches), 68)
+        self.assertTrue(all("s11" in cmd or "11" in cmd for cmd in launches))
+        self.assertTrue(all(x["group"] == "s11" and x["unique_states"] == 39916800
+                            for x in report["comparisons"]))
+
     def test_profile_suite_retains_all_modes_and_repetitions(self):
         # GPU processes are unavailable to this CPU orchestration test. The
         # boundary returns fixed measurements; real files/aggregation execute.

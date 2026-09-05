@@ -131,7 +131,10 @@ def suite(native,source,out,env):
    report['status']=row['status']
    return report
   if env.get('MGBFS_PROFILE_SWEEP')=='1':
-   n=10;expected=None;trials=[];variants=[]
+   n=int(env.get('MGBFS_PROFILE_SWEEP_N','10'));expected=None;trials=[];variants=[]
+   # This panel reserves n! records per rank through a u32 reference ABI.
+   # Larger streaming-capacity experiments use their separate launcher.
+   if not 2<=n<=12:raise ValueError('PROFILE_GROUP_CAPACITY')
    for profile,generation in [('DENSE','SCALAR'),('HASH_FIRST','SCALAR'),('HASH_FIRST','INT_MMA_SM75')]:
     for owner in ['CUB_SORT_MERGE','BMMA_BUCKET']:
      for pre in ['OFF','ON']:
