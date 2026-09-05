@@ -13,6 +13,153 @@ use std::sync::{Arc, Mutex};
 
 struct Disk(Arc<Mutex<Vec<u8>>>);
 
+#[test]
+fn hash_only_origins_regenerate_cpu_successors_without_host_count_readback() {
+    use mgbfs_cuda::ffi::*;
+    use mgbfs_cuda::native_owner::cudaSetDevice;
+    use std::ffi::c_void;
+    unsafe {
+        for rank in 0..2 {
+            assert_eq!(cudaSetDevice(rank), 0);
+            for (n, modulus) in [(7, 2), (7, 5), (3, 256)] {
+                let group = MatrixGroup::unitriangular(n, modulus).unwrap();
+                let width = n * n;
+                let stride = (width + 15) & !15;
+                let moves = group.generators.len();
+                let mut states = vec![group.start.clone()];
+                for i in 0..8 {
+                    states.push(group.successor(states.last().unwrap(), i % moves).unwrap());
+                }
+                let rows = states.len() * moves;
+                let mut packed = vec![0u8; states.len() * stride];
+                for (dst, state) in packed.chunks_exact_mut(stride).zip(&states) {
+                    dst[..width].copy_from_slice(state);
+                }
+                let children: Vec<Vec<u8>> = states
+                    .iter()
+                    .flat_map(|state| {
+                        (0..moves)
+                            .map(|m| group.successor(state, m).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                for seed in [0u128, 1, 20260828] {
+                    let hash = GemmHash::from_seed(width, seed.to_le_bytes()).unwrap();
+                    let mut allocations = Vec::<*mut c_void>::new();
+                    let mut upload = |bytes: &[u8]| {
+                        let mut p = std::ptr::null_mut();
+                        assert_eq!(cudaMalloc(&mut p, bytes.len()), 0);
+                        allocations.push(p);
+                        assert_eq!(cudaMemcpy(p, bytes.as_ptr().cast(), bytes.len(), 1), 0);
+                        p
+                    };
+                    let parents = upload(&packed);
+                    let generators = upload(&group.generators.concat());
+                    let weights = upload(&hash.limbs());
+                    let offsets = upload(
+                        &hash
+                            .offsets
+                            .iter()
+                            .flat_map(|x| x.to_le_bytes())
+                            .collect::<Vec<_>>(),
+                    );
+                    let count = upload(&(states.len() as u32).to_le_bytes());
+                    let output_count = upload(&0u32.to_le_bytes());
+                    let fatal = upload(&0u32.to_le_bytes());
+                    let hashes = upload(&vec![0xcc; rows * 16]);
+                    let origins = upload(&vec![0xcc; rows * 16]);
+                    let responses = upload(&vec![0xcc; rows * stride]);
+                    let mut stream = std::ptr::null_mut();
+                    assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                    let begin = 0x100000001u64;
+                    assert_eq!(
+                        mgbfs_generate_hash_only(
+                            n as u32,
+                            moves as u32,
+                            modulus as u32,
+                            stride as u32,
+                            states.len() as u32,
+                            rows as u32,
+                            rank as u32,
+                            begin,
+                            parents.cast(),
+                            generators.cast(),
+                            weights.cast(),
+                            offsets.cast(),
+                            count.cast(),
+                            hashes.cast(),
+                            origins.cast(),
+                            output_count.cast(),
+                            fatal.cast(),
+                            stream
+                        ),
+                        0
+                    );
+                    // Device-generated origins/count feed regeneration on the same stream.
+                    assert_eq!(
+                        mgbfs_regenerate_selected(
+                            n as u32,
+                            moves as u32,
+                            modulus as u32,
+                            stride as u32,
+                            rows as u32,
+                            rank as u32,
+                            begin,
+                            states.len() as u32,
+                            parents.cast(),
+                            generators.cast(),
+                            origins.cast(),
+                            output_count.cast(),
+                            responses.cast(),
+                            fatal.cast(),
+                            stream
+                        ),
+                        0
+                    );
+                    assert_eq!(cudaStreamSynchronize(stream), 0);
+                    let mut actual_hashes = vec![0u8; rows * 16];
+                    let mut actual_states = vec![0u8; rows * stride];
+                    assert_eq!(
+                        cudaMemcpy(actual_hashes.as_mut_ptr().cast(), hashes, rows * 16, 2),
+                        0
+                    );
+                    assert_eq!(
+                        cudaMemcpy(
+                            actual_states.as_mut_ptr().cast(),
+                            responses,
+                            rows * stride,
+                            2
+                        ),
+                        0
+                    );
+                    for (i, child) in children.iter().enumerate() {
+                        assert_eq!(
+                            &actual_hashes[i * 16..(i + 1) * 16],
+                            &hash.hash(child).unwrap().to_le_bytes()
+                        );
+                        assert_eq!(&actual_states[i * stride..i * stride + width], child);
+                        assert!(actual_states[i * stride + width..(i + 1) * stride]
+                            .iter()
+                            .all(|&x| x == 0));
+                    }
+                    let mut value = 99u32;
+                    assert_eq!(cudaMemcpy((&mut value as *mut u32).cast(), fatal, 4, 2), 0);
+                    assert_eq!(value, 0);
+                    assert_eq!(
+                        cudaMemcpy((&mut value as *mut u32).cast(), output_count, 4, 2),
+                        0
+                    );
+                    assert_eq!(value, rows as u32);
+                    assert_eq!(cudaStreamDestroy(stream), 0);
+                    for allocation in allocations {
+                        assert_eq!(cudaFree(allocation), 0);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Catches ABI width/order mismatches between wire OriginRef and CUDA regeneration.
 #[test]
 fn wire_origins_regenerate_selected_states_on_each_device() {
