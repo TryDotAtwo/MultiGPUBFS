@@ -24,8 +24,17 @@ pub struct ReferenceSelection {
     pub prededup: bool,
     pub materialization_capacity: Option<u32>,
     pub tile_limit: u32,
+    pub tensor_generation: bool,
 }
 impl ReferenceSelection {
+    pub fn with_hash_first_generation(mut self, backend: &str) -> Result<Self> {
+        self.tensor_generation = match backend {
+            "SCALAR" => false,
+            "INT_MMA_SM75" if self.profile == FrontierProfile::HashFirst => true,
+            _ => return Err("REFERENCE_HASH_FIRST_GENERATION".into()),
+        };
+        Ok(self)
+    }
     pub fn parse(
         profile: &str,
         owner: &str,
@@ -66,6 +75,7 @@ impl ReferenceSelection {
             prededup,
             materialization_capacity,
             tile_limit,
+            tensor_generation: false,
         })
     }
 }

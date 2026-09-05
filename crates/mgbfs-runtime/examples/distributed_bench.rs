@@ -139,6 +139,8 @@ fn run() -> Result<()> {
     let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
     let owner = std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
     let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
+    let hash_first_generation =
+        std::env::var("MGBFS_HASH_FIRST_GENERATION").unwrap_or_else(|_| "SCALAR".into());
     let selection = ReferenceSelection::parse(
         &profile,
         &owner,
@@ -151,7 +153,8 @@ fn run() -> Result<()> {
                 .ok_or("CANDIDATE_OVERFLOW")?,
         ),
         env_u32("MGBFS_BMMA_TILE_LIMIT", 256),
-    )?;
+    )?
+    .with_hash_first_generation(&hash_first_generation)?;
     let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
@@ -182,31 +185,46 @@ fn run() -> Result<()> {
     )?;
     let pinned = archive.pinned_bytes();
     let setup = Instant::now();
-    let mut bfs = DistributedNativeBfs::new_reference_with_owner(
-        &graph,
-        20260828u128.to_le_bytes(),
-        id,
-        DistributedConfig {
-            rank,
-            world,
-            logical_owner_to_rank: rank_map,
-            batch,
-            layer_capacity: capacity,
-            state_ring_capacity: future,
-            buckets: env_u32("MGBFS_BUCKETS", 256),
-            shards: env_u32("MGBFS_SHARDS", 64),
-            job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4),
-            bucket_capacity: env_u32(
-                "MGBFS_BUCKET_CAPACITY",
-                capacity.div_ceil(128).saturating_add(4096),
-            ),
-            prededup: selection.prededup,
-            generation_variant: if compact_states { 5 } else { 1 },
-        },
-        selection.materialization_capacity,
-        selection.owner,
-        selection.tile_limit,
-    )?;
+    let cfg = DistributedConfig {
+        rank,
+        world,
+        logical_owner_to_rank: rank_map,
+        batch,
+        layer_capacity: capacity,
+        state_ring_capacity: future,
+        buckets: env_u32("MGBFS_BUCKETS", 256),
+        shards: env_u32("MGBFS_SHARDS", 64),
+        job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4),
+        bucket_capacity: env_u32(
+            "MGBFS_BUCKET_CAPACITY",
+            capacity.div_ceil(128).saturating_add(4096),
+        ),
+        prededup: selection.prededup,
+        generation_variant: if compact_states { 5 } else { 1 },
+    };
+    let mut bfs = if selection.tensor_generation {
+        DistributedNativeBfs::new_hash_first_tc_with_owner(
+            &graph,
+            20260828u128.to_le_bytes(),
+            id,
+            cfg,
+            selection
+                .materialization_capacity
+                .ok_or("REFERENCE_HASH_FIRST_CAPACITY")?,
+            selection.owner,
+            selection.tile_limit,
+        )?
+    } else {
+        DistributedNativeBfs::new_reference_with_owner(
+            &graph,
+            20260828u128.to_le_bytes(),
+            id,
+            cfg,
+            selection.materialization_capacity,
+            selection.owner,
+            selection.tile_limit,
+        )?
+    };
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
@@ -258,6 +276,10 @@ fn run() -> Result<()> {
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?,
         if compact_states { 5 } else { 1 },
         selection.materialization_capacity.unwrap_or(0), selection.tile_limit);
+    let record = format!(
+        "{},\"hash_first_generation\":\"{hash_first_generation}\"}}",
+        record.strip_suffix('}').ok_or("RECORD_FORMAT")?
+    );
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,
