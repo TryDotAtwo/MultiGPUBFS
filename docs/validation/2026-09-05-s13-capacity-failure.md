@@ -18,3 +18,18 @@ live-frontier VRAM requirement.
 
 Evidence: test_results/s13-capacity-v2/s12-capacity-probe/summary.json and
 s13-capacity-160000000.log. Rank stderr lines are interleaved.
+
+## v3: 178M records/rank
+
+Source f2482c4db18c4c6a2596a7344f857d667b442b3a. Archive disabled.
+Peak 14129 MiB/rank on 15360 MiB T4s (1231 MiB unconsumed).
+Depth 51 reached with rank counts 172245371 and 172258148, totaling
+344503519. Expansion failed with ring capacity code 11 on rank 0:
+head=1374433896, tail=1552432168, capacity=178000000,
+requested survivors=4474. Existing logical occupancy=177998272;
+only 1728 records remained before the request. Peer exited with remote fatal.
+
+This confirms live ring exhaustion, not a diagnostic parsing error. Increasing
+capacity further has little room while preserving the 1 GiB reserve. The
+graph peak remains unknown; no S14 feasibility claim is supported.
+Evidence: test_results/s13-capacity-v3/s12-capacity-probe/.
