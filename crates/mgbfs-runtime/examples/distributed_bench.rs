@@ -185,6 +185,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let pinned = archive.pinned_bytes();
     let setup = Instant::now();
     let cfg = DistributedConfig {
+        untouched_vram_reserve: 1 << 30,
         rank,
         world,
         logical_owner_to_rank: rank_map,
@@ -279,6 +280,14 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         "{},\"hash_first_generation\":\"{hash_first_generation}\",\"warmup_completed\":{warmup_completed}}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?
     );
+    let owned_payload: u64 = bfs
+        .owned_memory()
+        .allocations
+        .iter()
+        .map(|a| a.payload_bytes)
+        .sum();
+    let record=format!("{},\"explicit_device_payload_bytes\":{owned_payload},\"explicit_device_aligned_bytes\":{},\"untouched_vram_reserve_bytes\":{},\"allocation_scope\":\"explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive\"}}",
+        record.strip_suffix('}').ok_or("RECORD_FORMAT")?,bfs.owned_memory().total(),cfg.untouched_vram_reserve);
     std::fs::write(
         Path::new(&args[5]).join(format!("rank-{rank}.json")),
         record,

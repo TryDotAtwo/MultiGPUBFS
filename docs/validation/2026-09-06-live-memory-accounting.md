@@ -38,3 +38,16 @@ claimed yet. The generation-query report adapter previously rejected supported
 compact variant 5; a failing compact-query test reproduced that stale guard,
 and the adapter now accepts 5 while rejecting 6. Five CUDA report adapter tests
 and three shared-memory composition tests pass; GPU gate remains pending.
+
+Admission integration: after communicator construction, a tiny temporary vote
+buffer performs the actual warmup all-reduce. Free VRAM is then queried; every
+rank votes on `explicit aligned device bytes + declared untouched reserve <=
+free`. Any rejection returns `VRAM_PREFLIGHT_GROUP` on both ranks before large
+runtime/library allocation. The benchmark and smoke defaults reserve 1 GiB.
+The new asymmetric fixture requests an impossible reserve on rank 1 only and
+requires both ranks to reject. Its CPU arithmetic tests pass and its CUDA Rust
+code checks; real two-T4 execution is pending. Backend/query errors before
+communicator establishment and unexpected CUDA/NCCL failures are not thereby
+proved coordinated. Admission does not reserve resources against other GPU
+processes or account for future driver/NCCL allocations; pinned/disk admission
+and complete rank startup protocol remain separate unfinished requirements.

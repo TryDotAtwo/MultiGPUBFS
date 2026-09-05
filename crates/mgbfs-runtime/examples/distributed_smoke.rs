@@ -89,6 +89,7 @@ fn run() -> Result<()> {
             bucket_capacity: 64,
             prededup: true,
             generation_variant: 1,
+            untouched_vram_reserve: 1 << 30,
         },
     )?;
     let mut counts = Vec::new();

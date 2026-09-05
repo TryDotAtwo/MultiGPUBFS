@@ -24,6 +24,7 @@ pub struct DistributedConfig {
     pub bucket_capacity: u32,
     pub prededup: bool,
     pub generation_variant: u32,
+    pub untouched_vram_reserve: u64,
 }
 fn check(status: i32) -> Result<()> {
     if status == 0 {
@@ -36,6 +37,36 @@ struct Buffer {
     ptr: *mut c_void,
     bytes: usize,
     stream: *mut c_void,
+}
+fn admit_device_group(
+    comm: *mut c_void,
+    stream: *mut c_void,
+    required: u64,
+    reserve: u64,
+) -> Result<()> {
+    let send = Buffer::new(4, stream)?;
+    let recv = Buffer::new(4, stream)?;
+    let vote = |value: u32| -> Result<u32> {
+        send.put(&[value])?;
+        check(unsafe {
+            mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream)
+        })?;
+        check(unsafe { cudaStreamSynchronize(stream) })?;
+        recv.one()
+    };
+    vote(0)?; // Initialize the actual collective before querying free VRAM.
+    let (mut free, mut total) = (0usize, 0usize);
+    let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) })
+        .and_then(|_| crate::distributed_memory::device_admission(required, reserve, free as u64));
+    if vote(u32::from(local.is_err()))? != 0 {
+        return Err(format!(
+            "VRAM_PREFLIGHT_GROUP: {}",
+            local
+                .err()
+                .unwrap_or_else(|| "peer rejected admission".into())
+        ));
+    }
+    Ok(())
 }
 impl Buffer {
     fn new(bytes: usize, stream: *mut c_void) -> Result<Self> {
@@ -571,6 +602,12 @@ impl DistributedNativeBfs {
                 .into_owned());
         }
         let comm = Comm(comm);
+        admit_device_group(
+            comm.0,
+            raw,
+            owned_memory.total(),
+            cfg.untouched_vram_reserve,
+        )?;
         let contract = GemmHash::from_seed(width, seed)?;
         let limbs = contract.limbs();
         let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();

@@ -4,6 +4,15 @@ use mgbfs_core::rank_plan::QueryResult;
 use mgbfs_core::{memory::AllocationLedger, Result};
 use mgbfs_cuda::native_owner::{BucketJob, Control, Counts, Extent, Range, Ring};
 
+pub fn device_admission(required: u64, reserve: u64, free: u64) -> Result<()> {
+    if required.checked_add(reserve).map_or(true, |n| n > free) {
+        return Err(format!(
+            "VRAM_PREFLIGHT required={required} reserve={reserve} free={free}"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub struct SharedBufferShape {
     pub state_stride: u64,

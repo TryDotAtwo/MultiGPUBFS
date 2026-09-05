@@ -14,6 +14,44 @@ use std::sync::{Arc, Mutex};
 struct Disk(Arc<Mutex<Vec<u8>>>);
 
 #[test]
+fn one_rank_vram_rejection_aborts_both_before_runtime_allocation() {
+    let mut id = [0u8; 128];
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
+    let workers: Vec<_> = (0..2)
+        .map(|rank| {
+            std::thread::spawn(move || {
+                let graph = MatrixGroup::unitriangular(3, 3).unwrap();
+                let cfg = DistributedConfig {
+                    rank,
+                    world: 2,
+                    logical_owner_to_rank: [0, 1],
+                    batch: 7,
+                    layer_capacity: 27,
+                    state_ring_capacity: 54,
+                    buckets: 8,
+                    shards: 2,
+                    job_buckets: 2,
+                    bucket_capacity: 27,
+                    prededup: true,
+                    generation_variant: 1,
+                    untouched_vram_reserve: if rank == 1 { u64::MAX } else { 1 << 30 },
+                };
+                match DistributedNativeBfs::new(&graph, [0; 16], id, cfg) {
+                    Ok(_) => panic!("rank {rank} admitted an invalid group"),
+                    Err(e) => assert!(e.starts_with("VRAM_PREFLIGHT_GROUP:"), "{e}"),
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
 fn native_request_response_epochs_include_empty_ranks_and_group_fatal() {
     use mgbfs_core::wire::OriginRef;
     use mgbfs_cuda::ffi::*;
@@ -417,6 +455,7 @@ fn hash_first_capacity_failure_is_group_terminal_and_archives_stay_incomplete() 
                 std::thread::spawn(move || {
                     let g = MatrixGroup::unitriangular(3, 3).unwrap();
                     let cfg = DistributedConfig {
+                        untouched_vram_reserve: 1 << 30,
                         rank,
                         world: 2,
                         logical_owner_to_rank: [1, 0],
@@ -568,6 +607,7 @@ fn archive_fixture_generator(
                     MatrixGroup::unitriangular(3, 3).unwrap()
                 };
                 let cfg = DistributedConfig {
+                    untouched_vram_reserve: 1 << 30,
                     rank,
                     world: 2,
                     logical_owner_to_rank: owners,

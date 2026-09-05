@@ -16,6 +16,15 @@ fn shape() -> SharedBufferShape {
 }
 
 #[test]
+fn device_admission_preserves_reserve_and_never_wraps_required_bytes() {
+    use mgbfs_runtime::distributed_memory::device_admission;
+    assert!(device_admission(768, 256, 1024).is_ok());
+    assert!(device_admission(769, 256, 1024).is_err());
+    assert!(device_admission(u64::MAX, 1, u64::MAX).is_err());
+    assert!(device_admission(0, 1025, 1024).is_err());
+}
+
+#[test]
 fn queried_storage_composition_keeps_alignment_and_rejects_duplicate_planes() {
     use mgbfs_core::{
         memory::AllocationLedger,
