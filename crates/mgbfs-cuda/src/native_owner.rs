@@ -77,6 +77,15 @@ mod calls {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_bounded_owner_create(i: u32, j: u32, k: u32, out: *mut *mut c_void) -> i32;
+        pub fn mgbfs_bounded_owner_create_backend(
+            i: u32,
+            j: u32,
+            k: u32,
+            backend: u32,
+            refinement_capacity: u32,
+            tile_limit: u32,
+            out: *mut *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bounded_owner_destroy(plan: *mut c_void);
         pub fn mgbfs_bounded_owner_compare(
             plan: *mut c_void,
@@ -162,10 +171,17 @@ mod calls {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_state_apply_response_span(
-            plan: *mut c_void, responses: *const u8, targets: *const u64,
-            count: *const u32, sorted_offset: u32, group_fatal: *const u32,
-            states: *mut u8, ring: *mut Ring, control: *mut Control,
-            extent: *mut Extent, stream: *mut c_void,
+            plan: *mut c_void,
+            responses: *const u8,
+            targets: *const u64,
+            count: *const u32,
+            sorted_offset: u32,
+            group_fatal: *const u32,
+            states: *mut u8,
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *mut Extent,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_bucket_directory(
             sorted: *const c_void,

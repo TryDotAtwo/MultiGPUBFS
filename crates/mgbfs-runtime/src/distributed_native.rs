@@ -2,6 +2,7 @@
 use crate::failure::attempt_all;
 use crate::jobs::{split, JobSpan};
 use mgbfs_core::{
+    config::OwnerBackend,
     hash::GemmHash,
     matrix::{encode_permutation_matrix, MatrixGroup},
     Result,
@@ -314,7 +315,7 @@ impl DistributedNativeBfs {
         id: [u8; 128],
         cfg: DistributedConfig,
     ) -> Result<Self> {
-        Self::new_profile(graph, seed, id, cfg, None)
+        Self::new_profile(graph, seed, id, cfg, None, OwnerBackend::CubSortMerge, 256)
     }
     /// Explicit scalar CUDA HASH_FIRST reference; never silently uses DENSE.
     pub fn new_hash_first_reference(
@@ -324,15 +325,36 @@ impl DistributedNativeBfs {
         cfg: DistributedConfig,
         materialization_capacity: u32,
     ) -> Result<Self> {
-        if materialization_capacity == 0
-            || materialization_capacity > i32::MAX as u32
-            || cfg.generation_variant != 1
-            || graph.generators.len() > 65536
-            || graph.modulus > 256
-        {
-            return Err("HASH_FIRST_REFERENCE_CONFIG".into());
-        }
-        Self::new_profile(graph, seed, id, cfg, Some(materialization_capacity))
+        Self::new_profile(
+            graph,
+            seed,
+            id,
+            cfg,
+            Some(materialization_capacity),
+            OwnerBackend::CubSortMerge,
+            256,
+        )
+    }
+    /// Explicit fixed owner policy; HASH_FIRST is selected by a nonzero
+    /// materialization capacity. No backend/profile change after allocation.
+    pub fn new_reference_with_owner(
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        owner: OwnerBackend,
+        tile_limit: u32,
+    ) -> Result<Self> {
+        Self::new_profile(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            owner,
+            tile_limit,
+        )
     }
     fn new_profile(
         graph: &MatrixGroup,
@@ -340,8 +362,23 @@ impl DistributedNativeBfs {
         id: [u8; 128],
         mut cfg: DistributedConfig,
         materialization_capacity: Option<u32>,
+        owner_backend: OwnerBackend,
+        tile_limit: u32,
     ) -> Result<Self> {
         graph.validate()?;
+        if let Some(capacity) = materialization_capacity {
+            if capacity == 0
+                || capacity > i32::MAX as u32
+                || cfg.generation_variant != 1
+                || graph.generators.len() > 65536
+                || graph.modulus > 256
+            {
+                return Err("HASH_FIRST_REFERENCE_CONFIG".into());
+            }
+        }
+        if owner_backend == OwnerBackend::BmmaBucket && !(1..=256).contains(&tile_limit) {
+            return Err("BMMA_TILE_LIMIT".into());
+        }
         if cfg.world != 2
             || cfg.rank >= 2
             || cfg.logical_owner_to_rank[0] == cfg.logical_owner_to_rank[1]
@@ -471,7 +508,23 @@ impl DistributedNativeBfs {
             )
         })?;
         let owner = Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
-            mgbfs_bounded_owner_create(candidates, cfg.job_buckets, cfg.bucket_capacity, out)
+            match owner_backend {
+                OwnerBackend::CubSortMerge => mgbfs_bounded_owner_create(
+                    candidates,
+                    cfg.job_buckets,
+                    cfg.bucket_capacity,
+                    out,
+                ),
+                OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
+                    candidates,
+                    cfg.job_buckets,
+                    cfg.bucket_capacity,
+                    1,
+                    candidates,
+                    tile_limit,
+                    out,
+                ),
+            }
         })?;
         let b = |n| Buffer::new(n, raw);
         let state_bytes = cfg.state_ring_capacity as usize * stride;

@@ -500,6 +500,31 @@ fn archive_fixture_config(
     owners: [u32; 2],
     prededup: bool,
 ) {
+    archive_fixture_backend(compact, hash_first, seed, owners, prededup, false);
+}
+
+#[test]
+fn bmma_owner_preserves_dense_and_hash_first_archived_layers() {
+    for hash_first in [false, true] {
+        archive_fixture_backend(
+            false,
+            hash_first,
+            20260828u128.to_le_bytes(),
+            [0, 1],
+            false,
+            true,
+        );
+    }
+}
+
+fn archive_fixture_backend(
+    compact: bool,
+    hash_first: bool,
+    seed: [u8; 16],
+    owners: [u32; 2],
+    prededup: bool,
+    bmma: bool,
+) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -529,7 +554,18 @@ fn archive_fixture_config(
                     prededup,
                     generation_variant: if compact { 5 } else { 1 },
                 };
-                let mut bfs = if hash_first {
+                let mut bfs = if bmma {
+                    DistributedNativeBfs::new_reference_with_owner(
+                        &g,
+                        seed,
+                        id,
+                        cfg,
+                        if hash_first { Some(64) } else { None },
+                        mgbfs_core::config::OwnerBackend::BmmaBucket,
+                        256,
+                    )
+                    .unwrap()
+                } else if hash_first {
                     DistributedNativeBfs::new_hash_first_reference(&g, seed, id, cfg, 64).unwrap()
                 } else {
                     DistributedNativeBfs::new(&g, seed, id, cfg).unwrap()
