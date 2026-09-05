@@ -108,6 +108,13 @@ def main():
                                  no_archive_env, timeout=7200)
     if no_archive["status"] != "COMPLETE" or no_archive["layer_sizes"] != row["layer_sizes"]:
         raise RuntimeError("ARCHIVE_AB_LAYER_MISMATCH")
+    swapped_command = [str(root / "bootstrap-swapped") if x == str(bootstrap)
+                       else str(root / "archive-swapped") if x == str(archive_prefix)
+                       else x for x in command]
+    swapped = bench.run_group(swapped_command, logs, "s11-swapped-owner-map",
+                              dict(no_archive_env, MGBFS_RANK_MAP="1,0"), timeout=7200)
+    if swapped["status"] != "COMPLETE" or swapped["layer_sizes"] != row["layer_sizes"]:
+        raise RuntimeError("SWAPPED_OWNER_MAP_LAYER_MISMATCH")
     if row["status"] == "COMPLETE":
         if sum(row["layer_sizes"]) != CARDINALITY:
             raise RuntimeError("S11_CARDINALITY_MISMATCH")
@@ -123,6 +130,7 @@ def main():
         "archive_slots_per_rank": ARCHIVE_SLOTS,
         "result": row,
         "no_archive_diagnostic": no_archive,
+        "swapped_owner_map": swapped,
     }
     (logs / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary), flush=True)
