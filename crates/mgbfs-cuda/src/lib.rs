@@ -7,6 +7,17 @@ pub mod ffi {
         FutureMergeBytes, GenerateBytes, HashBytes, MaterializeBytes, RouteBytes,
     };
     use std::ffi::{c_char, c_void};
+    /// Device ABI matching cuda/regenerate.h and little-endian wire OriginRef.
+    /// Do not transmute the Rust core OriginRef (it has no C layout).
+    #[repr(C)]
+    #[derive(Clone, Copy, Default, Debug)]
+    pub struct RegenerateOrigin {
+        pub source: u32,
+        pub movement: u16,
+        pub reserved: u16,
+        pub parent: u64,
+    }
+    const _: [(); 16] = [(); std::mem::size_of::<RegenerateOrigin>()];
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
     pub struct FrontierState {
@@ -39,6 +50,28 @@ pub mod ffi {
         pub fatal: u32,
     }
     extern "C" {
+        /// Enqueues selected-parent matrix regeneration; no allocation or host sync.
+        /// Parents and requests must remain live through stream completion.
+        /// All pointers except stream are device pointers. Fatal is sticky;
+        /// output is dense request order, with zero padding. Status 0 is enqueue
+        /// success only; inspect fatal after the consuming stream completes.
+        pub fn mgbfs_regenerate_selected(
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            stride: u32,
+            capacity: u32,
+            source_rank: u32,
+            parent_begin: u64,
+            parent_count: u32,
+            parents: *const u8,
+            generators: *const u8,
+            requests: *const RegenerateOrigin,
+            count: *const u32,
+            output: *mut u8,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_generate_query(
             n: u32,
             moves: u32,

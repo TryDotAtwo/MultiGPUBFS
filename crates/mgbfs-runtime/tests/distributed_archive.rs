@@ -12,6 +12,82 @@ use mgbfs_runtime::{
 use std::sync::{Arc, Mutex};
 
 struct Disk(Arc<Mutex<Vec<u8>>>);
+
+// Catches ABI width/order mismatches between wire OriginRef and CUDA regeneration.
+#[test]
+fn wire_origins_regenerate_selected_states_on_each_device() {
+    use mgbfs_core::wire::OriginRef;
+    use mgbfs_cuda::ffi::*;
+    use mgbfs_cuda::native_owner::cudaSetDevice;
+    use std::ffi::c_void;
+    unsafe {
+        for rank in 0..2 {
+            assert_eq!(cudaSetDevice(rank), 0);
+            let mut allocations = Vec::<*mut c_void>::new();
+            let mut upload = |bytes: &[u8]| {
+                let mut p = std::ptr::null_mut();
+                assert_eq!(cudaMalloc(&mut p, bytes.len()), 0);
+                allocations.push(p);
+                assert_eq!(cudaMemcpy(p, bytes.as_ptr().cast(), bytes.len(), 1), 0);
+                p
+            };
+            let mut parents = [0u8; 32];
+            parents[..4].copy_from_slice(&[1, 0, 0, 1]);
+            parents[16..20].copy_from_slice(&[1, 2, 0, 1]);
+            let p = upload(&parents);
+            let g = upload(&[1, 1, 0, 1, 1, 0, 1, 1]);
+            let requests: Vec<u8> = [(101, 1), (100, 0), (101, 0)]
+                .into_iter()
+                .flat_map(|(parent, movement)| {
+                    OriginRef {
+                        source: rank as u32,
+                        movement,
+                        parent,
+                    }
+                    .encode()
+                })
+                .collect();
+            let r = upload(&requests);
+            let count = upload(&3u32.to_le_bytes());
+            let fatal = upload(&0u32.to_le_bytes());
+            let output = upload(&[0xcc; 48]);
+            assert_eq!(
+                mgbfs_regenerate_selected(
+                    2,
+                    2,
+                    5,
+                    16,
+                    3,
+                    rank as u32,
+                    100,
+                    2,
+                    p.cast(),
+                    g.cast(),
+                    r.cast(),
+                    count.cast(),
+                    output.cast(),
+                    fatal.cast(),
+                    std::ptr::null_mut()
+                ),
+                0
+            );
+            assert_eq!(cudaDeviceSynchronize(), 0);
+            let mut actual = [0u8; 48];
+            assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), output, 48, 2), 0);
+            let mut expected = [0u8; 48];
+            expected[..4].copy_from_slice(&[1, 2, 1, 3]);
+            expected[16..20].copy_from_slice(&[1, 1, 0, 1]);
+            expected[32..36].copy_from_slice(&[1, 3, 0, 1]);
+            assert_eq!(actual, expected);
+            let mut error = 99u32;
+            assert_eq!(cudaMemcpy((&mut error as *mut u32).cast(), fatal, 4, 2), 0);
+            assert_eq!(error, 0);
+            for allocation in allocations {
+                assert_eq!(cudaFree(allocation), 0);
+            }
+        }
+    }
+}
 impl Extent for Disk {
     fn reserve(&mut self, n: u64) -> std::io::Result<()> {
         self.0.lock().unwrap().resize(n as usize, 0);
