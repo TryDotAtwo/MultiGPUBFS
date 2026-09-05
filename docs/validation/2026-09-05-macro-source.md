@@ -23,3 +23,30 @@ Existing S8/S12 frozen macro digests also remain unchanged. This validates
 the shared CPU compiler and weighted oracle, not native CUDA execution from
 nonidentity sources or multi-rank macro scheduling. Those hardware gates
 remain required. Identity-start results are not changed by this correction.
+
+## Native source regression: Kaggle v21
+
+Launcher pins cdde19980e41de6aa55ffe991929465435848cc5 and adds
+`native_macro_nonidentity_source_preserves_original_layers`.
+The single-rank CUDA fixture starts UT(3,3) at two successive original moves,
+uses parent batch 7, K=1/2/3/10 and pre-dedup OFF/ON, and compares every
+full-state original-depth layer to the ordinary matrix BFS oracle.
+
+Downloaded `macro-plain.log`, `macro-memcheck.log`, `macro-racecheck.log`,
+`macro-initcheck.log`, `macro-synccheck.log` all report one passed test.
+All four sanitizer summaries are zero, including race hazards and warnings.
+Inventory identifies two distinct real T4s; this macro fixture uses one GPU,
+not a multi-rank weighted scheduler. Logs reside in
+`test_results/distributed-sanitizer-v21/distributed-sanitizer/`.
+
+## CPU CI restored
+
+GitHub run 33990041597 at d6a374dd07d22c453867822c67a34ee00bb7a9e8
+passed all steps: Rust 1.75 formatting, full default CPU tests, Kaggle guard
+tests, allocation geometry, query adapter and descriptor ABI.
+Earlier runs stopped at formatting and then an obsolete allocation test
+which rejected the now-supported generation5 variant. The replacement checks
+the compact geometry explicitly (n=3, moves=2, batch=3: rows=8, columns=4,
+generators=128, packed parents=64, products=128 bytes). The old test's failure
+was reproduced locally; the corrected test prints ALLOCATION_SHAPE_PASS.
+No production capacity validation or CI gate was disabled.
