@@ -50,3 +50,10 @@ Kaggle BMMA gate v2 pins c65d9fc and runs plain plus all four sanitizers. This
 is not yet integrated into DistributedNativeBfs, nor profiled. One CTA per
 bucket and serial metadata refinement are explicit performance risks requiring
 measurement; the implementation is not claimed to saturate the GPU.
+
+V2 completed at c65d9fc. BOUNDED_OWNER_PASS appears in plain and all four
+sanitizer logs; zero errors and zero race hazards/warnings. The notebook had
+two real T4s, but this leaf fixture executes on one device: this is single-GPU
+owner correctness, not multi-GPU BFS evidence. Downloaded artifacts:
+`test_results/bmma-owner-v2/bmma-owner/`. Next required gate is full archived
+DistributedNativeBfs using explicit BMMA selection with DENSE and HASH_FIRST.
