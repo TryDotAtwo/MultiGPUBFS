@@ -13,6 +13,54 @@ fn key(epoch: u64, source: u32, generation: u64) -> TicketKey {
 }
 
 #[test]
+fn physical_banks_reuse_only_the_independently_drained_range() {
+    use mgbfs_runtime::payload_lease::PayloadBanks;
+    let mut banks = PayloadBanks::new(2, 2, 257, 2, 256).unwrap();
+    assert_eq!(banks.bytes(), 1024); // two aligned physical ranges
+    let a = banks.reserve(key(0, 0, 100), 257).unwrap().unwrap();
+    let b = banks.reserve(key(1, 0, 101), 12).unwrap().unwrap();
+    assert_eq!(banks.offset(a).unwrap(), 0);
+    assert_eq!(banks.offset(b).unwrap(), 512);
+    let hold = banks.consumer(a).unwrap();
+    banks.seal(a).unwrap();
+    banks.seal(b).unwrap();
+    assert!(banks.reserve(key(2, 1, 0), 0).unwrap().is_none());
+    banks.retire(b).unwrap(); // physical bank 1 frees before bank 0
+    let c = banks.reserve(key(2, 1, 0), 0).unwrap().unwrap();
+    assert_eq!(banks.offset(c).unwrap(), 512);
+    banks.complete(hold).unwrap();
+    assert!(banks.drained(a).unwrap());
+    banks.retire(a).unwrap();
+    banks.seal(c).unwrap();
+    banks.retire(c).unwrap();
+}
+
+#[test]
+fn physical_bank_planner_rejects_overflow_and_stale_handle() {
+    use mgbfs_runtime::payload_lease::PayloadBanks;
+    assert!(PayloadBanks::new(2, 2, u64::MAX, 1, 256).is_err());
+    assert!(PayloadBanks::new(2, 0, 8, 1, 256).is_err());
+    assert!(PayloadBanks::new(2, 1, 8, 1, 3).is_err());
+    let mut banks = PayloadBanks::new(2, 1, 8, 1, 256).unwrap();
+    let old = banks.reserve(key(0, 0, 1), 8).unwrap().unwrap();
+    banks.seal(old).unwrap();
+    banks.retire(old).unwrap();
+    banks.reserve(key(1, 1, 0), 8).unwrap().unwrap();
+    assert!(banks.offset(old).is_err());
+}
+
+#[test]
+fn duplicate_ticket_never_acquires_two_physical_banks() {
+    use mgbfs_runtime::payload_lease::PayloadBanks;
+    let mut banks = PayloadBanks::new(2, 2, 8, 1, 256).unwrap();
+    banks.reserve(key(0, 0, 1), 8).unwrap().unwrap();
+    assert_eq!(
+        banks.reserve(key(0, 0, 1), 8).unwrap_err(),
+        "PAYLOAD_DUPLICATE_TICKET"
+    );
+}
+
+#[test]
 fn bank_retains_every_consumer_until_fanout_is_sealed() {
     let mut bank = PayloadLease::new(2, 64, 3).unwrap();
     let ticket = key(0, 0, 100);

@@ -6,7 +6,7 @@ use mgbfs_runtime::{
     control_pump::ControlPump,
     control_wire::{Action, ControlFrame, Plane},
     event_generation::NativeEvent,
-    payload_lease::PayloadLease,
+    payload_lease::{PayloadBank, PayloadBanks},
     scatter_admission::TicketKey,
 };
 use std::{
@@ -37,8 +37,8 @@ impl AdmissionDriver {
         source: u32,
         epoch: u64,
         sizes: [u64; 2],
-        bank: &mut PayloadLease,
-    ) -> (TicketKey, u64) {
+        banks: &mut PayloadBanks,
+    ) -> (TicketKey, u64, PayloadBank) {
         let key = TicketKey {
             depth: 0,
             epoch,
@@ -67,17 +67,16 @@ impl AdmissionDriver {
             ),
             (Action::TicketBytes, epoch, key.generation, self.rank)
         );
-        bank.reserve(key, ticket.payload_bytes).unwrap();
+        let bank = banks.reserve(key, ticket.payload_bytes).unwrap().unwrap();
         self.pump.admit_bytes(ticket, 4).unwrap();
         let launch = self.receive();
         assert_eq!(
             (launch.action, launch.epoch, launch.slot),
             (Action::Launch, epoch, key.generation)
         );
-        (key, ticket.payload_bytes)
+        (key, ticket.payload_bytes, bank)
     }
     fn retire(&mut self, key: TicketKey) {
-        self.pump.transfer_complete(key.epoch).unwrap();
         self.pump.consumed(key.epoch).unwrap();
     }
     fn finalize(&mut self) {
@@ -131,17 +130,14 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 let mut send = std::ptr::null_mut();
                 let mut recv = std::ptr::null_mut();
                 let mut copied = std::ptr::null_mut();
+                let mut banks = PayloadBanks::new(2, 2, 4, 2, 256).unwrap();
                 assert_eq!(cudaMalloc(&mut send, 16), 0);
-                assert_eq!(cudaMalloc(&mut recv, 8), 0);
+                assert_eq!(cudaMalloc(&mut recv, banks.bytes() as usize), 0);
                 assert_eq!(cudaMalloc(&mut copied, 8), 0);
                 let mut events = [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()];
                 let mut reader_events = [
                     [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()],
                     [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()],
-                ];
-                let mut leases = [
-                    PayloadLease::new(2, 4, 2).unwrap(),
-                    PayloadLease::new(2, 4, 2).unwrap(),
                 ];
                 for source in 0..2u32 {
                     let payload = [
@@ -153,18 +149,18 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                     let mut consumers = [None; 2];
                     for lane in 0..2usize {
                         let send_bank = send.cast::<u8>().add(lane * 8).cast();
-                        let recv_bank = recv.cast::<u8>().add(lane * 4).cast();
-                        let (key, received_bytes) = admission.admit(
+                        let (key, received_bytes, bank) = admission.admit(
                             source,
                             u64::from(source) * 3 + lane as u64,
                             sizes,
-                            &mut leases[lane],
+                            &mut banks,
                         );
-                        consumers[lane] = Some([
-                            leases[lane].consumer(key).unwrap(),
-                            leases[lane].consumer(key).unwrap(),
-                        ]);
-                        leases[lane].seal(key).unwrap();
+                        let offset = banks.offset(bank).unwrap() as usize;
+                        let physical = offset / 256;
+                        let recv_bank = recv.cast::<u8>().add(offset).cast();
+                        consumers[lane] =
+                            Some([banks.consumer(bank).unwrap(), banks.consumer(bank).unwrap()]);
+                        banks.seal(bank).unwrap();
                         assert_eq!(received_bytes, 4);
                         // A rejected local capacity check must not enqueue an unmatched
                         // receive. The following valid exchange must still match.
@@ -198,7 +194,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             ),
                             0
                         );
-                        events[lane].record(key.epoch, stream).unwrap();
+                        events[physical].record(key.epoch, stream).unwrap();
                         let selected: *mut std::ffi::c_void = if rank == source {
                             send_bank.cast::<u8>().add(rank as usize * 4).cast()
                         } else {
@@ -208,7 +204,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         // host query of the transfer event. No host sync supplies
                         // this dependency: each stream waits on its generation.
                         for part in 0..2 {
-                            events[lane].wait(key.epoch, readers[part]).unwrap();
+                            events[physical].wait(key.epoch, readers[part]).unwrap();
                             assert_eq!(
                                 cudaMemcpyAsync(
                                     copied.cast::<u8>().add(lane * 4 + part * 2).cast(),
@@ -219,17 +215,17 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                                 ),
                                 0
                             );
-                            reader_events[lane][part]
+                            reader_events[physical][part]
                                 .record(key.epoch, readers[part])
                                 .unwrap();
                         }
-                        pending[lane] = Some(key);
+                        pending[lane] = Some((key, bank, physical));
                     }
                     // Both payload calls and both event records have been
                     // submitted before either bank can be consumed or reused.
                     for lane in 0..2usize {
-                        let key = pending[lane].unwrap();
-                        let completion = &mut events[lane];
+                        let (key, _, physical) = pending[lane].unwrap();
+                        let completion = &mut events[physical];
                         let deadline = Instant::now() + Duration::from_secs(30);
                         while !completion.poll(key.epoch).unwrap() {
                             assert_eq!(mgbfs_nccl_poll(comm), 0);
@@ -237,12 +233,19 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             std::thread::yield_now();
                         }
                         assert_eq!(mgbfs_nccl_poll(comm), 0);
+                        admission.pump.transfer_complete(key.epoch).unwrap();
+                    }
+                    // Transport COMPLETE stays ordered, but consumer retirement
+                    // and physical bank release are deliberately reversed.
+                    for lane in [1usize, 0] {
+                        let (key, bank, physical) = pending[lane].unwrap();
+                        let completion = &mut events[physical];
                         let mut actual = [0u8; 4];
                         let selected = copied.cast::<u8>().add(lane * 4);
                         // Two actual downstream readers share one payload bank.
                         // The first completion must not release the second reader.
                         for (part, consumer) in consumers[lane].unwrap().into_iter().enumerate() {
-                            let done = &mut reader_events[lane][part];
+                            let done = &mut reader_events[physical][part];
                             let deadline = Instant::now() + Duration::from_secs(30);
                             while !done.poll(key.epoch).unwrap() {
                                 assert_eq!(mgbfs_nccl_poll(comm), 0);
@@ -259,8 +262,8 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                                 0
                             );
                             done.retire(key.epoch).unwrap();
-                            leases[lane].complete(consumer).unwrap();
-                            assert_eq!(leases[lane].drained(key).unwrap(), part == 1);
+                            banks.complete(consumer).unwrap();
+                            assert_eq!(banks.drained(bank).unwrap(), part == 1);
                         }
                         assert_eq!(
                             actual,
@@ -273,14 +276,15 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             }
                         );
                         completion.retire(key.epoch).unwrap();
-                        leases[lane].retire(key).unwrap();
+                        banks.retire(bank).unwrap();
                         admission.retire(key);
                     }
-                    let completion = &mut events[0];
                     let zero = [0u64; 2];
-                    let (key, received_bytes) =
-                        admission.admit(source, u64::from(source) * 3 + 2, zero, &mut leases[0]);
-                    leases[0].seal(key).unwrap();
+                    let (key, received_bytes, bank) =
+                        admission.admit(source, u64::from(source) * 3 + 2, zero, &mut banks);
+                    let offset = banks.offset(bank).unwrap() as usize;
+                    let completion = &mut events[offset / 256];
+                    banks.seal(bank).unwrap();
                     assert_eq!(received_bytes, 0);
                     assert_eq!(
                         mgbfs_nccl_scatter(
@@ -289,7 +293,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             send,
                             8,
                             zero.as_ptr(),
-                            recv,
+                            recv.cast::<u8>().add(offset).cast(),
                             received_bytes,
                             4,
                             stream
@@ -304,7 +308,8 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         std::thread::yield_now();
                     }
                     completion.retire(key.epoch).unwrap();
-                    leases[0].retire(key).unwrap();
+                    banks.retire(bank).unwrap();
+                    admission.pump.transfer_complete(key.epoch).unwrap();
                     admission.retire(key);
                 }
                 admission.finalize();
