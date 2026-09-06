@@ -26,7 +26,7 @@ jobs:
       - name: Type-check Linux native benchmark (no CUDA link or execution)
         env:
           MGBFS_CUDA_LIB_DIR: /tmp
-        run: cargo +1.75.0 check --locked -p mgbfs-runtime --features cuda --example distributed_bench
+        run: cargo +1.75.0 check --locked -p mgbfs-runtime --features cuda --example distributed_bench --test native_scatter
       - name: Verify Kaggle hardware and immutable-source guards
         run: python3 -m unittest discover -s tests -p 'test_*gate.py'
       - name: Verify benchmark memory accounting without GPU
