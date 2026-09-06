@@ -68,3 +68,14 @@ it does not include the later health-query ABI. Its existing
 fixture exercises failed native advancement and incomplete archives on both
 devices. No v31 result is claimed until final logs are reconciled. The v12
 one-T4 benchmark remains on its original pin and must not be overwritten.
+
+## Data-plane handoff detail still to resolve
+
+The current `BEGIN` carries coordinator rank 0 and a source-local slot only on
+the selected sender; receiving ranks get `NO_SLOT`. It does not carry an
+explicit selected source rank. Thus a receiver cannot directly choose a single
+NCCL peer from that frame alone. Before single-source exchange is wired in,
+the versioned command must carry source identity, or an explicitly specified
+all-rank count exchange must supply it. Do not infer the sender from ready-event
+arrival order. Tests must cover a source other than rank 0 with at least three
+ranks, since two-rank peer-XOR code conceals this missing information.
