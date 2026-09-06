@@ -310,6 +310,18 @@ pub mod ffi {
         pub fn mgbfs_nccl_abort(comm: *mut c_void) -> i32;
         /// Nonblocking health query, not transfer completion; zero means healthy.
         pub fn mgbfs_nccl_poll(comm: *mut c_void) -> i32;
+        /// Dense rank-ordered single-source scatter; local source range stays a view.
+        /// Caller agrees counts and retains all device buffers until completion.
+        pub fn mgbfs_nccl_scatter(
+            comm: *mut c_void,
+            source: u32,
+            send: *const c_void,
+            send_capacity: u64,
+            sizes: *const u64,
+            recv: *mut c_void,
+            recv_bytes: u64,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;
         pub fn mgbfs_route_create(
             capacity: u32,

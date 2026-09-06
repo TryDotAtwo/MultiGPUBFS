@@ -5,6 +5,7 @@
 int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls = 0;
 int abort_calls = 0, destroy_calls = 0;
 int async_state = 0, async_query_status = 0;
+int last_send_peer = -1, last_recv_peer = -1;
 int main() {
   void* comm = nullptr;
   ncclUniqueId id{};
@@ -42,4 +43,23 @@ int main() {
   mgbfs_nccl_destroy(comm);
   assert(destroy_calls == 0); // Wrapper deletion must not destroy an aborted handle.
   assert(mgbfs_nccl_abort(nullptr) != 0);
+  fail_stage = 0;
+  void* source = nullptr;
+  assert(mgbfs_nccl_create(2, 3, 2, &id, &source, nullptr, 0) == 0);
+  const uint64_t sizes[] = {2, 0, 3};
+  char payload[5] = {};
+  send_calls = recv_calls = end_calls = 0;
+  assert(mgbfs_nccl_scatter(source, 2, payload, 5, sizes, nullptr, 0, nullptr) == 0);
+  assert(send_calls == 2 && recv_calls == 0 && end_calls == 1);
+  assert(last_send_peer == 1 && group_depth == 0);
+  send_calls = end_calls = 0;
+  assert(mgbfs_nccl_scatter(source, 2, payload, 4, sizes, nullptr, 0, nullptr) != 0);
+  assert(send_calls == 0 && end_calls == 0);
+  mgbfs_nccl_destroy(source);
+  void* receiver = nullptr;
+  assert(mgbfs_nccl_create(1, 3, 1, &id, &receiver, nullptr, 0) == 0);
+  recv_calls = 0;
+  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, nullptr, 0, nullptr) == 0);
+  assert(recv_calls == 1 && last_recv_peer == 2 && group_depth == 0);
+  mgbfs_nccl_destroy(receiver);
 }
