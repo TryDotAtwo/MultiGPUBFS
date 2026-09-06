@@ -13,6 +13,9 @@ pub struct ControlOutbox {
     writer: FrameWriter,
 }
 impl ControlOutbox {
+    pub(crate) fn available(&self) -> usize {
+        self.frames.len() - self.len
+    }
     pub fn new(world: u32, capacity: usize) -> Result<Self> {
         if capacity == 0 {
             return Err("CONTROL_SEND_CAPACITY".into());

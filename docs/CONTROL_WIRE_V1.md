@@ -222,3 +222,20 @@ The codec and file primitives are tested separately from GPU execution. The
 reference example replaces `MGBNCCL1` setup with this record; legacy benchmark
 measurements retain their pinned old source. GPU dispatcher integration remains
 pending. Primitive tests do not prove the benchmark migration correct on GPUs.
+# Host control pump integration status
+
+`ControlPump` now composes the rank admission state, coordinator and nonblocking
+TCP connections into one caller-driven polling loop. Construction validates the
+star topology and reserves command and send queues before traffic starts. Each
+poll handles at most one incoming frame per peer and one issued command group.
+Protocol errors poison the pump and close its connections.
+
+The caller receives `BEGIN`, `FINALIZE` and `PUBLISH` commands; it must report
+actual transfer completion separately from consumption. Descendant offers must
+precede consumption of their input. `finalized(true)` is a caller assertion of
+local drain, not a CUDA event check performed by this module.
+
+The two-depth lifecycle is tested both without sockets (one rank) and through
+real loopback TCP (two ranks, alternating source, empty receiving peer). These
+are CPU control tests only. The GPU dispatcher, NCCL execution, progress timeout
+and hardware overlap validation are not implemented by this pump.
