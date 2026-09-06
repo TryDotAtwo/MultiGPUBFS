@@ -1,5 +1,6 @@
 #![cfg(feature = "cuda")]
 use mgbfs_cuda::ffi::*;
+use mgbfs_cuda::native_owner::cudaMemcpyAsync;
 use mgbfs_runtime::{
     control_connection::ControlConnection,
     control_pump::ControlPump,
