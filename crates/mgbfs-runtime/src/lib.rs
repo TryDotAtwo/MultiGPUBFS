@@ -34,6 +34,7 @@ pub mod pinned_archive;
 pub mod rank_epochs;
 pub mod receipts;
 pub mod ring;
+pub mod route_count;
 pub mod scatter_admission;
 pub mod simulation;
 pub mod topology;

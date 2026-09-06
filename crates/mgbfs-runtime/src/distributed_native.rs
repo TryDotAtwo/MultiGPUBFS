@@ -1390,9 +1390,12 @@ impl DistributedNativeBfs {
                     self.cfg.prededup as i32,
                     s,
                 ))?;
-                check(cudaStreamSynchronize(s))?;
             }
-            let routed = self.route_count.one::<u32>()?;
+            let routed =
+                crate::route_count::routed_count(self.cfg.prededup, candidate_count, || {
+                    check(unsafe { cudaStreamSynchronize(s) })?;
+                    self.route_count.one::<u32>()
+                })?;
             let packet_stride = if self.hash_first.is_some() {
                 16
             } else {
