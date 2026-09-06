@@ -10,6 +10,27 @@ fn key() -> TicketKey {
     }
 }
 #[test]
+fn switching_source_may_use_a_lower_source_local_slot_token() {
+    let mut a = ScatterAdmission::new(3).unwrap();
+    a.prepare(key(), &[0, 0, 0], 16, 0).unwrap();
+    for rank in 0..3 {
+        a.admit(key(), rank, 0).unwrap();
+    }
+    assert!(a.launch(key()).unwrap());
+    a.retire(key()).unwrap();
+    let next = TicketKey {
+        epoch: 20,
+        source: 1,
+        generation: 0,
+        ..key()
+    };
+    a.prepare(next, &[0, 0, 0], 16, 0).unwrap();
+    for rank in 0..3 {
+        a.admit(next, rank, 0).unwrap();
+    }
+    assert!(a.launch(next).unwrap());
+}
+#[test]
 fn ready_later_ticket_cannot_overtake_global_issue_order() {
     let mut earlier = ScatterAdmission::new(3).unwrap();
     let mut later = ScatterAdmission::new(3).unwrap();

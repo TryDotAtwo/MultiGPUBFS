@@ -10,6 +10,31 @@ fn key() -> TicketKey {
         generation: 7,
     }
 }
+#[test]
+fn receiver_reuse_accepts_another_sources_lower_slot_token() {
+    let mut a = RankByteAdmission::new(3, 1).unwrap();
+    let first = ControlFrame {
+        action: Action::TicketBytes,
+        rank: 0,
+        ..offer(1, 32)
+    };
+    a.accept(first, 32).unwrap();
+    a.launch(ControlFrame {
+        action: Action::Launch,
+        destination_rank: 0,
+        payload_bytes: 0,
+        ..first
+    })
+    .unwrap();
+    a.retire(key()).unwrap();
+    let second = ControlFrame {
+        epoch: 10,
+        source_rank: 0,
+        slot: 0,
+        ..first
+    };
+    a.accept(second, 32).unwrap();
+}
 fn offer(dst: u32, bytes: u64) -> ControlFrame {
     ControlFrame {
         action: Action::OfferBytes,

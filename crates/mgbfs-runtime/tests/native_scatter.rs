@@ -46,7 +46,7 @@ impl AdmissionDriver {
             epoch,
             source,
             plane: Plane::Candidate,
-            generation: epoch,
+            generation: if source == 0 { 100 + epoch } else { epoch - 2 },
         };
         let blank = ControlFrame {
             action: Action::OfferBytes,
@@ -56,7 +56,7 @@ impl AdmissionDriver {
             payload_bytes: 0,
             depth: 0,
             epoch,
-            slot: epoch,
+            slot: key.generation,
             plane: Plane::Candidate,
             fatal_code: 0,
         };
@@ -200,9 +200,9 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         ),
                         0
                     );
-                    completion.record(key.generation, stream).unwrap();
+                    completion.record(key.epoch, stream).unwrap();
                     let deadline = Instant::now() + Duration::from_secs(30);
-                    while !completion.poll(key.generation).unwrap() {
+                    while !completion.poll(key.epoch).unwrap() {
                         assert_eq!(mgbfs_nccl_poll(comm), 0);
                         assert!(Instant::now() < deadline);
                         std::thread::yield_now();
@@ -223,7 +223,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             [21, 22, 23, 24]
                         }
                     );
-                    completion.retire(key.generation).unwrap();
+                    completion.retire(key.epoch).unwrap();
                     admission.retire(key);
                     let zero = [0u64; 2];
                     let (key, received_bytes) =
@@ -243,14 +243,14 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         ),
                         0
                     );
-                    completion.record(key.generation, stream).unwrap();
+                    completion.record(key.epoch, stream).unwrap();
                     let deadline = Instant::now() + Duration::from_secs(30);
-                    while !completion.poll(key.generation).unwrap() {
+                    while !completion.poll(key.epoch).unwrap() {
                         assert_eq!(mgbfs_nccl_poll(comm), 0);
                         assert!(Instant::now() < deadline);
                         std::thread::yield_now();
                     }
-                    completion.retire(key.generation).unwrap();
+                    completion.retire(key.epoch).unwrap();
                     admission.retire(key);
                 }
                 assert_eq!(mgbfs_nccl_abort(comm), 0);

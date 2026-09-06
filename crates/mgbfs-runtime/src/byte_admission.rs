@@ -54,11 +54,8 @@ impl RankByteAdmission {
             if f.action != Action::TicketBytes
                 || f.destination_rank != s.rank
                 || s.ticket.is_some()
-                || s.retired.is_some_and(|old| {
-                    key.epoch <= old.epoch
-                        || key.generation <= old.generation
-                        || key.depth < old.depth
-                })
+                || s.retired
+                    .is_some_and(|old| key.epoch <= old.epoch || key.depth < old.depth)
             {
                 return Err("BYTE_ADMISSION_TICKET".into());
             }

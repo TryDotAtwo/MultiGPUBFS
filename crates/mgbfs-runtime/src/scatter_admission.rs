@@ -7,6 +7,7 @@ pub struct TicketKey {
     pub epoch: u64,
     pub source: u32,
     pub plane: Plane,
+    /// Source-local slot token, not a counter ordered across different sources.
     pub generation: u64,
 }
 pub struct ScatterAdmission {
@@ -91,11 +92,8 @@ impl ScatterAdmission {
     ) -> Result<()> {
         self.apply(|s| {
             if s.key.is_some()
-                || s.retired.is_some_and(|old| {
-                    key.epoch <= old.epoch
-                        || key.generation <= old.generation
-                        || key.depth < old.depth
-                })
+                || s.retired
+                    .is_some_and(|old| key.epoch <= old.epoch || key.depth < old.depth)
                 || counts.len() != s.ranges.len()
                 || key.source as usize >= counts.len()
                 || key.plane == Plane::None
