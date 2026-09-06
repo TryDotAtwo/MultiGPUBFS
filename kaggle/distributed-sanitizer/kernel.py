@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "4ddf27138ca7e2c59624807b16fd7463b3a2ac3e"
+SOURCE = "bf486f1ee2e7a04663b42f7943bc6b1f6f20c9f9"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -95,7 +95,21 @@ def main():
         if len(macro_binaries) != 1:
             raise RuntimeError("AMBIGUOUS_MACRO_TEST_BINARY")
         report["macro_scope"] = "single T4 nonidentity UT(3,3) source; K=1,2,3,10; pre-dedup OFF/ON; full original layers"
+        scatter_build = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
+                             "--test", "native_scatter", "--no-run", "--message-format=json"], "scatter-build", source)
+        scatter_binaries = [json.loads(line)["executable"] for line in scatter_build.splitlines()
+                            if line.startswith("{") and json.loads(line).get("executable")]
+        if len(scatter_binaries) != 1:
+            raise RuntimeError("AMBIGUOUS_SCATTER_TEST_BINARY")
+        report["scatter_scope"] = "two T4; source ranks 0 and 1; exact received bytes; local source view; zero payload; health poll and repeated abort"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
+            if tool != "plain":
+                scatter_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + scatter_cmd
+            scatter_output = run(scatter_cmd, "scatter-" + tool, source)
+            if "1 passed; 0 failed" not in scatter_output:
+                raise RuntimeError("SCATTER_FIXTURE_NOT_PASSED")
+            require_clean(tool, scatter_output)
             if tool != "plain":
                 leaf = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
                             str(build / "mgbfs-regenerate-test")], "regenerate-" + tool, source)
