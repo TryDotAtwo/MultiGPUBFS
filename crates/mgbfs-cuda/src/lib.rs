@@ -306,6 +306,8 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_destroy(comm: *mut c_void);
+        /// Terminal abort; serialize with communicator calls, then destroy wrapper.
+        pub fn mgbfs_nccl_abort(comm: *mut c_void) -> i32;
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;
         pub fn mgbfs_route_create(
             capacity: u32,

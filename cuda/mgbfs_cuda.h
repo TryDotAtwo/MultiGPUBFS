@@ -143,6 +143,9 @@ int mgbfs_nccl_send_recv(void* comm,const void* send,uint64_t send_bytes,uint32_
 int mgbfs_nccl_all_gather_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
 int mgbfs_nccl_all_reduce_max_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
 void mgbfs_nccl_destroy(void* comm);
+/* Terminal, idempotent abort; wrapper remains owned until destroy. Not thread-safe:
+ * serialize with all other communicator calls. Does not provide a watchdog. */
+int mgbfs_nccl_abort(void* comm);
 /* Materialize one committed batch from a live source slot. References are local
  * source row indices, not global OriginRefs. Source stride is a multiple of 16.
  * Requests are sorted by source index; output states and hashes share that order.
