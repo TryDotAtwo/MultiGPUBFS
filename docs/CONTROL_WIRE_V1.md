@@ -2,7 +2,8 @@
 
 Status: implemented codec, rank-bound connection, bootstrap rendezvous, and real
 loopback TCP tests. The reference benchmark now calls rendezvous before NCCL;
-this integration still needs a GPU gate. **Not yet wired into the GPU dispatcher**.
+setup integration passed the [v30 two-T4 gate](validation/2026-09-06-bootstrap-two-t4-gate.md).
+**Not yet wired into the GPU dispatcher**.
 This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.
 
@@ -94,10 +95,10 @@ directions; each partial transfer uses the remaining timeout.
 
 This is run-identity validation, not cryptographic authentication. The caller
 must provide the actual shared bootstrap identity and reject duplicate rank
-admission. Integration into the GPU dispatcher/bootstrap remains pending.
+admission. Bootstrap is integrated; GPU dispatcher integration remains pending.
 Real loopback TCP tests cover matching identity followed by READY traffic and
 rejection of differing world, config digest, or run ID. Linux/GPU execution
-of this new handshake is not yet validated.
+of this handshake is covered by the v30 setup gate linked above.
 
 ## Bootstrap record
 
