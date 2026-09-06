@@ -12,8 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Test driver only: serialized epochs intentionally isolate admission + NCCL.
-// This is not the production event-driven BFS dispatcher or an overlap test.
+// Test driver only: two live data epochs followed by an empty epoch per source.
+// This proves leased bank correctness, not production BFS/kernel overlap.
 struct AdmissionDriver {
     rank: u32,
     pump: ControlPump,
@@ -117,76 +117,93 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
                 let mut send = std::ptr::null_mut();
                 let mut recv = std::ptr::null_mut();
-                assert_eq!(cudaMalloc(&mut send, 8), 0);
-                assert_eq!(cudaMalloc(&mut recv, 4), 0);
-                let mut completion = NativeEvent::new().unwrap();
+                assert_eq!(cudaMalloc(&mut send, 16), 0);
+                assert_eq!(cudaMalloc(&mut recv, 8), 0);
+                let mut events = [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()];
                 for source in 0..2u32 {
-                    let payload = [11u8, 12, 13, 14, 21, 22, 23, 24];
-                    assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 8, 1), 0);
+                    let payload = [
+                        11u8, 12, 13, 14, 21, 22, 23, 24, 31, 32, 33, 34, 41, 42, 43, 44,
+                    ];
+                    assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 16, 1), 0);
                     let sizes = [4u64, 4];
-                    let (key, received_bytes) =
-                        admission.admit(source, u64::from(source) * 2, sizes);
-                    assert_eq!(received_bytes, 4);
-                    // A rejected local capacity check must not enqueue an unmatched
-                    // receive. The following valid exchange must still match.
-                    if rank != source {
-                        assert_ne!(
+                    let mut pending = [None; 2];
+                    for lane in 0..2usize {
+                        let send_bank = send.cast::<u8>().add(lane * 8).cast();
+                        let recv_bank = recv.cast::<u8>().add(lane * 4).cast();
+                        let (key, received_bytes) =
+                            admission.admit(source, u64::from(source) * 3 + lane as u64, sizes);
+                        assert_eq!(received_bytes, 4);
+                        // A rejected local capacity check must not enqueue an unmatched
+                        // receive. The following valid exchange must still match.
+                        if rank != source {
+                            assert_ne!(
+                                mgbfs_nccl_scatter(
+                                    comm,
+                                    source,
+                                    send_bank,
+                                    8,
+                                    sizes.as_ptr(),
+                                    recv_bank,
+                                    5,
+                                    4,
+                                    stream
+                                ),
+                                0
+                            );
+                        }
+                        assert_eq!(
                             mgbfs_nccl_scatter(
                                 comm,
                                 source,
-                                send,
+                                send_bank,
                                 8,
                                 sizes.as_ptr(),
-                                recv,
-                                5,
+                                recv_bank,
+                                received_bytes,
                                 4,
                                 stream
                             ),
                             0
                         );
+                        events[lane].record(key.epoch, stream).unwrap();
+                        pending[lane] = Some(key);
                     }
-                    assert_eq!(
-                        mgbfs_nccl_scatter(
-                            comm,
-                            source,
-                            send,
-                            8,
-                            sizes.as_ptr(),
-                            recv,
-                            received_bytes,
-                            4,
-                            stream
-                        ),
-                        0
-                    );
-                    completion.record(key.epoch, stream).unwrap();
-                    let deadline = Instant::now() + Duration::from_secs(30);
-                    while !completion.poll(key.epoch).unwrap() {
-                        assert_eq!(mgbfs_nccl_poll(comm), 0);
-                        assert!(Instant::now() < deadline);
-                        std::thread::yield_now();
-                    }
-                    assert_eq!(mgbfs_nccl_poll(comm), 0);
-                    let mut actual = [0u8; 4];
-                    let selected = if rank == source {
-                        send.cast::<u8>().add(rank as usize * 4).cast()
-                    } else {
-                        recv
-                    };
-                    assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), selected, 4, 2), 0);
-                    assert_eq!(
-                        actual,
-                        if rank == 0 {
-                            [11, 12, 13, 14]
-                        } else {
-                            [21, 22, 23, 24]
+                    // Both payload calls and both event records have been
+                    // submitted before either bank can be consumed or reused.
+                    for lane in 0..2usize {
+                        let key = pending[lane].unwrap();
+                        let completion = &mut events[lane];
+                        let deadline = Instant::now() + Duration::from_secs(30);
+                        while !completion.poll(key.epoch).unwrap() {
+                            assert_eq!(mgbfs_nccl_poll(comm), 0);
+                            assert!(Instant::now() < deadline);
+                            std::thread::yield_now();
                         }
-                    );
-                    completion.retire(key.epoch).unwrap();
-                    admission.retire(key);
+                        assert_eq!(mgbfs_nccl_poll(comm), 0);
+                        let mut actual = [0u8; 4];
+                        let selected = if rank == source {
+                            send.cast::<u8>().add(lane * 8 + rank as usize * 4).cast()
+                        } else {
+                            recv.cast::<u8>().add(lane * 4).cast()
+                        };
+                        assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), selected, 4, 2), 0);
+                        assert_eq!(
+                            actual,
+                            match (lane, rank) {
+                                (0, 0) => [11, 12, 13, 14],
+                                (0, 1) => [21, 22, 23, 24],
+                                (1, 0) => [31, 32, 33, 34],
+                                (1, 1) => [41, 42, 43, 44],
+                                _ => unreachable!(),
+                            }
+                        );
+                        completion.retire(key.epoch).unwrap();
+                        admission.retire(key);
+                    }
+                    let completion = &mut events[0];
                     let zero = [0u64; 2];
                     let (key, received_bytes) =
-                        admission.admit(source, u64::from(source) * 2 + 1, zero);
+                        admission.admit(source, u64::from(source) * 3 + 2, zero);
                     assert_eq!(received_bytes, 0);
                     assert_eq!(
                         mgbfs_nccl_scatter(
