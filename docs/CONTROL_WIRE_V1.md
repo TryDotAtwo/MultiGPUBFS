@@ -7,6 +7,20 @@ setup integration passed the [v30 two-T4 gate](validation/2026-09-06-bootstrap-t
 This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.
 
+`EpochCoordinator` implements the bounded **data-epoch admission** slice. It
+mirrors per-rank leases, holds preallocated FIFO offers per plane/rank, prioritizes
+RESPONSE/REQUEST/RECEIPT before CANDIDATE, and emits one pinned BEGIN per rank
+under a shared sequence. A new ticket needs conservative receive credit on every
+rank, including empty sources. COMPLETE and CONSUMED are distinct; credit stays
+until each rank's consumers retire. Wrong plane/epoch acknowledgements poison
+the coordinator. Caller-owned BEGIN output storage and outbound queue capacity
+must be reserved before issue. Three CPU tests cover priority, empty ranks,
+cross-plane progress and invalid acknowledgement handling.
+This slice currently handles depth-zero data tickets only. SOURCE_CLOSED,
+global finalization/drain, payload counts/fragment admission, socket pumping,
+and NCCL execution are not implemented by it. Do not treat it as the full
+production sequencer or as proof of payload-capacity safety.
+
 `rank_epochs::RankEpochs` now supplies bounded rank-local admission bookkeeping:
 exact offered slot selection, one sequence across planes, outstanding-source
 slot ownership, and conservative per-plane receive credits (including zero

@@ -34,6 +34,19 @@ fn storage<T: Clone>(count: usize) -> Result<Vec<Option<T>>> {
     Ok(result)
 }
 impl RankEpochs {
+    pub(crate) fn receive_credit_available(&self, plane: Plane) -> Result<bool> {
+        self.alive()?;
+        if plane == Plane::None {
+            return Err("CONTROL_EPOCH_PROTOCOL".into());
+        }
+        Ok(self
+            .live
+            .iter()
+            .flatten()
+            .filter(|x| x.offer.plane == plane)
+            .count()
+            < self.slots)
+    }
     /// Called only after the externally coordinated FinalizeDepth jobs finish.
     /// Receipt of a FINALIZE frame by itself is not sufficient authorization.
     pub fn finish_depth(&mut self, frame: ControlFrame, local_drained: bool) -> Result<()> {

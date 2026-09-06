@@ -11,6 +11,7 @@ pub mod dense_device;
 pub mod distributed_memory;
 #[cfg(feature = "cuda")]
 pub mod distributed_native;
+pub mod epoch_coordinator;
 pub mod exchange;
 pub mod failure;
 #[cfg(feature = "cuda")]
