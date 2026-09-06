@@ -1,5 +1,14 @@
 use mgbfs_runtime::event_generation::EventGeneration;
 #[test]
+fn native_query_status_distinguishes_not_ready_from_async_error() {
+    use mgbfs_runtime::event_generation::cuda_query_status;
+    assert_eq!(cuda_query_status(0).unwrap(), true);
+    assert_eq!(cuda_query_status(600).unwrap(), false);
+    for code in [1, 400, 700, 719, -1] {
+        assert!(cuda_query_status(code).is_err());
+    }
+}
+#[test]
 fn unrecorded_event_never_queries_cuda_empty_work_success() {
     let mut event = EventGeneration::default();
     let mut queried = false;

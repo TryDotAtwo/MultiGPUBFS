@@ -4,6 +4,7 @@ use mgbfs_runtime::{
     byte_admission::{ByteAdmission, RankByteAdmission},
     control_connection::ControlConnection,
     control_wire::{Action, ControlFrame, Plane},
+    event_generation::NativeEvent,
     scatter_admission::TicketKey,
 };
 use std::{
@@ -159,6 +160,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 let mut recv = std::ptr::null_mut();
                 assert_eq!(cudaMalloc(&mut send, 8), 0);
                 assert_eq!(cudaMalloc(&mut recv, 4), 0);
+                let mut completion = NativeEvent::new().unwrap();
                 for source in 0..2u32 {
                     let payload = [11u8, 12, 13, 14, 21, 22, 23, 24];
                     assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 8, 1), 0);
@@ -198,7 +200,13 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         ),
                         0
                     );
-                    assert_eq!(cudaStreamSynchronize(stream), 0);
+                    completion.record(key.generation, stream).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    while !completion.poll(key.generation).unwrap() {
+                        assert_eq!(mgbfs_nccl_poll(comm), 0);
+                        assert!(Instant::now() < deadline);
+                        std::thread::yield_now();
+                    }
                     assert_eq!(mgbfs_nccl_poll(comm), 0);
                     let mut actual = [0u8; 4];
                     let selected = if rank == source {
@@ -215,6 +223,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             [21, 22, 23, 24]
                         }
                     );
+                    completion.retire(key.generation).unwrap();
                     admission.retire(key);
                     let zero = [0u64; 2];
                     let (key, received_bytes) =
@@ -234,7 +243,14 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         ),
                         0
                     );
-                    assert_eq!(cudaStreamSynchronize(stream), 0);
+                    completion.record(key.generation, stream).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    while !completion.poll(key.generation).unwrap() {
+                        assert_eq!(mgbfs_nccl_poll(comm), 0);
+                        assert!(Instant::now() < deadline);
+                        std::thread::yield_now();
+                    }
+                    completion.retire(key.generation).unwrap();
                     admission.retire(key);
                 }
                 assert_eq!(mgbfs_nccl_abort(comm), 0);
