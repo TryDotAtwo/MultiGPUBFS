@@ -13,6 +13,67 @@ fn record() -> BootstrapRecord {
 }
 
 #[test]
+fn bootstrap_endpoint_connects_to_identity_checked_control_stream() {
+    use mgbfs_runtime::control_connection::ControlConnection;
+    use mgbfs_runtime::control_wire::{Action, ControlFrame, Plane};
+    use std::time::{Duration, Instant};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut r = record();
+    r.endpoint = match listener.local_addr().unwrap() {
+        std::net::SocketAddr::V4(addr) => addr,
+        _ => unreachable!(),
+    };
+    let identity = r.identity;
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let (rank, mut connection) =
+            ControlConnection::accept_peer(stream, 2, identity, Duration::from_secs(3)).unwrap();
+        assert_eq!(rank, 1);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(frame) = connection.poll_receive().unwrap() {
+                assert_eq!(frame.slot, 5);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+    });
+    let mut connection = r.connect(1, Duration::from_secs(3)).unwrap();
+    connection
+        .enqueue(ControlFrame {
+            action: Action::Ready,
+            rank: 1,
+            depth: 0,
+            epoch: 0,
+            slot: 5,
+            plane: Plane::Candidate,
+            fatal_code: 0,
+        })
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !connection.poll_send().unwrap() {
+        assert!(Instant::now() < deadline);
+    }
+    server.join().unwrap();
+}
+
+#[test]
+fn invalid_connect_configuration_is_rejected_before_network_io() {
+    let r = record();
+    for (rank, timeout) in [
+        (0, std::time::Duration::from_secs(1)),
+        (2, std::time::Duration::from_secs(1)),
+        (1, std::time::Duration::ZERO),
+    ] {
+        assert_eq!(
+            r.connect(rank, timeout).err().unwrap(),
+            "BOOTSTRAP_CONNECT_CONFIG"
+        );
+    }
+}
+
+#[test]
 fn publication_never_overwrites_existing_run() {
     let root = std::env::temp_dir().join(format!(
         "mgbfs-bootstrap-{}-{}",

@@ -113,6 +113,10 @@ fallback. Failed publication retains staging for diagnosis; successful
 publication removes its own staging link. Directory crash durability and
 recovery are not promised. This is setup metadata, not an archive commit.
 Readers bound the read to exactly 200 bytes and reject size/identity mismatch.
+`BootstrapRecord::connect` validates configuration before network I/O, connects
+to the recorded endpoint and completes the run-identity handshake with the
+remaining shared setup timeout. It returns the nonblocking control connection;
+NCCL communicator creation and peer-group admission remain the caller's work.
 
 The codec and file primitives are tested locally; they are not yet connected
 to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime

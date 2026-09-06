@@ -11,6 +11,33 @@ pub struct BootstrapRecord {
     pub nccl_id: [u8; 128],
 }
 impl BootstrapRecord {
+    pub fn connect(
+        &self,
+        rank: u32,
+        timeout: std::time::Duration,
+    ) -> Result<crate::control_connection::ControlConnection> {
+        self.encode()?;
+        if rank == 0 || rank >= self.world || timeout.is_zero() {
+            return Err("BOOTSTRAP_CONNECT_CONFIG".into());
+        }
+        let deadline = std::time::Instant::now()
+            .checked_add(timeout)
+            .ok_or("BOOTSTRAP_CONNECT_TIMEOUT")?;
+        let stream =
+            std::net::TcpStream::connect_timeout(&std::net::SocketAddr::V4(self.endpoint), timeout)
+                .map_err(|e| format!("BOOTSTRAP_CONNECT: {e}"))?;
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or("BOOTSTRAP_CONNECT_TIMEOUT")?;
+        crate::control_connection::ControlConnection::connect_peer(
+            stream,
+            self.world,
+            rank,
+            self.identity,
+            remaining,
+        )
+    }
     pub fn read(path: &std::path::Path, world: u32, identity: RunIdentity) -> Result<Self> {
         use std::io::Read;
         let mut file = std::fs::File::open(path).map_err(|e| format!("BOOTSTRAP_OPEN: {e}"))?;
