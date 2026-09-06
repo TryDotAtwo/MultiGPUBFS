@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "d226dc919fc90760a4634c4fc912150019d3b91e"
+SOURCE = "93cdf30f41e842e5ff04e7637267022dfb3b6132"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -101,7 +101,7 @@ def main():
                             if line.startswith("{") and json.loads(line).get("executable")]
         if len(scatter_binaries) != 1:
             raise RuntimeError("AMBIGUOUS_SCATTER_TEST_BINARY")
-        report["scatter_scope"] = "two T4; admitted ControlPump drives schema3 TCP and NCCL; two distinct live payload banks; PayloadLease reserve precedes byte ACK; sealed fanout with two actual D2H readers per bank; first reader cannot release second; source ranks 0 and 1 with decreasing source-local slot tokens; generation-bound CUDA event polling; exact bytes; source view; zero payload with empty sealed fanout; capacity rejection; health poll; all-rank consumer retirement and Finalize/Publish; repeated abort; lifetime gate, not production BFS overlap"
+        report["scatter_scope"] = "two T4; admitted ControlPump and NCCL; two live payload banks; PayloadLease reserve before byte ACK; sealed fanout; two D2D readers on distinct nonblocking streams wait on generation-bound transfer events before any host completion query; individual reader completion events retain payload leases; exact bytes; both sources with decreasing source-local tokens; source view; empty sealed fanout; capacity rejection; health poll; Finalize/Publish; repeated abort; cross-stream lifetime gate, not production BFS overlap or speed proof"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
             scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":

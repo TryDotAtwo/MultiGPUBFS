@@ -27,3 +27,27 @@ The lease does not itself observe events: the caller must prove transfer and
 individual consumer completion. Existing `NativeEvent` guards remain responsible
 for transfer completion in the fixture. Production buffer ownership, event
 binding and exhaustive BFS dispatcher integration remain unimplemented.
+
+## Hardware result
+
+Kaggle v37 completed at `d226dc919fc90760a4634c4fc912150019d3b91e`
+(package `45727da`). Devices were distinct Tesla T4s, 15360 MiB each:
+`GPU-113bf917-c34a-b996-e6a1-4aca29c0bb1f` and
+`GPU-30992c1d-f9b6-758e-c5cd-a5986f78595d`.
+The changed fixture passed plain, memcheck, racecheck, initcheck and synccheck;
+all error summaries and race warnings/hazards are zero.
+
+Full raw audit on 2026-09-06:
+
+```text
+python test_results/audit_sanitizer_v30.py test_results/distributed-sanitizer-v37/distributed-sanitizer test_results/distributed-sanitizer-v37-summary/distributed-sanitizer/summary.json d226dc919fc90760a4634c4fc912150019d3b91e
+```
+
+Result `RAW_GATE_RECONCILED`: 40 tool logs, 36 measured ranks, 36 warmup
+ranks and 36 archive verifiers. The existing runtime, macro and archive
+regressions pass; all 24 reference profile selections preserve S4 layers
+`[1,3,5,6,5,3,1]`. Only logs and metadata were downloaded locally.
+
+This validates sealed fanout with synchronous test readers. It does not validate
+the later cross-stream dependency change (`ea844ff` / import fix `93cdf30`),
+the production dispatcher, or any throughput gain.
