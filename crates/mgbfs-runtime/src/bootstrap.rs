@@ -18,6 +18,37 @@ pub struct BootstrapListener {
     failed: bool,
 }
 impl BootstrapListener {
+    pub fn accept_all(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<Option<crate::control_connection::ControlConnection>>> {
+        if self.failed || self.admitted[1..].iter().any(|x| *x) {
+            return Err("BOOTSTRAP_GROUP_ALREADY_STARTED".into());
+        }
+        let result = (|| {
+            let deadline = std::time::Instant::now()
+                .checked_add(timeout)
+                .ok_or("BOOTSTRAP_ACCEPT_TIMEOUT")?;
+            let mut peers = Vec::new();
+            peers
+                .try_reserve_exact(self.record.world as usize)
+                .map_err(|_| "BOOTSTRAP_CAPACITY")?;
+            peers.resize_with(self.record.world as usize, || None);
+            for _ in 1..self.record.world {
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|d| !d.is_zero())
+                    .ok_or("BOOTSTRAP_ACCEPT_TIMEOUT")?;
+                let (rank, connection) = self.accept_next(remaining)?;
+                peers[rank as usize] = Some(connection);
+            }
+            Ok(peers)
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
     pub fn bind(world: u32, identity: RunIdentity, nccl_id: [u8; 128]) -> Result<Self> {
         if world < 2 {
             return Err("BOOTSTRAP_WORLD".into());

@@ -1,6 +1,45 @@
 use mgbfs_runtime::{bootstrap::BootstrapRecord, control_handshake::RunIdentity};
 
 #[test]
+fn incomplete_group_closes_previously_admitted_connections() {
+    use mgbfs_runtime::bootstrap::BootstrapListener;
+    use std::time::{Duration, Instant};
+    let mut listener = BootstrapListener::bind(3, record().identity, [11; 128]).unwrap();
+    let r = listener.record().clone();
+    let server = std::thread::spawn(move || {
+        assert!(listener.accept_all(Duration::from_millis(300)).is_err());
+    });
+    let mut connection = r.connect(1, Duration::from_secs(3)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match connection.poll_receive() {
+            Err(_) => break,
+            Ok(None) => {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            Ok(Some(_)) => panic!("unexpected control message"),
+        }
+    }
+    server.join().unwrap();
+}
+
+#[test]
+fn complete_group_is_indexed_by_rank_not_accept_order() {
+    use mgbfs_runtime::bootstrap::BootstrapListener;
+    use std::time::Duration;
+    let mut listener = BootstrapListener::bind(3, record().identity, [11; 128]).unwrap();
+    let r = listener.record().clone();
+    let server = std::thread::spawn(move || listener.accept_all(Duration::from_secs(3)).unwrap());
+    let _two = r.connect(2, Duration::from_secs(3)).unwrap();
+    let _one = r.connect(1, Duration::from_secs(3)).unwrap();
+    let peers = server.join().unwrap();
+    assert_eq!(peers.len(), 3);
+    assert!(peers[0].is_none());
+    assert!(peers[1].is_some() && peers[2].is_some());
+}
+
+#[test]
 fn missing_rank_times_out_and_listener_cannot_resume_partial_group() {
     use mgbfs_runtime::bootstrap::BootstrapListener;
     use std::time::{Duration, Instant};

@@ -126,6 +126,11 @@ handshake timeout; the caller must impose a total group-startup deadline and
 abort already returned peer connections on failure. This setup-only accept
 loop is not the GPU hot-path dispatcher. Actual TCP tests cover rank order
 2 then 1, duplicate rejection on both sides, and terminal missing-rank timeout.
+`accept_all` provides the total group-startup deadline and owns all connections
+until every nonzero rank is admitted. Failure drops every connection collected
+by that call; success returns a preallocated rank-indexed vector with slot 0
+empty. It cannot be mixed with earlier individual admissions. TCP tests verify
+successful out-of-order group setup and peer EOF when another rank is absent.
 
 The codec and file primitives are tested locally; they are not yet connected
 to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime
