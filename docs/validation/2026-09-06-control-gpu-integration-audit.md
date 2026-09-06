@@ -47,3 +47,24 @@ after failed send, and retains the first operation error. All five injected
 stages (success/start/send/recv/end) pass with MSVC C++17 locally. Linux CI now
 runs the same executable. This does not test real NCCL failure recovery; abort,
 async-error polling and real hardware regression remain required.
+
+## Follow-up: terminal abort integration and regression in progress
+
+At `7c47697`, the C ABI gained terminal `mgbfs_nccl_abort`: repeated abort is
+idempotent, all later communication calls reject the cleared handle, and wrapper
+destruction does not double-destroy it. At `4ddf271`, errors returned from both
+native advance methods poison the runtime and abort its communicator while
+preserving the original error. At `2ba5eca`, `mgbfs_nccl_poll` exposes a health
+query; it is not yet driven by the runtime and does not prove transfer completion.
+
+The CPU test double covers group cleanup, successful/repeated abort, invalid
+post-abort calls, and reported async/query failures. Full local CPU tests for
+core/runtime/CLI/CUDA packages completed with exit 0. Linux CI for `2ba5eca`
+also completed successfully. Neither is hardware failure-injection evidence.
+
+Kaggle sanitizer v31 is running source `4ddf27138ca7e2c59624807b16fd7463b3a2ac3e`;
+it does not include the later health-query ABI. Its existing
+`hash_first_capacity_failure_is_group_terminal_and_archives_stay_incomplete`
+fixture exercises failed native advancement and incomplete archives on both
+devices. No v31 result is claimed until final logs are reconciled. The v12
+one-T4 benchmark remains on its original pin and must not be overwritten.
