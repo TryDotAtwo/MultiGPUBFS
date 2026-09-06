@@ -10,6 +10,28 @@ fn key() -> TicketKey {
     }
 }
 #[test]
+fn ready_later_ticket_cannot_overtake_global_issue_order() {
+    let mut earlier = ScatterAdmission::new(3).unwrap();
+    let mut later = ScatterAdmission::new(3).unwrap();
+    let later_key = TicketKey { epoch: 20, ..key() };
+    earlier.prepare(key(), &[0, 0, 0], 16, 0).unwrap();
+    later.prepare(later_key, &[0, 0, 0], 16, 0).unwrap();
+    for rank in [2, 0, 1] {
+        later.admit(later_key, rank, 0).unwrap();
+    }
+    let mut next = 19;
+    assert!(!later.launch_ordered(later_key, &mut next).unwrap());
+    assert_eq!(next, 19);
+    assert!(!earlier.launch_ordered(key(), &mut next).unwrap());
+    for rank in [1, 2, 0] {
+        earlier.admit(key(), rank, 0).unwrap();
+    }
+    assert!(earlier.launch_ordered(key(), &mut next).unwrap());
+    assert_eq!(next, 20);
+    assert!(later.launch_ordered(later_key, &mut next).unwrap());
+    assert_eq!(next, 21);
+}
+#[test]
 fn reuse_resets_acknowledgments_and_rejects_old_generation() {
     let mut a = ScatterAdmission::new(3).unwrap();
     a.prepare(key(), &[0, 0, 0], 16, 0).unwrap();

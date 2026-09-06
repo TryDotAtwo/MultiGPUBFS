@@ -18,6 +18,24 @@ pub struct ScatterAdmission {
     failed: bool,
 }
 impl ScatterAdmission {
+    /// All slots share one counter, owned by the serialized dispatcher. Advance
+    /// only when this ticket is admitted and is the next global NCCL epoch.
+    pub fn launch_ordered(&mut self, key: TicketKey, next: &mut u64) -> Result<bool> {
+        self.apply(|s| {
+            if s.key != Some(key) || s.launched || key.epoch < *next {
+                return Err("ADMISSION_STALE".into());
+            }
+            if key.epoch > *next {
+                return Ok(false);
+            }
+            let following = next.checked_add(1).ok_or("ADMISSION_EPOCH_OVERFLOW")?;
+            if !s.launch(key)? {
+                return Ok(false);
+            }
+            *next = following;
+            Ok(true)
+        })
+    }
     /// Invoke only after transfer/consumer leases have drained. This guard does
     /// not observe CUDA events; the dispatcher owns that proof.
     pub fn retire(&mut self, key: TicketKey) -> Result<()> {
