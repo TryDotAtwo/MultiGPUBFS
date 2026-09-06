@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "c8e9a08cb1f480b817d43668931c49ad0af0b865"
+SOURCE = "3c4ad4034acc7f22eb48071dc4b868c70fa7e99d"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -101,7 +101,7 @@ def main():
                             if line.startswith("{") and json.loads(line).get("executable")]
         if len(scatter_binaries) != 1:
             raise RuntimeError("AMBIGUOUS_SCATTER_TEST_BINARY")
-        report["scatter_scope"] = "two T4; native schema3 TCP byte admission before NCCL; source ranks 0 and 1 with decreasing source-local slot tokens; generation-bound CUDA event polling; exact received bytes; local source view; zero payload; receive-capacity rejection; health poll and repeated abort; serialized fixture, not BFS dispatcher overlap"
+        report["scatter_scope"] = "two T4; admitted ControlPump drives schema3 TCP and NCCL; source ranks 0 and 1 with decreasing source-local slot tokens; generation-bound CUDA event polling; exact received bytes; local source view; zero payload; receive-capacity rejection; health poll; all-rank consumer retirement and Finalize/Publish; repeated abort; serialized fixture, not BFS dispatcher overlap"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
             scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
