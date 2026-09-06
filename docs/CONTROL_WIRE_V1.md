@@ -285,3 +285,30 @@ not an independent watchdog: it cannot interrupt a caller blocked in CUDA/NCCL.
 TCP tests cover expiry propagation and normal operation before expiry.
 These are CPU control tests only. The GPU dispatcher, NCCL execution, watchdog
 and hardware overlap validation are not implemented by this pump.
+# Admitted ControlPump integration (2026-09-06)
+
+`ControlPump::new_admitted` selects the byte-admitted host dispatcher explicitly;
+the old `new` remains the control-only reference, not a runtime fallback.
+Source capacities are fixed bytes for Candidate/Request/Response/Receipt and
+must agree across ranks in the run configuration. BEGIN assigns an epoch and
+requests source metadata; it does **not** authorize NCCL. The source calls
+`describe_bytes` only after its actual count publication completes. The pump
+validates the checked sum, distributes TICKET_BYTES, and requires each rank's
+`admit_bytes` with its actually reserved receive capacity, including empty ranks.
+Only ordered LAUNCH commands authorize payload submission. COMPLETE before
+LAUNCH is terminal. GPU events and buffer reservations remain caller obligations.
+
+There are `4 * slots` local admission records. Rank zero preallocates
+`4 * world * slots` coordinator records: different tickets may retain credits
+on different slow ranks, so `4 * slots` global records would reject valid work.
+Each coordinator record retains bounded world-sized counts/ack/consumer arrays.
+Metadata is partitioned by plane, allocated during construction, and released
+globally only after every rank has sent CONSUMED. Local credits retire after
+their own completed consumers. Finalize consumes a sequence number and cannot
+overtake undrained admission records. Send queues are fixed at
+`4 * slots * (world + 6) + 2` frames in this mode. Exhaustion is terminal.
+
+CPU/TCP tests cover delayed empty-rank acknowledgment, two depths, reversed
+source-local tokens, later-ready admission, independent consumer retirement,
+receive-capacity failure propagation, and staggered slow consumers. This mode
+is not yet connected to the native BFS data plane or validated on GPUs.

@@ -234,3 +234,182 @@ fn three_tcp_ranks_receive_identical_source_identity() {
         std::thread::yield_now();
     }
 }
+
+fn admitted_pair() -> [ControlPump; 2] {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    [
+        ControlPump::new_admitted(
+            2,
+            0,
+            2,
+            vec![None, Some(ControlConnection::new(server, 2, 0, 1).unwrap())],
+            [64; 4],
+        )
+        .unwrap(),
+        ControlPump::new_admitted(
+            2,
+            1,
+            2,
+            vec![Some(ControlConnection::new(client, 2, 1, 0).unwrap()), None],
+            [64; 4],
+        )
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn admitted_tcp_pump_requires_empty_receiver_ack_and_advances_past_finalize() {
+    let mut pumps = admitted_pair();
+    for depth in 0..2 {
+        let source = depth as usize;
+        pumps[source].offer(Plane::Candidate, 100 - depth).unwrap();
+        let begin = commands(&mut pumps);
+        assert!(begin
+            .iter()
+            .all(|f| f.action == Action::Begin && f.epoch == depth * 2));
+        pumps[source]
+            .describe_bytes(begin[source], &[32, 0])
+            .unwrap();
+        let tickets = commands(&mut pumps);
+        for (rank, ticket) in tickets.iter().enumerate() {
+            assert_eq!(ticket.action, Action::TicketBytes);
+            assert_eq!(ticket.destination_rank, rank as u32);
+            assert_eq!(ticket.payload_bytes, if rank == 0 { 32 } else { 0 });
+        }
+        pumps[0].admit_bytes(tickets[0], 32).unwrap();
+        // Removing the all-rank ACK gate would expose Launch here.
+        for _ in 0..32 {
+            for pump in &mut pumps {
+                pump.poll().unwrap();
+                assert!(pump.command().unwrap().is_none());
+            }
+        }
+        pumps[1].admit_bytes(tickets[1], 0).unwrap();
+        let launch = commands(&mut pumps);
+        assert!(launch
+            .iter()
+            .all(|f| f.action == Action::Launch && f.epoch == depth * 2));
+        for pump in &mut pumps {
+            pump.transfer_complete(depth * 2).unwrap();
+            pump.consumed(depth * 2).unwrap();
+            pump.close_source().unwrap();
+        }
+        assert!(commands(&mut pumps)
+            .iter()
+            .all(|f| f.action == Action::Finalize));
+        for pump in &mut pumps {
+            pump.finalized(true).unwrap();
+        }
+        assert!(commands(&mut pumps)
+            .iter()
+            .all(|f| f.action == Action::Publish));
+    }
+}
+
+#[test]
+fn admitted_pump_rejects_completion_before_launch() {
+    let mut pumps = admitted_pair();
+    pumps[0].offer(Plane::Candidate, 1).unwrap();
+    let _begin = commands(&mut pumps);
+    assert!(pumps[0].transfer_complete(0).is_err());
+    assert!(pumps[0].poll().is_err());
+}
+
+#[test]
+fn later_admitted_ticket_waits_for_earlier_epoch_without_releasing_consumers() {
+    let mut pumps = admitted_pair();
+    pumps[0].offer(Plane::Candidate, 100).unwrap();
+    let first = commands(&mut pumps);
+    pumps[1].offer(Plane::Candidate, 1).unwrap();
+    let second = commands(&mut pumps);
+    assert_eq!((first[0].epoch, second[0].epoch), (0, 1));
+    pumps[1].describe_bytes(second[1], &[0, 16]).unwrap();
+    let tickets = commands(&mut pumps);
+    for rank in 0..2 {
+        pumps[rank].admit_bytes(tickets[rank], 16).unwrap();
+    }
+    for _ in 0..32 {
+        for pump in &mut pumps {
+            pump.poll().unwrap();
+            assert!(pump.command().unwrap().is_none());
+        }
+    }
+    pumps[0].describe_bytes(first[0], &[16, 0]).unwrap();
+    let tickets = commands(&mut pumps);
+    for rank in 0..2 {
+        pumps[rank].admit_bytes(tickets[rank], 16).unwrap();
+    }
+    assert!(commands(&mut pumps)
+        .iter()
+        .all(|f| f.action == Action::Launch && f.epoch == 0));
+    assert!(commands(&mut pumps)
+        .iter()
+        .all(|f| f.action == Action::Launch && f.epoch == 1));
+    for pump in &mut pumps {
+        pump.transfer_complete(0).unwrap();
+        pump.transfer_complete(1).unwrap();
+        // A later consumer may finish first; finalization still needs both.
+        pump.consumed(1).unwrap();
+        pump.close_source().unwrap();
+    }
+    for _ in 0..32 {
+        for pump in &mut pumps {
+            pump.poll().unwrap();
+            assert!(pump.command().unwrap().is_none());
+        }
+    }
+    for pump in &mut pumps {
+        pump.consumed(0).unwrap();
+    }
+    assert!(commands(&mut pumps)
+        .iter()
+        .all(|f| f.action == Action::Finalize && f.epoch == 2));
+}
+
+#[test]
+fn receiver_capacity_rejection_poisoning_reaches_source_before_launch() {
+    let mut pumps = admitted_pair();
+    pumps[0].offer(Plane::Candidate, 1).unwrap();
+    let begin = commands(&mut pumps);
+    pumps[0].describe_bytes(begin[0], &[0, 33]).unwrap();
+    let tickets = commands(&mut pumps);
+    pumps[0].admit_bytes(tickets[0], 0).unwrap();
+    assert!(pumps[1].admit_bytes(tickets[1], 32).is_err());
+    assert!(pumps[1].command().is_err());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while pumps[0].poll().is_ok() {
+        assert!(pumps[0].command().unwrap().is_none());
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(pumps[0].command().is_err());
+}
+
+#[test]
+fn disjoint_slow_consumers_do_not_exhaust_global_ticket_metadata() {
+    let mut pumps = admitted_pair();
+    for epoch in 0..2 {
+        pumps[0].offer(Plane::Candidate, epoch).unwrap();
+        let begin = commands(&mut pumps);
+        pumps[0].describe_bytes(begin[0], &[1, 1]).unwrap();
+        let tickets = commands(&mut pumps);
+        for rank in 0..2 {
+            pumps[rank].admit_bytes(tickets[rank], 1).unwrap();
+        }
+        assert!(commands(&mut pumps)
+            .iter()
+            .all(|f| f.action == Action::Launch));
+        for pump in &mut pumps {
+            pump.transfer_complete(epoch).unwrap();
+        }
+    }
+    pumps[0].consumed(0).unwrap();
+    pumps[1].consumed(1).unwrap();
+    // Each rank has a free bank, although neither global ticket is drained.
+    pumps[0].offer(Plane::Candidate, 2).unwrap();
+    assert!(commands(&mut pumps)
+        .iter()
+        .all(|f| f.action == Action::Begin && f.epoch == 2));
+}

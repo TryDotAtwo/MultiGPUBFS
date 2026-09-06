@@ -9,6 +9,7 @@ use crate::{
 use mgbfs_core::Result;
 use std::collections::VecDeque;
 pub struct ControlPump {
+    admission: Option<crate::control_admission::Admission>,
     rank: u32,
     depth: u64,
     local: RankEpochs,
@@ -22,6 +23,37 @@ pub struct ControlPump {
     failed: bool,
 }
 impl ControlPump {
+    /// Explicit byte-admitted control mode. Capacities are fixed source-buffer
+    /// bytes per Candidate/Request/Response/Receipt plane, common to all ranks.
+    /// BEGIN requests metadata preparation, never permission to issue NCCL;
+    /// only LAUNCH authorizes payload submission. Receiver acknowledges its
+    /// actually reserved bank through admit_bytes after TICKET_BYTES.
+    pub fn new_admitted(
+        world: u32,
+        rank: u32,
+        slots: usize,
+        peers: Vec<Option<ControlConnection>>,
+        send_capacities: [u64; 4],
+    ) -> Result<Self> {
+        let mut pump = Self::new(world, rank, slots, peers)?;
+        pump.admission = Some(crate::control_admission::Admission::new(
+            world,
+            rank,
+            slots,
+            send_capacities,
+        )?);
+        // One source emits world descriptions per ticket. All queues remain
+        // bounded and allocated before any offers; no hot-path queue growth.
+        let capacity = slots
+            .checked_mul(4)
+            .and_then(|n| n.checked_mul(world as usize + 6))
+            .and_then(|n| n.checked_add(2))
+            .ok_or("CONTROL_PUMP_CAPACITY")?;
+        for peer in pump.peers.iter_mut().flatten() {
+            peer.prepare_send_capacity(capacity)?;
+        }
+        Ok(pump)
+    }
     pub fn new(
         world: u32,
         rank: u32,
@@ -81,6 +113,7 @@ impl ControlPump {
             },
         );
         Ok(Self {
+            admission: None,
             rank,
             depth: 0,
             local,
@@ -108,11 +141,73 @@ impl ControlPump {
         result
     }
     fn emit(&mut self, frame: ControlFrame) -> Result<()> {
-        if let Some(coordinator) = &mut self.coordinator {
-            coordinator.receive(frame)
+        if self.coordinator.is_some() {
+            self.receive_root(frame)
         } else {
             self.peers[0].as_mut().unwrap().enqueue(frame)
         }
+    }
+    fn broadcast(&mut self) -> Result<()> {
+        self.dispatch(self.outgoing[0])?;
+        for index in 1..self.peers.len() {
+            self.peers[index]
+                .as_mut()
+                .unwrap()
+                .enqueue(self.outgoing[index])?;
+        }
+        Ok(())
+    }
+    fn receive_root(&mut self, frame: ControlFrame) -> Result<()> {
+        if let Some(admission) = &mut self.admission {
+            match frame.action {
+                Action::OfferBytes => {
+                    if admission.offer(frame, &mut self.outgoing)? {
+                        self.broadcast()?;
+                    }
+                    return Ok(());
+                }
+                Action::Admitted => return admission.ack(frame),
+                Action::Complete | Action::Consumed => {
+                    admission.require_root_launched(frame.epoch)?
+                }
+                _ => (),
+            }
+        }
+        self.coordinator.as_mut().unwrap().receive(frame)?;
+        if frame.action == Action::Consumed {
+            if let Some(admission) = &mut self.admission {
+                admission.root_consume(frame)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn describe_bytes(&mut self, begin: ControlFrame, sizes: &[u64]) -> Result<()> {
+        self.apply(|s| {
+            s.admission
+                .as_mut()
+                .ok_or("CONTROL_ADMISSION_DISABLED")?
+                .describe(begin, sizes)?;
+            for (destination, &bytes) in sizes.iter().enumerate() {
+                s.emit(ControlFrame {
+                    action: Action::OfferBytes,
+                    rank: s.rank,
+                    destination_rank: destination as u32,
+                    payload_bytes: bytes,
+                    ..begin
+                })?;
+            }
+            Ok(())
+        })
+    }
+    pub fn admit_bytes(&mut self, ticket: ControlFrame, reserved_capacity: u64) -> Result<()> {
+        self.apply(|s| {
+            let ack = s
+                .admission
+                .as_mut()
+                .ok_or("CONTROL_ADMISSION_DISABLED")?
+                .admit(ticket, reserved_capacity)?;
+            s.emit(ack)
+        })
     }
     pub fn offer(&mut self, plane: Plane, slot: u64) -> Result<()> {
         self.apply(|s| {
@@ -125,6 +220,9 @@ impl ControlPump {
     }
     pub fn transfer_complete(&mut self, epoch: u64) -> Result<()> {
         self.apply(|s| {
+            if let Some(admission) = &s.admission {
+                admission.require_launched(epoch)?;
+            }
             let frame = s.local.transfer_complete(epoch)?;
             s.emit(frame)
         })
@@ -133,6 +231,9 @@ impl ControlPump {
     pub fn consumed(&mut self, epoch: u64) -> Result<()> {
         self.apply(|s| {
             let frame = s.local.consume(epoch)?;
+            if let Some(admission) = &mut s.admission {
+                admission.consume(epoch)?;
+            }
             s.emit(frame)
         })
     }
@@ -177,12 +278,18 @@ impl ControlPump {
                     return Err("CONTROL_FINALIZATION_ACTIVE".into());
                 }
                 self.local.begin(frame)?;
+                if let Some(admission) = &mut self.admission {
+                    admission.begin(frame)?;
+                }
             }
             Action::Finalize => {
                 if self.finalization.is_some() || !self.local.drained() {
                     return Err("CONTROL_FINALIZATION_NOT_DRAINED".into());
                 }
                 self.finalization = Some(frame);
+                if let Some(admission) = &mut self.admission {
+                    admission.finalize(frame)?;
+                }
             }
             Action::Publish => {
                 self.local.publish(frame)?;
@@ -196,6 +303,16 @@ impl ControlPump {
                     frame.rank, frame.fatal_code
                 ))
             }
+            Action::TicketBytes => self
+                .admission
+                .as_mut()
+                .ok_or("CONTROL_ADMISSION_DISABLED")?
+                .ticket(frame)?,
+            Action::Launch => self
+                .admission
+                .as_mut()
+                .ok_or("CONTROL_ADMISSION_DISABLED")?
+                .launch(frame)?,
             _ => return Err("CONTROL_PUMP_COMMAND".into()),
         }
         self.commands.push_back(frame);
@@ -233,8 +350,8 @@ impl ControlPump {
                         frame.rank, frame.fatal_code
                     ));
                 }
-                if let Some(coordinator) = &mut self.coordinator {
-                    coordinator.receive(frame)?;
+                if self.coordinator.is_some() {
+                    self.receive_root(frame)?;
                 } else {
                     self.dispatch(frame)?;
                 }
@@ -246,19 +363,24 @@ impl ControlPump {
                     return Ok(());
                 }
             }
+            if let Some(admission) = &mut self.admission {
+                if admission.issue_launch(&mut self.outgoing)? {
+                    self.broadcast()?;
+                    return Ok(());
+                }
+            }
             if self
                 .coordinator
                 .as_mut()
                 .unwrap()
                 .issue(&mut self.outgoing)?
             {
-                self.dispatch(self.outgoing[0])?;
-                for index in 1..self.peers.len() {
-                    self.peers[index]
-                        .as_mut()
-                        .unwrap()
-                        .enqueue(self.outgoing[index])?;
+                if self.outgoing[0].action == Action::Begin {
+                    if let Some(admission) = &mut self.admission {
+                        admission.root_begin(&self.outgoing)?;
+                    }
                 }
+                self.broadcast()?;
             }
         }
         Ok(())
