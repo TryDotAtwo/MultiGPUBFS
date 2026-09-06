@@ -237,5 +237,9 @@ local drain, not a CUDA event check performed by this module.
 
 The two-depth lifecycle is tested both without sockets (one rank) and through
 real loopback TCP (two ranks, alternating source, empty receiving peer). These
-are CPU control tests only. The GPU dispatcher, NCCL execution, progress timeout
+tests also exercise the Candidate→Request→Response→Receipt chain after source
+closure: transfer completion alone must not finalize a layer, and descendants
+offered before consumption must still execute. A duplicate local offer must
+close the remote connection and permanently poison both pumps.
+These are CPU control tests only. The GPU dispatcher, NCCL execution, progress timeout
 and hardware overlap validation are not implemented by this pump.
