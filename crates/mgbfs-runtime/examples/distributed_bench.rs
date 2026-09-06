@@ -165,22 +165,6 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     // Test-only A/B switch. Production runs retain the mandatory archive.
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
-    let extent: Box<dyn Extent + Send> = if archive_enabled {
-        create_archive_extent(Path::new(&archive_path), stream_archive)
-            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?
-    } else {
-        Box::new(StreamExtent::new(std::io::sink()))
-    };
-    let mut archive = PinnedArchive::new(
-        extent,
-        disk_bytes,
-        archive_width,
-        digest,
-        archive_rows,
-        env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
-    )?;
-    let pinned = archive.pinned_bytes();
-    let setup = Instant::now();
     let cfg = DistributedConfig {
         untouched_vram_reserve: 1 << 30,
         rank,
@@ -218,6 +202,22 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     // epochs on them is a separate integration step, not claimed here.
     let _control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
     let id = _control_group.nccl_id;
+    let extent: Box<dyn Extent + Send> = if archive_enabled {
+        create_archive_extent(Path::new(&archive_path), stream_archive)
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?
+    } else {
+        Box::new(StreamExtent::new(std::io::sink()))
+    };
+    let mut archive = PinnedArchive::new(
+        extent,
+        disk_bytes,
+        archive_width,
+        digest,
+        archive_rows,
+        env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+    )?;
+    let pinned = archive.pinned_bytes();
+    let setup = Instant::now();
     let mut bfs = if selection.tensor_generation {
         DistributedNativeBfs::new_hash_first_tc_with_owner(
             &graph,
