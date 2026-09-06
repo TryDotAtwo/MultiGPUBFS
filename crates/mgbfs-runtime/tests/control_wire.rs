@@ -1,5 +1,5 @@
-use mgbfs_runtime::control_wire::FrameReader;
 use mgbfs_runtime::control_wire::{Action, ControlFrame, Plane, FRAME_BYTES, NO_SLOT};
+use mgbfs_runtime::control_wire::{FrameReader, FrameWriter};
 use std::io::{self, Cursor, Read, Write};
 
 fn ready() -> ControlFrame {
@@ -17,6 +17,72 @@ fn ready() -> ControlFrame {
 struct PausingRead {
     bytes: Cursor<Vec<u8>>,
     pause: bool,
+}
+
+struct PausingWrite {
+    bytes: Vec<u8>,
+    pause: bool,
+}
+impl Write for PausingWrite {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.pause = !self.pause;
+        if self.pause {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let n = data.len().min(7);
+        self.bytes.extend_from_slice(&data[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn pending_writer_cannot_be_overwritten_and_resumes_exact_byte_offset() {
+    let mut writer = FrameWriter::new(2).unwrap();
+    let mut stream = PausingWrite {
+        bytes: Vec::new(),
+        pause: false,
+    };
+    writer.enqueue(ready()).unwrap();
+    assert!(!writer.poll(&mut stream).unwrap());
+    assert!(writer.enqueue(ControlFrame { slot: 9, ..ready() }).is_err());
+    let mut done = false;
+    for _ in 0..20 {
+        if writer.poll(&mut stream).unwrap() {
+            done = true;
+            break;
+        }
+    }
+    assert!(done);
+    assert_eq!(stream.bytes, ready().encode(2).unwrap());
+    assert!(writer.poll(&mut stream).unwrap());
+    assert_eq!(stream.bytes.len(), 64);
+    writer.enqueue(ControlFrame { slot: 9, ..ready() }).unwrap();
+    for _ in 0..20 {
+        if writer.poll(&mut stream).unwrap() {
+            break;
+        }
+    }
+    assert_eq!(stream.bytes.len(), 128);
+    assert_eq!(
+        ControlFrame::decode(&stream.bytes[64..], 2).unwrap().slot,
+        9
+    );
+}
+
+#[test]
+fn zero_write_permanently_poisons_pending_connection() {
+    let mut writer = FrameWriter::new(2).unwrap();
+    writer.enqueue(ready()).unwrap();
+    let mut full = Cursor::new([0u8; 0]);
+    assert!(writer.poll(&mut full).is_err());
+    let mut later = Vec::new();
+    assert!(writer.poll(&mut later).is_err());
+    assert!(writer.enqueue(ready()).is_err());
+    assert!(later.is_empty());
+    assert!(FrameWriter::new(0).is_err());
 }
 impl Read for PausingRead {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
@@ -82,8 +148,14 @@ fn nonblocking_tcp_fragment_arrival_and_frame_reuse() {
     client.write_all(&bytes[..13]).unwrap();
     assert_eq!(reader.poll(&mut server).unwrap(), None);
     client.write_all(&bytes[13..]).unwrap();
-    client.write_all(&bytes).unwrap();
+    client.set_nonblocking(true).unwrap();
+    let mut writer = FrameWriter::new(2).unwrap();
+    writer.enqueue(ready()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
+    while !writer.poll(&mut client).unwrap() {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
     let mut received = 0;
     while received < 2 {
         if let Some(frame) = reader.poll(&mut server).unwrap() {

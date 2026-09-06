@@ -17,8 +17,12 @@ retains partial bytes. Each call returns at most one decoded frame. A malformed
 frame, EOF, or other I/O error permanently poisons that reader. A slow peer
 therefore need not block polling another peer. Blocking `read_from` remains
 available for bounded setup/test exchanges; it must not be used by the roulette
-dispatcher. Sending is still blocking and needs its own bounded pending writer
-before integration into that dispatcher.
+dispatcher. `FrameWriter` supplies one fixed pending send frame per peer and
+retains its exact byte offset across WouldBlock/Interrupted. Enqueue while busy
+returns an explicit capacity error without overwriting the pending frame.
+Zero writes and other I/O failures permanently poison it. Local send completion
+only means bytes were accepted by the stream, not that the peer or GPU finished.
+The eventual dispatcher must provision its bounded outbound queue separately.
 
 | Offset | Bytes | Field |
 |---:|---:|---|
@@ -56,8 +60,8 @@ does not authorize StateRing reuse.
 
 Validation:
 `cargo test --locked -p mgbfs-runtime --test control_wire --test exchange --test transport`
-passes 10 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
+passes 12 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
 bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
 exchange are covered, including nonblocking partial-frame arrival, peer
-independence, frame reuse, and terminal error poisoning. This is not a multi-GPU
+independence, frame reuse, pending-send capacity/offsets, and terminal error poisoning. This is not a multi-GPU
 or Linux hardware gate.

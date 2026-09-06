@@ -3,6 +3,73 @@ use mgbfs_core::Result;
 use std::io::{Read, Write};
 pub const FRAME_BYTES: usize = 64;
 pub const NO_SLOT: u64 = u64::MAX;
+/// One fixed pending frame. Full capacity is an explicit error, never an
+/// allocation or overwrite. Caller supplies a nonblocking stream.
+pub struct FrameWriter {
+    bytes: [u8; FRAME_BYTES],
+    written: usize,
+    world: u32,
+    pending: bool,
+    poisoned: bool,
+}
+impl FrameWriter {
+    pub fn new(world: u32) -> Result<Self> {
+        if world == 0 {
+            return Err("CONTROL_RANK".into());
+        }
+        Ok(Self {
+            bytes: [0; FRAME_BYTES],
+            written: 0,
+            world,
+            pending: false,
+            poisoned: false,
+        })
+    }
+    pub fn enqueue(&mut self, frame: ControlFrame) -> Result<()> {
+        if self.poisoned {
+            return Err("CONTROL_WRITER_POISONED".into());
+        }
+        if self.pending {
+            return Err("CONTROL_SEND_CAPACITY".into());
+        }
+        self.bytes = frame.encode(self.world)?;
+        self.written = 0;
+        self.pending = true;
+        Ok(())
+    }
+    /// True means no bytes remain locally; it is NOT a peer/GPU acknowledgement.
+    pub fn poll(&mut self, stream: &mut impl Write) -> Result<bool> {
+        if self.poisoned {
+            return Err("CONTROL_WRITER_POISONED".into());
+        }
+        if !self.pending {
+            return Ok(true);
+        }
+        while self.written < FRAME_BYTES {
+            match stream.write(&self.bytes[self.written..]) {
+                Ok(0) => {
+                    self.poisoned = true;
+                    return Err("CONTROL_WRITE_ZERO".into());
+                }
+                Ok(n) => self.written += n,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return Ok(false)
+                }
+                Err(e) => {
+                    self.poisoned = true;
+                    return Err(format!("CONTROL_WRITE: {e}"));
+                }
+            }
+        }
+        self.pending = false;
+        Ok(true)
+    }
+}
 /// One preallocated receive frame per peer. The caller must supply a
 /// nonblocking stream; poll consumes at most one frame, never the next one.
 pub struct FrameReader {
