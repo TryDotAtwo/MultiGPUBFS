@@ -11,6 +11,15 @@ timeouts, connection identity, and lifecycle. Partial reads/writes are handled;
 EOF or an I/O error is fatal to that connection. Never retry a partial frame on
 the same stream or scan for a new magic marker.
 
+`FrameReader` holds one fixed 64-byte frame per peer. With a caller-configured
+nonblocking socket, `poll` returns immediately on WouldBlock/Interrupted and
+retains partial bytes. Each call returns at most one decoded frame. A malformed
+frame, EOF, or other I/O error permanently poisons that reader. A slow peer
+therefore need not block polling another peer. Blocking `read_from` remains
+available for bounded setup/test exchanges; it must not be used by the roulette
+dispatcher. Sending is still blocking and needs its own bounded pending writer
+before integration into that dispatcher.
+
 | Offset | Bytes | Field |
 |---:|---:|---|
 | 0 | 8 | ASCII `MGBCTRL1` |
@@ -47,6 +56,8 @@ does not authorize StateRing reuse.
 
 Validation:
 `cargo test --locked -p mgbfs-runtime --test control_wire --test exchange --test transport`
-passes 6 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
+passes 10 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
 bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
-exchange are covered. This is not a multi-GPU or Linux hardware gate.
+exchange are covered, including nonblocking partial-frame arrival, peer
+independence, frame reuse, and terminal error poisoning. This is not a multi-GPU
+or Linux hardware gate.

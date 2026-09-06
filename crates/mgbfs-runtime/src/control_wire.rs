@@ -3,6 +3,63 @@ use mgbfs_core::Result;
 use std::io::{Read, Write};
 pub const FRAME_BYTES: usize = 64;
 pub const NO_SLOT: u64 = u64::MAX;
+/// One preallocated receive frame per peer. The caller must supply a
+/// nonblocking stream; poll consumes at most one frame, never the next one.
+pub struct FrameReader {
+    bytes: [u8; FRAME_BYTES],
+    filled: usize,
+    world: u32,
+    poisoned: bool,
+}
+impl FrameReader {
+    pub fn new(world: u32) -> Result<Self> {
+        if world == 0 {
+            return Err("CONTROL_RANK".into());
+        }
+        Ok(Self {
+            bytes: [0; FRAME_BYTES],
+            filled: 0,
+            world,
+            poisoned: false,
+        })
+    }
+    pub fn poll(&mut self, stream: &mut impl Read) -> Result<Option<ControlFrame>> {
+        if self.poisoned {
+            return Err("CONTROL_READER_POISONED".into());
+        }
+        while self.filled < FRAME_BYTES {
+            match stream.read(&mut self.bytes[self.filled..]) {
+                Ok(0) => {
+                    self.poisoned = true;
+                    return Err("CONTROL_EOF".into());
+                }
+                Ok(n) => self.filled += n,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return Ok(None)
+                }
+                Err(e) => {
+                    self.poisoned = true;
+                    return Err(format!("CONTROL_READ: {e}"));
+                }
+            }
+        }
+        match ControlFrame::decode(&self.bytes, self.world) {
+            Ok(frame) => {
+                self.filled = 0;
+                Ok(Some(frame))
+            }
+            Err(error) => {
+                self.poisoned = true;
+                Err(error)
+            }
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum Action {

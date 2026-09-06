@@ -1,3 +1,4 @@
+use mgbfs_runtime::control_wire::FrameReader;
 use mgbfs_runtime::control_wire::{Action, ControlFrame, Plane, FRAME_BYTES, NO_SLOT};
 use std::io::{self, Cursor, Read, Write};
 
@@ -11,6 +12,98 @@ fn ready() -> ControlFrame {
         plane: Plane::Candidate,
         fatal_code: 0,
     }
+}
+
+struct PausingRead {
+    bytes: Cursor<Vec<u8>>,
+    pause: bool,
+}
+impl Read for PausingRead {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        self.pause = !self.pause;
+        if self.pause {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let n = out.len().min(7);
+        self.bytes.read(&mut out[..n])
+    }
+}
+
+#[test]
+fn nonblocking_reader_retains_partial_frames_without_stalling_other_peers() {
+    let mut slow = PausingRead {
+        bytes: Cursor::new(ready().encode(2).unwrap().to_vec()),
+        pause: false,
+    };
+    let mut reader = FrameReader::new(2).unwrap();
+    assert_eq!(reader.poll(&mut slow).unwrap(), None);
+    let mut fast_reader = FrameReader::new(2).unwrap();
+    let mut fast = Cursor::new(ready().encode(2).unwrap());
+    assert_eq!(fast_reader.poll(&mut fast).unwrap(), Some(ready()));
+    let mut received = None;
+    for _ in 0..20 {
+        if let Some(frame) = reader.poll(&mut slow).unwrap() {
+            received = Some(frame);
+            break;
+        }
+    }
+    assert_eq!(received, Some(ready()));
+}
+
+#[test]
+fn framing_error_poisoning_prevents_resynchronizing_onto_later_valid_data() {
+    let mut invalid = ready().encode(2).unwrap();
+    invalid[0] = 0;
+    let mut bytes = invalid.to_vec();
+    bytes.extend_from_slice(&ready().encode(2).unwrap());
+    let mut stream = Cursor::new(bytes);
+    let mut reader = FrameReader::new(2).unwrap();
+    assert!(reader.poll(&mut stream).is_err());
+    let position = stream.position();
+    assert!(reader.poll(&mut stream).is_err());
+    assert_eq!(stream.position(), position);
+    assert!(FrameReader::new(0).is_err());
+}
+
+#[test]
+fn nonblocking_tcp_fragment_arrival_and_frame_reuse() {
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    server.set_nonblocking(true).unwrap();
+    client
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut reader = FrameReader::new(2).unwrap();
+    assert_eq!(reader.poll(&mut server).unwrap(), None);
+    let bytes = ready().encode(2).unwrap();
+    client.write_all(&bytes[..13]).unwrap();
+    assert_eq!(reader.poll(&mut server).unwrap(), None);
+    client.write_all(&bytes[13..]).unwrap();
+    client.write_all(&bytes).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = 0;
+    while received < 2 {
+        if let Some(frame) = reader.poll(&mut server).unwrap() {
+            assert_eq!(frame, ready());
+            received += 1;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(reader.poll(&mut server).unwrap(), None);
+}
+
+#[test]
+fn partial_eof_is_terminal_for_incremental_reader() {
+    let mut reader = FrameReader::new(2).unwrap();
+    let mut partial = Cursor::new(ready().encode(2).unwrap()[..13].to_vec());
+    assert!(reader.poll(&mut partial).is_err());
+    let mut next = Cursor::new(ready().encode(2).unwrap());
+    assert!(reader.poll(&mut next).is_err());
+    assert_eq!(next.position(), 0);
 }
 
 #[test]
