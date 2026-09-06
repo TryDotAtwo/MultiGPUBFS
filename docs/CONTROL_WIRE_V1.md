@@ -1,5 +1,29 @@
 # Native control frame V1
 
+## Current framing revision: schema 3
+
+The filename is retained for existing links. Schema 3 supersedes the V1/V2
+layout below: the frame remains 64 bytes, version at offset 8 is now 3,
+source rank is u32 at 48, destination rank u32 at 52, and payload bytes u64 at
+56. All integers are little-endian. Old schema frames are rejected, not guessed.
+Existing actions require destination/payload zero. All ranks must use one build;
+bootstrap negotiation of the framing revision remains to be connected.
+
+New actions are OfferBytes=10, TicketBytes=11, Admitted=12, Launch=13.
+OfferBytes is source-to-coordinator; TicketBytes is coordinator-to-ranks;
+Admitted is destination-to-coordinator; Launch is coordinator-to-ranks.
+Every admission frame carries depth, epoch, source, plane and source slot token.
+Offer/Ticket payload is the required destination byte count. Admitted payload
+is the actual reserved receive capacity. Launch has destination and payload zero.
+Rank 0 processes its own offers/acknowledgments locally, not over its peer links.
+Capacity failure uses the existing terminal Fatal path, never an affirmative ACK.
+
+Codec and rank-bound loopback TCP tests cover these messages and byte counts
+larger than u32. `ScatterAdmission` separately checks all-rank capacity, identity,
+reuse and ordered launch. **The control pump does not yet dispatch these new
+messages; it rejects them.** These codec tests do not prove integrated admission,
+GPU event readiness, buffer reservation, or NCCL overlap.
+
 Status: implemented codec, rank-bound connection, bootstrap rendezvous, and real
 loopback TCP tests. The reference benchmark now calls rendezvous before NCCL;
 setup integration passed the [v30 two-T4 gate](validation/2026-09-06-bootstrap-two-t4-gate.md).

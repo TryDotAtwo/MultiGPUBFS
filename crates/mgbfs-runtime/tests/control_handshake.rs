@@ -90,6 +90,8 @@ fn fragmented_hello_is_accepted_without_consuming_following_ready() {
         plane: Plane::Candidate,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     };
     peer.write_all(&frame.encode(2).unwrap()).unwrap();
     let mut ack = [0; 80];
@@ -161,6 +163,8 @@ fn matching_handshake_returns_rank_bound_nonblocking_connection() {
             plane: Plane::Candidate,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         })
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);

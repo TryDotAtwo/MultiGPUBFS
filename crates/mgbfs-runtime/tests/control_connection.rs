@@ -19,6 +19,8 @@ fn ready() -> ControlFrame {
         plane: Plane::Candidate,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     }
 }
 fn receive(connection: &mut ControlConnection) -> Result<ControlFrame, String> {
@@ -38,6 +40,46 @@ fn send(connection: &mut ControlConnection, frame: ControlFrame) {
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
+}
+#[test]
+fn tcp_admission_metadata_roundtrip_preserves_sizes_and_source() {
+    let (server, client) = pair();
+    let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
+    let mut peer = ControlConnection::new(client, 2, 1, 0).unwrap();
+    let offer = ControlFrame {
+        action: Action::OfferBytes,
+        source_rank: 1,
+        destination_rank: 1,
+        payload_bytes: 1u64 << 34,
+        epoch: 19,
+        ..ready()
+    };
+    send(&mut peer, offer);
+    assert_eq!(receive(&mut root).unwrap(), offer);
+    let ticket = ControlFrame {
+        action: Action::TicketBytes,
+        rank: 0,
+        ..offer
+    };
+    send(&mut root, ticket);
+    assert_eq!(receive(&mut peer).unwrap(), ticket);
+    let ack = ControlFrame {
+        action: Action::Admitted,
+        rank: 1,
+        ..ticket
+    };
+    send(&mut peer, ack);
+    assert_eq!(receive(&mut root).unwrap(), ack);
+    let launch = ControlFrame {
+        action: Action::Launch,
+        rank: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
+        ..ticket
+    };
+    send(&mut root, launch);
+    assert_eq!(receive(&mut peer).unwrap(), launch);
+    assert!(peer.enqueue(ControlFrame { rank: 1, ..launch }).is_err());
 }
 
 #[test]
@@ -179,6 +221,8 @@ fn tcp_coordinator_publishes_two_depths_only_after_both_ranks_finalize() {
             plane: Plane::None,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         };
         coordinator.receive(close).unwrap();
         send(&mut peer, ControlFrame { rank: 1, ..close });

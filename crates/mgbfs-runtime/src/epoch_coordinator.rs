@@ -178,6 +178,8 @@ impl EpochCoordinator {
                 plane: Plane::None,
                 source_rank: 0,
                 fatal_code: 0,
+                destination_rank: 0,
+                payload_bytes: 0,
             };
             for rank in &mut self.ranks {
                 rank.publish(publish)?;
@@ -235,6 +237,8 @@ impl EpochCoordinator {
                     plane,
                     source_rank: source as u32,
                     fatal_code: 0,
+                    destination_rank: 0,
+                    payload_bytes: 0,
                 };
                 self.ranks[rank].begin(*frame)?;
                 if slot != NO_SLOT {
@@ -262,6 +266,8 @@ impl EpochCoordinator {
                 plane: Plane::None,
                 source_rank: 0,
                 fatal_code: 0,
+                destination_rank: 0,
+                payload_bytes: 0,
             });
             self.finalizing = Some(self.next);
             self.next = next;

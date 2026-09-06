@@ -160,6 +160,8 @@ impl RankEpochs {
             plane,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         })
     }
     pub fn begin(&mut self, frame: ControlFrame) -> Result<()> {
@@ -239,6 +241,8 @@ impl RankEpochs {
             plane: live.offer.plane,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         })
     }
     /// Caller proves all local epoch consumers have completed before retiring.
@@ -265,6 +269,8 @@ impl RankEpochs {
             plane: live.offer.plane,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         })
     }
 }

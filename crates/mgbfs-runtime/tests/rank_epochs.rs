@@ -12,6 +12,8 @@ fn begin(epoch: u64, slot: u64, plane: Plane) -> ControlFrame {
         plane,
         source_rank: if slot == NO_SLOT { 0 } else { 1 },
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     }
 }
 #[test]

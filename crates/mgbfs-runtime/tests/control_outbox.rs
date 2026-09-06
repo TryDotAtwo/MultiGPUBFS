@@ -31,6 +31,8 @@ fn ready(slot: u64) -> ControlFrame {
         plane: Plane::Candidate,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     }
 }
 #[test]

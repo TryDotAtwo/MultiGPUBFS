@@ -12,11 +12,66 @@ fn ready() -> ControlFrame {
         plane: Plane::Candidate,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     }
+}
+#[test]
+fn admission_frames_preserve_large_byte_counts_and_destination() {
+    for (action, rank) in [
+        (Action::OfferBytes, 2),
+        (Action::TicketBytes, 0),
+        (Action::Admitted, 1),
+    ] {
+        let frame = ControlFrame {
+            action,
+            rank,
+            source_rank: 2,
+            destination_rank: 1,
+            payload_bytes: 0x0102030405060708,
+            epoch: 19,
+            slot: 8,
+            ..ready()
+        };
+        let bytes = frame.encode(3).unwrap();
+        assert_eq!(&bytes[52..56], &[1, 0, 0, 0]);
+        assert_eq!(&bytes[56..64], &[8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(ControlFrame::decode(&bytes, 3).unwrap(), frame);
+        assert!(ControlFrame {
+            destination_rank: 3,
+            ..frame
+        }
+        .encode(3)
+        .is_err());
+    }
+    let launch = ControlFrame {
+        action: Action::Launch,
+        rank: 0,
+        source_rank: 2,
+        epoch: 19,
+        slot: 8,
+        ..ready()
+    };
+    assert_eq!(
+        ControlFrame::decode(&launch.encode(3).unwrap(), 3).unwrap(),
+        launch
+    );
+    assert!(ControlFrame {
+        payload_bytes: 1,
+        ..launch
+    }
+    .encode(3)
+    .is_err());
+    assert!(ControlFrame {
+        payload_bytes: 1,
+        ..ready()
+    }
+    .encode(3)
+    .is_err());
 }
 
 #[test]
-fn version_two_begin_preserves_explicit_source_rank() {
+fn version_three_begin_preserves_explicit_source_rank() {
     let frame = ControlFrame {
         action: Action::Begin,
         rank: 0,
@@ -24,14 +79,14 @@ fn version_two_begin_preserves_explicit_source_rank() {
         ..ready()
     };
     let mut bytes = frame.encode(3).unwrap();
-    bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
+    bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
     bytes[48..52].copy_from_slice(&2u32.to_le_bytes());
-    let decoded = ControlFrame::decode(&bytes, 3).expect("V2 source-bearing command");
+    let decoded = ControlFrame::decode(&bytes, 3).expect("V3 source-bearing command");
     assert_eq!(decoded.encode(3).unwrap(), bytes);
     bytes[48..52].copy_from_slice(&3u32.to_le_bytes());
     assert!(ControlFrame::decode(&bytes, 3).is_err());
     bytes[48..52].fill(0);
-    bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+    bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
     assert!(ControlFrame::decode(&bytes, 3).is_err());
 }
 
@@ -203,7 +258,7 @@ fn partial_eof_is_terminal_for_incremental_reader() {
 fn frozen_ready_layout_and_roundtrip() {
     let frame = ready();
     let expected: [u8; 64] = [
-        77, 71, 66, 67, 84, 82, 76, 49, 2, 0, 1, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        77, 71, 66, 67, 84, 82, 76, 49, 3, 0, 1, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
@@ -254,6 +309,8 @@ fn rejects_impossible_action_fields() {
         ControlFrame {
             source_rank: 0,
             fatal_code: 1,
+            destination_rank: 0,
+            payload_bytes: 0,
             ..ready()
         },
         ControlFrame {
@@ -371,6 +428,8 @@ fn control_only_messages_have_no_payload_plane_or_slot() {
             plane: Plane::None,
             source_rank: 0,
             fatal_code: if action == Action::Fatal { 17 } else { 0 },
+            destination_rank: 0,
+            payload_bytes: 0,
         };
         assert_eq!(
             ControlFrame::decode(&frame.encode(2).unwrap(), 2).unwrap(),

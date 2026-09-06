@@ -139,6 +139,10 @@ pub enum Action {
     Consumed = 7,
     Finalized = 8,
     Publish = 9,
+    OfferBytes = 10,
+    TicketBytes = 11,
+    Admitted = 12,
+    Launch = 13,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -159,16 +163,28 @@ pub struct ControlFrame {
     pub plane: Plane,
     pub fatal_code: u32,
     pub source_rank: u32,
+    pub destination_rank: u32,
+    pub payload_bytes: u64,
 }
 impl ControlFrame {
     fn validate(&self, world: u32) -> Result<()> {
         if world == 0 || self.rank >= world {
             return Err("CONTROL_RANK".into());
         }
-        if (self.action == Action::Begin && self.source_rank >= world)
-            || (self.action != Action::Begin && self.source_rank != 0)
+        let admission = matches!(
+            self.action,
+            Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch
+        );
+        let source_bearing = admission || self.action == Action::Begin;
+        if (source_bearing && self.source_rank >= world)
+            || (!source_bearing && self.source_rank != 0)
         {
             return Err("CONTROL_SOURCE_RANK".into());
+        }
+        if (!admission && (self.destination_rank != 0 || self.payload_bytes != 0))
+            || (admission && self.destination_rank >= world)
+        {
+            return Err("CONTROL_PAYLOAD_FIELDS".into());
         }
         let valid = match self.action {
             Action::Ready => {
@@ -199,6 +215,20 @@ impl ControlFrame {
             Action::Finalized => {
                 self.slot == NO_SLOT && self.plane == Plane::None && self.fatal_code == 0
             }
+            Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch => {
+                self.slot != NO_SLOT
+                    && self.plane != Plane::None
+                    && self.fatal_code == 0
+                    && match self.action {
+                        Action::OfferBytes => self.rank == self.source_rank,
+                        Action::TicketBytes => self.rank == 0,
+                        Action::Admitted => self.rank == self.destination_rank,
+                        Action::Launch => {
+                            self.rank == 0 && self.destination_rank == 0 && self.payload_bytes == 0
+                        }
+                        _ => unreachable!(),
+                    }
+            }
         };
         if !valid {
             return Err("CONTROL_FIELDS".into());
@@ -209,7 +239,7 @@ impl ControlFrame {
         self.validate(world)?;
         let mut bytes = [0; FRAME_BYTES];
         bytes[..8].copy_from_slice(b"MGBCTRL1");
-        bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
+        bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
         bytes[10..12].copy_from_slice(&(self.action as u16).to_le_bytes());
         bytes[12..16].copy_from_slice(&self.rank.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.depth.to_le_bytes());
@@ -218,14 +248,12 @@ impl ControlFrame {
         bytes[40..44].copy_from_slice(&(self.plane as u32).to_le_bytes());
         bytes[44..48].copy_from_slice(&self.fatal_code.to_le_bytes());
         bytes[48..52].copy_from_slice(&self.source_rank.to_le_bytes());
+        bytes[52..56].copy_from_slice(&self.destination_rank.to_le_bytes());
+        bytes[56..64].copy_from_slice(&self.payload_bytes.to_le_bytes());
         Ok(bytes)
     }
     pub fn decode(bytes: &[u8], world: u32) -> Result<Self> {
-        if bytes.len() != FRAME_BYTES
-            || &bytes[..8] != b"MGBCTRL1"
-            || bytes[8..10] != [2, 0]
-            || bytes[52..].iter().any(|&b| b != 0)
-        {
+        if bytes.len() != FRAME_BYTES || &bytes[..8] != b"MGBCTRL1" || bytes[8..10] != [3, 0] {
             return Err("CONTROL_HEADER".into());
         }
         let action = match u16::from_le_bytes(bytes[10..12].try_into().unwrap()) {
@@ -238,6 +266,10 @@ impl ControlFrame {
             7 => Action::Consumed,
             8 => Action::Finalized,
             9 => Action::Publish,
+            10 => Action::OfferBytes,
+            11 => Action::TicketBytes,
+            12 => Action::Admitted,
+            13 => Action::Launch,
             _ => return Err("CONTROL_ACTION".into()),
         };
         let plane = match u32::from_le_bytes(bytes[40..44].try_into().unwrap()) {
@@ -257,6 +289,8 @@ impl ControlFrame {
             slot: u64::from_le_bytes(bytes[32..40].try_into().unwrap()),
             source_rank: u32::from_le_bytes(bytes[48..52].try_into().unwrap()),
             fatal_code: u32::from_le_bytes(bytes[44..48].try_into().unwrap()),
+            destination_rank: u32::from_le_bytes(bytes[52..56].try_into().unwrap()),
+            payload_bytes: u64::from_le_bytes(bytes[56..64].try_into().unwrap()),
         };
         frame.validate(world)?;
         Ok(frame)

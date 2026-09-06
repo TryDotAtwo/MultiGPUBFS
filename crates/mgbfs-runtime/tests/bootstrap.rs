@@ -220,6 +220,8 @@ fn bootstrap_endpoint_connects_to_identity_checked_control_stream() {
             plane: Plane::Candidate,
             source_rank: 0,
             fatal_code: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         })
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);

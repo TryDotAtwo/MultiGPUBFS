@@ -12,6 +12,8 @@ fn ready(rank: u32, plane: Plane, slot: u64) -> ControlFrame {
         plane,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     }
 }
 fn ack(rank: u32, plane: Plane, epoch: u64, action: Action) -> ControlFrame {
@@ -218,6 +220,8 @@ fn three_rank_begin_identifies_nonzero_source_to_every_receiver() {
         plane: mgbfs_runtime::control_wire::Plane::Candidate,
         source_rank: 0,
         fatal_code: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
     };
     coordinator.receive(offer).unwrap();
     let mut commands = [offer; 3];

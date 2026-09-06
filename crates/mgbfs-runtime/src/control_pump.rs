@@ -76,6 +76,8 @@ impl ControlPump {
                 plane: Plane::None,
                 source_rank: 0,
                 fatal_code: 0,
+                destination_rank: 0,
+                payload_bytes: 0,
             },
         );
         Ok(Self {
@@ -149,6 +151,8 @@ impl ControlPump {
                 plane: Plane::None,
                 source_rank: 0,
                 fatal_code: 0,
+                destination_rank: 0,
+                payload_bytes: 0,
             })
         })
     }

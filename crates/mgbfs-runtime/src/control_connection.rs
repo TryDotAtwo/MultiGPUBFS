@@ -89,7 +89,12 @@ impl ControlConnection {
         let allowed = if frame.rank == 0 {
             matches!(
                 frame.action,
-                Action::Begin | Action::Finalize | Action::Publish | Action::Fatal
+                Action::Begin
+                    | Action::Finalize
+                    | Action::Publish
+                    | Action::Fatal
+                    | Action::TicketBytes
+                    | Action::Launch
             )
         } else {
             matches!(
@@ -100,6 +105,8 @@ impl ControlConnection {
                     | Action::Finalized
                     | Action::SourceClosed
                     | Action::Fatal
+                    | Action::OfferBytes
+                    | Action::Admitted
             )
         };
         if allowed {
