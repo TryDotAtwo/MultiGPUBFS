@@ -85,3 +85,16 @@ fn wrong_ack_plane_poisoning_prevents_following_issuance() {
         .is_err());
     assert!(coordinator.issue(&mut frames).is_err());
 }
+
+#[test]
+fn one_source_per_ticket_bounds_aggregate_input_and_round_robins_sources() {
+    let mut coordinator = EpochCoordinator::new(2, 2).unwrap();
+    let mut frames = [ready(0, Plane::Candidate, 0); 2];
+    coordinator.receive(ready(0, Plane::Candidate, 7)).unwrap();
+    coordinator.receive(ready(0, Plane::Candidate, 8)).unwrap();
+    coordinator.receive(ready(1, Plane::Candidate, 9)).unwrap();
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!((frames[0].slot, frames[1].slot), (7, NO_SLOT));
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!((frames[0].slot, frames[1].slot), (NO_SLOT, 9));
+}

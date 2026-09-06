@@ -9,6 +9,7 @@ pub struct EpochCoordinator {
     ranks: Vec<RankEpochs>,
     pending: Vec<VecDeque<u64>>,
     next: u64,
+    source_cursor: [usize; 4],
     failed: bool,
 }
 fn plane_index(plane: Plane) -> Result<usize> {
@@ -54,6 +55,7 @@ impl EpochCoordinator {
             ranks,
             pending,
             next: 0,
+            source_cursor: [0; 4],
             failed: false,
         })
     }
@@ -114,7 +116,8 @@ impl EpochCoordinator {
             Plane::Receipt,
             Plane::Candidate,
         ] {
-            let base = plane_index(plane)? * self.world as usize;
+            let kind = plane_index(plane)?;
+            let base = kind * self.world as usize;
             if self.pending[base..base + self.world as usize]
                 .iter()
                 .all(VecDeque::is_empty)
@@ -128,15 +131,22 @@ impl EpochCoordinator {
             if !available {
                 continue;
             }
+            // One bounded source fragment per ticket avoids summing independent
+            // source maxima into the same receive bank.
+            let source = (0..self.world as usize)
+                .map(|offset| (self.source_cursor[kind] + offset) % self.world as usize)
+                .find(|&rank| !self.pending[base + rank].is_empty())
+                .unwrap();
             let next = self
                 .next
                 .checked_add(1)
                 .ok_or("CONTROL_COORDINATOR_SEQUENCE")?;
             for (rank, frame) in frames.iter_mut().enumerate() {
-                let slot = self.pending[base + rank]
-                    .front()
-                    .copied()
-                    .unwrap_or(NO_SLOT);
+                let slot = if rank == source {
+                    *self.pending[base + rank].front().unwrap()
+                } else {
+                    NO_SLOT
+                };
                 *frame = ControlFrame {
                     action: Action::Begin,
                     rank: 0,
@@ -152,6 +162,7 @@ impl EpochCoordinator {
                 }
             }
             self.next = next;
+            self.source_cursor[kind] = (source + 1) % self.world as usize;
             return Ok(true);
         }
         Ok(false)

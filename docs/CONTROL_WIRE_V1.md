@@ -11,11 +11,16 @@ sequencer or proof of asynchronous NCCL issue order.
 mirrors per-rank leases, holds preallocated FIFO offers per plane/rank, prioritizes
 RESPONSE/REQUEST/RECEIPT before CANDIDATE, and emits one pinned BEGIN per rank
 under a shared sequence. A new ticket needs conservative receive credit on every
+rank. Each ticket selects exactly one source by per-plane round-robin; other
+ranks receive NO_SLOT. This avoids accumulating W independent source maxima
+into one receive bank. The future payload admission must still prove each
+source fragment's maximum count/bytes fits every potential receiver.
+It reserves credit on every
 rank, including empty sources. COMPLETE and CONSUMED are distinct; credit stays
 until each rank's consumers retire. Wrong plane/epoch acknowledgements poison
 the coordinator. Caller-owned BEGIN output storage and outbound queue capacity
-must be reserved before issue. Three CPU tests cover priority, empty ranks,
-cross-plane progress and invalid acknowledgement handling.
+must be reserved before issue. Four CPU tests cover priority, empty ranks,
+cross-plane progress, source round-robin and invalid acknowledgement handling.
 This slice currently handles depth-zero data tickets only. SOURCE_CLOSED,
 global finalization/drain, payload counts/fragment admission, socket pumping,
 and NCCL execution are not implemented by it. Do not treat it as the full
