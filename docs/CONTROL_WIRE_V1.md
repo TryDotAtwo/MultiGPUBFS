@@ -1,0 +1,52 @@
+# Native control frame V1
+
+Status: implemented codec and real loopback TCP test; **not yet wired into the
+GPU dispatcher or bootstrap**. This specifies transport framing, not a complete
+sequencer or proof of asynchronous NCCL issue order.
+
+Each frame is exactly 64 bytes, little-endian, with no variable-length payload.
+The codec uses stack arrays on the successful path. It accepts a caller-owned
+`Read`/`Write` stream; the connection owner is responsible for bounded I/O
+timeouts, connection identity, and lifecycle. Partial reads/writes are handled;
+EOF or an I/O error is fatal to that connection. Never retry a partial frame on
+the same stream or scan for a new magic marker.
+
+| Offset | Bytes | Field |
+|---:|---:|---|
+| 0 | 8 | ASCII `MGBCTRL1` |
+| 8 | 2 | version = 1 |
+| 10 | 2 | action |
+| 12 | 4 | sender rank |
+| 16 | 8 | depth |
+| 24 | 8 | exchange epoch |
+| 32 | 8 | local slot, or `u64::MAX` for no slot |
+| 40 | 4 | plane |
+| 44 | 4 | fatal code, zero except FATAL |
+| 48 | 16 | reserved, all zero |
+
+Actions: READY=1, BEGIN=2, COMPLETE=3, SOURCE_CLOSED=4, FATAL=5,
+FINALIZE=6. Planes: NONE=0, CANDIDATE=1, REQUEST=2, RESPONSE=3,
+RECEIPT=4. Unknown values, nonzero reserved bytes, and ranks outside the
+configured world are rejected before dispatch.
+
+READY carries a real local slot and data plane, with epoch=0 (the sequencer
+has not assigned one). BEGIN is sent by rank 0 with a data plane and no slot;
+each rank selects its ready offer or participates with zero payload. COMPLETE
+acknowledges the specified epoch with a data plane and no slot. SOURCE_CLOSED
+has no slot/plane and epoch=0. FATAL has no slot/plane and a nonzero fatal code.
+FINALIZE is sent by rank 0 with no slot/plane. All nonfatal messages have a zero
+fatal code. Exact send counts remain in the ordered NCCL metadata exchange,
+not in this frame.
+
+Required dispatcher checks still to implement: bind sender rank to the
+bootstrapped connection/run digest; enforce depth/epoch monotonicity, slot
+capacity and legal lifetime, action direction, duplicate acknowledgements,
+receive credits, and complete depth drain. The codec does **not** authenticate
+a peer or establish that these semantic checks occurred. FINALIZE receipt alone
+does not authorize StateRing reuse.
+
+Validation:
+`cargo test --locked -p mgbfs-runtime --test control_wire --test exchange --test transport`
+passes 6 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
+bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
+exchange are covered. This is not a multi-GPU or Linux hardware gate.
