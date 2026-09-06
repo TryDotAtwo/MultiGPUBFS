@@ -114,6 +114,27 @@ class RankMetrics(unittest.TestCase):
         self.assertEqual(result["search_complete_seconds"], 3)
         self.assertEqual(result["durable_run_commit_seconds"], 5)
 
+    def test_mixed_rank_configuration_is_rejected(self):
+        for key in ('group', 'batch', 'frontier_profile', 'owner_backend',
+                    'pre_dedup', 'capacity_mode', 'global_capacity_records',
+                    'global_state_ring_records', 'archive_enabled', 'archive_state_bytes',
+                    'generation_variant', 'hash_first_generation', 'warmup_completed'):
+            rows = self.rows()
+            rows[0][key] = 1
+            rows[1][key] = 2
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                aggregate_rank_results(rows)
+            del rows[1][key]
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                aggregate_rank_results(rows)
+
+    def test_layer_counts_are_nonnegative_integers_on_every_rank(self):
+        for invalid in (-1, 0.5, True, float('nan')):
+            rows = self.rows()
+            rows[1]['local_layer_sizes'][0] = invalid
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                aggregate_rank_results(rows)
+
     def test_absent_baseline_archive_time_stays_unknown(self):
         rows = self.rows()
         for row in rows:

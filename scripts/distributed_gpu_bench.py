@@ -65,6 +65,17 @@ def aggregate_rank_results(ranks,world=2):
  if [x['rank'] for x in ranks]!=list(range(world)):raise ValueError('rank result inventory')
  if any(x.get('world_size',world)!=world for x in ranks):raise ValueError('rank world mismatch')
  if any(x['status']!='COMPLETE' or x['backend']!=ranks[0]['backend'] for x in ranks):raise ValueError('rank result contract mismatch')
+ # Legacy reports may omit a field everywhere; partial presence is not agreement.
+ for key in ('group','batch','frontier_profile','owner_backend','pre_dedup',
+             'capacity_mode','global_capacity_records','global_state_ring_records',
+             'archive_enabled','archive_state_bytes','generation_variant',
+             'hash_first_generation','warmup_completed'):
+  if any(key in x for x in ranks) and (any(key not in x for x in ranks) or any(x[key]!=ranks[0][key] for x in ranks)):
+   raise ValueError('rank configuration mismatch: '+key)
+ for result in ranks:
+  counts=result.get('local_layer_sizes',result.get('layer_sizes'))
+  if not isinstance(counts,list) or not counts or any(type(x) is not int or x<0 for x in counts):
+   raise ValueError('invalid rank layer counts')
  search=[x['search_complete_seconds'] for x in ranks]
  durable=[x.get('durable_run_commit_seconds') for x in ranks]
  if any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in search):raise ValueError('invalid search timing')
