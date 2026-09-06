@@ -127,11 +127,14 @@ def stats(rows):
 def suite(native,source,out,env):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
  if world not in (1,2):raise ValueError('unsupported measurement world')
+ capacity_mode=env.get('MGBFS_CAPACITY_MODE','max_per_rank')
+ if capacity_mode not in ('equal_global','max_per_rank'):raise ValueError('BENCH_CAPACITY_MODE')
  # Fixed physical device inventory also matches the nvidia-smi index sampler.
- env=dict(env,CUDA_VISIBLE_DEVICES='0' if world==1 else '0,1')
+ env=dict(env,CUDA_VISIBLE_DEVICES='0' if world==1 else '0,1',MGBFS_CAPACITY_MODE=capacity_mode)
  out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',world_size=world,scope=f'physical {world}xT4, same S_n matrix states, native mandatory archive, CayleyPy no archive',rows=[],comparisons=[],disk_events=[])
  archive_dir=Path(env.get('MGBFS_BENCH_ARCHIVE_DIR','/tmp'))
  report['archive_directory']=str(archive_dir)
+ report['capacity_mode']=capacity_mode
  def save():(out/'summary.json').write_text(json.dumps(report,indent=2))
  def disk_event(label,stage):
   event=dict(label=label,stage=stage)
@@ -165,6 +168,12 @@ def suite(native,source,out,env):
     for rank in range(world):Path(f'{prefix}-rank-{rank}.mgbfsar1').unlink(missing_ok=True)
     bootstrap.unlink(missing_ok=True)
    disk_event(label,'after_cleanup')
+  if backend=='native':
+   # Requested budgets, not measured allocations. Runtime rank_results remain
+   # authoritative for admitted capacities and actual device allocation planes.
+   multiplier=1 if capacity_mode=='equal_global' else world
+   row['requested_global_capacity_records']=int(cfg['MGBFS_BENCH_CAPACITY'])*multiplier
+   row['requested_global_state_ring_records']=int(cfg['MGBFS_FUTURE_CAPACITY'])*multiplier
   row.update(phase=phase,repetition=rep,config_backend=backend,batch=batch);report['rows'].append(row);save()
   print('MGBFS_BENCH_ROW '+json.dumps(dict(label=label,row=row)),flush=True)
   return row
@@ -176,7 +185,7 @@ def suite(native,source,out,env):
    return report
   if env.get('MGBFS_PROFILE_SWEEP')=='1':
    n=int(env.get('MGBFS_PROFILE_SWEEP_N','10'));expected=None;trials=[];variants=[]
-   # This panel reserves n! records per rank through a u32 reference ABI.
+   # This panel declares n! records (global or per rank) through a u32 reference ABI.
    # Larger streaming-capacity experiments use their separate launcher.
    if not 2<=n<=12:raise ValueError('PROFILE_GROUP_CAPACITY')
    archive_codec=env.get('MGBFS_PROFILE_ARCHIVE_CODEC','matrix_u8')

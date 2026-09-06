@@ -10,6 +10,33 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_invalid_capacity_mode_is_rejected_before_any_gpu_launch(self):
+        for mode in ('', 'equal-global', 'auto'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                with patch('distributed_gpu_bench.run_group', return_value=dict(status='COMPLETE')) as launch:
+                    with self.assertRaisesRegex(ValueError, 'BENCH_CAPACITY_MODE'):
+                        suite(Path('native'), Path('source'), Path(directory),
+                              {'MGBFS_DIAGNOSTIC':'1', 'MGBFS_CAPACITY_MODE':mode})
+                    launch.assert_not_called()
+
+    def test_capacity_budget_semantics_are_explicit_for_one_and_two_ranks(self):
+        for world, mode, global_records in ((1, 'equal_global', 40320),
+                                             (2, 'equal_global', 40320),
+                                             (2, 'max_per_rank', 80640)):
+            with self.subTest(world=world, mode=mode), tempfile.TemporaryDirectory() as directory:
+                def worker(command, out, label, env, timeout):
+                    self.assertEqual(env['MGBFS_CAPACITY_MODE'], mode)
+                    self.assertEqual(env['MGBFS_BENCH_CAPACITY'], '40320')
+                    self.assertEqual(env['MGBFS_FUTURE_CAPACITY'], '40320')
+                    return dict(status='COMPLETE')
+                with patch('distributed_gpu_bench.run_group', worker):
+                    report = suite(Path('native'), Path('source'), Path(directory),
+                                   {'MGBFS_DIAGNOSTIC':'1', 'MGBFS_CAPACITY_MODE':mode,
+                                    'MGBFS_BENCH_WORLD_SIZE':str(world)})
+                self.assertEqual(report.get('capacity_mode'), mode)
+                self.assertEqual(report['rows'][0].get('requested_global_capacity_records'), global_records)
+                self.assertEqual(report['rows'][0].get('requested_global_state_ring_records'), global_records)
+
     def test_selected_archive_filesystem_is_used_and_reported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
