@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "aebc057dd14fa2ace9c021ab6263c8f74839274d"
+SOURCE = "4ddf27138ca7e2c59624807b16fd7463b3a2ac3e"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -56,7 +56,9 @@ def main():
         env["PATH"] = str(root / "cargo/bin") + ":" + env["PATH"]
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--test", "bootstrap", "--test", "control_handshake",
-             "--test", "control_connection", "--test", "control_wire"],
+             "--test", "control_connection", "--test", "control_wire",
+             "--test", "control_pump", "--test", "rank_epochs",
+             "--test", "epoch_coordinator", "--test", "failure_abort"],
             "control-contracts", source)
         report["control_contracts"] = "PASS_LINUX_TCP_AND_FILE_CONTRACTS"
         save()
