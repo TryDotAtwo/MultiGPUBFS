@@ -98,3 +98,38 @@ fn one_source_per_ticket_bounds_aggregate_input_and_round_robins_sources() {
     assert!(coordinator.issue(&mut frames).unwrap());
     assert_eq!((frames[0].slot, frames[1].slot), (NO_SLOT, 9));
 }
+
+#[test]
+fn source_close_does_not_discard_pending_candidates_or_block_responses() {
+    let mut coordinator = EpochCoordinator::new(2, 2).unwrap();
+    coordinator.receive(ready(0, Plane::Candidate, 7)).unwrap();
+    coordinator
+        .receive(ack(0, Plane::None, 0, Action::SourceClosed))
+        .unwrap();
+    coordinator.receive(ready(0, Plane::Response, 8)).unwrap();
+    let mut frames = [ready(0, Plane::Candidate, 0); 2];
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!(frames[0].plane, Plane::Response);
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!((frames[0].plane, frames[0].slot), (Plane::Candidate, 7));
+    assert!(coordinator.receive(ready(0, Plane::Candidate, 9)).is_err());
+    assert!(coordinator.issue(&mut frames).is_err());
+}
+
+#[test]
+fn duplicate_or_wrong_depth_source_close_is_terminal() {
+    for wrong_depth in [false, true] {
+        let mut coordinator = EpochCoordinator::new(2, 1).unwrap();
+        let close = ack(1, Plane::None, 0, Action::SourceClosed);
+        if !wrong_depth {
+            coordinator.receive(close).unwrap();
+        }
+        assert!(coordinator
+            .receive(ControlFrame {
+                depth: u64::from(wrong_depth),
+                ..close
+            })
+            .is_err());
+        assert!(coordinator.receive(ready(0, Plane::Response, 0)).is_err());
+    }
+}

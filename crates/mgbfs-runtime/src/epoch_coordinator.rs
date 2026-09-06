@@ -10,6 +10,7 @@ pub struct EpochCoordinator {
     pending: Vec<VecDeque<u64>>,
     next: u64,
     source_cursor: [usize; 4],
+    source_closed: Vec<bool>,
     failed: bool,
 }
 fn plane_index(plane: Plane) -> Result<usize> {
@@ -50,12 +51,18 @@ impl EpochCoordinator {
                 .map_err(|_| "CONTROL_COORDINATOR_CAPACITY")?;
             pending.push(queue);
         }
+        let mut source_closed = Vec::new();
+        source_closed
+            .try_reserve_exact(world as usize)
+            .map_err(|_| "CONTROL_COORDINATOR_CAPACITY")?;
+        source_closed.resize(world as usize, false);
         Ok(Self {
             world,
             ranks,
             pending,
             next: 0,
             source_cursor: [0; 4],
+            source_closed,
             failed: false,
         })
     }
@@ -79,6 +86,9 @@ impl EpochCoordinator {
         let rank = frame.rank as usize;
         let expected = match frame.action {
             Action::Ready => {
+                if frame.plane == Plane::Candidate && self.source_closed[rank] {
+                    return Err("CONTROL_SOURCE_CLOSED".into());
+                }
                 let expected = self.ranks[rank].offer(frame.plane, frame.slot)?;
                 if expected != frame {
                     return Err("CONTROL_COORDINATOR_FRAME".into());
@@ -89,6 +99,13 @@ impl EpochCoordinator {
             }
             Action::Complete => self.ranks[rank].transfer_complete(frame.epoch)?,
             Action::Consumed => self.ranks[rank].consume(frame.epoch)?,
+            Action::SourceClosed => {
+                if frame.depth != 0 || self.source_closed[rank] {
+                    return Err("CONTROL_SOURCE_CLOSE".into());
+                }
+                self.source_closed[rank] = true;
+                frame
+            }
             _ => return Err("CONTROL_COORDINATOR_ACTION".into()),
         };
         if expected != frame {

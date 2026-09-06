@@ -19,10 +19,12 @@ It reserves credit on every
 rank, including empty sources. COMPLETE and CONSUMED are distinct; credit stays
 until each rank's consumers retire. Wrong plane/epoch acknowledgements poison
 the coordinator. Caller-owned BEGIN output storage and outbound queue capacity
-must be reserved before issue. Four CPU tests cover priority, empty ranks,
-cross-plane progress, source round-robin and invalid acknowledgement handling.
-This slice currently handles depth-zero data tickets only. SOURCE_CLOSED,
-global finalization/drain, payload counts/fragment admission, socket pumping,
+must be reserved before issue. Six CPU tests cover priority, empty ranks,
+cross-plane progress, source round-robin, source closure and invalid acknowledgements.
+SOURCE_CLOSED rejects later candidate offers without deleting already queued
+candidates or blocking dependent response/request/receipt traffic. Duplicate or
+wrong-depth closure is fatal. This slice currently handles depth-zero tickets.
+Global finalization/drain, payload counts/fragment admission, socket pumping,
 and NCCL execution are not implemented by it. Do not treat it as the full
 production sequencer or as proof of payload-capacity safety.
 
