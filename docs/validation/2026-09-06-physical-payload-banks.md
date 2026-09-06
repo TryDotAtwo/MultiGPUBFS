@@ -29,3 +29,26 @@ the already reconciled v38 run does not cover it.
 
 Production BFS scheduling and owning device-allocation wrappers remain separate
 work. The host pool is not a device-side allocator or a throughput claim.
+
+## Hardware result (reconciled 2026-09-06 UTC)
+
+Kaggle v39 completed at `47cbb1a2ee26a9678847433ea6b06c92656bced4`,
+package `8afbf3d`. Distinct Tesla T4 devices, each 15360 MiB:
+`GPU-81624915-b8ae-101b-b16b-d5853d0f4c14` and
+`GPU-39023a04-85b3-b150-3523-f3da475de283`.
+
+The physical-offset and reversed-consumer-retirement fixture passes plain,
+memcheck, racecheck, initcheck and synccheck, with zero errors and zero race
+warnings/hazards. Full reconciliation:
+
+```text
+python test_results/audit_sanitizer_v30.py test_results/distributed-sanitizer-v39/distributed-sanitizer test_results/distributed-sanitizer-v39-summary/distributed-sanitizer/summary.json 47cbb1a2ee26a9678847433ea6b06c92656bced4
+```
+
+Result `RAW_GATE_RECONCILED`: 40 tool logs, 36 measured ranks, 36 warmup
+results and 36 archive verifiers. All 24 reference profile selections preserve
+S4 layers `[1,3,5,6,5,3,1]`; existing runtime/macro/archive regressions pass.
+No state payload datasets were downloaded locally; S13 was not rerun.
+
+This does not validate subsequent `ebcbb99` route-count optimization or the
+full asynchronous BFS dispatcher. No performance claim follows from this gate.
