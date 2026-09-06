@@ -10,6 +10,23 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_selected_archive_filesystem_is_used_and_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def worker(command, out, label, env, timeout):
+                # GPU launch is the only substituted boundary. Paths and cleanup are real.
+                self.assertEqual(Path(command[-2]).parent, root)
+                self.assertEqual(Path(command[-3]).parent, root)
+                Path(command[-2]+'-rank-0.mgbfsar1').write_bytes(b'fixture')
+                return dict(status='COMPLETE')
+            with patch('distributed_gpu_bench.run_group', worker):
+                report = suite(Path('native'), Path('source'), root/'logs',
+                               {'MGBFS_DIAGNOSTIC':'1','MGBFS_BENCH_WORLD_SIZE':'1',
+                                'MGBFS_BENCH_ARCHIVE_DIR':str(root)})
+            self.assertEqual(report['archive_directory'], str(root))
+            self.assertFalse(list(root.glob('*.mgbfsar1')))
+            self.assertTrue(all('free_bytes' in e['archive'] for e in report['disk_events']))
+
     def test_one_rank_baseline_uses_single_gpu_measurement_without_collectives(self):
         def measured(n, batch, validate):
             self.assertEqual((n, batch, validate), (4, 65536, False))

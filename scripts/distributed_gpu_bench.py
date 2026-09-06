@@ -130,10 +130,12 @@ def suite(native,source,out,env):
  # Fixed physical device inventory also matches the nvidia-smi index sampler.
  env=dict(env,CUDA_VISIBLE_DEVICES='0' if world==1 else '0,1')
  out.mkdir(parents=True,exist_ok=True);report=dict(schema=1,status='INCOMPLETE',world_size=world,scope=f'physical {world}xT4, same S_n matrix states, native mandatory archive, CayleyPy no archive',rows=[],comparisons=[],disk_events=[])
+ archive_dir=Path(env.get('MGBFS_BENCH_ARCHIVE_DIR','/tmp'))
+ report['archive_directory']=str(archive_dir)
  def save():(out/'summary.json').write_text(json.dumps(report,indent=2))
  def disk_event(label,stage):
   event=dict(label=label,stage=stage)
-  for name,path in [('tmp',Path('/tmp')),('output',out)]:
+  for name,path in [('tmp',Path('/tmp')),('output',out),('archive',archive_dir)]:
    try:
     usage=shutil.disk_usage(path)
     event[name]=dict(total_bytes=usage.total,used_bytes=usage.used,free_bytes=usage.free)
@@ -144,7 +146,7 @@ def suite(native,source,out,env):
   label=f's{n}-{backend}-b{batch}-{phase}-{rep}'
   if selection:label+='-'+selection[0]
   if backend=='native':
-   bootstrap=Path('/tmp')/(label+'-bootstrap');prefix=str(Path('/tmp')/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_RANK_MAP='0' if world==1 else env.get('MGBFS_RANK_MAP','0,1'),MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone',f'--nproc-per-node={world}','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
+   bootstrap=archive_dir/(label+'-bootstrap');prefix=str(archive_dir/(label+'-archive'));rows=min(batch,16384);slots=(math_factorial(n)+rows-1)//rows+64;cfg=dict(env,MGBFS_RANK_MAP='0' if world==1 else env.get('MGBFS_RANK_MAP','0,1'),MGBFS_BENCH_WARMUP='1',MGBFS_BENCH_CAPACITY=str(math_factorial(n)),MGBFS_FUTURE_CAPACITY=str(math_factorial(n)),MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots));command=['torchrun','--standalone',f'--nproc-per-node={world}','--no-python',str(native),f's{n}',str(batch),str(bootstrap),prefix,'{RANK_OUT}']
   else:cfg=env;command=['torchrun','--standalone',f'--nproc-per-node={world}',str(Path(__file__).resolve()),'baseline-worker',str(n),str(batch),'{RANK_OUT}']
   if selection:cfg=dict(cfg,**selection[1])
   disk_event(label,'before')
