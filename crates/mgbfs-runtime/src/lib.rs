@@ -2,6 +2,7 @@
 pub mod archive;
 pub mod benchmark;
 pub mod bootstrap;
+pub mod byte_admission;
 pub mod control_connection;
 pub mod control_handshake;
 pub mod control_outbox;
