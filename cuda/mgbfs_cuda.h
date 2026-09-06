@@ -146,6 +146,9 @@ void mgbfs_nccl_destroy(void* comm);
 /* Terminal, idempotent abort; wrapper remains owned until destroy. Not thread-safe:
  * serialize with all other communicator calls. Does not provide a watchdog. */
 int mgbfs_nccl_abort(void* comm);
+/* Health query for the blocking communicator created above, not transfer
+ * completion. 0 healthy, 1 invalid/aborted, 2 query failure, 3 async failure. */
+int mgbfs_nccl_poll(void* comm);
 /* Materialize one committed batch from a live source slot. References are local
  * source row indices, not global OriginRefs. Source stride is a multiple of 16.
  * Requests are sorted by source index; output states and hashes share that order.

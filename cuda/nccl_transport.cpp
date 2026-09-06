@@ -33,3 +33,10 @@ extern "C" int mgbfs_nccl_abort(void* raw){
   p->value = nullptr; // Terminal even if NCCL reports an abort error.
   return ncclCommAbort(value) == ncclSuccess ? 0 : 2;
 }
+extern "C" int mgbfs_nccl_poll(void* raw){
+  auto* p = static_cast<Comm*>(raw);
+  if(!p || !p->value) return 1;
+  ncclResult_t state = ncclSuccess;
+  if(ncclCommGetAsyncError(p->value, &state) != ncclSuccess) return 2;
+  return state == ncclSuccess ? 0 : 3;
+}

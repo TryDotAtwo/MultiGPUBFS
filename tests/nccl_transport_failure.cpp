@@ -4,11 +4,19 @@
 #include "../cuda/nccl_transport.cpp"
 int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls = 0;
 int abort_calls = 0, destroy_calls = 0;
+int async_state = 0, async_query_status = 0;
 int main() {
   void* comm = nullptr;
   ncclUniqueId id{};
   assert(mgbfs_nccl_create(0, 2, 0, &id, &comm, nullptr, 0) == 0);
   char byte = 0;
+  assert(mgbfs_nccl_poll(comm) == 0);
+  async_state = 9;
+  assert(mgbfs_nccl_poll(comm) != 0);
+  async_state = 0;
+  async_query_status = 8;
+  assert(mgbfs_nccl_poll(comm) != 0);
+  async_query_status = 0;
   for (int stage = 0; stage <= 4; ++stage) {
     fail_stage = stage;
     group_depth = send_calls = recv_calls = end_calls = 0;
@@ -23,6 +31,8 @@ int main() {
   assert(abort_calls == 1);
   assert(mgbfs_nccl_abort(comm) == 0);
   assert(abort_calls == 1); // Repeated abort must not reuse a freed NCCL handle.
+  assert(mgbfs_nccl_poll(comm) != 0);
+  assert(mgbfs_nccl_poll(nullptr) != 0);
   group_depth = send_calls = recv_calls = end_calls = 0;
   assert(mgbfs_nccl_send_recv(comm, &byte, 1, 1, &byte, 1, nullptr) != 0);
   assert(send_calls == 0 && recv_calls == 0 && end_calls == 0);

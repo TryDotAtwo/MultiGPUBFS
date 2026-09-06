@@ -7,6 +7,8 @@ constexpr int ncclSuccess = 0, ncclUint8 = 1, ncclUint32 = 2, ncclMax = 3;
 inline const char* ncclGetErrorString(int) { return "injected NCCL error"; }
 extern int fail_stage, group_depth, send_calls, recv_calls, end_calls;
 extern int abort_calls, destroy_calls;
+extern int async_state, async_query_status;
+inline int ncclCommGetAsyncError(ncclComm_t, ncclResult_t* state) { *state = async_state; return async_query_status; }
 inline int ncclGetUniqueId(ncclUniqueId*) { return 0; }
 inline int ncclCommInitRank(ncclComm_t* p, int, ncclUniqueId, int) { *p = reinterpret_cast<void*>(1); return 0; }
 inline int ncclCommDestroy(ncclComm_t) { ++destroy_calls; return 0; }
