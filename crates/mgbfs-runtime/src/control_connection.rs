@@ -71,7 +71,11 @@ impl ControlConnection {
         } else {
             matches!(
                 frame.action,
-                Action::Ready | Action::Complete | Action::SourceClosed | Action::Fatal
+                Action::Ready
+                    | Action::Complete
+                    | Action::Consumed
+                    | Action::SourceClosed
+                    | Action::Fatal
             )
         };
         if allowed {

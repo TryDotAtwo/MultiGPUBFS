@@ -1,6 +1,6 @@
 //! Bounded rank-local admission bookkeeping. Not yet a TCP/GPU dispatcher.
-//! COMPLETE is emitted only after local consumers release the epoch, not just
-//! after NCCL transfer completion. Every epoch reserves a receive credit even
+//! COMPLETE marks transfer completion; CONSUMED releases local receive credit.
+//! Every epoch reserves a receive credit even
 //! when this rank contributes no source payload.
 use crate::control_wire::{Action, ControlFrame, Plane, NO_SLOT};
 use mgbfs_core::Result;
@@ -13,6 +13,7 @@ struct Offer {
 struct Live {
     offer: Offer,
     epoch: u64,
+    transferred: bool,
 }
 pub struct RankEpochs {
     world: u32,
@@ -152,9 +153,41 @@ impl RankEpochs {
                 slot: frame.slot,
             },
             epoch: frame.epoch,
+            transferred: false,
         });
         self.next = next;
         Ok(())
+    }
+    /// Caller has observed the ordered NCCL completion event. This does not
+    /// release source ownership or receive credit while consumers are active.
+    pub fn transfer_complete(&mut self, epoch: u64) -> Result<ControlFrame> {
+        self.alive()?;
+        let expected = self
+            .live
+            .iter()
+            .flatten()
+            .filter(|x| !x.transferred)
+            .map(|x| x.epoch)
+            .min();
+        if expected != Some(epoch) {
+            return self.reject();
+        }
+        let live = self
+            .live
+            .iter_mut()
+            .flatten()
+            .find(|x| x.epoch == epoch)
+            .unwrap();
+        live.transferred = true;
+        Ok(ControlFrame {
+            action: Action::Complete,
+            rank: self.rank,
+            depth: self.depth,
+            epoch,
+            slot: NO_SLOT,
+            plane: live.offer.plane,
+            fatal_code: 0,
+        })
     }
     /// Caller proves all local epoch consumers have completed before retiring.
     /// GPU completion events and global receive-credit coordination are external.
@@ -167,9 +200,12 @@ impl RankEpochs {
         else {
             return self.reject();
         };
+        if !self.live[index].unwrap().transferred {
+            return self.reject();
+        }
         let live = self.live[index].take().unwrap();
         Ok(ControlFrame {
-            action: Action::Complete,
+            action: Action::Consumed,
             rank: self.rank,
             depth: self.depth,
             epoch,

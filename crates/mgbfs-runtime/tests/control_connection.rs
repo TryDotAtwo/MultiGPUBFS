@@ -107,11 +107,13 @@ fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
         },
     );
     epochs.begin(receive(&mut peer).unwrap()).unwrap();
+    send(&mut peer, epochs.transfer_complete(0).unwrap());
     send(&mut peer, epochs.consume(0).unwrap());
     let later = receive(&mut root).unwrap();
     assert_eq!((later.action, later.slot), (Action::Ready, 7));
     let complete = receive(&mut root).unwrap();
     assert_eq!((complete.action, complete.epoch), (Action::Complete, 0));
+    assert_eq!(receive(&mut root).unwrap().action, Action::Consumed);
     send(
         &mut root,
         ControlFrame {
@@ -125,8 +127,10 @@ fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
     // Retired slot 3 is reusable even while slot 7's consumers still own it.
     send(&mut peer, epochs.offer(Plane::Candidate, 3).unwrap());
     assert_eq!(receive(&mut root).unwrap().slot, 3);
-    send(&mut peer, epochs.consume(1).unwrap());
+    send(&mut peer, epochs.transfer_complete(1).unwrap());
     assert_eq!(receive(&mut root).unwrap().epoch, 1);
+    send(&mut peer, epochs.consume(1).unwrap());
+    assert_eq!(receive(&mut root).unwrap().action, Action::Consumed);
 }
 
 #[test]

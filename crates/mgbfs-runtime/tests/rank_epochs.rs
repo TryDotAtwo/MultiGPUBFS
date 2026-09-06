@@ -22,6 +22,7 @@ fn finalize_requires_drain_and_preserves_sequence_across_depths() {
     };
     let mut rank = RankEpochs::new(2, 1, 1).unwrap();
     rank.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    rank.transfer_complete(0).unwrap();
     rank.consume(0).unwrap();
     rank.finish_depth(finalize, true).unwrap();
     assert_eq!(rank.offer(Plane::Candidate, 0).unwrap().depth, 1);
@@ -33,6 +34,7 @@ fn finalize_requires_drain_and_preserves_sequence_across_depths() {
     for drained in [false, true] {
         let mut rank = RankEpochs::new(2, 1, 1).unwrap();
         rank.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+        rank.transfer_complete(0).unwrap();
         if !drained {
             rank.consume(0).unwrap();
         }
@@ -46,10 +48,11 @@ fn begin_pins_offered_slot_not_latest_ready_and_holds_it_until_consumed() {
     rank.offer(Plane::Candidate, 9).unwrap();
     rank.begin(begin(0, 7, Plane::Candidate)).unwrap();
     rank.begin(begin(1, 9, Plane::Candidate)).unwrap();
+    rank.transfer_complete(0).unwrap();
     let done = rank.consume(0).unwrap();
     assert_eq!(
         (done.action, done.rank, done.epoch, done.plane),
-        (Action::Complete, 1, 0, Plane::Candidate)
+        (Action::Consumed, 1, 0, Plane::Candidate)
     );
     rank.offer(Plane::Candidate, 7).unwrap();
     rank.begin(begin(2, 7, Plane::Candidate)).unwrap();
@@ -98,7 +101,35 @@ fn fixed_capacity_invalid_topology_and_duplicate_retirement_fail_closed() {
     assert!(epochs.begin(begin(0, 0, Plane::Candidate)).is_err());
     let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
     epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    epochs.transfer_complete(0).unwrap();
     epochs.consume(0).unwrap();
     assert!(epochs.consume(0).is_err());
     assert!(epochs.offer(Plane::Response, 0).is_err());
+}
+
+#[test]
+fn consumers_cannot_retire_before_transfer_completion() {
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    assert!(epochs.consume(0).is_err());
+}
+
+#[test]
+fn ordered_transfer_completions_allow_independent_consumer_retirement() {
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    epochs.begin(begin(1, NO_SLOT, Plane::Response)).unwrap();
+    assert_eq!(
+        epochs.transfer_complete(0).unwrap().action,
+        Action::Complete
+    );
+    epochs.transfer_complete(1).unwrap();
+    assert_eq!(epochs.consume(1).unwrap().action, Action::Consumed);
+    epochs.begin(begin(2, NO_SLOT, Plane::Response)).unwrap();
+    epochs.consume(0).unwrap();
+    epochs.begin(begin(3, NO_SLOT, Plane::Candidate)).unwrap();
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    epochs.begin(begin(1, NO_SLOT, Plane::Response)).unwrap();
+    assert!(epochs.transfer_complete(1).is_err());
 }

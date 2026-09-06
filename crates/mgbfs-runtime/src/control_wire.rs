@@ -136,6 +136,7 @@ pub enum Action {
     SourceClosed = 4,
     Fatal = 5,
     Finalize = 6,
+    Consumed = 7,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -169,7 +170,7 @@ impl ControlFrame {
                     && self.fatal_code == 0
             }
             Action::Begin => self.rank == 0 && self.plane != Plane::None && self.fatal_code == 0,
-            Action::Complete => {
+            Action::Complete | Action::Consumed => {
                 self.slot == NO_SLOT && self.plane != Plane::None && self.fatal_code == 0
             }
             Action::SourceClosed => {
@@ -222,6 +223,7 @@ impl ControlFrame {
             4 => Action::SourceClosed,
             5 => Action::Fatal,
             6 => Action::Finalize,
+            7 => Action::Consumed,
             _ => return Err("CONTROL_ACTION".into()),
         };
         let plane = match u32::from_le_bytes(bytes[40..44].try_into().unwrap()) {

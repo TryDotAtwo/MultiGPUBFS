@@ -10,11 +10,12 @@ sequencer or proof of asynchronous NCCL issue order.
 `rank_epochs::RankEpochs` now supplies bounded rank-local admission bookkeeping:
 exact offered slot selection, one sequence across planes, outstanding-source
 slot ownership, and conservative per-plane receive credits (including zero
-source offers). COMPLETE is produced after caller-proven consumer retirement,
-not merely transfer completion. FinalizeDepth advancement requires no pending
+source offers). COMPLETE marks ordered transfer completion without releasing
+credit. CONSUMED marks caller-proven consumer retirement and can arrive out of
+order across independent epochs. FinalizeDepth advancement requires no pending
 offers/live epochs plus external local-drain confirmation; sequence survives
 depth rotation. Storage is allocated once; protocol errors poison the state.
-Five CPU tests cover these transitions. A composed real loopback TCP test also
+Seven CPU tests cover these transitions. A composed real loopback TCP test also
 checks a later READY arriving before the earlier epoch's completion, exact-slot
 BEGIN admission and reuse only after consumption. This component is not yet
 connected to the production TCP pump or CUDA; it does not prove global credits, coordinator drain,
@@ -71,7 +72,9 @@ deadlines while polling (nonblocking I/O alone cannot detect a silent peer).
 | 48 | 16 | reserved, all zero |
 
 Actions: READY=1, BEGIN=2, COMPLETE=3, SOURCE_CLOSED=4, FATAL=5,
-FINALIZE=6. Planes: NONE=0, CANDIDATE=1, REQUEST=2, RESPONSE=3,
+FINALIZE=6, CONSUMED=7. CONSUMED is an additive action in this pre-release V1
+codec; older builds reject it instead of interpreting it as COMPLETE. Run/config
+identity must match before connecting. Planes: NONE=0, CANDIDATE=1, REQUEST=2, RESPONSE=3,
 RECEIPT=4. Unknown values, nonzero reserved bytes, and ranks outside the
 configured world are rejected before dispatch.
 
@@ -84,7 +87,9 @@ another READY can be in transit when BEGIN arrives. This concretizes the
 sequencer's offer snapshot and matches the CPU `exchange::Sequencer` oracle.
 The slot identity is receiver-local, so the bootstrap connection must establish
 the recipient rank. COMPLETE
-acknowledges the specified epoch with a data plane and no slot. SOURCE_CLOSED
+acknowledges transfer completion for the specified epoch with a data plane and
+no slot; it does not release receive storage. CONSUMED has the same fields and
+acknowledges local consumer retirement after transfer completion. SOURCE_CLOSED
 has no slot/plane and epoch=0. FATAL has no slot/plane and a nonzero fatal code.
 FINALIZE is sent by rank 0 with no slot/plane. All nonfatal messages have a zero
 fatal code. Exact send counts remain in the ordered NCCL metadata exchange,
