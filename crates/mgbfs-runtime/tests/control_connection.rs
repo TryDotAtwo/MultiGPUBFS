@@ -42,6 +42,90 @@ fn send(connection: &mut ControlConnection, frame: ControlFrame) {
     }
 }
 #[test]
+fn three_rank_tcp_byte_admission_waits_for_empty_receiver_ack() {
+    use mgbfs_runtime::{byte_admission::ByteAdmission, scatter_admission::TicketKey};
+    let (server1, client1) = pair();
+    let (server2, client2) = pair();
+    let mut root1 = ControlConnection::new(server1, 3, 0, 1).unwrap();
+    let mut peer1 = ControlConnection::new(client1, 3, 1, 0).unwrap();
+    let mut root2 = ControlConnection::new(server2, 3, 0, 2).unwrap();
+    let mut peer2 = ControlConnection::new(client2, 3, 2, 0).unwrap();
+    let key = TicketKey {
+        depth: 0,
+        epoch: 0,
+        source: 2,
+        plane: Plane::Candidate,
+        generation: 3,
+    };
+    let mut admission = ByteAdmission::new(3).unwrap();
+    admission.begin(key, 80).unwrap();
+    let mut out = [ready(); 3];
+    for (dst, bytes, complete) in [(2, 48, false), (0, 32, false), (1, 0, true)] {
+        let frame = ControlFrame {
+            action: Action::OfferBytes,
+            rank: 2,
+            source_rank: 2,
+            destination_rank: dst,
+            payload_bytes: bytes,
+            ..ready()
+        };
+        send(&mut peer2, frame);
+        assert_eq!(
+            admission
+                .offer(receive(&mut root2).unwrap(), &mut out)
+                .unwrap(),
+            complete
+        );
+    }
+    send(&mut root1, out[1]);
+    send(&mut root2, out[2]);
+    let ticket1 = receive(&mut peer1).unwrap();
+    let ticket2 = receive(&mut peer2).unwrap();
+    assert_eq!(ticket1.payload_bytes, 0);
+    assert_eq!(ticket2.payload_bytes, 48);
+    admission
+        .ack(ControlFrame {
+            action: Action::Admitted,
+            rank: 0,
+            ..out[0]
+        })
+        .unwrap();
+    send(
+        &mut peer2,
+        ControlFrame {
+            action: Action::Admitted,
+            rank: 2,
+            payload_bytes: 0,
+            ..ticket2
+        },
+    );
+    admission.ack(receive(&mut root2).unwrap()).unwrap();
+    let mut next = 0;
+    assert!(!admission.launch(&mut next, &mut out).unwrap());
+    assert!(peer1.poll_receive().unwrap().is_none());
+    assert!(peer2.poll_receive().unwrap().is_none());
+    send(
+        &mut peer1,
+        ControlFrame {
+            action: Action::Admitted,
+            rank: 1,
+            ..ticket1
+        },
+    );
+    admission.ack(receive(&mut root1).unwrap()).unwrap();
+    assert!(admission.launch(&mut next, &mut out).unwrap());
+    send(&mut root1, out[1]);
+    send(&mut root2, out[2]);
+    for command in [receive(&mut peer1).unwrap(), receive(&mut peer2).unwrap()] {
+        assert_eq!(command.action, Action::Launch);
+        assert_eq!(
+            (command.epoch, command.source_rank, command.slot),
+            (0, 2, 3)
+        );
+    }
+    assert_eq!(next, 1);
+}
+#[test]
 fn tcp_admission_metadata_roundtrip_preserves_sizes_and_source() {
     let (server, client) = pair();
     let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
