@@ -7,7 +7,7 @@ layout below: the frame remains 64 bytes, version at offset 8 is now 3,
 source rank is u32 at 48, destination rank u32 at 52, and payload bytes u64 at
 56. All integers are little-endian. Old schema frames are rejected, not guessed.
 Existing actions require destination/payload zero. All ranks must use one build;
-bootstrap negotiation of the framing revision remains to be connected.
+the setup handshake now rejects mismatched framing revisions before admission.
 
 New actions are OfferBytes=10, TicketBytes=11, Admitted=12, Launch=13.
 OfferBytes is source-to-coordinator; TicketBytes is coordinator-to-ranks;
@@ -179,8 +179,8 @@ or Linux hardware gate.
 
 `ControlConnection::accept_peer` / `connect_peer` exchange fixed 80-byte
 hellos before returning a nonblocking connection. Layout: magic `MGBHEL01`
-at 0, little-endian u32 version 1 at 8, world at 12, rank at 16,
-zero reserved bytes at 20..24, config digest at 24..56, run ID at 56..72,
+at 0, little-endian u32 handshake version 2 at 8, world at 12, rank at 16,
+required control schema u32 at 20..24 (currently 3), config digest at 24..56, run ID at 56..72,
 zero reserved bytes at 72..80. The coordinator replies with rank 0 only
 after validating the complete peer hello. One deadline covers both transfer
 directions; each partial transfer uses the remaining timeout.

@@ -67,9 +67,10 @@ impl ControlConnection {
 fn hello(world: u32, rank: u32, identity: RunIdentity) -> [u8; 80] {
     let mut bytes = [0; 80];
     bytes[..8].copy_from_slice(b"MGBHEL01");
-    bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
     bytes[12..16].copy_from_slice(&world.to_le_bytes());
     bytes[16..20].copy_from_slice(&rank.to_le_bytes());
+    bytes[20..24].copy_from_slice(&u32::from(crate::control_wire::CONTROL_SCHEMA).to_le_bytes());
     bytes[24..56].copy_from_slice(&identity.config_digest);
     bytes[56..72].copy_from_slice(&identity.run_id);
     bytes

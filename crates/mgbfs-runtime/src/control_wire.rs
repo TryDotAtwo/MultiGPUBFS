@@ -2,6 +2,7 @@
 use mgbfs_core::Result;
 use std::io::{Read, Write};
 pub const FRAME_BYTES: usize = 64;
+pub const CONTROL_SCHEMA: u16 = 3;
 pub const NO_SLOT: u64 = u64::MAX;
 /// One fixed pending frame. Full capacity is an explicit error, never an
 /// allocation or overwrite. Caller supplies a nonblocking stream.
@@ -239,7 +240,7 @@ impl ControlFrame {
         self.validate(world)?;
         let mut bytes = [0; FRAME_BYTES];
         bytes[..8].copy_from_slice(b"MGBCTRL1");
-        bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
+        bytes[8..10].copy_from_slice(&CONTROL_SCHEMA.to_le_bytes());
         bytes[10..12].copy_from_slice(&(self.action as u16).to_le_bytes());
         bytes[12..16].copy_from_slice(&self.rank.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.depth.to_le_bytes());
@@ -253,7 +254,10 @@ impl ControlFrame {
         Ok(bytes)
     }
     pub fn decode(bytes: &[u8], world: u32) -> Result<Self> {
-        if bytes.len() != FRAME_BYTES || &bytes[..8] != b"MGBCTRL1" || bytes[8..10] != [3, 0] {
+        if bytes.len() != FRAME_BYTES
+            || &bytes[..8] != b"MGBCTRL1"
+            || bytes[8..10] != CONTROL_SCHEMA.to_le_bytes()
+        {
             return Err("CONTROL_HEADER".into());
         }
         let action = match u16::from_le_bytes(bytes[10..12].try_into().unwrap()) {

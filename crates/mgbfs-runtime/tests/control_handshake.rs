@@ -10,6 +10,22 @@ fn identity() -> RunIdentity {
         run_id: [9; 16],
     }
 }
+#[test]
+fn old_control_schema_is_rejected_during_setup() {
+    use std::io::Write;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (stream, _) = listener.accept().unwrap();
+    let mut old = [0u8; 80];
+    old[..8].copy_from_slice(b"MGBHEL01");
+    old[8] = 1;
+    old[12] = 2;
+    old[16] = 1;
+    old[24..56].fill(7);
+    old[56..72].fill(9);
+    peer.write_all(&old).unwrap();
+    assert!(ControlConnection::accept_peer(stream, 2, identity(), Duration::from_secs(3)).is_err());
+}
 
 #[test]
 fn silent_peer_has_stable_timeout_error() {
@@ -73,9 +89,10 @@ fn fragmented_hello_is_accepted_without_consuming_following_ready() {
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     let mut hello = [0u8; 80];
     hello[..8].copy_from_slice(b"MGBHEL01");
-    hello[8] = 1;
+    hello[8] = 2;
     hello[12] = 2;
     hello[16] = 1;
+    hello[20] = 3;
     hello[24..56].fill(7);
     hello[56..72].fill(9);
     for part in hello.chunks(3) {
@@ -119,12 +136,13 @@ fn reserved_bytes_are_rejected_before_acknowledgement() {
     peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     let mut hello = [0u8; 80];
     hello[..8].copy_from_slice(b"MGBHEL01");
-    hello[8] = 1;
+    hello[8] = 2;
     hello[12] = 2;
     hello[16] = 1;
     hello[24..56].fill(7);
     hello[56..72].fill(9);
     hello[79] = 1;
+    hello[20] = 3;
     peer.write_all(&hello).unwrap();
     let mut ack = [0; 80];
     assert_eq!(peer.read(&mut ack).unwrap(), 0);
