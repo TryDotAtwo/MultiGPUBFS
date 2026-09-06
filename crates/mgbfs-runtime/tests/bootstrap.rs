@@ -218,6 +218,7 @@ fn bootstrap_endpoint_connects_to_identity_checked_control_stream() {
             epoch: 0,
             slot: 5,
             plane: Plane::Candidate,
+            source_rank: 0,
             fatal_code: 0,
         })
         .unwrap();

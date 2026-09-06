@@ -29,6 +29,7 @@ fn ready(slot: u64) -> ControlFrame {
         epoch: 0,
         slot,
         plane: Plane::Candidate,
+        source_rank: 0,
         fatal_code: 0,
     }
 }

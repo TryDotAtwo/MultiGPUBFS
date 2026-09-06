@@ -88,6 +88,7 @@ fn fragmented_hello_is_accepted_without_consuming_following_ready() {
         epoch: 0,
         slot: 7,
         plane: Plane::Candidate,
+        source_rank: 0,
         fatal_code: 0,
     };
     peer.write_all(&frame.encode(2).unwrap()).unwrap();
@@ -158,6 +159,7 @@ fn matching_handshake_returns_rank_bound_nonblocking_connection() {
             epoch: 0,
             slot: 3,
             plane: Plane::Candidate,
+            source_rank: 0,
             fatal_code: 0,
         })
         .unwrap();

@@ -176,6 +176,7 @@ impl EpochCoordinator {
                 epoch,
                 slot: NO_SLOT,
                 plane: Plane::None,
+                source_rank: 0,
                 fatal_code: 0,
             };
             for rank in &mut self.ranks {
@@ -232,6 +233,7 @@ impl EpochCoordinator {
                     epoch: self.next,
                     slot,
                     plane,
+                    source_rank: source as u32,
                     fatal_code: 0,
                 };
                 self.ranks[rank].begin(*frame)?;
@@ -258,6 +260,7 @@ impl EpochCoordinator {
                 epoch: self.next,
                 slot: NO_SLOT,
                 plane: Plane::None,
+                source_rank: 0,
                 fatal_code: 0,
             });
             self.finalizing = Some(self.next);

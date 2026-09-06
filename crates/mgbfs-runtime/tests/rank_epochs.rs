@@ -10,6 +10,7 @@ fn begin(epoch: u64, slot: u64, plane: Plane) -> ControlFrame {
         epoch,
         slot,
         plane,
+        source_rank: 0,
         fatal_code: 0,
     }
 }

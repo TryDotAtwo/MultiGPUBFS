@@ -10,6 +10,7 @@ fn ready(rank: u32, plane: Plane, slot: u64) -> ControlFrame {
         epoch: 0,
         slot,
         plane,
+        source_rank: 0,
         fatal_code: 0,
     }
 }
@@ -204,4 +205,25 @@ fn all_finalization_acks_precede_publication_and_next_depth_data() {
         (frames[0].action, frames[0].depth, frames[0].epoch),
         (Action::Begin, 1, 1)
     );
+}
+#[test]
+fn three_rank_begin_identifies_nonzero_source_to_every_receiver() {
+    let mut coordinator = mgbfs_runtime::epoch_coordinator::EpochCoordinator::new(3, 2).unwrap();
+    let offer = mgbfs_runtime::control_wire::ControlFrame {
+        action: mgbfs_runtime::control_wire::Action::Ready,
+        rank: 2,
+        depth: 0,
+        epoch: 0,
+        slot: 17,
+        plane: mgbfs_runtime::control_wire::Plane::Candidate,
+        source_rank: 0,
+        fatal_code: 0,
+    };
+    coordinator.receive(offer).unwrap();
+    let mut commands = [offer; 3];
+    assert!(coordinator.issue(&mut commands).unwrap());
+    for (rank, command) in commands.iter().enumerate() {
+        assert_eq!(command.source_rank, 2);
+        assert_eq!(command.slot, if rank == 2 { 17 } else { u64::MAX });
+    }
 }

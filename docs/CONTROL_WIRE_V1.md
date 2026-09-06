@@ -224,6 +224,15 @@ measurements retain their pinned old source. GPU dispatcher integration remains
 pending. Primitive tests do not prove the benchmark migration correct on GPUs.
 # Host control pump integration status
 
+Current wire schema is **2** (the historical filename is retained). The 64-byte
+frame retains magic `MGBCTRL1`, but its u16 version at offset 8 is 2. Offset
+48 now holds `source_rank: u32 LE`; bytes 52..64 remain zero. BEGIN requires
+source_rank < world and identifies the selected sender on every rank, including
+empty receivers. Other actions require source_rank = 0. Version 1 is rejected;
+all ranks must run the same build. Earlier V1 descriptions below are historical
+where they conflict with this paragraph. Source rank is independent of the
+coordinator/sender identity in the existing `rank` field.
+
 `ControlPump` now composes the rank admission state, coordinator and nonblocking
 TCP connections into one caller-driven polling loop. Construction validates the
 star topology and reserves command and send queues before traffic starts. Each

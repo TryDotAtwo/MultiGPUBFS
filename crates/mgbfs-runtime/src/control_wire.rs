@@ -158,11 +158,17 @@ pub struct ControlFrame {
     pub slot: u64,
     pub plane: Plane,
     pub fatal_code: u32,
+    pub source_rank: u32,
 }
 impl ControlFrame {
     fn validate(&self, world: u32) -> Result<()> {
         if world == 0 || self.rank >= world {
             return Err("CONTROL_RANK".into());
+        }
+        if (self.action == Action::Begin && self.source_rank >= world)
+            || (self.action != Action::Begin && self.source_rank != 0)
+        {
+            return Err("CONTROL_SOURCE_RANK".into());
         }
         let valid = match self.action {
             Action::Ready => {
@@ -203,7 +209,7 @@ impl ControlFrame {
         self.validate(world)?;
         let mut bytes = [0; FRAME_BYTES];
         bytes[..8].copy_from_slice(b"MGBCTRL1");
-        bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+        bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
         bytes[10..12].copy_from_slice(&(self.action as u16).to_le_bytes());
         bytes[12..16].copy_from_slice(&self.rank.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.depth.to_le_bytes());
@@ -211,13 +217,14 @@ impl ControlFrame {
         bytes[32..40].copy_from_slice(&self.slot.to_le_bytes());
         bytes[40..44].copy_from_slice(&(self.plane as u32).to_le_bytes());
         bytes[44..48].copy_from_slice(&self.fatal_code.to_le_bytes());
+        bytes[48..52].copy_from_slice(&self.source_rank.to_le_bytes());
         Ok(bytes)
     }
     pub fn decode(bytes: &[u8], world: u32) -> Result<Self> {
         if bytes.len() != FRAME_BYTES
             || &bytes[..8] != b"MGBCTRL1"
-            || bytes[8..10] != [1, 0]
-            || bytes[48..].iter().any(|&b| b != 0)
+            || bytes[8..10] != [2, 0]
+            || bytes[52..].iter().any(|&b| b != 0)
         {
             return Err("CONTROL_HEADER".into());
         }
@@ -248,6 +255,7 @@ impl ControlFrame {
             depth: u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
             epoch: u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
             slot: u64::from_le_bytes(bytes[32..40].try_into().unwrap()),
+            source_rank: u32::from_le_bytes(bytes[48..52].try_into().unwrap()),
             fatal_code: u32::from_le_bytes(bytes[44..48].try_into().unwrap()),
         };
         frame.validate(world)?;

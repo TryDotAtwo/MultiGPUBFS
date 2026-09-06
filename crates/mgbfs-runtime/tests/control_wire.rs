@@ -10,8 +10,29 @@ fn ready() -> ControlFrame {
         epoch: 0,
         slot: 3,
         plane: Plane::Candidate,
+        source_rank: 0,
         fatal_code: 0,
     }
+}
+
+#[test]
+fn version_two_begin_preserves_explicit_source_rank() {
+    let frame = ControlFrame {
+        action: Action::Begin,
+        rank: 0,
+        slot: NO_SLOT,
+        ..ready()
+    };
+    let mut bytes = frame.encode(3).unwrap();
+    bytes[8..10].copy_from_slice(&2u16.to_le_bytes());
+    bytes[48..52].copy_from_slice(&2u32.to_le_bytes());
+    let decoded = ControlFrame::decode(&bytes, 3).expect("V2 source-bearing command");
+    assert_eq!(decoded.encode(3).unwrap(), bytes);
+    bytes[48..52].copy_from_slice(&3u32.to_le_bytes());
+    assert!(ControlFrame::decode(&bytes, 3).is_err());
+    bytes[48..52].fill(0);
+    bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+    assert!(ControlFrame::decode(&bytes, 3).is_err());
 }
 
 struct PausingRead {
@@ -182,7 +203,7 @@ fn partial_eof_is_terminal_for_incremental_reader() {
 fn frozen_ready_layout_and_roundtrip() {
     let frame = ready();
     let expected: [u8; 64] = [
-        77, 71, 66, 67, 84, 82, 76, 49, 1, 0, 1, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        77, 71, 66, 67, 84, 82, 76, 49, 2, 0, 1, 0, 1, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
@@ -231,6 +252,7 @@ fn rejects_impossible_action_fields() {
             ..ready()
         },
         ControlFrame {
+            source_rank: 0,
             fatal_code: 1,
             ..ready()
         },
@@ -347,6 +369,7 @@ fn control_only_messages_have_no_payload_plane_or_slot() {
             epoch: 0,
             slot: NO_SLOT,
             plane: Plane::None,
+            source_rank: 0,
             fatal_code: if action == Action::Fatal { 17 } else { 0 },
         };
         assert_eq!(

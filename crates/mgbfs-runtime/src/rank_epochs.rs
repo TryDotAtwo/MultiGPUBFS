@@ -158,6 +158,7 @@ impl RankEpochs {
             epoch: 0,
             slot,
             plane,
+            source_rank: 0,
             fatal_code: 0,
         })
     }
@@ -235,6 +236,7 @@ impl RankEpochs {
             epoch,
             slot: NO_SLOT,
             plane: live.offer.plane,
+            source_rank: 0,
             fatal_code: 0,
         })
     }
@@ -260,6 +262,7 @@ impl RankEpochs {
             epoch,
             slot: NO_SLOT,
             plane: live.offer.plane,
+            source_rank: 0,
             fatal_code: 0,
         })
     }

@@ -17,6 +17,7 @@ fn ready() -> ControlFrame {
         epoch: 0,
         slot: 3,
         plane: Plane::Candidate,
+        source_rank: 0,
         fatal_code: 0,
     }
 }
@@ -174,6 +175,7 @@ fn tcp_coordinator_publishes_two_depths_only_after_both_ranks_finalize() {
             epoch: 0,
             slot: NO_SLOT,
             plane: Plane::None,
+            source_rank: 0,
             fatal_code: 0,
         };
         coordinator.receive(close).unwrap();

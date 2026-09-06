@@ -74,6 +74,7 @@ impl ControlPump {
                 epoch: 0,
                 slot: NO_SLOT,
                 plane: Plane::None,
+                source_rank: 0,
                 fatal_code: 0,
             },
         );
@@ -146,6 +147,7 @@ impl ControlPump {
                 epoch: 0,
                 slot: NO_SLOT,
                 plane: Plane::None,
+                source_rank: 0,
                 fatal_code: 0,
             })
         })
