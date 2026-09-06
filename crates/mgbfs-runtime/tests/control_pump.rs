@@ -200,3 +200,37 @@ fn live_poll_deadline_allows_commands_without_waiting_for_expiry() {
     pump.poll_before(deadline).unwrap();
     assert!(pump.command().unwrap().is_none());
 }
+#[test]
+fn three_tcp_ranks_receive_identical_source_identity() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut root_peers = vec![None];
+    let mut clients = Vec::new();
+    for rank in 1..3 {
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        root_peers.push(Some(ControlConnection::new(server, 3, 0, rank).unwrap()));
+        let mut peers: Vec<_> = (0..3).map(|_| None).collect();
+        peers[0] = Some(ControlConnection::new(client, 3, rank, 0).unwrap());
+        clients.push(ControlPump::new(3, rank, 2, peers).unwrap());
+    }
+    let mut pumps = vec![ControlPump::new(3, 0, 2, root_peers).unwrap()];
+    pumps.extend(clients);
+    pumps[2].offer(Plane::Candidate, 71).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut seen = [false; 3];
+    while seen.iter().any(|x| !x) {
+        for (rank, pump) in pumps.iter_mut().enumerate() {
+            pump.poll_before(deadline).unwrap();
+            if let Some(frame) = pump.command().unwrap() {
+                assert!(!seen[rank]);
+                assert_eq!(
+                    (frame.action, frame.source_rank, frame.epoch),
+                    (Action::Begin, 2, 0)
+                );
+                assert_eq!(frame.slot, if rank == 2 { 71 } else { u64::MAX });
+                seen[rank] = true;
+            }
+        }
+        std::thread::yield_now();
+    }
+}
