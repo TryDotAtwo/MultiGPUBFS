@@ -266,7 +266,22 @@ impl ControlPump {
         })
     }
     pub fn command(&mut self) -> Result<Option<ControlFrame>> {
-        self.apply(|s| Ok(s.commands.pop_front()))
+        self.apply(|s| {
+            // A host-blocking NCCL call must not prevent the coordinator from
+            // delivering the peer commands that make that same call progress.
+            // Partial/WouldBlock writes retain the local command for a later
+            // poll; this is socket submission, not remote execution completion.
+            if s.rank == 0 && !s.commands.is_empty() {
+                let mut submitted = true;
+                for peer in s.peers.iter_mut().flatten() {
+                    submitted &= peer.poll_send()?;
+                }
+                if !submitted {
+                    return Ok(None);
+                }
+            }
+            Ok(s.commands.pop_front())
+        })
     }
     fn dispatch(&mut self, frame: ControlFrame) -> Result<()> {
         if self.commands.len() == self.command_capacity {

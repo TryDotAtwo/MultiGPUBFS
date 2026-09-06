@@ -413,3 +413,39 @@ fn disjoint_slow_consumers_do_not_exhaust_global_ticket_metadata() {
         .iter()
         .all(|f| f.action == Action::Begin && f.epoch == 2));
 }
+
+#[test]
+fn root_launch_is_not_exposed_before_peer_command_has_left_outbox() {
+    let mut pumps = admitted_pair();
+    pumps[0].offer(Plane::Candidate, 1).unwrap();
+    let begin = commands(&mut pumps);
+    pumps[0].describe_bytes(begin[0], &[1, 1]).unwrap();
+    let tickets = commands(&mut pumps);
+    for rank in 0..2 {
+        pumps[rank].admit_bytes(tickets[rank], 1).unwrap();
+    }
+    pumps[1].poll().unwrap(); // submit remote ACK
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        pumps[0].poll().unwrap();
+        if let Some(f) = pumps[0].command().unwrap() {
+            assert_eq!(f.action, Action::Launch);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+    }
+    // The coordinator may now enter a host-blocking NCCL API. It must not
+    // require another root poll to deliver the peer's matching LAUNCH.
+    loop {
+        pumps[1].poll().unwrap();
+        if let Some(f) = pumps[1].command().unwrap() {
+            assert_eq!(f.action, Action::Launch);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "root exposed LAUNCH while peer command was still queued"
+        );
+        std::thread::yield_now();
+    }
+}

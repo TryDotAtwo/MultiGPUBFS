@@ -312,3 +312,13 @@ CPU/TCP tests cover delayed empty-rank acknowledgment, two depths, reversed
 source-local tokens, later-ready admission, independent consumer retirement,
 receive-capacity failure propagation, and staggered slow consumers. This mode
 is not yet connected to the native BFS data plane or validated on GPUs.
+
+Coordinator `command()` also polls outbound submission before exposing a local
+command. If any write is partial/WouldBlock it returns None and retains the
+command. This prevents entering a host-blocking payload/finalization call while
+the matching peer command is still only in the coordinator's application FIFO.
+Socket submission does not prove remote processing or CUDA completion. A real
+TCP regression failed when the root stopped polling after taking LAUNCH and
+the peer never received it; it passes with this guard. The GPU scatter fixture
+now consumes ControlPump commands directly and finalizes after four epochs;
+hardware validation of this new connection is pending.
