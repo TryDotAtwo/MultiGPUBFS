@@ -36,41 +36,37 @@ fn capacity_mode() -> Result<CapacityMode> {
         _ => Err("ENV_MGBFS_CAPACITY_MODE".into()),
     }
 }
-fn bootstrap(path: &Path, rank: u32, world: u32) -> Result<[u8; 128]> {
-    const MAGIC: &[u8; 8] = b"MGBNCCL1";
-    if rank == 0 {
-        let mut id = [0; 128];
-        if unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) } != 0 {
-            return Err("NCCL_ID".into());
-        }
-        let mut x = Vec::new();
-        x.extend_from_slice(MAGIC);
-        x.extend_from_slice(&world.to_le_bytes());
-        x.extend_from_slice(&id);
-        let tmp = path.with_extension("rank0.tmp");
-        if tmp.exists() || path.exists() {
-            return Err("BOOTSTRAP_EXISTS".into());
-        }
-        std::fs::write(&tmp, x).map_err(|e| e.to_string())?;
-        std::fs::rename(tmp, path).map_err(|e| e.to_string())?;
-        return Ok(id);
+fn bootstrap(
+    path: &Path,
+    rank: u32,
+    world: u32,
+    digest: [u8; 32],
+) -> Result<mgbfs_runtime::bootstrap::BootstrapGroup> {
+    let launch =
+        std::env::var("TORCHELASTIC_RUN_ID").map_err(|_| "BOOTSTRAP_LAUNCH_ID_REQUIRED")?;
+    if launch.is_empty() || launch == "none" {
+        return Err("BOOTSTRAP_LAUNCH_ID_REQUIRED".into());
     }
-    let start = Instant::now();
-    loop {
-        if let Ok(x) = std::fs::read(path) {
-            if x.len() != 140
-                || &x[..8] != MAGIC
-                || u32::from_le_bytes(x[8..12].try_into().unwrap()) != world
-            {
-                return Err("BOOTSTRAP_FORMAT".into());
+    let run_digest =
+        Sha256::digest(serde_json::to_vec(&(launch, path)).map_err(|e| e.to_string())?);
+    let identity = mgbfs_runtime::control_handshake::RunIdentity {
+        config_digest: digest,
+        run_id: run_digest[..16].try_into().unwrap(),
+    };
+    mgbfs_runtime::bootstrap::rendezvous(
+        path,
+        rank,
+        world,
+        identity,
+        Duration::from_secs(60),
+        || {
+            let mut id = [0; 128];
+            if unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) } != 0 {
+                return Err("NCCL_ID".into());
             }
-            return Ok(x[12..].try_into().unwrap());
-        }
-        if start.elapsed() > Duration::from_secs(60) {
-            return Err("BOOTSTRAP_TIMEOUT".into());
-        }
-        std::thread::sleep(Duration::from_millis(10))
-    }
+            Ok(id)
+        },
+    )
 }
 fn used() -> Result<usize> {
     let (mut free, mut total) = (0, 0);
@@ -100,7 +96,6 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         return Err("CUDA_SET_DEVICE".into());
     }
     let graph = MatrixGroup::symmetric_permutation_matrices(n)?;
-    let id = bootstrap(Path::new(&args[3]), rank, world)?;
     let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
         Err(std::env::VarError::NotPresent) => u32::try_from(graph.expected_max_unique_states)
@@ -204,6 +199,25 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         prededup: selection.prededup,
         generation_variant: if compact_states { 5 } else { 1 },
     };
+    // Reference launch agreement includes geometry and archive settings omitted
+    // by the older archive digest. Rank-local capacities are derived from the
+    // shared declared capacity and rank map, not compared as equal across ranks.
+    let bootstrap_description = serde_json::json!({
+        "schema": "reference-bootstrap-v1", "archive_digest": digest,
+        "world": world, "buckets": cfg.buckets, "shards": cfg.shards,
+        "job_buckets": cfg.job_buckets,
+        "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
+        "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
+        "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
+        "stream_archive": stream_archive, "archive_enabled": archive_enabled,
+    });
+    let bootstrap_digest: [u8; 32] =
+        Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
+            .into();
+    // Keep control sockets alive throughout this reference run. Dispatching GPU
+    // epochs on them is a separate integration step, not claimed here.
+    let _control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
+    let id = _control_group.nccl_id;
     let mut bfs = if selection.tensor_generation {
         DistributedNativeBfs::new_hash_first_tc_with_owner(
             &graph,

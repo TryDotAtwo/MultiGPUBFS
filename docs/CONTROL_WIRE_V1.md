@@ -1,7 +1,9 @@
 # Native control frame V1
 
-Status: implemented codec, rank-bound connection, and real loopback TCP tests; **not yet wired into the
-GPU dispatcher or bootstrap**. This specifies transport framing, not a complete
+Status: implemented codec, rank-bound connection, bootstrap rendezvous, and real
+loopback TCP tests. The reference benchmark now calls rendezvous before NCCL;
+this integration still needs a GPU gate. **Not yet wired into the GPU dispatcher**.
+This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.
 
 Each frame is exactly 64 bytes, little-endian, with no variable-length payload.
@@ -139,8 +141,15 @@ rank explicitly skips file/TCP setup. The returned `BootstrapGroup` owns the
 rank-indexed control sockets. The NCCL-ID factory and filesystem system calls
 are synchronous setup operations and cannot be forcibly cancelled by this
 budget; their elapsed time is checked before the next stage. This helper is
-tested with real files and TCP but remains unconnected to the GPU example.
+tested with real files and TCP. The reference benchmark now calls it before
+NCCL initialization and retains the returned sockets through the run. Its
+run identity derives from the required torchrun launch ID and per-pass bootstrap
+path, separating warmup and measurement. Its agreement digest includes the
+reference archive digest, world, geometry, reserve and archive switches.
+This does not implement runtime epoch dispatch or distributed failure polling.
+The benchmark integration has not yet passed a GPU execution gate.
 
-The codec and file primitives are tested locally; they are not yet connected
-to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime
-bootstrap migration is claimed by these primitive tests.
+The codec and file primitives are tested separately from GPU execution. The
+reference example replaces `MGBNCCL1` setup with this record; legacy benchmark
+measurements retain their pinned old source. GPU dispatcher integration remains
+pending. Primitive tests do not prove the benchmark migration correct on GPUs.
