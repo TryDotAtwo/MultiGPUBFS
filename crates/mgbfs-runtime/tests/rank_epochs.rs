@@ -10,9 +10,28 @@ fn begin(epoch: u64, slot: u64, plane: Plane) -> ControlFrame {
         epoch,
         slot,
         plane,
-        source_rank: 0,
+        source_rank: if slot == NO_SLOT { 0 } else { 1 },
         fatal_code: 0,
     }
+}
+#[test]
+fn source_identity_and_slot_presence_must_agree_with_local_rank() {
+    let mut receiver = RankEpochs::new(3, 1, 1).unwrap();
+    receiver.offer(Plane::Candidate, 7).unwrap();
+    assert!(receiver
+        .begin(ControlFrame {
+            source_rank: 2,
+            ..begin(0, 7, Plane::Candidate)
+        })
+        .is_err());
+    let mut sender = RankEpochs::new(3, 2, 1).unwrap();
+    sender.offer(Plane::Candidate, 7).unwrap();
+    assert!(sender
+        .begin(ControlFrame {
+            source_rank: 2,
+            ..begin(0, NO_SLOT, Plane::Candidate)
+        })
+        .is_err());
 }
 #[test]
 fn finalize_requires_drain_and_preserves_sequence_across_depths() {

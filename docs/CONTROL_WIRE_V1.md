@@ -232,6 +232,9 @@ empty receivers. Other actions require source_rank = 0. Version 1 is rejected;
 all ranks must run the same build. Earlier V1 descriptions below are historical
 where they conflict with this paragraph. Source rank is independent of the
 coordinator/sender identity in the existing `rank` field.
+Rank admission additionally requires a real slot exactly when source_rank equals
+the local rank. A receiver cannot consume its own pending offer for another
+source's command, and the selected sender cannot claim an empty source slot.
 
 `ControlPump` now composes the rank admission state, coordinator and nonblocking
 TCP connections into one caller-driven polling loop. Construction validates the

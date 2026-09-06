@@ -104,6 +104,7 @@ fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
         ControlFrame {
             action: Action::Begin,
             rank: 0,
+            source_rank: 1,
             ..first
         },
     );
@@ -121,6 +122,7 @@ fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
             action: Action::Begin,
             rank: 0,
             epoch: 1,
+            source_rank: 1,
             ..later
         },
     );

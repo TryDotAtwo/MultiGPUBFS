@@ -169,6 +169,7 @@ impl RankEpochs {
         }
         if frame.encode(self.world).is_err()
             || frame.action != Action::Begin
+            || (frame.source_rank == self.rank) != (frame.slot != NO_SLOT)
             || frame.depth != self.depth
             || frame.epoch != self.next
             || self
