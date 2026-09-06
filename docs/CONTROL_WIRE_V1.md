@@ -96,3 +96,24 @@ admission. Integration into the GPU dispatcher/bootstrap remains pending.
 Real loopback TCP tests cover matching identity followed by READY traffic and
 rejection of differing world, config digest, or run ID. Linux/GPU execution
 of this new handshake is not yet validated.
+
+## Bootstrap record
+
+`BootstrapRecord` is a 200-byte setup record: magic `MGBBOOT1` at 0,
+u32 version 1 at 8, u32 world at 12, digest at 16..48, run ID at 48..64,
+IPv4 octets at 64..68, little-endian u16 port at 68..70, zero reserved
+bytes at 70..72, opaque NCCL ID at 72..200. Only loopback addresses and
+nonzero ports are accepted for this single-node transport. The caller must
+supply its independently established expected run identity when reading.
+
+Publication uses an exclusively created `.rank0.staging` sibling, a complete
+write and file sync, then a same-filesystem hard link that cannot replace an
+existing destination. Unsupported hard links are fatal, with no rename
+fallback. Failed publication retains staging for diagnosis; successful
+publication removes its own staging link. Directory crash durability and
+recovery are not promised. This is setup metadata, not an archive commit.
+Readers bound the read to exactly 200 bytes and reject size/identity mismatch.
+
+The codec and file primitives are tested locally; they are not yet connected
+to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime
+bootstrap migration is claimed by these primitive tests.
