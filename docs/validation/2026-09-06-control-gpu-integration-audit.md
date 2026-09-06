@@ -37,3 +37,13 @@ The installed Kaggle NCCL version must be recorded before choosing newer APIs.
 The existing S11 one-T4 v12 benchmark was still reported RUNNING by Kaggle
 during this audit. It was not restarted or overwritten. Published S13 was not
 rerun. No new performance claim follows from this control work.
+
+## Follow-up: group cleanup fix
+
+`tests/nccl_transport_failure.cpp` compiles the actual wrapper against test-only
+CUDA/NCCL doubles. The pre-fix executable failed `group_depth == 0` when send
+failed. The wrapper now always ends a successfully opened group, skips recv
+after failed send, and retains the first operation error. All five injected
+stages (success/start/send/recv/end) pass with MSVC C++17 locally. Linux CI now
+runs the same executable. This does not test real NCCL failure recovery; abort,
+async-error polling and real hardware regression remain required.

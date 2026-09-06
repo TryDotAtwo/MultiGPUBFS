@@ -39,3 +39,5 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_job_abi.cpp -o /tmp/owner-job-abi && /tmp/owner-job-abi
       - name: Verify actual bounded owner allocation shape without CUDA
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_memory_query.cpp cuda/bounded_owner_query.cpp -o /tmp/owner-memory-query && /tmp/owner-memory-query
+      - name: Verify NCCL wrapper error cleanup without GPU
+        run: g++ -std=c++17 -Itests/nccl_stubs tests/nccl_transport_failure.cpp -o /tmp/nccl-transport-failure && /tmp/nccl-transport-failure
