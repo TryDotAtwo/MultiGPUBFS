@@ -1,0 +1,98 @@
+//! Native nonblocking control connection. Bootstrap and dispatcher integration pending.
+use crate::control_wire::{Action, ControlFrame, FrameReader, FrameWriter};
+use mgbfs_core::Result;
+use std::net::{Shutdown, TcpStream};
+pub struct ControlConnection {
+    stream: TcpStream,
+    local: u32,
+    peer: u32,
+    reader: FrameReader,
+    writer: FrameWriter,
+    failed: bool,
+}
+impl ControlConnection {
+    /// Wrap only a stream assigned by the bootstrap handshake. Rank checking
+    /// detects protocol mismatch, not cryptographic peer authentication.
+    pub fn new(stream: TcpStream, world: u32, local: u32, peer: u32) -> Result<Self> {
+        if world == 0
+            || local >= world
+            || peer >= world
+            || local == peer
+            || (local != 0 && peer != 0)
+        {
+            return Err("CONTROL_TOPOLOGY".into());
+        }
+        stream
+            .set_nonblocking(true)
+            .map_err(|e| format!("CONTROL_NONBLOCKING: {e}"))?;
+        stream
+            .set_nodelay(true)
+            .map_err(|e| format!("CONTROL_NODELAY: {e}"))?;
+        Ok(Self {
+            stream,
+            local,
+            peer,
+            reader: FrameReader::new(world)?,
+            writer: FrameWriter::new(world)?,
+            failed: false,
+        })
+    }
+    fn alive(&self) -> Result<()> {
+        if self.failed {
+            Err("CONTROL_CONNECTION_FAILED".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn finish<T>(&mut self, result: Result<T>) -> Result<T> {
+        if result.is_err() {
+            self.failed = true;
+            let _ = self.stream.shutdown(Shutdown::Both);
+        }
+        result
+    }
+    fn direction(frame: ControlFrame) -> Result<()> {
+        let allowed = if frame.rank == 0 {
+            matches!(
+                frame.action,
+                Action::Begin | Action::Finalize | Action::Fatal
+            )
+        } else {
+            matches!(
+                frame.action,
+                Action::Ready | Action::Complete | Action::SourceClosed | Action::Fatal
+            )
+        };
+        if allowed {
+            Ok(())
+        } else {
+            Err("CONTROL_DIRECTION".into())
+        }
+    }
+    pub fn enqueue(&mut self, frame: ControlFrame) -> Result<()> {
+        self.alive()?;
+        if frame.rank != self.local {
+            return self.finish(Err("CONTROL_LOCAL_RANK".into()));
+        }
+        self.finish(Self::direction(frame))?;
+        let result = self.writer.enqueue(frame);
+        self.finish(result)
+    }
+    pub fn poll_send(&mut self) -> Result<bool> {
+        self.alive()?;
+        let result = self.writer.poll(&mut self.stream);
+        self.finish(result)
+    }
+    pub fn poll_receive(&mut self) -> Result<Option<ControlFrame>> {
+        self.alive()?;
+        let result = self.reader.poll(&mut self.stream);
+        let frame = self.finish(result)?;
+        if let Some(frame) = frame {
+            if frame.rank != self.peer {
+                return self.finish(Err("CONTROL_PEER_RANK".into()));
+            }
+            self.finish(Self::direction(frame))?;
+        }
+        Ok(frame)
+    }
+}

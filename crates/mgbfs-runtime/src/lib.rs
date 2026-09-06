@@ -1,6 +1,7 @@
 //! Native scheduling contracts. CPU models are verification tools, not GPU fallbacks.
 pub mod archive;
 pub mod benchmark;
+pub mod control_connection;
 pub mod control_wire;
 #[cfg(feature = "cuda")]
 pub mod dense_device;

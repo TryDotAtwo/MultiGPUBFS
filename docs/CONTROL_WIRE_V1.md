@@ -1,6 +1,6 @@
 # Native control frame V1
 
-Status: implemented codec and real loopback TCP test; **not yet wired into the
+Status: implemented codec, rank-bound connection, and real loopback TCP tests; **not yet wired into the
 GPU dispatcher or bootstrap**. This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.
 
@@ -23,6 +23,15 @@ returns an explicit capacity error without overwriting the pending frame.
 Zero writes and other I/O failures permanently poison it. Local send completion
 only means bytes were accepted by the stream, not that the peer or GPU finished.
 The eventual dispatcher must provision its bounded outbound queue separately.
+
+`ControlConnection` owns its TcpStream and configures nonblocking I/O/TCP_NODELAY
+at construction. It accepts only a valid rank-0 star edge, checks the sender
+against its assigned peer, and enforces command direction. Codec, I/O,
+direction, sender mismatch, and pending-send-capacity errors fail the connection
+and shut down both socket directions. Bootstrap must establish the run digest
+and peer assignment before wrapping the stream; the claimed rank is not
+cryptographic authentication. The caller must also enforce overall progress
+deadlines while polling (nonblocking I/O alone cannot detect a silent peer).
 
 | Offset | Bytes | Field |
 |---:|---:|---|
@@ -65,8 +74,8 @@ a peer or establish that these semantic checks occurred. FINALIZE receipt alone
 does not authorize StateRing reuse.
 
 Validation:
-`cargo test --locked -p mgbfs-runtime --test control_wire --test exchange --test transport`
-passes 13 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
+`cargo test --locked -p mgbfs-runtime --test control_connection --test control_wire --test exchange --test transport`
+passes 5 connection tests, 13 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
 bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
 exchange are covered, including nonblocking partial-frame arrival, peer
 independence, frame reuse, pending-send capacity/offsets, and terminal error poisoning. This is not a multi-GPU
