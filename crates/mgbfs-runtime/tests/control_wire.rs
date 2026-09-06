@@ -192,6 +192,21 @@ fn frozen_ready_layout_and_roundtrip() {
 }
 
 #[test]
+fn begin_pins_the_receiver_offer_instead_of_resampling_ready_slots() {
+    for slot in [3, NO_SLOT] {
+        let begin = ControlFrame {
+            action: Action::Begin,
+            rank: 0,
+            epoch: 42,
+            slot,
+            ..ready()
+        };
+        let bytes = begin.encode(2).unwrap();
+        assert_eq!(ControlFrame::decode(&bytes, 2).unwrap(), begin);
+    }
+}
+
+#[test]
 fn rejects_corruption_and_cross_world_rank() {
     let bytes = ready().encode(2).unwrap();
     for offset in [0, 8, 10, 40, 48, 63] {

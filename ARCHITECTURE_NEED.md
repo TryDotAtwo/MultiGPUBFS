@@ -790,6 +790,13 @@ Data plane использует grouped NCCL send/recv. Все ranks выпус�
 7. `ncclGroupStart/End` ставит recv/send в фиксированном peer/plane порядке;
 8. receive events публикуют готовые sorted segments owner scheduler'у.
 
+Уточнение wire-контракта: `BEGIN` несёт конкретный receiver-local slot из
+зарегистрированных `READY` либо `NO_SLOT`. Rank не выбирает заново из текущих
+ready slots при получении `BEGIN`: более новый `READY` может ещё быть в пути.
+Epoch и plane одинаковы на всех ranks; slot может различаться. Формат описан в
+`docs/CONTROL_WIRE_V1.md`; кодек проверен, подключение к GPU dispatcher ещё не
+реализовано.
+
 Comm epoch синхронизирует только `comm_stream`; generate, route и owner jobs
 продолжают работать. Это транспортный rendezvous, а не semantic barrier слоя.
 Sequencer не выбирает данные и не ждёт завершения GPU jobs: он лишь нумерует

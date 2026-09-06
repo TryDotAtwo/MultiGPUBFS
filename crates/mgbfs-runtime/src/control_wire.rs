@@ -168,12 +168,7 @@ impl ControlFrame {
                     && self.plane != Plane::None
                     && self.fatal_code == 0
             }
-            Action::Begin => {
-                self.rank == 0
-                    && self.slot == NO_SLOT
-                    && self.plane != Plane::None
-                    && self.fatal_code == 0
-            }
+            Action::Begin => self.rank == 0 && self.plane != Plane::None && self.fatal_code == 0,
             Action::Complete => {
                 self.slot == NO_SLOT && self.plane != Plane::None && self.fatal_code == 0
             }

@@ -43,8 +43,14 @@ RECEIPT=4. Unknown values, nonzero reserved bytes, and ranks outside the
 configured world are rejected before dispatch.
 
 READY carries a real local slot and data plane, with epoch=0 (the sequencer
-has not assigned one). BEGIN is sent by rank 0 with a data plane and no slot;
-each rank selects its ready offer or participates with zero payload. COMPLETE
+has not assigned one). BEGIN is sent by rank 0 with a data plane and the
+receiver's pinned slot, or NO_SLOT for a zero offer. Rank 0 issues one BEGIN to
+each rank for the same epoch/plane but potentially different slots. The receiver
+must use that exact registered READY slot, not resample its newest readiness:
+another READY can be in transit when BEGIN arrives. This concretizes the
+sequencer's offer snapshot and matches the CPU `exchange::Sequencer` oracle.
+The slot identity is receiver-local, so the bootstrap connection must establish
+the recipient rank. COMPLETE
 acknowledges the specified epoch with a data plane and no slot. SOURCE_CLOSED
 has no slot/plane and epoch=0. FATAL has no slot/plane and a nonzero fatal code.
 FINALIZE is sent by rank 0 with no slot/plane. All nonfatal messages have a zero
@@ -60,7 +66,7 @@ does not authorize StateRing reuse.
 
 Validation:
 `cargo test --locked -p mgbfs-runtime --test control_wire --test exchange --test transport`
-passes 12 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
+passes 13 codec/TCP tests and 10 existing CPU sequencing tests. Frozen READY
 bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
 exchange are covered, including nonblocking partial-frame arrival, peer
 independence, frame reuse, pending-send capacity/offsets, and terminal error poisoning. This is not a multi-GPU
