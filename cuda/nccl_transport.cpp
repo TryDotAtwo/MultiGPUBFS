@@ -40,7 +40,7 @@ extern "C" int mgbfs_nccl_poll(void* raw){
   if(ncclCommGetAsyncError(p->value, &state) != ncclSuccess) return 2;
   return state == ncclSuccess ? 0 : 3;
 }
-extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,void* stream) {
+extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,uint64_t recv_capacity,void* stream) {
   auto* p = static_cast<Comm*>(raw);
   if(!p || !p->value || source >= p->world) return 1;
   if(p->rank == source) {
@@ -51,7 +51,7 @@ extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uin
       total += sizes[rank];
     }
     if(total && !send) return 1;
-  } else if(recv_bytes && !recv) return 1;
+  } else if(recv_bytes > recv_capacity || (recv_bytes && !recv)) return 1;
   if(ncclGroupStart() != ncclSuccess) return 2;
   int status = 0;
   auto s = static_cast<cudaStream_t>(stream);

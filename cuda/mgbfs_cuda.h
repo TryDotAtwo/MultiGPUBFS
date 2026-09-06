@@ -152,9 +152,11 @@ int mgbfs_nccl_poll(void* comm);
 /* Single-source scatter, same source and matching byte counts on every rank.
  * sizes is a host array [world] on source; send holds dense rank-ordered ranges.
  * Source's own range stays a view (no copy). Receivers provide prevalidated
- * recv_bytes and allocated receive storage; source sizes sum <= send_capacity.
+ * recv_bytes and actual allocated recv_capacity; recv_bytes <= recv_capacity is
+ * checked before GroupStart. Source sizes sum <= send_capacity. Cross-rank
+ * agreement remains the caller's responsibility; rebuild C and Rust together.
  * Zero-byte peers still participate. Success means enqueue only. */
-int mgbfs_nccl_scatter(void* comm,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,void* stream);
+int mgbfs_nccl_scatter(void* comm,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,uint64_t recv_capacity,void* stream);
 /* Materialize one committed batch from a live source slot. References are local
  * source row indices, not global OriginRefs. Source stride is a multiple of 16.
  * Requests are sorted by source index; output states and hashes share that order.

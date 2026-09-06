@@ -49,17 +49,22 @@ int main() {
   const uint64_t sizes[] = {2, 0, 3};
   char payload[5] = {};
   send_calls = recv_calls = end_calls = 0;
-  assert(mgbfs_nccl_scatter(source, 2, payload, 5, sizes, nullptr, 0, nullptr) == 0);
+  assert(mgbfs_nccl_scatter(source, 2, payload, 5, sizes, nullptr, 0, 0, nullptr) == 0);
   assert(send_calls == 2 && recv_calls == 0 && end_calls == 1);
   assert(last_send_peer == 1 && group_depth == 0);
   send_calls = end_calls = 0;
-  assert(mgbfs_nccl_scatter(source, 2, payload, 4, sizes, nullptr, 0, nullptr) != 0);
+  assert(mgbfs_nccl_scatter(source, 2, payload, 4, sizes, nullptr, 0, 0, nullptr) != 0);
   assert(send_calls == 0 && end_calls == 0);
   mgbfs_nccl_destroy(source);
   void* receiver = nullptr;
   assert(mgbfs_nccl_create(1, 3, 1, &id, &receiver, nullptr, 0) == 0);
   recv_calls = 0;
-  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, nullptr, 0, nullptr) == 0);
+  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, nullptr, 0, 0, nullptr) == 0);
   assert(recv_calls == 1 && last_recv_peer == 2 && group_depth == 0);
+  recv_calls = end_calls = 0;
+  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, payload, 5, 4, nullptr) != 0);
+  assert(recv_calls == 0 && end_calls == 0 && group_depth == 0);
+  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, payload, 5, 5, nullptr) == 0);
+  assert(recv_calls == 1 && end_calls == 1 && group_depth == 0);
   mgbfs_nccl_destroy(receiver);
 }

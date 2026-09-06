@@ -320,6 +320,7 @@ pub mod ffi {
             sizes: *const u64,
             recv: *mut c_void,
             recv_bytes: u64,
+            recv_capacity: u64,
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_route_query(capacity: u32, out: *mut RouteBytes) -> i32;

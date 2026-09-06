@@ -33,7 +33,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                     assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 8, 1), 0);
                     let sizes = [4u64, 4];
                     assert_eq!(
-                        mgbfs_nccl_scatter(comm, source, send, 8, sizes.as_ptr(), recv, 4, stream),
+                        mgbfs_nccl_scatter(comm, source, send, 8, sizes.as_ptr(), recv, 4, 4, stream),
                         0
                     );
                     assert_eq!(cudaStreamSynchronize(stream), 0);
@@ -55,7 +55,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                     );
                     let zero = [0u64; 2];
                     assert_eq!(
-                        mgbfs_nccl_scatter(comm, source, send, 8, zero.as_ptr(), recv, 0, stream),
+                        mgbfs_nccl_scatter(comm, source, send, 8, zero.as_ptr(), recv, 0, 4, stream),
                         0
                     );
                     assert_eq!(cudaStreamSynchronize(stream), 0);
