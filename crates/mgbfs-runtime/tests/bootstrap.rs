@@ -1,5 +1,54 @@
 use mgbfs_runtime::{bootstrap::BootstrapRecord, control_handshake::RunIdentity};
 
+#[test]
+fn missing_rank_times_out_and_listener_cannot_resume_partial_group() {
+    use mgbfs_runtime::bootstrap::BootstrapListener;
+    use std::time::{Duration, Instant};
+    let mut listener = BootstrapListener::bind(2, record().identity, [11; 128]).unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        listener
+            .accept_next(Duration::from_millis(20))
+            .err()
+            .unwrap(),
+        "BOOTSTRAP_ACCEPT_TIMEOUT"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(
+        listener.accept_next(Duration::from_secs(3)).err().unwrap(),
+        "BOOTSTRAP_LISTENER_FAILED"
+    );
+}
+
+#[test]
+fn listener_admits_out_of_order_ranks_and_rejects_duplicate() {
+    use mgbfs_runtime::bootstrap::BootstrapListener;
+    use std::time::Duration;
+    let mut listener = BootstrapListener::bind(3, record().identity, [11; 128]).unwrap();
+    let r = listener.record().clone();
+    let client_record = r.clone();
+    let client =
+        std::thread::spawn(move || client_record.connect(2, Duration::from_secs(3)).unwrap());
+    let (rank, _connection) = listener.accept_next(Duration::from_secs(3)).unwrap();
+    assert_eq!(rank, 2);
+    let _client_connection = client.join().unwrap();
+    let client_record = r.clone();
+    let client =
+        std::thread::spawn(move || client_record.connect(1, Duration::from_secs(3)).unwrap());
+    assert_eq!(listener.accept_next(Duration::from_secs(3)).unwrap().0, 1);
+    let _other_client = client.join().unwrap();
+    let client = std::thread::spawn(move || r.connect(2, Duration::from_secs(3)));
+    assert_eq!(
+        listener.accept_next(Duration::from_secs(3)).err().unwrap(),
+        "BOOTSTRAP_DUPLICATE_RANK"
+    );
+    assert!(client.join().unwrap().is_err());
+    assert_eq!(
+        listener.accept_next(Duration::from_secs(3)).err().unwrap(),
+        "BOOTSTRAP_LISTENER_FAILED"
+    );
+}
+
 fn record() -> BootstrapRecord {
     BootstrapRecord {
         world: 2,

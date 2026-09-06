@@ -13,10 +13,19 @@ pub struct RunIdentity {
 }
 impl ControlConnection {
     pub fn accept_peer(
+        stream: TcpStream,
+        world: u32,
+        identity: RunIdentity,
+        timeout: Duration,
+    ) -> Result<(u32, Self)> {
+        Self::accept_peer_admitted(stream, world, identity, timeout, |_| Ok(()))
+    }
+    pub(crate) fn accept_peer_admitted(
         mut stream: TcpStream,
         world: u32,
         identity: RunIdentity,
         timeout: Duration,
+        admit: impl FnOnce(u32) -> Result<()>,
     ) -> Result<(u32, Self)> {
         let deadline = setup(&stream, world, timeout)?;
         let mut bytes = [0; 80];
@@ -25,6 +34,7 @@ impl ControlConnection {
         if rank == 0 || rank >= world || bytes != hello(world, rank, identity) {
             return Err("CONTROL_HANDSHAKE_IDENTITY".into());
         }
+        admit(rank)?;
         transfer(&mut stream, &mut hello(world, 0, identity), deadline, true)?;
         Ok((rank, Self::new(stream, world, 0, rank)?))
     }

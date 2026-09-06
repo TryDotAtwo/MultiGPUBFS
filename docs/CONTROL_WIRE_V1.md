@@ -118,6 +118,15 @@ to the recorded endpoint and completes the run-identity handshake with the
 remaining shared setup timeout. It returns the nonblocking control connection;
 NCCL communicator creation and peer-group admission remain the caller's work.
 
+`BootstrapListener` binds loopback before publication and preallocates rank
+admission flags. Setup accepts ranks in arrival order, checking duplicate rank
+before sending the handshake acknowledgement. Any accept/handshake error
+permanently poisons admission. Each `accept_next` call has a shared accept plus
+handshake timeout; the caller must impose a total group-startup deadline and
+abort already returned peer connections on failure. This setup-only accept
+loop is not the GPU hot-path dispatcher. Actual TCP tests cover rank order
+2 then 1, duplicate rejection on both sides, and terminal missing-rank timeout.
+
 The codec and file primitives are tested locally; they are not yet connected
 to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime
 bootstrap migration is claimed by these primitive tests.

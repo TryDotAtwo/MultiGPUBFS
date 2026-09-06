@@ -10,6 +10,99 @@ pub struct BootstrapRecord {
     pub endpoint: SocketAddrV4,
     pub nccl_id: [u8; 128],
 }
+
+pub struct BootstrapListener {
+    listener: std::net::TcpListener,
+    record: BootstrapRecord,
+    admitted: Vec<bool>,
+    failed: bool,
+}
+impl BootstrapListener {
+    pub fn bind(world: u32, identity: RunIdentity, nccl_id: [u8; 128]) -> Result<Self> {
+        if world < 2 {
+            return Err("BOOTSTRAP_WORLD".into());
+        }
+        let listener =
+            std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|e| e.to_string())?;
+        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let endpoint = match listener.local_addr().map_err(|e| e.to_string())? {
+            std::net::SocketAddr::V4(addr) => addr,
+            _ => return Err("BOOTSTRAP_ENDPOINT".into()),
+        };
+        let mut admitted = Vec::new();
+        admitted
+            .try_reserve_exact(world as usize)
+            .map_err(|_| "BOOTSTRAP_CAPACITY")?;
+        admitted.resize(world as usize, false);
+        admitted[0] = true;
+        Ok(Self {
+            listener,
+            record: BootstrapRecord {
+                world,
+                identity,
+                endpoint,
+                nccl_id,
+            },
+            admitted,
+            failed: false,
+        })
+    }
+    pub fn record(&self) -> &BootstrapRecord {
+        &self.record
+    }
+    pub fn accept_next(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<(u32, crate::control_connection::ControlConnection)> {
+        if self.failed {
+            return Err("BOOTSTRAP_LISTENER_FAILED".into());
+        }
+        let result = (|| {
+            let deadline = std::time::Instant::now()
+                .checked_add(timeout)
+                .ok_or("BOOTSTRAP_ACCEPT_TIMEOUT")?;
+            loop {
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|d| !d.is_zero())
+                    .ok_or("BOOTSTRAP_ACCEPT_TIMEOUT")?;
+                match self.listener.accept() {
+                    Ok((stream, _)) => {
+                        let remaining = deadline
+                            .checked_duration_since(std::time::Instant::now())
+                            .filter(|d| !d.is_zero())
+                            .ok_or("BOOTSTRAP_ACCEPT_TIMEOUT")?;
+                        let (rank, connection) =
+                            crate::control_connection::ControlConnection::accept_peer_admitted(
+                                stream,
+                                self.record.world,
+                                self.record.identity,
+                                remaining,
+                                |rank| {
+                                    if self.admitted[rank as usize] {
+                                        Err("BOOTSTRAP_DUPLICATE_RANK".into())
+                                    } else {
+                                        Ok(())
+                                    }
+                                },
+                            )?;
+                        self.admitted[rank as usize] = true;
+                        return Ok((rank, connection));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(remaining.min(std::time::Duration::from_millis(1)));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(format!("BOOTSTRAP_ACCEPT: {e}")),
+                }
+            }
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+}
 impl BootstrapRecord {
     pub fn connect(
         &self,
