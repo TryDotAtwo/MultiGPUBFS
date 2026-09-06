@@ -165,6 +165,12 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     // Test-only A/B switch. Production runs retain the mandatory archive.
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
+    let buckets = env_u32("MGBFS_BUCKETS", 256);
+    let shards = env_u32("MGBFS_SHARDS", 64);
+    let (local_buckets, _) =
+        mgbfs_runtime::topology::reference_owner_geometry(world, rank, rank_map, buckets, shards)?;
+    let default_bucket_capacity =
+        mgbfs_runtime::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
     let cfg = DistributedConfig {
         untouched_vram_reserve: 1 << 30,
         rank,
@@ -173,13 +179,10 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         batch,
         layer_capacity: capacity,
         state_ring_capacity: future,
-        buckets: env_u32("MGBFS_BUCKETS", 256),
-        shards: env_u32("MGBFS_SHARDS", 64),
+        buckets,
+        shards,
         job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4),
-        bucket_capacity: env_u32(
-            "MGBFS_BUCKET_CAPACITY",
-            capacity.div_ceil(128).saturating_add(4096),
-        ),
+        bucket_capacity: env_u32("MGBFS_BUCKET_CAPACITY", default_bucket_capacity),
         prededup: selection.prededup,
         generation_variant: if compact_states { 5 } else { 1 },
     };
