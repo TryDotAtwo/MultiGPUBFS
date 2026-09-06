@@ -241,5 +241,11 @@ tests also exercise the Candidate→Request→Response→Receipt chain after sou
 closure: transfer completion alone must not finalize a layer, and descendants
 offered before consumption must still execute. A duplicate local offer must
 close the remote connection and permanently poison both pumps.
-These are CPU control tests only. The GPU dispatcher, NCCL execution, progress timeout
+`poll_before(deadline)` checks a caller-owned deadline before and after polling.
+Expiry closes connections and permanently poisons the pump; a later deadline
+cannot revive it. The caller must retain a shared deadline across repeated
+polls, advancing it only according to the configured progress policy. This is
+not an independent watchdog: it cannot interrupt a caller blocked in CUDA/NCCL.
+TCP tests cover expiry propagation and normal operation before expiry.
+These are CPU control tests only. The GPU dispatcher, NCCL execution, watchdog
 and hardware overlap validation are not implemented by this pump.

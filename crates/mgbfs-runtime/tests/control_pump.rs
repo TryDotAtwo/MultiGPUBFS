@@ -166,3 +166,37 @@ fn local_protocol_failure_closes_tcp_peer_and_poisoning_is_permanent() {
     assert!(pumps[0].offer(Plane::Request, 20).is_err());
     assert!(pumps[0].command().is_err());
 }
+
+#[test]
+fn expired_poll_deadline_closes_peer_and_cannot_be_extended_after_failure() {
+    let mut pumps = pair();
+    let expired = Instant::now();
+    assert!(pumps[1].poll_before(expired).is_err());
+    assert!(pumps[1]
+        .poll_before(Instant::now() + Duration::from_secs(60))
+        .is_err());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while pumps[0].poll().is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "deadline failure did not close peer"
+        );
+        std::thread::yield_now();
+    }
+    assert!(pumps[0].command().is_err());
+}
+
+#[test]
+fn live_poll_deadline_allows_commands_without_waiting_for_expiry() {
+    let mut pump = ControlPump::new(1, 0, 1, vec![None]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    pump.offer(Plane::Candidate, 99).unwrap();
+    pump.poll_before(deadline).unwrap();
+    let frame = pump.command().unwrap().unwrap();
+    assert_eq!(
+        (frame.action, frame.slot, frame.epoch),
+        (Action::Begin, 99, 0)
+    );
+    pump.poll_before(deadline).unwrap();
+    assert!(pump.command().unwrap().is_none());
+}

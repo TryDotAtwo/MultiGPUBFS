@@ -199,6 +199,19 @@ impl ControlPump {
     pub fn poll(&mut self) -> Result<()> {
         self.apply(Self::poll_inner)
     }
+    /// Poll within a caller-owned deadline shared across repeated calls.
+    pub fn poll_before(&mut self, deadline: std::time::Instant) -> Result<()> {
+        self.apply(|s| {
+            if std::time::Instant::now() >= deadline {
+                return Err("CONTROL_PROGRESS_TIMEOUT".into());
+            }
+            s.poll_inner()?;
+            if std::time::Instant::now() >= deadline {
+                return Err("CONTROL_PROGRESS_TIMEOUT".into());
+            }
+            Ok(())
+        })
+    }
     fn poll_inner(&mut self) -> Result<()> {
         for index in 0..self.peers.len() {
             let frame = if let Some(peer) = &mut self.peers[index] {
