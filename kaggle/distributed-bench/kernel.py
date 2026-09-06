@@ -1,7 +1,7 @@
 """Shared native engine versus pinned CayleyPy, one active T4 on a T4x2 host."""
 import importlib.util,json,os,sys,tempfile,urllib.request
 from pathlib import Path
-SOURCE='b02bf3f2526c5bce0f5331cb30c5317c2c80b91a';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
+SOURCE='195275bf41fc37db00c15b2096068563bf26755c';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
 BENCH_WORLD_SIZE=1
 PROFILE_GROUP_N=11
 ARCHIVE_CODEC='permutation_u8'
@@ -10,6 +10,7 @@ def main():
  root=Path(tempfile.mkdtemp(prefix='mgbfs-dist-ab-',dir='/tmp'));logs=Path('/kaggle/working/distributed-bench');logs.mkdir();helper=root/'gate.py';urllib.request.urlretrieve('https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/c6b501c5e245ff15d92bfbc018c6bc25b0e68c98/kaggle/native-primitives/kernel.py',helper);gate=load(helper,'gate');env=os.environ.copy();env['PATH']='/usr/local/cuda/bin:'+env.get('PATH','')
  def run(command,name,cwd=root,timeout=1800):return gate.run(command,cwd=cwd,env=env,logs=logs,name=name,timeout=timeout)
  env.update(MGBFS_BENCH_WORLD_SIZE=str(BENCH_WORLD_SIZE),
+            MGBFS_BENCH_ARCHIVE_DIR='/kaggle/working',
             MGBFS_PROFILE_SWEEP_N=str(PROFILE_GROUP_N),MGBFS_PROFILE_ARCHIVE_CODEC=ARCHIVE_CODEC)
  gpus=gate.validate_gpus(run(['nvidia-smi','--query-gpu=index,name,uuid,memory.total,memory.free','--format=csv,noheader,nounits'],'inventory'));source,baseline,cutlass=root/'source',root/'baseline',root/'cutlass';gate.checkout('https://github.com/TryDotAtwo/MultiGPUBFS.git',SOURCE,source,env,logs,'source');gate.checkout('https://github.com/TryDotAtwo/cayleypy.git',BASELINE,baseline,env,logs,'baseline');gate.checkout('https://github.com/NVIDIA/cutlass.git',CUTLASS,cutlass,env,logs,'cutlass');env['CARGO_HOME']=str(root/'cargo');env['RUSTUP_HOME']=str(root/'rustup');installer=root/'rustup.sh';urllib.request.urlretrieve('https://sh.rustup.rs',installer);run(['sh',str(installer),'-y','--no-modify-path','--profile','minimal','--default-toolchain','1.75.0'],'rust-install');env['PATH']=str(root/'cargo/bin')+':'+env['PATH']
  build=source/'build/distributed-bench';env['MGBFS_CUDA_LIB_DIR']=str(build);env['LD_LIBRARY_PATH']=str(build)+':/usr/local/cuda/lib64:'+env.get('LD_LIBRARY_PATH','');env['PYTHONPATH']=str(baseline);env.update(MGBFS_PROFILE_SWEEP='1',MGBFS_VERIFY_ARCHIVE='1',MGBFS_ARCHIVE_STREAM='0',MGBFS_BENCH_SKIP_ARCHIVE='0');run(['cmake','-S','cuda','-B',str(build),'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_CUDA_ARCHITECTURES=75','-DCUTLASS_ROOT='+str(cutlass)],'cmake',source);run(['cmake','--build',str(build),'--target','mgbfs_cuda','--parallel','2'],'cuda-build',source);run(['cargo','build','--locked','--release','-p','mgbfs-runtime','--features','cuda','--example','distributed_bench'],'rust-build',source);run(['cargo','build','--locked','--release','-p','mgbfs-cli'],'cli-build',source);(logs/'environment.json').write_text(json.dumps(dict(source=SOURCE,baseline=BASELINE,cutlass=CUTLASS,gpus=gpus,native_archive='mandatory',baseline_archive='none'),indent=2));sys.path.insert(0,str(source/'scripts'));bench=load(source/'scripts/distributed_gpu_bench.py','bench');bench.suite(source/'target/release/examples/distributed_bench',source,logs,env)
