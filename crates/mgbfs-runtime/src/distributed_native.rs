@@ -1242,10 +1242,10 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(None);
-        if result.is_err() {
-            self.failed = true
-        }
-        result
+        let comm = self.comm.0;
+        crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
+            mgbfs_nccl_abort(comm);
+        })
     }
     /// Archive each bounded parent slice before retiring its StateRing range.
     pub fn advance_archived(
@@ -1256,10 +1256,10 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(Some(archive));
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
+        let comm = self.comm.0;
+        crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
+            mgbfs_nccl_abort(comm);
+        })
     }
     fn advance_inner(
         &mut self,
