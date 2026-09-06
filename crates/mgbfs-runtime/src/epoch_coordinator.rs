@@ -1,5 +1,5 @@
-//! Bounded data-epoch coordinator. Finalization and socket/GPU pumping are
-//! deliberately separate; no NCCL calls or payload-count validation occur here.
+//! Bounded epoch/finalization control state. Socket/GPU pumping is separate;
+//! no NCCL calls, CUDA drain proof or payload-count validation occur here.
 use crate::control_wire::{Action, ControlFrame, Plane, NO_SLOT};
 use crate::rank_epochs::RankEpochs;
 use mgbfs_core::Result;
@@ -11,6 +11,9 @@ pub struct EpochCoordinator {
     next: u64,
     source_cursor: [usize; 4],
     source_closed: Vec<bool>,
+    finalizing: Option<u64>,
+    finalized: Vec<bool>,
+    depth: u64,
     failed: bool,
 }
 fn plane_index(plane: Plane) -> Result<usize> {
@@ -56,6 +59,11 @@ impl EpochCoordinator {
             .try_reserve_exact(world as usize)
             .map_err(|_| "CONTROL_COORDINATOR_CAPACITY")?;
         source_closed.resize(world as usize, false);
+        let mut finalized = Vec::new();
+        finalized
+            .try_reserve_exact(world as usize)
+            .map_err(|_| "CONTROL_COORDINATOR_CAPACITY")?;
+        finalized.resize(world as usize, false);
         Ok(Self {
             world,
             ranks,
@@ -63,6 +71,9 @@ impl EpochCoordinator {
             next: 0,
             source_cursor: [0; 4],
             source_closed,
+            finalizing: None,
+            finalized,
+            depth: 0,
             failed: false,
         })
     }
@@ -83,6 +94,29 @@ impl EpochCoordinator {
     }
     fn receive_inner(&mut self, frame: ControlFrame) -> Result<()> {
         frame.encode(self.world)?;
+        if let Some(epoch) = self.finalizing {
+            let rank = frame.rank as usize;
+            if frame.action != Action::Finalized
+                || frame.epoch != epoch
+                || frame.depth != self.depth
+                || self.finalized[rank]
+            {
+                return Err("CONTROL_FINALIZATION_ADMISSION_CLOSED".into());
+            }
+            let expected = self.ranks[rank].finish_depth(
+                ControlFrame {
+                    action: Action::Finalize,
+                    rank: 0,
+                    ..frame
+                },
+                true,
+            )?;
+            if expected != frame {
+                return Err("CONTROL_FINALIZATION_ACK".into());
+            }
+            self.finalized[rank] = true;
+            return Ok(());
+        }
         let rank = frame.rank as usize;
         let expected = match frame.action {
             Action::Ready => {
@@ -100,7 +134,7 @@ impl EpochCoordinator {
             Action::Complete => self.ranks[rank].transfer_complete(frame.epoch)?,
             Action::Consumed => self.ranks[rank].consume(frame.epoch)?,
             Action::SourceClosed => {
-                if frame.depth != 0 || self.source_closed[rank] {
+                if frame.depth != self.depth || self.source_closed[rank] {
                     return Err("CONTROL_SOURCE_CLOSE".into());
                 }
                 self.source_closed[rank] = true;
@@ -126,6 +160,33 @@ impl EpochCoordinator {
     fn issue_inner(&mut self, frames: &mut [ControlFrame]) -> Result<bool> {
         if frames.len() != self.world as usize {
             return Err("CONTROL_COORDINATOR_OUTPUT".into());
+        }
+        if let Some(epoch) = self.finalizing {
+            if !self.finalized.iter().all(|x| *x) {
+                return Ok(false);
+            }
+            let depth = self
+                .depth
+                .checked_add(1)
+                .ok_or("CONTROL_COORDINATOR_DEPTH")?;
+            let publish = ControlFrame {
+                action: Action::Publish,
+                rank: 0,
+                depth,
+                epoch,
+                slot: NO_SLOT,
+                plane: Plane::None,
+                fatal_code: 0,
+            };
+            for rank in &mut self.ranks {
+                rank.publish(publish)?;
+            }
+            frames.fill(publish);
+            self.depth = depth;
+            self.finalizing = None;
+            self.finalized.fill(false);
+            self.source_closed.fill(false);
+            return Ok(true);
         }
         for plane in [
             Plane::Response,
@@ -167,7 +228,7 @@ impl EpochCoordinator {
                 *frame = ControlFrame {
                     action: Action::Begin,
                     rank: 0,
-                    depth: 0,
+                    depth: self.depth,
                     epoch: self.next,
                     slot,
                     plane,
@@ -180,6 +241,27 @@ impl EpochCoordinator {
             }
             self.next = next;
             self.source_cursor[kind] = (source + 1) % self.world as usize;
+            return Ok(true);
+        }
+        if self.source_closed.iter().all(|x| *x)
+            && self.pending.iter().all(VecDeque::is_empty)
+            && self.ranks.iter().all(RankEpochs::drained)
+        {
+            let next = self
+                .next
+                .checked_add(1)
+                .ok_or("CONTROL_COORDINATOR_SEQUENCE")?;
+            frames.fill(ControlFrame {
+                action: Action::Finalize,
+                rank: 0,
+                depth: self.depth,
+                epoch: self.next,
+                slot: NO_SLOT,
+                plane: Plane::None,
+                fatal_code: 0,
+            });
+            self.finalizing = Some(self.next);
+            self.next = next;
             return Ok(true);
         }
         Ok(false)

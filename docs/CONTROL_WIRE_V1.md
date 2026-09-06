@@ -19,14 +19,25 @@ It reserves credit on every
 rank, including empty sources. COMPLETE and CONSUMED are distinct; credit stays
 until each rank's consumers retire. Wrong plane/epoch acknowledgements poison
 the coordinator. Caller-owned BEGIN output storage and outbound queue capacity
-must be reserved before issue. Six CPU tests cover priority, empty ranks,
+must be reserved before issue. Eight CPU tests cover priority, empty ranks,
 cross-plane progress, source round-robin, source closure and invalid acknowledgements.
 SOURCE_CLOSED rejects later candidate offers without deleting already queued
 candidates or blocking dependent response/request/receipt traffic. Duplicate or
-wrong-depth closure is fatal. This slice currently handles depth-zero tickets.
-Global finalization/drain, payload counts/fragment admission, socket pumping,
-and NCCL execution are not implemented by it. Do not treat it as the full
+wrong-depth closure is fatal. Once every source is closed, queues are empty and
+all consumer leases retired, it closes admission and issues FINALIZE at the
+next transport watermark. Every rank must acknowledge FINALIZED after local
+finalization/drain. Only then is PUBLISH emitted and the next depth admitted;
+transport sequence does not reset. Late READY or duplicate acknowledgement is
+fatal. Payload counts/fragment admission, socket pumping, actual CUDA drain
+verification and NCCL execution are not implemented by it. Do not treat it as the full
 production sequencer or as proof of payload-capacity safety.
+
+Required caller invariant: publish descendant offers before sending CONSUMED
+for their input ticket, and register all local jobs/leases before that retirement.
+SOURCE_CLOSED follows all initial producer offers. FIFO control order then
+preserves the causal watermark. Untracked/detached jobs cannot be proven drained
+by this state machine; the GPU dispatcher must enforce this invariant and
+verify local drain before FINALIZED. A counter snapshot alone is insufficient.
 
 `rank_epochs::RankEpochs` now supplies bounded rank-local admission bookkeeping:
 exact offered slot selection, one sequence across planes, outstanding-source
@@ -36,7 +47,8 @@ credit. CONSUMED marks caller-proven consumer retirement and can arrive out of
 order across independent epochs. FinalizeDepth advancement requires no pending
 offers/live epochs plus external local-drain confirmation; sequence survives
 depth rotation. Storage is allocated once; protocol errors poison the state.
-Seven CPU tests cover these transitions. A composed real loopback TCP test also
+Eight CPU tests cover these transitions. After local finalization it forbids
+new offers/BEGIN until matching PUBLISH. A composed real loopback TCP test also
 checks a later READY arriving before the earlier epoch's completion, exact-slot
 BEGIN admission and reuse only after consumption. This component is not yet
 connected to the production TCP pump or CUDA; it does not prove global credits, coordinator drain,
@@ -93,8 +105,8 @@ deadlines while polling (nonblocking I/O alone cannot detect a silent peer).
 | 48 | 16 | reserved, all zero |
 
 Actions: READY=1, BEGIN=2, COMPLETE=3, SOURCE_CLOSED=4, FATAL=5,
-FINALIZE=6, CONSUMED=7. CONSUMED is an additive action in this pre-release V1
-codec; older builds reject it instead of interpreting it as COMPLETE. Run/config
+FINALIZE=6, CONSUMED=7, FINALIZED=8, PUBLISH=9. These are additive actions in this pre-release V1
+codec; older builds reject unknown actions rather than reinterpreting them. Run/config
 identity must match before connecting. Planes: NONE=0, CANDIDATE=1, REQUEST=2, RESPONSE=3,
 RECEIPT=4. Unknown values, nonzero reserved bytes, and ranks outside the
 configured world are rejected before dispatch.
@@ -112,7 +124,10 @@ acknowledges transfer completion for the specified epoch with a data plane and
 no slot; it does not release receive storage. CONSUMED has the same fields and
 acknowledges local consumer retirement after transfer completion. SOURCE_CLOSED
 has no slot/plane and epoch=0. FATAL has no slot/plane and a nonzero fatal code.
-FINALIZE is sent by rank 0 with no slot/plane. All nonfatal messages have a zero
+FINALIZE is sent by rank 0 with no slot/plane. FINALIZED echoes its depth/epoch
+from each completing rank. PUBLISH is sent by rank 0 with the next depth and
+the same FINALIZE epoch; it is a control acknowledgement, not another NCCL
+transport ticket. Both carry no slot/plane. All nonfatal messages have a zero
 fatal code. Exact send counts remain in the ordered NCCL metadata exchange,
 not in this frame.
 

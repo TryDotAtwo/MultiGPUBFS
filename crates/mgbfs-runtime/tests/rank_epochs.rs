@@ -25,6 +25,12 @@ fn finalize_requires_drain_and_preserves_sequence_across_depths() {
     rank.transfer_complete(0).unwrap();
     rank.consume(0).unwrap();
     rank.finish_depth(finalize, true).unwrap();
+    rank.publish(ControlFrame {
+        action: Action::Publish,
+        depth: 1,
+        ..finalize
+    })
+    .unwrap();
     assert_eq!(rank.offer(Plane::Candidate, 0).unwrap().depth, 1);
     rank.begin(ControlFrame {
         depth: 1,
@@ -132,4 +138,20 @@ fn ordered_transfer_completions_allow_independent_consumer_retirement() {
     epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
     epochs.begin(begin(1, NO_SLOT, Plane::Response)).unwrap();
     assert!(epochs.transfer_complete(1).is_err());
+}
+
+#[test]
+fn local_finalization_does_not_authorize_next_depth_before_publication() {
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs
+        .finish_depth(
+            ControlFrame {
+                action: Action::Finalize,
+                plane: Plane::None,
+                ..begin(0, NO_SLOT, Plane::Candidate)
+            },
+            true,
+        )
+        .unwrap();
+    assert!(epochs.offer(Plane::Candidate, 7).is_err());
 }

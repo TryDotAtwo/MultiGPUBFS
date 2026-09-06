@@ -21,6 +21,7 @@ pub struct RankEpochs {
     slots: usize,
     depth: u64,
     next: u64,
+    awaiting_publish: Option<u64>,
     pending: Vec<Option<Offer>>,
     live: Vec<Option<Live>>,
     failed: bool,
@@ -34,6 +35,12 @@ fn storage<T: Clone>(count: usize) -> Result<Vec<Option<T>>> {
     Ok(result)
 }
 impl RankEpochs {
+    pub(crate) fn drained(&self) -> bool {
+        !self.failed
+            && self.awaiting_publish.is_none()
+            && self.pending.iter().all(Option::is_none)
+            && self.live.iter().all(Option::is_none)
+    }
     pub(crate) fn receive_credit_available(&self, plane: Plane) -> Result<bool> {
         self.alive()?;
         if plane == Plane::None {
@@ -49,9 +56,14 @@ impl RankEpochs {
     }
     /// Called only after the externally coordinated FinalizeDepth jobs finish.
     /// Receipt of a FINALIZE frame by itself is not sufficient authorization.
-    pub fn finish_depth(&mut self, frame: ControlFrame, local_drained: bool) -> Result<()> {
+    pub fn finish_depth(
+        &mut self,
+        frame: ControlFrame,
+        local_drained: bool,
+    ) -> Result<ControlFrame> {
         self.alive()?;
-        if frame.encode(self.world).is_err()
+        if self.awaiting_publish.is_some()
+            || frame.encode(self.world).is_err()
             || frame.action != Action::Finalize
             || frame.depth != self.depth
             || frame.epoch != self.next
@@ -69,6 +81,23 @@ impl RankEpochs {
         };
         self.next = next;
         self.depth = depth;
+        self.awaiting_publish = Some(frame.epoch);
+        Ok(ControlFrame {
+            action: Action::Finalized,
+            rank: self.rank,
+            ..frame
+        })
+    }
+    pub fn publish(&mut self, frame: ControlFrame) -> Result<()> {
+        self.alive()?;
+        if frame.encode(self.world).is_err()
+            || frame.action != Action::Publish
+            || frame.depth != self.depth
+            || self.awaiting_publish != Some(frame.epoch)
+        {
+            return self.reject();
+        }
+        self.awaiting_publish = None;
         Ok(())
     }
     pub fn new(world: u32, rank: u32, slots: usize) -> Result<Self> {
@@ -82,6 +111,7 @@ impl RankEpochs {
             slots,
             depth: 0,
             next: 0,
+            awaiting_publish: None,
             pending: storage(count)?,
             live: storage(count)?,
             failed: false,
@@ -100,6 +130,9 @@ impl RankEpochs {
     }
     pub fn offer(&mut self, plane: Plane, slot: u64) -> Result<ControlFrame> {
         self.alive()?;
+        if self.awaiting_publish.is_some() {
+            return self.reject();
+        }
         let pending = self.pending.iter().flatten().filter(|x| x.plane == plane);
         let live = self
             .live
@@ -130,6 +163,9 @@ impl RankEpochs {
     }
     pub fn begin(&mut self, frame: ControlFrame) -> Result<()> {
         self.alive()?;
+        if self.awaiting_publish.is_some() {
+            return self.reject();
+        }
         if frame.encode(self.world).is_err()
             || frame.action != Action::Begin
             || frame.depth != self.depth

@@ -133,3 +133,75 @@ fn duplicate_or_wrong_depth_source_close_is_terminal() {
         assert!(coordinator.receive(ready(0, Plane::Response, 0)).is_err());
     }
 }
+
+#[test]
+fn finalization_waits_for_all_sources_and_consumer_retirement() {
+    let mut coordinator = EpochCoordinator::new(2, 1).unwrap();
+    let mut frames = [ready(0, Plane::Candidate, 0); 2];
+    coordinator.receive(ready(0, Plane::Candidate, 7)).unwrap();
+    coordinator.issue(&mut frames).unwrap();
+    for rank in 0..2 {
+        coordinator
+            .receive(ack(rank, Plane::None, 0, Action::SourceClosed))
+            .unwrap();
+        coordinator
+            .receive(ack(rank, Plane::Candidate, 0, Action::Complete))
+            .unwrap();
+    }
+    assert!(!coordinator.issue(&mut frames).unwrap());
+    coordinator
+        .receive(ack(0, Plane::Candidate, 0, Action::Consumed))
+        .unwrap();
+    assert!(!coordinator.issue(&mut frames).unwrap());
+    coordinator
+        .receive(ack(1, Plane::Candidate, 0, Action::Consumed))
+        .unwrap();
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!((frames[0].action, frames[0].epoch), (Action::Finalize, 1));
+    assert_eq!(frames[0], frames[1]);
+    assert!(coordinator.receive(ready(1, Plane::Response, 9)).is_err());
+}
+
+#[test]
+fn all_finalization_acks_precede_publication_and_next_depth_data() {
+    let mut coordinator = EpochCoordinator::new(2, 1).unwrap();
+    let mut frames = [ready(0, Plane::Candidate, 0); 2];
+    for rank in 0..2 {
+        coordinator
+            .receive(ack(rank, Plane::None, 0, Action::SourceClosed))
+            .unwrap();
+    }
+    assert!(coordinator.issue(&mut frames).unwrap());
+    let finalize = frames[0];
+    coordinator
+        .receive(ControlFrame {
+            action: Action::Finalized,
+            rank: 1,
+            ..finalize
+        })
+        .unwrap();
+    assert!(!coordinator.issue(&mut frames).unwrap());
+    coordinator
+        .receive(ControlFrame {
+            action: Action::Finalized,
+            rank: 0,
+            ..finalize
+        })
+        .unwrap();
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!(
+        (frames[0].action, frames[0].depth, frames[0].epoch),
+        (Action::Publish, 1, 0)
+    );
+    coordinator
+        .receive(ControlFrame {
+            depth: 1,
+            ..ready(0, Plane::Candidate, 7)
+        })
+        .unwrap();
+    assert!(coordinator.issue(&mut frames).unwrap());
+    assert_eq!(
+        (frames[0].action, frames[0].depth, frames[0].epoch),
+        (Action::Begin, 1, 1)
+    );
+}

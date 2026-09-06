@@ -137,6 +137,8 @@ pub enum Action {
     Fatal = 5,
     Finalize = 6,
     Consumed = 7,
+    Finalized = 8,
+    Publish = 9,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -182,11 +184,14 @@ impl ControlFrame {
             Action::Fatal => {
                 self.slot == NO_SLOT && self.plane == Plane::None && self.fatal_code != 0
             }
-            Action::Finalize => {
+            Action::Finalize | Action::Publish => {
                 self.rank == 0
                     && self.slot == NO_SLOT
                     && self.plane == Plane::None
                     && self.fatal_code == 0
+            }
+            Action::Finalized => {
+                self.slot == NO_SLOT && self.plane == Plane::None && self.fatal_code == 0
             }
         };
         if !valid {
@@ -224,6 +229,8 @@ impl ControlFrame {
             5 => Action::Fatal,
             6 => Action::Finalize,
             7 => Action::Consumed,
+            8 => Action::Finalized,
+            9 => Action::Publish,
             _ => return Err("CONTROL_ACTION".into()),
         };
         let plane = match u32::from_le_bytes(bytes[40..44].try_into().unwrap()) {
