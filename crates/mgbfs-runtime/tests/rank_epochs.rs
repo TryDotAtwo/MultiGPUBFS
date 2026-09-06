@@ -86,3 +86,19 @@ fn unoffered_stale_wrong_depth_and_reused_slots_are_terminal() {
     rank.begin(begin(0, 3, Plane::Candidate)).unwrap();
     assert!(rank.offer(Plane::Candidate, 3).is_err());
 }
+
+#[test]
+fn fixed_capacity_invalid_topology_and_duplicate_retirement_fail_closed() {
+    for (world, rank, slots) in [(0, 0, 1), (2, 2, 1), (2, 1, 0), (2, 1, usize::MAX)] {
+        assert!(RankEpochs::new(world, rank, slots).is_err());
+    }
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs.offer(Plane::Candidate, 0).unwrap();
+    assert!(epochs.offer(Plane::Candidate, 1).is_err());
+    assert!(epochs.begin(begin(0, 0, Plane::Candidate)).is_err());
+    let mut epochs = RankEpochs::new(2, 1, 1).unwrap();
+    epochs.begin(begin(0, NO_SLOT, Plane::Candidate)).unwrap();
+    epochs.consume(0).unwrap();
+    assert!(epochs.consume(0).is_err());
+    assert!(epochs.offer(Plane::Response, 0).is_err());
+}

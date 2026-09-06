@@ -66,6 +66,48 @@ fn rank_bound_nonblocking_ready_begin_complete_roundtrip() {
 }
 
 #[test]
+fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
+    use mgbfs_runtime::rank_epochs::RankEpochs;
+    let (server, client) = pair();
+    let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
+    let mut peer = ControlConnection::new(client, 2, 1, 0).unwrap();
+    let mut epochs = RankEpochs::new(2, 1, 2).unwrap();
+    send(&mut peer, epochs.offer(Plane::Candidate, 3).unwrap());
+    let first = receive(&mut root).unwrap();
+    // The later offer is registered locally before the root's first BEGIN.
+    send(&mut peer, epochs.offer(Plane::Candidate, 7).unwrap());
+    send(
+        &mut root,
+        ControlFrame {
+            action: Action::Begin,
+            rank: 0,
+            ..first
+        },
+    );
+    epochs.begin(receive(&mut peer).unwrap()).unwrap();
+    send(&mut peer, epochs.consume(0).unwrap());
+    let later = receive(&mut root).unwrap();
+    assert_eq!((later.action, later.slot), (Action::Ready, 7));
+    let complete = receive(&mut root).unwrap();
+    assert_eq!((complete.action, complete.epoch), (Action::Complete, 0));
+    send(
+        &mut root,
+        ControlFrame {
+            action: Action::Begin,
+            rank: 0,
+            epoch: 1,
+            ..later
+        },
+    );
+    epochs.begin(receive(&mut peer).unwrap()).unwrap();
+    // Retired slot 3 is reusable even while slot 7's consumers still own it.
+    send(&mut peer, epochs.offer(Plane::Candidate, 3).unwrap());
+    assert_eq!(receive(&mut root).unwrap().slot, 3);
+    send(&mut peer, epochs.consume(1).unwrap());
+    assert_eq!(receive(&mut root).unwrap().epoch, 1);
+}
+
+#[test]
 fn forged_sender_poisoning_is_terminal() {
     let (server, mut client) = pair();
     let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();

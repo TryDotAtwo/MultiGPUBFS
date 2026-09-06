@@ -14,8 +14,10 @@ source offers). COMPLETE is produced after caller-proven consumer retirement,
 not merely transfer completion. FinalizeDepth advancement requires no pending
 offers/live epochs plus external local-drain confirmation; sequence survives
 depth rotation. Storage is allocated once; protocol errors poison the state.
-Four CPU tests cover these transitions. This component is not yet connected to
-ControlConnection or CUDA; it does not prove global credits, coordinator drain,
+Five CPU tests cover these transitions. A composed real loopback TCP test also
+checks a later READY arriving before the earlier epoch's completion, exact-slot
+BEGIN admission and reuse only after consumption. This component is not yet
+connected to the production TCP pump or CUDA; it does not prove global credits, coordinator drain,
 actual event readiness or multi-GPU issue order.
 
 Each frame is exactly 64 bytes, little-endian, with no variable-length payload.
