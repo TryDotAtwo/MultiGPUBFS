@@ -30,6 +30,7 @@ pub mod pinned_archive;
 pub mod rank_epochs;
 pub mod receipts;
 pub mod ring;
+pub mod scatter_admission;
 pub mod simulation;
 pub mod topology;
 pub mod transport;
