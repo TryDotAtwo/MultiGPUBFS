@@ -58,6 +58,9 @@ fn three_rank_tcp_byte_admission_waits_for_empty_receiver_ack() {
         generation: 3,
     };
     let mut admission = ByteAdmission::new(3).unwrap();
+    let mut local: [_; 3] = std::array::from_fn(|rank| {
+        mgbfs_runtime::byte_admission::RankByteAdmission::new(3, rank as u32).unwrap()
+    });
     admission.begin(key, 80).unwrap();
     let mut out = [ready(); 3];
     for (dst, bytes, complete) in [(2, 48, false), (0, 32, false), (1, 0, true)] {
@@ -83,46 +86,35 @@ fn three_rank_tcp_byte_admission_waits_for_empty_receiver_ack() {
     let ticket2 = receive(&mut peer2).unwrap();
     assert_eq!(ticket1.payload_bytes, 0);
     assert_eq!(ticket2.payload_bytes, 48);
-    admission
-        .ack(ControlFrame {
-            action: Action::Admitted,
-            rank: 0,
-            ..out[0]
-        })
-        .unwrap();
-    send(
-        &mut peer2,
-        ControlFrame {
-            action: Action::Admitted,
-            rank: 2,
-            payload_bytes: 0,
-            ..ticket2
-        },
-    );
+    admission.ack(local[0].accept(out[0], 32).unwrap()).unwrap();
+    send(&mut peer2, local[2].accept(ticket2, 0).unwrap());
     admission.ack(receive(&mut root2).unwrap()).unwrap();
     let mut next = 0;
     assert!(!admission.launch(&mut next, &mut out).unwrap());
     assert!(peer1.poll_receive().unwrap().is_none());
     assert!(peer2.poll_receive().unwrap().is_none());
-    send(
-        &mut peer1,
-        ControlFrame {
-            action: Action::Admitted,
-            rank: 1,
-            ..ticket1
-        },
-    );
+    send(&mut peer1, local[1].accept(ticket1, 0).unwrap());
     admission.ack(receive(&mut root1).unwrap()).unwrap();
     assert!(admission.launch(&mut next, &mut out).unwrap());
     send(&mut root1, out[1]);
     send(&mut root2, out[2]);
-    for command in [receive(&mut peer1).unwrap(), receive(&mut peer2).unwrap()] {
+    for (rank, command) in [
+        out[0],
+        receive(&mut peer1).unwrap(),
+        receive(&mut peer2).unwrap(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         assert_eq!(command.action, Action::Launch);
         assert_eq!(
             (command.epoch, command.source_rank, command.slot),
             (0, 2, 3)
         );
+        assert_eq!(local[rank].launch(command).unwrap(), [32, 0, 48][rank]);
+        local[rank].retire(key).unwrap();
     }
+    admission.retire(key).unwrap();
     assert_eq!(next, 1);
 }
 #[test]

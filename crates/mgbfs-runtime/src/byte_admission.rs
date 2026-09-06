@@ -4,6 +4,100 @@ use crate::{
     scatter_admission::{ScatterAdmission, TicketKey},
 };
 use mgbfs_core::Result;
+/// One rank-local physical ticket slot. Caller provides real reserved capacity;
+/// this state machine neither allocates GPU buffers nor observes their events.
+pub struct RankByteAdmission {
+    world: u32,
+    rank: u32,
+    ticket: Option<ControlFrame>,
+    retired: Option<TicketKey>,
+    launched: bool,
+    failed: bool,
+}
+fn ticket_key(f: ControlFrame) -> TicketKey {
+    TicketKey {
+        depth: f.depth,
+        epoch: f.epoch,
+        source: f.source_rank,
+        plane: f.plane,
+        generation: f.slot,
+    }
+}
+impl RankByteAdmission {
+    pub fn new(world: u32, rank: u32) -> Result<Self> {
+        if world == 0 || rank >= world {
+            return Err("BYTE_ADMISSION_RANK".into());
+        }
+        Ok(Self {
+            world,
+            rank,
+            ticket: None,
+            retired: None,
+            launched: false,
+            failed: false,
+        })
+    }
+    fn apply<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.failed {
+            return Err("BYTE_ADMISSION_FAILED".into());
+        }
+        let result = f(self);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    pub fn accept(&mut self, f: ControlFrame, capacity: u64) -> Result<ControlFrame> {
+        self.apply(|s| {
+            f.encode(s.world)?;
+            let key = ticket_key(f);
+            if f.action != Action::TicketBytes
+                || f.destination_rank != s.rank
+                || s.ticket.is_some()
+                || s.retired.is_some_and(|old| {
+                    key.epoch <= old.epoch
+                        || key.generation <= old.generation
+                        || key.depth < old.depth
+                })
+            {
+                return Err("BYTE_ADMISSION_TICKET".into());
+            }
+            if f.source_rank != s.rank && f.payload_bytes > capacity {
+                return Err("BYTE_ADMISSION_RECV_CAPACITY".into());
+            }
+            s.ticket = Some(f);
+            Ok(ControlFrame {
+                action: Action::Admitted,
+                rank: s.rank,
+                payload_bytes: capacity,
+                ..f
+            })
+        })
+    }
+    pub fn launch(&mut self, f: ControlFrame) -> Result<u64> {
+        self.apply(|s| {
+            f.encode(s.world)?;
+            let ticket = s.ticket.ok_or("BYTE_ADMISSION_IDLE")?;
+            if f.action != Action::Launch || ticket_key(f) != ticket_key(ticket) || s.launched {
+                return Err("BYTE_ADMISSION_STALE".into());
+            }
+            s.launched = true;
+            Ok(ticket.payload_bytes)
+        })
+    }
+    /// Call only after all device and consumer references have retired.
+    pub fn retire(&mut self, key: TicketKey) -> Result<()> {
+        self.apply(|s| {
+            if !s.launched || s.ticket.map(ticket_key) != Some(key) {
+                return Err("BYTE_ADMISSION_NOT_LAUNCHED".into());
+            }
+            s.retired = Some(key);
+            s.ticket = None;
+            s.launched = false;
+            Ok(())
+        })
+    }
+}
 pub struct ByteAdmission {
     guard: ScatterAdmission,
     key: Option<TicketKey>,
