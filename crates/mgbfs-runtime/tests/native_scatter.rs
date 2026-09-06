@@ -123,11 +123,21 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 );
                 let mut stream = std::ptr::null_mut();
                 assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                let mut readers = [std::ptr::null_mut(); 2];
+                for reader in &mut readers {
+                    assert_eq!(cudaStreamCreateWithFlags(reader, 1), 0);
+                }
                 let mut send = std::ptr::null_mut();
                 let mut recv = std::ptr::null_mut();
+                let mut copied = std::ptr::null_mut();
                 assert_eq!(cudaMalloc(&mut send, 16), 0);
                 assert_eq!(cudaMalloc(&mut recv, 8), 0);
+                assert_eq!(cudaMalloc(&mut copied, 8), 0);
                 let mut events = [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()];
+                let mut reader_events = [
+                    [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()],
+                    [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()],
+                ];
                 let mut leases = [
                     PayloadLease::new(2, 4, 2).unwrap(),
                     PayloadLease::new(2, 4, 2).unwrap(),
@@ -188,6 +198,30 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             0
                         );
                         events[lane].record(key.epoch, stream).unwrap();
+                        let selected: *mut std::ffi::c_void = if rank == source {
+                            send_bank.cast::<u8>().add(rank as usize * 4).cast()
+                        } else {
+                            recv_bank
+                        };
+                        // Queue actual readers on distinct streams BEFORE any
+                        // host query of the transfer event. No host sync supplies
+                        // this dependency: each stream waits on its generation.
+                        for part in 0..2 {
+                            events[lane].wait(key.epoch, readers[part]).unwrap();
+                            assert_eq!(
+                                cudaMemcpyAsync(
+                                    copied.cast::<u8>().add(lane * 4 + part * 2).cast(),
+                                    selected.cast::<u8>().add(part * 2).cast(),
+                                    2,
+                                    3,
+                                    readers[part]
+                                ),
+                                0
+                            );
+                            reader_events[lane][part]
+                                .record(key.epoch, readers[part])
+                                .unwrap();
+                        }
                         pending[lane] = Some(key);
                     }
                     // Both payload calls and both event records have been
@@ -203,14 +237,17 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         }
                         assert_eq!(mgbfs_nccl_poll(comm), 0);
                         let mut actual = [0u8; 4];
-                        let selected: *mut std::ffi::c_void = if rank == source {
-                            send.cast::<u8>().add(lane * 8 + rank as usize * 4).cast()
-                        } else {
-                            recv.cast::<u8>().add(lane * 4).cast()
-                        };
+                        let selected = copied.cast::<u8>().add(lane * 4);
                         // Two actual downstream readers share one payload bank.
                         // The first completion must not release the second reader.
                         for (part, consumer) in consumers[lane].unwrap().into_iter().enumerate() {
+                            let done = &mut reader_events[lane][part];
+                            let deadline = Instant::now() + Duration::from_secs(30);
+                            while !done.poll(key.epoch).unwrap() {
+                                assert_eq!(mgbfs_nccl_poll(comm), 0);
+                                assert!(Instant::now() < deadline);
+                                std::thread::yield_now();
+                            }
                             assert_eq!(
                                 cudaMemcpy(
                                     actual.as_mut_ptr().add(part * 2).cast(),
@@ -220,6 +257,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                                 ),
                                 0
                             );
+                            done.retire(key.epoch).unwrap();
                             leases[lane].complete(consumer).unwrap();
                             assert_eq!(leases[lane].drained(key).unwrap(), part == 1);
                         }
@@ -274,6 +312,10 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 mgbfs_nccl_destroy(comm);
                 assert_eq!(cudaFree(send), 0);
                 assert_eq!(cudaFree(recv), 0);
+                assert_eq!(cudaFree(copied), 0);
+                for reader in readers {
+                    assert_eq!(cudaStreamDestroy(reader), 0);
+                }
                 assert_eq!(cudaStreamDestroy(stream), 0);
             })
         })

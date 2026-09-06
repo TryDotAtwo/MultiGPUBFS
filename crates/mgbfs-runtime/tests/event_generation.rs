@@ -1,5 +1,57 @@
 use mgbfs_runtime::event_generation::EventGeneration;
 #[test]
+fn stream_dependency_can_be_enqueued_before_host_observes_completion() {
+    let mut event = EventGeneration::default();
+    event.record(7, || Ok(())).unwrap();
+    let mut waits = 0;
+    for _ in 0..2 {
+        event
+            .wait(7, || {
+                waits += 1;
+                Ok(())
+            })
+            .unwrap();
+    }
+    assert_eq!(waits, 2);
+    assert!(!event.poll(7, || Ok(false)).unwrap());
+    assert!(event.poll(7, || Ok(true)).unwrap());
+    event.retire(7).unwrap();
+}
+#[test]
+fn unrecorded_stale_and_retired_waits_never_submit_native_work() {
+    for case in 0..3 {
+        let mut event = EventGeneration::default();
+        if case != 0 {
+            event.record(7, || Ok(())).unwrap();
+        }
+        if case == 2 {
+            assert!(event.poll(7, || Ok(true)).unwrap());
+            event.retire(7).unwrap();
+        }
+        let mut submitted = false;
+        assert!(event
+            .wait(if case == 1 { 6 } else { 7 }, || {
+                submitted = true;
+                Ok(())
+            })
+            .is_err());
+        assert!(!submitted);
+        assert!(event.record(8, || Ok(())).is_err());
+    }
+}
+#[test]
+fn stream_wait_error_poisoning_prevents_later_reuse() {
+    let mut event = EventGeneration::default();
+    event.record(7, || Ok(())).unwrap();
+    assert_eq!(
+        event
+            .wait(7, || Err("CUDA_WAIT_FAILURE".into()))
+            .unwrap_err(),
+        "CUDA_WAIT_FAILURE"
+    );
+    assert_eq!(event.poll(7, || Ok(true)).unwrap_err(), "EVENT_FAILED");
+}
+#[test]
 fn native_query_status_distinguishes_not_ready_from_async_error() {
     use mgbfs_runtime::event_generation::cuda_query_status;
     assert_eq!(cuda_query_status(0).unwrap(), true);

@@ -48,6 +48,23 @@ impl NativeEvent {
             cuda_query_status(unsafe { mgbfs_cuda::native_owner::cudaEventQuery(handle) })
         })
     }
+    /// Enqueue a dependency without waiting for host-observed completion.
+    /// # Safety
+    /// Stream must be live in the intended CUDA context. Enqueue every consumer
+    /// after this wait, keep protected buffers live, and drain all consumers
+    /// before retiring/re-recording this generation. Graph capture is outside
+    /// this wrapper's contract.
+    pub unsafe fn wait(&mut self, generation: u64, stream: *mut std::ffi::c_void) -> Result<()> {
+        let handle = self.handle;
+        self.generation.wait(generation, || {
+            let status = mgbfs_cuda::ffi::cudaStreamWaitEvent(stream, handle, 0);
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(format!("CUDA_EVENT_WAIT_{status}"))
+            }
+        })
+    }
     pub fn retire(&mut self, generation: u64) -> Result<()> {
         self.generation.retire(generation)
     }
@@ -68,6 +85,16 @@ pub struct EventGeneration {
     failed: bool,
 }
 impl EventGeneration {
+    /// Bind a downstream stream to the active recorded generation. Submission
+    /// does not imply event completion or release any payload/consumer lease.
+    pub fn wait(&mut self, generation: u64, submit: impl FnOnce() -> Result<()>) -> Result<()> {
+        self.apply(|s| {
+            if s.active != Some(generation) {
+                return Err("EVENT_GENERATION".into());
+            }
+            submit()
+        })
+    }
     fn apply<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if self.failed {
             return Err("EVENT_FAILED".into());
