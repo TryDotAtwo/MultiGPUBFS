@@ -54,6 +54,12 @@ BEGIN admission and reuse only after consumption. This component is not yet
 connected to the production TCP pump or CUDA; it does not prove global credits, coordinator drain,
 actual event readiness or multi-GPU issue order.
 
+A second composed loopback TCP test now drives coordinator + both rank states
+through two full control depths, alternating which rank supplies candidates.
+It checks that one rank's FINALIZED cannot publish alone, and that the next
+depth keeps the transport sequence. This is host control integration evidence,
+not CUDA/NCCL data-plane execution or a production progress loop.
+
 Each frame is exactly 64 bytes, little-endian, with no variable-length payload.
 The codec uses stack arrays on the successful path. It accepts a caller-owned
 `Read`/`Write` stream; the connection owner is responsible for bounded I/O

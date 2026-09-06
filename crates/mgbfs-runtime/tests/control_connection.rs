@@ -134,6 +134,73 @@ fn tcp_begin_uses_registered_epoch_slot_while_a_later_ready_is_pending() {
 }
 
 #[test]
+fn tcp_coordinator_publishes_two_depths_only_after_both_ranks_finalize() {
+    use mgbfs_runtime::{epoch_coordinator::EpochCoordinator, rank_epochs::RankEpochs};
+    let (server, client) = pair();
+    let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
+    let mut peer = ControlConnection::new(client, 2, 1, 0).unwrap();
+    let mut coordinator = EpochCoordinator::new(2, 2).unwrap();
+    let mut local = RankEpochs::new(2, 0, 2).unwrap();
+    let mut remote = RankEpochs::new(2, 1, 2).unwrap();
+    let mut frames = [ready(); 2];
+    for depth in 0..2 {
+        if depth == 0 {
+            coordinator
+                .receive(local.offer(Plane::Candidate, 7).unwrap())
+                .unwrap();
+        } else {
+            send(&mut peer, remote.offer(Plane::Candidate, 9).unwrap());
+            coordinator.receive(receive(&mut root).unwrap()).unwrap();
+        }
+        assert!(coordinator.issue(&mut frames).unwrap());
+        assert_eq!((frames[0].depth, frames[0].epoch), (depth, depth * 2));
+        local.begin(frames[0]).unwrap();
+        send(&mut root, frames[1]);
+        remote.begin(receive(&mut peer).unwrap()).unwrap();
+        coordinator
+            .receive(local.transfer_complete(depth * 2).unwrap())
+            .unwrap();
+        send(&mut peer, remote.transfer_complete(depth * 2).unwrap());
+        coordinator.receive(receive(&mut root).unwrap()).unwrap();
+        coordinator
+            .receive(local.consume(depth * 2).unwrap())
+            .unwrap();
+        send(&mut peer, remote.consume(depth * 2).unwrap());
+        coordinator.receive(receive(&mut root).unwrap()).unwrap();
+        let close = ControlFrame {
+            action: Action::SourceClosed,
+            rank: 0,
+            depth,
+            epoch: 0,
+            slot: NO_SLOT,
+            plane: Plane::None,
+            fatal_code: 0,
+        };
+        coordinator.receive(close).unwrap();
+        send(&mut peer, ControlFrame { rank: 1, ..close });
+        coordinator.receive(receive(&mut root).unwrap()).unwrap();
+        assert!(coordinator.issue(&mut frames).unwrap());
+        assert_eq!(frames[0].action, Action::Finalize);
+        coordinator
+            .receive(local.finish_depth(frames[0], true).unwrap())
+            .unwrap();
+        send(&mut root, frames[1]);
+        let finalize = receive(&mut peer).unwrap();
+        assert!(!coordinator.issue(&mut frames).unwrap());
+        send(&mut peer, remote.finish_depth(finalize, true).unwrap());
+        coordinator.receive(receive(&mut root).unwrap()).unwrap();
+        assert!(coordinator.issue(&mut frames).unwrap());
+        assert_eq!(
+            (frames[0].action, frames[0].depth, frames[0].epoch),
+            (Action::Publish, depth + 1, depth * 2 + 1)
+        );
+        local.publish(frames[0]).unwrap();
+        send(&mut root, frames[1]);
+        remote.publish(receive(&mut peer).unwrap()).unwrap();
+    }
+}
+
+#[test]
 fn forged_sender_poisoning_is_terminal() {
     let (server, mut client) = pair();
     let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
