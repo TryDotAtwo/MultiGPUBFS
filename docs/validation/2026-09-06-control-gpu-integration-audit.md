@@ -116,3 +116,24 @@ one rank rejecting while others accept, and identical NCCL issue order when
 admission for a later ticket becomes ready first. Metadata admission may wait
 for its own dependencies; it must not become a depth-wide barrier or a host
 `cudaStreamSynchronize` on the producer lane.
+
+## CUDA readiness audit at 38a946f
+
+`distributed_native.rs` still performs host stream synchronization around
+generation/routing/count reads and communication. `native_owner` already exposes
+`cudaEventQuery`; adding another FFI declaration would not remove those waits.
+
+An event query alone is insufficient as a slot-ready predicate. NVIDIA states
+that a never-recorded event represents empty work and queries successfully;
+recording the same event again replaces its captured work. Therefore the driver
+must track successful record submission for the exact slot generation before
+querying, reject stale-generation completion, and distinguish not-ready from
+asynchronous CUDA errors. Keep the buffers leased until their actual consumers
+complete, not merely until the producer event becomes ready. A successful query
+is a completion signal, not evidence of producer/consumer overlap.
+
+Reference: [CUDA Runtime event management](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EVENT.html).
+Required fixture: never-recorded event, completed previous generation, pending
+current generation, ready current generation, and injected asynchronous error.
+Do not replace existing synchronizations mechanically before these lifetime
+conditions are wired to the bounded slots and validated on the target GPUs.
