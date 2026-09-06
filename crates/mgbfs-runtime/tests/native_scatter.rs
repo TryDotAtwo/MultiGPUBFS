@@ -5,6 +5,7 @@ use mgbfs_runtime::{
     control_pump::ControlPump,
     control_wire::{Action, ControlFrame, Plane},
     event_generation::NativeEvent,
+    payload_lease::PayloadLease,
     scatter_admission::TicketKey,
 };
 use std::{
@@ -30,7 +31,13 @@ impl AdmissionDriver {
             std::thread::yield_now();
         }
     }
-    fn admit(&mut self, source: u32, epoch: u64, sizes: [u64; 2]) -> (TicketKey, u64) {
+    fn admit(
+        &mut self,
+        source: u32,
+        epoch: u64,
+        sizes: [u64; 2],
+        bank: &mut PayloadLease,
+    ) -> (TicketKey, u64) {
         let key = TicketKey {
             depth: 0,
             epoch,
@@ -59,6 +66,7 @@ impl AdmissionDriver {
             ),
             (Action::TicketBytes, epoch, key.generation, self.rank)
         );
+        bank.reserve(key, ticket.payload_bytes).unwrap();
         self.pump.admit_bytes(ticket, 4).unwrap();
         let launch = self.receive();
         assert_eq!(
@@ -120,6 +128,10 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                 assert_eq!(cudaMalloc(&mut send, 16), 0);
                 assert_eq!(cudaMalloc(&mut recv, 8), 0);
                 let mut events = [NativeEvent::new().unwrap(), NativeEvent::new().unwrap()];
+                let mut leases = [
+                    PayloadLease::new(2, 4, 2).unwrap(),
+                    PayloadLease::new(2, 4, 2).unwrap(),
+                ];
                 for source in 0..2u32 {
                     let payload = [
                         11u8, 12, 13, 14, 21, 22, 23, 24, 31, 32, 33, 34, 41, 42, 43, 44,
@@ -127,11 +139,21 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                     assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 16, 1), 0);
                     let sizes = [4u64, 4];
                     let mut pending = [None; 2];
+                    let mut consumers = [None; 2];
                     for lane in 0..2usize {
                         let send_bank = send.cast::<u8>().add(lane * 8).cast();
                         let recv_bank = recv.cast::<u8>().add(lane * 4).cast();
-                        let (key, received_bytes) =
-                            admission.admit(source, u64::from(source) * 3 + lane as u64, sizes);
+                        let (key, received_bytes) = admission.admit(
+                            source,
+                            u64::from(source) * 3 + lane as u64,
+                            sizes,
+                            &mut leases[lane],
+                        );
+                        consumers[lane] = Some([
+                            leases[lane].consumer(key).unwrap(),
+                            leases[lane].consumer(key).unwrap(),
+                        ]);
+                        leases[lane].seal(key).unwrap();
                         assert_eq!(received_bytes, 4);
                         // A rejected local capacity check must not enqueue an unmatched
                         // receive. The following valid exchange must still match.
@@ -181,12 +203,26 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         }
                         assert_eq!(mgbfs_nccl_poll(comm), 0);
                         let mut actual = [0u8; 4];
-                        let selected = if rank == source {
+                        let selected: *mut std::ffi::c_void = if rank == source {
                             send.cast::<u8>().add(lane * 8 + rank as usize * 4).cast()
                         } else {
                             recv.cast::<u8>().add(lane * 4).cast()
                         };
-                        assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), selected, 4, 2), 0);
+                        // Two actual downstream readers share one payload bank.
+                        // The first completion must not release the second reader.
+                        for (part, consumer) in consumers[lane].unwrap().into_iter().enumerate() {
+                            assert_eq!(
+                                cudaMemcpy(
+                                    actual.as_mut_ptr().add(part * 2).cast(),
+                                    selected.cast::<u8>().add(part * 2).cast(),
+                                    2,
+                                    2
+                                ),
+                                0
+                            );
+                            leases[lane].complete(consumer).unwrap();
+                            assert_eq!(leases[lane].drained(key).unwrap(), part == 1);
+                        }
                         assert_eq!(
                             actual,
                             match (lane, rank) {
@@ -198,12 +234,14 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                             }
                         );
                         completion.retire(key.epoch).unwrap();
+                        leases[lane].retire(key).unwrap();
                         admission.retire(key);
                     }
                     let completion = &mut events[0];
                     let zero = [0u64; 2];
                     let (key, received_bytes) =
-                        admission.admit(source, u64::from(source) * 3 + 2, zero);
+                        admission.admit(source, u64::from(source) * 3 + 2, zero, &mut leases[0]);
+                    leases[0].seal(key).unwrap();
                     assert_eq!(received_bytes, 0);
                     assert_eq!(
                         mgbfs_nccl_scatter(
@@ -227,6 +265,7 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                         std::thread::yield_now();
                     }
                     completion.retire(key.epoch).unwrap();
+                    leases[0].retire(key).unwrap();
                     admission.retire(key);
                 }
                 admission.finalize();
