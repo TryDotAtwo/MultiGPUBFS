@@ -1,5 +1,6 @@
 //! Native nonblocking control connection. Bootstrap and dispatcher integration pending.
-use crate::control_wire::{Action, ControlFrame, FrameReader, FrameWriter};
+use crate::control_outbox::ControlOutbox;
+use crate::control_wire::{Action, ControlFrame, FrameReader};
 use mgbfs_core::Result;
 use std::net::{Shutdown, TcpStream};
 pub struct ControlConnection {
@@ -7,13 +8,23 @@ pub struct ControlConnection {
     local: u32,
     peer: u32,
     reader: FrameReader,
-    writer: FrameWriter,
+    writer: ControlOutbox,
     failed: bool,
 }
 impl ControlConnection {
     /// Wrap only a stream assigned by the bootstrap handshake. Rank checking
     /// detects protocol mismatch, not cryptographic peer authentication.
     pub fn new(stream: TcpStream, world: u32, local: u32, peer: u32) -> Result<Self> {
+        Self::with_send_capacity(stream, world, local, peer, 1)
+    }
+    /// Allocate the complete bounded outbound FIFO during connection setup.
+    pub fn with_send_capacity(
+        stream: TcpStream,
+        world: u32,
+        local: u32,
+        peer: u32,
+        capacity: usize,
+    ) -> Result<Self> {
         if world == 0
             || local >= world
             || peer >= world
@@ -33,7 +44,7 @@ impl ControlConnection {
             local,
             peer,
             reader: FrameReader::new(world)?,
-            writer: FrameWriter::new(world)?,
+            writer: ControlOutbox::new(world, capacity)?,
             failed: false,
         })
     }

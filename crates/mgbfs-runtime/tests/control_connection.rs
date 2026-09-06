@@ -40,6 +40,28 @@ fn send(connection: &mut ControlConnection, frame: ControlFrame) {
 }
 
 #[test]
+fn bounded_outbox_preserves_order_and_capacity_including_pending_frame() {
+    let (server, client) = pair();
+    let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();
+    let mut peer = ControlConnection::with_send_capacity(client, 2, 1, 0, 2).unwrap();
+    peer.enqueue(ready()).unwrap();
+    peer.enqueue(ControlFrame { slot: 7, ..ready() }).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !peer.poll_send().unwrap() {
+        assert!(Instant::now() < deadline);
+    }
+    assert_eq!(receive(&mut root).unwrap().slot, 3);
+    assert_eq!(receive(&mut root).unwrap().slot, 7);
+    // Exercise wrapping physical queue indices after retirement.
+    send(&mut peer, ControlFrame { slot: 9, ..ready() });
+    assert_eq!(receive(&mut root).unwrap().slot, 9);
+    peer.enqueue(ready()).unwrap();
+    peer.enqueue(ControlFrame { slot: 7, ..ready() }).unwrap();
+    assert!(peer.enqueue(ControlFrame { slot: 9, ..ready() }).is_err());
+    assert!(peer.poll_send().is_err());
+}
+
+#[test]
 fn rank_bound_nonblocking_ready_begin_complete_roundtrip() {
     let (server, client) = pair();
     let mut root = ControlConnection::new(server, 2, 0, 1).unwrap();

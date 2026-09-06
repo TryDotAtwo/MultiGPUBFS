@@ -38,7 +38,15 @@ retains its exact byte offset across WouldBlock/Interrupted. Enqueue while busy
 returns an explicit capacity error without overwriting the pending frame.
 Zero writes and other I/O failures permanently poison it. Local send completion
 only means bytes were accepted by the stream, not that the peer or GPU finished.
-The eventual dispatcher must provision its bounded outbound queue separately.
+`ControlOutbox` now provides that bounded FIFO: capacity includes the partially
+written head frame, storage is allocated at construction, and each poll retires
+at most one frame. `ControlConnection::with_send_capacity` selects its capacity
+at setup; the existing constructor/handshake retain capacity one. Partial writes
+keep the same FIFO head until complete. Standalone queue-full errors preserve
+queued data; through ControlConnection they poison and close the connection as
+before. Tests cover short writes, WouldBlock, wraparound, exact frame order,
+write-zero poisoning, and the real TCP multi-frame path. Dispatcher sizing and
+bootstrap propagation of larger configured queues remain to be connected.
 
 `ControlConnection` owns its TcpStream and configures nonblocking I/O/TCP_NODELAY
 at construction. It accepts only a valid rank-0 star edge, checks the sender
