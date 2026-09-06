@@ -1,6 +1,88 @@
 use mgbfs_runtime::{bootstrap::BootstrapRecord, control_handshake::RunIdentity};
 
 #[test]
+fn single_rank_needs_no_file_and_invalid_topology_never_creates_id() {
+    use mgbfs_runtime::bootstrap::rendezvous;
+    use std::time::Duration;
+    let unusable = std::path::Path::new("");
+    let group = rendezvous(
+        unusable,
+        0,
+        1,
+        record().identity,
+        Duration::from_secs(1),
+        || Ok([31; 128]),
+    )
+    .unwrap();
+    assert_eq!(group.nccl_id, [31; 128]);
+    assert_eq!(group.peers.len(), 1);
+    assert!(group.peers[0].is_none());
+    for (rank, world, timeout) in [
+        (0, 0, Duration::from_secs(1)),
+        (2, 2, Duration::from_secs(1)),
+        (0, 1, Duration::ZERO),
+    ] {
+        assert_eq!(
+            rendezvous(
+                unusable,
+                rank,
+                world,
+                record().identity,
+                timeout,
+                || panic!("invalid config reached NCCL ID creation")
+            )
+            .err()
+            .unwrap(),
+            "BOOTSTRAP_CONFIG"
+        );
+    }
+}
+
+#[test]
+fn file_rendezvous_shares_coordinator_nccl_id_and_control_connections() {
+    use mgbfs_runtime::bootstrap::rendezvous;
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-rendezvous-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        rendezvous(
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || panic!("peer cannot create NCCL ID"),
+        )
+        .unwrap()
+    });
+    let coordinator = rendezvous(
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    let peer = peer.join().unwrap();
+    assert_eq!(coordinator.nccl_id, [23; 128]);
+    assert_eq!(peer.nccl_id, coordinator.nccl_id);
+    assert!(coordinator.peers[1].is_some());
+    assert!(peer.peers[0].is_some());
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn incomplete_group_closes_previously_admitted_connections() {
     use mgbfs_runtime::bootstrap::BootstrapListener;
     use std::time::{Duration, Instant};

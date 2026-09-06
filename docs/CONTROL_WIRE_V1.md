@@ -132,6 +132,15 @@ by that call; success returns a preallocated rank-indexed vector with slot 0
 empty. It cannot be mixed with earlier individual admissions. TCP tests verify
 successful out-of-order group setup and peer EOF when another rank is absent.
 
+`rendezvous` composes publication, bounded waiting for a new file, validation,
+and group admission under one elapsed-time budget. Rank 0 alone calls the
+supplied NCCL-ID factory; peers read that ID from the validated record. One
+rank explicitly skips file/TCP setup. The returned `BootstrapGroup` owns the
+rank-indexed control sockets. The NCCL-ID factory and filesystem system calls
+are synchronous setup operations and cannot be forcibly cancelled by this
+budget; their elapsed time is checked before the next stage. This helper is
+tested with real files and TCP but remains unconnected to the GPU example.
+
 The codec and file primitives are tested locally; they are not yet connected
 to the existing `MGBNCCL1` reference example or the GPU dispatcher. No runtime
 bootstrap migration is claimed by these primitive tests.

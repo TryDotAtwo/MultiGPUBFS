@@ -3,6 +3,67 @@ use crate::control_handshake::RunIdentity;
 use mgbfs_core::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
+pub struct BootstrapGroup {
+    pub nccl_id: [u8; 128],
+    pub peers: Vec<Option<crate::control_connection::ControlConnection>>,
+}
+pub fn rendezvous(
+    path: &std::path::Path,
+    rank: u32,
+    world: u32,
+    identity: RunIdentity,
+    timeout: std::time::Duration,
+    create_id: impl FnOnce() -> Result<[u8; 128]>,
+) -> Result<BootstrapGroup> {
+    if world == 0 || rank >= world || timeout.is_zero() {
+        return Err("BOOTSTRAP_CONFIG".into());
+    }
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or("BOOTSTRAP_TIMEOUT")?;
+    let remaining = || {
+        deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| "BOOTSTRAP_TIMEOUT".to_string())
+    };
+    if rank == 0 {
+        let nccl_id = create_id()?;
+        remaining()?;
+        if world == 1 {
+            return Ok(BootstrapGroup {
+                nccl_id,
+                peers: vec![None],
+            });
+        }
+        let mut listener = BootstrapListener::bind(world, identity, nccl_id)?;
+        listener.record().publish(path)?;
+        let peers = listener.accept_all(remaining()?)?;
+        return Ok(BootstrapGroup { nccl_id, peers });
+    }
+    loop {
+        let left = remaining()?;
+        match std::fs::metadata(path) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::thread::sleep(left.min(std::time::Duration::from_millis(1)))
+            }
+            Err(e) => return Err(format!("BOOTSTRAP_METADATA: {e}")),
+        }
+    }
+    let record = BootstrapRecord::read(path, world, identity)?;
+    let mut peers = Vec::new();
+    peers
+        .try_reserve_exact(world as usize)
+        .map_err(|_| "BOOTSTRAP_CAPACITY")?;
+    peers.resize_with(world as usize, || None);
+    peers[0] = Some(record.connect(rank, remaining()?)?);
+    Ok(BootstrapGroup {
+        nccl_id: record.nccl_id,
+        peers,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BootstrapRecord {
     pub world: u32,
