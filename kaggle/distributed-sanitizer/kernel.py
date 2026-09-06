@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "b520a788e1ad6de3202e77dadf7bf59662f941c3"
+SOURCE = "a6956223110109f69a3a96249db37c70d5926103"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -54,6 +54,12 @@ def main():
         urllib.request.urlretrieve("https://sh.rustup.rs", installer)
         run(["sh", str(installer), "-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", "1.75.0"], "rust-install")
         env["PATH"] = str(root / "cargo/bin") + ":" + env["PATH"]
+        run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+             "--test", "bootstrap", "--test", "control_handshake",
+             "--test", "control_connection", "--test", "control_wire"],
+            "control-contracts", source)
+        report["control_contracts"] = "PASS_LINUX_TCP_AND_FILE_CONTRACTS"
+        save()
         build = source / "build/sanitizer"
         env["MGBFS_CUDA_LIB_DIR"] = str(build)
         env["LD_LIBRARY_PATH"] = str(build) + ":/usr/local/cuda/lib64:" + env.get("LD_LIBRARY_PATH", "")
