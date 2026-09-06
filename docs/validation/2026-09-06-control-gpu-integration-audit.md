@@ -79,3 +79,40 @@ the versioned command must carry source identity, or an explicitly specified
 all-rank count exchange must supply it. Do not infer the sender from ready-event
 arrival order. Tests must cover a source other than rank 0 with at least three
 ranks, since two-rank peer-XOR code conceals this missing information.
+
+## Follow-up at 002163d: source identity resolved, byte admission still missing
+
+Control wire schema 2 now carries `source_rank` at byte 48; receivers no longer
+infer it from `NO_SLOT`. CPU tests include an actual three-rank TCP star with
+source rank 2. Linux CI for source `bf486f1` and package `002163d` passed.
+Kaggle sanitizer version 32 is RUNNING, pinned to
+`bf486f1ee2e7a04663b42f7943bc6b1f6f20c9f9`; no hardware result is claimed yet.
+
+Inspection of `mgbfs_nccl_scatter` and `native_scatter.rs` establishes a narrower
+contract than the canonical architecture's admitted ticket:
+
+- The source checks the checked sum of destination byte sizes against send
+  capacity before opening an NCCL group.
+- A receiver supplies its own `recv_bytes`; the wrapper has no receive-capacity
+  argument and cannot establish agreement with the source's destination size.
+- The fixture supplies matching sizes out of band. It covers source 0/1,
+  exact device bytes, self views and empty traffic, not count negotiation.
+- `ControlFrame::Begin` contains no payload sizes and the pump does not bind
+  receive capacity to a ticket. Connecting it directly to scatter would not
+  satisfy the pre-launch admission contract.
+
+The next integration must carry authoritative per-destination, per-plane counts
+from a completed source count publication into a bounded ticket. Each receiver
+must check checked byte conversion and its reserved slot capacity, and every
+rank must acknowledge admission before any payload call is issued. Bind this
+acknowledgment to depth, epoch, source, plane and slot generation; a delayed
+acknowledgment cannot authorize a reused slot. Keep send/receive storage leased
+through transfer and consumer retirement respectively. Failure must poison the
+group, not truncate a size or launch only on the ranks that accepted it.
+
+Required tests before production connection: asymmetric/zero destination sizes,
+exact capacity and capacity+1, arithmetic overflow, stale/repeated admission,
+one rank rejecting while others accept, and identical NCCL issue order when
+admission for a later ticket becomes ready first. Metadata admission may wait
+for its own dependencies; it must not become a depth-wide barrier or a host
+`cudaStreamSynchronize` on the producer lane.
