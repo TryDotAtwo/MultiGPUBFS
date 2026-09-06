@@ -26,3 +26,27 @@ synchronize. This changes the fixture, not the production BFS dispatcher.
 Hardware validation is pending. Running Kaggle v37 uses the preceding source
 `d226dc9` and does NOT contain these new cross-stream waits. Do not restart that
 run or attribute its eventual result to this change.
+
+## Hardware result
+
+Kaggle v38 completed at `93cdf30f41e842e5ff04e7637267022dfb3b6132`
+(package `d6a37a1`). Two distinct Tesla T4s, 15360 MiB each:
+`GPU-725193e5-01aa-1dc6-ecd5-d9889c18a1cf` and
+`GPU-c009cfd5-fe86-6d83-fc97-df036b5fafbf`.
+
+The cross-stream fixture passes plain and all four sanitizer modes. All
+sanitizer error summaries are zero, including race warnings/hazards. Exact
+bytes match after both independent consumer events; empty epochs and source
+switching also pass. This establishes the tested event dependencies and
+lifetimes, not a measured overlap speedup or production BFS integration.
+
+Raw reconciliation on 2026-09-06:
+
+```text
+python test_results/audit_sanitizer_v30.py test_results/distributed-sanitizer-v38/distributed-sanitizer test_results/distributed-sanitizer-v38-summary/distributed-sanitizer/summary.json 93cdf30f41e842e5ff04e7637267022dfb3b6132
+```
+
+Result: `RAW_GATE_RECONCILED`, 40 tool logs, 36 measured rank results,
+36 warmup results and 36 archive verifiers. All 24 profile selections preserve
+S4 layers `[1,3,5,6,5,3,1]`; existing runtime, macro and archive regressions
+also pass. Only logs and metadata were downloaded locally. S13 was not rerun.
