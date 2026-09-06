@@ -80,3 +80,19 @@ bytes, short I/O, EOF, invalid fields, and actual loopback READY/BEGIN/COMPLETE
 exchange are covered, including nonblocking partial-frame arrival, peer
 independence, frame reuse, pending-send capacity/offsets, and terminal error poisoning. This is not a multi-GPU
 or Linux hardware gate.
+# Setup identity handshake
+
+`ControlConnection::accept_peer` / `connect_peer` exchange fixed 80-byte
+hellos before returning a nonblocking connection. Layout: magic `MGBHEL01`
+at 0, little-endian u32 version 1 at 8, world at 12, rank at 16,
+zero reserved bytes at 20..24, config digest at 24..56, run ID at 56..72,
+zero reserved bytes at 72..80. The coordinator replies with rank 0 only
+after validating the complete peer hello. One deadline covers both transfer
+directions; each partial transfer uses the remaining timeout.
+
+This is run-identity validation, not cryptographic authentication. The caller
+must provide the actual shared bootstrap identity and reject duplicate rank
+admission. Integration into the GPU dispatcher/bootstrap remains pending.
+Real loopback TCP tests cover matching identity followed by READY traffic and
+rejection of differing world, config digest, or run ID. Linux/GPU execution
+of this new handshake is not yet validated.

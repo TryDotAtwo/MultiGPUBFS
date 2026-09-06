@@ -2,6 +2,7 @@
 pub mod archive;
 pub mod benchmark;
 pub mod control_connection;
+pub mod control_handshake;
 pub mod control_wire;
 #[cfg(feature = "cuda")]
 pub mod dense_device;
