@@ -32,6 +32,24 @@ fn two_devices_scatter_exact_bytes_from_each_source_and_drain_empty_epochs() {
                     let payload = [11u8, 12, 13, 14, 21, 22, 23, 24];
                     assert_eq!(cudaMemcpy(send, payload.as_ptr().cast(), 8, 1), 0);
                     let sizes = [4u64, 4];
+                    // A rejected local capacity check must not enqueue an unmatched
+                    // receive. The following valid exchange must still match.
+                    if rank != source {
+                        assert_ne!(
+                            mgbfs_nccl_scatter(
+                                comm,
+                                source,
+                                send,
+                                8,
+                                sizes.as_ptr(),
+                                recv,
+                                5,
+                                4,
+                                stream
+                            ),
+                            0
+                        );
+                    }
                     assert_eq!(
                         mgbfs_nccl_scatter(
                             comm,
