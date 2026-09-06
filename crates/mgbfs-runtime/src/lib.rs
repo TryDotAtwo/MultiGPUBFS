@@ -24,6 +24,7 @@ pub mod native;
 pub mod owner;
 #[cfg(feature = "cuda")]
 pub mod pinned_archive;
+pub mod rank_epochs;
 pub mod receipts;
 pub mod ring;
 pub mod simulation;

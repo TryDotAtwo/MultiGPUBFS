@@ -7,6 +7,17 @@ setup integration passed the [v30 two-T4 gate](validation/2026-09-06-bootstrap-t
 This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.
 
+`rank_epochs::RankEpochs` now supplies bounded rank-local admission bookkeeping:
+exact offered slot selection, one sequence across planes, outstanding-source
+slot ownership, and conservative per-plane receive credits (including zero
+source offers). COMPLETE is produced after caller-proven consumer retirement,
+not merely transfer completion. FinalizeDepth advancement requires no pending
+offers/live epochs plus external local-drain confirmation; sequence survives
+depth rotation. Storage is allocated once; protocol errors poison the state.
+Four CPU tests cover these transitions. This component is not yet connected to
+ControlConnection or CUDA; it does not prove global credits, coordinator drain,
+actual event readiness or multi-GPU issue order.
+
 Each frame is exactly 64 bytes, little-endian, with no variable-length payload.
 The codec uses stack arrays on the successful path. It accepts a caller-owned
 `Read`/`Write` stream; the connection owner is responsible for bounded I/O
