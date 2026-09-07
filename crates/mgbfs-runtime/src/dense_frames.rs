@@ -1,6 +1,9 @@
 //! Fixed host descriptors for rank-contiguous DENSE payloads. Contains no
 //! states; successful preparation performs no allocations or device reads.
 use mgbfs_core::Result;
+/// Transport envelope: 64-byte schema2 header followed by zero padding, then
+/// the existing aligned payload planes. Empty destinations remain zero bytes.
+pub const DENSE_FRAME_PREFIX_BYTES: u64 = 256;
 
 #[derive(Clone, Copy, Default)]
 pub struct DenseFrame {
@@ -79,11 +82,18 @@ impl DenseFrames {
             if end > self.max_records {
                 return Err("DENSE_FRAME_RECORD_CAPACITY".into());
             }
-            let bytes = mgbfs_core::wire::payload_bytes(
+            let payload = mgbfs_core::wire::payload_bytes(
                 mgbfs_core::wire::FrameKind::Dense,
                 count,
                 u64::from(self.stride),
             )?;
+            let bytes = if count == 0 {
+                0
+            } else {
+                payload
+                    .checked_add(DENSE_FRAME_PREFIX_BYTES)
+                    .ok_or("DENSE_FRAME_BYTE_OVERFLOW")?
+            };
             let rank = self.owner_to_rank[owner] as usize;
             self.frames[rank] = DenseFrame {
                 begin,
@@ -117,7 +127,7 @@ impl DenseFrames {
         Ok(&self.sizes)
     }
     /// Fill caller-preallocated headers after BEGIN assigns the ticket epoch.
-    /// These are separate from the GPU payload planes. The caller must bind the
+    /// These describe the prefix separate from the GPU payload planes. The caller must bind the
     /// matching source bank, deliver/validate headers before consuming payload,
     /// and retain any pinned header storage through its transfer completion.
     /// This method encodes metadata; it does not send it or establish readiness.
@@ -152,8 +162,54 @@ impl DenseFrames {
         }
         Ok(())
     }
+    /// Bind headers to the assigned ticket, then enqueue their prefix writes.
+    /// Kernel arguments copy each 64-byte host header before the call returns.
+    ///
+    /// # Safety
+    /// Output is the same live, aligned source slot passed to enqueue_native(),
+    /// with at least configured capacity bytes. The key must belong to this
+    /// source bank. Enqueue on the communication stream before its NCCL scatter,
+    /// after payload packing readiness has been established. No readers may
+    /// access these prefixes yet. Retain storage through all native consumers.
+    #[cfg(feature = "cuda")]
+    pub unsafe fn enqueue_headers_native(
+        &mut self,
+        key: crate::scatter_admission::TicketKey,
+        run_tag: u64,
+        output: *mut u8,
+        stream: *mut std::ffi::c_void,
+    ) -> Result<()> {
+        let result = (|| {
+            let mut headers = [[0u8; 64]; 128]; // Bounded stack storage, not a heap allocation.
+            self.encode_headers(key, run_tag, &mut headers[..self.frames.len()])?;
+            if output.is_null() && self.frames.iter().any(|f| f.count != 0) {
+                return Err("DENSE_FRAME_NATIVE_POINTER".into());
+            }
+            for (frame, header) in self.frames.iter().zip(&headers) {
+                if frame.count == 0 {
+                    continue;
+                }
+                let status = mgbfs_cuda::ffi::mgbfs_frame_write_header(
+                    header.as_ptr(),
+                    output.add(frame.offset as usize),
+                    stream,
+                );
+                if status != 0 {
+                    return Err(format!("DENSE_FRAME_HEADER_NATIVE_{status}"));
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.failed = true;
+            self.prepared = false;
+        }
+        result
+    }
     /// Enqueue all destination frames directly into one admitted source slot.
     /// No allocation, host synchronization, or publication of READY occurs.
+    /// Prefixes are deliberately left untouched until enqueue_headers_native()
+    /// binds the later assigned ticket. Never scatter an unbound frame.
     ///
     /// # Safety
     /// Input arrays must be live device storage for source_count children and
@@ -195,8 +251,8 @@ impl DenseFrames {
                     sorted_count,
                     frame.begin,
                     frame.count,
-                    output.add(frame.offset as usize),
-                    frame.bytes,
+                    output.add((frame.offset + DENSE_FRAME_PREFIX_BYTES) as usize),
+                    frame.bytes - DENSE_FRAME_PREFIX_BYTES,
                     fatal,
                     stream,
                 );

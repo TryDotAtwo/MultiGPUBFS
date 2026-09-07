@@ -59,4 +59,7 @@ MGBFS_FRAME_HD inline bool mgbfs_dense_frame_word(
   }
   return true;
 }
+MGBFS_FRAME_HD inline uint32_t mgbfs_frame_prefix_word(const uint32_t* header, uint32_t word) {
+  return word < 16 ? header[word] : 0;
+}
 #undef MGBFS_FRAME_HD

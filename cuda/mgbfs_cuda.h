@@ -29,6 +29,13 @@ int mgbfs_exchange_pack_frame(uint32_t stride,const uint8_t* source_states,
     uint32_t source_count,const void* sorted_hashes,const uint64_t* sorted_refs,
     uint32_t sorted_count,uint32_t begin,uint32_t count,uint8_t* output,
     uint64_t output_capacity,uint32_t* fatal,void* stream);
+/* host_header is a HOST pointer to 64 encoded bytes, consumed before return.
+ * Kernel arguments own a copy; no asynchronous reference to host_header remains.
+ * device_prefix is a 256-byte aligned DEVICE range of at least 256 bytes.
+ * Writes the header and zeroes the remaining 192 bytes, on the given stream.
+ * Enqueue after ticket assignment and before NCCL; caller retains device storage.
+ */
+int mgbfs_frame_write_header(const uint8_t* host_header,uint8_t* device_prefix,void* stream);
 /* Pre-allocation queries. Host outputs, no cudaMalloc or CUDA launches.
  * Bytes exclude caller-owned input/output and allocator/runtime overhead.
  * Failed query zeroes output. Workspace is queried from the compiled GEMM.

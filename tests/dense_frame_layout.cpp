@@ -3,6 +3,10 @@
 #include <cstdio>
 
 int main() {
+  uint32_t header[16];
+  for (uint32_t i = 0; i < 16; ++i) header[i] = i + 5;
+  for (uint32_t i = 0; i < 64; ++i)
+    assert(mgbfs_frame_prefix_word(header, i) == (i < 16 ? i + 5 : 0));
   {
     MgbfsDenseFrameLayout layout{};
     assert(mgbfs_dense_frame_layout(3, 16, &layout) == 0);

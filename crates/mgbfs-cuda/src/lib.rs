@@ -276,6 +276,11 @@ pub mod ffi {
             fatal: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_frame_write_header(
+            host_header: *const u8,
+            device_prefix: *mut u8,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_exchange_pack(
             stride: u32,
             capacity: u32,

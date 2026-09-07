@@ -4,9 +4,9 @@ use mgbfs_runtime::dense_frames::DenseFrames;
 fn equal_padded_sizes_keep_distinct_record_counts_and_ticket_identity() {
     use mgbfs_core::wire::{ExpectedFrame, FrameHeader, FrameKind};
     use mgbfs_runtime::{control_wire::Plane, scatter_admission::TicketKey};
-    let mut plan = DenseFrames::new(&[1, 0], 16, 3, 1536).unwrap();
+    let mut plan = DenseFrames::new(&[1, 0], 16, 3, 2048).unwrap();
     plan.prepare(&[1, 2]).unwrap();
-    assert_eq!(plan.sizes().unwrap(), &[768, 768]);
+    assert_eq!(plan.sizes().unwrap(), &[1024, 1024]);
     let key = TicketKey {
         depth: 9,
         epoch: 99,
@@ -61,16 +61,16 @@ fn equal_padded_sizes_keep_distinct_record_counts_and_ticket_identity() {
 
 #[test]
 fn physical_rank_frames_preserve_logical_sorted_ranges_and_empty_peers() {
-    let mut plan = DenseFrames::new(&[2, 0, 1], 32, 18, 2304).unwrap();
+    let mut plan = DenseFrames::new(&[2, 0, 1], 32, 18, 2816).unwrap();
     plan.prepare(&[1, 0, 17]).unwrap();
-    assert_eq!(plan.sizes().unwrap(), &[0, 1536, 768]);
+    assert_eq!(plan.sizes().unwrap(), &[0, 1792, 1024]);
     let ranges: Vec<_> = plan
         .frames()
         .unwrap()
         .iter()
         .map(|f| (f.begin, f.count, f.offset, f.bytes))
         .collect();
-    assert_eq!(ranges, [(1, 0, 0, 0), (1, 17, 0, 1536), (0, 1, 1536, 768)]);
+    assert_eq!(ranges, [(1, 0, 0, 0), (1, 17, 0, 1792), (0, 1, 1792, 1024)]);
     plan.prepare(&[0, 0, 0]).unwrap();
     assert_eq!(plan.sizes().unwrap(), &[0, 0, 0]);
     assert!(plan
@@ -82,9 +82,9 @@ fn physical_rank_frames_preserve_logical_sorted_ranges_and_empty_peers() {
 
 #[test]
 fn capacity_failure_never_exposes_partial_or_previous_frame_metadata() {
-    let mut plan = DenseFrames::new(&[0, 1], 16, 3, 768).unwrap();
+    let mut plan = DenseFrames::new(&[0, 1], 16, 3, 1024).unwrap();
     plan.prepare(&[3, 0]).unwrap();
-    assert!(plan.prepare(&[1, 2]).is_err()); // Two nonempty frames need 1536 bytes.
+    assert!(plan.prepare(&[1, 2]).is_err()); // Two nonempty framed payloads need 2048 bytes.
     assert!(plan.frames().is_err());
     assert!(plan.sizes().is_err());
     assert!(plan.prepare(&[0, 0]).is_err());

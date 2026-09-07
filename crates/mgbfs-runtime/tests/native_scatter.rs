@@ -170,7 +170,7 @@ fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
         let mut stream = std::ptr::null_mut();
         assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
         let mut storage = [std::ptr::null_mut(); 5];
-        for (ptr, bytes) in storage.iter_mut().zip([64, 32, 64, 1536, 4]) {
+        for (ptr, bytes) in storage.iter_mut().zip([64, 32, 64, 2048, 4]) {
             assert_eq!(cudaMalloc(ptr, bytes), 0);
         }
         let [hashes, refs, states, output, fatal] = storage;
@@ -225,7 +225,7 @@ fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
         // Actual fixed descriptor plan -> native frame enqueue, with a swapped
         // owner map. The leading invalid input ref is outside this sorted view.
         let mut frames =
-            mgbfs_runtime::dense_frames::DenseFrames::new(&[1, 0], 16, 4, 1536).unwrap();
+            mgbfs_runtime::dense_frames::DenseFrames::new(&[1, 0], 16, 4, 2048).unwrap();
         frames.prepare(&[1, 2]).unwrap();
         frames
             .enqueue_native(
@@ -238,17 +238,42 @@ fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
                 stream,
             )
             .unwrap();
+        let key = TicketKey {
+            depth: 9,
+            epoch: 99,
+            source: 0,
+            plane: Plane::Candidate,
+            generation: 123,
+        };
+        frames
+            .enqueue_headers_native(key, 7, output.cast(), stream)
+            .unwrap();
         assert_eq!(cudaStreamSynchronize(stream), 0);
-        let mut routed = [0u8; 1536];
-        assert_eq!(cudaMemcpy(routed.as_mut_ptr().cast(), output, 1536, 2), 0);
-        let mut want = [0u8; 1536];
+        let mut routed = [0u8; 2048];
+        assert_eq!(cudaMemcpy(routed.as_mut_ptr().cast(), output, 2048, 2), 0);
+        let mut want = [0u8; 2048];
+        for rank in 0..2 {
+            let header = mgbfs_core::wire::FrameHeader {
+                kind: FrameKind::Dense,
+                run_tag: 7,
+                sequence: 99,
+                batch: 123,
+                depth: 9,
+                source: 0,
+                destination: rank,
+                count: if rank == 0 { 2 } else { 1 },
+            }
+            .encode(16)
+            .unwrap();
+            want[rank as usize * 1024..rank as usize * 1024 + 64].copy_from_slice(&header);
+        }
         for (offset, words) in [
-            (0, &[5u32, 6, 7, 8, 9, 10, 11, 12][..]),
-            (256, &[0u32, 2][..]),
-            (512, &[10u32, 11, 12, 13, 30, 31, 32, 33][..]),
-            (768, &[1u32, 2, 3, 4][..]),
-            (1024, &[3u32][..]),
-            (1280, &[40u32, 41, 42, 43][..]),
+            (256, &[5u32, 6, 7, 8, 9, 10, 11, 12][..]),
+            (512, &[0u32, 2][..]),
+            (768, &[10u32, 11, 12, 13, 30, 31, 32, 33][..]),
+            (1280, &[1u32, 2, 3, 4][..]),
+            (1536, &[3u32][..]),
+            (1792, &[40u32, 41, 42, 43][..]),
         ] {
             for (i, word) in words.iter().enumerate() {
                 want[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&word.to_le_bytes());

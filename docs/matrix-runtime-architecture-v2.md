@@ -622,6 +622,20 @@ explicit config; staging query includes Fwire*64 headers, 16*Fwire directory,
 and all planes. Count sums checked against E, never trusted from headers.
 Large states do not change Hash128 or OriginRef size.
 
+Native DENSE transport envelope: each nonempty destination range carries its
+64-byte MessageHeader in a 256-byte zero-padded prefix, followed by the above
+payload planes. The header's payload_bytes excludes this prefix; NCCL admission
+bytes include it. Empty destinations carry zero bytes and no header. Source and
+receive capacity plans must include 256 bytes per nonempty frame, not just the
+64 logical header bytes. Packing writes payload first; after BEGIN assigns the
+transport sequence, the source writes ticket-bound prefixes on the communication
+stream before scattering that same contiguous range. Header kernel arguments
+own the 64-byte host value; no temporary host pointer remains in flight. Owner
+consumption must validate header identity, count, padding and exact envelope
+length; equal padded byte lengths do not imply equal record counts. This is
+the framing contract for the new path, not a claim that the reference BFS has
+already migrated to it.
+
 FileHeader schema2: 4096 bytes, zero reserved. Offsets:
 magic0:8 bytes ASCII MGBFSAR2; schema8:u32=2; header_bytes12:u32=4096;
 config_digest16:32 bytes; run_uuid48:16 bytes; rank64:u32; W68:u32;
