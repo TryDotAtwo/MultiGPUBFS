@@ -37,5 +37,6 @@ pub mod ring;
 pub mod route_count;
 pub mod scatter_admission;
 pub mod simulation;
+pub mod source_banks;
 pub mod topology;
 pub mod transport;

@@ -47,3 +47,19 @@ must be accounted for before independently progressing ranks are enabled.
 No CUDA edits or new hardware run were made by this audit. Existing targeted
 CPU checks passed: control_pump 13, event_generation 8, jobs 2, payload_lease 7.
 These 30 checks do not cover the missing production integration.
+
+## Source identity implementation update
+
+`source_banks.rs` now reserves aligned source offsets before epoch assignment.
+The source token is monotonic and independent of physical slot and transport
+epoch. Ready batches may bind in a different order from allocation; a retired
+physical slot receives a new token. Errors poison the pool, and stale handles,
+wrong ticket identity, unready binding and duplicate live epochs are rejected.
+
+RED: the initial two tests failed to compile because the module was absent.
+GREEN: four source-bank tests pass, including malformed bindings, overflow and
+unbound retirement. The runtime CPU suite passed with the initial two tests;
+the expanded four-test target also passed. This is host bookkeeping only:
+event completion, device allocation and the production dispatcher are not
+implemented by this type. Pool handles must not be mixed between instances.
+No new Kaggle gate is warranted until this is connected to the data plane.
