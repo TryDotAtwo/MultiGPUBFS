@@ -443,8 +443,8 @@ fn hash_first_reference_preserves_full_archived_bfs_layers_on_two_devices() {
 // runtime, and leave archives without RunCommit. Removing the group fatal
 // vote or allowing failed runtimes to continue must fail this fixture.
 #[test]
-fn hash_first_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
-    for request_limited in [true, false] {
+fn owner_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
+    for (hash_first, request_limited) in [(true, true), (true, false), (false, false)] {
         let mut id = [0u8; 128];
         assert_eq!(
             unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
@@ -469,13 +469,19 @@ fn hash_first_capacity_failure_is_group_terminal_and_archives_stay_incomplete() 
                         prededup: true,
                         generation_variant: 1,
                     };
-                    let mut bfs = DistributedNativeBfs::new_hash_first_reference(
-                        &g,
-                        [0; 16],
-                        id,
-                        cfg,
-                        if request_limited { 1 } else { 64 },
-                    )
+                    let mut bfs = if hash_first {
+                        DistributedNativeBfs::new_hash_first_reference(
+                            &g,
+                            [0; 16],
+                            id,
+                            cfg,
+                            if request_limited { 1 } else { 64 },
+                        )
+                    } else {
+                        // DENSE submits all owner jobs before observing the
+                        // sticky fatal. No captured result may publish a layer.
+                        DistributedNativeBfs::new(&g, [0; 16], id, cfg)
+                    }
                     .unwrap();
                     let data = Arc::new(Mutex::new(Vec::new()));
                     let mut archive =

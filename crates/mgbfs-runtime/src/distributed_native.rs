@@ -339,6 +339,7 @@ pub struct DistributedNativeBfs {
     curr_dir: Vec<Range>,
     descriptors: Vec<BucketJob>,
     spans: Vec<JobSpan>,
+    dense_results: Vec<Extent>,
     front: Vec<Extent>,
     next: Vec<Extent>,
     collective_send: Buffer,
@@ -840,6 +841,7 @@ impl DistributedNativeBfs {
             curr_dir,
             descriptors: vec![BucketJob::default(); slots],
             spans: vec![JobSpan::default(); slots],
+            dense_results: vec![Extent::default(); slots],
             front,
             next: Vec::with_capacity(2),
             collective_send: b("collective_send")?,
@@ -1017,6 +1019,17 @@ impl DistributedNativeBfs {
                         extent,
                         s,
                     ))?;
+                    // All readers of these job descriptors have finished in
+                    // this stream. Reuse only this span's first 64-byte slot
+                    // for its extent; later spans occupy disjoint slots.
+                    check(cudaMemcpyAsync(
+                        jobs.cast(),
+                        self.extent.ptr,
+                        std::mem::size_of::<Extent>(),
+                        3,
+                        s,
+                    ))?;
+                    continue;
                 }
                 check(cudaStreamSynchronize(s))?;
             }
@@ -1029,7 +1042,7 @@ impl DistributedNativeBfs {
                     ring.capacity, control.survivors, ring.descriptor_head, ring.descriptor_tail
                 ));
             }
-            let mut extent = self.extent.one::<Extent>()?;
+            let extent = self.extent.one::<Extent>()?;
             if let Some(h) = self.hash_first.as_mut() {
                 if extent.ready != 0 || u64::from(h.count.one::<u32>()?) != extent.count {
                     return Err("HASH_FIRST_REQUEST_PUBLICATION".into());
@@ -1038,26 +1051,27 @@ impl DistributedNativeBfs {
                 append_extent(&mut h.pending_extents[source_group], extent)?;
                 continue;
             }
-            if extent.ready != 1 {
-                return Err("STATE_NOT_READY".into());
+        }
+        if self.hash_first.is_none() {
+            // Every owner error is propagated into the sticky ring fatal by
+            // reserve/materialize before the next job can commit. Never
+            // publish captured results when any job failed.
+            check(unsafe { cudaStreamSynchronize(s) })?;
+            let ring = self.ring.one::<Ring>()?;
+            if ring.fatal != 0 {
+                return Err(format!(
+                    "NATIVE_OWNER_FATAL_{} rank={} depth={} ring_head={} ring_tail={} ring_capacity={} descriptor_head={} descriptor_tail={}",
+                    ring.fatal, self.cfg.rank, self.depth, ring.head, ring.tail,
+                    ring.capacity, ring.descriptor_head, ring.descriptor_tail
+                ));
             }
-            if extent.count != 0 {
-                extent.padding[1] = extent.descriptor;
-                if self.next.last().is_some_and(|last| {
-                    last.begin + last.count == extent.begin
-                        && last.sequence + last.count == extent.sequence
-                }) {
-                    let last = self.next.last_mut().unwrap();
-                    last.count += extent.count;
-                    last.granted_rows = last.count as u32;
-                    last.padding[1] = extent.descriptor;
-                } else {
-                    if self.next.len() == self.next.capacity() {
-                        return Err("HOST_EXTENT_CAPACITY".into());
-                    }
-                    self.next.push(extent);
-                }
-            }
+            self.jobs_gpu
+                .read(&mut self.dense_results[..descriptor_count])?;
+            crate::owner_results::append_dense_results(
+                &self.dense_results[..descriptor_count],
+                &self.spans[..span_count],
+                &mut self.next,
+            )?;
         }
         Ok(())
     }

@@ -30,6 +30,7 @@ pub mod macro_simulation;
 #[cfg(feature = "cuda")]
 pub mod native;
 pub mod owner;
+pub mod owner_results;
 pub mod payload_lease;
 #[cfg(feature = "cuda")]
 pub mod pinned_archive;
