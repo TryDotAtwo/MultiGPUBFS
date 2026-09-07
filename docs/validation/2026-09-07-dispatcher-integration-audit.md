@@ -77,3 +77,24 @@ Admitted mode now preallocates `12*slots+1` command entries: three commands
 finalization command. Dispatch still refuses growth. Legacy mode is unchanged.
 The reproducer failed before the change and passed afterward; all 14
 ControlPump tests pass. No new performance or full-dispatcher claim follows.
+
+## Host buffer adapter
+
+`admitted_buffers.rs` now joins the existing ControlPump, SourceBanks and
+PayloadBanks rather than introducing another sequencer. Four independent
+traffic-plane pools have preallocated source descriptions and live-ticket
+records. BEGIN binds the producer token, TicketBytes reserves receive storage
+before ACK, and only LAUNCH exposes the corresponding work descriptor.
+Consumer drain releases both the receive lease and the source self-view.
+Local adapter errors drop the control pump and close its TCP connections;
+the caller still must abort NCCL and stop device submissions.
+
+Six CPU tests pass, including actual two-rank TCP with an empty receiver and
+delayed source-view consumption. RED tests exposed and fixed premature access
+before LAUNCH, source closure while generation was unoffered, reservation
+after source closure, and finalization ignoring reserved response storage.
+
+This remains a host adapter, not an executable GPU dispatcher. Device buffers,
+NativeEvent bindings, NCCL submission arguments, full allocation-ledger wiring,
+and integration into DENSE/HASH_FIRST BFS are still pending. No hardware or
+performance claim is attached to these CPU results.

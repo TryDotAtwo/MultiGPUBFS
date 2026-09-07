@@ -1,4 +1,5 @@
 //! Native scheduling contracts. CPU models are verification tools, not GPU fallbacks.
+pub mod admitted_buffers;
 pub mod archive;
 pub mod benchmark;
 pub mod bootstrap;
