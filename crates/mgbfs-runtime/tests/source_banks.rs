@@ -17,6 +17,7 @@ fn admitted_pump_binds_ready_token_to_original_source_bank() {
     }
     let mut banks = SourceBanks::new(0, 2, 257).unwrap();
     let mut pump = ControlPump::new_admitted(1, 0, 2, vec![None], [257; 4]).unwrap();
+    let mut receive = mgbfs_runtime::payload_lease::PayloadBanks::new(1, 2, 257, 1, 256).unwrap();
     let slow = banks.reserve(0).unwrap().unwrap();
     let fast = banks.reserve(0).unwrap().unwrap();
     banks.ready(fast).unwrap();
@@ -36,12 +37,19 @@ fn admitted_pump_binds_ready_token_to_original_source_bank() {
     pump.describe_bytes(begin, &[16]).unwrap();
     let ticket = command(&mut pump);
     assert_eq!(ticket.action, Action::TicketBytes);
+    let receive_bank = receive.reserve(key, ticket.payload_bytes).unwrap().unwrap();
+    let consumer = receive.consumer(receive_bank).unwrap();
+    receive.seal(receive_bank).unwrap();
     pump.admit_bytes(ticket, 257).unwrap();
     let launch = command(&mut pump);
     assert_eq!(launch.action, Action::Launch);
     assert_eq!(launch.slot, fast.token());
     pump.transfer_complete(key.epoch).unwrap();
     assert!(banks.reserve(0).unwrap().is_none());
+    assert!(!receive.drained(receive_bank).unwrap());
+    receive.complete(consumer).unwrap();
+    assert!(receive.drained(receive_bank).unwrap());
+    receive.retire(receive_bank).unwrap();
     banks.retire(bound, key).unwrap();
     pump.consumed(key.epoch).unwrap();
     let reused = banks.reserve(0).unwrap().unwrap();
