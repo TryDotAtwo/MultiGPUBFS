@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "45899cff53c4595e9c485d9ef2f3be1a2098f750"
+SOURCE = "9c59e73a8eeb40a451ad1226a99906fdc8387ed7"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -110,12 +110,13 @@ def main():
             raise RuntimeError("AMBIGUOUS_SCATTER_TEST_BINARY")
         report["scatter_scope"] = "two T4; admitted ControlPump and NCCL; PayloadBanks checked aligned allocation and physical receive offsets; bank reservation before byte ACK; two live banks; ordered transfer COMPLETE with reversed consumer retirement; sealed fanout; two D2D readers on separate nonblocking streams with generation-bound waits before host query; per-consumer events; exact bytes; both sources with decreasing source tokens; source view; zero payload; capacity rejection; health; Finalize/Publish; repeated abort; physical-bank lifetime gate, not production BFS or speed proof"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            report["dense_frame_scope"] = "single-device direct DENSE schema2 gather; exact hashes/ordinals/states and zero padding; nonzero sorted begin; invalid source reference device fatal; capacity/range rejection; empty frame; not yet connected to production BFS"
             report["admitted_adapter_scope"] = "native ordered submission; preallocated source/receive pools; exact bytes including nonzero self-view prefix; both sources; empty payload; two depths; transport-only, not production BFS overlap"
             scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 scatter_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + scatter_cmd
             scatter_output = run(scatter_cmd, "scatter-" + tool, source)
-            require_fixture(scatter_output, 2)
+            require_fixture(scatter_output, 3)
             require_clean(tool, scatter_output)
             if tool != "plain":
                 leaf = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
