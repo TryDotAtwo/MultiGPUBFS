@@ -63,3 +63,17 @@ the expanded four-test target also passed. This is host bookkeeping only:
 event completion, device allocation and the production dispatcher are not
 implemented by this type. Pool handles must not be mixed between instances.
 No new Kaggle gate is warranted until this is connected to the data plane.
+
+## Admitted command queue regression
+
+A real two-rank TCP test delayed rank zero's command consumer while rank one
+offered two tickets on each of four planes. Eight BEGIN plus eight TicketBytes
+commands exceeded the legacy `4*slots+1` bound (9 for this setup), causing
+`CONTROL_COMMAND_CAPACITY` despite valid receive credits. This is a host
+metadata sizing error, not GPU exhaustion.
+
+Admitted mode now preallocates `12*slots+1` command entries: three commands
+(BEGIN, TicketBytes, LAUNCH) per live ticket across four planes, plus the
+finalization command. Dispatch still refuses growth. Legacy mode is unchanged.
+The reproducer failed before the change and passed afterward; all 14
+ControlPump tests pass. No new performance or full-dispatcher claim follows.

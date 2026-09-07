@@ -235,6 +235,53 @@ fn three_tcp_ranks_receive_identical_source_identity() {
     }
 }
 
+#[test]
+fn admitted_commands_fit_all_begin_and_ticket_frames_before_consumer_poll() {
+    let mut pumps = admitted_pair();
+    for plane in [
+        Plane::Candidate,
+        Plane::Request,
+        Plane::Response,
+        Plane::Receipt,
+    ] {
+        for slot in 0..2 {
+            pumps[1].offer(plane, slot).unwrap();
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut described = 0;
+    let mut tickets = 0;
+    while tickets < 8 {
+        pumps[0].poll().unwrap();
+        pumps[1].poll().unwrap();
+        if let Some(f) = pumps[1].command().unwrap() {
+            match f.action {
+                Action::Begin => {
+                    pumps[1].describe_bytes(f, &[0, 0]).unwrap();
+                    described += 1;
+                }
+                Action::TicketBytes => {
+                    tickets += 1;
+                }
+                _ => panic!("unexpected command"),
+            }
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(described, 8);
+    // Rank zero has not dispatched any consumer commands yet. All eight
+    // BEGIN plus eight TicketBytes entries must fit in preallocated storage.
+    let mut received = 0;
+    while received < 16 {
+        pumps[0].poll().unwrap();
+        if pumps[0].command().unwrap().is_some() {
+            received += 1;
+        }
+        assert!(Instant::now() < deadline);
+    }
+}
+
 fn admitted_pair() -> [ControlPump; 2] {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();

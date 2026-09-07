@@ -42,6 +42,18 @@ impl ControlPump {
             slots,
             send_capacities,
         )?);
+        // Each of four traffic planes can retain `slots` live epochs, with
+        // BEGIN, TicketBytes and LAUNCH commands per epoch. Socket progress
+        // may queue these before the device dispatcher consumes commands.
+        // Reserve during setup, never grow the queue in dispatch().
+        let command_capacity = slots
+            .checked_mul(12)
+            .and_then(|n| n.checked_add(1))
+            .ok_or("CONTROL_PUMP_CAPACITY")?;
+        pump.commands
+            .try_reserve_exact(command_capacity)
+            .map_err(|_| "CONTROL_PUMP_CAPACITY")?;
+        pump.command_capacity = command_capacity;
         // One source emits world descriptions per ticket. All queues remain
         // bounded and allocated before any offers; no hot-path queue growth.
         let capacity = slots
