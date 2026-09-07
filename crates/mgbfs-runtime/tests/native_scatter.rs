@@ -170,7 +170,7 @@ fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
         let mut stream = std::ptr::null_mut();
         assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
         let mut storage = [std::ptr::null_mut(); 5];
-        for (ptr, bytes) in storage.iter_mut().zip([64, 32, 64, 768, 4]) {
+        for (ptr, bytes) in storage.iter_mut().zip([64, 32, 64, 1536, 4]) {
             assert_eq!(cudaMalloc(ptr, bytes), 0);
         }
         let [hashes, refs, states, output, fatal] = storage;
@@ -222,6 +222,39 @@ fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
         let mut code = 99u32;
         assert_eq!(cudaMemcpy((&mut code as *mut u32).cast(), fatal, 4, 2), 0);
         assert_eq!(code, 0);
+        // Actual fixed descriptor plan -> native frame enqueue, with a swapped
+        // owner map. The leading invalid input ref is outside this sorted view.
+        let mut frames =
+            mgbfs_runtime::dense_frames::DenseFrames::new(&[1, 0], 16, 4, 1536).unwrap();
+        frames.prepare(&[1, 2]).unwrap();
+        frames
+            .enqueue_native(
+                states.cast(),
+                4,
+                hashes.cast::<u8>().add(16).cast(),
+                refs.cast::<u64>().add(1),
+                output.cast(),
+                fatal.cast(),
+                stream,
+            )
+            .unwrap();
+        assert_eq!(cudaStreamSynchronize(stream), 0);
+        let mut routed = [0u8; 1536];
+        assert_eq!(cudaMemcpy(routed.as_mut_ptr().cast(), output, 1536, 2), 0);
+        let mut want = [0u8; 1536];
+        for (offset, words) in [
+            (0, &[5u32, 6, 7, 8, 9, 10, 11, 12][..]),
+            (256, &[0u32, 2][..]),
+            (512, &[10u32, 11, 12, 13, 30, 31, 32, 33][..]),
+            (768, &[1u32, 2, 3, 4][..]),
+            (1024, &[3u32][..]),
+            (1280, &[40u32, 41, 42, 43][..]),
+        ] {
+            for (i, word) in words.iter().enumerate() {
+                want[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        assert_eq!(routed, want);
         assert_ne!(
             mgbfs_exchange_pack_frame(
                 16,

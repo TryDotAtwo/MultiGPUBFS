@@ -12,6 +12,7 @@ pub mod control_pump;
 pub mod control_wire;
 #[cfg(feature = "cuda")]
 pub mod dense_device;
+pub mod dense_frames;
 pub mod distributed_memory;
 #[cfg(feature = "cuda")]
 pub mod distributed_native;
