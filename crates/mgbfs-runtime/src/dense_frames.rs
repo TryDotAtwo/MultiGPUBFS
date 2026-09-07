@@ -79,17 +79,11 @@ impl DenseFrames {
             if end > self.max_records {
                 return Err("DENSE_FRAME_RECORD_CAPACITY".into());
             }
-            let mut bytes = 0u64;
-            for width in [16, 4, u64::from(self.stride)] {
-                let plane = u64::from(count)
-                    .checked_mul(width)
-                    .and_then(|n| n.checked_add(255))
-                    .ok_or("DENSE_FRAME_BYTE_OVERFLOW")?
-                    & !255;
-                bytes = bytes
-                    .checked_add(plane)
-                    .ok_or("DENSE_FRAME_BYTE_OVERFLOW")?;
-            }
+            let bytes = mgbfs_core::wire::payload_bytes(
+                mgbfs_core::wire::FrameKind::Dense,
+                count,
+                u64::from(self.stride),
+            )?;
             let rank = self.owner_to_rank[owner] as usize;
             self.frames[rank] = DenseFrame {
                 begin,
@@ -121,6 +115,42 @@ impl DenseFrames {
     pub fn sizes(&self) -> Result<&[u64]> {
         self.frames()?;
         Ok(&self.sizes)
+    }
+    /// Fill caller-preallocated headers after BEGIN assigns the ticket epoch.
+    /// These are separate from the GPU payload planes. The caller must bind the
+    /// matching source bank, deliver/validate headers before consuming payload,
+    /// and retain any pinned header storage through its transfer completion.
+    /// This method encodes metadata; it does not send it or establish readiness.
+    pub fn encode_headers(
+        &self,
+        key: crate::scatter_admission::TicketKey,
+        run_tag: u64,
+        out: &mut [[u8; 64]],
+    ) -> Result<()> {
+        use mgbfs_core::wire::{FrameHeader, FrameKind};
+        self.frames()?;
+        if key.plane != crate::control_wire::Plane::Candidate
+            || key.source as usize >= self.frames.len()
+            || out.len() != self.frames.len()
+            || key.generation == crate::control_wire::NO_SLOT
+        {
+            return Err("DENSE_FRAME_HEADER_TICKET".into());
+        }
+        let depth = u32::try_from(key.depth).map_err(|_| "DENSE_FRAME_HEADER_DEPTH")?;
+        for (rank, (frame, bytes)) in self.frames.iter().zip(out).enumerate() {
+            *bytes = FrameHeader {
+                kind: FrameKind::Dense,
+                run_tag,
+                sequence: key.epoch,
+                batch: key.generation,
+                depth,
+                source: key.source,
+                destination: rank as u32,
+                count: frame.count,
+            }
+            .encode(u64::from(self.stride))?;
+        }
+        Ok(())
     }
     /// Enqueue all destination frames directly into one admitted source slot.
     /// No allocation, host synchronization, or publication of READY occurs.

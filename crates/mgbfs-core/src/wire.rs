@@ -47,6 +47,20 @@ pub struct PayloadLayout {
     pub bytes: u64,
 }
 pub fn payload_layout(kind: FrameKind, count: u32, stride: u64) -> Result<PayloadLayout> {
+    let mut planes = Vec::with_capacity(3);
+    let bytes = visit_payload(kind, count, stride, |plane| planes.push(plane))?;
+    Ok(PayloadLayout { planes, bytes })
+}
+/// Allocation-free byte calculation for live transport metadata.
+pub fn payload_bytes(kind: FrameKind, count: u32, stride: u64) -> Result<u64> {
+    visit_payload(kind, count, stride, |_| {})
+}
+fn visit_payload(
+    kind: FrameKind,
+    count: u32,
+    stride: u64,
+    mut visit: impl FnMut(Plane),
+) -> Result<u64> {
     if stride == 0 || stride % 16 != 0 {
         return Err("WIRE_STATE_STRIDE".into());
     }
@@ -59,25 +73,19 @@ pub fn payload_layout(kind: FrameKind, count: u32, stride: u64) -> Result<Payloa
         FrameKind::Response => &response,
         FrameKind::Receipt => &[32],
     };
-    let mut result = PayloadLayout {
-        planes: Vec::with_capacity(sizes.len()),
-        bytes: 0,
-    };
+    let mut offset = 0u64;
     for &s in sizes {
         let bytes = s.checked_mul(count as u64).ok_or("WIRE_BYTE_OVERFLOW")?;
         let reserved = bytes.checked_add(255).ok_or("WIRE_BYTE_OVERFLOW")? & !255;
-        let end = result
-            .bytes
-            .checked_add(reserved)
-            .ok_or("WIRE_BYTE_OVERFLOW")?;
-        result.planes.push(Plane {
-            offset: result.bytes,
+        let end = offset.checked_add(reserved).ok_or("WIRE_BYTE_OVERFLOW")?;
+        visit(Plane {
+            offset,
             bytes,
             reserved,
         });
-        result.bytes = end;
+        offset = end;
     }
-    Ok(result)
+    Ok(offset)
 }
 impl FrameHeader {
     pub fn encode(self, stride: u64) -> Result<[u8; 64]> {
@@ -97,7 +105,7 @@ impl FrameHeader {
             (16, self.run_tag),
             (24, self.sequence),
             (32, self.batch),
-            (56, payload_layout(self.kind, self.count, stride)?.bytes),
+            (56, payload_bytes(self.kind, self.count, stride)?),
         ] {
             b[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
         }
@@ -145,7 +153,7 @@ impl FrameHeader {
         if h.count > expected.max_records || u64_at(56) > expected.max_payload {
             return Err("WIRE_CAPACITY".into());
         }
-        if payload_layout(h.kind, h.count, expected.state_stride)?.bytes != u64_at(56) {
+        if payload_bytes(h.kind, h.count, expected.state_stride)? != u64_at(56) {
             return Err("WIRE_PAYLOAD_SIZE".into());
         }
         Ok(h)
