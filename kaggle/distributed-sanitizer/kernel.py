@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "ebcbb9998d52689c53d50bbd1dd7cc23243cca22"
+SOURCE = "45899cff53c4595e9c485d9ef2f3be1a2098f750"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -58,7 +58,8 @@ def main():
              "--test", "bootstrap", "--test", "control_handshake",
              "--test", "control_connection", "--test", "control_wire",
              "--test", "control_pump", "--test", "rank_epochs",
-             "--test", "epoch_coordinator", "--test", "failure_abort"],
+            "--test", "epoch_coordinator", "--test", "failure_abort",
+             "--test", "admitted_buffers", "--test", "source_banks"],
             "control-contracts", source)
         report["control_contracts"] = "PASS_LINUX_TCP_AND_FILE_CONTRACTS"
         save()
@@ -103,11 +104,12 @@ def main():
             raise RuntimeError("AMBIGUOUS_SCATTER_TEST_BINARY")
         report["scatter_scope"] = "two T4; admitted ControlPump and NCCL; PayloadBanks checked aligned allocation and physical receive offsets; bank reservation before byte ACK; two live banks; ordered transfer COMPLETE with reversed consumer retirement; sealed fanout; two D2D readers on separate nonblocking streams with generation-bound waits before host query; per-consumer events; exact bytes; both sources with decreasing source tokens; source view; zero payload; capacity rejection; health; Finalize/Publish; repeated abort; physical-bank lifetime gate, not production BFS or speed proof"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            report["admitted_adapter_scope"] = "native ordered submission; preallocated source/receive pools; exact bytes including nonzero self-view prefix; both sources; empty payload; two depths; transport-only, not production BFS overlap"
             scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 scatter_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + scatter_cmd
             scatter_output = run(scatter_cmd, "scatter-" + tool, source)
-            if "1 passed; 0 failed" not in scatter_output:
+            if "2 passed; 0 failed" not in scatter_output:
                 raise RuntimeError("SCATTER_FIXTURE_NOT_PASSED")
             require_clean(tool, scatter_output)
             if tool != "plain":
