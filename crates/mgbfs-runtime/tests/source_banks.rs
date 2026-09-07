@@ -1,6 +1,54 @@
 use mgbfs_runtime::{control_wire::Plane, scatter_admission::TicketKey, source_banks::SourceBanks};
 
 #[test]
+fn admitted_pump_binds_ready_token_to_original_source_bank() {
+    use mgbfs_runtime::{
+        control_pump::ControlPump,
+        control_wire::{Action, ControlFrame},
+    };
+    fn command(p: &mut ControlPump) -> ControlFrame {
+        for _ in 0..64 {
+            p.poll().unwrap();
+            if let Some(f) = p.command().unwrap() {
+                return f;
+            }
+        }
+        panic!("single-rank command did not progress");
+    }
+    let mut banks = SourceBanks::new(0, 2, 257).unwrap();
+    let mut pump = ControlPump::new_admitted(1, 0, 2, vec![None], [257; 4]).unwrap();
+    let slow = banks.reserve(0).unwrap().unwrap();
+    let fast = banks.reserve(0).unwrap().unwrap();
+    banks.ready(fast).unwrap();
+    pump.offer(Plane::Candidate, fast.token()).unwrap();
+    let begin = command(&mut pump);
+    assert_eq!(begin.action, Action::Begin);
+    let key = TicketKey {
+        depth: begin.depth,
+        epoch: begin.epoch,
+        source: begin.source_rank,
+        plane: begin.plane,
+        generation: begin.slot,
+    };
+    let bound = banks.bind_ticket(key).unwrap();
+    assert_eq!(banks.offset(bound).unwrap(), 512);
+    assert_eq!(banks.offset(slow).unwrap(), 0);
+    pump.describe_bytes(begin, &[16]).unwrap();
+    let ticket = command(&mut pump);
+    assert_eq!(ticket.action, Action::TicketBytes);
+    pump.admit_bytes(ticket, 257).unwrap();
+    let launch = command(&mut pump);
+    assert_eq!(launch.action, Action::Launch);
+    assert_eq!(launch.slot, fast.token());
+    pump.transfer_complete(key.epoch).unwrap();
+    assert!(banks.reserve(0).unwrap().is_none());
+    banks.retire(bound, key).unwrap();
+    pump.consumed(key.epoch).unwrap();
+    let reused = banks.reserve(0).unwrap().unwrap();
+    assert_eq!(banks.offset(reused).unwrap(), 512);
+}
+
+#[test]
 fn producer_banks_bind_in_ready_order_not_allocation_order() {
     let mut banks = SourceBanks::new(0, 2, 257).unwrap();
     let a = banks.reserve(0).unwrap().unwrap();

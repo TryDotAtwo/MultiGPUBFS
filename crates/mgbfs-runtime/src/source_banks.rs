@@ -118,6 +118,21 @@ impl SourceBanks {
             Ok(())
         })
     }
+    /// Resolve a source-local BEGIN token without assuming epoch or ready order
+    /// equals physical bank order. The caller must validate the control frame.
+    pub fn bind_ticket(&mut self, ticket: TicketKey) -> Result<SourceBank> {
+        self.apply(|s| {
+            let bank = s
+                .slots
+                .iter()
+                .flatten()
+                .find(|x| x.bank.token == ticket.generation)
+                .map(|x| x.bank)
+                .ok_or("SOURCE_TICKET")?;
+            s.bind(bank, ticket)?;
+            Ok(bank)
+        })
+    }
     pub fn bind(&mut self, bank: SourceBank, ticket: TicketKey) -> Result<()> {
         self.apply(|s| {
             if ticket.source != s.rank
