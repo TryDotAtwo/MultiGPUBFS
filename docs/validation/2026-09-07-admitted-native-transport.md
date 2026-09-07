@@ -2,7 +2,9 @@
 
 Source: `45899cff53c4595e9c485d9ef2f3be1a2098f750`.
 Kaggle package: `190c86f`, private `trydotatwo/mgbfs-distributed-sanitizer`
-version 41. Hardware result is pending; RUNNING is not a correctness result.
+version 41. Kaggle execution completed and the full downloaded raw regression
+artifacts were reconciled with the pinned source. Only logs and JSON metadata
+were downloaded; state archives were not copied to this workstation.
 
 The adapter now enforces globally ordered, once-only submission before transfer
 completion. Submission failure poisons the adapter and closes its control
@@ -24,14 +26,36 @@ The same consumer lease protects either range. A view is not a readiness proof.
 - GitHub run `34106908360` completed successfully, including Linux Rust 1.75
   CUDA-feature type checking. It does not link or execute CUDA.
 
-## Hardware test under execution
+## Hardware transport result
 
 The added `admitted_adapter_native_scatter_and_depth_rollover` test uses two
 actual devices, both source ranks, nonempty and empty payloads, and two depths.
 It checks exact received bytes and the nonzero source self-view prefix.
 The v41 package requires both native scatter tests to pass under plain execution,
 memcheck, racecheck, initcheck and synccheck, in addition to existing BFS archive
-regressions. No result has yet been claimed for v41.
+regressions. Both transport tests passed in all five modes (10 executions).
+The downloaded raw scatter logs pass the stricter exact test-count parser and
+sanitizer error/hazard checks, not just the notebook's summary flag.
+
+The summary identifies two distinct Tesla T4 devices, each 15360 MiB:
+
+- `GPU-0df51b1f-5ae5-f52d-cead-721f987d6e61`
+- `GPU-75ee57f7-0817-1ff2-263a-21ea6da7b425`
+
+All five overall modes are PASS, with raw reconciliation covering 40 tool logs,
+36 measured rank records, 36 warmup rank records and 36 archive verifiers. The
+source-sha log matches the pinned source above. All 24 reference profile smoke
+selections preserve the expected complete layer counts `[1,3,5,6,5,3,1]`.
+
+Reconciliation command (the final argument requires two scatter tests):
+
+```powershell
+python test_results/audit_sanitizer_v30.py test_results/distributed-sanitizer-v41/distributed-sanitizer test_results/distributed-sanitizer-v41-summary/distributed-sanitizer/summary.json 45899cff53c4595e9c485d9ef2f3be1a2098f750 2
+```
+
+Result: `RAW_GATE_RECONCILED`. The new adapter test serially exercises
+its payloads; concurrency remains covered only by the older lower-level test.
+Neither test establishes end-to-end production BFS overlap.
 
 ## Production integration boundary
 
