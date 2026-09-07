@@ -1,6 +1,6 @@
 #![cfg(feature = "cuda")]
 use mgbfs_cuda::ffi::*;
-use mgbfs_cuda::native_owner::cudaMemcpyAsync;
+use mgbfs_cuda::native_owner::{cudaMemcpyAsync, cudaSetDevice};
 use mgbfs_runtime::{
     admitted_buffers::{AdmittedBuffers, BufferEvent},
     control_connection::ControlConnection,
@@ -161,6 +161,146 @@ use std::{
     net::{TcpListener, TcpStream},
     time::{Duration, Instant},
 };
+
+#[test]
+fn dense_frame_gpu_gather_matches_schema2_without_intermediate_states() {
+    use mgbfs_core::wire::{payload_layout, validate_payload, FrameKind};
+    unsafe {
+        assert_eq!(cudaSetDevice(0), 0);
+        let mut stream = std::ptr::null_mut();
+        assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+        let mut storage = [std::ptr::null_mut(); 5];
+        for (ptr, bytes) in storage.iter_mut().zip([64, 32, 64, 768, 4]) {
+            assert_eq!(cudaMalloc(ptr, bytes), 0);
+        }
+        let [hashes, refs, states, output, fatal] = storage;
+        let hash_words = [99u32, 99, 99, 99, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let reference_words = [99u64, 3, 0, 2];
+        let state_words = [
+            10u32, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33, 40, 41, 42, 43,
+        ];
+        assert_eq!(cudaMemcpy(hashes, hash_words.as_ptr().cast(), 64, 1), 0);
+        assert_eq!(cudaMemcpy(refs, reference_words.as_ptr().cast(), 32, 1), 0);
+        assert_eq!(cudaMemcpy(states, state_words.as_ptr().cast(), 64, 1), 0);
+        assert_eq!(cudaMemsetAsync(fatal, 0, 4, stream), 0);
+        assert_eq!(cudaMemsetAsync(output, 0xff, 768, stream), 0);
+        assert_eq!(
+            mgbfs_exchange_pack_frame(
+                16,
+                states.cast(),
+                4,
+                hashes,
+                refs.cast(),
+                4,
+                1,
+                3,
+                output.cast(),
+                768,
+                fatal.cast(),
+                stream
+            ),
+            0
+        );
+        assert_eq!(cudaStreamSynchronize(stream), 0);
+        let mut actual = [0u8; 768];
+        assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), output, 768, 2), 0);
+        let mut expected = [0u8; 768];
+        for (i, word) in (1u32..=12).enumerate() {
+            expected[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        for (i, word) in [3u32, 0, 2].iter().enumerate() {
+            expected[256 + i * 4..260 + i * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        for (i, word) in [40u32, 41, 42, 43, 10, 11, 12, 13, 30, 31, 32, 33]
+            .iter()
+            .enumerate()
+        {
+            expected[512 + i * 4..516 + i * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        assert_eq!(actual, expected);
+        validate_payload(&actual, &payload_layout(FrameKind::Dense, 3, 16).unwrap()).unwrap();
+        let mut code = 99u32;
+        assert_eq!(cudaMemcpy((&mut code as *mut u32).cast(), fatal, 4, 2), 0);
+        assert_eq!(code, 0);
+        assert_ne!(
+            mgbfs_exchange_pack_frame(
+                16,
+                states.cast(),
+                4,
+                hashes,
+                refs.cast(),
+                4,
+                1,
+                3,
+                output.cast(),
+                767,
+                fatal.cast(),
+                stream
+            ),
+            0
+        );
+        assert_ne!(
+            mgbfs_exchange_pack_frame(
+                16,
+                states.cast(),
+                4,
+                hashes,
+                refs.cast(),
+                4,
+                3,
+                3,
+                output.cast(),
+                768,
+                fatal.cast(),
+                stream
+            ),
+            0
+        );
+        // Valid enqueue with an invalid reference must report a device fatal,
+        // not read the out-of-range source or silently accept its frame.
+        assert_eq!(
+            mgbfs_exchange_pack_frame(
+                16,
+                states.cast(),
+                4,
+                hashes,
+                refs.cast(),
+                4,
+                0,
+                3,
+                output.cast(),
+                768,
+                fatal.cast(),
+                stream
+            ),
+            0
+        );
+        assert_eq!(cudaStreamSynchronize(stream), 0);
+        assert_eq!(cudaMemcpy((&mut code as *mut u32).cast(), fatal, 4, 2), 0);
+        assert_eq!(code, 1);
+        assert_eq!(
+            mgbfs_exchange_pack_frame(
+                16,
+                states.cast(),
+                4,
+                hashes,
+                refs.cast(),
+                4,
+                4,
+                0,
+                output.cast(),
+                0,
+                fatal.cast(),
+                stream
+            ),
+            0
+        );
+        for ptr in storage {
+            assert_eq!(cudaFree(ptr), 0);
+        }
+        assert_eq!(cudaStreamDestroy(stream), 0);
+    }
+}
 
 // Test driver only: two live data epochs followed by an empty epoch per source.
 // This proves leased bank correctness, not production BFS/kernel overlap.

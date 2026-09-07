@@ -17,6 +17,18 @@ extern "C" {
  * is four little-endian u32 residues, numerical order word3 through word0.
  */
 int mgbfs_hash_create(uint32_t bytes,uint32_t capacity,const uint8_t* limbs,const uint32_t* offsets,void** out,char* error,size_t error_capacity);
+/* Pack one destination's DENSE schema2 payload directly from generated children.
+ * Planes: hash16*N, ordinal4*N, stateStride*N, each rounded to 256 bytes;
+ * padding is zeroed by the gather itself. Output is 256-byte aligned.
+ * Invalid child refs set the caller's sticky device fatal flag to 1; caller
+ * must inspect it after completion before offering the frame to transport.
+ * No allocation, host synchronization, or intermediate full-state gather.
+ * All input/output ranges are disjoint and retained through stream completion.
+ */
+int mgbfs_exchange_pack_frame(uint32_t stride,const uint8_t* source_states,
+    uint32_t source_count,const void* sorted_hashes,const uint64_t* sorted_refs,
+    uint32_t sorted_count,uint32_t begin,uint32_t count,uint8_t* output,
+    uint64_t output_capacity,uint32_t* fatal,void* stream);
 /* Pre-allocation queries. Host outputs, no cudaMalloc or CUDA launches.
  * Bytes exclude caller-owned input/output and allocator/runtime overhead.
  * Failed query zeroes output. Workspace is queried from the compiled GEMM.

@@ -262,6 +262,20 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_future_merge_destroy(plan: *mut c_void);
+        pub fn mgbfs_exchange_pack_frame(
+            stride: u32,
+            source_states: *const u8,
+            source_count: u32,
+            sorted_hashes: *const c_void,
+            sorted_refs: *const u64,
+            sorted_count: u32,
+            begin: u32,
+            count: u32,
+            output: *mut u8,
+            output_capacity: u64,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_exchange_pack(
             stride: u32,
             capacity: u32,
