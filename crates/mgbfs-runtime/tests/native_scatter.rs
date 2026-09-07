@@ -29,7 +29,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 let mut peers = vec![None, None];
                 peers[(rank ^ 1) as usize] =
                     Some(ControlConnection::new(socket, 2, rank, rank ^ 1).unwrap());
-                let mut buffers = AdmittedBuffers::new(2, rank, 2, peers, [8; 4], 1).unwrap();
+                let mut buffers = AdmittedBuffers::new(2, rank, 2, peers, [2048; 4], 1).unwrap();
                 let mut comm = std::ptr::null_mut();
                 let mut error = [0i8; 512];
                 assert_eq!(
@@ -52,25 +52,59 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 assert_eq!(cudaMalloc(&mut send, send_bytes as usize), 0);
                 assert_eq!(cudaMalloc(&mut recv, recv_bytes as usize), 0);
                 let mut done = NativeEvent::new().unwrap();
+                let mut generate_stream = std::ptr::null_mut();
+                assert_eq!(cudaStreamCreateWithFlags(&mut generate_stream, 1), 0);
+                let mut generated = NativeEvent::new().unwrap();
+                let mut generation = 0u64;
+                let mut inputs = [std::ptr::null_mut(); 4];
+                for (ptr, bytes) in inputs.iter_mut().zip([32, 32, 16, 4]) {
+                    assert_eq!(cudaMalloc(ptr, bytes), 0);
+                }
+                let [states, hashes, refs, fatal] = inputs;
+                let state_words = [11u32, 12, 13, 14, 21, 22, 23, 24].map(|n| n + rank * 100);
+                let hash_words = [31u32, 32, 33, 34, 41, 42, 43, 44];
+                let ref_words = [0u64, 1];
+                assert_eq!(cudaMemcpy(states, state_words.as_ptr().cast(), 32, 1), 0);
+                assert_eq!(cudaMemcpy(hashes, hash_words.as_ptr().cast(), 32, 1), 0);
+                assert_eq!(cudaMemcpy(refs, ref_words.as_ptr().cast(), 16, 1), 0);
+                assert_eq!(cudaMemsetAsync(fatal, 0, 4, generate_stream), 0);
+                let mut frames =
+                    mgbfs_runtime::dense_frames::DenseFrames::new(&[0, 1], 16, 2, 2048).unwrap();
                 for depth in 0..2 {
                     for source in 0..2 {
                         for empty in [false, true] {
                             if rank == source {
                                 let h = buffers.reserve(Plane::Candidate, depth).unwrap().unwrap();
                                 let offset = buffers.source_offset(h).unwrap();
-                                let bytes = [11u8, 12, 13, 14, 21, 22, 23, 24];
+                                frames
+                                    .prepare(if empty { &[0, 0] } else { &[1, 1] })
+                                    .unwrap();
+                                frames
+                                    .enqueue_native(
+                                        states.cast(),
+                                        2,
+                                        hashes,
+                                        refs.cast(),
+                                        send.cast::<u8>().add(offset as usize),
+                                        fatal.cast(),
+                                        generate_stream,
+                                    )
+                                    .unwrap();
+                                generation += 1;
+                                generated.record(generation, generate_stream).unwrap();
+                                let pack_deadline = Instant::now() + Duration::from_secs(30);
+                                while !generated.poll(generation).unwrap() {
+                                    assert!(Instant::now() < pack_deadline);
+                                    std::thread::yield_now();
+                                }
+                                let mut code = 99u32;
                                 assert_eq!(
-                                    cudaMemcpy(
-                                        send.cast::<u8>().add(offset as usize).cast(),
-                                        bytes.as_ptr().cast(),
-                                        8,
-                                        1
-                                    ),
+                                    cudaMemcpy((&mut code as *mut u32).cast(), fatal, 4, 2),
                                     0
                                 );
-                                buffers
-                                    .ready(h, if empty { &[0, 0] } else { &[4, 4] })
-                                    .unwrap();
+                                assert_eq!(code, 0);
+                                generated.retire(generation).unwrap();
+                                buffers.ready(h, frames.sizes().unwrap()).unwrap();
                             }
                             let deadline = Instant::now() + Duration::from_secs(30);
                             let launch = loop {
@@ -82,12 +116,12 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                             };
                             let view = buffers.payload_view(launch).unwrap();
                             assert_eq!(view.source_pool, rank == source);
-                            assert_eq!(view.bytes, if empty { 0 } else { 4 });
+                            assert_eq!(view.bytes, if empty { 0 } else { 1024 });
                             let reader = buffers.consumer(launch).unwrap();
                             buffers.seal(launch).unwrap();
                             let mut sizes = [0u64; 2];
                             buffers
-                                .submit_native(
+                                .submit_native_with_prefix(
                                     launch,
                                     comm,
                                     send.cast(),
@@ -95,6 +129,19 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     stream,
                                     &mut done,
                                     &mut sizes,
+                                    || {
+                                        if rank == source {
+                                            frames.enqueue_headers_native(
+                                                launch.key,
+                                                7,
+                                                send.cast::<u8>()
+                                                    .add(launch.source_offset.unwrap() as usize),
+                                                stream,
+                                            )
+                                        } else {
+                                            Ok(())
+                                        }
+                                    },
                                 )
                                 .unwrap();
                             while !done.poll(launch.key.epoch).unwrap() {
@@ -105,24 +152,54 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                             buffers.transfer_complete(launch).unwrap();
                             if !empty {
                                 let base = if view.source_pool { send } else { recv };
-                                let mut actual = [0u8; 4];
+                                let mut prefix = [0u8; 256];
+                                assert_eq!(
+                                    cudaMemcpy(
+                                        prefix.as_mut_ptr().cast(),
+                                        base.cast::<u8>().add(view.offset as usize).cast(),
+                                        256,
+                                        2
+                                    ),
+                                    0
+                                );
+                                let header = mgbfs_runtime::dense_frames::decode_prefix(
+                                    &prefix, launch.key, 7, rank, 2, 16, 2, view.bytes,
+                                )
+                                .unwrap()
+                                .unwrap();
+                                assert_eq!(header.count, 1);
+                                let mut actual = [0u32; 4];
                                 assert_eq!(
                                     cudaMemcpy(
                                         actual.as_mut_ptr().cast(),
-                                        base.cast::<u8>().add(view.offset as usize).cast(),
-                                        4,
+                                        base.cast::<u8>().add(view.offset as usize + 768).cast(),
+                                        16,
                                         2
                                     ),
                                     0
                                 );
                                 assert_eq!(
                                     actual,
-                                    if rank == 0 {
+                                    (if rank == 0 {
                                         [11, 12, 13, 14]
                                     } else {
                                         [21, 22, 23, 24]
-                                    }
+                                    })
+                                    .map(|n| n + source * 100)
                                 );
+                            } else {
+                                assert!(mgbfs_runtime::dense_frames::decode_prefix(
+                                    &[],
+                                    launch.key,
+                                    7,
+                                    rank,
+                                    2,
+                                    16,
+                                    2,
+                                    view.bytes
+                                )
+                                .unwrap()
+                                .is_none());
                             }
                             buffers.complete(reader).unwrap();
                             done.retire(launch.key.epoch).unwrap();
@@ -149,6 +226,10 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 mgbfs_nccl_destroy(comm);
                 assert_eq!(cudaFree(send), 0);
                 assert_eq!(cudaFree(recv), 0);
+                for ptr in inputs {
+                    assert_eq!(cudaFree(ptr), 0);
+                }
+                assert_eq!(cudaStreamDestroy(generate_stream), 0);
                 assert_eq!(cudaStreamDestroy(stream), 0);
             })
         })

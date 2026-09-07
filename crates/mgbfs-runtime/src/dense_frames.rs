@@ -5,6 +5,69 @@ use mgbfs_core::Result;
 /// the existing aligned payload planes. Empty destinations remain zero bytes.
 pub const DENSE_FRAME_PREFIX_BYTES: u64 = 256;
 
+/// Validate the completed prefix readback against the admitted ticket before
+/// exposing row counts to owner work. Does not inspect or copy state payload.
+/// `wire_bytes` must be the admitted receive size, not a value from the header.
+/// A zero-byte destination has no prefix and exactly zero records.
+pub fn decode_prefix(
+    prefix: &[u8],
+    key: crate::scatter_admission::TicketKey,
+    run_tag: u64,
+    rank: u32,
+    world: u32,
+    stride: u32,
+    max_records: u32,
+    wire_bytes: u64,
+) -> Result<Option<mgbfs_core::wire::FrameHeader>> {
+    use mgbfs_core::wire::{payload_bytes, ExpectedFrame, FrameHeader, FrameKind};
+    if world == 0
+        || rank >= world
+        || key.source >= world
+        || key.plane != crate::control_wire::Plane::Candidate
+        || key.generation == crate::control_wire::NO_SLOT
+    {
+        return Err("DENSE_PREFIX_TICKET".into());
+    }
+    let depth = u32::try_from(key.depth).map_err(|_| "DENSE_PREFIX_DEPTH")?;
+    payload_bytes(FrameKind::Dense, 0, u64::from(stride))?;
+    if wire_bytes == 0 {
+        return if prefix.is_empty() {
+            Ok(None)
+        } else {
+            Err("DENSE_PREFIX_EMPTY".into())
+        };
+    }
+    if prefix.len() != DENSE_FRAME_PREFIX_BYTES as usize
+        || wire_bytes < DENSE_FRAME_PREFIX_BYTES
+        || prefix[64..].iter().any(|&b| b != 0)
+    {
+        return Err("DENSE_PREFIX_SHAPE".into());
+    }
+    let bytes = wire_bytes - DENSE_FRAME_PREFIX_BYTES;
+    let header = FrameHeader::decode(
+        &prefix[..64],
+        &ExpectedFrame {
+            run_tag,
+            sequence: key.epoch,
+            batch: key.generation,
+            depth,
+            source: key.source,
+            destination: rank,
+            world,
+            kind: FrameKind::Dense,
+            max_records,
+            max_payload: bytes,
+            state_stride: u64::from(stride),
+        },
+    )?;
+    if header.count == 0
+        || payload_bytes(FrameKind::Dense, header.count, u64::from(stride))? != bytes
+    {
+        return Err("DENSE_PREFIX_LENGTH".into());
+    }
+    Ok(Some(header))
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct DenseFrame {
     pub begin: u32,

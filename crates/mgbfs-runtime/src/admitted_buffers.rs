@@ -478,6 +478,38 @@ impl AdmittedBuffers {
         event: &mut crate::event_generation::NativeEvent,
         sizes: &mut [u64],
     ) -> Result<()> {
+        self.submit_native_with_prefix(
+            l,
+            comm,
+            source_base,
+            receive_base,
+            stream,
+            event,
+            sizes,
+            || Ok(()),
+        )
+    }
+    /// Like submit_native, but binds a ticket-specific prefix inside the same
+    /// once-only submission guard. A duplicate/out-of-order call cannot enqueue
+    /// prefix writes into a buffer whose earlier transfer is still in flight.
+    ///
+    /// # Safety
+    /// All submit_native preconditions apply. prepare_prefix may only enqueue
+    /// writes to this ticket's exclusively owned source prefixes on `stream`;
+    /// it must be a no-op on receiving ranks. It must not synchronize, free
+    /// storage, or submit another NCCL operation. Abort the group on any error.
+    #[cfg(feature = "cuda")]
+    pub unsafe fn submit_native_with_prefix(
+        &mut self,
+        l: BufferLaunch,
+        comm: *mut std::ffi::c_void,
+        source_base: *const u8,
+        receive_base: *mut u8,
+        stream: *mut std::ffi::c_void,
+        event: &mut crate::event_generation::NativeEvent,
+        sizes: &mut [u64],
+        prepare_prefix: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         self.source_sizes(l, sizes)?;
         let capacity = self.pools[kind(l.key.plane)?].capacity;
         self.submit(l, || {
@@ -489,6 +521,7 @@ impl AdmittedBuffers {
                 None => std::ptr::null(),
             };
             let receive = receive_base.add(l.receive_offset as usize).cast();
+            prepare_prefix()?;
             let status = mgbfs_cuda::ffi::mgbfs_nccl_scatter(
                 comm,
                 l.key.source,
