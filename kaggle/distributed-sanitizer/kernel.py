@@ -11,6 +11,12 @@ SOURCE = "45899cff53c4595e9c485d9ef2f3be1a2098f750"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
+def require_fixture(output, expected):
+    results = re.findall(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed;", output)
+    if results != [("ok", str(expected), "0")]:
+        raise RuntimeError("FIXTURE_RESULT_MISMATCH")
+
+
 def require_clean(tool, output):
     if tool == "racecheck":
         matches = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", output)
@@ -109,8 +115,7 @@ def main():
             if tool != "plain":
                 scatter_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + scatter_cmd
             scatter_output = run(scatter_cmd, "scatter-" + tool, source)
-            if "2 passed; 0 failed" not in scatter_output:
-                raise RuntimeError("SCATTER_FIXTURE_NOT_PASSED")
+            require_fixture(scatter_output, 2)
             require_clean(tool, scatter_output)
             if tool != "plain":
                 leaf = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "99",
@@ -142,24 +147,21 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            if "12 passed; 0 failed" not in output:
-                raise RuntimeError("FIXTURE_NOT_PASSED")
+            require_fixture(output, 12)
             require_clean(tool, output)
             macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
                          "--exact", "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 macro_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + macro_cmd
             macro_output = run(macro_cmd, "macro-" + tool, source)
-            if "1 passed; 0 failed" not in macro_output:
-                raise RuntimeError("MACRO_SOURCE_FIXTURE_NOT_PASSED")
+            require_fixture(macro_output, 1)
             require_clean(tool, macro_output)
             archive_cmd = [macro_binaries[0], "native_macro_archive_is_complete_and_verifiable",
                            "--exact", "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 archive_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + archive_cmd
             archive_output = run(archive_cmd, "macro-archive-" + tool, source)
-            if "1 passed; 0 failed" not in archive_output:
-                raise RuntimeError("MACRO_ARCHIVE_FIXTURE_NOT_PASSED")
+            require_fixture(archive_output, 1)
             require_clean(tool, archive_output)
             report["tests"].append({"tool": tool, "status": "PASS"})
             save()
