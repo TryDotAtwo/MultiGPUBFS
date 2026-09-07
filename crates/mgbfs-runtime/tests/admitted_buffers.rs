@@ -138,6 +138,11 @@ fn two_tcp_ranks_hold_empty_receiver_ticket_until_consumer_drain() {
     assert_eq!(a.source_offset, None);
     assert_eq!(b.bytes, 32);
     assert_eq!(b.source_offset, Some(0));
+    let mut sizes = [99; 2];
+    assert!(!ranks[0].source_sizes(a, &mut sizes).unwrap());
+    assert_eq!(sizes, [0, 0]);
+    assert!(ranks[1].source_sizes(b, &mut sizes).unwrap());
+    assert_eq!(sizes, [0, 32]);
     ranks[0].seal(a).unwrap();
     let reader = ranks[1].consumer(b).unwrap();
     ranks[1].seal(b).unwrap();

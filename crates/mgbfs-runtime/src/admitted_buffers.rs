@@ -308,6 +308,29 @@ impl AdmittedBuffers {
             })
         })
     }
+    /// Copy the immutable per-destination byte counts for native scatter into
+    /// caller-preallocated host storage. False means this rank is not source;
+    /// its output is zeroed. source_offset is the whole send-bank base, not
+    /// the source rank's self-view offset (which adds preceding rank counts).
+    pub fn source_sizes(&mut self, l: BufferLaunch, out: &mut [u64]) -> Result<bool> {
+        self.apply(|s| {
+            if out.len() != s.world {
+                return Err("BUFFER_COUNTS_SHAPE".into());
+            }
+            let (p, i) = s.active(l)?;
+            let Some(h) = p.live[i].as_ref().unwrap().source else {
+                out.fill(0);
+                return Ok(false);
+            };
+            let d = p
+                .descriptions
+                .iter()
+                .find(|d| d.handle == Some(h) && d.ticket == Some(l.key))
+                .ok_or("BUFFER_SOURCE")?;
+            out.copy_from_slice(&d.sizes);
+            Ok(true)
+        })
+    }
     pub fn seal(&mut self, l: BufferLaunch) -> Result<()> {
         self.apply(|s| {
             let (p, i) = s.active(l)?;
