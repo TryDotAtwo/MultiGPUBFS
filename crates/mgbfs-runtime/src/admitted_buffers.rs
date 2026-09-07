@@ -148,6 +148,21 @@ impl AdmittedBuffers {
         let p = &self.pools[kind(plane)?];
         Ok((p.source.bytes(), p.receive.bytes()))
     }
+    /// Setup-only ledger of the eight actual flat payload allocations, including
+    /// per-bank alignment and storage for empty tickets. Excludes CUDA/NCCL
+    /// internals, events and host bookkeeping; append to the rank-wide plan.
+    /// This reports required storage, not evidence that it has been allocated.
+    pub fn device_ledger(&self) -> Result<mgbfs_core::memory::AllocationLedger> {
+        let mut ledger = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
+        for (name, p) in ["candidate", "request", "response", "receipt"]
+            .iter()
+            .zip(&self.pools)
+        {
+            ledger.add(&format!("{name}.source"), p.source.bytes(), 1, 256)?;
+            ledger.add(&format!("{name}.receive"), p.receive.bytes(), 1, 256)?;
+        }
+        Ok(ledger)
+    }
     pub fn reserve(&mut self, plane: Plane, depth: u64) -> Result<Option<SourceHandle>> {
         self.apply(|s| {
             if depth != s.depth || s.finalizing || (plane == Plane::Candidate && s.source_closed) {

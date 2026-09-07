@@ -43,6 +43,31 @@ fn unoffered_generation_prevents_source_close() {
 }
 
 #[test]
+fn transport_allocation_ledger_matches_all_independent_physical_pools() {
+    let d = AdmittedBuffers::new(1, 0, 2, vec![None], [0, 1, 257, 512], 1).unwrap();
+    let ledger = d.device_ledger().unwrap();
+    assert_eq!(ledger.total(), 6144);
+    let got: Vec<_> = ledger
+        .allocations
+        .iter()
+        .map(|a| (a.name.as_str(), a.reserved_bytes))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("candidate.source", 512),
+            ("candidate.receive", 512),
+            ("request.source", 512),
+            ("request.receive", 512),
+            ("response.source", 1024),
+            ("response.receive", 1024),
+            ("receipt.source", 1024),
+            ("receipt.receive", 1024),
+        ]
+    );
+}
+
+#[test]
 fn closed_or_wrong_depth_cannot_reserve_new_candidate_storage() {
     let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
     d.close_source().unwrap();
