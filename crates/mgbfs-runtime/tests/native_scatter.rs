@@ -70,6 +70,35 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 assert_eq!(cudaMemsetAsync(fatal, 0, 4, generate_stream), 0);
                 let mut frames =
                     mgbfs_runtime::dense_frames::DenseFrames::new(&[0, 1], 16, 2, 2048).unwrap();
+                // Isolate materialization from transport. This fixture supplies
+                // an already committed one-row owner result, not an owner BFS.
+                let mut owner_stream = std::ptr::null_mut();
+                assert_eq!(cudaStreamCreateWithFlags(&mut owner_stream, 1), 0);
+                let mut materialized = NativeEvent::new().unwrap();
+                let mut owner_storage = [std::ptr::null_mut(); 5];
+                for (ptr, bytes) in owner_storage.iter_mut().zip([64, 64, 64, 4, 16]) {
+                    assert_eq!(cudaMalloc(ptr, bytes), 0);
+                }
+                let [ring_ptr, control_ptr, extent_ptr, selected_ptr, final_states] = owner_storage;
+                use mgbfs_cuda::native_owner::{Control, Extent, Ring};
+                let ring = Ring {
+                    tail: 1,
+                    descriptor_tail: 1,
+                    capacity: 1,
+                    descriptor_capacity: 1,
+                    ..Ring::default()
+                };
+                let control = Control {
+                    stage: 2,
+                    survivors: 1,
+                    ..Control::default()
+                };
+                let extent = Extent {
+                    count: 1,
+                    granted_rows: 1,
+                    ..Extent::default()
+                };
+                assert_eq!(cudaMemsetAsync(selected_ptr, 0, 4, owner_stream), 0);
                 for depth in 0..2 {
                     for source in 0..2 {
                         for empty in [false, true] {
@@ -168,14 +197,52 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                 assert_eq!(input.source_pool, view.source_pool);
                                 buffers.seal(launch).unwrap();
                                 assert!(!buffers.drained(launch).unwrap());
-                                let mut actual = [0u32; 4];
+                                assert_eq!(
+                                    cudaMemcpy(ring_ptr, (&ring as *const Ring).cast(), 64, 1),
+                                    0
+                                );
                                 assert_eq!(
                                     cudaMemcpy(
-                                        actual.as_mut_ptr().cast(),
-                                        base.cast::<u8>().add(input.state_offset as usize).cast(),
-                                        16,
-                                        2
+                                        control_ptr,
+                                        (&control as *const Control).cast(),
+                                        std::mem::size_of::<Control>(),
+                                        1
                                     ),
+                                    0
+                                );
+                                assert_eq!(
+                                    cudaMemcpy(
+                                        extent_ptr,
+                                        (&extent as *const Extent).cast(),
+                                        64,
+                                        1
+                                    ),
+                                    0
+                                );
+                                assert_eq!(
+                                    mgbfs_cuda::native_owner::mgbfs_state_materialize_packed(
+                                        base.cast::<u8>().add(input.state_offset as usize),
+                                        input.rows,
+                                        selected_ptr.cast(),
+                                        1,
+                                        16,
+                                        final_states.cast(),
+                                        ring_ptr.cast(),
+                                        control_ptr.cast(),
+                                        extent_ptr.cast(),
+                                        owner_stream,
+                                    ),
+                                    0
+                                );
+                                materialized.record(launch.key.epoch, owner_stream).unwrap();
+                                while !materialized.poll(launch.key.epoch).unwrap() {
+                                    assert!(!buffers.drained(launch).unwrap());
+                                    assert!(Instant::now() < deadline);
+                                    std::thread::yield_now();
+                                }
+                                let mut actual = [0u32; 4];
+                                assert_eq!(
+                                    cudaMemcpy(actual.as_mut_ptr().cast(), final_states, 16, 2),
                                     0
                                 );
                                 assert_eq!(
@@ -187,6 +254,18 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     })
                                     .map(|n| n + source * 100)
                                 );
+                                let mut published = Extent::default();
+                                assert_eq!(
+                                    cudaMemcpy(
+                                        (&mut published as *mut Extent).cast(),
+                                        extent_ptr,
+                                        64,
+                                        2
+                                    ),
+                                    0
+                                );
+                                assert_eq!(published.ready, 1);
+                                materialized.retire(launch.key.epoch).unwrap();
                                 buffers.complete(reader).unwrap();
                             } else {
                                 assert!(buffers
@@ -222,6 +301,10 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 for ptr in inputs {
                     assert_eq!(cudaFree(ptr), 0);
                 }
+                for ptr in owner_storage {
+                    assert_eq!(cudaFree(ptr), 0);
+                }
+                assert_eq!(cudaStreamDestroy(owner_stream), 0);
                 assert_eq!(cudaStreamDestroy(generate_stream), 0);
                 assert_eq!(cudaStreamDestroy(stream), 0);
             })
