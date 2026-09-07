@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "a7378e39cc4813524829cfff2dae091e4a090c23"
+SOURCE = "66d82d03cb055daa08dae328978208efda7c8ede"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -66,7 +66,7 @@ def main():
              "--test", "control_pump", "--test", "rank_epochs",
             "--test", "epoch_coordinator", "--test", "failure_abort",
              "--test", "admitted_buffers", "--test", "source_banks",
-             "--test", "dense_frames", "--test", "dense_prefix"],
+             "--test", "dense_frames", "--test", "dense_prefix", "--test", "owner_results"],
             "control-contracts", source)
         report["control_contracts"] = "PASS_LINUX_TCP_AND_FILE_CONTRACTS"
         save()
@@ -112,7 +112,8 @@ def main():
         report["scatter_scope"] = "two T4; admitted ControlPump and NCCL; PayloadBanks checked aligned allocation and physical receive offsets; bank reservation before byte ACK; two live banks; ordered transfer COMPLETE with reversed consumer retirement; sealed fanout; two D2D readers on separate nonblocking streams with generation-bound waits before host query; per-consumer events; exact bytes; both sources with decreasing source tokens; source view; zero payload; capacity rejection; health; Finalize/Publish; repeated abort; physical-bank lifetime gate, not production BFS or speed proof"
         for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
             report["dense_frame_scope"] = "direct DENSE schema2 gather; physical-rank frame plan and swapped map; late-bound 256-byte prefix; exact hashes/ordinals/states and zero padding; nonzero sorted begin; invalid source reference device fatal; capacity/range rejection; empty frame; not yet connected to production BFS"
-            report["admitted_adapter_scope"] = "two T4; generation-stream frame pack and readiness event; ticket-bound header enqueue inside once-only submission guard; native NCCL; recipient prefix validation and exact states; both sources; zero-copy self view; empty payload; two depths; preallocated pools; serial integration gate, not production BFS overlap"
+            report["admitted_adapter_scope"] = "two T4; generation-stream frame pack and readiness event; ticket-bound header enqueue inside once-only submission guard; native NCCL; recipient prefix validation; consumer lease through packed materialization on independent stream and completion event; synthetic already-committed owner result; exact final states; both sources; zero-copy self view; empty payload; two depths; preallocated pools; serial integration gate, not production BFS overlap"
+            report["dense_owner_scope"] = "reference runtime enqueues all DENSE owner spans before one batch completion wait; consumed first-descriptor slots capture extents; sticky ring fatal checked before frontier metadata; DENSE and HASH_FIRST capacity stop is group-terminal; not yet the admitted asynchronous BFS dispatcher"
             scatter_cmd = [scatter_binaries[0], "--test-threads=1", "--nocapture"]
             if tool != "plain":
                 scatter_cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + scatter_cmd
