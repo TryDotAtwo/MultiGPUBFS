@@ -4,6 +4,95 @@ use mgbfs_runtime::{
 };
 
 #[test]
+fn validated_dense_consumer_keeps_original_source_bank_until_materialization_finishes() {
+    use mgbfs_core::wire::{FrameHeader, FrameKind};
+    let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [1792; 4], 1).unwrap();
+    let _slow = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+    let fast = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+    d.ready(fast, &[1792]).unwrap();
+    let l = (0..64)
+        .find_map(|_| match d.poll().unwrap() {
+            Some(BufferEvent::Launch(l)) => Some(l),
+            _ => None,
+        })
+        .unwrap();
+    let mut prefix = [0u8; 256];
+    prefix[..64].copy_from_slice(
+        &FrameHeader {
+            kind: FrameKind::Dense,
+            run_tag: 7,
+            sequence: l.key.epoch,
+            batch: l.key.generation,
+            depth: 0,
+            source: 0,
+            destination: 0,
+            count: 17,
+        }
+        .encode(32)
+        .unwrap(),
+    );
+    d.submit(l, || Ok(())).unwrap();
+    d.transfer_complete(l).unwrap();
+    let (consumer, input) = d.dense_consumer(l, &prefix, 7, 32, 17).unwrap().unwrap();
+    assert!(input.source_pool);
+    assert_eq!(
+        (
+            input.rows,
+            input.hash_offset,
+            input.ordinal_offset,
+            input.state_offset
+        ),
+        (17, 2048, 2560, 2816)
+    );
+    d.seal(l).unwrap();
+    assert!(!d.drained(l).unwrap());
+    assert!(d.reserve(Plane::Candidate, 0).unwrap().is_none());
+    d.complete(consumer).unwrap();
+    d.consume(l).unwrap();
+    let reused = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+    assert_eq!(d.source_offset(reused).unwrap(), 1792);
+}
+
+#[test]
+fn dense_input_rejects_pending_transfer_or_corrupt_prefix_and_poisoning_is_terminal() {
+    use mgbfs_core::wire::{FrameHeader, FrameKind};
+    for corrupt in [false, true] {
+        let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [1024; 4], 1).unwrap();
+        let h = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+        d.ready(h, &[1024]).unwrap();
+        let l = (0..64)
+            .find_map(|_| match d.poll().unwrap() {
+                Some(BufferEvent::Launch(l)) => Some(l),
+                _ => None,
+            })
+            .unwrap();
+        let mut prefix = [0u8; 256];
+        prefix[..64].copy_from_slice(
+            &FrameHeader {
+                kind: FrameKind::Dense,
+                run_tag: 7,
+                sequence: l.key.epoch,
+                batch: l.key.generation,
+                depth: 0,
+                source: 0,
+                destination: 0,
+                count: 1,
+            }
+            .encode(16)
+            .unwrap(),
+        );
+        if corrupt {
+            d.submit(l, || Ok(())).unwrap();
+            d.transfer_complete(l).unwrap();
+            prefix[70] = 1;
+        }
+        assert!(d.dense_consumer(l, &prefix, 7, 16, 2).is_err());
+        assert!(d.poll().is_err());
+        assert!(d.reserve(Plane::Candidate, 0).is_err());
+    }
+}
+
+#[test]
 fn submission_sequence_survives_finalize_and_rejects_reordered_launches() {
     let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [16; 4], 1).unwrap();
     for depth in 0..3 {

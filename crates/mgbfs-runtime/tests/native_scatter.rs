@@ -117,8 +117,6 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                             let view = buffers.payload_view(launch).unwrap();
                             assert_eq!(view.source_pool, rank == source);
                             assert_eq!(view.bytes, if empty { 0 } else { 1024 });
-                            let reader = buffers.consumer(launch).unwrap();
-                            buffers.seal(launch).unwrap();
                             let mut sizes = [0u64; 2];
                             buffers
                                 .submit_native_with_prefix(
@@ -162,17 +160,19 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     ),
                                     0
                                 );
-                                let header = mgbfs_runtime::dense_frames::decode_prefix(
-                                    &prefix, launch.key, 7, rank, 2, 16, 2, view.bytes,
-                                )
-                                .unwrap()
-                                .unwrap();
-                                assert_eq!(header.count, 1);
+                                let (reader, input) = buffers
+                                    .dense_consumer(launch, &prefix, 7, 16, 2)
+                                    .unwrap()
+                                    .unwrap();
+                                assert_eq!(input.rows, 1);
+                                assert_eq!(input.source_pool, view.source_pool);
+                                buffers.seal(launch).unwrap();
+                                assert!(!buffers.drained(launch).unwrap());
                                 let mut actual = [0u32; 4];
                                 assert_eq!(
                                     cudaMemcpy(
                                         actual.as_mut_ptr().cast(),
-                                        base.cast::<u8>().add(view.offset as usize + 768).cast(),
+                                        base.cast::<u8>().add(input.state_offset as usize).cast(),
                                         16,
                                         2
                                     ),
@@ -187,21 +187,14 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     })
                                     .map(|n| n + source * 100)
                                 );
+                                buffers.complete(reader).unwrap();
                             } else {
-                                assert!(mgbfs_runtime::dense_frames::decode_prefix(
-                                    &[],
-                                    launch.key,
-                                    7,
-                                    rank,
-                                    2,
-                                    16,
-                                    2,
-                                    view.bytes
-                                )
-                                .unwrap()
-                                .is_none());
+                                assert!(buffers
+                                    .dense_consumer(launch, &[], 7, 16, 2)
+                                    .unwrap()
+                                    .is_none());
+                                buffers.seal(launch).unwrap();
                             }
-                            buffers.complete(reader).unwrap();
                             done.retire(launch.key.epoch).unwrap();
                             buffers.consume(launch).unwrap();
                         }

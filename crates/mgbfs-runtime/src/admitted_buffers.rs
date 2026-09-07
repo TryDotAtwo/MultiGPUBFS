@@ -50,6 +50,14 @@ pub struct PayloadView {
     pub offset: u64,
     pub bytes: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DenseRead {
+    pub source_pool: bool,
+    pub rows: u32,
+    pub hash_offset: u64,
+    pub ordinal_offset: u64,
+    pub state_offset: u64,
+}
 pub enum BufferEvent {
     Launch(BufferLaunch),
     Finalize(ControlFrame),
@@ -335,6 +343,79 @@ impl AdmittedBuffers {
                 plane: l.key.plane,
                 token: p.receive.consumer(p.live[i].as_ref().unwrap().bank)?,
             })
+        })
+    }
+    /// Validate completed prefix readback and pin its original payload before
+    /// returning owner input ranges. The caller retains the returned consumer
+    /// through every compare/materialization read, not only the first kernel.
+    /// No full-state readback or allocation is performed. Empty input returns
+    /// None; the ticket must still be sealed and consumed normally.
+    pub fn dense_consumer(
+        &mut self,
+        l: BufferLaunch,
+        prefix: &[u8],
+        run_tag: u64,
+        stride: u32,
+        max_records: u32,
+    ) -> Result<Option<(BufferConsumer, DenseRead)>> {
+        let view = self.payload_view(l)?;
+        self.apply(|s| {
+            let rank = s.rank;
+            let world = s.world as u32;
+            let (p, i) = s.active(l)?;
+            let a = p.live[i].as_ref().unwrap();
+            if !a.transferred {
+                return Err("BUFFER_TRANSFER_PENDING".into());
+            }
+            let Some(header) = crate::dense_frames::decode_prefix(
+                prefix,
+                l.key,
+                run_tag,
+                rank,
+                world,
+                stride,
+                max_records,
+                view.bytes,
+            )?
+            else {
+                return Ok(None);
+            };
+            let rows = u64::from(header.count);
+            let hash_offset = view
+                .offset
+                .checked_add(crate::dense_frames::DENSE_FRAME_PREFIX_BYTES)
+                .ok_or("DENSE_READ_OFFSET")?;
+            let ordinal_offset = hash_offset
+                .checked_add((rows * 16 + 255) & !255)
+                .ok_or("DENSE_READ_OFFSET")?;
+            let state_offset = ordinal_offset
+                .checked_add((rows * 4 + 255) & !255)
+                .ok_or("DENSE_READ_OFFSET")?;
+            let end = state_offset
+                .checked_add(rows * u64::from(stride))
+                .ok_or("DENSE_READ_OFFSET")?;
+            if end
+                > view
+                    .offset
+                    .checked_add(view.bytes)
+                    .ok_or("DENSE_READ_OFFSET")?
+            {
+                return Err("DENSE_READ_CAPACITY".into());
+            }
+            let consumer = BufferConsumer {
+                plane: l.key.plane,
+                token: p.receive.consumer(a.bank)?,
+            };
+            Ok(Some((
+                consumer,
+                DenseRead {
+                    source_pool: view.source_pool,
+                    rows: header.count,
+                    hash_offset,
+                    ordinal_offset,
+                    state_offset,
+                },
+            )))
         })
     }
     /// Copy the immutable per-destination byte counts for native scatter into
