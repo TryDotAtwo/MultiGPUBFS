@@ -2,6 +2,7 @@
 use mgbfs_cuda::ffi::*;
 use mgbfs_cuda::native_owner::cudaMemcpyAsync;
 use mgbfs_runtime::{
+    admitted_buffers::{AdmittedBuffers, BufferEvent},
     control_connection::ControlConnection,
     control_pump::ControlPump,
     control_wire::{Action, ControlFrame, Plane},
@@ -9,6 +10,153 @@ use mgbfs_runtime::{
     payload_lease::{PayloadBank, PayloadBanks},
     scatter_admission::TicketKey,
 };
+
+// Exercises the production buffer adapter, including the source's zero-copy
+// self view and empty epochs. This is a transport gate, not a BFS benchmark.
+#[test]
+fn admitted_adapter_native_scatter_and_depth_rollover() {
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    let workers: Vec<_> = [server, client]
+        .into_iter()
+        .enumerate()
+        .map(|(rank, socket)| {
+            std::thread::spawn(move || unsafe {
+                let rank = rank as u32;
+                let mut peers = vec![None, None];
+                peers[(rank ^ 1) as usize] =
+                    Some(ControlConnection::new(socket, 2, rank, rank ^ 1).unwrap());
+                let mut buffers = AdmittedBuffers::new(2, rank, 2, peers, [8; 4], 1).unwrap();
+                let mut comm = std::ptr::null_mut();
+                let mut error = [0i8; 512];
+                assert_eq!(
+                    mgbfs_nccl_create(
+                        rank,
+                        2,
+                        rank,
+                        id.as_ptr().cast(),
+                        &mut comm,
+                        error.as_mut_ptr(),
+                        error.len()
+                    ),
+                    0
+                );
+                let mut stream = std::ptr::null_mut();
+                assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                let mut send = std::ptr::null_mut();
+                let mut recv = std::ptr::null_mut();
+                let (send_bytes, recv_bytes) = buffers.allocation_bytes(Plane::Candidate).unwrap();
+                assert_eq!(cudaMalloc(&mut send, send_bytes as usize), 0);
+                assert_eq!(cudaMalloc(&mut recv, recv_bytes as usize), 0);
+                let mut done = NativeEvent::new().unwrap();
+                for depth in 0..2 {
+                    for source in 0..2 {
+                        for empty in [false, true] {
+                            if rank == source {
+                                let h = buffers.reserve(Plane::Candidate, depth).unwrap().unwrap();
+                                let offset = buffers.source_offset(h).unwrap();
+                                let bytes = [11u8, 12, 13, 14, 21, 22, 23, 24];
+                                assert_eq!(
+                                    cudaMemcpy(
+                                        send.cast::<u8>().add(offset as usize).cast(),
+                                        bytes.as_ptr().cast(),
+                                        8,
+                                        1
+                                    ),
+                                    0
+                                );
+                                buffers
+                                    .ready(h, if empty { &[0, 0] } else { &[4, 4] })
+                                    .unwrap();
+                            }
+                            let deadline = Instant::now() + Duration::from_secs(30);
+                            let launch = loop {
+                                if let Some(BufferEvent::Launch(l)) = buffers.poll().unwrap() {
+                                    break l;
+                                }
+                                assert!(Instant::now() < deadline);
+                                std::thread::yield_now();
+                            };
+                            let view = buffers.payload_view(launch).unwrap();
+                            assert_eq!(view.source_pool, rank == source);
+                            assert_eq!(view.bytes, if empty { 0 } else { 4 });
+                            let reader = buffers.consumer(launch).unwrap();
+                            buffers.seal(launch).unwrap();
+                            let mut sizes = [0u64; 2];
+                            buffers
+                                .submit_native(
+                                    launch,
+                                    comm,
+                                    send.cast(),
+                                    recv.cast(),
+                                    stream,
+                                    &mut done,
+                                    &mut sizes,
+                                )
+                                .unwrap();
+                            while !done.poll(launch.key.epoch).unwrap() {
+                                assert_eq!(mgbfs_nccl_poll(comm), 0);
+                                assert!(Instant::now() < deadline);
+                                std::thread::yield_now();
+                            }
+                            buffers.transfer_complete(launch).unwrap();
+                            if !empty {
+                                let base = if view.source_pool { send } else { recv };
+                                let mut actual = [0u8; 4];
+                                assert_eq!(
+                                    cudaMemcpy(
+                                        actual.as_mut_ptr().cast(),
+                                        base.cast::<u8>().add(view.offset as usize).cast(),
+                                        4,
+                                        2
+                                    ),
+                                    0
+                                );
+                                assert_eq!(
+                                    actual,
+                                    if rank == 0 {
+                                        [11, 12, 13, 14]
+                                    } else {
+                                        [21, 22, 23, 24]
+                                    }
+                                );
+                            }
+                            buffers.complete(reader).unwrap();
+                            done.retire(launch.key.epoch).unwrap();
+                            buffers.consume(launch).unwrap();
+                        }
+                    }
+                    buffers.close_source().unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(30);
+                    loop {
+                        match buffers.poll().unwrap() {
+                            Some(BufferEvent::Finalize(_)) => buffers.finalized(true).unwrap(),
+                            Some(BufferEvent::Publish(f)) => {
+                                assert_eq!(f.depth, depth + 1);
+                                break;
+                            }
+                            Some(BufferEvent::Launch(_)) => panic!("unexpected payload"),
+                            None => {}
+                        }
+                        assert!(Instant::now() < deadline);
+                        std::thread::yield_now();
+                    }
+                }
+                assert_eq!(mgbfs_nccl_abort(comm), 0);
+                mgbfs_nccl_destroy(comm);
+                assert_eq!(cudaFree(send), 0);
+                assert_eq!(cudaFree(recv), 0);
+                assert_eq!(cudaStreamDestroy(stream), 0);
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
 use std::{
     net::{TcpListener, TcpStream},
     time::{Duration, Instant},

@@ -1,6 +1,7 @@
 //! Host adapter binding the real admitted pump to independent flat buffer pools.
-//! No CUDA calls: the caller allocates reported storage before use and proves
-//! native transfer/consumer completion before the corresponding callbacks.
+//! The caller allocates reported storage before use and proves native transfer/
+//! consumer completion before callbacks. The optional CUDA submission bridge
+//! enqueues communication without synchronizing the host.
 use crate::{
     control_connection::ControlConnection,
     control_pump::ControlPump,
@@ -41,6 +42,14 @@ pub struct BufferLaunch {
     pub receive_offset: u64,
     pub bytes: u64,
 }
+/// Read-only payload location. The source consumes its own packed range in
+/// place; NCCL scatter deliberately does not populate its receive allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PayloadView {
+    pub source_pool: bool,
+    pub offset: u64,
+    pub bytes: u64,
+}
 pub enum BufferEvent {
     Launch(BufferLaunch),
     Finalize(ControlFrame),
@@ -57,6 +66,7 @@ struct Source {
     ticket: Option<TicketKey>,
 }
 struct Active {
+    submitted: bool,
     launched: bool,
     launch: BufferLaunch,
     bank: PayloadBank,
@@ -71,6 +81,7 @@ struct Pool {
     capacity: u64,
 }
 pub struct AdmittedBuffers {
+    next_submission: u64,
     depth: u64,
     source_closed: bool,
     finalizing: bool,
@@ -124,6 +135,7 @@ impl AdmittedBuffers {
             });
         }
         Ok(Self {
+            next_submission: 0,
             depth: 0,
             source_closed: false,
             finalizing: false,
@@ -268,6 +280,7 @@ impl AdmittedBuffers {
                         .find(|x| x.is_none())
                         .ok_or("BUFFER_CAPACITY")?;
                     *slot = Some(Active {
+                        submitted: false,
                         launched: false,
                         launch,
                         bank,
@@ -296,6 +309,7 @@ impl AdmittedBuffers {
                     Ok(Some(BufferEvent::Finalize(f)))
                 }
                 Action::Publish => {
+                    s.next_submission = f.epoch.checked_add(1).ok_or("BUFFER_SEQUENCE")?;
                     s.depth = f.depth;
                     s.finalizing = false;
                     s.source_closed = false;
@@ -364,8 +378,30 @@ impl AdmittedBuffers {
     pub fn transfer_complete(&mut self, l: BufferLaunch) -> Result<()> {
         self.apply(|s| {
             let (p, i) = s.active(l)?;
+            if !p.live[i].as_ref().unwrap().submitted {
+                return Err("BUFFER_NOT_SUBMITTED".into());
+            }
             p.live[i].as_mut().unwrap().transferred = true;
             s.pump.as_mut().unwrap().transfer_complete(l.key.epoch)
+        })
+    }
+    /// Execute the native submission boundary once, in global epoch order.
+    /// The callback enqueues NCCL and records its event; success is NOT proof
+    /// of completion. Native buffers/events must remain live until consume.
+    pub fn submit(&mut self, l: BufferLaunch, enqueue: impl FnOnce() -> Result<()>) -> Result<()> {
+        self.apply(|s| {
+            if l.key.epoch != s.next_submission {
+                return Err("BUFFER_SUBMISSION_ORDER".into());
+            }
+            let next = s.next_submission.checked_add(1).ok_or("BUFFER_SEQUENCE")?;
+            let (p, i) = s.active(l)?;
+            if p.live[i].as_ref().unwrap().submitted {
+                return Err("BUFFER_ALREADY_SUBMITTED".into());
+            }
+            enqueue()?;
+            p.live[i].as_mut().unwrap().submitted = true;
+            s.next_submission = next;
+            Ok(())
         })
     }
     pub fn consume(&mut self, l: BufferLaunch) -> Result<()> {
@@ -388,6 +424,86 @@ impl AdmittedBuffers {
             }
             p.live[i] = None;
             s.pump.as_mut().unwrap().consumed(l.key.epoch)
+        })
+    }
+    /// Resolve a consumer range without copying the source's self payload.
+    /// Register a consumer lease before using it and complete that lease only
+    /// after device readers finish. A view alone does not establish readiness.
+    pub fn payload_view(&mut self, l: BufferLaunch) -> Result<PayloadView> {
+        self.apply(|s| {
+            let rank = s.rank as usize;
+            let (p, i) = s.active(l)?;
+            let a = p.live[i].as_ref().unwrap();
+            let offset = if let Some(base) = l.source_offset {
+                let d = p
+                    .descriptions
+                    .iter()
+                    .find(|d| d.handle == a.source)
+                    .ok_or("BUFFER_SOURCE")?;
+                let prefix = d.sizes[..rank]
+                    .iter()
+                    .try_fold(0u64, |sum, n| sum.checked_add(*n).ok_or("BUFFER_OFFSET"))?;
+                base.checked_add(prefix).ok_or("BUFFER_OFFSET")?
+            } else {
+                l.receive_offset
+            };
+            Ok(PayloadView {
+                source_pool: l.source_offset.is_some(),
+                offset,
+                bytes: l.bytes,
+            })
+        })
+    }
+    /// Native submission through the same once-only, globally ordered boundary.
+    /// This enqueues communication and records an event; it does not complete
+    /// the ticket, release consumers, or synchronize the host.
+    ///
+    /// # Safety
+    /// `comm` must be this rank's live communicator, serialized with other NCCL
+    /// calls. Both base pointers must name this plane's preallocated pools of
+    /// at least allocation_bytes() size in the correct CUDA context. Source data
+    /// must be ready, rank-ordered, and match ready() byte counts. Every rank must
+    /// call this for matching tickets. The stream and event must be in that
+    /// context; event must be fresh or fully retired, with no outstanding users.
+    /// Keep allocations and event alive through all transfer/consumer work.
+    /// On any error the caller must abort NCCL before freeing device storage.
+    #[cfg(feature = "cuda")]
+    pub unsafe fn submit_native(
+        &mut self,
+        l: BufferLaunch,
+        comm: *mut std::ffi::c_void,
+        source_base: *const u8,
+        receive_base: *mut u8,
+        stream: *mut std::ffi::c_void,
+        event: &mut crate::event_generation::NativeEvent,
+        sizes: &mut [u64],
+    ) -> Result<()> {
+        self.source_sizes(l, sizes)?;
+        let capacity = self.pools[kind(l.key.plane)?].capacity;
+        self.submit(l, || {
+            if receive_base.is_null() || (l.source_offset.is_some() && source_base.is_null()) {
+                return Err("BUFFER_NATIVE_POINTER".into());
+            }
+            let source = match l.source_offset {
+                Some(offset) => source_base.add(offset as usize).cast(),
+                None => std::ptr::null(),
+            };
+            let receive = receive_base.add(l.receive_offset as usize).cast();
+            let status = mgbfs_cuda::ffi::mgbfs_nccl_scatter(
+                comm,
+                l.key.source,
+                source,
+                capacity,
+                sizes.as_ptr(),
+                receive,
+                l.bytes,
+                capacity,
+                stream,
+            );
+            if status != 0 {
+                return Err(format!("BUFFER_NCCL_SCATTER_{status}"));
+            }
+            event.record(l.key.epoch, stream)
         })
     }
     pub fn close_source(&mut self) -> Result<()> {

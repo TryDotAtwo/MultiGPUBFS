@@ -4,6 +4,90 @@ use mgbfs_runtime::{
 };
 
 #[test]
+fn submission_sequence_survives_finalize_and_rejects_reordered_launches() {
+    let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [16; 4], 1).unwrap();
+    for depth in 0..3 {
+        let h = d.reserve(Plane::Candidate, depth).unwrap().unwrap();
+        d.ready(h, &[16]).unwrap();
+        let l = (0..64)
+            .find_map(|_| match d.poll().unwrap() {
+                Some(BufferEvent::Launch(l)) => Some(l),
+                _ => None,
+            })
+            .unwrap();
+        let view = d.payload_view(l).unwrap();
+        assert!(view.source_pool);
+        assert_eq!((view.offset, view.bytes), (l.source_offset.unwrap(), 16));
+        d.submit(l, || Ok(())).unwrap();
+        d.seal(l).unwrap();
+        d.transfer_complete(l).unwrap();
+        d.consume(l).unwrap();
+        d.close_source().unwrap();
+        let mut published = false;
+        for _ in 0..64 {
+            match d.poll().unwrap() {
+                Some(BufferEvent::Finalize(_)) => d.finalized(true).unwrap(),
+                Some(BufferEvent::Publish(f)) => {
+                    assert_eq!(f.depth, depth + 1);
+                    published = true;
+                    break;
+                }
+                Some(BufferEvent::Launch(_)) => panic!("unexpected launch"),
+                None => {}
+            }
+        }
+        assert!(published);
+    }
+    for _ in 0..2 {
+        let h = d.reserve(Plane::Candidate, 3).unwrap().unwrap();
+        d.ready(h, &[16]).unwrap();
+    }
+    let mut launches = Vec::new();
+    for _ in 0..128 {
+        if let Some(BufferEvent::Launch(l)) = d.poll().unwrap() {
+            launches.push(l);
+        }
+        if launches.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(launches.len(), 2);
+    assert!(d
+        .submit(launches[1], || panic!("out-of-order enqueue"))
+        .is_err());
+}
+
+#[test]
+fn native_submission_failure_and_duplicate_never_allow_reuse() {
+    for mode in 0..3 {
+        let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
+        let h = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+        d.ready(h, &[16]).unwrap();
+        let l = (0..64)
+            .find_map(|_| match d.poll().unwrap() {
+                Some(BufferEvent::Launch(l)) => Some(l),
+                _ => None,
+            })
+            .unwrap();
+        match mode {
+            0 => assert!(d.transfer_complete(l).is_err()),
+            1 => {
+                assert_eq!(
+                    d.submit(l, || Err("NATIVE_INJECTED".into())).unwrap_err(),
+                    "NATIVE_INJECTED"
+                );
+            }
+            _ => {
+                d.submit(l, || Ok(())).unwrap();
+                assert!(d.submit(l, || panic!("duplicate enqueue")).is_err());
+            }
+        }
+        assert!(d.reserve(Plane::Candidate, 0).is_err());
+        assert!(d.poll().is_err());
+    }
+}
+
+#[test]
 fn source_and_receive_reservations_follow_actual_pump_commands() {
     let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [257; 4], 2).unwrap();
     let slow = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
@@ -23,6 +107,7 @@ fn source_and_receive_reservations_follow_actual_pump_commands() {
     assert_eq!(launch.bytes, 16);
     let reader = d.consumer(launch).unwrap();
     d.seal(launch).unwrap();
+    d.submit(launch, || Ok(())).unwrap();
     d.transfer_complete(launch).unwrap();
     assert!(!d.drained(launch).unwrap());
     assert!(d.reserve(Plane::Candidate, 0).unwrap().is_none());
@@ -171,6 +256,8 @@ fn two_tcp_ranks_hold_empty_receiver_ticket_until_consumer_drain() {
     ranks[0].seal(a).unwrap();
     let reader = ranks[1].consumer(b).unwrap();
     ranks[1].seal(b).unwrap();
+    ranks[0].submit(a, || Ok(())).unwrap();
+    ranks[1].submit(b, || Ok(())).unwrap();
     ranks[0].transfer_complete(a).unwrap();
     ranks[1].transfer_complete(b).unwrap();
     ranks[0].consume(a).unwrap();
