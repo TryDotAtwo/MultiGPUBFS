@@ -158,6 +158,19 @@ mod calls {
             extent: *mut Extent,
             stream: *mut c_void,
         ) -> i32;
+        /// Materialize an already packed owner span without an identity ref table.
+        pub fn mgbfs_state_materialize_packed(
+            input: *const u8,
+            rows: u32,
+            selected: *const u32,
+            capacity: u32,
+            stride: u32,
+            output: *mut u8,
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *mut Extent,
+            stream: *mut c_void,
+        ) -> i32;
         /// Build HASH_FIRST requests after owner commit, without publishing ready.
         /// All pointers are device resident; target refs are absolute sequences.
         pub fn mgbfs_state_build_requests(

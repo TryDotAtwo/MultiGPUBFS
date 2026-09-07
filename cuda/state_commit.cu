@@ -1,4 +1,5 @@
 #include "state_commit.h"
+#include "state_index.h"
 #include <cuda_runtime.h>
 #include <climits>
 static_assert(sizeof(MgbfsStateRingControl)==64&&sizeof(MgbfsStateExtent)==64);
@@ -41,17 +42,20 @@ __global__ void validate_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,Mg
 __global__ void gate_rows(MgbfsOwnerControl* o,const MgbfsStateExtent* e,uint64_t* count){*count=o->error?0:e->count;}
 // No temporary allocation: validated count is carried in extent padding[0].
 // The index kernel never reads error while other blocks may atomically set it.
+template<bool Packed=false>
 __global__ void validate_indices(const uint64_t* refs,unsigned sorted,const uint32_t* selected,unsigned candidates,
     MgbfsStateRingControl* r,MgbfsOwnerControl* o,const MgbfsStateExtent* e){
   for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<e->padding[0];i+=uint64_t(gridDim.x)*blockDim.x){
-    unsigned index=selected[i];if(index>=sorted||refs[index]>=candidates)fatal(r,o,15);
+    uint64_t row;
+    if(!mgbfs_state_source_index<Packed>(refs,selected[i],sorted,candidates,&row))fatal(r,o,15);
   }
 }
+template<bool Packed=false>
 __global__ void copy_states(const uint4* input,const uint64_t* refs,const uint32_t* selected,unsigned words,
     uint4* output,const MgbfsOwnerControl* o,const MgbfsStateExtent* e){
   if(o->error)return;
   for(uint64_t x=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;x<e->count*words;x+=uint64_t(gridDim.x)*blockDim.x){
-    uint64_t row=x/words,word=x%words;output[e->begin*words+x]=input[refs[selected[row]]*words+word];
+    uint64_t row=x/words,word=x%words;output[e->begin*words+x]=input[mgbfs_state_source_row<Packed>(refs,selected[row])*words+word];
   }
 }
 __global__ void publish_ready(const MgbfsOwnerControl* o,MgbfsStateExtent* e){if(!o->error)e->ready=1;}
@@ -107,8 +111,19 @@ extern "C" int mgbfs_state_materialize(const uint8_t* input,uint32_t candidates,
   auto s=static_cast<cudaStream_t>(stream);unsigned blocks=(capacity+255)/256;if(blocks>4096)blocks=4096;
   validate_extent<<<1,1,0,s>>>(r,o,e,capacity,stride);
   gate_rows<<<1,1,0,s>>>(o,e,&e->padding[0]);
-  validate_indices<<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
-  copy_states<<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),refs,selected,stride/16,reinterpret_cast<uint4*>(output),o,e);
+  validate_indices<false><<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
+  copy_states<false><<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),refs,selected,stride/16,reinterpret_cast<uint4*>(output),o,e);
+  publish_ready<<<1,1,0,s>>>(o,e);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_materialize_packed(const uint8_t* input,uint32_t rows,
+    const uint32_t* selected,uint32_t capacity,uint32_t stride,uint8_t* output,MgbfsStateRingControl* r,
+    MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
+  if(!input||!selected||!output||!r||!o||!e||!capacity||capacity>INT_MAX||!stride||stride%16)return 1;
+  auto s=static_cast<cudaStream_t>(stream);unsigned blocks=(capacity+255)/256;if(blocks>4096)blocks=4096;
+  validate_extent<<<1,1,0,s>>>(r,o,e,capacity,stride);
+  gate_rows<<<1,1,0,s>>>(o,e,&e->padding[0]);
+  validate_indices<true><<<blocks,256,0,s>>>(nullptr,rows,selected,rows,r,o,e);
+  copy_states<true><<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),nullptr,selected,stride/16,reinterpret_cast<uint4*>(output),o,e);
   publish_ready<<<1,1,0,s>>>(o,e);return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t candidates,
@@ -119,7 +134,7 @@ extern "C" int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,u
   auto s=static_cast<cudaStream_t>(stream);unsigned blocks=(capacity+255)/256;if(blocks>4096)blocks=4096;
   validate_extent<<<1,1,0,s>>>(r,o,e,capacity,16);
   gate_rows<<<1,1,0,s>>>(o,e,&e->padding[0]);
-  validate_indices<<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
+  validate_indices<false><<<blocks,256,0,s>>>(refs,sorted,selected,candidates,r,o,e);
   build_requests<<<blocks,256,0,s>>>(origins,refs,selected,requests,targets,o,e);
   publish_requests<<<1,1,0,s>>>(o,e,count);
   return cudaGetLastError()==cudaSuccess?0:2;

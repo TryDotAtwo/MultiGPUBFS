@@ -38,6 +38,14 @@ int mgbfs_state_materialize(const uint8_t* candidates, uint32_t candidate_count,
     uint32_t selected_capacity, uint32_t stride, uint8_t* states,
     MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
+/* Input already follows sorted hash order (e.g. owner receive frame).
+ * selected is span-local; input points to that span's first packed state.
+ * Same validation/publication contract, without an identity-reference load.
+ * Caller retains the transport consumer through the completion event. */
+int mgbfs_state_materialize_packed(const uint8_t* input, uint32_t rows,
+    const uint32_t* selected, uint32_t selected_capacity, uint32_t stride,
+    uint8_t* states, MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent, void* stream);
 /* HASH_FIRST after irreversible owner commit (stage 2). Compact selected
  * origins and absolute target StateRefs into dense request order. Does not
  * publish StateReady or release source origins. Caller preserves request/target

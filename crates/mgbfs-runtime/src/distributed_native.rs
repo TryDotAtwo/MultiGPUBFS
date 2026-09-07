@@ -1005,10 +1005,8 @@ impl DistributedNativeBfs {
                         s,
                     ))?;
                 } else {
-                    check(mgbfs_state_materialize(
-                        source_states,
-                        rows,
-                        refs,
+                    check(mgbfs_state_materialize_packed(
+                        source_states.add(span.source_begin as usize * self.stride),
                         span.rows,
                         self.selected.ptr.cast(),
                         self.candidates,

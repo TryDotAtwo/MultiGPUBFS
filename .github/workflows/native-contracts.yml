@@ -35,6 +35,8 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/allocation_shape.cpp cuda/allocation_shape.cpp -o /tmp/allocation-shape && /tmp/allocation-shape
       - name: Verify dense frame byte geometry and gather mapping without CUDA
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/dense_frame_layout.cpp -o /tmp/dense-frame-layout && /tmp/dense-frame-layout
+      - name: Verify packed and indexed state selection bounds without CUDA
+        run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/state_index.cpp -o /tmp/state-index && /tmp/state-index
       - name: Verify CUDA query report adapter without GPU
         run: cargo +1.75.0 test --locked -p mgbfs-cuda --test allocation_report
       - name: Verify bounded owner descriptor ABI without CUDA

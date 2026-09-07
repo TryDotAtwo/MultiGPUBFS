@@ -37,17 +37,20 @@ static void reservation(unsigned mode){
   else if(mode==3){req(!oo.error&&e.count==0&&e.granted_rows==0&&rr.tail==r.tail&&rr.descriptor_tail==r.descriptor_tail,"zero reserve");}
   else{unsigned n=mode==4?8:3;req(!oo.error&&e.sequence==8&&e.begin==0&&e.count==n&&e.granted_rows==n&&rr.tail==8+n,"wrap reserve");}
 }
-static void materialization(bool invalid){
+static void materialization(bool invalid,bool packed=false){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);Device<MgbfsStateExtent> extent(1);
   Device<uint8_t> input(64),states(128);Device<uint64_t> refs(4);Device<uint32_t> selected(2);
   std::vector<uint8_t> data(64);for(unsigned i=0;i<64;++i)data[i]=uint8_t(i+1);input.put(data);
   ring.put({{0,4,0,1,8,4,0,0,0}});MgbfsOwnerControl o{};o.stage=2;o.survivors=2;owner.put({o});
   MgbfsStateExtent e{};e.sequence=2;e.begin=2;e.count=2;e.granted_rows=2;extent.put({e});
-  refs.put({3,1,0,2});selected.put({0,invalid?4u:2u});
-  req(mgbfs_state_materialize(input.p,4,refs.p,4,selected.p,2,16,states.p,ring.p,owner.p,extent.p,nullptr)==0,"materialize enqueue");
+  refs.put({3,1,0,2});selected.put(packed?std::vector<uint32_t>{2,invalid?3u:0u}:std::vector<uint32_t>{0,invalid?4u:2u});
+  // Nonzero source-span offset catches accidental use of full-frame indices.
+  int status=packed?mgbfs_state_materialize_packed(input.p+16,3,selected.p,2,16,states.p,ring.p,owner.p,extent.p,nullptr):
+      mgbfs_state_materialize(input.p,4,refs.p,4,selected.p,2,16,states.p,ring.p,owner.p,extent.p,nullptr);
+  req(status==0,"materialize enqueue");
   ck(cudaDeviceSynchronize());auto out=states.get();
   if(invalid){req(owner.get()[0].error&&ring.get()[0].fatal&&!extent.get()[0].ready,"invalid materialize fatal");req(std::all_of(out.begin(),out.end(),[](uint8_t x){return x==0;}),"partial state copy");}
-  else{req(!owner.get()[0].error&&extent.get()[0].ready==1,"state ready");for(unsigned i=0;i<16;++i){req(out[32+i]==data[48+i],"first state mapping");req(out[48+i]==data[i],"second state mapping");}}
+  else{req(!owner.get()[0].error&&extent.get()[0].ready==1,"state ready");for(unsigned i=0;i<16;++i){req(out[32+i]==data[48+i],"first state mapping");req(out[48+i]==data[(packed?16:0)+i],"second state mapping");}}
 }
 static void retire_prefix(){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsStateExtent> extent(1);
@@ -119,5 +122,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
