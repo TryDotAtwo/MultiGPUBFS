@@ -1,7 +1,7 @@
 """Physical 2xT4 native NCCL versus CayleyPy torchrun S_n benchmark."""
 import importlib.util,json,os,sys,tempfile,urllib.request
 from pathlib import Path
-SOURCE='8be72b9867f284b437129fb63ef169044336fa9e';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
+SOURCE='66d82d03cb055daa08dae328978208efda7c8ede';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
 def load(path,name):spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 def main():
  root=Path(tempfile.mkdtemp(prefix='mgbfs-dist-ab-',dir='/tmp'));logs=Path('/kaggle/working/distributed-bench');logs.mkdir();helper=root/'gate.py';urllib.request.urlretrieve('https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/c6b501c5e245ff15d92bfbc018c6bc25b0e68c98/kaggle/native-primitives/kernel.py',helper);gate=load(helper,'gate');env=os.environ.copy();env['PATH']='/usr/local/cuda/bin:'+env.get('PATH','')

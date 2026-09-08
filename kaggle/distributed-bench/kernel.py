@@ -1,7 +1,7 @@
 """Shared native engine versus pinned CayleyPy, one active T4 on a T4x2 host."""
 import importlib.util,json,os,sys,tempfile,urllib.request
 from pathlib import Path
-SOURCE='68e2a866e302125828f90d50df4bcebd5820dd79';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
+SOURCE='66d82d03cb055daa08dae328978208efda7c8ede';BASELINE='f0f2b8e5ee61173039ab9742f3a7756c9b6365e6';CUTLASS='ffa119a1255d78998536107466cc7097ecefa393'
 BENCH_WORLD_SIZE=1
 PROFILE_GROUP_N=11
 ARCHIVE_CODEC='permutation_u8'
