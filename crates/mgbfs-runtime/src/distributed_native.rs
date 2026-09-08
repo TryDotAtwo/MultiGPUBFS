@@ -1,5 +1,5 @@
 //! Native one/two-rank NCCL BFS reference. Torchrun supplies only rank env.
-use crate::failure::attempt_all;
+use crate::failure::process_owner_pair;
 use crate::jobs::{split, JobSpan};
 use mgbfs_core::{
     config::OwnerBackend,
@@ -294,6 +294,8 @@ pub struct DistributedNativeBfs {
     prev_count: u32,
     failed: bool,
     stream: Stream,
+    exchange_stream: Stream,
+    exchange_done: Event,
     archive_stream: Stream,
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
@@ -601,6 +603,10 @@ impl DistributedNativeBfs {
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
+        let mut raw_exchange = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
+        let exchange_stream = Stream(raw_exchange);
+        let exchange_done = Event::new()?;
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
         let archive_stream = Stream(raw_archive);
@@ -798,6 +804,8 @@ impl DistributedNativeBfs {
             prev_count: 0,
             failed: false,
             stream,
+            exchange_stream,
+            exchange_done,
             archive_stream,
             archive_done,
             archived_depth: None,
@@ -1446,6 +1454,10 @@ impl DistributedNativeBfs {
             let received = if self.cfg.world == 1 {
                 0
             } else {
+                let communication = self.exchange_stream.0;
+                // Pack/count publication has already completed on s. These
+                // immutable send ranges remain live until the remote wait and
+                // the batch's failure collective have completed.
                 self.collective_send.put(&[owner_counts[remote_owner]])?;
                 check(unsafe {
                     mgbfs_nccl_send_recv(
@@ -1455,10 +1467,10 @@ impl DistributedNativeBfs {
                         self.cfg.rank ^ 1,
                         self.recv_count.ptr,
                         4,
-                        s,
+                        communication,
                     )
                 })?;
-                check(unsafe { cudaStreamSynchronize(s) })?;
+                check(unsafe { cudaStreamSynchronize(communication) })?;
                 let received = self.recv_count.one::<u32>()?;
                 if received > self.candidates {
                     return Err("EXCHANGE_CAPACITY".into());
@@ -1471,7 +1483,7 @@ impl DistributedNativeBfs {
                         self.cfg.rank ^ 1,
                         self.recv_hashes.ptr,
                         u64::from(received) * 16,
-                        s,
+                        communication,
                     )
                 })?;
                 check(unsafe {
@@ -1483,9 +1495,10 @@ impl DistributedNativeBfs {
                         self.cfg.rank ^ 1,
                         self.recv_states.ptr,
                         u64::from(received) * packet_stride as u64,
-                        s,
+                        communication,
                     )
                 })?;
+                check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
                 received
             };
             if let Some(parent_extent) = parent.filter(|_| self.hash_first.is_none()) {
@@ -1522,15 +1535,25 @@ impl DistributedNativeBfs {
                     .cast()
             };
             let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
-            let batch_error = attempt_all(
-                [
-                    (local_states, local_hashes, owner_counts[local_owner]),
+            let remote_ready = self.exchange_done.0;
+            let world = self.cfg.world;
+            let batch_error = process_owner_pair(
+                (0, (local_states, local_hashes, owner_counts[local_owner])),
+                (
+                    1,
                     (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
-                ]
-                .into_iter()
-                .enumerate(),
+                ),
                 |(group, (states, hashes, rows))| {
                     self.commit_owner_batch(states, hashes, rows, group)
+                },
+                || {
+                    if world == 2 {
+                        // Executed even after a local owner failure and for
+                        // empty receive payloads. The next failure collective
+                        // on s therefore cannot overtake the P2P operations.
+                        check(unsafe { cudaStreamWaitEvent(s, remote_ready, 0) })?;
+                    }
+                    Ok(())
                 },
             )
             .err();

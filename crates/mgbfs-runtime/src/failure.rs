@@ -31,3 +31,19 @@ pub fn abort_on_error<T, E>(
     }
     result
 }
+
+/// Process independent local input, then establish remote readiness before
+/// consuming remote input. A local error must not skip the readiness boundary.
+pub fn process_owner_pair<T, E>(
+    local: T,
+    remote: T,
+    mut process: impl FnMut(T) -> Result<(), E>,
+    ready: impl FnOnce() -> Result<(), E>,
+) -> Result<(), E> {
+    let first = process(local);
+    if let Err(error) = ready() {
+        return first.and(Err(error));
+    }
+    let second = process(remote);
+    first.and(second)
+}
