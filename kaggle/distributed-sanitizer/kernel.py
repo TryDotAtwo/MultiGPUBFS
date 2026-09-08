@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "66d82d03cb055daa08dae328978208efda7c8ede"
+SOURCE = "b3c191a5c32654a779e325d4b3bbe8e2f8226362"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -66,7 +66,7 @@ def main():
              "--test", "control_pump", "--test", "rank_epochs",
             "--test", "epoch_coordinator", "--test", "failure_abort",
              "--test", "admitted_buffers", "--test", "source_banks",
-             "--test", "dense_frames", "--test", "dense_prefix", "--test", "owner_results"],
+             "--test", "dense_frames", "--test", "dense_prefix", "--test", "owner_results", "--test", "owner_pair"],
             "control-contracts", source)
         report["control_contracts"] = "PASS_LINUX_TCP_AND_FILE_CONTRACTS"
         save()
