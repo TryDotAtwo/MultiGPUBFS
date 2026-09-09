@@ -79,11 +79,24 @@ def audit(directory):
         values = [r['search_complete_seconds'] for r in samples]
         median = statistics.median(values)
         mad = statistics.median(abs(x - median) for x in values)
+        comparisons = [c for c in summary['comparisons'] if (
+            c['config']['MGBFS_PROFILE'], c['config']['MGBFS_HASH_FIRST_GENERATION'],
+            c['config']['MGBFS_OWNER_BACKEND'], c['config']['MGBFS_PRE_DEDUP']) == key]
+        assert len(comparisons) == 1
+        reported = comparisons[0]['native']
+        assert reported['samples_seconds'] == values and reported['repeats'] == 5
+        assert reported['median_seconds'] == median and reported['mad_seconds'] == mad
+        assert reported['peak_mib_total'] == max(r['smi_peak_mib_total'] for r in samples)
         print(' | '.join(map(str, (world, *key, round(median, 6), round(mad, 6),
               round(statistics.median(r['durable_run_commit_seconds'] for r in samples), 6),
               max(r['smi_peak_mib_total'] for r in samples)))))
     baseline = [r for r in rows if r['config_backend'] == 'cayleypy' and r['phase'] == 'measure']
     assert len(baseline) == 5
+    for comparison in summary['comparisons']:
+        measured = [r['search_complete_seconds'] for r in baseline]
+        assert comparison['cayleypy']['samples_seconds'] == measured
+        assert comparison['cayleypy']['median_seconds'] == statistics.median(measured)
+        assert all(r['batch'] == comparison['baseline_batch'] for r in baseline)
     print('baseline', statistics.median(r['search_complete_seconds'] for r in baseline),
           'peak MiB', max(r['smi_peak_mib_total'] for r in baseline))
 
