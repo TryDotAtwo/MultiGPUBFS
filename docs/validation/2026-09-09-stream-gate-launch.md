@@ -20,3 +20,12 @@ Next: finish both result downloads and reconcile configurations, repeats,
 layer counts, archive verifier outcomes and memory observations; collect v45
 terminal sanitizer artifacts before accepting the stream change.
 Do not repeat the published S13 run.
+
+## Terminal observation
+
+The authoritative Kaggle status subsequently changed to COMPLETE. Downloaded
+v45 summary pins the expected b3c191a source and reports COMPLETE, with PASS
+for plain, memcheck, racecheck, initcheck and synccheck. Raw fixture/rank/
+archive logs are downloading to `test_results/distributed-sanitizer-v45`.
+Until the strict auditor reconciles those artifacts, this is a terminal
+summary observation only, not final acceptance of the stream change.
