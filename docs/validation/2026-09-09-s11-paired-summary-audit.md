@@ -10,6 +10,12 @@ per configuration. All report 39,916,800 states across 56 layers.
 This verifies summary consistency, not independent replay of full state sets.
 Raw per-rank logs still require separate reconciliation.
 
+Update: the one-T4 panel now passes `audit_raw`: all successful raw rank
+JSONs match the summary, memory peaks recomputed from the original sampler
+CSVs agree, and every native archive verification log agrees. The failed
+1048576 baseline calibration log explicitly contains CUDA OutOfMemoryError
+(attempted 8.96 GiB allocation). The two-T4 raw reconciliation remains pending.
+
 Seconds are medians of five fresh processes. Peak VRAM is total sampled MiB.
 Native archives are mandatory; CayleyPy produces no archive.
 
