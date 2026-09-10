@@ -29,3 +29,16 @@ for plain, memcheck, racecheck, initcheck and synccheck. Raw fixture/rank/
 archive logs are downloading to `test_results/distributed-sanitizer-v45`.
 Until the strict auditor reconciles those artifacts, this is a terminal
 summary observation only, not final acceptance of the stream change.
+
+## Raw reconciliation completed 2026-09-10
+
+After the interrupted download processes were confirmed absent, missing
+sort-origins logs were retrieved without rerunning the GPU workload.
+The strict auditor completed successfully against source b3c191a:
+40 tool logs, 36 measured ranks, 36 warmup ranks and 36 archive verifiers.
+All 24 profile selections reproduce global layers `[1,3,5,6,5,3,1]`.
+This covers the compact full-runtime correctness/sanitizer gate for the
+separate exchange stream, including 12 distributed archive tests and three
+native scatter tests per tool mode. It does not establish performance gain,
+actual timeline overlap, large-graph acceptance or production dispatcher
+completion. The S11 tables still measure the earlier 66d82d0 source.
