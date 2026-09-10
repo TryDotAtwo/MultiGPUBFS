@@ -17,6 +17,11 @@ exist; there is no production multi-GPU BFS executable yet. See the
 The Python package and `gpu/` / `rust/` trees below remain research prototypes,
 not fallback implementations of the new runtime.
 
+The measured one/two-rank reference is also available through
+`mgbfs bench --reference` in a Linux CUDA build. It is not the production
+`RunConfigV1` dispatcher. See [reference CLI usage](docs/reference-cli.md)
+for launch arguments, archive requirements and remaining limitations.
+
 The notes deliberately separate three domains:
 
 1. classical BFS theory and correctness;

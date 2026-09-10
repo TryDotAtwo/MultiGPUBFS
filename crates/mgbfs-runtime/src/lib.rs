@@ -36,6 +36,8 @@ pub mod payload_lease;
 pub mod pinned_archive;
 pub mod rank_epochs;
 pub mod receipts;
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub mod reference_bench;
 pub mod ring;
 pub mod route_count;
 pub mod scatter_admission;
