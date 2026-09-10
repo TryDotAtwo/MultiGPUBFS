@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "b3c191a5c32654a779e325d4b3bbe8e2f8226362"
+SOURCE = "676b842c6ab540a23fd63b7b4c2b181252c81ee6"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 
 
@@ -172,7 +172,11 @@ def main():
         # direct constructors. These tiny runs are correctness, not timing data.
         run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime", "--features", "cuda",
              "--example", "distributed_bench"], "bench-build", source)
-        run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli"], "cli-build", source)
+        run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli", "--features", "cuda"], "cli-build", source)
+        cli_contracts = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-cli",
+                             "--features", "cuda", "--test", "bench"], "cli-contracts", source)
+        require_fixture(cli_contracts, 3)
+        report["cli_scope"] = "Linux CUDA mgbfs bench --reference; same shared reference runtime; mandatory archive; explicit torchrun ranks; 1/2-rank profile smoke below uses CLI entry point"
         report["reference_profile_smoke"] = []
         expected_layers = None
         for world in (1, 2):
@@ -192,7 +196,7 @@ def main():
                                    MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
                         prefix = root / (label + "-archive")
                         run(["torchrun", "--standalone", f"--nproc-per-node={world}", "--no-python",
-                             str(source / "target/release/examples/distributed_bench"), "s4", "7",
+                             str(source / "target/release/mgbfs"), "bench", "--reference", "s4", "7",
                              str(root / (label + "-bootstrap")), str(prefix), str(output_dir)], label, source)
                         rows = [json.loads((output_dir / f"rank-{rank}.json").read_text()) for rank in range(world)]
                         for rank, row in enumerate(rows):
