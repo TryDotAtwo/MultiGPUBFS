@@ -35,9 +35,20 @@ const _: [(); 8] = [(); std::mem::align_of::<SurvivorsV1>()];
 
 /// Opaque handle: only the C++ adapter creates/destroys the object.
 pub type OwnerHandle = *mut c_void;
+pub type PoolHandle = *mut c_void;
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    /// Install one fixed-size RMM pool on the current device before allocating
+    /// owner inputs. Calls are serialized; no nested pool or runtime growth.
+    pub fn mgbfs_library_pool_create_v1(
+        bytes: u64,
+        reserve_bytes: u64,
+        pool: *mut PoolHandle,
+    ) -> i32;
+    /// Drain all users first. Live suballocations reject destruction and leave
+    /// the handle valid. Success restores the previous resource, invalidating it.
+    pub fn mgbfs_library_pool_destroy_v1(pool: PoolHandle) -> i32;
     /// Caller keeps history and installed fixed RMM pool alive on the same GPU.
     /// Zero status is success. A factory failure must leave `owner` null.
     pub fn mgbfs_library_owner_create_v1(
