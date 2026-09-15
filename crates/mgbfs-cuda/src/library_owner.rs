@@ -68,6 +68,9 @@ extern "C" {
     /// `granted_rows` is actual reserved state/archive credit. Success enqueues
     /// writes; it does not replace a completed CUDA event or host publication gate.
     pub fn mgbfs_library_owner_commit_v1(owner: OwnerHandle, epoch: u64, granted_rows: u32) -> i32;
+    /// Borrow append-order committed keys. Consume on the owner stream or after
+    /// its completion event; pending/poisoned owners are rejected.
+    pub fn mgbfs_library_owner_export_v1(owner: OwnerHandle, keys: *mut KeysV1) -> i32;
     /// Drain the stream before destroying the handle or external leases.
     pub fn mgbfs_library_owner_destroy_v1(owner: OwnerHandle);
 }

@@ -143,3 +143,8 @@ extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32
 extern "C" void mgbfs_library_owner_destroy_v1(void* owner) {
   delete static_cast<Handle*>(owner);
 }
+// RED scaffold for the depth-finalization export boundary.
+extern "C" int mgbfs_library_owner_export_v1(void*, MgbfsLibraryKeysV1* keys) {
+  if (keys) *keys = {};
+  return -1;
+}

@@ -59,6 +59,12 @@ int mgbfs_library_owner_compare_v1(void* owner, uint64_t epoch,
  * Any error poisons the owner; the rank group must fail, not retry.
  */
 int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32_t granted_rows);
+/* Borrow append-order committed SoA keys for depth finalization. Not sorted.
+ * Rejects pending/poisoned owners and zeros output on error. Does not wait:
+ * consume on the owner stream or after its completion event. Borrow ends at
+ * owner destruction; do not mutate keys. No host copy or allocation of key data.
+ */
+int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* keys);
 /* Caller drains the owner's stream before destroy. No hidden global barrier. */
 void mgbfs_library_owner_destroy_v1(void* owner);
 

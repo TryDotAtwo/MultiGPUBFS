@@ -165,3 +165,33 @@ is under GPU validation in v16. It reserves initial=max pool bytes, retains the
 previous per-device resource and rejects nested pools or destruction with live
 suballocations. The caller must drain streams and destroy owners before pool
 release. Rust declarations remain type-check only; runtime integration is pending.
+
+V16 subsequently completed: both distinct T4 devices passed plain and all four
+sanitizers (ten runs, eight sanitizer summaries with zero errors and no racecheck
+warnings). Evidence: `test_results/library-owner-v16/library-owner/`. The pool
+lifecycle fixture proves live-allocation destruction rejection, nested-pool
+rejection, fixed-size exhaustion, owner operation under the ABI-installed pool
+and restoration of the previous resource. The printed 320,156-byte peak belongs
+to the separate characterization pool, not an instrumented full runtime.
+
+### Remaining runtime boundary (source audit)
+
+`distributed_native.rs` currently reserves with owner control stage 1 and
+materializes only after stage 2. Its finalization compacts fixed-bucket accepted
+AoS hashes, reads the directory/count, then swaps previous/current layers.
+The cuDF owner instead holds append-order SoA accepted keys internally.
+Therefore integration requires all of the following, not just ABI dispatch:
+
+- Explicit AoS-to-SoA inputs and span-local source ordinals, with bounded scratch.
+- Transfer survivor count into stage-1 GPU control, run the existing actual
+  StateRing reservation, and read its grant/error before cuDF commit.
+- Publish stage 2 only after successful commit, retaining survivor indices until
+  materialization has consumed them; failed reservations must not commit keys.
+- Expose committed accepted keys for depth finalization, convert/partition them
+  into the next layer's directory format, and check its count against reserved
+  layer count. Existing fixed-bucket compaction cannot read cuDF private storage.
+- Rebuild history from the appropriate depth window only after readers drain;
+  account pool plus conversion/finalization scratch in the full VRAM plan.
+
+These synchronization and conversion costs belong in end-to-end timings. No
+bridge implementation or measured performance claim follows from this audit.

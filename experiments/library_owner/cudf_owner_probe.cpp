@@ -180,11 +180,44 @@ void abi_fixture(rmm::cuda_stream_view stream) {
     stream.synchronize();
     check(origin == 1, "OWNER_ABI_PROVENANCE");
     check(mgbfs_library_owner_commit_v1(owner, 5, 1) == 0, "OWNER_ABI_COMMIT");
+    MgbfsLibraryKeysV1 committed{};
+    check(mgbfs_library_owner_export_v1(owner, &committed) == 0,
+          "OWNER_ABI_EXPORT");
+    check(committed.rows == 1 && committed.reserved == 0, "OWNER_ABI_EXPORT_COUNT");
+    std::array<uint32_t, 4> exported{};
+    for (int c = 0; c < 4; ++c)
+      cuda_check(cudaMemcpyAsync(&exported[c], committed.words[c], sizeof(uint32_t),
+                                cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    check(exported == std::array<uint32_t, 4>{7,8,9,11}, "OWNER_ABI_EXPORT_KEY");
     check(mgbfs_library_owner_compare_v1(owner, 6, candidates, &out) == 0,
           "OWNER_ABI_NEXT_COMPARE");
     check(out.rows == 0, "OWNER_ABI_REACCEPTED_DUPLICATE");
     check(mgbfs_library_owner_commit_v1(owner, 5, 0) != 0, "OWNER_ABI_STALE_EPOCH");
     check(mgbfs_library_owner_commit_v1(owner, 6, 0) != 0, "OWNER_ABI_POISON_RETRY");
+    check(mgbfs_library_owner_export_v1(owner, &committed) != 0 &&
+          committed.rows == 0 && committed.reserved == 0 &&
+          std::all_of(std::begin(committed.words), std::end(committed.words),
+                      [](auto p) { return p == nullptr; }), "OWNER_ABI_POISON_EXPORT");
+    stream.synchronize();
+  } catch (...) {
+    stream.synchronize();
+    mgbfs_library_owner_destroy_v1(owner);
+    throw;
+  }
+  mgbfs_library_owner_destroy_v1(owner);
+  owner = nullptr;
+  check(mgbfs_library_owner_create_v1(keys(old->view()), 1, stream.value(), &owner) == 0,
+        "OWNER_ABI_PENDING_CREATE");
+  try {
+    MgbfsLibraryCandidatesV1 candidates{keys(input->view()),
+        input->view().column(4).data<uint32_t>()};
+    MgbfsLibrarySurvivorsV1 out{};
+    check(mgbfs_library_owner_compare_v1(owner, 1, candidates, &out) == 0,
+          "OWNER_ABI_PENDING_COMPARE");
+    MgbfsLibraryKeysV1 committed{};
+    check(mgbfs_library_owner_export_v1(owner, &committed) != 0 && committed.rows == 0,
+          "OWNER_ABI_EXPORTED_UNCOMMITTED");
     stream.synchronize();
   } catch (...) {
     stream.synchronize();
