@@ -60,6 +60,8 @@ def main():
         run([*pip, "install", "--only-binary=:all:", "--no-cache-dir",
              "--report", str(logs / "pip-install.json"), *PACKAGES], "install", 900)
         run([*pip, "freeze", "--all"], "packages")
+        run([*pip, "show", "-f", "libcudf-cu12", "librmm-cu12", "rapids-logger"],
+            "sdk-inventory")
         # The normal log helper deliberately merges stdout/stderr. Never parse
         # its result as a path: even a nonfatal sitecustomize diagnostic corrupts
         # that protocol. Preserve diagnostics separately instead of hiding them.
