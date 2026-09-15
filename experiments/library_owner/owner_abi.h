@@ -29,6 +29,17 @@ typedef struct MgbfsLibrarySurvivorsV1 {
   uint32_t reserved;
 } MgbfsLibrarySurvivorsV1;
 
+/* One fixed RMM pool per device, installed before any owner/input allocation.
+ * bytes is nonzero and 256-byte aligned; reserve_bytes is at least 1 GiB.
+ * Initial and maximum pool size are identical. No growth or fallback.
+ * Calls are serialized by the caller on the creating device. All users of
+ * the current RMM resource must be drained before destruction. Destroy rejects
+ * live suballocations and leaves the handle valid on failure. On success it
+ * restores the previous resource; the handle must never be reused.
+ */
+int mgbfs_library_pool_create_v1(uint64_t bytes, uint64_t reserve_bytes, void** pool);
+int mgbfs_library_pool_destroy_v1(void* pool);
+
 /* Caller installs the fixed RMM resource before creation; it and immutable
  * history outlive all owners. Exactly one serialized writer/stream per owner.
  * Factory returns a null handle on error. Status 0 means success, never a

@@ -3,6 +3,13 @@
 #include <limits>
 #include <vector>
 
+// RED scaffold: GPU fixture must reach POOL_ABI_CREATE before implementation.
+extern "C" int mgbfs_library_pool_create_v1(uint64_t, uint64_t, void** pool) {
+  if (pool) *pool = nullptr;
+  return -1;
+}
+extern "C" int mgbfs_library_pool_destroy_v1(void*) { return -1; }
+
 namespace {
 struct Handle {
   mgbfs::CudfOwner owner;

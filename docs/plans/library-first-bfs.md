@@ -137,3 +137,23 @@ Integration remains incomplete: `distributed_native.rs` uses the AoS
 whereas the experimental cuDF class takes SoA columns and host-visible library
 counts. The C ABI, layout conversion and reserve/event bridge must be implemented
 and charged to both timing and peak memory, not bypassed in the comparison.
+
+### Shared C ABI gate, Kaggle v14
+
+The v13 RED fixture reached the intended missing implementation and failed at
+`OWNER_ABI_CREATE`. The implemented shared library at source commit
+`9b34de715799ca996e1b1ba64a95ec7357ed5188` passed v14 on both physical T4s:
+ten plain/sanitized fixture runs, including eight sanitizer runs with zero
+errors (racecheck also zero warnings). Raw evidence is in
+`test_results/library-owner-v14/library-owner/`.
+
+The ABI fixture covers borrowed history, survivor source indices, an empty
+second result, stale commit rejection and poisoned-handle rejection. The pool
+remains fixed at 67,108,864 bytes; fixture suballocation peak is 320,156 bytes.
+The logged oversized-allocation failure is intentional. These measurements
+are neither full-device VRAM nor full-BFS performance.
+
+Rust declarations have only type-check evidence, not linking or execution.
+Remaining integration includes a Rust-accessible fixed RMM resource context,
+AoS-to-SoA conversion, GPU reserve/event bridging and actual runtime dispatch.
+This gate does not establish multi-rank/NCCL correctness or a speedup.

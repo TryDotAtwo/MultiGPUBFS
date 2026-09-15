@@ -194,10 +194,51 @@ void abi_fixture(rmm::cuda_stream_view stream) {
   mgbfs_library_owner_destroy_v1(owner);
 }
 
+void pool_abi_fixture(rmm::cuda_stream_view stream) {
+  constexpr uint64_t bytes = 64ULL << 20;
+  auto previous = rmm::mr::get_current_device_resource_ref();
+  void* pool = nullptr;
+  check(mgbfs_library_pool_create_v1(bytes, 1ULL << 30, &pool) == 0 && pool,
+        "POOL_ABI_CREATE");
+  try {
+    void* nested = nullptr;
+    check(mgbfs_library_pool_create_v1(bytes, 1ULL << 30, &nested) != 0 && !nested,
+          "POOL_ABI_NESTED");
+    {
+      rmm::device_buffer live(256, stream);
+      check(mgbfs_library_pool_destroy_v1(pool) != 0, "POOL_ABI_FREED_LIVE_STORAGE");
+      cuda_check(cudaMemsetAsync(live.data(), 0x5a, live.size(), stream.value()));
+      stream.synchronize();
+    }
+    stream.synchronize();
+    bool exhausted = false;
+    try { rmm::device_buffer impossible(bytes + 256, stream); }
+    catch (rmm::out_of_memory const&) { exhausted = true; }
+    check(exhausted, "POOL_ABI_GREW");
+    // Exercise a real owner while this ABI-installed resource is active.
+    abi_fixture(stream);
+    stream.synchronize();
+  } catch (...) {
+    stream.synchronize();
+    mgbfs_library_pool_destroy_v1(pool);
+    throw;
+  }
+  check(mgbfs_library_pool_destroy_v1(pool) == 0, "POOL_ABI_DESTROY");
+  check(rmm::mr::get_current_device_resource_ref() == previous, "POOL_ABI_RESTORE");
+  for (uint64_t invalid : {uint64_t{0}, bytes + 1}) {
+    pool = nullptr;
+    check(mgbfs_library_pool_create_v1(invalid, 1ULL << 30, &pool) != 0 && !pool,
+          "POOL_ABI_INVALID_CAPACITY");
+  }
+  check(mgbfs_library_pool_create_v1(bytes, 0, &pool) != 0 && !pool,
+        "POOL_ABI_MISSING_RESERVE");
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
     rmm::cuda_stream stream;
+    pool_abi_fixture(stream.view());
     constexpr std::size_t bytes = 64ULL << 20;
     std::size_t free = 0, total = 0;
     cuda_check(cudaMemGetInfo(&free, &total));
