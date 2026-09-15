@@ -19,6 +19,13 @@ pub struct OwnerCommitGate {
     phase: Phase,
 }
 impl OwnerCommitGate {
+    /// Require a completed batch before releasing borrowed history indices.
+    pub fn check_idle(&mut self) -> Result<()> {
+        if !matches!(self.phase, Phase::Idle) {
+            return self.fail("LIBRARY_OWNER_ORDER");
+        }
+        Ok(())
+    }
     /// Validate event recording/query before it can authorize publication.
     pub fn check_completion(&mut self, epoch: u64) -> Result<()> {
         if !matches!(self.phase, Phase::Reserved { epoch: expected, .. } if expected == epoch) {

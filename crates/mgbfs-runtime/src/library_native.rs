@@ -41,7 +41,8 @@ impl LibraryShard {
 
     /// # Safety
     /// Install a fixed RMM pool on the current device first. Pool, immutable
-    /// history and stream must outlive this object, including teardown. Calls
+    /// history and stream must outlive this object, including teardown (history
+    /// may instead be released after successful seal()). Calls
     /// are serialized on that device. A failure requires rank-group termination.
     pub unsafe fn new(history: KeysV1, capacity: u32, stream: *mut c_void) -> Result<Self> {
         let completion = NativeEvent::new()?;
@@ -118,6 +119,21 @@ impl LibraryShard {
         self.gate.accepted()
     }
 
+    /// End comparisons and release borrowed history indices, preserving accepted
+    /// keys for finalization/export. This does not synchronize the device.
+    /// # Safety
+    /// All GPU work and external consumers of borrowed results/history must be
+    /// drained first. Pool, creating device and stream must remain valid until
+    /// close(); successful return ends only the borrowed history lifetime.
+    pub unsafe fn seal(&mut self) -> Result<()> {
+        self.gate.check_idle()?;
+        let status = mgbfs_library_owner_seal_v1(self.handle);
+        self.status(status, "SEAL")?;
+        // Terminal for compare/commit, but export deliberately stays available.
+        self.gate.abort();
+        Ok(())
+    }
+
     /// Record only after commit, materialization, and every consumer of borrowed
     /// result indices have been enqueued. The event is allocated during setup.
     /// # Safety
@@ -173,7 +189,8 @@ impl LibraryShard {
     /// Explicit teardown, outside the batch loop. On CUDA failure retain the
     /// handle; process termination owns cleanup, never free live GPU readers.
     /// # Safety
-    /// The creating device, stream, pool and borrowed history must still exist.
+    /// The creating device, stream and pool must still exist. Borrowed history
+    /// must exist unless seal() succeeded; external readers must be drained.
     pub unsafe fn close(&mut self) -> Result<()> {
         if self.handle.is_null() {
             return Ok(());

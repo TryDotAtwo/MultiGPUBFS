@@ -1,6 +1,33 @@
 use mgbfs_runtime::library_owner::OwnerCommitGate;
 
 #[test]
+fn sealing_cannot_release_history_before_completion_or_after_failure() {
+    for phase in 0..3 {
+        let mut gate = OwnerCommitGate::new(8);
+        gate.compared(1, 4, 2).unwrap();
+        if phase == 1 {
+            gate.reserve(1, 2).unwrap();
+        } else if phase == 2 {
+            gate.abort();
+        }
+        assert!(gate.check_idle().is_err());
+        assert!(gate.check_compare(2).is_err());
+        assert_eq!(gate.accepted(), 0);
+    }
+}
+
+#[test]
+fn history_can_be_released_after_publication_without_losing_count() {
+    let mut gate = OwnerCommitGate::new(8);
+    gate.check_idle().unwrap();
+    gate.compared(1, 4, 2).unwrap();
+    gate.reserve(1, 2).unwrap();
+    gate.completed(1).unwrap();
+    gate.check_idle().unwrap();
+    assert_eq!(gate.accepted(), 2);
+}
+
+#[test]
 fn completion_event_cannot_be_recorded_before_commit_reservation() {
     let mut gate = OwnerCommitGate::new(8);
     gate.compared(1, 4, 2).unwrap();

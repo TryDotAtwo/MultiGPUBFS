@@ -306,3 +306,19 @@ key unchanged, and reject any subsequent comparison. The seal function is still
 a stub. This boundary is needed to overwrite the oldest history buffer during
 depth rotation without keeping an extra combined/copy buffer or invalidating
 live borrowed history. No full runtime rotation is implemented yet.
+
+V27 reached the intended `OWNER_WINDOW_SEAL` failure. V28 at
+`9b47697309f35c3bdb78119bbeb5846d68839a90` passed C++ and Rust plain and all
+four sanitizer modes independently on both physical T4s; all sixteen sanitizer
+runs reported zero errors, with no racecheck warnings. Evidence:
+`test_results/library-owner-v28/library-owner/`. The C++ seal fixture releases
+history and candidate tables, then verifies exported accepted keys and rejects
+new comparisons. This is a component gate, not NCCL or complete BFS evidence.
+
+The Rust adapter now exposes seal with a host idle guard. A new CPU RED test
+failed when that guard allowed pending work; after implementation all fifteen
+owner and eight event tests pass. History may be released after successful seal,
+but the pool/stream and accepted storage remain live until drained teardown.
+The extended Rust GPU fixture checks export and rejected comparison after seal;
+its GPU execution is pending. No library backend is selected by the production
+distributed scheduler yet.

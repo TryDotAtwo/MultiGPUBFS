@@ -88,6 +88,16 @@ fn rust_adapter_preserves_keys_and_publishes_only_after_completion() {
         owner.commit(2, 0).unwrap();
         owner.complete(2).unwrap();
         assert_eq!(owner.accepted(), 2);
+        owner.seal().unwrap();
+        let keys = owner.export().unwrap();
+        assert_eq!(keys.rows, 2);
+        assert_eq!(mgbfs_library_keys_to_aos_v1(keys, destination, 2, stream), 0);
+        assert_eq!(cudaStreamSynchronize(stream), 0);
+        actual.fill(0);
+        assert_eq!(cudaMemcpy(actual.as_mut_ptr().cast(), destination, 32, 2), 0);
+        assert_eq!(actual, [1, 2, 3, 4, 1, 2, 3, 5]);
+        assert!(owner.compare(3, candidates).is_err());
+        assert_eq!(owner.accepted(), 2);
         owner.close().unwrap();
         assert_eq!(mgbfs_library_pool_destroy_v1(pool), 0);
         for buffer in [input, scratch, destination] {
