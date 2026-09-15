@@ -254,3 +254,18 @@ an uncompleted borrowed result. All eleven gate tests pass. Feature-enabled
 The first adapter explicitly synchronizes its stream for completion/teardown;
 that cost must be measured. It does not own the pool/history/stream and has not
 yet been selected by `DistributedNativeBfs` or exercised from Rust on T4.
+
+The library-only Rust feature no longer requires `MGBFS_CUDA_LIB_DIR` or links
+the unrelated full native BFS library. Before separation the real build check
+failed at that missing variable; afterwards library-only and ordinary native
+feature checks both passed. `MGBFS_CUDART_LIB_DIR` selects the pinned CUDA Runtime
+directory. This changes build dependencies, not runtime fallback behavior.
+
+V23 pins `fd6a08589379ceae204b43df2e8e6939748fcc17` and adds real Rust linking
+and execution alongside the C++ tests. The Rust test uses the actual
+`LibraryShard`, removes one duplicate from three keys, verifies all key words
+and checks that accepted counts change only after explicit stream completion.
+Its private destination is preallocated; native StateRing remains covered by
+the separate C++ fixture, not this Rust test. The runner uses the project's
+pinned Rust version and locked Cargo dependencies, with plain plus all four
+sanitizers per physical GPU. Results are pending.

@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "6f9ad60dc58dfc01c9ae1d4f306ec725a057fee7"
+SOURCE_COMMIT = "fd6a08589379ceae204b43df2e8e6939748fcc17"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
