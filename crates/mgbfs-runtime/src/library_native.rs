@@ -6,6 +6,23 @@ use mgbfs_core::Result;
 use mgbfs_cuda::{ffi::cudaStreamSynchronize, library_owner::*};
 use std::{ffi::c_void, ptr};
 
+/// Finalize one rank's disjoint shards into a preallocated SoA history buffer.
+/// Output ranges are shard-major, not sorted within a shard.
+/// # Safety
+/// Drain every producer and borrowed-result consumer before calling. All owners
+/// use stream and its current device/pool. Destination planes each hold rows
+/// writable u32s and do not overlap each other or accepted storage. They may
+/// alias borrowed history: all history leases must end before the first copy.
+/// A failure is fatal to the rank group, not a retryable partial finalization.
+pub unsafe fn finalize_shards(
+    _owners: &mut [LibraryShard],
+    _destination: KeysV1,
+    _ranges: &mut [std::ops::Range<u32>],
+    _stream: *mut c_void,
+) -> Result<u32> {
+    Err("LIBRARY_FINALIZE_NOT_IMPLEMENTED".into())
+}
+
 pub struct LibraryShard {
     handle: OwnerHandle,
     stream: *mut c_void,
