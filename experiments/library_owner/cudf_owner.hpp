@@ -45,7 +45,7 @@ class CudfOwner {
   cudf::table_view compare(cudf::table_view incoming) {
     try {
       check_device();
-      if (poisoned_ || pending_) throw std::runtime_error("OWNER_ORDER");
+      if (poisoned_ || pending_ || sealed_) throw std::runtime_error("OWNER_ORDER");
       schema(incoming, 5);
       staged_ = cudf::stable_distinct(incoming, {0,1,2,3},
           cudf::duplicate_keep_option::KEEP_FIRST, cudf::null_equality::EQUAL,
@@ -69,7 +69,7 @@ class CudfOwner {
   void commit(cudf::size_type granted) {
     try {
       check_device();
-      if (poisoned_ || !pending_) throw std::runtime_error("OWNER_ORDER");
+      if (poisoned_ || !pending_ || sealed_) throw std::runtime_error("OWNER_ORDER");
       auto const rows = staged_->num_rows();
       if (granted < rows || rows > capacity_ - count_)
         throw std::runtime_error("OWNER_CREDIT");
@@ -92,6 +92,20 @@ class CudfOwner {
 
   // Stream-ordered appended count, NOT evidence of completed device execution.
   cudf::size_type accepted_count() const { return count_; }
+
+  // Caller has drained all operations and external result consumers. After
+  // releasing these indexes, borrowed history may be overwritten for rotation.
+  void seal() {
+    try {
+      check_device();
+      if (poisoned_ || pending_ || sealed_) throw std::runtime_error("OWNER_ORDER");
+      history_.reset();
+      current_history_.reset();
+      next_.reset();
+      staged_.reset();
+      sealed_ = true;
+    } catch (...) { poisoned_ = true; throw; }
+  }
 
   // Borrow committed append-order keys; stream completion remains caller-owned.
   cudf::table_view export_committed() {
@@ -140,7 +154,7 @@ class CudfOwner {
   cudf::size_type capacity_, count_{0};
   rmm::cuda_stream_view stream_;
   int device_{0};
-  bool pending_{false}, poisoned_{false};
+  bool pending_{false}, poisoned_{false}, sealed_{false};
   std::unique_ptr<cudf::table> accepted_, staged_;
   // Destroy indexes before their referenced storage.
   std::unique_ptr<cudf::filtered_join> history_, current_history_, next_;

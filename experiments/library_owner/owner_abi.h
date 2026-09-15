@@ -54,7 +54,8 @@ int mgbfs_library_keys_to_aos_v1(MgbfsLibraryKeysV1 keys, void* output,
     uint32_t capacity, void* cuda_stream);
 
 /* Caller installs the fixed RMM resource before creation; it and immutable
- * history outlive all owners. Exactly one serialized writer/stream per owner.
+ * history outlives its owner or successful seal. The resource outlives owners.
+ * Exactly one serialized writer/stream per owner.
  * Factory returns a null handle on error. Status 0 means success, never a
  * backend fallback. Exceptions must not cross the C boundary.
  */

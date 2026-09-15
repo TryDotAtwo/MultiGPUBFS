@@ -9,8 +9,6 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
-// RED scaffold for releasing history leases before depth-buffer rotation.
-extern "C" int mgbfs_library_owner_seal_v1(void*) { return -1; }
 
 namespace {
 using FixedPool = rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>;
@@ -159,6 +157,15 @@ extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32
 }
 extern "C" void mgbfs_library_owner_destroy_v1(void* owner) {
   delete static_cast<Handle*>(owner);
+}
+extern "C" int mgbfs_library_owner_seal_v1(void* owner) {
+  auto* handle = static_cast<Handle*>(owner);
+  if (!handle) return -1;
+  try {
+    if (handle->poisoned || handle->pending) return fail(handle);
+    handle->owner.seal();
+    return 0;
+  } catch (...) { return fail(handle); }
 }
 extern "C" int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* keys) {
   if (keys) *keys = {};

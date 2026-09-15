@@ -97,6 +97,9 @@ extern "C" {
     /// Borrow append-order committed keys. Consume on the owner stream or after
     /// its completion event; pending/poisoned owners are rejected.
     pub fn mgbfs_library_owner_export_v1(owner: OwnerHandle, keys: *mut KeysV1) -> i32;
+    /// Drain all work first. Release history/result leases while retaining
+    /// accepted storage; only export and destruction are legal afterwards.
+    pub fn mgbfs_library_owner_seal_v1(owner: OwnerHandle) -> i32;
     /// Drain the stream before destroying the handle or external leases.
     pub fn mgbfs_library_owner_destroy_v1(owner: OwnerHandle);
 }
