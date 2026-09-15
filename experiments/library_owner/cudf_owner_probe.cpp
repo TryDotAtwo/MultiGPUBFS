@@ -22,6 +22,7 @@
 #include <set>
 #include "cudf_owner.hpp"
 #include "owner_abi.h"
+#include "../../cuda/state_commit.h"
 
 void check(bool ok, char const* msg) { if (!ok) throw std::runtime_error(msg); }
 void cuda_check(cudaError_t result) {
@@ -308,6 +309,91 @@ void layout_fixture(rmm::cuda_stream_view stream) {
         converted.source_indices == nullptr, "LAYOUT_SHORT_BUFFER");
 }
 
+// Integration fixture, not timing evidence: uses actual native reserve/materialize
+// kernels and explicitly charges host synchronization in a future runtime adapter.
+void native_commit_fixture(rmm::cuda_stream_view stream) {
+  auto history = upload({Row{1,2,3,4,0}}, stream);
+  MgbfsLibraryKeysV1 old{};
+  old.rows = 1;
+  for (int c = 0; c < 4; ++c) old.words[c] = history->view().column(c).data<uint32_t>();
+  const std::array<uint32_t, 16> input_words{
+      1,2,3,4, 1,2,3,5, 1,2,3,5, 9,8,7,6};
+  rmm::device_buffer input(input_words.data(), sizeof(input_words), stream);
+  rmm::device_buffer scratch(1280, stream), states(32, stream), exported(32, stream);
+  MgbfsStateRingControl host_ring{};
+  host_ring.capacity = 2;
+  host_ring.descriptor_capacity = 2;
+  MgbfsOwnerControl host_control{};
+  MgbfsStateExtent host_extent{};
+  uint32_t layer_count = 0;
+  rmm::device_buffer ring(&host_ring, sizeof(host_ring), stream);
+  rmm::device_buffer control(&host_control, sizeof(host_control), stream);
+  rmm::device_buffer extent(&host_extent, sizeof(host_extent), stream);
+  rmm::device_buffer count(&layer_count, sizeof(layer_count), stream);
+  void* owner = nullptr;
+  check(mgbfs_library_owner_create_v1(old, 2, stream.value(), &owner) == 0,
+        "NATIVE_BRIDGE_CREATE");
+  try {
+    MgbfsLibraryCandidatesV1 candidates{};
+    check(mgbfs_library_candidates_from_aos_v1(input.data(), 4, 4, scratch.data(),
+          scratch.size(), stream.value(), &candidates) == 0, "NATIVE_BRIDGE_LAYOUT");
+    MgbfsLibrarySurvivorsV1 survivors{};
+    check(mgbfs_library_owner_compare_v1(owner, 1, candidates, &survivors) == 0 &&
+          survivors.rows == 2, "NATIVE_BRIDGE_COMPARE");
+    host_control.stage = 1;
+    host_control.survivors = survivors.rows;
+    cuda_check(cudaMemcpyAsync(control.data(), &host_control, sizeof(host_control),
+                              cudaMemcpyHostToDevice, stream.value()));
+    auto r = static_cast<MgbfsStateRingControl*>(ring.data());
+    auto o = static_cast<MgbfsOwnerControl*>(control.data());
+    auto e = static_cast<MgbfsStateExtent*>(extent.data());
+    check(mgbfs_state_reserve_layer(r, o, e, static_cast<uint32_t*>(count.data()),
+          2, stream.value()) == 0, "NATIVE_BRIDGE_RESERVE_LAUNCH");
+    cuda_check(cudaMemcpyAsync(&host_control, o, sizeof(host_control),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    cuda_check(cudaMemcpyAsync(&host_extent, e, sizeof(host_extent),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    check(host_control.error == 0 && host_extent.granted_rows == 2 &&
+          host_extent.ready == 0, "NATIVE_BRIDGE_RESERVE");
+    check(mgbfs_library_owner_commit_v1(owner, 1, host_extent.granted_rows) == 0,
+          "NATIVE_BRIDGE_COMMIT");
+    host_control.stage = 2;
+    cuda_check(cudaMemcpyAsync(o, &host_control, sizeof(host_control),
+                              cudaMemcpyHostToDevice, stream.value()));
+    check(mgbfs_state_materialize_packed(static_cast<const uint8_t*>(input.data()), 4,
+          survivors.source_indices, 4, 16, static_cast<uint8_t*>(states.data()),
+          r, o, e, stream.value()) == 0, "NATIVE_BRIDGE_MATERIALIZE");
+    MgbfsLibraryKeysV1 keys{};
+    check(mgbfs_library_owner_export_v1(owner, &keys) == 0 && keys.rows == 2,
+          "NATIVE_BRIDGE_EXPORT");
+    check(mgbfs_library_keys_to_aos_v1(keys, exported.data(), 2, stream.value()) == 0,
+          "NATIVE_BRIDGE_EXPORT_LAYOUT");
+    std::array<uint32_t, 8> actual_states{}, actual_hashes{};
+    cuda_check(cudaMemcpyAsync(actual_states.data(), states.data(), 32,
+                              cudaMemcpyDeviceToHost, stream.value()));
+    cuda_check(cudaMemcpyAsync(actual_hashes.data(), exported.data(), 32,
+                              cudaMemcpyDeviceToHost, stream.value()));
+    cuda_check(cudaMemcpyAsync(&host_extent, e, sizeof(host_extent),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    cuda_check(cudaMemcpyAsync(&host_ring, r, sizeof(host_ring),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    cuda_check(cudaMemcpyAsync(&layer_count, count.data(), sizeof(layer_count),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    const std::array<uint32_t, 8> expected{1,2,3,5, 9,8,7,6};
+    check(actual_states == expected && actual_hashes == expected,
+          "NATIVE_BRIDGE_STATE_HASH_PAIRING");
+    check(host_extent.ready == 1 && host_ring.fatal == 0 && layer_count == 2,
+          "NATIVE_BRIDGE_PUBLICATION");
+  } catch (...) {
+    stream.synchronize();
+    mgbfs_library_owner_destroy_v1(owner);
+    throw;
+  }
+  mgbfs_library_owner_destroy_v1(owner);
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -324,6 +410,7 @@ int main() {
     try {
       fixture(stream.view());
       layout_fixture(stream.view());
+      native_commit_fixture(stream.view());
       owner_fixture(stream.view());
       owner_multibatch_fixture(stream.view());
       abi_fixture(stream.view());
