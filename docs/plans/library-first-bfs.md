@@ -215,3 +215,20 @@ V19 pins `08ad47758f69ad7f65904e03d74e19d2dbfee5c8` for the allocation-free
 AoS/SoA conversion RED test: 65 rows, explicit plane offsets, source ordinals,
 round-trip equality, untouched padding/guard and a short-buffer rejection.
 Its conversion functions are still stubs; no conversion GPU pass is claimed.
+
+V19 subsequently reached `LAYOUT_AOS_TO_SOA`, the intended RED failure. The
+allocation-free CUDA implementation at `fab8fa3726976b850142aa4eb02751e6304239ee`
+passed v20 on both distinct T4s, plain plus all four sanitizer tools with zero
+errors (racecheck zero warnings). Evidence is in
+`test_results/library-owner-v20/library-owner/`. The fixture verifies all key
+words, source ordinals, non-block-multiple rows, plane padding/guard integrity,
+round-trip conversion and short-buffer rejection. This is correctness evidence,
+not a conversion throughput measurement or full BFS performance result.
+
+V21 pins `3128fa8b3ab487561ce748225432ac9825fc45da` and links the actual
+`cuda/state_commit.cu` into the probe: four incoming records include an old key,
+a duplicated new key and another new key. The fixture checks two survivor
+states paired with two exported hashes after actual native reservation and
+materialization, including the ready flag and layer count. Host synchronization
+in this fixture is explicit. Its result is pending; this is not yet Rust runtime
+dispatch or a multi-rank test.
