@@ -52,7 +52,7 @@ fn rust_adapter_preserves_keys_and_publishes_only_after_completion() {
             rows: 0,
             reserved: 0,
         };
-        let mut owner = LibraryShard::new(history, 2, stream).unwrap();
+        let mut owner = LibraryShard::new_window(history, history, 2, stream).unwrap();
         let survivors = owner.compare(1, candidates).unwrap();
         assert_eq!(survivors.rows, 2);
         assert_eq!(owner.accepted(), 0);

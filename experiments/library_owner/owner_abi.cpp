@@ -9,14 +9,6 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
-// RED scaffold for independent previous/current history views.
-extern "C" int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1,
-    MgbfsLibraryKeysV1, uint32_t, void*, void** owner) {
-  if (owner) *owner = nullptr;
-  return -1;
-}
-
-
 namespace {
 using FixedPool = rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>;
 struct PoolHandle {
@@ -79,8 +71,9 @@ struct Handle {
   mgbfs::CudfOwner owner;
   uint64_t epoch{0}, last_epoch{0};
   bool pending{false}, has_last{false}, poisoned{false};
-  Handle(cudf::table_view history, int32_t capacity, rmm::cuda_stream_view stream)
-      : owner(history, capacity, stream) {}
+  Handle(cudf::table_view history, int32_t capacity, rmm::cuda_stream_view stream,
+         std::optional<cudf::table_view> current = std::nullopt)
+      : owner(history, capacity, stream, current) {}
 };
 
 int32_t count(uint32_t rows) {
@@ -135,6 +128,19 @@ extern "C" int mgbfs_library_owner_compare_v1(void* owner, uint64_t epoch,
     handle->pending = true;
     return 0;
   } catch (...) { return fail(handle); }
+}
+extern "C" int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1 previous,
+    MgbfsLibraryKeysV1 current, uint32_t capacity, void* stream, void** owner) {
+  if (!owner) return -1;
+  *owner = nullptr;
+  try {
+    auto prev_keys = columns(previous);
+    auto curr_keys = columns(current);
+    *owner = new Handle(cudf::table_view(prev_keys), count(capacity),
+                        rmm::cuda_stream_view{static_cast<cudaStream_t>(stream)},
+                        cudf::table_view(curr_keys));
+    return 0;
+  } catch (...) { return -1; }
 }
 extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32_t granted) {
   auto* handle = static_cast<Handle*>(owner);

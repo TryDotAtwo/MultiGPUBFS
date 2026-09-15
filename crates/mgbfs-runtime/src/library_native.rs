@@ -15,6 +15,31 @@ pub struct LibraryShard {
 
 impl LibraryShard {
     /// # Safety
+    /// Same device/pool/stream lifetime contract as new(), for two independent
+    /// immutable history views. Appropriate to the inverse-closed depth-one
+    /// window; callers using macro edges must provide the wider required history.
+    pub unsafe fn new_window(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        stream: *mut c_void,
+    ) -> Result<Self> {
+        let completion = NativeEvent::new()?;
+        let mut handle = ptr::null_mut();
+        let status =
+            mgbfs_library_owner_create_window_v1(previous, current, capacity, stream, &mut handle);
+        if status != 0 || handle.is_null() {
+            return Err(format!("LIBRARY_OWNER_CREATE_WINDOW_{status}"));
+        }
+        Ok(Self {
+            handle,
+            stream,
+            gate: OwnerCommitGate::new(u64::from(capacity)),
+            completion,
+        })
+    }
+
+    /// # Safety
     /// Install a fixed RMM pool on the current device first. Pool, immutable
     /// history and stream must outlive this object, including teardown. Calls
     /// are serialized on that device. A failure requires rank-group termination.

@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <memory>
 #include <vector>
+#include <optional>
 
 namespace mgbfs {
 // Experimental single-shard owner. All library allocations must use the caller's
@@ -19,9 +20,12 @@ namespace mgbfs {
 class CudfOwner {
  public:
   CudfOwner(cudf::table_view history, cudf::size_type capacity,
-            rmm::cuda_stream_view stream) : capacity_(capacity), stream_(stream) {
+            rmm::cuda_stream_view stream,
+            std::optional<cudf::table_view> current = std::nullopt)
+      : capacity_(capacity), stream_(stream) {
     if (capacity < 0) throw std::runtime_error("OWNER_CAPACITY");
     schema(history, 4);
+    if (current) schema(*current, 4);
     cuda_ok(cudaGetDevice(&device_));
     std::vector<std::unique_ptr<cudf::column>> columns;
     for (int c = 0; c < 4; ++c) {
@@ -31,6 +35,7 @@ class CudfOwner {
     }
     accepted_ = std::make_unique<cudf::table>(std::move(columns));
     if (history.num_rows()) history_ = index(history);
+    if (current && current->num_rows()) current_history_ = index(*current);
   }
   CudfOwner(CudfOwner const&) = delete;
   CudfOwner& operator=(CudfOwner const&) = delete;
@@ -46,6 +51,7 @@ class CudfOwner {
           cudf::duplicate_keep_option::KEEP_FIRST, cudf::null_equality::EQUAL,
           cudf::nan_equality::ALL_EQUAL, stream_);
       if (history_) staged_ = exclude(staged_->view(), *history_);
+      if (current_history_) staged_ = exclude(staged_->view(), *current_history_);
       if (count_) {
         if (!next_) next_ = index(accepted_view());
         staged_ = exclude(staged_->view(), *next_);
@@ -137,6 +143,6 @@ class CudfOwner {
   bool pending_{false}, poisoned_{false};
   std::unique_ptr<cudf::table> accepted_, staged_;
   // Destroy indexes before their referenced storage.
-  std::unique_ptr<cudf::filtered_join> history_, next_;
+  std::unique_ptr<cudf::filtered_join> history_, current_history_, next_;
 };
 }

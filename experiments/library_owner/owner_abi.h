@@ -61,7 +61,7 @@ int mgbfs_library_keys_to_aos_v1(MgbfsLibraryKeysV1 keys, void* output,
 int mgbfs_library_owner_create_v1(MgbfsLibraryKeysV1 history, uint32_t capacity,
                                  void* cuda_stream, void** owner);
 /* Independent immutable previous/current history views for inverse-closed
- * depth-one BFS. Neither view is concatenated or copied by the factory.
+ * depth-one BFS. Views are borrowed; no explicit combined history buffer.
  * Both outlive the owner. Remaining V1 operations accept the returned handle.
  */
 int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1 previous,
