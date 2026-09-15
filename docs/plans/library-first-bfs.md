@@ -424,3 +424,13 @@ for the baseline; mixed missing/invalid samples fail instead of producing a
 partial statistic. Per-rank library pool reservations must agree. All 19
 distributed-metrics CPU tests pass after the new cases failed against the old
 implementation. This changes reporting only; no new GPU measurements are implied.
+
+V35 at `248142359ad42ba64682d88a7de4f17765188fc2` completed with PASS on two
+physical Tesla T4s. Downloaded evidence is in
+`test_results/library-owner-v35/library-owner/`. The two-device NCCL fixture
+passed plain and all four sanitizers (zero errors; racecheck zero warnings).
+Linux CLI build and actual two-process torchrun runs completed for S4 DENSE,
+S4 HASH_FIRST INT_MMA_SM75, and U4m2 DENSE, with warmup and mandatory archives.
+The runner checked global counts 24/24/64 and verified both rank archives for
+each scenario. These remain small correctness gates, not a performance panel;
+the CLI reports setup/final cudaMemGetInfo only, not full peak VRAM.
