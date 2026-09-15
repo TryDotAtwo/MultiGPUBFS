@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include "cudf_owner.hpp"
 
 void check(bool ok, char const* msg) { if (!ok) throw std::runtime_error(msg); }
 void cuda_check(cudaError_t result) {
@@ -90,6 +91,29 @@ void fixture(rmm::cuda_stream_view stream) {
   expect_indices(empty_result->view(), {}, stream);
 }
 
+void owner_fixture(rmm::cuda_stream_view stream) {
+  auto old = upload({Row{7,8,9,10,0}}, stream);
+  auto input = upload({Row{7,8,9,10,0}, Row{7,8,9,11,1}, Row{7,8,9,11,2},
+                       Row{8,8,9,10,3}}, stream);
+  mgbfs::CudfOwner owner(old->view().select({0,1,2,3}), 2, stream);
+  expect_indices(owner.compare(input->view()), {1,3}, stream);
+  check(owner.accepted_count() == 0, "Compare published accepted keys");
+  owner.commit(2);
+  check(owner.accepted_count() == 2, "Commit did not append keys");
+  expect_indices(owner.compare(input->view()), {}, stream);
+  owner.commit(0);
+  check(owner.accepted_count() == 2, "Empty commit changed accepted keys");
+
+  mgbfs::CudfOwner denied(old->view().select({0,1,2,3}), 2, stream);
+  expect_indices(denied.compare(input->view()), {1,3}, stream);
+  bool rejected = false;
+  try { denied.commit(1); } catch (std::runtime_error const&) { rejected = true; }
+  check(rejected && denied.accepted_count() == 0, "Insufficient credit published keys");
+  rejected = false;
+  try { denied.commit(2); } catch (std::runtime_error const&) { rejected = true; }
+  check(rejected, "Poisoned owner permitted retry");
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -104,6 +128,7 @@ int main() {
     auto previous = rmm::mr::set_current_device_resource_ref(stats);
     try {
       fixture(stream.view());
+      owner_fixture(stream.view());
       stream.synchronize();
       check(stats.get_bytes_counter().value == 0, "Library allocation escaped fixture lifetime");
       bool exhausted = false;
