@@ -205,6 +205,16 @@ class RankMetrics(unittest.TestCase):
 
 
 class MemoryMetrics(unittest.TestCase):
+    def test_invalid_search_or_memory_cannot_enter_comparison(self):
+        row = dict(search_complete_seconds=1, smi_peak_mib_per_rank=[100],
+                   smi_peak_mib_total=100)
+        for invalid in (-1, float('nan'), float('inf'), True, '2'):
+            for key in ('search_complete_seconds', 'smi_peak_mib_total',
+                        'smi_peak_mib_per_rank'):
+                value = [invalid] if key == 'smi_peak_mib_per_rank' else invalid
+                with self.subTest(key=key, value=invalid), self.assertRaises(ValueError):
+                    stats([dict(row, **{key: value})])
+
     def test_durable_statistics_retain_every_sample(self):
         rows = [dict(search_complete_seconds=1, durable_run_commit_seconds=t,
                      smi_peak_mib_per_rank=[100], smi_peak_mib_total=100)
