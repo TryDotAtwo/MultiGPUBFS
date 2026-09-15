@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <set>
 #include "cudf_owner.hpp"
 
 void check(bool ok, char const* msg) { if (!ok) throw std::runtime_error(msg); }
@@ -114,6 +115,44 @@ void owner_fixture(rmm::cuda_stream_view stream) {
   check(rejected, "Poisoned owner permitted retry");
 }
 
+void owner_multibatch_fixture(rmm::cuda_stream_view stream) {
+  // Independent host membership oracle; GPU backend never reads this set.
+  std::set<uint32_t> visited;
+  std::vector<Row> history;
+  auto key = [](uint32_t id, uint32_t origin) {
+    return Row{id % 97, id / 97, 0xdeadbeefU, 0x12345678U, origin};
+  };
+  for (uint32_t id = 0; id < 4096; ++id) {
+    visited.insert(id);
+    history.push_back(key(id, id));
+  }
+  auto old = upload(history, stream);
+  mgbfs::CudfOwner owner(old->view().select({0,1,2,3}), 16384, stream);
+  for (uint32_t batch = 0; batch < 48; ++batch) {
+    std::vector<Row> incoming;
+    std::vector<uint32_t> expected;
+    std::set<uint32_t> unique;
+    for (uint32_t i = 0; i < 1024; ++i) {
+      // Every adjacent pair is a duplicate; batches overlap both old and next.
+      auto id = (batch * 521 + (i / 2) * 17) % 20000;
+      incoming.push_back(key(id, i));
+      if (!visited.count(id) && unique.insert(id).second) expected.push_back(i);
+    }
+    auto input = upload(incoming, stream);
+    auto result = owner.compare(input->view());
+    check(owner.accepted_count() == static_cast<int>(visited.size() - 4096),
+          "Compare changed cumulative accepted count");
+    expect_indices(result, expected, stream);
+    owner.commit(static_cast<cudf::size_type>(expected.size()));
+    visited.insert(unique.begin(), unique.end());
+    check(owner.accepted_count() == static_cast<int>(visited.size() - 4096),
+          "Multi-batch cumulative accepted mismatch");
+  }
+  // Ensure this exercised a populated index, not an all-old or empty fixture.
+  check(visited.size() > 16000, "Multi-batch fixture has insufficient coverage");
+  stream.synchronize();
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -129,6 +168,7 @@ int main() {
     try {
       fixture(stream.view());
       owner_fixture(stream.view());
+      owner_multibatch_fixture(stream.view());
       stream.synchronize();
       check(stats.get_bytes_counter().value == 0, "Library allocation escaped fixture lifetime");
       bool exhausted = false;
