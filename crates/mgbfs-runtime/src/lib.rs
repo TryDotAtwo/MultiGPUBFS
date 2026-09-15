@@ -23,6 +23,7 @@ pub mod failure;
 #[cfg(feature = "cuda")]
 pub mod hash_first_exchange;
 pub mod jobs;
+pub mod library_owner;
 #[cfg(feature = "cuda")]
 pub mod macro_native;
 pub mod macro_owner;
