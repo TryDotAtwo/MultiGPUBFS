@@ -1,5 +1,6 @@
 //! Experimental Rust adapter. Not yet selected by the distributed scheduler.
 //! CUDA arrays stay on device; library count synchronization remains explicit.
+use crate::event_generation::NativeEvent;
 use crate::library_owner::OwnerCommitGate;
 use mgbfs_core::Result;
 use mgbfs_cuda::{ffi::cudaStreamSynchronize, library_owner::*};
@@ -9,6 +10,7 @@ pub struct LibraryShard {
     handle: OwnerHandle,
     stream: *mut c_void,
     gate: OwnerCommitGate,
+    completion: NativeEvent,
 }
 
 impl LibraryShard {
@@ -17,6 +19,7 @@ impl LibraryShard {
     /// history and stream must outlive this object, including teardown. Calls
     /// are serialized on that device. A failure requires rank-group termination.
     pub unsafe fn new(history: KeysV1, capacity: u32, stream: *mut c_void) -> Result<Self> {
+        let completion = NativeEvent::new()?;
         let mut handle = ptr::null_mut();
         let status = mgbfs_library_owner_create_v1(history, capacity, stream, &mut handle);
         if status != 0 || handle.is_null() {
@@ -26,6 +29,7 @@ impl LibraryShard {
             handle,
             stream,
             gate: OwnerCommitGate::new(u64::from(capacity)),
+            completion,
         })
     }
 
@@ -87,6 +91,44 @@ impl LibraryShard {
 
     pub fn accepted(&self) -> u64 {
         self.gate.accepted()
+    }
+
+    /// Record only after commit, materialization, and every consumer of borrowed
+    /// result indices have been enqueued. The event is allocated during setup.
+    /// # Safety
+    /// All protected operations must be ordered on this owner's stream.
+    pub unsafe fn record_completion(&mut self, epoch: u64) -> Result<()> {
+        self.gate.check_completion(epoch)?;
+        if let Err(error) = self.completion.record(epoch, self.stream) {
+            self.gate.abort();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Nonblocking readiness query. Does not publish counts, even when ready:
+    /// caller must inspect completed native fatal controls before publication.
+    pub fn poll_completion(&mut self, epoch: u64) -> Result<bool> {
+        self.gate.check_completion(epoch)?;
+        match self.completion.poll(epoch) {
+            Ok(ready) => Ok(ready),
+            Err(error) => {
+                self.gate.abort();
+                Err(error)
+            }
+        }
+    }
+
+    /// # Safety
+    /// After poll_completion returned true, validate all completed native
+    /// reservation/materialization/fatal controls before calling this method.
+    pub unsafe fn publish_completion(&mut self, epoch: u64) -> Result<()> {
+        self.gate.check_completion(epoch)?;
+        if let Err(error) = self.completion.retire(epoch) {
+            self.gate.abort();
+            return Err(error);
+        }
+        self.gate.completed(epoch)
     }
 
     /// # Safety

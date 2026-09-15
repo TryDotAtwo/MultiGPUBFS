@@ -63,7 +63,20 @@ fn rust_adapter_preserves_keys_and_publishes_only_after_completion() {
             mgbfs_library_keys_to_aos_v1(keys, destination, 2, stream),
             0
         );
-        owner.complete(1).unwrap();
+        owner.record_completion(1).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !owner.poll_completion(1).unwrap() {
+            assert_eq!(owner.accepted(), 0);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GPU completion timeout"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.accepted(), 0);
+        // This fixture has no native materializer/fatal control; CUDA completion
+        // is checked above. A full runtime must inspect those controls here.
+        owner.publish_completion(1).unwrap();
         assert_eq!(owner.accepted(), 2);
         let mut actual = [0u32; 8];
         assert_eq!(

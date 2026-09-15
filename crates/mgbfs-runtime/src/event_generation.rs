@@ -10,12 +10,12 @@ pub fn cuda_query_status(status: i32) -> Result<bool> {
 
 /// A timing-disabled CUDA event owned on its creating thread/context. Create
 /// during setup. No raw handle escapes; every record is generation-checked.
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "library-owner"))]
 pub struct NativeEvent {
     handle: *mut std::ffi::c_void,
     generation: EventGeneration,
 }
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "library-owner"))]
 impl NativeEvent {
     pub fn new() -> Result<Self> {
         let mut handle = std::ptr::null_mut();
@@ -45,7 +45,7 @@ impl NativeEvent {
     pub fn poll(&mut self, generation: u64) -> Result<bool> {
         let handle = self.handle;
         self.generation.poll(generation, || {
-            cuda_query_status(unsafe { mgbfs_cuda::native_owner::cudaEventQuery(handle) })
+            cuda_query_status(unsafe { mgbfs_cuda::ffi::cudaEventQuery(handle) })
         })
     }
     /// Enqueue a dependency without waiting for host-observed completion.
@@ -69,7 +69,7 @@ impl NativeEvent {
         self.generation.retire(generation)
     }
 }
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "library-owner"))]
 impl Drop for NativeEvent {
     fn drop(&mut self) {
         unsafe {

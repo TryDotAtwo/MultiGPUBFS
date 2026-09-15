@@ -1,6 +1,25 @@
 use mgbfs_runtime::library_owner::OwnerCommitGate;
 
 #[test]
+fn completion_event_cannot_be_recorded_before_commit_reservation() {
+    let mut gate = OwnerCommitGate::new(8);
+    gate.compared(1, 4, 2).unwrap();
+    assert!(gate.check_completion(1).is_err());
+    assert!(gate.reserve(1, 2).is_err());
+}
+
+#[test]
+fn completion_event_is_bound_to_reserved_epoch_without_publication() {
+    let mut gate = OwnerCommitGate::new(8);
+    gate.compared(1, 4, 2).unwrap();
+    gate.reserve(1, 2).unwrap();
+    gate.check_completion(1).unwrap();
+    assert_eq!(gate.accepted(), 0);
+    assert!(gate.check_completion(2).is_err());
+    assert!(gate.completed(1).is_err());
+}
+
+#[test]
 fn ffi_failure_cannot_later_publish_reserved_rows() {
     let mut gate = OwnerCommitGate::new(8);
     gate.compared(1, 4, 2).unwrap();

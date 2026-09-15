@@ -269,3 +269,12 @@ Its private destination is preallocated; native StateRing remains covered by
 the separate C++ fixture, not this Rust test. The runner uses the project's
 pinned Rust version and locked Cargo dependencies, with plain plus all four
 sanitizers per physical GPU. Results are pending.
+
+V23 completed successfully: the actual Rust test executable linked against the
+library SDK and passed plain/memcheck/racecheck/initcheck/synccheck on both T4s.
+All eight Rust sanitizer runs reported zero errors (racecheck zero warnings).
+Source `fd6a08589379ceae204b43df2e8e6939748fcc17`; evidence:
+`test_results/library-owner-v23/library-owner/`, including `rust-build.log`,
+`rust-version.log` and ten `rust-gpu*` logs. These test durations include test
+setup and teardown and must not be reported as BFS timings. The production
+distributed scheduler still does not select the library adapter.

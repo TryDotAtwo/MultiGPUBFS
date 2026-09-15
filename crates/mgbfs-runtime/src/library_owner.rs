@@ -19,6 +19,13 @@ pub struct OwnerCommitGate {
     phase: Phase,
 }
 impl OwnerCommitGate {
+    /// Validate event recording/query before it can authorize publication.
+    pub fn check_completion(&mut self, epoch: u64) -> Result<()> {
+        if !matches!(self.phase, Phase::Reserved { epoch: expected, .. } if expected == epoch) {
+            return self.fail("LIBRARY_OWNER_ORDER");
+        }
+        Ok(())
+    }
     /// Sticky external CUDA/FFI failure: never publish or reuse this shard.
     pub fn abort(&mut self) {
         self.phase = Phase::Poisoned;
