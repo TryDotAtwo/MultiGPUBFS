@@ -225,8 +225,11 @@ def main():
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "cli-build")
             cli = str(source / "target/release/mgbfs")
-            for profile, generation in [("DENSE", "SCALAR"), ("HASH_FIRST", "INT_MMA_SM75")]:
-                label = profile.lower()
+            for group, expected_count, profile, generation in [
+                    ("s4", 24, "DENSE", "SCALAR"),
+                    ("s4", 24, "HASH_FIRST", "INT_MMA_SM75"),
+                    ("u4m2", 64, "DENSE", "SCALAR")]:
+                label = group + "-" + profile.lower()
                 run_root = work / ("cli-" + label)
                 run_root.mkdir()
                 output_dir = logs / ("cli-" + label)
@@ -238,24 +241,26 @@ def main():
                     MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
                     MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128",
                     MGBFS_BENCH_WARMUP="1", MGBFS_PRE_DEDUP="ON",
-                    MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
+                    MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
+                    MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0,1")
                 run([sys.executable, "-m", "torch.distributed.run", "--standalone",
                      "--nproc-per-node=2", "--no-python", cli, "bench", "--reference",
-                     "s4", "7", str(run_root / "bootstrap"), str(run_root / "archive"),
+                     group, "7", str(run_root / "bootstrap"), str(run_root / "archive"),
                      str(output_dir)], "cli-" + label, extra_env=process_env)
                 total = 0
                 for rank in range(2):
                     result = json.loads((output_dir / f"rank-{rank}.json").read_text())
                     if (result["status"] != "COMPLETE" or result["owner_backend"] != "CUDF_RELATIONAL"
-                            or result["library_pool_reserved_bytes"] != 64 << 20
+                            or result["library_pool_reserved_bytes"] != (64 << 20)
+                            or result["group"] != group or not result["backend"].startswith("library_")
                             or not result["archive_enabled"] or not result["warmup_completed"]):
                         raise RuntimeError("CLI library dispatch/archive contract mismatch")
                     total += sum(result["local_layer_sizes"])
                     run([cli, "verify", str(run_root / f"archive-rank-{rank}.mgbfsar1")],
                         f"cli-{label}-verify-rank{rank}", extra_env=process_env)
-                if total != 24:
-                    raise RuntimeError(f"CLI S4 count mismatch: {total}")
-            manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4 correctness only"
+                if total != expected_count:
+                    raise RuntimeError(f"CLI {group} count mismatch: {total}")
+            manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4/U4m2 correctness only"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

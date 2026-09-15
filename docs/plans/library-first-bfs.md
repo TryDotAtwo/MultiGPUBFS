@@ -399,3 +399,12 @@ and an actual two-process torchrun CLI warmup/measure/archive-verification gate.
 Windows type/CPU checks do not compile the Linux-only benchmark module; Linux
 build, CLI launch and the new Tensor combination remain pending. Tiny S4 CLI
 times will remain correctness-fixture durations, not performance claims.
+
+Reference group parsing now supports `sN` and `uNmM` (for example `u4m12`),
+using the existing graph constructors, without changing their generators.
+The benchmark stores the canonical group name and rejects permutation codecs
+for unitriangular inputs. Two CPU tests cover constructor/order agreement and
+invalid inputs; the positive test failed before implementation. The next CLI
+gate includes U4(modulus=2) as well as S4. The output explicitly labels its
+current cudaMemGetInfo sampling as setup/final only, not a full peak measurement;
+external/full-peak profiling is still required for acceptance.

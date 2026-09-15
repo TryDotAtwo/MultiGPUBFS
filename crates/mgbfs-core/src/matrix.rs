@@ -40,6 +40,27 @@ pub struct MatrixGroup {
 }
 
 impl MatrixGroup {
+    /// Canonical reference-benchmark names: sN or uNmM. This is not a manifest
+    /// decoder and retains the existing constructors' generators and validation.
+    pub fn from_reference_label(label: &str) -> Result<(String, Self)> {
+        if let Some(degree) = label.strip_prefix('s') {
+            let degree: usize = degree.parse().map_err(|_| "REFERENCE_GROUP")?;
+            return Ok((
+                format!("s{degree}"),
+                Self::symmetric_permutation_matrices(degree)?,
+            ));
+        }
+        if let Some(shape) = label.strip_prefix('u') {
+            let (degree, modulus) = shape.split_once('m').ok_or("REFERENCE_GROUP")?;
+            let degree: usize = degree.parse().map_err(|_| "REFERENCE_GROUP")?;
+            let modulus: u16 = modulus.parse().map_err(|_| "REFERENCE_GROUP")?;
+            return Ok((
+                format!("u{degree}m{modulus}"),
+                Self::unitriangular(degree, modulus)?,
+            ));
+        }
+        Err("REFERENCE_GROUP".into())
+    }
     pub fn validate(&self) -> Result<()> {
         if self.schema != 1 {
             return Err("MATRIX_MANIFEST_SCHEMA".into());

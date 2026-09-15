@@ -73,11 +73,8 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
-    let n: usize = args[1]
-        .strip_prefix('s')
-        .ok_or("GROUP")?
-        .parse()
-        .map_err(|_| "GROUP")?;
+    let (group, graph) = MatrixGroup::from_reference_label(&args[1])?;
+    let n = graph.rows;
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
     let rank = required("RANK")?;
     let local = required("LOCAL_RANK")?;
@@ -88,7 +85,6 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if unsafe { cudaSetDevice(local as i32) } != 0 {
         return Err("CUDA_SET_DEVICE".into());
     }
-    let graph = MatrixGroup::symmetric_permutation_matrices(n)?;
     let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
         Err(std::env::VarError::NotPresent) => u32::try_from(graph.expected_max_unique_states)
@@ -125,6 +121,9 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if compact_states && archive_width != n {
         return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
     }
+    if !group.starts_with('s') && (compact_states || archive_width != graph.start.len()) {
+        return Err("UNITRIANGULAR_REQUIRES_MATRIX_CODEC".into());
+    }
     let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
     let owner = std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
     let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
@@ -148,7 +147,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
         cfg!(feature = "library-owner"),
     )?;
-    let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
+    let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
@@ -334,6 +333,8 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
+        value["group"] = serde_json::json!(group);
+        value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         if selection.owner == ReferenceOwner::CudfRelational {
