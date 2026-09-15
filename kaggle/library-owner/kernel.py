@@ -12,6 +12,15 @@ PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 
 
+def isolated_environment(inherited):
+    env = dict(inherited)
+    # Kaggle injects a sitecustomize via PYTHONPATH that imports host-only wrapt.
+    # It must not load into the isolated library toolchain or pollute path output.
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    return env
+
+
 def main():
     logs = Path("/kaggle/working/library-owner")
     logs.mkdir(parents=True, exist_ok=True)
@@ -37,7 +46,7 @@ def main():
                 "gpus": gpus, "kind": "library_characterization", "status": "RUNNING"}
     summary_path = logs / "summary.json"
     summary_path.write_text(json.dumps(manifest, indent=2))
-    env = dict(os.environ)
+    env = isolated_environment(os.environ)
     def run(command, name, timeout=900, extra_env=None):
         return gate.run(command, cwd=source, env=env if extra_env is None else extra_env,
                         logs=logs, name=name, timeout=timeout)
