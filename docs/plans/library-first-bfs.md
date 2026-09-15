@@ -92,3 +92,25 @@ null-mask arguments. The latter is corrected in source, not yet GPU-compiled.
 Next action: provision an explicitly pinned compatible CUDA SDK and rebuild;
 do not mix newer runtime headers with an older toolkit or declare T4 unsupported.
 No new performance or GPU-correctness claim follows from successful configure.
+
+### Passing T4 library characterization, Kaggle v9
+
+`trydotatwo/mgbfs-library-owner-t4` v9 completed successfully with C++ source
+`3036622b637453bc25d9fe8fd949ee93c31c2aa3`, launcher at `ba0d72c`, and the
+checksummed CUDA 12.9 redistributable SDK. Both distinct physical Tesla T4s
+passed plain, memcheck, racecheck, initcheck and synccheck: 10 fixture runs,
+8 sanitizer runs with zero errors (racecheck also zero warnings).
+
+Each fixture verifies all four hash words, within-batch duplicate elimination,
+history-index reuse, accepted-next exclusion and empty inputs. The deliberately
+oversized allocation raises the expected RMM OOM; it is not a sanitizer error.
+Pool reservation remains 67,108,864 bytes; requested suballocation peak is 2,464
+bytes on this tiny fixture. Neither value is whole-device VRAM or BFS capacity.
+No full BFS, native owner adapter, overlap or speedup has been demonstrated.
+
+Small raw evidence is under `test_results/library-owner-v9/library-owner/`:
+summary, ten individual logs, build/configure, CUDA version, installed-package
+list and pip installation report. Exact wheel hashes from that report are in
+`experiments/library_owner/requirements-linux-x86_64.lock` for future runs.
+The SDK obstacle is resolved; next is implementing the actual owner adapter
+with bounded persistent accepted storage, explicit compare/commit and tests.

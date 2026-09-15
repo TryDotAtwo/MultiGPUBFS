@@ -1,0 +1,8 @@
+# Wheels observed in the passing Kaggle T4 v9 fixture, including dependencies.
+libcudf-cu12==26.4.0 --hash=sha256:432fe19cb4ed7af4149be1d018bec4b243a184bbbcd3284fd178e06a0c4eb8f2
+librmm-cu12==26.4.0 --hash=sha256:5ef1a60c22711a949c09152f8568cac3a6bf8f09bdd01b0ef35914121267eb1e
+cmake==3.31.6 --hash=sha256:1c8b05df0602365da91ee6a3336fe57525b137706c4ab5675498f662ae1dbcec
+ninja==1.11.1.4 --hash=sha256:096487995473320de7f65d622c3f1d16c3ad174797602218ca8c967f51ec38a0
+libkvikio-cu12==26.4.0 --hash=sha256:1334b5210d3b05d760085cd3575af96cfe3dc2717065e8532bdcc7c9b195233b
+nvidia-libnvcomp-cu12==5.1.0.21 --hash=sha256:68de61183edb9a870c9a608273a2b5da97dea18e3552096c61fafd9bb2689db0
+rapids-logger==0.2.3 --hash=sha256:7fe67ef4049c5d8ba6154746325dcf7cc0f327f0efa8f2611fc8f64e67510f60
