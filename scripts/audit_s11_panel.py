@@ -2,8 +2,18 @@
 import json
 import csv
 import statistics
-import sys
+import argparse
+import re
 from pathlib import Path
+
+
+def validate_environment(environment, expected_source):
+    if not re.fullmatch(r'[0-9a-f]{40}', expected_source):
+        raise ValueError('Expected source must be a full immutable commit SHA')
+    if environment.get('source') != expected_source:
+        raise ValueError('Native source does not match expected commit')
+    if environment.get('baseline') != 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6':
+        raise ValueError('CayleyPy baseline does not match pinned commit')
 
 
 def audit_raw(summary_directory, raw_directory):
@@ -38,12 +48,11 @@ def audit_raw(summary_directory, raw_directory):
     print('Raw artifact reconciliation passed:', raw)
 
 
-def audit(directory):
+def audit(directory, expected_source='66d82d03cb055daa08dae328978208efda7c8ede'):
     directory = Path(directory)
     summary = json.loads((directory / 'summary.json').read_text())
     environment = json.loads((directory / 'environment.json').read_text())
-    assert environment['source'] == '66d82d03cb055daa08dae328978208efda7c8ede'
-    assert environment['baseline'] == 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
+    validate_environment(environment, expected_source)
     assert summary['status'] == 'COMPLETE'
     world = summary['world_size']
     assert world in (1, 2)
@@ -102,5 +111,10 @@ def audit(directory):
 
 
 if __name__ == '__main__':
-    for path in sys.argv[1:]:
-        audit(path)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', default='66d82d03cb055daa08dae328978208efda7c8ede',
+                        help='Expected immutable native commit, never inferred from outputs')
+    parser.add_argument('directories', nargs='+')
+    args = parser.parse_args()
+    for path in args.directories:
+        audit(path, args.source)
