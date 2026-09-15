@@ -311,7 +311,7 @@ void layout_fixture(rmm::cuda_stream_view stream) {
 
 // Integration fixture, not timing evidence: uses actual native reserve/materialize
 // kernels and explicitly charges host synchronization in a future runtime adapter.
-void native_commit_fixture(rmm::cuda_stream_view stream) {
+void native_commit_fixture(rmm::cuda_stream_view stream, uint64_t ring_capacity = 2) {
   auto history = upload({Row{1,2,3,4,0}}, stream);
   MgbfsLibraryKeysV1 old{};
   old.rows = 1;
@@ -321,7 +321,7 @@ void native_commit_fixture(rmm::cuda_stream_view stream) {
   rmm::device_buffer input(input_words.data(), sizeof(input_words), stream);
   rmm::device_buffer scratch(1280, stream), states(32, stream), exported(32, stream);
   MgbfsStateRingControl host_ring{};
-  host_ring.capacity = 2;
+  host_ring.capacity = ring_capacity;
   host_ring.descriptor_capacity = 2;
   MgbfsOwnerControl host_control{};
   MgbfsStateExtent host_extent{};
@@ -354,6 +354,24 @@ void native_commit_fixture(rmm::cuda_stream_view stream) {
     cuda_check(cudaMemcpyAsync(&host_extent, e, sizeof(host_extent),
                               cudaMemcpyDeviceToHost, stream.value()));
     stream.synchronize();
+    if (ring_capacity == 1) {
+      check(host_control.error != 0 && host_extent.granted_rows == 0 &&
+            host_extent.ready == 0, "NATIVE_BRIDGE_CAPACITY_NOT_REJECTED");
+      check(mgbfs_library_owner_commit_v1(owner, 1, host_extent.granted_rows) != 0,
+            "NATIVE_BRIDGE_COMMITTED_WITHOUT_CREDIT");
+      MgbfsLibraryKeysV1 rejected{};
+      check(mgbfs_library_owner_export_v1(owner, &rejected) != 0 && rejected.rows == 0,
+            "NATIVE_BRIDGE_EXPORTED_FAILED_COMMIT");
+      cuda_check(cudaMemcpyAsync(&layer_count, count.data(), sizeof(layer_count),
+                                cudaMemcpyDeviceToHost, stream.value()));
+      cuda_check(cudaMemcpyAsync(&host_ring, r, sizeof(host_ring),
+                                cudaMemcpyDeviceToHost, stream.value()));
+      stream.synchronize();
+      check(layer_count == 0 && host_ring.tail == 0 && host_ring.descriptor_tail == 0,
+            "NATIVE_BRIDGE_FAILED_RESERVATION_ADVANCED");
+      mgbfs_library_owner_destroy_v1(owner);
+      return;
+    }
     check(host_control.error == 0 && host_extent.granted_rows == 2 &&
           host_extent.ready == 0, "NATIVE_BRIDGE_RESERVE");
     check(mgbfs_library_owner_commit_v1(owner, 1, host_extent.granted_rows) == 0,
@@ -411,6 +429,7 @@ int main() {
       fixture(stream.view());
       layout_fixture(stream.view());
       native_commit_fixture(stream.view());
+      native_commit_fixture(stream.view(), 1);
       owner_fixture(stream.view());
       owner_multibatch_fixture(stream.view());
       abi_fixture(stream.view());

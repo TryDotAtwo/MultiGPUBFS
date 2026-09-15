@@ -232,3 +232,10 @@ states paired with two exported hashes after actual native reservation and
 materialization, including the ready flag and layer count. Host synchronization
 in this fixture is explicit. Its result is pending; this is not yet Rust runtime
 dispatch or a multi-rank test.
+
+V21 passed on both T4s with all four sanitizers reporting zero errors and
+racecheck zero warnings. Source remains `3128fa8b3ab487561ce748225432ac9825fc45da`;
+evidence: `test_results/library-owner-v21/library-owner/`. This establishes the
+small C++ integration fixture's state/hash pairing and native publication, not
+Rust integration, exhaustive BFS correctness, NCCL execution or performance.
+An additional ring-capacity failure fixture is being added before runtime wiring.
