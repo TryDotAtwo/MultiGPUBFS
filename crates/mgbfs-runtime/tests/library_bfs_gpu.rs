@@ -29,6 +29,25 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                 generation_variant: 1,
                 untouched_vram_reserve: 1 << 30,
             };
+            // Guard the unchanged default path after separating its storage.
+            // This is correctness evidence only, not a timed A/B run.
+            let mut baseline = if let Some(capacity) = materialization_capacity {
+                DistributedNativeBfs::new_hash_first_reference(&graph, [0; 16], id, cfg, capacity)
+            } else {
+                DistributedNativeBfs::new(&graph, [0; 16], id, cfg)
+            }
+            .unwrap();
+            for (depth, wanted) in expected.iter().enumerate() {
+                let mut actual = baseline.snapshot().unwrap();
+                actual.sort();
+                assert_eq!(&actual, wanted);
+                assert_eq!(baseline.advance().unwrap(), depth + 1 < expected.len());
+            }
+            drop(baseline);
+            assert_eq!(
+                unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                0
+            );
             let mut bfs = DistributedNativeBfs::new_library_reference(
                 &graph,
                 [0; 16],
@@ -43,6 +62,18 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                 .allocations
                 .iter()
                 .any(|a| a.name == "accepted"));
+            let pool = bfs
+                .owned_memory()
+                .allocations
+                .iter()
+                .find(|a| a.name == "library.fixed_pool")
+                .unwrap();
+            assert_eq!(pool.payload_bytes, 64 << 20);
+            assert!(!bfs
+                .owned_memory()
+                .allocations
+                .iter()
+                .any(|a| a.name.starts_with("owner.")));
             for (depth, wanted) in expected.iter().enumerate() {
                 let mut actual = bfs.snapshot().unwrap();
                 actual.sort();

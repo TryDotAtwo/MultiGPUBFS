@@ -344,3 +344,23 @@ legacy accepted/length/count/selected buffers instead of budgeting both owner
 representations. Two new tests failed before implementation and pass now; all
 seven distributed-memory tests pass. This is the allocation contract to wire
 into the runtime, not an observed VRAM improvement or a full pool budget.
+
+V31 at `5c49e4a44d004067b6cce04012a2ebced4115667` passed C++ and both Rust
+component tests, plain and all four sanitizers independently on both T4s.
+V32 at `3a05b41663253087302aa27a88d7d47a180b3d29` built and linked the full
+native CUDA/CUTLASS/NCCL runtime together with the pinned library SDK. Its new
+full-state BFS test reached `LIBRARY_BFS_NOT_IMPLEMENTED` as intended. Evidence
+is in `test_results/library-owner-v31/` and `test_results/library-owner-v32/`.
+
+`DistributedNativeBfs::new_library_reference` now explicitly selects the library
+owner for DENSE or HASH_FIRST. The original native path stays the default. The
+library path skips legacy owner plans/arrays, charges the entire fixed pool and
+uses aligned SoA previous/current history. Incoming sorted hashes are processed
+in shard-sized ranges; native StateRing grants precede key commit, and native
+materialization/request generation consumes library survivor indices. Empty
+results complete without passing a null index array to native materializers.
+Depth finalization reuses the old history bank; owner handles reopen within the
+same fixed pool and reuse preallocated completion events. The initial integration
+uses explicit stream/count synchronization, all of which belongs in search time.
+This is not an overlap or speedup claim. GPU full-layer validation, archived runs,
+actual two-rank exchange and CLI/benchmark selection remain pending.

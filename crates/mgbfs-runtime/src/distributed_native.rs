@@ -2,6 +2,8 @@
 use crate::event_generation::NativeEvent;
 use crate::failure::process_owner_pair;
 use crate::jobs::{split, JobSpan};
+#[cfg(feature = "library-owner")]
+use crate::library_native::{finalize_shards, LibraryShard};
 use crate::parent_batches::{ParentBatch, ParentCursor};
 use mgbfs_core::{
     config::OwnerBackend,
@@ -9,8 +11,57 @@ use mgbfs_core::{
     matrix::{encode_permutation_matrix, MatrixGroup},
     Result,
 };
+#[cfg(feature = "library-owner")]
+use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
+
+#[cfg(feature = "library-owner")]
+struct LibraryOwnerStorage {
+    shards: Vec<LibraryShard>,
+    scratch: Buffer,
+    previous: Vec<std::ops::Range<u32>>,
+    current: Vec<std::ops::Range<u32>>,
+    capacity: u32,
+    plane_words: usize,
+    epoch: u64,
+    closed: bool,
+    pool: PoolHandle,
+}
+#[cfg(feature = "library-owner")]
+impl Drop for LibraryOwnerStorage {
+    fn drop(&mut self) {
+        // This field is dropped BEFORE streams/history. On failed drain leave
+        // pool destruction to rank-process exit rather than free GPU readers.
+        let mut drained = true;
+        for shard in &mut self.shards {
+            drained &= unsafe { shard.close().is_ok() };
+        }
+        if drained {
+            unsafe {
+                mgbfs_library_pool_destroy_v1(self.pool);
+            }
+        }
+    }
+}
+#[cfg(feature = "library-owner")]
+unsafe fn history_view(
+    buffer: &Buffer,
+    plane_words: usize,
+    range: &std::ops::Range<u32>,
+) -> KeysV1 {
+    KeysV1 {
+        words: std::array::from_fn(|p| {
+            buffer
+                .ptr
+                .cast::<u32>()
+                .add(p * plane_words + range.start as usize)
+                .cast_const()
+        }),
+        rows: range.end - range.start,
+        reserved: 0,
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct DistributedConfig {
@@ -133,6 +184,13 @@ impl Drop for Buffer {
     }
 }
 struct Plan(*mut c_void, unsafe extern "C" fn(*mut c_void));
+struct BoundedOwnerStorage {
+    plan: Plan,
+    accepted: Buffer,
+    lengths: Buffer,
+    counts: Buffer,
+    selected: Buffer,
+}
 impl Plan {
     fn new(
         drop: unsafe extern "C" fn(*mut c_void),
@@ -285,6 +343,8 @@ impl HashFirstStorage {
 }
 
 pub struct DistributedNativeBfs {
+    #[cfg(feature = "library-owner")]
+    library_owner: Option<LibraryOwnerStorage>,
     cfg: DistributedConfig,
     width: usize,
     stride: usize,
@@ -312,14 +372,12 @@ pub struct DistributedNativeBfs {
     hash_first_tensor_generation: bool,
     archive_hash: Plan,
     route: Plan,
-    owner: Plan,
+    owner: Option<BoundedOwnerStorage>,
     shared_memory: mgbfs_core::memory::AllocationLedger,
     owned_memory: mgbfs_core::memory::AllocationLedger,
     states: Buffer,
     prev: Buffer,
     curr: Buffer,
-    accepted: Buffer,
-    lengths: Buffer,
     children: Buffer,
     child_hashes: Buffer,
     archive_hashes: Buffer,
@@ -336,9 +394,7 @@ pub struct DistributedNativeBfs {
     directory: Buffer,
     fatal: Buffer,
     jobs_gpu: Buffer,
-    counts: Buffer,
     control: Buffer,
-    selected: Buffer,
     ring: Buffer,
     extent: Buffer,
     layer_count: Buffer,
@@ -358,14 +414,24 @@ impl DistributedNativeBfs {
     /// no fallback to the existing bounded owner is permitted.
     #[cfg(feature = "library-owner")]
     pub fn new_library_reference(
-        _graph: &MatrixGroup,
-        _seed: [u8; 16],
-        _id: [u8; 128],
-        _cfg: DistributedConfig,
-        _materialization_capacity: Option<u32>,
-        _pool_bytes: u64,
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        pool_bytes: u64,
     ) -> Result<Self> {
-        Err("LIBRARY_BFS_NOT_IMPLEMENTED".into())
+        Self::new_profile(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            OwnerBackend::CubSortMerge,
+            256,
+            false,
+            Some(pool_bytes),
+        )
     }
     /// The 29 shared Buffer allocations, excluding library/profile/transport
     /// allocations. This is not the complete rank memory budget.
@@ -397,6 +463,7 @@ impl DistributedNativeBfs {
             OwnerBackend::CubSortMerge,
             256,
             false,
+            None,
         )
     }
     /// Explicit scalar CUDA HASH_FIRST reference; never silently uses DENSE.
@@ -416,6 +483,7 @@ impl DistributedNativeBfs {
             OwnerBackend::CubSortMerge,
             256,
             false,
+            None,
         )
     }
     /// Explicit fixed owner policy; HASH_FIRST is selected by a nonzero
@@ -438,6 +506,7 @@ impl DistributedNativeBfs {
             owner,
             tile_limit,
             false,
+            None,
         )
     }
     /// Explicit experimental Tensor Core generation; hash projection still
@@ -460,6 +529,7 @@ impl DistributedNativeBfs {
             owner,
             tile_limit,
             true,
+            None,
         )
     }
     fn new_profile(
@@ -471,7 +541,17 @@ impl DistributedNativeBfs {
         owner_backend: OwnerBackend,
         tile_limit: u32,
         hash_first_tensor_generation: bool,
+        library_pool_bytes: Option<u64>,
     ) -> Result<Self> {
+        if let Some(bytes) = library_pool_bytes {
+            if !cfg!(feature = "library-owner")
+                || bytes == 0
+                || bytes % 256 != 0
+                || cfg.untouched_vram_reserve < 1 << 30
+            {
+                return Err("LIBRARY_POOL_CONFIG".into());
+            }
+        }
         graph.validate()?;
         if let Some(capacity) = materialization_capacity {
             if capacity == 0
@@ -540,20 +620,23 @@ impl DistributedNativeBfs {
         } else {
             stride
         };
-        let shared_memory = crate::distributed_memory::shared_buffers(
-            crate::distributed_memory::SharedBufferShape {
-                state_stride: stride as u64,
-                packet_stride: packet_stride as u64,
-                batch: cfg.batch.into(),
-                candidates: candidates.into(),
-                layer_capacity: cfg.layer_capacity.into(),
-                state_ring_capacity: cfg.state_ring_capacity.into(),
-                buckets: cfg.buckets.into(),
-                bucket_capacity: cfg.bucket_capacity.into(),
-                job_buckets: cfg.job_buckets.into(),
-                archive_width: permutation_n.unwrap_or(1).into(),
-            },
-        )?;
+        let shared_plan = if library_pool_bytes.is_some() {
+            crate::distributed_memory::library_shared_buffers
+        } else {
+            crate::distributed_memory::shared_buffers
+        };
+        let shared_memory = shared_plan(crate::distributed_memory::SharedBufferShape {
+            state_stride: stride as u64,
+            packet_stride: packet_stride as u64,
+            batch: cfg.batch.into(),
+            candidates: candidates.into(),
+            layer_capacity: cfg.layer_capacity.into(),
+            state_ring_capacity: cfg.state_ring_capacity.into(),
+            buckets: cfg.buckets.into(),
+            bucket_capacity: cfg.bucket_capacity.into(),
+            job_buckets: cfg.job_buckets.into(),
+            archive_width: permutation_n.unwrap_or(1).into(),
+        })?;
         let mut owned_memory = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
         for a in &shared_memory.allocations {
             owned_memory.add(&format!("shared.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -601,24 +684,28 @@ impl DistributedNativeBfs {
             &query_hash(width as u32, cfg.batch)?,
         )?;
         append_query(&mut owned_memory, "route", &query_route(candidates)?)?;
-        let backend = u32::from(owner_backend == OwnerBackend::BmmaBucket);
-        let mut oq = BoundedOwnerBytes::default();
-        check(unsafe {
-            mgbfs_bounded_owner_query(
-                candidates,
-                cfg.job_buckets,
-                cfg.bucket_capacity,
-                backend,
-                candidates,
-                tile_limit,
-                &mut oq,
-            )
-        })?;
-        append_query(
-            &mut owned_memory,
-            "owner",
-            &oq.report(candidates, cfg.job_buckets, cfg.bucket_capacity, backend)?,
-        )?;
+        if let Some(bytes) = library_pool_bytes {
+            owned_memory.add("library.fixed_pool", bytes, 1, 256)?;
+        } else {
+            let backend = u32::from(owner_backend == OwnerBackend::BmmaBucket);
+            let mut oq = BoundedOwnerBytes::default();
+            check(unsafe {
+                mgbfs_bounded_owner_query(
+                    candidates,
+                    cfg.job_buckets,
+                    cfg.bucket_capacity,
+                    backend,
+                    candidates,
+                    tile_limit,
+                    &mut oq,
+                )
+            })?;
+            append_query(
+                &mut owned_memory,
+                "owner",
+                &oq.report(candidates, cfg.job_buckets, cfg.bucket_capacity, backend)?,
+            )?;
+        }
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
@@ -723,25 +810,29 @@ impl DistributedNativeBfs {
                 512,
             )
         })?;
-        let owner = Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
-            match owner_backend {
-                OwnerBackend::CubSortMerge => mgbfs_bounded_owner_create(
-                    candidates,
-                    cfg.job_buckets,
-                    cfg.bucket_capacity,
-                    out,
-                ),
-                OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
-                    candidates,
-                    cfg.job_buckets,
-                    cfg.bucket_capacity,
-                    1,
-                    candidates,
-                    tile_limit,
-                    out,
-                ),
-            }
-        })?;
+        let owner = if library_pool_bytes.is_some() {
+            None
+        } else {
+            Some(Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
+                match owner_backend {
+                    OwnerBackend::CubSortMerge => mgbfs_bounded_owner_create(
+                        candidates,
+                        cfg.job_buckets,
+                        cfg.bucket_capacity,
+                        out,
+                    ),
+                    OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
+                        candidates,
+                        cfg.job_buckets,
+                        cfg.bucket_capacity,
+                        1,
+                        candidates,
+                        tile_limit,
+                        out,
+                    ),
+                }
+            })?)
+        };
         let b = |name: &str| {
             let entry = shared_memory
                 .allocations
@@ -816,6 +907,8 @@ impl DistributedNativeBfs {
             ..Ring::default()
         }])?;
         let result = Self {
+            #[cfg(feature = "library-owner")]
+            library_owner: None,
             cfg,
             width,
             stride,
@@ -843,12 +936,20 @@ impl DistributedNativeBfs {
             hash_first_tensor_generation,
             archive_hash,
             route,
-            owner,
+            owner: owner
+                .map(|plan| -> Result<BoundedOwnerStorage> {
+                    Ok(BoundedOwnerStorage {
+                        plan,
+                        accepted: b("accepted")?,
+                        lengths: b("lengths")?,
+                        counts: b("counts")?,
+                        selected: b("selected")?,
+                    })
+                })
+                .transpose()?,
             states,
             prev,
             curr,
-            accepted: b("accepted")?,
-            lengths: b("lengths")?,
             children: b("children")?,
             child_hashes: b("child_hashes")?,
             archive_hashes: b("archive_hashes")?,
@@ -865,9 +966,7 @@ impl DistributedNativeBfs {
             directory,
             fatal,
             jobs_gpu: b("jobs_gpu")?,
-            counts: b("counts")?,
             control: b("control")?,
-            selected: b("selected")?,
             ring,
             extent: b("extent")?,
             layer_count: b("layer_count")?,
@@ -884,6 +983,75 @@ impl DistributedNativeBfs {
             shared_memory,
             owned_memory,
         };
+        #[cfg(feature = "library-owner")]
+        let mut result = result;
+        #[cfg(feature = "library-owner")]
+        if let Some(pool_bytes) = library_pool_bytes {
+            let plane_words =
+                (mgbfs_core::library_memory::CandidateSoaLayout::plan(cfg.layer_capacity.into())?
+                    .plane_stride_bytes
+                    / 4) as usize;
+            // Initial directory was built from the one AoS start key. Rewrite
+            // it in-place as SoA before any library view starts borrowing it.
+            if current_count != 0 {
+                for plane in 0..4 {
+                    unsafe {
+                        check(cudaMemcpyAsync(
+                            result.curr.at(plane * plane_words * 4),
+                            (&start_hash.0[plane] as *const u32).cast(),
+                            4,
+                            1,
+                            raw,
+                        ))?;
+                    }
+                }
+                check(unsafe { cudaStreamSynchronize(raw) })?;
+            }
+            let scratch = Buffer::new(
+                mgbfs_core::library_memory::CandidateSoaLayout::plan(candidates.into())?
+                    .allocation_bytes as usize,
+                raw,
+            )?;
+            let mut pool = std::ptr::null_mut();
+            check(unsafe {
+                mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
+            })?;
+            let per_shard = cfg.buckets / cfg.shards;
+            let capacity = u32::try_from(
+                (u64::from(per_shard) * u64::from(cfg.bucket_capacity))
+                    .min(cfg.layer_capacity.into()),
+            )
+            .map_err(|_| "LIBRARY_SHARD_CAPACITY")?;
+            let mut library = LibraryOwnerStorage {
+                shards: Vec::with_capacity(cfg.shards as usize),
+                scratch,
+                previous: vec![0..0; cfg.shards as usize],
+                current: Vec::with_capacity(cfg.shards as usize),
+                capacity,
+                plane_words,
+                epoch: 0,
+                closed: false,
+                pool,
+            };
+            for directories in result.curr_dir.chunks(per_shard as usize) {
+                let first = directories[0].begin as u32;
+                let last = directories.last().unwrap();
+                library
+                    .current
+                    .push(first..(last.begin + last.count) as u32);
+            }
+            for shard in 0..cfg.shards as usize {
+                unsafe {
+                    library.shards.push(LibraryShard::new_window(
+                        history_view(&result.prev, plane_words, &library.previous[shard]),
+                        history_view(&result.curr, plane_words, &library.current[shard]),
+                        capacity,
+                        raw,
+                    )?);
+                }
+            }
+            result.library_owner = Some(library);
+        }
         result.all_max(0)?;
         Ok(result)
     }
@@ -938,6 +1106,177 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         self.collective_recv.one()
     }
+    #[cfg(feature = "library-owner")]
+    fn commit_library_batch(
+        &mut self,
+        source_states: *const u8,
+        source_hashes: *const c_void,
+        rows: u32,
+        source_group: usize,
+    ) -> Result<()> {
+        let s = self.stream.0;
+        self.route_count.put(&[rows])?;
+        unsafe {
+            check(rank_directory(
+                self.cfg.world,
+                source_hashes,
+                self.route_count.ptr.cast(),
+                self.candidates,
+                self.cfg.buckets,
+                u32::from(self.cfg.logical_owner_to_rank[1] == self.cfg.rank),
+                self.directory.ptr.cast(),
+                self.fatal.ptr.cast(),
+                s,
+            ))?;
+            check(cudaStreamSynchronize(s))?;
+        }
+        if self.fatal.one::<u32>()? != 0 {
+            return Err("LIBRARY_DIRECTORY_FATAL".into());
+        }
+        self.directory.read(&mut self.incoming_dir)?;
+        let per_shard = (self.cfg.buckets / self.cfg.shards) as usize;
+        let library = self.library_owner.as_mut().ok_or("LIBRARY_OWNER_MISSING")?;
+        for shard in 0..library.shards.len() {
+            let directories = &self.incoming_dir[shard * per_shard..(shard + 1) * per_shard];
+            let begin = directories[0].begin;
+            let last = directories.last().unwrap();
+            let end = last
+                .begin
+                .checked_add(last.count)
+                .ok_or("LIBRARY_DIRECTORY_OVERFLOW")?;
+            if end < begin || end > u64::from(rows) {
+                return Err("LIBRARY_DIRECTORY_RANGE".into());
+            }
+            let count = (end - begin) as u32;
+            if count == 0 {
+                continue;
+            }
+            library.epoch = library
+                .epoch
+                .checked_add(1)
+                .ok_or("LIBRARY_EPOCH_OVERFLOW")?;
+            let epoch = library.epoch;
+            let mut candidates = CandidatesV1 {
+                keys: KeysV1 {
+                    words: [std::ptr::null(); 4],
+                    rows: 0,
+                    reserved: 0,
+                },
+                source_indices: std::ptr::null(),
+            };
+            unsafe {
+                check(mgbfs_library_candidates_from_aos_v1(
+                    source_hashes.cast::<u8>().add(begin as usize * 16).cast(),
+                    count,
+                    self.candidates,
+                    library.scratch.ptr,
+                    library.scratch.bytes as u64,
+                    s,
+                    &mut candidates,
+                ))?;
+            }
+            let owner = &mut library.shards[shard];
+            let survivors = unsafe { owner.compare(epoch, candidates)? };
+            if let Some(h) = &self.hash_first {
+                if u64::from(h.pending_counts[source_group]) + u64::from(survivors.rows)
+                    > u64::from(h.capacity)
+                {
+                    return Err("HASH_FIRST_REQUEST_CAPACITY".into());
+                }
+            }
+            let mut control = Control {
+                stage: 1,
+                survivors: survivors.rows,
+                ..Control::default()
+            };
+            self.control.put(&[control])?;
+            unsafe {
+                check(mgbfs_state_reserve_layer(
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    self.layer_count.ptr.cast(),
+                    self.cfg.layer_capacity,
+                    s,
+                ))?;
+                check(cudaStreamSynchronize(s))?;
+            }
+            control = self.control.one()?;
+            let reserved = self.extent.one::<Extent>()?;
+            if control.error != 0 || self.ring.one::<Ring>()?.fatal != 0 {
+                return Err(format!("LIBRARY_RESERVE_FATAL_{}", control.error));
+            }
+            unsafe {
+                owner.commit(epoch, reserved.granted_rows)?;
+            }
+            if survivors.rows == 0 {
+                // Empty cuDF outputs may have a null index pointer. Complete
+                // the zero-credit transaction without calling a materializer
+                // whose ABI requires a non-null selection array.
+                unsafe {
+                    owner.complete(epoch)?;
+                }
+                continue;
+            }
+            control.stage = 2;
+            self.control.put(&[control])?;
+            unsafe {
+                if let Some(h) = self.hash_first.as_ref() {
+                    let offset = h.pending_counts[source_group] as usize;
+                    check(mgbfs_state_build_requests(
+                        source_states.cast(),
+                        rows,
+                        self.identity_refs.at(begin as usize * 8).cast(),
+                        count,
+                        survivors.source_indices,
+                        self.candidates,
+                        h.requests[source_group].at(offset * 16).cast(),
+                        h.targets[source_group].at(offset * 8).cast(),
+                        h.count.ptr.cast(),
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        self.extent.ptr.cast(),
+                        s,
+                    ))?;
+                } else {
+                    check(mgbfs_state_materialize_packed(
+                        source_states.add(begin as usize * self.stride),
+                        count,
+                        survivors.source_indices,
+                        self.candidates,
+                        self.stride as u32,
+                        self.states.ptr.cast(),
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        self.extent.ptr.cast(),
+                        s,
+                    ))?;
+                }
+                check(cudaStreamSynchronize(s))?;
+            }
+            let control = self.control.one::<Control>()?;
+            if control.error != 0 || self.ring.one::<Ring>()?.fatal != 0 {
+                return Err(format!("LIBRARY_MATERIALIZE_FATAL_{}", control.error));
+            }
+            let extent = self.extent.one::<Extent>()?;
+            if let Some(h) = self.hash_first.as_mut() {
+                if extent.ready != 0 || u64::from(h.count.one::<u32>()?) != extent.count {
+                    return Err("HASH_FIRST_REQUEST_PUBLICATION".into());
+                }
+                h.pending_counts[source_group] += extent.count as u32;
+                append_extent(&mut h.pending_extents[source_group], extent)?;
+            } else {
+                if extent.ready != 1 {
+                    return Err("LIBRARY_STATE_NOT_READY".into());
+                }
+                append_extent(&mut self.next, extent)?;
+            }
+            unsafe {
+                owner.complete(epoch)?;
+            }
+        }
+        Ok(())
+    }
     fn commit_owner_batch(
         &mut self,
         source_states: *const u8,
@@ -948,6 +1287,18 @@ impl DistributedNativeBfs {
         if rows == 0 {
             return Ok(());
         }
+        #[cfg(feature = "library-owner")]
+        if self.library_owner.is_some() {
+            return self.commit_library_batch(source_states, source_hashes, rows, source_group);
+        }
+        let owner = self.owner.as_ref().ok_or("NATIVE_OWNER_MISSING")?;
+        let (owner_plan, accepted, lengths, counts, selected) = (
+            owner.plan.0,
+            owner.accepted.ptr,
+            owner.lengths.ptr,
+            owner.counts.ptr,
+            owner.selected.ptr,
+        );
         let s = self.stream.0;
         self.route_count.put(&[rows])?;
         unsafe {
@@ -998,12 +1349,12 @@ impl DistributedNativeBfs {
                 check(mgbfs_bind_owner_jobs(
                     jobs,
                     span.buckets,
-                    self.lengths.ptr.cast(),
+                    lengths.cast(),
                     self.cfg.buckets,
                     s,
                 ))?;
                 check(mgbfs_bounded_owner_compare(
-                    self.owner.0,
+                    owner_plan,
                     jobs,
                     span.buckets,
                     span.rows,
@@ -1012,13 +1363,13 @@ impl DistributedNativeBfs {
                     u64::from(self.prev_count),
                     self.curr.ptr,
                     u64::from(self.current_count),
-                    self.accepted.ptr,
-                    self.lengths.ptr.cast(),
+                    accepted,
+                    lengths.cast(),
                     self.cfg.buckets,
                     self.cfg.buckets / self.cfg.shards,
                     lane,
                     self.depth,
-                    self.counts.ptr.cast(),
+                    counts.cast(),
                     self.control.ptr.cast(),
                     s,
                 ))?;
@@ -1044,16 +1395,16 @@ impl DistributedNativeBfs {
                 ))?;
                 let extent = self.extent.ptr.cast::<Extent>();
                 check(mgbfs_bounded_owner_commit(
-                    self.owner.0,
+                    owner_plan,
                     jobs,
                     span.buckets,
                     hashes.cast(),
-                    self.accepted.ptr,
-                    self.lengths.ptr.cast(),
-                    self.counts.ptr.cast(),
+                    accepted,
+                    lengths.cast(),
+                    counts.cast(),
                     self.control.ptr.cast(),
                     std::ptr::addr_of!((*extent).granted_rows),
-                    self.selected.ptr.cast(),
+                    selected.cast(),
                     s,
                 ))?;
                 if let Some(h) = self.hash_first.as_ref() {
@@ -1063,7 +1414,7 @@ impl DistributedNativeBfs {
                         rows,
                         refs,
                         span.rows,
-                        self.selected.ptr.cast(),
+                        selected.cast(),
                         self.candidates,
                         h.requests[source_group].at(offset * 16).cast(),
                         h.targets[source_group].at(offset * 8).cast(),
@@ -1077,7 +1428,7 @@ impl DistributedNativeBfs {
                     check(mgbfs_state_materialize_packed(
                         source_states.add(span.source_begin as usize * self.stride),
                         span.rows,
-                        self.selected.ptr.cast(),
+                        selected.cast(),
                         self.candidates,
                         self.stride as u32,
                         self.states.ptr.cast(),
@@ -1358,13 +1709,30 @@ impl DistributedNativeBfs {
         }
         let s = self.stream.0;
         unsafe {
-            check(cudaMemsetAsync(
-                self.lengths.ptr,
-                0,
-                self.cfg.buckets as usize * 4,
-                s,
-            ))?;
+            if let Some(owner) = self.owner.as_ref() {
+                check(cudaMemsetAsync(
+                    owner.lengths.ptr,
+                    0,
+                    self.cfg.buckets as usize * 4,
+                    s,
+                ))?;
+            }
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
+        }
+        #[cfg(feature = "library-owner")]
+        if let Some(library) = self.library_owner.as_mut() {
+            if library.closed {
+                for shard in 0..library.shards.len() {
+                    unsafe {
+                        library.shards[shard].reopen_window(
+                            history_view(&self.prev, library.plane_words, &library.previous[shard]),
+                            history_view(&self.curr, library.plane_words, &library.current[shard]),
+                            library.capacity,
+                        )?;
+                    }
+                }
+                library.closed = false;
+            }
         }
         self.next.clear();
         let local_owner = self
@@ -1678,20 +2046,37 @@ impl DistributedNativeBfs {
             }
             self.archived_depth = Some(self.depth);
         }
-        unsafe {
-            check(mgbfs_compact_hash_layer(
-                self.accepted.ptr,
-                self.lengths.ptr.cast(),
-                self.cfg.buckets,
-                self.cfg.bucket_capacity,
-                self.prev.ptr,
-                self.cfg.layer_capacity,
-                self.directory.ptr.cast(),
-                self.route_count.ptr.cast(),
-                self.fatal.ptr.cast(),
-                s,
-            ))?;
-            check(cudaStreamSynchronize(s))?;
+        if let Some(owner) = self.owner.as_ref() {
+            unsafe {
+                check(mgbfs_compact_hash_layer(
+                    owner.accepted.ptr,
+                    owner.lengths.ptr.cast(),
+                    self.cfg.buckets,
+                    self.cfg.bucket_capacity,
+                    self.prev.ptr,
+                    self.cfg.layer_capacity,
+                    self.directory.ptr.cast(),
+                    self.route_count.ptr.cast(),
+                    self.fatal.ptr.cast(),
+                    s,
+                ))?;
+                check(cudaStreamSynchronize(s))?;
+            }
+        }
+        #[cfg(feature = "library-owner")]
+        if let Some(library) = self.library_owner.as_mut() {
+            let target = unsafe {
+                history_view(
+                    &self.prev,
+                    library.plane_words,
+                    &(0..self.cfg.layer_capacity),
+                )
+            };
+            let count =
+                unsafe { finalize_shards(&mut library.shards, target, &mut library.previous, s)? };
+            library.closed = true;
+            std::mem::swap(&mut library.previous, &mut library.current);
+            self.route_count.put(&[count])?;
         }
         if self.fatal.one::<u32>()? != 0 {
             return Err("FINALIZE_FATAL".into());
@@ -1700,8 +2085,10 @@ impl DistributedNativeBfs {
         if self.layer_count.one::<u32>()? != count {
             return Err("LAYER_COUNT_MISMATCH".into());
         }
-        self.directory.read(&mut self.prev_dir)?;
-        std::mem::swap(&mut self.prev_dir, &mut self.curr_dir);
+        if self.owner.is_some() {
+            self.directory.read(&mut self.prev_dir)?;
+            std::mem::swap(&mut self.prev_dir, &mut self.curr_dir);
+        }
         std::mem::swap(&mut self.prev, &mut self.curr);
         std::mem::swap(&mut self.front, &mut self.next);
         self.prev_count = self.current_count;

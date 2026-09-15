@@ -1,4 +1,4 @@
-//! Experimental Rust adapter. Not yet selected by the distributed scheduler.
+//! Experimental Rust adapter, explicitly selected by new_library_reference.
 //! CUDA arrays stay on device; library count synchronization remains explicit.
 use crate::event_generation::NativeEvent;
 use crate::library_owner::OwnerCommitGate;
@@ -104,6 +104,37 @@ pub struct LibraryShard {
 }
 
 impl LibraryShard {
+    /// Reuse the preallocated completion event after a finalized/closed depth.
+    /// Library allocations stay inside the already installed fixed pool.
+    /// # Safety
+    /// Same device/history/stream contract as new_window. Prior exported keys
+    /// must have been consumed and close() must have succeeded. Epochs supplied
+    /// to event completion must remain monotonic across depth changes.
+    pub unsafe fn reopen_window(
+        &mut self,
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+    ) -> Result<()> {
+        if !self.handle.is_null() {
+            return Err("LIBRARY_OWNER_STILL_OPEN".into());
+        }
+        let mut handle = ptr::null_mut();
+        let status = mgbfs_library_owner_create_window_v1(
+            previous,
+            current,
+            capacity,
+            self.stream,
+            &mut handle,
+        );
+        self.status(status, "REOPEN")?;
+        if handle.is_null() {
+            return Err("LIBRARY_OWNER_REOPEN_NULL".into());
+        }
+        self.handle = handle;
+        self.gate = OwnerCommitGate::new(u64::from(capacity));
+        Ok(())
+    }
     /// # Safety
     /// Same device/pool/stream lifetime contract as new(), for two independent
     /// immutable history views. Appropriate to the inverse-closed depth-one
