@@ -417,3 +417,10 @@ zero racecheck warnings. Evidence: `test_results/library-owner-v34/library-owner
 This is two rank threads on two devices, not yet a process-launch result.
 V35 pins `248142359ad42ba64682d88a7de4f17765188fc2` for the added Tensor and
 actual torchrun/CLI/archive gates. No speed or peak-memory acceptance is claimed.
+
+The comparison aggregator now retains every durable-time sample and reports its
+median and MAD separately from search time. Missing archive timings remain null
+for the baseline; mixed missing/invalid samples fail instead of producing a
+partial statistic. Per-rank library pool reservations must agree. All 19
+distributed-metrics CPU tests pass after the new cases failed against the old
+implementation. This changes reporting only; no new GPU measurements are implied.

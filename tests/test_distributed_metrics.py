@@ -162,7 +162,8 @@ class RankMetrics(unittest.TestCase):
         for key in ('group', 'batch', 'frontier_profile', 'owner_backend',
                     'pre_dedup', 'capacity_mode', 'global_capacity_records',
                     'global_state_ring_records', 'archive_enabled', 'archive_state_bytes',
-                    'generation_variant', 'hash_first_generation', 'warmup_completed'):
+                    'generation_variant', 'hash_first_generation', 'warmup_completed',
+                    'library_pool_reserved_bytes'):
             rows = self.rows()
             rows[0][key] = 1
             rows[1][key] = 2
@@ -204,6 +205,28 @@ class RankMetrics(unittest.TestCase):
 
 
 class MemoryMetrics(unittest.TestCase):
+    def test_durable_statistics_retain_every_sample(self):
+        rows = [dict(search_complete_seconds=1, durable_run_commit_seconds=t,
+                     smi_peak_mib_per_rank=[100], smi_peak_mib_total=100)
+                for t in (2, 9, 4)]
+        result = stats(rows)
+        self.assertEqual(result.get('durable_median_seconds'), 4)
+        self.assertEqual(result.get('durable_mad_seconds'), 2)
+        self.assertEqual(result.get('durable_samples_seconds'), [2, 9, 4])
+        for row in rows:
+            row['durable_run_commit_seconds'] = None
+        result = stats(rows)
+        self.assertIsNone(result['durable_median_seconds'])
+        self.assertIsNone(result['durable_mad_seconds'])
+        self.assertEqual(result['durable_samples_seconds'], [None, None, None])
+
+    def test_partial_or_invalid_durable_samples_are_rejected(self):
+        row = dict(search_complete_seconds=1, durable_run_commit_seconds=2,
+                   smi_peak_mib_per_rank=[100], smi_peak_mib_total=100)
+        for invalid in (None, -1, float('nan'), float('inf'), True, '2'):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                stats([row, dict(row, durable_run_commit_seconds=invalid)])
+
     def test_single_gpu_does_not_charge_unused_device(self):
         text = 't, 0, a, 500, 1, 1, 1, 1\nt, 1, b, 9000, 1, 1, 1, 1\n'
         self.assertEqual(smi_peaks(text, world=1), ([500.0], 500.0))

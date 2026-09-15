@@ -69,7 +69,7 @@ def aggregate_rank_results(ranks,world=2):
  for key in ('group','batch','frontier_profile','owner_backend','pre_dedup',
              'capacity_mode','global_capacity_records','global_state_ring_records',
              'archive_enabled','archive_state_bytes','generation_variant',
-             'hash_first_generation','warmup_completed'):
+             'hash_first_generation','warmup_completed','library_pool_reserved_bytes'):
   if any(key in x for x in ranks) and (any(key not in x for x in ranks) or any(x[key]!=ranks[0][key] for x in ranks)):
    raise ValueError('rank configuration mismatch: '+key)
  for result in ranks:
@@ -122,7 +122,13 @@ def stats(rows):
  if world not in (1,2) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
  if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')
  values=[x['search_complete_seconds'] for x in rows];median=statistics.median(values)
- return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
+ durable=[x.get('durable_run_commit_seconds') for x in rows]
+ if all(x is None for x in durable):durable_median=durable_mad=None
+ else:
+  if any(type(x) not in (int,float) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('INCOMPLETE_OR_INVALID_DURABLE_SAMPLES')
+  durable_median=statistics.median(durable)
+  durable_mad=statistics.median(abs(x-durable_median) for x in durable)
+ return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,durable_median_seconds=durable_median,durable_mad_seconds=durable_mad,durable_samples_seconds=durable,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
 
 def suite(native,source,out,env):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
