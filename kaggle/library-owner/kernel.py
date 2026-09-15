@@ -6,10 +6,19 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import hashlib
+import shutil
 
-SOURCE_COMMIT = "61d2c516daca6588161712455f79b38117d25c07"
+SOURCE_COMMIT = "3036622b637453bc25d9fe8fd949ee93c31c2aa3"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
+# NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
+CUDA_COMPONENTS = [
+    ("cuda_nvcc", "12.9.86", "7a1a5b652e5ef85c82b721d10672fc9a2dbaab44e9bd3c65a69517bf53998c35"),
+    ("cuda_cudart", "12.9.79", "1f6ad42d4f530b24bfa35894ccf6b7209d2354f59101fd62ec4a6192a184ce99"),
+    ("cuda_cccl", "12.9.27", "8b1a5095669e94f2f9afd7715533314d418179e9452be61e2fde4c82a3e542aa"),
+    ("cuda_nvrtc", "12.9.86", "82913658363892dbc0f2638b070476234476e06e084fed60db861cb7e161a6af"),
+]
 
 
 def isolated_environment(inherited):
@@ -60,6 +69,24 @@ def main():
         return gate.run(command, cwd=source, env=env if extra_env is None else extra_env,
                         logs=logs, name=name, timeout=timeout)
     try:
+        sdk = work / "cuda-12.9"
+        sdk.mkdir()
+        manifest["cuda_components"] = CUDA_COMPONENTS
+        for component, version, sha256 in CUDA_COMPONENTS:
+            name = f"{component}-linux-x86_64-{version}-archive"
+            archive = work / (name + ".tar.xz")
+            url = f"https://developer.download.nvidia.com/compute/cuda/redist/{component}/linux-x86_64/{archive.name}"
+            run(["curl", "--fail", "--location", "--max-time", "180", url,
+                 "--output", str(archive)], component + "-download")
+            with archive.open("rb") as package:
+                actual_sha = hashlib.file_digest(package, "sha256").hexdigest()
+            if actual_sha != sha256:
+                raise RuntimeError(f"CUDA archive checksum mismatch: {component}")
+            run(["tar", "-xf", str(archive), "-C", str(work)], component + "-extract")
+            shutil.copytree(work / name, sdk, dirs_exist_ok=True)
+        env["PATH"] = str(sdk / "bin") + ":" + env["PATH"]
+        env["CUDACXX"] = str(sdk / "bin/nvcc")
+        run([str(sdk / "bin/nvcc"), "--version"], "cuda-version")
         venv = work / "venv"
         # Kaggle's ensurepip bootstrap failed in v1. Use the host pip's supported
         # --python entry point; the target environment remains fully isolated.
@@ -83,11 +110,12 @@ def main():
         site = Path(site_query.stdout.strip())
         prefixes = cmake_prefixes(site)
         lib_dirs = sorted({str(p.parent) for p in site.rglob("*.so*") if p.is_file()})
-        env["LD_LIBRARY_PATH"] = ":".join(lib_dirs + [env.get("LD_LIBRARY_PATH", "")])
+        env["LD_LIBRARY_PATH"] = ":".join([str(sdk / "lib"), str(sdk / "lib64")] + lib_dirs + [env.get("LD_LIBRARY_PATH", "")])
         env["PATH"] = str(venv / "bin") + ":" + env["PATH"]
         build = work / "build"
         run([str(venv / "bin/cmake"), "-S", str(source / "experiments/library_owner"),
              "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+             "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes)], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
         executable = str(build / "cudf_owner_probe")
