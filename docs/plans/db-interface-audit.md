@@ -26,6 +26,33 @@ then demonstrate one generate/query/consume cycle without D2H intermediate
 materialization. It must separately prove fixed physical reservation and fatal
 exhaustion rather than wait/spill. No executable Sirius probe has passed yet.
 
+### Dev scan-manager entry point found
+
+At the same dev SHA, `src/include/scan_manager/sirius_scan_manager.hpp` declares
+`insert_pinned_entry` taking owned `vector<unique_ptr<cudf::table>>`, explicit
+per-chunk cuCascade memory spaces, logical types, statistics and storage metadata.
+This is a concrete candidate for GPU-native batch registration, without a
+mandatory file round-trip at this call boundary. The complete execution path
+and whether registration can bind to an appropriate catalog identity remain
+unverified.
+
+Two adapter hazards are explicit in the interface documentation:
+
+- Same-name re-insertion with the same row count may merge additional columns
+  while retaining existing columns. It is NOT a guaranteed batch replacement.
+  A reused BFS slot must remove the drained old entry or use a fresh identity;
+  otherwise equal-sized batches could query stale data.
+- `try_match_cached_entry` can fall back to a disk-reading provider on a cache
+  miss or malformed entry. Closed-loop tests must assert a cache hit and reject
+  fallback; successful SQL alone does not prove GPU-resident BFS execution.
+
+The API also exposes `remove_pinned_entry` and generation-checked late-materialization
+handles. Removal/replacement must be serialized after query consumers drain.
+These observations identify a plausible adapter, not a benchmark win or a final
+DB rejection.
+
+Source: https://github.com/sirius-db/sirius/blob/1f996e3cd022f7f416bf83fd12c889005e8f730d/src/include/scan_manager/sirius_scan_manager.hpp
+
 Source links:
 - https://github.com/sirius-db/sirius/blob/2611fa289d3ce788d9426977629a3699dc472e32/src/memory/memory_reservation.cpp
 - https://github.com/sirius-db/sirius/blob/1f996e3cd022f7f416bf83fd12c889005e8f730d/src/include/pin_table.hpp
