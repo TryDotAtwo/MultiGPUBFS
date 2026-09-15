@@ -11,6 +11,7 @@ import shutil
 
 SOURCE_COMMIT = "248142359ad42ba64682d88a7de4f17765188fc2"
 FULL_BFS_GATE = True
+LOAD_SCREEN = True
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
@@ -261,6 +262,13 @@ def main():
                 if total != expected_count:
                     raise RuntimeError(f"CLI {group} count mismatch: {total}")
             manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4/U4m2 correctness only"
+            if LOAD_SCREEN:
+                sys.path.insert(0, str(source / "scripts"))
+                from library_gpu_screen import run_case
+                run_case(cli, logs / "screen-s10-dense", work / "screen-s10-dense",
+                         "s10", 3628800, 2, 32768, 3628800, 3628800,
+                         1 << 30, "DENSE", "ON", device_env)
+                manifest["load_screen"] = "S10 DENSE cuDF; one sample, not Pareto acceptance"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))
