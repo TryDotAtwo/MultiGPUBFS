@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "bc0f85abe0826297ae79dbc0f075ddb7663cefe3"
+SOURCE_COMMIT = "9b34de715799ca996e1b1ba64a95ec7357ed5188"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
@@ -125,6 +125,7 @@ def main():
              "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes)], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
+        run([str(build / "owner_abi_invalid")], "abi-invalid-handle")
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
