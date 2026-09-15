@@ -21,6 +21,7 @@
 #include <vector>
 #include <set>
 #include "cudf_owner.hpp"
+#include "owner_abi.h"
 
 void check(bool ok, char const* msg) { if (!ok) throw std::runtime_error(msg); }
 void cuda_check(cudaError_t result) {
@@ -153,6 +154,46 @@ void owner_multibatch_fixture(rmm::cuda_stream_view stream) {
   stream.synchronize();
 }
 
+void abi_fixture(rmm::cuda_stream_view stream) {
+  auto old = upload({Row{7,8,9,10,0}}, stream);
+  auto input = upload({Row{7,8,9,10,0}, Row{7,8,9,11,1}, Row{7,8,9,11,2}}, stream);
+  auto keys = [](cudf::table_view t) {
+    MgbfsLibraryKeysV1 k{};
+    k.rows = static_cast<uint32_t>(t.num_rows());
+    for (int i = 0; i < 4; ++i) k.words[i] = t.column(i).data<uint32_t>();
+    return k;
+  };
+  void* owner = nullptr;
+  check(mgbfs_library_owner_create_v1(keys(old->view()), 1, stream.value(), &owner) == 0,
+        "OWNER_ABI_CREATE");
+  // Drain even after a failed assertion before releasing external history/pool.
+  try {
+    MgbfsLibraryCandidatesV1 candidates{keys(input->view()),
+        input->view().column(4).data<uint32_t>()};
+    MgbfsLibrarySurvivorsV1 out{};
+    check(mgbfs_library_owner_compare_v1(owner, 5, candidates, &out) == 0,
+          "OWNER_ABI_COMPARE");
+    check(out.rows == 1 && out.epoch == 5 && out.reserved == 0, "OWNER_ABI_RESULT");
+    uint32_t origin = 999;
+    cuda_check(cudaMemcpyAsync(&origin, out.source_indices, sizeof(origin),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    check(origin == 1, "OWNER_ABI_PROVENANCE");
+    check(mgbfs_library_owner_commit_v1(owner, 5, 1) == 0, "OWNER_ABI_COMMIT");
+    check(mgbfs_library_owner_compare_v1(owner, 6, candidates, &out) == 0,
+          "OWNER_ABI_NEXT_COMPARE");
+    check(out.rows == 0, "OWNER_ABI_REACCEPTED_DUPLICATE");
+    check(mgbfs_library_owner_commit_v1(owner, 5, 0) != 0, "OWNER_ABI_STALE_EPOCH");
+    check(mgbfs_library_owner_commit_v1(owner, 6, 0) != 0, "OWNER_ABI_POISON_RETRY");
+    stream.synchronize();
+  } catch (...) {
+    stream.synchronize();
+    mgbfs_library_owner_destroy_v1(owner);
+    throw;
+  }
+  mgbfs_library_owner_destroy_v1(owner);
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -169,6 +210,7 @@ int main() {
       fixture(stream.view());
       owner_fixture(stream.view());
       owner_multibatch_fixture(stream.view());
+      abi_fixture(stream.view());
       stream.synchronize();
       check(stats.get_bytes_counter().value == 0, "Library allocation escaped fixture lifetime");
       bool exhausted = false;
