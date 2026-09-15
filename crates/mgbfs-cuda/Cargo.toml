@@ -6,7 +6,7 @@ build = "build.rs"
 
 [features]
 cuda = []
-library-owner = ["cuda"]
+library-owner = []
 
 [dependencies]
 mgbfs-core = { path = "../mgbfs-core" }

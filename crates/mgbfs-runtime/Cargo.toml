@@ -6,7 +6,7 @@ rust-version = "1.75"
 
 [features]
 cuda = ["mgbfs-cuda/cuda"]
-library-owner = ["cuda", "mgbfs-cuda/library-owner"]
+library-owner = ["mgbfs-cuda/library-owner"]
 
 [dependencies]
 mgbfs-core = { path = "../mgbfs-core" }

@@ -2,7 +2,7 @@
 pub mod allocation;
 pub mod library_owner;
 pub mod native_owner;
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "library-owner"))]
 pub mod ffi {
     pub use crate::allocation::{
         FutureMergeBytes, GenerateBytes, HashBytes, MaterializeBytes, RouteBytes,

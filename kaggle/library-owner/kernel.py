@@ -126,6 +126,36 @@ def main():
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes)], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
         run([str(build / "owner_abi_invalid")], "abi-invalid-handle")
+        # Build the real Rust adapter without pulling the unrelated native BFS
+        # library into this ABI gate. All data-plane calls remain native CUDA.
+        env["CARGO_HOME"] = str(work / "cargo")
+        env["RUSTUP_HOME"] = str(work / "rustup")
+        installer = work / "rustup-init.sh"
+        run(["curl", "--fail", "--location", "--max-time", "180",
+             "https://sh.rustup.rs", "-o", str(installer)], "rust-download")
+        run(["sh", str(installer), "-y", "--no-modify-path", "--profile", "minimal",
+             "--default-toolchain", gate.RUST_VERSION], "rust-install")
+        env["PATH"] = str(work / "cargo/bin") + ":" + env["PATH"]
+        env["MGBFS_LIBRARY_OWNER_LIB_DIR"] = str(build)
+        env["MGBFS_CUDART_LIB_DIR"] = str(sdk / "lib")
+        env.pop("MGBFS_CUDA_LIB_DIR", None)
+        env["LD_LIBRARY_PATH"] = str(build) + ":" + env["LD_LIBRARY_PATH"]
+        run(["rustc", "--version", "--verbose"], "rust-version")
+        artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                         "--features", "library-owner", "--test", "library_native_gpu",
+                         "--no-run", "--message-format=json"], "rust-build")
+        executables = []
+        for line in artifacts.splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (record.get("reason") == "compiler-artifact"
+                    and record.get("target", {}).get("name") == "library_native_gpu"
+                    and record.get("executable")):
+                executables.append(record["executable"])
+        if len(executables) != 1:
+            raise RuntimeError("Expected one Rust GPU test executable")
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
@@ -133,6 +163,11 @@ def main():
                 command = [executable] if tool == "plain" else [
                     "compute-sanitizer", "--tool", tool, "--error-exitcode", "97", executable]
                 run(command, f"gpu{gpu['index']}-{tool}", extra_env=device_env)
+                rust_command = [executables[0], "--test-threads=1"]
+                if tool != "plain":
+                    rust_command = ["compute-sanitizer", "--tool", tool,
+                                    "--error-exitcode", "97", *rust_command]
+                run(rust_command, f"rust-gpu{gpu['index']}-{tool}", extra_env=device_env)
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))
