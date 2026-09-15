@@ -39,6 +39,24 @@ pub type PoolHandle = *mut c_void;
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    /// Convert native Hash128 AoS into five aligned u32 planes in preallocated
+    /// scratch. No input/output aliasing. Data readiness is stream-ordered.
+    pub fn mgbfs_library_candidates_from_aos_v1(
+        hashes: *const c_void,
+        rows: u32,
+        capacity: u32,
+        scratch: *mut c_void,
+        scratch_bytes: u64,
+        cuda_stream: *mut c_void,
+        result: *mut CandidatesV1,
+    ) -> i32;
+    /// Convert committed SoA hashes back to native AoS in preallocated storage.
+    pub fn mgbfs_library_keys_to_aos_v1(
+        keys: KeysV1,
+        output: *mut c_void,
+        capacity: u32,
+        cuda_stream: *mut c_void,
+    ) -> i32;
     /// Install one fixed-size RMM pool on the current device before allocating
     /// owner inputs. Calls are serialized; no nested pool or runtime growth.
     pub fn mgbfs_library_pool_create_v1(

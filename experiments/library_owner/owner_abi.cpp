@@ -9,6 +9,16 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+// RED scaffolds for the allocation-free native AoS boundary.
+extern "C" int mgbfs_library_candidates_from_aos_v1(const void*, uint32_t,
+    uint32_t, void*, uint64_t, void*, MgbfsLibraryCandidatesV1* result) {
+  if (result) *result = {};
+  return -1;
+}
+extern "C" int mgbfs_library_keys_to_aos_v1(MgbfsLibraryKeysV1, void*, uint32_t, void*) {
+  return -1;
+}
+
 namespace {
 using FixedPool = rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>;
 struct PoolHandle {

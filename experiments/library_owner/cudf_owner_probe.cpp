@@ -267,6 +267,47 @@ void pool_abi_fixture(rmm::cuda_stream_view stream) {
         "POOL_ABI_MISSING_RESERVE");
 }
 
+void layout_fixture(rmm::cuda_stream_view stream) {
+  constexpr uint32_t rows = 65;
+  constexpr size_t stride = 512, bytes = 5 * stride;
+  std::vector<uint32_t> original(rows * 4);
+  for (uint32_t i = 0; i < rows; ++i)
+    for (uint32_t c = 0; c < 4; ++c) original[i * 4 + c] = 0xff000000u + i * 19 + c;
+  rmm::device_buffer input(original.data(), original.size() * 4, stream);
+  rmm::device_buffer scratch(bytes + 256, stream), output(original.size() * 4, stream);
+  cuda_check(cudaMemsetAsync(scratch.data(), 0xa5, scratch.size(), stream.value()));
+  MgbfsLibraryCandidatesV1 converted{};
+  check(mgbfs_library_candidates_from_aos_v1(input.data(), rows, rows, scratch.data(),
+        bytes, stream.value(), &converted) == 0, "LAYOUT_AOS_TO_SOA");
+  check(converted.keys.rows == rows && converted.keys.reserved == 0, "LAYOUT_METADATA");
+  for (size_t c = 0; c < 4; ++c)
+    check(reinterpret_cast<const char*>(converted.keys.words[c]) ==
+          static_cast<const char*>(scratch.data()) + c * stride, "LAYOUT_PLANE_OFFSET");
+  check(reinterpret_cast<const char*>(converted.source_indices) ==
+        static_cast<const char*>(scratch.data()) + 4 * stride, "LAYOUT_ORDINAL_OFFSET");
+  check(mgbfs_library_keys_to_aos_v1(converted.keys, output.data(), rows,
+        stream.value()) == 0, "LAYOUT_SOA_TO_AOS");
+  std::vector<uint32_t> planes((bytes + 256) / 4), roundtrip(original.size());
+  cuda_check(cudaMemcpyAsync(planes.data(), scratch.data(), scratch.size(),
+                            cudaMemcpyDeviceToHost, stream.value()));
+  cuda_check(cudaMemcpyAsync(roundtrip.data(), output.data(), output.size(),
+                            cudaMemcpyDeviceToHost, stream.value()));
+  stream.synchronize();
+  check(roundtrip == original, "LAYOUT_ROUNDTRIP");
+  for (size_t c = 0; c < 5; ++c) {
+    for (uint32_t i = 0; i < rows; ++i)
+      check(planes[c * stride / 4 + i] == (c == 4 ? i : original[i * 4 + c]),
+            "LAYOUT_PLANE_VALUE");
+    for (size_t i = rows; i < stride / 4; ++i)
+      check(planes[c * stride / 4 + i] == 0xa5a5a5a5, "LAYOUT_PADDING_WRITE");
+  }
+  for (size_t i = bytes / 4; i < planes.size(); ++i)
+    check(planes[i] == 0xa5a5a5a5, "LAYOUT_GUARD_WRITE");
+  check(mgbfs_library_candidates_from_aos_v1(input.data(), rows, rows, scratch.data(),
+        bytes - 1, stream.value(), &converted) != 0 && converted.keys.rows == 0 &&
+        converted.source_indices == nullptr, "LAYOUT_SHORT_BUFFER");
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -282,6 +323,7 @@ int main() {
     auto previous = rmm::mr::set_current_device_resource_ref(stats);
     try {
       fixture(stream.view());
+      layout_fixture(stream.view());
       owner_fixture(stream.view());
       owner_multibatch_fixture(stream.view());
       abi_fixture(stream.view());

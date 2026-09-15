@@ -40,6 +40,19 @@ typedef struct MgbfsLibrarySurvivorsV1 {
 int mgbfs_library_pool_create_v1(uint64_t bytes, uint64_t reserve_bytes, void** pool);
 int mgbfs_library_pool_destroy_v1(void* pool);
 
+/* Allocation-free layout bridge. AoS is four consecutive u32 words per key.
+ * scratch is 256-aligned with 5 * align_up(capacity*4,256) bytes: four
+ * hash planes followed by span-local u32 source ordinals. rows <= capacity,
+ * 0 < capacity <= INT32_MAX. Input/output ranges must not alias.
+ * Result metadata is host-visible; data is ready in stream order. Failure
+ * clears result. Tail padding is untouched. These calls never synchronize.
+ */
+int mgbfs_library_candidates_from_aos_v1(const void* hashes, uint32_t rows,
+    uint32_t capacity, void* scratch, uint64_t scratch_bytes, void* cuda_stream,
+    MgbfsLibraryCandidatesV1* result);
+int mgbfs_library_keys_to_aos_v1(MgbfsLibraryKeysV1 keys, void* output,
+    uint32_t capacity, void* cuda_stream);
+
 /* Caller installs the fixed RMM resource before creation; it and immutable
  * history outlive all owners. Exactly one serialized writer/stream per owner.
  * Factory returns a null handle on error. Status 0 means success, never a
