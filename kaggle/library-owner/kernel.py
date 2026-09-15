@@ -21,6 +21,15 @@ def isolated_environment(inherited):
     return env
 
 
+def cmake_prefixes(site):
+    # Ubuntu does not necessarily search lib64 under every prefix. Include the
+    # actual exported-config directories, including bundled CCCL dependencies.
+    paths = {str(p) for p in site.iterdir() if p.is_dir()}
+    for pattern in ("*-config.cmake", "*Config.cmake"):
+        paths.update(str(p.parent) for p in site.rglob(pattern) if p.is_file())
+    return sorted(paths)
+
+
 def main():
     logs = Path("/kaggle/working/library-owner")
     logs.mkdir(parents=True, exist_ok=True)
@@ -72,9 +81,7 @@ def main():
         (logs / "site-stderr.log").write_text(site_query.stderr)
         (logs / "site-stdout.log").write_text(site_query.stdout)
         site = Path(site_query.stdout.strip())
-        prefixes = sorted({str(p.parent.parent) for p in site.rglob("libcudf") if p.is_dir()})
-        # Wheels install their exported CMake config under individual package roots.
-        prefixes = [str(p) for p in site.iterdir() if p.is_dir()] + prefixes
+        prefixes = cmake_prefixes(site)
         lib_dirs = sorted({str(p.parent) for p in site.rglob("*.so*") if p.is_file()})
         env["LD_LIBRARY_PATH"] = ":".join(lib_dirs + [env.get("LD_LIBRARY_PATH", "")])
         env["PATH"] = str(venv / "bin") + ":" + env["PATH"]
