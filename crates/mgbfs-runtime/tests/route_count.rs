@@ -32,3 +32,13 @@ fn prededup_reads_compacted_count_once_and_checks_bound() {
         "CUDA_FAILURE"
     );
 }
+#[test]
+fn packed_owner_counts_reject_corrupt_totals_and_device_fatal() {
+    use mgbfs_runtime::route_count::packed_count;
+    assert_eq!(packed_count(7, [4, 3]).unwrap(), 7);
+    assert_eq!(packed_count(7, [0, 3]).unwrap(), 3);
+    assert_eq!(packed_count(0, [0, 0]).unwrap(), 0);
+    assert!(packed_count(7, [4, 4]).is_err());
+    assert!(packed_count(u32::MAX, [u32::MAX, 0]).is_err());
+    assert!(packed_count(u32::MAX, [1, u32::MAX]).is_err());
+}

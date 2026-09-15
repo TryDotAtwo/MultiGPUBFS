@@ -1478,8 +1478,8 @@ impl DistributedNativeBfs {
             check(unsafe { cudaStreamSynchronize(s) })?;
             let mut owner_counts = [0u32; 2];
             self.owner_counts.read(&mut owner_counts)?;
-            if owner_counts[0] == u32::MAX {
-                return Err("EXCHANGE_SOURCE_REF".into());
+            if crate::route_count::packed_count(candidate_count, owner_counts)? != routed {
+                return Err("EXCHANGE_COUNT_MISMATCH".into());
             }
             if let Some(sequence) = generation {
                 // Pack's host-observed completion includes the generation wait
