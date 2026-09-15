@@ -2,13 +2,69 @@
 #include "cudf_owner.hpp"
 #include <limits>
 #include <vector>
+#include <map>
+#include <mutex>
+#include <rmm/mr/cuda_memory_resource.hpp>
+#include <rmm/mr/per_device_resource.hpp>
+#include <rmm/mr/pool_memory_resource.hpp>
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
-// RED scaffold: GPU fixture must reach POOL_ABI_CREATE before implementation.
-extern "C" int mgbfs_library_pool_create_v1(uint64_t, uint64_t, void** pool) {
-  if (pool) *pool = nullptr;
-  return -1;
+namespace {
+using FixedPool = rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>;
+struct PoolHandle {
+  int device;
+  decltype(rmm::mr::get_current_device_resource_ref()) previous;
+  rmm::mr::cuda_memory_resource upstream;
+  FixedPool pool;
+  rmm::mr::statistics_resource_adaptor<FixedPool> stats;
+  PoolHandle(int id, size_t bytes)
+      : device(id), previous(rmm::mr::get_current_device_resource_ref()),
+        pool(&upstream, bytes, bytes), stats(&pool) {}
+};
+std::mutex pool_mutex;
+std::map<int, PoolHandle*> device_pools;
 }
-extern "C" int mgbfs_library_pool_destroy_v1(void*) { return -1; }
+
+extern "C" int mgbfs_library_pool_create_v1(uint64_t bytes, uint64_t reserve, void** output) {
+  if (!output) return -1;
+  *output = nullptr;
+  try {
+    if (!bytes || bytes % 256 || reserve < (1ULL << 30) ||
+        bytes > std::numeric_limits<size_t>::max()) return -1;
+    int device;
+    size_t free, total;
+    if (cudaGetDevice(&device) != cudaSuccess ||
+        cudaMemGetInfo(&free, &total) != cudaSuccess) return -1;
+    if (reserve > free || bytes > free - reserve) return -1;
+    std::lock_guard<std::mutex> lock(pool_mutex);
+    if (device_pools.count(device)) return -1;
+    auto handle = std::make_unique<PoolHandle>(device, static_cast<size_t>(bytes));
+    // Map insertion may throw: do it before exposing the new current resource.
+    device_pools.emplace(device, handle.get());
+    try { rmm::mr::set_current_device_resource_ref(handle->stats); }
+    catch (...) { device_pools.erase(device); throw; }
+    *output = handle.release();
+    return 0;
+  } catch (...) { return -1; }
+}
+extern "C" int mgbfs_library_pool_destroy_v1(void* pool) {
+  if (!pool) return -1;
+  try {
+    int device;
+    if (cudaGetDevice(&device) != cudaSuccess) return -1;
+    std::lock_guard<std::mutex> lock(pool_mutex);
+    auto found = device_pools.find(device);
+    if (found == device_pools.end() || found->second != pool) return -1;
+    auto* handle = found->second;
+    if (handle->stats.get_bytes_counter().value != 0 ||
+        rmm::mr::get_current_device_resource_ref() !=
+            decltype(handle->previous){handle->stats}) return -1;
+    rmm::mr::set_current_device_resource_ref(handle->previous);
+    device_pools.erase(found);
+    delete handle;
+    return 0;
+  } catch (...) { return -1; }
+}
 
 namespace {
 struct Handle {
