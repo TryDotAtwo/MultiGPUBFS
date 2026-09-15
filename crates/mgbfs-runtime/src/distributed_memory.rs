@@ -115,6 +115,29 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
     Ok(l)
 }
 
+/// Library-owner shared storage, excluding the separately charged fixed RMM
+/// pool. History is four aligned SoA planes; no duplicate legacy owner arrays.
+pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
+    use mgbfs_core::library_memory::CandidateSoaLayout;
+    let history = CandidateSoaLayout::plan(s.layer_capacity)?;
+    let candidates = CandidateSoaLayout::plan(s.candidates)?;
+    let base = shared_buffers(s)?;
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in base.allocations {
+        if ["accepted", "lengths", "counts", "selected"].contains(&allocation.name.as_str()) {
+            continue;
+        }
+        let bytes = if ["prev", "curr"].contains(&allocation.name.as_str()) {
+            history.plane_stride_bytes * 4
+        } else {
+            allocation.payload_bytes
+        };
+        result.add(&allocation.name, bytes, 1, 256)?;
+    }
+    result.add("library_candidates", candidates.allocation_bytes, 1, 256)?;
+    Ok(result)
+}
+
 /// Append real queried allocations without substituting architectural estimates.
 pub fn append_query(
     ledger: &mut AllocationLedger,

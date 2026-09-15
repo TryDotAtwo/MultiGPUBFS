@@ -1,6 +1,40 @@
 use mgbfs_runtime::distributed_memory::{shared_buffers, SharedBufferShape};
 
 #[test]
+fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
+    use mgbfs_runtime::distributed_memory::library_shared_buffers;
+    let mut s = shape();
+    s.layer_capacity = 65;
+    let ledger = library_shared_buffers(s).unwrap();
+    let bytes = |name| {
+        ledger
+            .allocations
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap()
+            .payload_bytes
+    };
+    assert_eq!(bytes("prev"), 2048);
+    assert_eq!(bytes("curr"), 2048);
+    assert_eq!(bytes("library_candidates"), 1280);
+    assert_eq!(bytes("states"), 4096);
+    for legacy in ["accepted", "lengths", "counts", "selected"] {
+        assert!(!ledger.allocations.iter().any(|a| a.name == legacy));
+    }
+    assert_eq!(shared_buffers(s).unwrap().allocations.len(), 29);
+}
+
+#[test]
+fn library_layout_rejects_unrepresentable_history_before_allocation() {
+    use mgbfs_runtime::distributed_memory::library_shared_buffers;
+    assert!(library_shared_buffers(SharedBufferShape {
+        layer_capacity: i32::MAX as u64 + 1,
+        ..shape()
+    })
+    .is_err());
+}
+
+#[test]
 fn allocation_report_preserves_named_payload_and_padding_without_device_addresses() {
     use mgbfs_core::memory::AllocationLedger;
     use mgbfs_runtime::distributed_memory::allocation_report;

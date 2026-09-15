@@ -252,13 +252,6 @@ mod calls {
             fatal: *mut u32,
             stream: *mut c_void,
         ) -> i32;
-        pub fn cudaMemcpyAsync(
-            dst: *mut c_void,
-            src: *const c_void,
-            bytes: usize,
-            kind: i32,
-            stream: *mut c_void,
-        ) -> i32;
         pub fn cudaHostAlloc(out: *mut *mut c_void, bytes: usize, flags: u32) -> i32;
         pub fn cudaMemcpy2DAsync(
             dst: *mut c_void,
@@ -280,3 +273,5 @@ mod calls {
 }
 #[cfg(feature = "cuda")]
 pub use calls::*;
+#[cfg(feature = "cuda")]
+pub use crate::ffi::cudaMemcpyAsync;

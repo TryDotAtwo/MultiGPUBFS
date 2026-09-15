@@ -322,3 +322,25 @@ but the pool/stream and accepted storage remain live until drained teardown.
 The extended Rust GPU fixture checks export and rejected comparison after seal;
 its GPU execution is pending. No library backend is selected by the production
 distributed scheduler yet.
+
+V29 at `80e762c0504ada1f9e221e886a310a2923675fa8` passed C++ and Rust plain
+and all four sanitizers on both physical T4s. The added Rust seal/export test
+is now hardware-validated; evidence `test_results/library-owner-v29/library-owner/`.
+The complete CPU core/runtime lib/tests command also finished successfully.
+
+V30 at `dfcdf5742c2283b2bc2b6351f46c938499eed7d6` reached the intended Rust
+`LIBRARY_FINALIZE_NOT_IMPLEMENTED` failure. Its three-shard fixture has accepted
+counts `[2,0,1]` and writes the new SoA layer over the previous history buffer.
+It checks full keys, empty-shard offsets and untouched capacity-tail sentinels.
+The finalizer now validates idle owners and total capacity, seals ALL history
+leases before any write, copies four contiguous planes per nonempty shard,
+drains, destroys owners and only then publishes ranges. It does not allocate
+GPU storage or concatenate history. GPU validation of this implementation is
+pending. Full distributed scheduler selection is still outstanding.
+
+`library_shared_buffers` now accounts four individually aligned planes in each
+history bank and one bounded five-plane candidate conversion scratch. It omits
+legacy accepted/length/count/selected buffers instead of budgeting both owner
+representations. Two new tests failed before implementation and pass now; all
+seven distributed-memory tests pass. This is the allocation contract to wire
+into the runtime, not an observed VRAM improvement or a full pool budget.

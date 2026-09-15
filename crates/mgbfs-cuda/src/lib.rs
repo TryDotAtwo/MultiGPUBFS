@@ -431,6 +431,13 @@ pub mod ffi {
         pub fn cudaMalloc(ptr: *mut *mut c_void, bytes: usize) -> i32;
         pub fn cudaFree(ptr: *mut c_void) -> i32;
         pub fn cudaMemcpy(dst: *mut c_void, src: *const c_void, bytes: usize, kind: i32) -> i32;
+        pub fn cudaMemcpyAsync(
+            dst: *mut c_void,
+            src: *const c_void,
+            bytes: usize,
+            kind: i32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn cudaDeviceSynchronize() -> i32;
         pub fn cudaStreamCreateWithFlags(stream: *mut *mut c_void, flags: u32) -> i32;
         pub fn cudaStreamSynchronize(stream: *mut c_void) -> i32;

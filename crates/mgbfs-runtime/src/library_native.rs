@@ -3,7 +3,10 @@
 use crate::event_generation::NativeEvent;
 use crate::library_owner::OwnerCommitGate;
 use mgbfs_core::Result;
-use mgbfs_cuda::{ffi::cudaStreamSynchronize, library_owner::*};
+use mgbfs_cuda::{
+    ffi::{cudaMemcpyAsync, cudaStreamSynchronize},
+    library_owner::*,
+};
 use std::{ffi::c_void, ptr};
 
 /// Finalize one rank's disjoint shards into a preallocated SoA history buffer.
@@ -15,12 +18,82 @@ use std::{ffi::c_void, ptr};
 /// alias borrowed history: all history leases must end before the first copy.
 /// A failure is fatal to the rank group, not a retryable partial finalization.
 pub unsafe fn finalize_shards(
-    _owners: &mut [LibraryShard],
-    _destination: KeysV1,
-    _ranges: &mut [std::ops::Range<u32>],
-    _stream: *mut c_void,
+    owners: &mut [LibraryShard],
+    destination: KeysV1,
+    ranges: &mut [std::ops::Range<u32>],
+    stream: *mut c_void,
 ) -> Result<u32> {
-    Err("LIBRARY_FINALIZE_NOT_IMPLEMENTED".into())
+    if ranges.len() != owners.len()
+        || destination.reserved != 0
+        || destination.rows > i32::MAX as u32
+        || (destination.rows != 0
+            && destination
+                .words
+                .iter()
+                .any(|p| p.is_null() || *p as usize % 4 != 0))
+    {
+        return Err("LIBRARY_FINALIZE_SHAPE".into());
+    }
+    let mut total = 0u64;
+    for owner in owners.iter_mut() {
+        owner.gate.check_idle()?;
+        if owner.stream != stream {
+            return Err("LIBRARY_FINALIZE_STREAM".into());
+        }
+        total = total
+            .checked_add(owner.accepted())
+            .ok_or("LIBRARY_FINALIZE_OVERFLOW")?;
+    }
+    if total > u64::from(destination.rows) {
+        return Err(format!(
+            "LIBRARY_FINALIZE_CAPACITY required={total} available={}",
+            destination.rows
+        ));
+    }
+    // Releasing one shard and immediately writing it could overwrite history
+    // still borrowed by another shard. End ALL leases before ANY destination write.
+    for owner in owners.iter_mut() {
+        owner.seal()?;
+    }
+    let mut offset = 0usize;
+    for owner in owners.iter_mut() {
+        let keys = owner.export()?;
+        if u64::from(keys.rows) != owner.accepted() {
+            return Err("LIBRARY_FINALIZE_COUNT".into());
+        }
+        if keys.rows != 0 {
+            for plane in 0..4 {
+                let status = cudaMemcpyAsync(
+                    destination.words[plane].cast_mut().add(offset).cast(),
+                    keys.words[plane].cast(),
+                    keys.rows as usize * 4,
+                    3,
+                    stream,
+                );
+                owner.status(status, "FINALIZE_COPY")?;
+            }
+        }
+        offset += keys.rows as usize;
+    }
+    // FinalizeDepth is a semantic drain. Do not recycle accepted pool storage
+    // or publish ranges until all four planes of every shard are ready.
+    let status = cudaStreamSynchronize(stream);
+    if status != 0 {
+        for owner in owners.iter_mut() {
+            owner.gate.abort();
+        }
+        return Err(format!("LIBRARY_FINALIZE_COMPLETE_{status}"));
+    }
+    for owner in owners.iter_mut() {
+        owner.close()?;
+    }
+    let mut begin = 0u32;
+    for (owner, range) in owners.iter().zip(ranges.iter_mut()) {
+        let end = begin + owner.accepted() as u32; // total was bounded above.
+        *range = begin..end;
+        begin = end;
+    }
+    Ok(total as u32)
 }
 
 pub struct LibraryShard {
