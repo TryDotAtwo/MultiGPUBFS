@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE_COMMIT = "67adf6bf46220f60bae7c59bbbc2076171dd7e42"
+SOURCE_COMMIT = "61d2c516daca6588161712455f79b38117d25c07"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 
