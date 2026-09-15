@@ -77,3 +77,18 @@ single-T4, two-T4, sanitizer and benchmark evidence are tracked separately.
 Next: inspect installed wheel file/config inventory (not another blind prefix
 change), establish a reproducible C++ SDK environment, pass the characterization
 fixture, then implement the first owner adapter against its observed contracts.
+
+### SDK gate follow-up
+
+Kaggle v5 inventory proves the wheels DO contain headers, shared libraries, and
+`lib64/cmake/*/*-config.cmake`. v6 discovers those exports after adding their
+actual directories to the CMake search; two CPU guard tests cover environment
+isolation and discovery of lib64 plus transitive CCCL configs (27 total guards).
+v7 with source `61d2c516daca6588161712455f79b38117d25c07` configures successfully
+with exact version `26.04.0` and reaches compilation. Compilation fails on
+RAPIDS bundled CCCL references to `cudaDevAttrHostNumaMemoryPoolsSupported`
+missing from Kaggle CUDA 12.8.93, and on the fixture's missing column-view
+null-mask arguments. The latter is corrected in source, not yet GPU-compiled.
+Next action: provision an explicitly pinned compatible CUDA SDK and rebuild;
+do not mix newer runtime headers with an older toolkit or declare T4 unsupported.
+No new performance or GPU-correctness claim follows from successful configure.

@@ -53,7 +53,7 @@ std::unique_ptr<cudf::table> probe(cudf::table_view incoming,
       cudf::nan_equality::ALL_EQUAL, stream);
   auto indices = history.anti_join(unique->view().select({0, 1, 2, 3}), stream);
   cudf::column_view map{cudf::data_type{cudf::type_id::INT32},
-      static_cast<cudf::size_type>(indices->size()), indices->data()};
+      static_cast<cudf::size_type>(indices->size()), indices->data(), nullptr, 0, 0, {}};
   return cudf::gather(unique->view(), map, cudf::out_of_bounds_policy::DONT_CHECK, stream);
 }
 
