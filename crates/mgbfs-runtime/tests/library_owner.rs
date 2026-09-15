@@ -1,6 +1,27 @@
 use mgbfs_runtime::library_owner::OwnerCommitGate;
 
 #[test]
+fn ffi_failure_cannot_later_publish_reserved_rows() {
+    let mut gate = OwnerCommitGate::new(8);
+    gate.compared(1, 4, 2).unwrap();
+    gate.reserve(1, 2).unwrap();
+    gate.abort();
+    assert!(gate.completed(1).is_err());
+    assert_eq!(gate.accepted(), 0);
+    assert!(gate.check_compare(2).is_err());
+}
+
+#[test]
+fn next_compare_is_rejected_before_reusing_uncompleted_device_result() {
+    let mut gate = OwnerCommitGate::new(8);
+    gate.check_compare(1).unwrap();
+    gate.compared(1, 4, 2).unwrap();
+    gate.reserve(1, 2).unwrap();
+    assert!(gate.check_compare(2).is_err());
+    assert_eq!(gate.accepted(), 0);
+}
+
+#[test]
 fn publication_requires_reservation_and_device_completion() {
     let mut gate = OwnerCommitGate::new(5);
     gate.compared(0, 8, 3).unwrap();

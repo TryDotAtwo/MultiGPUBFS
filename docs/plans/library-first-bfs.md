@@ -239,3 +239,18 @@ evidence: `test_results/library-owner-v21/library-owner/`. This establishes the
 small C++ integration fixture's state/hash pairing and native publication, not
 Rust integration, exhaustive BFS correctness, NCCL execution or performance.
 An additional ring-capacity failure fixture is being added before runtime wiring.
+
+V22 at `6f9ad60dc58dfc01c9ae1d4f306ec725a057fee7` passed both T4s and all
+four sanitizers (zero errors, racecheck zero warnings). The added fixture forces
+two survivors into a one-record StateRing: zero grant, failed commit/export,
+unchanged tail/descriptor tail and zero layer count. Evidence:
+`test_results/library-owner-v22/library-owner/`.
+
+The Rust `library-owner` feature now exposes `library_native::LibraryShard`,
+which wraps the C ABI with `OwnerCommitGate`. New RED/GREEN CPU tests ensure
+external FFI failure prevents later publication and comparison cannot replace
+an uncompleted borrowed result. All eleven gate tests pass. Feature-enabled
+`cargo check` passes, but this is neither linking nor GPU execution evidence.
+The first adapter explicitly synchronizes its stream for completion/teardown;
+that cost must be measured. It does not own the pool/history/stream and has not
+yet been selected by `DistributedNativeBfs` or exercised from Rust on T4.

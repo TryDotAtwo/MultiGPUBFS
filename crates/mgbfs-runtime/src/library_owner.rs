@@ -19,6 +19,19 @@ pub struct OwnerCommitGate {
     phase: Phase,
 }
 impl OwnerCommitGate {
+    /// Sticky external CUDA/FFI failure: never publish or reuse this shard.
+    pub fn abort(&mut self) {
+        self.phase = Phase::Poisoned;
+    }
+
+    /// Check before calling a library that can replace its borrowed result.
+    pub fn check_compare(&mut self, epoch: u64) -> Result<()> {
+        if !matches!(self.phase, Phase::Idle) || self.last_epoch.is_some_and(|last| epoch <= last) {
+            return self.fail("LIBRARY_OWNER_ORDER");
+        }
+        Ok(())
+    }
+
     pub fn new(capacity: u64) -> Self {
         Self {
             capacity,
@@ -30,9 +43,7 @@ impl OwnerCommitGate {
 
     /// Called after the library result/count is ready, before persistent writes.
     pub fn compared(&mut self, epoch: u64, candidates: u64, survivors: u64) -> Result<()> {
-        if !matches!(self.phase, Phase::Idle) || self.last_epoch.is_some_and(|last| epoch <= last) {
-            return self.fail("LIBRARY_OWNER_ORDER");
-        }
+        self.check_compare(epoch)?;
         if survivors > candidates {
             return self.fail("LIBRARY_OWNER_COUNT");
         }
