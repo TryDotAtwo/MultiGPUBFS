@@ -2,6 +2,27 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 
+/// Fixed candidate conversion buffer: four u32 hash planes and source ordinal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidateSoaLayout {
+    pub plane_stride_bytes: u64,
+    pub allocation_bytes: u64,
+}
+
+impl CandidateSoaLayout {
+    pub fn plan(capacity: u64) -> Result<Self> {
+        if capacity == 0 || capacity > i32::MAX as u64 {
+            return Err("LIBRARY_SOA_CAPACITY".into());
+        }
+        // The signed 32-bit row bound proves both products fit u64.
+        let plane_stride_bytes = (capacity * 4 + 255) & !255;
+        Ok(Self {
+            plane_stride_bytes,
+            allocation_bytes: plane_stride_bytes * 5,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LibraryMemoryBudget {
