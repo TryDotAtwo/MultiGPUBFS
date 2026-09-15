@@ -84,6 +84,12 @@ int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32_t granted_
  * owner destruction; do not mutate keys. No host copy or allocation of key data.
  */
 int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* keys);
+/* Finalize this owner after its stream and all external consumers drain.
+ * Releases borrowed-history indexes and transient result storage; retains
+ * committed keys for export. Only export/destroy are legal afterwards.
+ * History buffers may then be reused without an additional depth buffer.
+ */
+int mgbfs_library_owner_seal_v1(void* owner);
 /* Caller drains the owner's stream before destroy. No hidden global barrier. */
 void mgbfs_library_owner_destroy_v1(void* owner);
 

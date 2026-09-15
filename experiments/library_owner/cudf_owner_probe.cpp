@@ -441,6 +441,23 @@ void history_window_fixture(rmm::cuda_stream_view stream) {
           "OWNER_WINDOW_REACCEPTED_KEY");
     check(mgbfs_library_owner_commit_v1(owner, 2, 0) == 0, "OWNER_WINDOW_EMPTY_COMMIT");
     stream.synchronize();
+    check(mgbfs_library_owner_seal_v1(owner) == 0, "OWNER_WINDOW_SEAL");
+    previous.reset();
+    current.reset();
+    incoming.reset();
+    // History and candidate ownership has ended; only accepted storage remains.
+    MgbfsLibraryKeysV1 accepted{};
+    check(mgbfs_library_owner_export_v1(owner, &accepted) == 0 && accepted.rows == 1,
+          "OWNER_WINDOW_SEALED_EXPORT");
+    std::array<uint32_t, 4> final_key{};
+    for (int c = 0; c < 4; ++c)
+      cuda_check(cudaMemcpyAsync(&final_key[c], accepted.words[c], sizeof(uint32_t),
+                                cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    check(final_key == std::array<uint32_t, 4>{1,2,3,6}, "OWNER_WINDOW_SEALED_KEY");
+    MgbfsLibraryCandidatesV1 empty{};
+    check(mgbfs_library_owner_compare_v1(owner, 3, empty, &result) != 0,
+          "OWNER_WINDOW_REOPENED_SEALED_OWNER");
   } catch (...) {
     stream.synchronize();
     mgbfs_library_owner_destroy_v1(owner);
