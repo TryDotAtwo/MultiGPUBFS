@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "3a05b41663253087302aa27a88d7d47a180b3d29"
+SOURCE_COMMIT = "03bba0f453168f1f6222fc5290d1159130bcf7c4"
 FULL_BFS_GATE = True
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
@@ -158,6 +158,7 @@ def main():
         if len(executables) != 1:
             raise RuntimeError("Expected one Rust GPU test executable")
         bfs_executable = None
+        multi_executable = None
         if FULL_BFS_GATE:
             cutlass = work / "cutlass"
             gate.checkout("https://github.com/NVIDIA/cutlass.git", gate.CUTLASS_COMMIT,
@@ -175,20 +176,22 @@ def main():
             env["LD_LIBRARY_PATH"] = str(native_build) + ":" + env["LD_LIBRARY_PATH"]
             artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                              "--features", "cuda,library-owner", "--test", "library_bfs_gpu",
+                             "--test", "library_multi_gpu",
                              "--no-run", "--message-format=json"], "rust-bfs-build")
-            matches = []
+            matches = {}
             for line in artifacts.splitlines():
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if (record.get("reason") == "compiler-artifact"
-                        and record.get("target", {}).get("name") == "library_bfs_gpu"
+                        and record.get("target", {}).get("name") in ("library_bfs_gpu", "library_multi_gpu")
                         and record.get("executable")):
-                    matches.append(record["executable"])
-            if len(matches) != 1:
-                raise RuntimeError("Expected one full BFS test executable")
-            bfs_executable = matches[0]
+                    matches[record["target"]["name"]] = record["executable"]
+            if set(matches) != {"library_bfs_gpu", "library_multi_gpu"}:
+                raise RuntimeError("Full BFS test executable inventory mismatch")
+            bfs_executable = matches["library_bfs_gpu"]
+            multi_executable = matches["library_multi_gpu"]
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
@@ -208,6 +211,15 @@ def main():
                                    "--error-exitcode", "97", *command]
                     run(command, f"bfs-gpu{gpu['index']}-{tool}", extra_env=device_env)
             manifest["full_bfs_gate"] = bfs_executable is not None
+        if multi_executable is not None:
+            device_env = dict(env, CUDA_VISIBLE_DEVICES=",".join(gpu["uuid"] for gpu in gpus))
+            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+                command = [multi_executable, "--test-threads=1"]
+                if tool != "plain":
+                    command = ["compute-sanitizer", "--tool", tool,
+                               "--error-exitcode", "97", *command]
+                run(command, f"bfs-two-gpu-{tool}", extra_env=device_env)
+            manifest["two_gpu_gate"] = "two device threads with NCCL; not torchrun processes"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))
