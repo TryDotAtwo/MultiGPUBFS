@@ -10,6 +10,14 @@ per configuration. All report 39,916,800 states across 56 layers.
 This verifies summary consistency, not independent replay of full state sets.
 Raw per-rank logs still require separate reconciliation.
 
+2026-09-15 raw acceptance update: the two-T4 v5 panel now also passes
+`audit_raw`. Every successful raw rank JSON matches the summary; peaks
+recomputed from original nvidia-smi CSVs match; all native archive verification
+outputs agree. The batch-1048576 baseline calibration raw log explicitly
+reports OOM. This closes raw reconciliation for both panels, not independent
+full-state replay or validation of later runtime revisions. The pending-status
+paragraphs below preserve the earlier audit chronology.
+
 Update: the one-T4 panel now passes `audit_raw`: all successful raw rank
 JSONs match the summary, memory peaks recomputed from the original sampler
 CSVs agree, and every native archive verification log agrees. The failed
