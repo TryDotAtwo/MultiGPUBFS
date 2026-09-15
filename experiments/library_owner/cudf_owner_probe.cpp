@@ -412,6 +412,43 @@ void native_commit_fixture(rmm::cuda_stream_view stream, uint64_t ring_capacity 
   mgbfs_library_owner_destroy_v1(owner);
 }
 
+void history_window_fixture(rmm::cuda_stream_view stream) {
+  auto previous = upload({Row{1,2,3,4,0}}, stream);
+  auto current = upload({Row{1,2,3,5,0}}, stream);
+  auto incoming = upload({Row{1,2,3,4,0}, Row{1,2,3,5,1}, Row{1,2,3,6,2}}, stream);
+  auto keys = [](cudf::table_view table) {
+    MgbfsLibraryKeysV1 result{};
+    result.rows = static_cast<uint32_t>(table.num_rows());
+    for (int c = 0; c < 4; ++c) result.words[c] = table.column(c).data<uint32_t>();
+    return result;
+  };
+  void* owner = nullptr;
+  check(mgbfs_library_owner_create_window_v1(keys(previous->view()), keys(current->view()),
+        1, stream.value(), &owner) == 0, "OWNER_WINDOW_CREATE");
+  try {
+    MgbfsLibraryCandidatesV1 input{keys(incoming->view()),
+        incoming->view().column(4).data<uint32_t>()};
+    MgbfsLibrarySurvivorsV1 result{};
+    check(mgbfs_library_owner_compare_v1(owner, 1, input, &result) == 0 && result.rows == 1,
+          "OWNER_WINDOW_COMPARE");
+    uint32_t source = 99;
+    cuda_check(cudaMemcpyAsync(&source, result.source_indices, sizeof(source),
+                              cudaMemcpyDeviceToHost, stream.value()));
+    stream.synchronize();
+    check(source == 2, "OWNER_WINDOW_WRONG_SURVIVOR");
+    check(mgbfs_library_owner_commit_v1(owner, 1, 1) == 0, "OWNER_WINDOW_COMMIT");
+    check(mgbfs_library_owner_compare_v1(owner, 2, input, &result) == 0 && result.rows == 0,
+          "OWNER_WINDOW_REACCEPTED_KEY");
+    check(mgbfs_library_owner_commit_v1(owner, 2, 0) == 0, "OWNER_WINDOW_EMPTY_COMMIT");
+    stream.synchronize();
+  } catch (...) {
+    stream.synchronize();
+    mgbfs_library_owner_destroy_v1(owner);
+    throw;
+  }
+  mgbfs_library_owner_destroy_v1(owner);
+}
+
 int main() {
   try {
     cuda_check(cudaSetDevice(0));
@@ -430,6 +467,7 @@ int main() {
       layout_fixture(stream.view());
       native_commit_fixture(stream.view());
       native_commit_fixture(stream.view(), 1);
+      history_window_fixture(stream.view());
       owner_fixture(stream.view());
       owner_multibatch_fixture(stream.view());
       abi_fixture(stream.view());

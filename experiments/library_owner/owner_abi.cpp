@@ -9,6 +9,13 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+// RED scaffold for independent previous/current history views.
+extern "C" int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1,
+    MgbfsLibraryKeysV1, uint32_t, void*, void** owner) {
+  if (owner) *owner = nullptr;
+  return -1;
+}
+
 
 namespace {
 using FixedPool = rmm::mr::pool_memory_resource<rmm::mr::cuda_memory_resource>;
