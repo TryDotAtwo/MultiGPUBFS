@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "3036622b637453bc25d9fe8fd949ee93c31c2aa3"
+SOURCE_COMMIT = "65811e3a711b0dd35f32dcf42fce05f5ceb9fa17"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
@@ -98,8 +98,10 @@ def main():
         run([sys.executable, "-m", "venv", "--without-pip", str(venv)], "venv")
         python = str(venv / "bin/python")
         pip = [sys.executable, "-m", "pip", "--python", python]
-        run([*pip, "install", "--only-binary=:all:", "--no-cache-dir",
-             "--report", str(logs / "pip-install.json"), *PACKAGES], "install", 900)
+        requirements = source / "experiments/library_owner/requirements-linux-x86_64.lock"
+        manifest["requirements_sha256"] = hashlib.sha256(requirements.read_bytes()).hexdigest()
+        run([*pip, "install", "--only-binary=:all:", "--no-cache-dir", "--require-hashes",
+             "--report", str(logs / "pip-install.json"), "-r", str(requirements)], "install", 900)
         run([*pip, "freeze", "--all"], "packages")
         run([*pip, "show", "-f", "libcudf-cu12", "librmm-cu12", "rapids-logger"],
             "sdk-inventory")
