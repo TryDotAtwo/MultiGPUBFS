@@ -43,11 +43,14 @@ def main():
                         logs=logs, name=name, timeout=timeout)
     try:
         venv = work / "venv"
-        run([sys.executable, "-m", "venv", str(venv)], "venv")
+        # Kaggle's ensurepip bootstrap failed in v1. Use the host pip's supported
+        # --python entry point; the target environment remains fully isolated.
+        run([sys.executable, "-m", "venv", "--without-pip", str(venv)], "venv")
         python = str(venv / "bin/python")
-        run([python, "-m", "pip", "install", "--only-binary=:all:", "--no-cache-dir",
+        pip = [sys.executable, "-m", "pip", "--python", python]
+        run([*pip, "install", "--only-binary=:all:", "--no-cache-dir",
              "--report", str(logs / "pip-install.json"), *PACKAGES], "install", 900)
-        run([python, "-m", "pip", "freeze", "--all"], "packages")
+        run([*pip, "freeze", "--all"], "packages")
         site = Path(run([python, "-c", "import site; print(site.getsitepackages()[0])"], "site").strip())
         prefixes = sorted({str(p.parent.parent) for p in site.rglob("libcudf") if p.is_dir()})
         # Wheels install their exported CMake config under individual package roots.
