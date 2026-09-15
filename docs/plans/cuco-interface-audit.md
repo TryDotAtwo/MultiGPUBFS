@@ -66,3 +66,36 @@ observations, not evidence that the proposed adapter builds or performs well.
 The earlier rebuild approach remains a simpler reference candidate; its cost
 must be measured if implemented. The two-set option also has extra memory and
 random-probe costs and is not presumed to beat the sort/merge baseline.
+
+## Allocator detail verified at the same source pin
+
+`include/cuco/detail/storage/bucket_storage.inl` calls
+`allocator_.allocate(alloc_size, stream)` directly, not the ordinary one-argument
+std allocator interface. The adapter must therefore support the cuco stream
+argument and preserve that stream through deallocation. Storage reserves extra
+alignment elements beyond `capacity()` (`(alignment - 1) / sizeof(value_type) + 1`);
+counting only capacity times key width underestimates the allocation. Charge the
+actual allocator request and retain the raw pointer for paired deallocation.
+The constructor's requested capacity can also be rounded by the probing/storage
+geometry; inspect the resulting capacity, not only the requested row count.
+These are source-level requirements only; no allocator adapter has compiled yet.
+
+The pinned cuco `utility/allocator.hpp` pairs `allocate(n, cuda::stream_ref)`
+with `deallocate(pointer, n, cuda::stream_ref)`; its default implementation uses
+cudaMallocAsync/cudaFreeAsync and must not be used for our fixed reservation.
+RMM v26.04.00 source lives under `cpp/include/rmm/`, not `include/rmm/`.
+Its pool's `device_async_resource_ref` uses stream-first calls
+`allocate(stream, bytes)` and matching resource deallocation. The adapter must
+convert element count to checked byte count, retain the selected resource
+instead of resolving the current resource during destruction, and keep it alive
+until the set and its queued operations are drained. This remains an uncompiled
+adapter design, not a runtime compatibility result.
+
+The matching RMM device-memory-resource deallocation signature was verified as
+`deallocate(cuda_stream_view stream, void* pointer, size_t bytes, size_t alignment)`
+(alignment defaults to CUDA_ALLOCATION_ALIGNMENT). Allocation has the matching
+stream-first signature and default alignment. A conventional cuco allocator
+must translate both calls, not forward the cuco argument list unchanged.
+No `cl`, `g++` or `clang++` is currently available on PATH in the Windows host;
+the adapter's real compile/run gate will use the pinned Kaggle SDK, not a claimed
+local C++ build.
