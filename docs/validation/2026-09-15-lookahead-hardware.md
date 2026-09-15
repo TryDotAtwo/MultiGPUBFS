@@ -12,6 +12,15 @@ reconciliation is still pending; do not conflate this with that stronger audit.
 Evidence: `test_results/dense-lookahead-v1-summary` (summary, source SHA,
 notebook log); raw download target `test_results/dense-lookahead-v1-raw`.
 
+Raw acceptance completed later on 2026-09-15: the separate raw-file auditor
+returned `RAW_GATE_RECONCILED` for 40 tool logs, 36 measured rank records,
+36 warmup records and 36 verifier outputs. It required exactly 13 archive
+tests and three scatter tests per tool, checked each profile selection and
+global layer counts, and matched the source SHA. Its backward-compatibility
+check still accepts the old 12-test v46 gate; supplying 13 for that old gate
+is rejected with `FIXTURE_RESULT_MISMATCH`. The pending raw-audit statement
+above records the launch-time evidence boundary and is now superseded.
+
 After this gate, two private v1 comparison notebooks were submitted and their
 RUNNING states confirmed:
 
