@@ -1,4 +1,4 @@
-"""Pinned libcudf boundary probe on T4; NOT an end-to-end BFS benchmark."""
+"""Pinned libcudf and full BFS correctness gates; NOT a speed benchmark."""
 import importlib.util
 import json
 import os
@@ -9,7 +9,8 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "dfcdf5742c2283b2bc2b6351f46c938499eed7d6"
+SOURCE_COMMIT = "5c49e4a44d004067b6cce04012a2ebced4115667"
+FULL_BFS_GATE = True
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
@@ -156,6 +157,38 @@ def main():
                 executables.append(record["executable"])
         if len(executables) != 1:
             raise RuntimeError("Expected one Rust GPU test executable")
+        bfs_executable = None
+        if FULL_BFS_GATE:
+            cutlass = work / "cutlass"
+            gate.checkout("https://github.com/NVIDIA/cutlass.git", gate.CUTLASS_COMMIT,
+                          cutlass, env, logs, "cutlass")
+            manifest["cutlass_commit"] = gate.CUTLASS_COMMIT
+            native_build = work / "native-build"
+            run([str(venv / "bin/cmake"), "-S", str(source / "cuda"),
+                 "-B", str(native_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                 "-DBUILD_TESTING=OFF", "-DCMAKE_CUDA_ARCHITECTURES=75",
+                 "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+                 "-DCUTLASS_ROOT=" + str(cutlass)], "native-configure")
+            run([str(venv / "bin/cmake"), "--build", str(native_build),
+                 "--target", "mgbfs_cuda", "-j2"], "native-build")
+            env["MGBFS_CUDA_LIB_DIR"] = str(native_build)
+            env["LD_LIBRARY_PATH"] = str(native_build) + ":" + env["LD_LIBRARY_PATH"]
+            artifacts = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                             "--features", "cuda,library-owner", "--test", "library_bfs_gpu",
+                             "--no-run", "--message-format=json"], "rust-bfs-build")
+            matches = []
+            for line in artifacts.splitlines():
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (record.get("reason") == "compiler-artifact"
+                        and record.get("target", {}).get("name") == "library_bfs_gpu"
+                        and record.get("executable")):
+                    matches.append(record["executable"])
+            if len(matches) != 1:
+                raise RuntimeError("Expected one full BFS test executable")
+            bfs_executable = matches[0]
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
@@ -168,6 +201,13 @@ def main():
                     rust_command = ["compute-sanitizer", "--tool", tool,
                                     "--error-exitcode", "97", *rust_command]
                 run(rust_command, f"rust-gpu{gpu['index']}-{tool}", extra_env=device_env)
+                if bfs_executable is not None:
+                    command = [bfs_executable, "--test-threads=1"]
+                    if tool != "plain":
+                        command = ["compute-sanitizer", "--tool", tool,
+                                   "--error-exitcode", "97", *command]
+                    run(command, f"bfs-gpu{gpu['index']}-{tool}", extra_env=device_env)
+            manifest["full_bfs_gate"] = bfs_executable is not None
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

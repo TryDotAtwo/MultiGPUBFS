@@ -354,6 +354,19 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    /// Explicit library owner policy. Pool reservation is fixed before depth 0;
+    /// no fallback to the existing bounded owner is permitted.
+    #[cfg(feature = "library-owner")]
+    pub fn new_library_reference(
+        _graph: &MatrixGroup,
+        _seed: [u8; 16],
+        _id: [u8; 128],
+        _cfg: DistributedConfig,
+        _materialization_capacity: Option<u32>,
+        _pool_bytes: u64,
+    ) -> Result<Self> {
+        Err("LIBRARY_BFS_NOT_IMPLEMENTED".into())
+    }
     /// The 29 shared Buffer allocations, excluding library/profile/transport
     /// allocations. This is not the complete rank memory budget.
     pub fn shared_memory(&self) -> &mgbfs_core::memory::AllocationLedger {
