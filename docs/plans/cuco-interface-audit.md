@@ -27,3 +27,42 @@ Integration consequences (our inference, not an upstream performance claim):
 Required next evidence: pinned dependency build on sm75; all-word-distinct keys,
 duplicate candidates, committed overlap, transient-slot reuse and full-capacity
 failure fixtures; then real owner comparison. No CUCO runtime result exists yet.
+
+## Proposed persistent/transient split (not implemented or measured)
+
+The first indexed design need not rebuild accepted membership after every batch.
+Use two fixed-capacity sets per shard:
+
+- Persistent set: indices into previous, current and accepted key planes. After
+  StateRing credit and accepted-key copy, insert the new **accepted** indices,
+  never candidate-slot indices. Accepted rows remain immutable for the depth.
+- Transient set: indices into one candidate slot, cleared only after all result
+  readers finish. It deduplicates the current batch independently of history.
+
+Proposed index representation is u64: top two bits identify previous/current/
+accepted/candidate storage, low 62 bits identify the row. Actual row bounds stay
+at the ABI's signed-32-bit limit. UINT64_MAX is outside every valid index. All
+four Hash128 words participate in equality and hashing; these index bits do not
+replace the hash or change its collision contract.
+
+Concurrent insertion may select an arbitrary representative. After insertion
+has finished, find that representative and atomic-min the original candidate
+**row** into an incoming-sized ordinal array. Select the minimum row and return
+its supplied source index. Minimum source-index value is not a substitute for
+KEEP_FIRST when callers provide non-monotonic provenance values.
+
+Candidate probing reads the persistent set but cannot publish into it. Commit
+copies the selected keys to stable accepted storage before inserting their
+stable indices. Keep an explicit exclusive shard lease and stream ordering.
+At depth finalization, drain and discard membership before overwriting history.
+Capacity must cover previous+current+maximum accepted rows at the chosen load
+factor, plus the independent incoming table, ordinal/select scratch and actual
+rounded cuco storage extent. Use a fixed-RMM allocator adapter; the default
+cuco CUDA allocator is not acceptable for this profile's physical-pool contract.
+
+Pinned `static_set.cuh` exposes allocator and stream constructor parameters,
+`insert_and_find_async` and device `ref` operations. These are API feasibility
+observations, not evidence that the proposed adapter builds or performs well.
+The earlier rebuild approach remains a simpler reference candidate; its cost
+must be measured if implemented. The two-set option also has extra memory and
+random-probe costs and is not presumed to beat the sort/merge baseline.

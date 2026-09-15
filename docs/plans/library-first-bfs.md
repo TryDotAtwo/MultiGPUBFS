@@ -364,3 +364,20 @@ same fixed pool and reuse preallocated completion events. The initial integratio
 uses explicit stream/count synchronization, all of which belongs in search time.
 This is not an overlap or speedup claim. GPU full-layer validation, archived runs,
 actual two-rank exchange and CLI/benchmark selection remain pending.
+
+V33 at `03bba0f453168f1f6222fc5290d1159130bcf7c4` passed the full BFS test
+plain and all four sanitizers independently on each physical T4. U4(modulus=2)
+full-state layers match the CPU oracle for DENSE/HASH_FIRST and pre-dedup OFF/ON;
+the test also checks the default native path after its storage refactor. All
+eight full-BFS sanitizer runs reported zero errors, racecheck zero warnings.
+Evidence: `test_results/library-owner-v33/library-owner/bfs-gpu*.log`. Durations
+include multiple runs, initialization and test assertions; they are NOT BFS A/B
+timings. This gate does not validate simultaneous rank exchange or archives.
+
+V34 pins `d37cb51c0d932540274676ef2cd7357aac71f203` and adds a true two-device
+NCCL gate using two rank threads in one process, not a torchrun benchmark. It
+tests U3(modulus=3) and matrix S4, both profiles, rank maps [0,1]/[1,0], batch=1,
+full-state snapshots and checksummed per-rank archives. Archive keys, ownership,
+per-depth counts (including empty local layers), and global layer sets are
+checked independently. Results are pending. Process-launch, capacity and
+performance acceptance remain open even if this gate passes.
