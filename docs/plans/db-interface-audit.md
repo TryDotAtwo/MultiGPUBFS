@@ -53,6 +53,24 @@ DB rejection.
 
 Source: https://github.com/sirius-db/sirius/blob/1f996e3cd022f7f416bf83fd12c889005e8f730d/src/include/scan_manager/sirius_scan_manager.hpp
 
+Implementation follow-up at the same immutable commit:
+`src/scan_manager/sirius_scan_manager.cpp:2276-2305` marks a fresh entry GPU-tier,
+calls `cudf::table::release()` and moves owned columns into the pinned entry.
+There is no host serialization in this registration block. This transfers
+ownership of owning cuDF columns; it is not a borrowed raw-pointer API for a
+reusable BFS allocation. Allocator compatibility and consumer lifetimes still
+need an executed adapter test.
+
+The equal-size merge hazard is confirmed by implementation at 2180-2206:
+existing column names cause the new incoming columns to be discarded, retaining
+the old data. The return value lists only newly stored columns (2261-2269).
+An adapter must check that all submitted columns were stored, not treat a
+non-throwing registration as proof of replacement. Explicit removal (2500-2503)
+invalidates the late-materialization handle and erases the entry; no GPU stream
+drain occurs in that method, so the caller must establish completion first.
+
+Source: https://github.com/sirius-db/sirius/blob/1f996e3cd022f7f416bf83fd12c889005e8f730d/src/scan_manager/sirius_scan_manager.cpp
+
 Source links:
 - https://github.com/sirius-db/sirius/blob/2611fa289d3ce788d9426977629a3699dc472e32/src/memory/memory_reservation.cpp
 - https://github.com/sirius-db/sirius/blob/1f996e3cd022f7f416bf83fd12c889005e8f730d/src/include/pin_table.hpp

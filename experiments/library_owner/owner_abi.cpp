@@ -143,8 +143,17 @@ extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32
 extern "C" void mgbfs_library_owner_destroy_v1(void* owner) {
   delete static_cast<Handle*>(owner);
 }
-// RED scaffold for the depth-finalization export boundary.
-extern "C" int mgbfs_library_owner_export_v1(void*, MgbfsLibraryKeysV1* keys) {
+extern "C" int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* keys) {
   if (keys) *keys = {};
-  return -1;
+  auto* handle = static_cast<Handle*>(owner);
+  if (!handle || !keys) return fail(handle);
+  try {
+    if (handle->poisoned || handle->pending) return fail(handle);
+    auto view = handle->owner.export_committed();
+    MgbfsLibraryKeysV1 result{};
+    result.rows = static_cast<uint32_t>(view.num_rows());
+    for (int c = 0; c < 4; ++c) result.words[c] = view.column(c).data<uint32_t>();
+    *keys = result;
+    return 0;
+  } catch (...) { return fail(handle); }
 }

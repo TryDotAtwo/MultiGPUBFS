@@ -87,6 +87,15 @@ class CudfOwner {
   // Stream-ordered appended count, NOT evidence of completed device execution.
   cudf::size_type accepted_count() const { return count_; }
 
+  // Borrow committed append-order keys; stream completion remains caller-owned.
+  cudf::table_view export_committed() {
+    try {
+      check_device();
+      if (poisoned_ || pending_) throw std::runtime_error("OWNER_ORDER");
+      return accepted_view();
+    } catch (...) { poisoned_ = true; throw; }
+  }
+
  private:
   static void cuda_ok(cudaError_t error) {
     if (error != cudaSuccess) throw std::runtime_error(cudaGetErrorString(error));
