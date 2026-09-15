@@ -9,7 +9,7 @@ extern "C" {
 /* V1, Linux x86_64. Every data pointer is device-resident on the owner device.
  * Counts/structs themselves are host control data. SoA conversion from the
  * native AoS Hash128 format is explicit and must be counted in time/memory.
- * This header defines the integration boundary; implementation is pending.
+ * Row counts and capacities must not exceed INT32_MAX (libcudf size_type).
  */
 typedef struct MgbfsLibraryKeysV1 {
   const uint32_t* words[4];
@@ -36,7 +36,7 @@ typedef struct MgbfsLibrarySurvivorsV1 {
  */
 int mgbfs_library_owner_create_v1(MgbfsLibraryKeysV1 history, uint32_t capacity,
                                  void* cuda_stream, void** owner);
-/* Compare does not publish. Returned indices are borrowed until next compare
+/* Compare zeros a non-null result on failure and does not publish. Returned indices are borrowed until next compare
  * or destroy. Library count synchronization is included in this call's timing.
  */
 int mgbfs_library_owner_compare_v1(void* owner, uint64_t epoch,
