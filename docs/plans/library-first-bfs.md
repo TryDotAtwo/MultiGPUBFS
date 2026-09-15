@@ -195,3 +195,23 @@ Therefore integration requires all of the following, not just ABI dispatch:
 
 These synchronization and conversion costs belong in end-to-end timings. No
 bridge implementation or measured performance claim follows from this audit.
+
+### Committed export and conversion progress
+
+V17 reached the intended `OWNER_ABI_EXPORT` failure with the export stub. V18
+at `94cc3747ec678c7bf3a594b832c77d8f1f269e9f` passed both T4s, plain plus all
+four sanitizers (eight zero-error summaries, racecheck zero warnings). Evidence:
+`test_results/library-owner-v18/library-owner/`. The ABI now exposes borrowed
+append-order committed SoA keys without a host data copy and rejects pending or
+poisoned owners. Export does not synchronize; consumers must obey stream/event
+ordering. Conversion/partition and actual depth finalization remain unimplemented.
+
+The CPU candidate conversion planner at `00667c8` accounts for five separately
+256-byte-aligned u32 planes and rejects capacities outside `1..=INT32_MAX`.
+Both new tests failed against the stub before implementation; all five library
+memory tests then passed. This planner is not yet charged by the runtime.
+
+V19 pins `08ad47758f69ad7f65904e03d74e19d2dbfee5c8` for the allocation-free
+AoS/SoA conversion RED test: 65 rows, explicit plane offsets, source ordinals,
+round-trip equality, untouched padding/guard and a short-buffer rejection.
+Its conversion functions are still stubs; no conversion GPU pass is claimed.
