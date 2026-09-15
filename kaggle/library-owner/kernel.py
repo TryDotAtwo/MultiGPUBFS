@@ -60,7 +60,16 @@ def main():
         run([*pip, "install", "--only-binary=:all:", "--no-cache-dir",
              "--report", str(logs / "pip-install.json"), *PACKAGES], "install", 900)
         run([*pip, "freeze", "--all"], "packages")
-        site = Path(run([python, "-c", "import site; print(site.getsitepackages()[0])"], "site").strip())
+        # The normal log helper deliberately merges stdout/stderr. Never parse
+        # its result as a path: even a nonfatal sitecustomize diagnostic corrupts
+        # that protocol. Preserve diagnostics separately instead of hiding them.
+        site_query = subprocess.run(
+            [python, "-c", "import site; print(site.getsitepackages()[0])"],
+            env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=True, timeout=30)
+        (logs / "site-stderr.log").write_text(site_query.stderr)
+        (logs / "site-stdout.log").write_text(site_query.stdout)
+        site = Path(site_query.stdout.strip())
         prefixes = sorted({str(p.parent.parent) for p in site.rglob("libcudf") if p.is_dir()})
         # Wheels install their exported CMake config under individual package roots.
         prefixes = [str(p) for p in site.iterdir() if p.is_dir()] + prefixes
