@@ -51,3 +51,29 @@ cuGraph/Gunrock/GraphBLAST adjacency is not substituted for implicit generation.
 
 New leaf tests do not certify the production runtime. Compile-only, CPU,
 single-T4, two-T4, sanitizer and benchmark evidence are tracked separately.
+
+## Evidence, 2026-09-15 implementation slice
+
+- Branch: `codex/library-first-bfs`; no baseline source was modified.
+- Fixed-pool admission: three passing CPU tests, including complete reservation,
+  alignment, overflow and the 1 GiB reserve. Successful budget validation is not
+  a measurement of CUDA/NCCL/driver residency.
+- `OwnerCommitGate`: nine passing CPU tests. Comparison, actual credit grant,
+  and successful device completion are distinct; malformed order/count/capacity
+  errors poison the gate without publishing pending rows. This gate is not yet
+  connected to an executable library owner or the production scheduler.
+- Core/runtime/CLI CPU regression passed. Python notebook guard suite: 26 passed.
+- Changed Rust files pass rustfmt. Whole-package formatting check still finds
+  a pre-existing difference in `crates/mgbfs-runtime/src/route_count.rs`.
+- Kaggle `trydotatwo/mgbfs-library-owner-t4` v1 verified two physical T4s but
+  failed in ensurepip; v2/v3 installed cuDF/RMM 26.4 successfully but a merged
+  stderr diagnostic polluted the path-query output. v4 separates that protocol
+  and reaches CMake with CUDA 12.8.93/GCC 11.4, then fails to locate cuDF's CMake
+  package in the wheel prefixes. Do not infer absent headers or unsupported
+  T4 from that configure failure: package inventory remains to be inspected.
+- No new GPU executable has compiled or passed yet. No sanitizer, full BFS,
+  memory improvement, speedup, or DB viability result is claimed.
+
+Next: inspect installed wheel file/config inventory (not another blind prefix
+change), establish a reproducible C++ SDK environment, pass the characterization
+fixture, then implement the first owner adapter against its observed contracts.
