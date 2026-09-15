@@ -15,18 +15,56 @@ pub enum OwnerBackend {
     BmmaBucket,
 }
 
+/// Reference-only dispatch; library selection cannot be coerced to a native
+/// owner. Production RunConfigV1 remains unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceOwner {
+    Native(OwnerBackend),
+    CudfRelational,
+}
+
 /// Explicit selection for the current reference benchmark, not production
 /// RunConfig validation or a promise of Tensor Core HASH_FIRST generation.
 #[derive(Debug, Clone, Copy)]
 pub struct ReferenceSelection {
     pub profile: FrontierProfile,
-    pub owner: OwnerBackend,
+    pub owner: ReferenceOwner,
     pub prededup: bool,
     pub materialization_capacity: Option<u32>,
     pub tile_limit: u32,
     pub tensor_generation: bool,
+    pub library_pool_bytes: Option<u64>,
 }
 impl ReferenceSelection {
+    pub fn validate_archive(&self, enabled: bool) -> Result<()> {
+        if self.owner == ReferenceOwner::CudfRelational && !enabled {
+            return Err("REFERENCE_LIBRARY_ARCHIVE_REQUIRED".into());
+        }
+        Ok(())
+    }
+    pub fn with_library_pool(mut self, bytes: Option<&str>, available: bool) -> Result<Self> {
+        match self.owner {
+            ReferenceOwner::Native(_) => {
+                if bytes.is_some() {
+                    return Err("REFERENCE_UNUSED_LIBRARY_POOL".into());
+                }
+            }
+            ReferenceOwner::CudfRelational => {
+                if !available {
+                    return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
+                }
+                let bytes: u64 = bytes
+                    .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?
+                    .parse()
+                    .map_err(|_| "REFERENCE_LIBRARY_POOL_INVALID")?;
+                if bytes == 0 || bytes % 256 != 0 {
+                    return Err("REFERENCE_LIBRARY_POOL_ALIGNMENT".into());
+                }
+                self.library_pool_bytes = Some(bytes);
+            }
+        }
+        Ok(self)
+    }
     pub fn with_hash_first_generation(mut self, backend: &str) -> Result<Self> {
         self.tensor_generation = match backend {
             "SCALAR" => false,
@@ -49,8 +87,9 @@ impl ReferenceSelection {
             _ => return Err("REFERENCE_PROFILE_OR_CODEC".into()),
         };
         let owner = match owner {
-            "CUB_SORT_MERGE" => OwnerBackend::CubSortMerge,
-            "BMMA_BUCKET" => OwnerBackend::BmmaBucket,
+            "CUB_SORT_MERGE" => ReferenceOwner::Native(OwnerBackend::CubSortMerge),
+            "BMMA_BUCKET" => ReferenceOwner::Native(OwnerBackend::BmmaBucket),
+            "CUDF_RELATIONAL" => ReferenceOwner::CudfRelational,
             _ => return Err("REFERENCE_OWNER_BACKEND".into()),
         };
         let prededup = match pre {
@@ -76,6 +115,7 @@ impl ReferenceSelection {
             materialization_capacity,
             tile_limit,
             tensor_generation: false,
+            library_pool_bytes: None,
         })
     }
 }

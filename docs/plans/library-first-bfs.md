@@ -381,3 +381,21 @@ full-state snapshots and checksummed per-rank archives. Archive keys, ownership,
 per-depth counts (including empty local layers), and global layer sets are
 checked independently. Results are pending. Process-launch, capacity and
 performance acceptance remain open even if this gate passes.
+
+Reference-launch selection now has a separate `ReferenceOwner` enum, so a
+library request cannot be passed as a native `OwnerBackend`. CUDF_RELATIONAL
+requires a compiled library feature and explicit aligned nonzero
+`MGBFS_LIBRARY_POOL_BYTES`; native modes reject unused pool settings. The
+library benchmark rejects disabled archives. Five CPU selection tests pass,
+including RED-before-GREEN coverage of missing dispatch/pool/archive guards.
+Production RunConfigV1 and its OwnerBackend enum are unchanged.
+
+The CLI `library-owner` feature enables native CUDA plus the library adapter.
+The reference benchmark dispatches explicitly, includes the pool in config
+identity and output, and labels library records separately from native records.
+HASH_FIRST Tensor generation is now an explicit library constructor option,
+with no scalar substitution. The next GPU fixture adds full-layer Tensor checks
+and an actual two-process torchrun CLI warmup/measure/archive-verification gate.
+Windows type/CPU checks do not compile the Linux-only benchmark module; Linux
+build, CLI launch and the new Tensor combination remain pending. Tiny S4 CLI
+times will remain correctness-fixture durations, not performance claims.

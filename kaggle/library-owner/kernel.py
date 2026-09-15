@@ -220,6 +220,42 @@ def main():
                                "--error-exitcode", "97", *command]
                 run(command, f"bfs-two-gpu-{tool}", extra_env=device_env)
             manifest["two_gpu_gate"] = "two device threads with NCCL; not torchrun processes"
+            # Actual process-launch contract, with mandatory file archives and a
+            # separate warmup pass. Tiny S4 is a correctness gate, not a speed result.
+            run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "cli-build")
+            cli = str(source / "target/release/mgbfs")
+            for profile, generation in [("DENSE", "SCALAR"), ("HASH_FIRST", "INT_MMA_SM75")]:
+                label = profile.lower()
+                run_root = work / ("cli-" + label)
+                run_root.mkdir()
+                output_dir = logs / ("cli-" + label)
+                process_env = dict(device_env, MGBFS_OWNER_BACKEND="CUDF_RELATIONAL",
+                    MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE=profile,
+                    MGBFS_HASH_FIRST_GENERATION=generation, MGBFS_BENCH_CAPACITY="64",
+                    MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8", MGBFS_SHARDS="4",
+                    MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
+                    MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
+                    MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128",
+                    MGBFS_BENCH_WARMUP="1", MGBFS_PRE_DEDUP="ON",
+                    MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0")
+                run([sys.executable, "-m", "torch.distributed.run", "--standalone",
+                     "--nproc-per-node=2", "--no-python", cli, "bench", "--reference",
+                     "s4", "7", str(run_root / "bootstrap"), str(run_root / "archive"),
+                     str(output_dir)], "cli-" + label, extra_env=process_env)
+                total = 0
+                for rank in range(2):
+                    result = json.loads((output_dir / f"rank-{rank}.json").read_text())
+                    if (result["status"] != "COMPLETE" or result["owner_backend"] != "CUDF_RELATIONAL"
+                            or result["library_pool_reserved_bytes"] != 64 << 20
+                            or not result["archive_enabled"] or not result["warmup_completed"]):
+                        raise RuntimeError("CLI library dispatch/archive contract mismatch")
+                    total += sum(result["local_layer_sizes"])
+                    run([cli, "verify", str(run_root / f"archive-rank-{rank}.mgbfsar1")],
+                        f"cli-{label}-verify-rank{rank}", extra_env=process_env)
+                if total != 24:
+                    raise RuntimeError(f"CLI S4 count mismatch: {total}")
+            manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4 correctness only"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

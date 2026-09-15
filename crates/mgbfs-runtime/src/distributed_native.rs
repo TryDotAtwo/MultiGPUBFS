@@ -421,6 +421,31 @@ impl DistributedNativeBfs {
         materialization_capacity: Option<u32>,
         pool_bytes: u64,
     ) -> Result<Self> {
+        Self::new_library_reference_with_generation(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            pool_bytes,
+            false,
+        )
+    }
+    /// Same fixed library owner with an explicit experimental HASH_FIRST
+    /// Tensor Core generator. No scalar substitution is performed.
+    #[cfg(feature = "library-owner")]
+    pub fn new_library_reference_with_generation(
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        pool_bytes: u64,
+        tensor_generation: bool,
+    ) -> Result<Self> {
+        if tensor_generation && materialization_capacity.is_none() {
+            return Err("REFERENCE_HASH_FIRST_GENERATION".into());
+        }
         Self::new_profile(
             graph,
             seed,
@@ -429,7 +454,7 @@ impl DistributedNativeBfs {
             materialization_capacity,
             OwnerBackend::CubSortMerge,
             256,
-            false,
+            tensor_generation,
             Some(pool_bytes),
         )
     }

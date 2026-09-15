@@ -7,7 +7,9 @@ use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs}
 fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
-    for materialization_capacity in [None, Some(128)] {
+    for (materialization_capacity, tensor_generation) in
+        [(None, false), (Some(128), false), (Some(128), true)]
+    {
         for prededup in [false, true] {
             let mut id = [0u8; 128];
             assert_eq!(
@@ -31,7 +33,17 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
             };
             // Guard the unchanged default path after separating its storage.
             // This is correctness evidence only, not a timed A/B run.
-            let mut baseline = if let Some(capacity) = materialization_capacity {
+            let mut baseline = if tensor_generation {
+                DistributedNativeBfs::new_hash_first_tc_with_owner(
+                    &graph,
+                    [0; 16],
+                    id,
+                    cfg,
+                    128,
+                    mgbfs_core::config::OwnerBackend::CubSortMerge,
+                    256,
+                )
+            } else if let Some(capacity) = materialization_capacity {
                 DistributedNativeBfs::new_hash_first_reference(&graph, [0; 16], id, cfg, capacity)
             } else {
                 DistributedNativeBfs::new(&graph, [0; 16], id, cfg)
@@ -48,13 +60,14 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                 unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
                 0
             );
-            let mut bfs = DistributedNativeBfs::new_library_reference(
+            let mut bfs = DistributedNativeBfs::new_library_reference_with_generation(
                 &graph,
                 [0; 16],
                 id,
                 cfg,
                 materialization_capacity,
                 64 << 20,
+                tensor_generation,
             )
             .unwrap();
             assert!(!bfs
@@ -79,7 +92,7 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                 actual.sort();
                 assert_eq!(
                     &actual, wanted,
-                    "depth={depth} prededup={prededup} hash_first={materialization_capacity:?}"
+                    "depth={depth} prededup={prededup} hash_first={materialization_capacity:?} tensor={tensor_generation}"
                 );
                 assert_eq!(bfs.advance().unwrap(), depth + 1 < expected.len());
             }

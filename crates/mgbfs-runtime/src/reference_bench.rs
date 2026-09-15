@@ -4,7 +4,7 @@ use crate::{
     pinned_archive::PinnedArchive,
 };
 use mgbfs_core::{
-    config::ReferenceSelection,
+    config::{ReferenceOwner, ReferenceSelection},
     matrix::MatrixGroup,
     rank_plan::{cluster_capacity_plan, CapacityMode},
     Result,
@@ -143,7 +143,11 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         ),
         env_u32("MGBFS_BMMA_TILE_LIMIT", 256),
     )?
-    .with_hash_first_generation(&hash_first_generation)?;
+    .with_hash_first_generation(&hash_first_generation)?
+    .with_library_pool(
+        std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
+        cfg!(feature = "library-owner"),
+    )?;
     let description=format!("distributed-native-ring-v2;s{n};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
@@ -158,6 +162,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     // Test-only A/B switch. Production runs retain the mandatory archive.
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
+    selection.validate_archive(archive_enabled)?;
     let buckets = env_u32("MGBFS_BUCKETS", 256);
     let shards = env_u32("MGBFS_SHARDS", 64);
     let (local_buckets, _) =
@@ -214,28 +219,52 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     )?;
     let pinned = archive.pinned_bytes();
     let setup = Instant::now();
-    let mut bfs = if selection.tensor_generation {
-        DistributedNativeBfs::new_hash_first_tc_with_owner(
-            &graph,
-            20260828u128.to_le_bytes(),
-            id,
-            cfg,
-            selection
-                .materialization_capacity
-                .ok_or("REFERENCE_HASH_FIRST_CAPACITY")?,
-            selection.owner,
-            selection.tile_limit,
-        )?
-    } else {
-        DistributedNativeBfs::new_reference_with_owner(
-            &graph,
-            20260828u128.to_le_bytes(),
-            id,
-            cfg,
-            selection.materialization_capacity,
-            selection.owner,
-            selection.tile_limit,
-        )?
+    let mut bfs = match selection.owner {
+        ReferenceOwner::CudfRelational => {
+            #[cfg(feature = "library-owner")]
+            {
+                DistributedNativeBfs::new_library_reference_with_generation(
+                    &graph,
+                    20260828u128.to_le_bytes(),
+                    id,
+                    cfg,
+                    selection.materialization_capacity,
+                    selection
+                        .library_pool_bytes
+                        .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?,
+                    selection.tensor_generation,
+                )?
+            }
+            #[cfg(not(feature = "library-owner"))]
+            {
+                return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
+            }
+        }
+        ReferenceOwner::Native(owner) => {
+            if selection.tensor_generation {
+                DistributedNativeBfs::new_hash_first_tc_with_owner(
+                    &graph,
+                    20260828u128.to_le_bytes(),
+                    id,
+                    cfg,
+                    selection
+                        .materialization_capacity
+                        .ok_or("REFERENCE_HASH_FIRST_CAPACITY")?,
+                    owner,
+                    selection.tile_limit,
+                )?
+            } else {
+                DistributedNativeBfs::new_reference_with_owner(
+                    &graph,
+                    20260828u128.to_le_bytes(),
+                    id,
+                    cfg,
+                    selection.materialization_capacity,
+                    owner,
+                    selection.tile_limit,
+                )?
+            }
+        }
     };
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
@@ -306,6 +335,14 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
+        value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
+        if selection.owner == ReferenceOwner::CudfRelational {
+            value["backend"] = serde_json::json!(if selection.materialization_capacity.is_some() {
+                "library_nccl_hash_first_cudf_v1"
+            } else {
+                "library_nccl_dense_cudf_v1"
+            });
+        }
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
     })
     .map_err(|e| e.to_string())?;

@@ -1,4 +1,47 @@
-use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceSelection};
+use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection};
+
+#[test]
+fn library_dispatch_requires_compiled_support_and_an_explicit_fixed_pool() {
+    let selection =
+        ReferenceSelection::parse("DENSE", "CUDF_RELATIONAL", "OFF", false, 64, 8).unwrap();
+    assert!(selection
+        .with_library_pool(Some("67108864"), false)
+        .is_err());
+    for invalid in [
+        None,
+        Some("0"),
+        Some("255"),
+        Some("257"),
+        Some("auto"),
+        Some("18446744073709551616"),
+    ] {
+        assert!(selection.with_library_pool(invalid, true).is_err());
+    }
+    let selection = selection.with_library_pool(Some("67108864"), true).unwrap();
+    assert_eq!(selection.owner, ReferenceOwner::CudfRelational);
+    assert_eq!(selection.library_pool_bytes, Some(64 << 20));
+}
+
+#[test]
+fn native_dispatch_rejects_an_unused_library_pool() {
+    let selection =
+        ReferenceSelection::parse("DENSE", "CUB_SORT_MERGE", "ON", false, 64, 8).unwrap();
+    assert!(selection.with_library_pool(Some("67108864"), true).is_err());
+    assert_eq!(
+        selection.with_library_pool(None, false).unwrap().owner,
+        ReferenceOwner::Native(OwnerBackend::CubSortMerge)
+    );
+}
+
+#[test]
+fn library_measurement_cannot_disable_the_archive_contract() {
+    let library =
+        ReferenceSelection::parse("DENSE", "CUDF_RELATIONAL", "ON", false, 64, 8).unwrap();
+    assert!(library.validate_archive(false).is_err());
+    assert!(library.validate_archive(true).is_ok());
+    let native = ReferenceSelection::parse("DENSE", "CUB_SORT_MERGE", "ON", false, 64, 8).unwrap();
+    assert!(native.validate_archive(false).is_ok());
+}
 
 #[test]
 fn tensor_generation_is_an_explicit_hash_first_only_reference_choice() {
@@ -33,7 +76,7 @@ fn reference_backend_selection_is_explicit_and_rejects_unsupported_compact_hash_
                     profile == "HASH_FIRST"
                 );
                 assert_eq!(
-                    selected.owner == OwnerBackend::BmmaBucket,
+                    selected.owner == ReferenceOwner::Native(OwnerBackend::BmmaBucket),
                     owner == "BMMA_BUCKET"
                 );
                 assert_eq!(selected.prededup, pre == "ON");

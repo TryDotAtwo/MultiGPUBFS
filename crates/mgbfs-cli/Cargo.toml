@@ -6,6 +6,7 @@ rust-version = "1.75"
 
 [features]
 cuda = ["mgbfs-runtime/cuda"]
+library-owner = ["cuda", "mgbfs-runtime/library-owner"]
 
 [[bin]]
 name = "mgbfs"
