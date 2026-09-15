@@ -434,3 +434,13 @@ S4 HASH_FIRST INT_MMA_SM75, and U4m2 DENSE, with warmup and mandatory archives.
 The runner checked global counts 24/24/64 and verified both rank archives for
 each scenario. These remain small correctness gates, not a performance panel;
 the CLI reports setup/final cudaMemGetInfo only, not full peak VRAM.
+
+V36 launches immutable source `d8e33dc73730d96a13dae3f7f4e98de94bc1b8e6`.
+After the correctness gates it runs a single S10 DENSE/cuDF screening sample on
+two T4s: batch 32768, per-rank state/hash capacity 3628800, ring 3628800,
+fixed RMM pool 1 GiB per rank, pre-dedup ON, matrix state/archive encoding.
+Warmup and both rank archives are mandatory. The screening helper retains raw
+measurements and failures, verifies archive commits, and labels the external
+50 ms device-memory sampler as sampled consumption, not exact peak. Six CPU
+screen-contract tests pass. This is not a tuned or repeated baseline comparison;
+the actual S10 result is still pending.

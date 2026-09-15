@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "248142359ad42ba64682d88a7de4f17765188fc2"
+SOURCE_COMMIT = "d8e33dc73730d96a13dae3f7f4e98de94bc1b8e6"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
