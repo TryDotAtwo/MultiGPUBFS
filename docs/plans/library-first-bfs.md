@@ -291,3 +291,18 @@ window RED fixture. Previous and current keys differ in the fourth word, and
 the candidates include duplicates against each plus a new key. The factory is
 still a stub. Once implemented, two borrowed views avoid an explicit combined
 history buffer; cuDF index allocation remains part of the fixed pool budget.
+
+V25 reached the intended `OWNER_WINDOW_CREATE` RED failure. V26 at
+`a6cf9b8ee63fbe55723cee478a4c261ab5727275` passed C++ and Rust plain plus all
+four sanitizer modes on both physical T4s, with zero errors and no racecheck
+warnings. Evidence: `test_results/library-owner-v26/library-owner/`. Two
+independent immutable views now feed separate cached anti-join indexes; no
+explicit combined history array is created. Index and temporary allocations
+still belong to the fixed RMM pool and must be charged in full.
+
+V27 pins `217b810d2e0e3d669904881f98ca2cc3935c9846` for a new RED boundary:
+seal a completed owner, release history/candidate storage, export the accepted
+key unchanged, and reject any subsequent comparison. The seal function is still
+a stub. This boundary is needed to overwrite the oldest history buffer during
+depth rotation without keeping an extra combined/copy buffer or invalidating
+live borrowed history. No full runtime rotation is implemented yet.
