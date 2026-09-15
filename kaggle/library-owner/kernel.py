@@ -84,6 +84,11 @@ def main():
                 raise RuntimeError(f"CUDA archive checksum mismatch: {component}")
             run(["tar", "-xf", str(archive), "-C", str(work)], component + "-extract")
             shutil.copytree(work / name, sdk, dirs_exist_ok=True)
+        # Linux redistributables store libraries in lib; nvcc.profile expects
+        # the conventional toolkit lib64 layout. Both names refer to this SDK.
+        (sdk / "lib64").symlink_to("lib", target_is_directory=True)
+        if not (sdk / "lib64/libcudart_static.a").is_file():
+            raise RuntimeError("Pinned CUDA SDK missing static runtime")
         env["PATH"] = str(sdk / "bin") + ":" + env["PATH"]
         env["CUDACXX"] = str(sdk / "bin/nvcc")
         run([str(sdk / "bin/nvcc"), "--version"], "cuda-version")
