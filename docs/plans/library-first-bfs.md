@@ -114,3 +114,26 @@ list and pip installation report. Exact wheel hashes from that report are in
 `experiments/library_owner/requirements-linux-x86_64.lock` for future runs.
 The SDK obstacle is resolved; next is implementing the actual owner adapter
 with bounded persistent accepted storage, explicit compare/commit and tests.
+
+### Experimental owner implementation and repeated batches
+
+The RED GPU fixture v10 compiled and failed at `OWNER_NOT_IMPLEMENTED`, proving
+the new compare/commit test reached its intended missing behavior. Implementation
+`ad251654b02a3b0a1e0356b8feeb74814a9c718c` passed the v11 gate on both T4s,
+plain plus all four sanitizer tools. `CudfOwner` now owns fixed-capacity accepted
+hash columns, borrows immutable history, stages survivors separately, checks
+actual grant before commit, and poisons errors instead of permitting retry.
+Accepted count is stream-ordered, not proof that GPU publication has completed.
+
+Expanded v12 at `64c3b12adb0d6cfe1820122aeeab766a808fa970` also passed all ten
+runs (eight sanitizer runs, zero errors/warnings). It exercises 48 batches of
+1,024 rows against an independent host set, including pair duplicates, overlap
+with 4,096 history keys and previously accepted keys, and more than 16,000 total
+visited keys. Fixed reservation stays 64 MiB; requested suballocation peak on
+this fixture is 320,156 bytes. No whole-device or large-BFS inference is valid.
+
+Integration remains incomplete: `distributed_native.rs` uses the AoS
+`mgbfs_bounded_owner_compare/commit` descriptor interface with GPU-side reserve,
+whereas the experimental cuDF class takes SoA columns and host-visible library
+counts. The C ABI, layout conversion and reserve/event bridge must be implemented
+and charged to both timing and peak memory, not bypassed in the comparison.
