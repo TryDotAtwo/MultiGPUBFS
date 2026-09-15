@@ -157,3 +157,11 @@ Rust declarations have only type-check evidence, not linking or execution.
 Remaining integration includes a Rust-accessible fixed RMM resource context,
 AoS-to-SoA conversion, GPU reserve/event bridging and actual runtime dispatch.
 This gate does not establish multi-rank/NCCL correctness or a speedup.
+
+The fixed-pool C ABI lifecycle test reached `POOL_ABI_CREATE` in v15 at
+`112036087037b74bf8c004eea46fc9b2b1598ea0`: the expected RED result, not a
+compiler/dependency failure. Implementation `4759026b6a0e5760fe745aee50dcc9269b92c1c9`
+is under GPU validation in v16. It reserves initial=max pool bytes, retains the
+previous per-device resource and rejects nested pools or destruction with live
+suballocations. The caller must drain streams and destroy owners before pool
+release. Rust declarations remain type-check only; runtime integration is pending.
