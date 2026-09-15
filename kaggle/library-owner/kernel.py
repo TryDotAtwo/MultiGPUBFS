@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "d37cb51c0d932540274676ef2cd7357aac71f203"
+SOURCE_COMMIT = "248142359ad42ba64682d88a7de4f17765188fc2"
 FULL_BFS_GATE = True
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]

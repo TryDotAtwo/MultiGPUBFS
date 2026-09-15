@@ -408,3 +408,12 @@ invalid inputs; the positive test failed before implementation. The next CLI
 gate includes U4(modulus=2) as well as S4. The output explicitly labels its
 current cudaMemGetInfo sampling as setup/final only, not a full peak measurement;
 external/full-peak profiling is still required for acceptance.
+
+V34 at `d37cb51c0d932540274676ef2cd7357aac71f203` passed the two-device NCCL
+and archive fixture plain and all four sanitizers. U3(modulus=3) and matrix S4,
+both profiles and both rank maps matched full CPU layer sets; archive ownership,
+hashes, counts and commits passed. All sanitizer summaries were clean, including
+zero racecheck warnings. Evidence: `test_results/library-owner-v34/library-owner/`.
+This is two rank threads on two devices, not yet a process-launch result.
+V35 pins `248142359ad42ba64682d88a7de4f17765188fc2` for the added Tensor and
+actual torchrun/CLI/archive gates. No speed or peak-memory acceptance is claimed.
