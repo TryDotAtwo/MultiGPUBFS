@@ -640,6 +640,49 @@ fn archive_fixture_world(
     tensor_generation: bool,
     world: u32,
 ) {
+    archive_fixture_batch(
+        compact,
+        hash_first,
+        seed,
+        owners,
+        prededup,
+        bmma,
+        tensor_generation,
+        world,
+        7,
+    );
+}
+
+#[test]
+fn dense_lookahead_preserves_archived_layers_with_one_parent_batches() {
+    for compact in [false, true] {
+        for bmma in [false, true] {
+            archive_fixture_batch(
+                compact,
+                false,
+                20260828u128.to_le_bytes(),
+                [1, 0],
+                true,
+                bmma,
+                false,
+                2,
+                1,
+            );
+        }
+    }
+}
+
+fn archive_fixture_batch(
+    compact: bool,
+    hash_first: bool,
+    seed: [u8; 16],
+    owners: [u32; 2],
+    prededup: bool,
+    bmma: bool,
+    tensor_generation: bool,
+    world: u32,
+    batch: u32,
+) {
     let width = if compact { 4 } else { 9 };
     let capacity = if compact { 24 } else { 27 };
     let mut id = [0u8; 128];
@@ -660,7 +703,7 @@ fn archive_fixture_world(
                     rank,
                     world,
                     logical_owner_to_rank: owners,
-                    batch: 7,
+                    batch,
                     layer_capacity: capacity,
                     state_ring_capacity: capacity,
                     buckets: 8,
@@ -709,7 +752,7 @@ fn archive_fixture_world(
                 archive.finish().unwrap();
                 let bytes = data.lock().unwrap().clone();
                 verify(&bytes).unwrap();
-                bytes
+                (bytes, bfs.dense_lookahead_batches())
             })
         })
         .collect();
@@ -729,8 +772,10 @@ fn archive_fixture_world(
     }
     let mut actual = vec![Vec::new(); expected.len()];
     let hash = GemmHash::from_seed(width, seed).unwrap();
+    let mut lookahead = 0;
     for (rank, worker) in workers.into_iter().enumerate() {
-        let data = worker.join().unwrap();
+        let (data, prefetched) = worker.join().unwrap();
+        lookahead += prefetched;
         let mut at = 48;
         loop {
             let word =
@@ -760,4 +805,10 @@ fn archive_fixture_world(
         layer.sort();
     }
     assert_eq!(actual, expected);
+    if batch == 1 && !hash_first {
+        assert!(
+            lookahead > 0,
+            "fixture never exercised overlapping generation"
+        );
+    }
 }

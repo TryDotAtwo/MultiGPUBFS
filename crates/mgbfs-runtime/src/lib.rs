@@ -31,6 +31,7 @@ pub mod macro_simulation;
 pub mod native;
 pub mod owner;
 pub mod owner_results;
+pub mod parent_batches;
 pub mod payload_lease;
 #[cfg(feature = "cuda")]
 pub mod pinned_archive;

@@ -305,6 +305,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
+        value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
     })
     .map_err(|e| e.to_string())?;

@@ -1,6 +1,8 @@
 //! Native one/two-rank NCCL BFS reference. Torchrun supplies only rank env.
+use crate::event_generation::NativeEvent;
 use crate::failure::process_owner_pair;
 use crate::jobs::{split, JobSpan};
+use crate::parent_batches::{ParentBatch, ParentCursor};
 use mgbfs_core::{
     config::OwnerBackend,
     hash::GemmHash,
@@ -294,6 +296,10 @@ pub struct DistributedNativeBfs {
     prev_count: u32,
     failed: bool,
     stream: Stream,
+    generation_stream: Stream,
+    generation_done: NativeEvent,
+    generation_sequence: u64,
+    dense_lookahead: u64,
     exchange_stream: Stream,
     exchange_done: Event,
     archive_stream: Stream,
@@ -603,6 +609,10 @@ impl DistributedNativeBfs {
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
+        let mut raw_generation = std::ptr::null_mut();
+        check(unsafe { cudaStreamCreateWithFlags(&mut raw_generation, 1) })?;
+        let generation_stream = Stream(raw_generation);
+        let generation_done = NativeEvent::new()?;
         let mut raw_exchange = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
         let exchange_stream = Stream(raw_exchange);
@@ -804,6 +814,10 @@ impl DistributedNativeBfs {
             prev_count: 0,
             failed: false,
             stream,
+            generation_stream,
+            generation_done,
+            generation_sequence: 0,
+            dense_lookahead: 0,
             exchange_stream,
             exchange_done,
             archive_stream,
@@ -865,6 +879,38 @@ impl DistributedNativeBfs {
     }
     pub fn frontier_len(&self) -> u32 {
         self.current_count
+    }
+    /// Submitted lookahead batches, not a claim of measured GPU overlap.
+    pub fn dense_lookahead_batches(&self) -> u64 {
+        self.dense_lookahead
+    }
+    fn enqueue_dense_generation(&mut self, batch: ParentBatch) -> Result<u64> {
+        let sequence = self
+            .generation_sequence
+            .checked_add(1)
+            .ok_or("GENERATION_SEQUENCE")?;
+        let s = self.generation_stream.0;
+        // The frontier range is still live in StateRing. Only the *previous*
+        // parent batch may retire while these read-only operations are running.
+        unsafe {
+            check(mgbfs_generate_run(
+                self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
+                self.states.at(batch.begin as usize * self.stride).cast(),
+                self.children.ptr.cast(),
+                batch.count,
+                s,
+            ))?;
+            check(mgbfs_hash_run(
+                self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
+                self.children.ptr.cast(),
+                self.child_hashes.ptr.cast(),
+                batch.count * self.moves,
+                s,
+            ))?;
+            self.generation_done.record(sequence, s)?;
+        }
+        self.generation_sequence = sequence;
+        Ok(sequence)
     }
     fn all_max(&self, value: u32) -> Result<u32> {
         self.collective_send.put(&[value])?;
@@ -1315,14 +1361,17 @@ impl DistributedNativeBfs {
             .position(|&rank| rank == self.cfg.rank)
             .ok_or("OWNER_MAP")?;
         let remote_owner = local_owner ^ 1;
-        let mut extent_index = 0usize;
-        let mut extent_offset = 0u64;
+        let mut cursor = ParentCursor::default();
+        let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
         loop {
-            let parent = self.front.get(extent_index).copied();
-            let parents = parent
-                .map(|extent| u64::from(self.cfg.batch).min(extent.count - extent_offset) as u32)
-                .unwrap_or(0);
+            let work = cursor.take(&self.front, self.cfg.batch)?;
+            let extent_index = work.map(|b| b.extent).unwrap_or(0);
+            let extent_offset = work.map(|b| b.offset).unwrap_or(0);
+            let parent = work.map(|b| self.front[b.extent]);
+            let parents = work.map(|b| b.count).unwrap_or(0);
+            let next_work = cursor.peek(&self.front, self.cfg.batch)?;
+            let mut generation = None;
             let candidate_count = parents * self.moves;
             if let Some(a) = archive.as_deref_mut() {
                 let error = if let Some(extent) = parent {
@@ -1378,25 +1427,16 @@ impl DistributedNativeBfs {
                 if self.all_max(h.local_fatal.one::<u32>()?)? != 0 {
                     return Err("HASH_FIRST_GENERATION_FATAL".into());
                 }
-            } else if let Some(extent) = parent {
+            } else if let Some(batch) = work {
+                let sequence = match prefetched.take() {
+                    Some((expected, sequence)) if expected == batch => sequence,
+                    Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
+                    None => self.enqueue_dense_generation(batch)?,
+                };
                 unsafe {
-                    check(mgbfs_generate_run(
-                        self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
-                        self.states
-                            .at((extent.begin + extent_offset) as usize * self.stride)
-                            .cast(),
-                        self.children.ptr.cast(),
-                        parents,
-                        s,
-                    ))?;
-                    check(mgbfs_hash_run(
-                        self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
-                        self.children.ptr.cast(),
-                        self.child_hashes.ptr.cast(),
-                        candidate_count,
-                        s,
-                    ))?;
+                    self.generation_done.wait(sequence, s)?;
                 }
+                generation = Some(sequence);
             }
             unsafe {
                 check(mgbfs_route_run(
@@ -1440,6 +1480,24 @@ impl DistributedNativeBfs {
             self.owner_counts.read(&mut owner_counts)?;
             if owner_counts[0] == u32::MAX {
                 return Err("EXCHANGE_SOURCE_REF".into());
+            }
+            if let Some(sequence) = generation {
+                // Pack's host-observed completion includes the generation wait
+                // and the last reads of children/child_hashes. Owner and NCCL
+                // read packed_states/sorted_hashes instead, so the next batch
+                // reuses the original producer storage without another arena.
+                if !self.generation_done.poll(sequence)? {
+                    return Err("GENERATION_PACK_ORDER".into());
+                }
+                self.generation_done.retire(sequence)?;
+                if let Some(next) = next_work {
+                    let sequence = self.enqueue_dense_generation(next)?;
+                    prefetched = Some((next, sequence));
+                    self.dense_lookahead = self
+                        .dense_lookahead
+                        .checked_add(1)
+                        .ok_or("GENERATION_COUNTER_OVERFLOW")?;
+                }
             }
             if self.cfg.world == 1 {
                 // Both sorted hash halves belong to this single physical rank.
@@ -1593,14 +1651,7 @@ impl DistributedNativeBfs {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
             }
-            if let Some(extent) = parent {
-                extent_offset += u64::from(parents);
-                if extent_offset == extent.count {
-                    extent_index += 1;
-                    extent_offset = 0;
-                }
-            }
-            let more = (extent_index < self.front.len()) as u32;
+            let more = u32::from(next_work.is_some());
             if self.all_max(more)? == 0 {
                 break;
             }
