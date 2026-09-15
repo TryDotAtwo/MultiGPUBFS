@@ -278,3 +278,16 @@ Source `fd6a08589379ceae204b43df2e8e6939748fcc17`; evidence:
 `rust-version.log` and ten `rust-gpu*` logs. These test durations include test
 setup and teardown and must not be reported as BFS timings. The production
 distributed scheduler still does not select the library adapter.
+
+V24 at `a526087bb49025d5e82eadb36c6e574c844174dd` validated event-driven Rust
+completion on both T4s with all four sanitizers clean. Evidence:
+`test_results/library-owner-v24/library-owner/`. Event readiness does not itself
+publish host counts: the caller must check native fatal controls before the
+separate publication call. The GPU test verifies counts stay unchanged until
+that call. This does not establish scheduler overlap or a throughput improvement.
+
+V25 pins `5eb30cc7f2334aa7a50c986121f4b839344736d9` for the separate history
+window RED fixture. Previous and current keys differ in the fourth word, and
+the candidates include duplicates against each plus a new key. The factory is
+still a stub. Once implemented, two borrowed views avoid an explicit combined
+history buffer; cuDF index allocation remains part of the fixed pool budget.
