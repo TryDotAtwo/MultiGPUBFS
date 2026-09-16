@@ -43,6 +43,17 @@ prove process bootstrap. Use a fresh rendezvous/output path for every case.
 
 ## LRX13 acceptance
 
+The platform-independent streaming entry point is now
+`python scripts/streamed_bfs_launcher.py --config <explicit-config.json>
+--run-dir <new-directory> --source <pinned-checkout>`.
+It creates one FIFO/consumer per rank, monitors consumer failures during BFS,
+uses a shared search/drain/publication timeout, and requires reference-checked
+HF promotion. It does not provision the machine or stop billing.
+Local Linux container tests cover real FIFO creation and process supervision;
+they do not prove NCCL, GPU performance, or successful remote HF publication.
+Production capacity/pool settings and an independent rental teardown deadline
+must still be selected before renting.
+
 - Identity start, L/R/X (cycle, inverse cycle, swap), full group, no coset.
 - Set `MGBFS_STATE_CODEC=permutation_u8` and matching archive codec explicitly.
 - Set capacities explicitly: 13! exceeds the CLI's u32 default capacity range.

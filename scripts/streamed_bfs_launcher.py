@@ -8,7 +8,29 @@ import sys
 import json
 import subprocess
 import time
+import os
+import shutil
+import argparse
 from contextlib import ExitStack
+from pathlib import Path
+
+
+def available_host_bytes(meminfo=Path('/proc/meminfo'), limits=None):
+    if limits is None:
+        limits = [(Path('/sys/fs/cgroup/memory.max'), Path('/sys/fs/cgroup/memory.current')),
+                  (Path('/sys/fs/cgroup/memory/memory.limit_in_bytes'),
+                   Path('/sys/fs/cgroup/memory/memory.usage_in_bytes'))]
+    fields = dict(line.split(':', 1) for line in meminfo.read_text().splitlines())
+    amount, unit = fields['MemAvailable'].split()
+    if unit != 'kB' or int(amount) < 0:
+        raise ValueError('HOST_MEMORY_FORMAT')
+    available = int(amount)*1024
+    for maximum, current in limits:
+        if maximum.exists() and current.exists():
+            limit = maximum.read_text().strip()
+            if limit != 'max':
+                available = min(available, max(0, int(limit)-int(current.read_text())))
+    return available
 
 
 def make_plan(config, source, root):
@@ -137,3 +159,56 @@ def execute_plan(plan, logs, env, timeout_seconds):
         finally:
             for child in children:
                 stop_group(child)
+
+
+def prepare_run(config, source, root, environment, available_bytes=None):
+    """Preflight host/disk and reference, then create a fresh FIFO inventory."""
+    from archive_budget import host_budget
+    from verify_lrx_layers import verify_layers
+    source, root = source.resolve(), root.resolve()
+    plan = make_plan(config, source, root)
+    budget = host_budget(available_host_bytes() if available_bytes is None else available_bytes,
+                         config['world'], config['archive_rows'], config['archive_slots'],
+                         config['n'], plan['upload_bytes'], config['scratch_bytes'],
+                         config['reserve_bytes'])
+    if not environment.get('HF_TOKEN'):
+        raise ValueError('HF_TOKEN_MISSING')
+    reference_path = Path(plan['promotion'][plan['promotion'].index('--reference')+1]).resolve()
+    reference = json.loads(reference_path.read_text(encoding='utf-8'))
+    if reference['n'] != config['n']:
+        raise ValueError('REFERENCE_GROUP_MISMATCH')
+    verify_layers([dict(rank=0, status='COMPLETE', group=f"s{config['n']}",
+                        local_layer_sizes=reference['layers'])], reference['layers'], config['n'], 1)
+    if root.exists() or not root.parent.is_dir():
+        raise ValueError('RUN_DIRECTORY_MUST_BE_NEW_WITH_EXISTING_PARENT')
+    if shutil.disk_usage(root.parent).free < plan['upload_bytes'] + config['reserve_bytes']:
+        raise ValueError('DISK_STAGING_PREFLIGHT')
+    if not (source / 'target/release/mgbfs').is_file():
+        raise ValueError('NATIVE_BINARY_MISSING')
+    if not hasattr(os, 'mkfifo'):
+        raise ValueError('LINUX_FIFO_REQUIRED')
+    # Do not inherit diagnostic knobs that could silently change the run.
+    env = {k:v for k,v in environment.items() if not k.startswith('MGBFS_')}
+    env.update(plan['env'])
+    root.mkdir()
+    for fifo in plan['fifos']:
+        os.mkfifo(fifo, mode=0o600)
+    (root / 'launch-plan.json').write_text(json.dumps(plan, indent=2), encoding='utf-8')
+    (root / 'host-budget.json').write_text(json.dumps(budget, indent=2), encoding='utf-8')
+    return plan, env
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--run-dir', type=Path, required=True)
+    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
+    args = parser.parse_args()
+    config = json.loads(args.config.read_text(encoding='utf-8'))
+    plan, env = prepare_run(config, args.source, args.run_dir, os.environ)
+    result = execute_plan(plan, args.run_dir.resolve(), env, config['timeout_seconds'])
+    print(json.dumps(result), flush=True)
+
+
+if __name__ == '__main__':
+    main()

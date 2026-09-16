@@ -3,6 +3,8 @@ import unittest
 import tempfile
 import time
 import os
+import json
+import stat
 from unittest.mock import patch
 from pathlib import Path
 
@@ -11,6 +13,47 @@ import streamed_bfs_launcher as launcher
 
 
 class StreamedLauncher(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'requires Linux FIFOs')
+    def test_prepare_creates_eight_real_fifos_and_resets_diagnostic_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            binary = source / 'target/release/mgbfs'
+            binary.parent.mkdir(parents=True); binary.touch()
+            reference = source / 'reference.json'
+            reference.write_text(json.dumps(dict(n=3, layers=[1,3,2])))
+            config = self.config()
+            config.update(n=3, reference=str(reference), archive_rows=2, archive_slots=2,
+                          max_slot_bytes=1024, scratch_bytes=1024, reserve_bytes=1024)
+            plan, env = launcher.prepare_run(config, source, source/'run',
+                       {'HF_TOKEN':'fixture', 'MGBFS_BENCH_SKIP_ARCHIVE':'1',
+                        'MGBFS_DIAGNOSTIC':'1'}, available_bytes=1024**3)
+            self.assertEqual(len(plan['fifos']), 8)
+            self.assertTrue(all(stat.S_ISFIFO(Path(p).stat().st_mode) for p in plan['fifos']))
+            self.assertEqual(env['MGBFS_BENCH_SKIP_ARCHIVE'], '0')
+            self.assertNotIn('MGBFS_DIAGNOSTIC', env)
+            self.assertNotIn('fixture', (source/'run/launch-plan.json').read_text())
+
+    def test_insufficient_host_memory_creates_no_run_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'run'
+            with self.assertRaisesRegex(ValueError, 'HOST_RAM_PREFLIGHT'):
+                launcher.prepare_run(self.config(), Path(__file__).resolve().parents[1],
+                                     root, {'HF_TOKEN': 'fixture'}, available_bytes=0)
+            self.assertFalse(root.exists())
+
+    def test_host_memory_respects_container_remaining_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            meminfo = root / 'meminfo'
+            meminfo.write_text('MemTotal: 999999 kB\nMemAvailable: 1000 kB\n')
+            maximum, current = root / 'memory.max', root / 'memory.current'
+            maximum.write_text('800000'); current.write_text('200000')
+            self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 600000)
+            maximum.write_text('max')
+            self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 1024000)
+            maximum.write_text('100000')
+            self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 0)
+
     def test_publication_runs_after_consumers_finish(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
