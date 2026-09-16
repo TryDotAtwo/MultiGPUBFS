@@ -4,19 +4,25 @@ fn execute() -> Result<(), (i32, String)> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|x| x.to_str()) {
         Some("--help") | Some("-h") if args.len() == 1 => {
-            println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir>\nReference bench requires a Linux CUDA build and torchrun topology; archive is mandatory.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
+            println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
         }
-        Some("bench") if args.len() == 7 && args[1] == "--reference" => {
-            match std::env::var("MGBFS_BENCH_SKIP_ARCHIVE") {
+        Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only")) && args[1] == "--reference" => {
+            if args.len() == 8 {
+                // Explicit alternative output contract, never an implicit fallback.
+                std::env::set_var("MGBFS_BENCH_SKIP_ARCHIVE", "1");
+                std::env::set_var("MGBFS_ARCHIVE_STREAM", "0");
+            } else {
+              match std::env::var("MGBFS_BENCH_SKIP_ARCHIVE") {
                 Err(std::env::VarError::NotPresent) => (),
                 Ok(value) if value == "0" => (),
                 _ => return Err((2, "CLI_BENCH_ARCHIVE_REQUIRED".into())),
+              }
             }
             #[cfg(all(feature = "cuda", target_os = "linux"))]
             {
                 let launch = std::iter::once("mgbfs-bench".to_string())
                     .map(Ok)
-                    .chain(args[2..].iter().map(|s| s.clone().into_string()
+                    .chain(args[2..7].iter().map(|s| s.clone().into_string()
                         .map_err(|_| (2, "CLI_BENCH_ARGUMENT_ENCODING".into()))))
                     .collect::<Result<Vec<_>, _>>()?;
                 mgbfs_runtime::reference_bench::run(launch).map_err(|e| (1, e))?;

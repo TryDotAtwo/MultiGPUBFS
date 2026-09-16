@@ -1,5 +1,21 @@
 # Vast LRX13 hardware procedure
 
+## Current user-approved output contract (2026-09-16)
+
+The user explicitly changed the upcoming Vast run to **search-only**: no full
+state archive and no Parquet/HF publication. Preserve all rank JSON, layer
+histograms, per-depth timings, VRAM samples, build/config evidence and expenses.
+Compare every depth with the frozen fedmug LRX13 reference. This validates layer
+counts, not independently all states. Budget remains USD 100.
+
+Use `mgbfs bench --reference s13 <batch> <bootstrap> <unused-archive-prefix>
+<output-dir> --search-only` through eight-process torchrun. The explicit flag
+disables both archive output and streaming. The default CLI contract remains
+archived. Do not use the streaming launcher for this run. Treat the streaming
+sections below as retained instructions for a future archived run, not current
+acceptance requirements. Small oracle tests still exercise archive correctness.
+Search-only output's durable timing is not proof of an archive commit.
+
 Status: preparation only; no server rented. Total project cap is USD 100,
 including compute, storage and network. Existing account credit is not the cap.
 

@@ -70,3 +70,23 @@ fn public_bench_cannot_disable_the_archive_output_contract() {
         assert_eq!(result["error"], "CLI_BENCH_ARCHIVE_REQUIRED");
     }
 }
+
+#[test]
+fn explicit_search_only_reaches_launcher_without_weakening_default() {
+    let result = invoke(&[
+        "bench",
+        "--reference",
+        "s3",
+        "16",
+        "bootstrap",
+        "unused-archive",
+        "results",
+        "--search-only",
+    ]);
+    let expected = if cfg!(all(feature = "cuda", target_os = "linux")) {
+        "ENV_RANK"
+    } else {
+        "CLI_BENCH_REQUIRES_LINUX_CUDA"
+    };
+    assert_eq!(result["error"], expected);
+}
