@@ -31,13 +31,14 @@ impl Extent for TestDisk {
 #[test]
 fn library_two_rank_layers_and_archives_match_oracle() {
     for library_owner in [
+        mgbfs_core::config::ReferenceOwner::Native(mgbfs_core::config::OwnerBackend::CubSortMerge),
         mgbfs_core::config::ReferenceOwner::CudfRelational,
         mgbfs_core::config::ReferenceOwner::CucoIndexed,
     ] {
         for symmetric in [false, true] {
             for hash_first in [false, true] {
                 for owners in [[0, 1], [1, 0]] {
-                    fixture(symmetric, hash_first, &owners, library_owner);
+                    fixture(symmetric, hash_first, &owners, library_owner, true);
                 }
             }
         }
@@ -47,15 +48,17 @@ fn library_two_rank_layers_and_archives_match_oracle() {
 #[test]
 #[ignore = "requires eight physical CUDA devices; run explicitly on 8-GPU host"]
 fn library_eight_rank_layers_and_archives_match_oracle() {
-    for hash_first in [false, true] {
-        for owners in [[0, 1, 2, 3, 4, 5, 6, 7], [7, 3, 0, 6, 1, 5, 2, 4]] {
-            for symmetric in [false, true] {
-                fixture(
-                    symmetric,
-                    hash_first,
-                    &owners,
-                    mgbfs_core::config::ReferenceOwner::CucoIndexed,
-                );
+    for backend in [
+        mgbfs_core::config::ReferenceOwner::CucoIndexed,
+        mgbfs_core::config::ReferenceOwner::Native(mgbfs_core::config::OwnerBackend::CubSortMerge),
+    ] {
+        for prededup in [false, true] {
+            for hash_first in [false, true] {
+                for owners in [[0, 1, 2, 3, 4, 5, 6, 7], [7, 3, 0, 6, 1, 5, 2, 4]] {
+                    for symmetric in [false, true] {
+                        fixture(symmetric, hash_first, &owners, backend, prededup);
+                    }
+                }
             }
         }
     }
@@ -66,6 +69,7 @@ fn fixture(
     hash_first: bool,
     owners: &[u32],
     library_owner: mgbfs_core::config::ReferenceOwner,
+    prededup: bool,
 ) {
     let graph = if symmetric {
         MatrixGroup::symmetric_permutation_matrices(4).unwrap()
@@ -100,21 +104,34 @@ fn fixture(
                         shards: world * 2,
                         job_buckets: 2,
                         bucket_capacity: 32,
-                        prededup: true,
+                        prededup,
                         generation_variant: 1,
                         untouched_vram_reserve: 1 << 30,
                     };
-                    let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
-                        &graph,
-                        seed,
-                        id,
-                        cfg,
-                        hash_first.then_some(128),
-                        64 << 20,
-                        false,
-                        library_owner,
-                    )
-                    .unwrap();
+                    let mut bfs =
+                        if let mgbfs_core::config::ReferenceOwner::Native(owner) = library_owner {
+                            DistributedNativeBfs::new_reference_with_owner(
+                                &graph,
+                                seed,
+                                id,
+                                cfg,
+                                hash_first.then_some(128),
+                                owner,
+                                256,
+                            )
+                        } else {
+                            DistributedNativeBfs::new_library_reference_with_owner(
+                                &graph,
+                                seed,
+                                id,
+                                cfg,
+                                hash_first.then_some(128),
+                                64 << 20,
+                                false,
+                                library_owner,
+                            )
+                        }
+                        .unwrap();
                     let bytes = Arc::new(Mutex::new(Vec::new()));
                     let mut archive = PinnedArchive::new(
                         TestDisk(bytes.clone()),

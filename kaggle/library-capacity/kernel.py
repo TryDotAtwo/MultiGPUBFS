@@ -1,4 +1,4 @@
-"""Fixed-4-shard calibration, same geometry for cuco and native."""
+"""Full 1/2-T4 regression for the N-peer runtime, all sanitizers, no speed panel."""
 import hashlib
 import os
 import urllib.request
@@ -15,17 +15,17 @@ if __name__ == "__main__":
         raise RuntimeError("PINNED_RUNNER_DIGEST_MISMATCH")
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
-    namespace.update(SOURCE_COMMIT="f5b52c9f240e89c5b8b30828919ef56c367fdad6",
+    namespace.update(SOURCE_COMMIT="fce7de137d2ffb121854759efcea330b7c25a803",
                      SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
                      SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
                      CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
-                     FULL_BFS_GATE=True, LOAD_SCREEN=True,
+                     FULL_BFS_GATE=True, LOAD_SCREEN=False,
                      NATIVE_COMPARISON=True,
-                     SANITIZER_TOOLS=())
+                     SANITIZER_TOOLS=("memcheck", "racecheck", "initcheck", "synccheck"))
     # Both pinned reference executables read these before allocation. The
     # runner preserves MGBFS_* environment for both native and library cases.
     os.environ["MGBFS_SHARDS"] = "4"
     os.environ["MGBFS_BUCKETS"] = "256"
-    print("SHARD_CALIBRATION: shards=4 buckets=256 for BOTH cuco/native; "
-          "fixed 96MiB library pools; five repetitions; no fresh sanitizer claim", flush=True)
+    print("N_PEER_REGRESSION: physical 1/2 T4 correctness, all sanitizers; "
+          "eight-device test remains an explicit separate hardware gate", flush=True)
     namespace["main"]()
