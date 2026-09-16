@@ -107,3 +107,11 @@ the missing-header RED build. The CPU fixture checks stream translation, byte
 counts, captured resource identity, allocator copy/deallocation, overflow before
 allocation, and propagation of pool exhaustion without fallback. This does not
 compile the actual cuco/RMM binding and does not validate CUDA device execution.
+
+The cuco/RMM binding probe was added in `830c0e1`. Kaggle v37 reached nvcc but
+failed at cuco's explicit extended-device-lambda requirement, before running any
+GPU fixture. `72bae3b` adds `--expt-extended-lambda` only to the cuco probe target.
+V38 pins `72bae3bc030d9e1fd597c7ab6171e70b030123d9`; its result is pending.
+The fixture checks integer-set insertion, duplicate counts, clear/reuse, fixed
+pool size and zero live pool allocations at teardown. Even a pass will not
+certify the proposed indirect Hash128 owner or full BFS integration.
