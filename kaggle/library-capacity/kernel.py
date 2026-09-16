@@ -1,4 +1,4 @@
-"""Diagnostic timelines for fixed-96-MiB cuco/native with batched control DMA."""
+"""RED contract: already-drained owner completion must not synchronize again."""
 import hashlib
 import urllib.request
 
@@ -14,12 +14,12 @@ if __name__ == "__main__":
         raise RuntimeError("PINNED_RUNNER_DIGEST_MISMATCH")
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
-    namespace.update(SOURCE_COMMIT=RUNNER_COMMIT,
+    namespace.update(SOURCE_COMMIT="11e2a274db5bff5619a56522957f062095e2f11c",
                      SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
                      SCREEN_REPEATS=1, SCREEN_WORLDS=(1, 2),
-                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=True,
-                     NATIVE_COMPARISON=True,
+                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
+                     FULL_BFS_GATE=False, LOAD_SCREEN=False,
+                     NATIVE_COMPARISON=False,
                      SANITIZER_TOOLS=())
-    print("CONTROL_DMA_PROFILE pool=96MiB archive_slots=256 worlds=1,2; "
-          "diagnostic traces only; no new performance or sanitizer claim", flush=True)
+    print("DRAINED_COMPLETION_RED: expected runtime assertion, not benchmark", flush=True)
     namespace["main"]()
