@@ -7,8 +7,9 @@ including compute, storage and network. Existing account credit is not the cap.
 
 - Pin a published source commit containing the eight-rank test (not only the
   earlier T4-tested runtime), dependency commits and build configuration.
-- Build CUDA for SM90, including the cuCollections library; native-only SM90
-  compilation does not prove the library build. This library build is pending.
+- Build CUDA for SM90, including the cuCollections library. The SM75/SM90
+  library build passed in [T4 v13](n-peer-t4-v13.md); H200 execution is still
+  unverified and must use the pinned toolchain/dependencies.
 - Prepare access using the existing authorized Vast session; do not create new
   credentials implicitly. Confirm a usable terminal/SSH path before spending.
 - Record the selected offer ID, hourly compute/storage rates, upload/download
@@ -78,5 +79,5 @@ must still be selected before renting.
 - Record actual billed cost and terminate the rental after durable outputs are
   secured. Report partial/capacity/deadline failures as INCOMPLETE.
 
-Unresolved before rental: reproducible library SM90 build, bounded launch and
+Unresolved before rental: bounded launch and
 teardown procedure, streaming/archive capacity configuration, final offer quote.
