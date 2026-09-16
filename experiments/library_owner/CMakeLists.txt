@@ -19,6 +19,10 @@ add_executable(owner_abi_invalid ../../tests/library_owner_abi_invalid.cpp)
 target_include_directories(owner_abi_invalid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(owner_abi_invalid PRIVATE mgbfs_library_owner)
 add_test(NAME owner_abi_invalid COMMAND owner_abi_invalid)
+add_executable(owner_source_gather ../../tests/owner_source_gather.cu)
+target_include_directories(owner_source_gather PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(owner_source_gather PRIVATE CUDA::cudart)
+add_test(NAME owner_source_gather COMMAND owner_source_gather)
 
 # Optional pinned cuco source supplied by the isolated GPU gate.
 if(DEFINED CUCO_ROOT)

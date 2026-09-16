@@ -223,6 +223,11 @@ def main():
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
             for tool in ("plain", *SANITIZER_TOOLS):
+                gather_command = [str(build / "owner_source_gather")]
+                if tool != "plain":
+                    gather_command = ["compute-sanitizer", "--tool", tool,
+                                      "--error-exitcode", "97", *gather_command]
+                run(gather_command, f"source-gather-gpu{gpu['index']}-{tool}", extra_env=device_env)
                 if CUCO_GATE:
                     cuco_command = [str(build / "cuco_pool_probe")]
                     if tool != "plain":

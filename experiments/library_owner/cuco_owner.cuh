@@ -3,6 +3,7 @@
 #include "cuco_index.hpp"
 #include "cuco_pool_allocator.hpp"
 #include "cuco_workspace_lease.hpp"
+#include "owner_source_gather.cuh"
 #include <cuco/static_set.cuh>
 #include <cub/device/device_select.cuh>
 #include <thrust/iterator/counting_iterator.h>
@@ -60,11 +61,6 @@ __global__ void survivor_flags(Ref persistent, uint32_t rows,
     flags[row] = representative != UINT32_MAX && minima[representative] == row &&
                  !persistent.contains(key_index(3, row));
   }
-}
-static __global__ void gather_sources(uint32_t const* selected, uint32_t rows,
-                               uint32_t const* input, uint32_t* output) {
-  for (uint32_t row = blockIdx.x * blockDim.x + threadIdx.x; row < rows;
-       row += gridDim.x * blockDim.x) output[row] = input[selected[row]];
 }
 static __global__ void append_keys(uint32_t const* selected, uint32_t rows,
     uint32_t const* candidate, size_t candidate_stride,
@@ -199,19 +195,16 @@ class CucoOwner {
         cuco_owner_detail::check(cub::DeviceSelect::Flagged(scratch_.data(), bytes,
             thrust::counting_iterator<uint32_t>{0}, static_cast<uint8_t*>(flags_.data()),
             data(selected_), data(control_), static_cast<int>(rows), stream_.value()));
+        gather_owner_sources<<<cuco_owner_detail::grid(rows), 256, 0, stream_.value()>>>(
+            data(selected_), data(control_), rows, input.source_indices, data(sources_));
+        cuco_owner_detail::check(cudaGetLastError());
         uint32_t counts[2]{};
         cuco_owner_detail::check(cudaMemcpyAsync(counts, control_.data(), sizeof(counts),
             cudaMemcpyDeviceToHost, stream_.value()));
         stream_.synchronize();
-        if (counts[1]) throw std::runtime_error("OWNER_INDEX_CORRUPTION");
+        if (counts[1] || counts[0] > rows) throw std::runtime_error("OWNER_INDEX_CORRUPTION");
         if (counts[0] > capacity_ - count_) throw std::runtime_error("OWNER_CAPACITY");
         staged_count_ = counts[0];
-        if (staged_count_) {
-          cuco_owner_detail::gather_sources<<<cuco_owner_detail::grid(staged_count_), 256,
-              0, stream_.value()>>>(data(selected_), staged_count_, input.source_indices, data(sources_));
-          cuco_owner_detail::check(cudaGetLastError());
-          stream_.synchronize();
-        }
       }
       pending_ = true;
       pending_epoch_ = epoch;
