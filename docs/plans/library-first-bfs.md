@@ -707,3 +707,42 @@ requested suballocations 179,555,431 bytes and final live 3,245,575 bytes.
 Those counters do not prove a smaller pool would fit fragmentation or bound
 full-device VRAM. The updated timing validator also rejects per-rank durable
 time below search time; all 30 measured rank outputs from v47 satisfy it.
+
+### V49 matched native comparison and independent 192 MiB screen
+
+Both completed PASS on source `5ea41ff0a9861c974f979a30c4562f92a168e0b8`.
+V49 contains 30 complete S10 samples (five per owner/world combination),
+identical 3,628,800-state layer counts and all rank archive verifications.
+All timed backends use 256 archive slots, DENSE tensor generation variant 1,
+batch 32768, matrix_u8, and one-million-record per-rank state/hash capacities.
+The native code remains immutable `013ed5c`; library pools are 256 MiB/rank.
+
+| Backend | T4s | Search median s | Durable median s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| Native CUB_SORT_MERGE | 1 | 1.031818 | 4.800959 | 835 |
+| cuCO | 1 | 2.090342 | 4.967951 | 1061 |
+| cuDF | 1 | 9.850057 | 12.030324 | 1099 |
+| Native CUB_SORT_MERGE | 2 | 0.850224 | 3.919483 | 457, 457 |
+| cuCO | 2 | 1.720673 | 4.280852 | 689, 689 |
+| cuDF | 2 | 6.384307 | 8.526411 | 719, 719 |
+
+Independent `mgbfs-library-capacity-t4` v1 completed all 20 samples with
+192 MiB pools and otherwise matched settings, on a different T4 pair. cuCO:
+1 rank search/durable 2.118323/4.992234 s, sampled 997 MiB; 2 ranks
+1.681172/4.260087 s, sampled 625 MiB each. cuDF: 1 rank 9.702025/11.870675 s,
+1035 MiB; 2 ranks 6.612568/8.862296 s, 655 MiB each. Plain correctness and
+archives passed; that independent run does not provide fresh sanitizer evidence.
+
+Evidence directories: `test_results/library-owner-v49/library-owner/` and
+`test_results/library-capacity-v1/library-owner/`. All memory figures remain
+50 ms external samples, not guaranteed absolute peaks. These settings fail
+the search-time <=20% regression gate and do not improve sampled VRAM versus
+native. No CayleyPy measurements or DB execution are included in this panel.
+
+Next diagnosis: `CucoOwner::compare` performs a count-copy stream drain and,
+when survivors exist, another stream drain after gathering source indices.
+This is a code-confirmed host/GPU boundary per nonempty shard, not a measured
+attribution of the 2x regression. Profile these boundaries and table operations
+before claiming cuCollections itself is the bottleneck. A possible optimization
+is device-count-guarded source gathering before the existing count drain,
+preserving ready-on-return indices and capacity/credit semantics; not yet coded.
