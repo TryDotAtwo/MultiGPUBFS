@@ -69,6 +69,19 @@ same exact test filter. Save exit statuses and complete logs. Then separately
 test the CLI with eight torchrun processes; the device-thread fixture does not
 prove process bootstrap. Use a fresh rendezvous/output path for every case.
 
+The bounded runner is:
+
+```sh
+python scripts/eight_gpu_gate.py --executable <release-library_multi_gpu-executable> --logs <new-directory> --timeout-seconds <remaining-gate-budget>
+```
+
+It records eight distinct H200 UUIDs and topology, runs the explicitly ignored
+oracle with an exact filter, then repeats it under all four sanitizers. A zero
+exit code without exactly one passed/non-ignored test or without a sanitizer
+summary is rejected. Failure retains logs and an INCOMPLETE summary. One timeout
+covers the whole gate and kills its process group; it does not stop billing.
+Local host tests check orchestration and injected failures only, not CUDA.
+
 ## LRX13 acceptance
 
 The platform-independent streaming entry point is now
