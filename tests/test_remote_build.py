@@ -15,6 +15,23 @@ except ImportError:
 
 
 class RemoteBuildTests(unittest.TestCase):
+    def test_sanitizer_is_bundled_and_cannot_silently_drift_from_compiler(self):
+        self.assertTrue(hasattr(remote_build, 'toolchain_components'))
+        recipe = [('cuda_nvcc', '12.9.86', '0'*64),
+                  ('cuda_cudart', '12.9.79', '1'*64)]
+        planned = remote_build.toolchain_components(recipe)
+        self.assertEqual(planned[:2], recipe)
+        sanitizer = [row for row in planned if row[0] == 'cuda_sanitizer_api']
+        self.assertEqual(len(sanitizer), 1)
+        self.assertEqual(sanitizer[0][1].split('.')[:2], ['12', '9'])
+        self.assertEqual(len(sanitizer[0][2]), 64)
+        for invalid in (recipe[:1],
+                        [('cuda_nvcc', '12.8.93', '0'*64), recipe[1]],
+                        [recipe[0], ('cuda_cudart', '13.0.0', '1'*64)],
+                        recipe + [recipe[0]], recipe + sanitizer):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                remote_build.toolchain_components(invalid)
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux build preflight')
     def test_wrong_source_pin_fails_before_any_download_and_saves_summary(self):
         with tempfile.TemporaryDirectory() as folder:

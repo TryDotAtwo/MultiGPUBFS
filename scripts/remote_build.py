@@ -16,6 +16,17 @@ import sys
 import time
 
 
+def toolchain_components(recipe):
+    """Bundle the matching sanitizer instead of inheriting a host tool silently."""
+    versions = {name: version for name, version, _ in recipe}
+    if (len(versions) != len(recipe) or 'cuda_sanitizer_api' in versions or
+            any(not versions.get(name, '').startswith('12.9.')
+                for name in ('cuda_nvcc', 'cuda_cudart'))):
+        raise ValueError('MATCHED_CUDA_12_9_TOOLCHAIN_REQUIRED')
+    return list(recipe) + [('cuda_sanitizer_api', '12.9.79',
+        'e23aad21132ff58b92a22aad372a7048793400b79c625665d325d4ecec6979bf')]
+
+
 def test_executable(output):
     artifacts, finished = set(), []
     for line in output.splitlines():
@@ -94,10 +105,11 @@ def main():
             raise ValueError('SOURCE_CHANGES')
         recipe = load_recipe(source/'kaggle/library-owner/kernel.py', 'library_build_recipe')
         primitives = load_recipe(source/'kaggle/native-primitives/kernel.py', 'primitive_build_recipe')
-        report.update(cuda_components=recipe.CUDA_COMPONENTS, cuco_commit=recipe.CUCO_COMMIT,
+        components = toolchain_components(recipe.CUDA_COMPONENTS)
+        report.update(cuda_components=components, cuco_commit=recipe.CUCO_COMMIT,
                       cutlass_commit=primitives.CUTLASS_COMMIT, rust_version=primitives.RUST_VERSION)
         sdk = work/'cuda-12.9'; sdk.mkdir()
-        for component, version, digest in recipe.CUDA_COMPONENTS:
+        for component, version, digest in components:
             name = f'{component}-linux-x86_64-{version}-archive'
             archive = work/(name+'.tar.xz')
             url = f'https://developer.download.nvidia.com/compute/cuda/redist/{component}/linux-x86_64/{archive.name}'
@@ -116,6 +128,10 @@ def main():
         env['CUDACXX'] = str(sdk/'bin/nvcc')
         env['PATH'] = str(sdk/'bin') + ':' + env['PATH']
         run([sdk/'bin/nvcc', '--version'], 'cuda-version')
+        sanitizer = sdk/'compute-sanitizer/compute-sanitizer'
+        run([sanitizer, '--version'], 'sanitizer-version')
+        report['sanitizer_executable'] = str(sanitizer)
+        env['PATH'] = str(sanitizer.parent) + ':' + env['PATH']
         venv = work/'venv'
         run([sys.executable, '-m', 'venv', '--without-pip', venv], 'venv')
         python = venv/'bin/python'

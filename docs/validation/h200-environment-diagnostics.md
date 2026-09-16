@@ -9,7 +9,11 @@ The shared project budget remains USD 100, including a USD 20 reserve.
 ## Reproduction
 
 - BFS source: `cc6aa3c` (two-GPU build).
-- CUDA toolkit / Compute Sanitizer: 12.8.
+- BFS compiler/runtime: CUDA 12.9 (nvcc 12.9.86). Initial diagnostics used the
+  host Compute Sanitizer 12.8; this mismatch was discovered by inspecting
+  `runtime-env.json` and both nvcc versions. A matching 12.9 sanitizer is required
+  for the next validation. Do not present the initial diagnostics as a matched
+  toolchain gate.
 - Two physical H200 devices connected through NV18.
 - Host image NCCL package: `2.31.2-1+cuda13.3`.
 - Diagnostic NCCL: upstream `v2.28.9-1`, commit
@@ -55,6 +59,28 @@ version changes, disable API reporting globally, or reclassify this run as PASS.
 If expected vendor probes are eventually classified separately, that must be a
 documented validation-contract change with complete raw logs retained and unknown
 API errors, memory errors, races, and synchronization errors still fatal.
+
+## Matched-tool follow-up
+
+The official CUDA 12.9.1 redistribution manifest identifies sanitizer 12.9.79,
+SHA256 `e23aad21132ff58b92a22aad372a7048793400b79c625665d325d4ecec6979bf`.
+The downloaded archive matched this digest; its executable reports Compute
+Sanitizer 2025.2.1.0. The NCCL-only two-device probe still reports 16 API errors
+under that tool, with successful NCCL initialization. Thus the initial toolchain
+mismatch is real but is not the explanation for these vendor probe diagnostics.
+
+`remote_build.py` now includes the matching sanitizer in its verified downloads
+and exported PATH. Unit tests reject compiler/runtime version drift. This change
+has not yet been exercised through a full fresh remote build.
+
+`audit_nccl_sanitizer.py` classifies the complete initial memcheck log as 384
+kernel-availability and 5,374 peer-already-enabled diagnostics at the exact
+NCCL host call sites above. It rejects unknown call sites, extra diagnostic
+categories, missing/duplicate summaries, and unaccounted counts. Its output
+always has `gate_pass: false`: neither library identity nor oracle completion is
+proved by a diagnostic classifier. The existing eight-GPU gate is unchanged.
+The raw log SHA256 is
+`82d0385d35c7f12762419a376bbbb0597d0ab336e930921fe96468e84ad8c70d`.
 
 ## Evidence location
 
