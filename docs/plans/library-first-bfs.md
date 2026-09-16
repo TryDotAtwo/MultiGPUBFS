@@ -813,3 +813,29 @@ unprofiled performance or solely the timed BFS interval. Fixed Nsight package
 Reference: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/Packages
 Local harness tests: 36 passed, two POSIX process tests skipped on Windows.
 Actual diagnostic capture is still pending; do not claim profiler attribution.
+
+### Allocation attribution and transient-table RED gate
+
+V50 rank-0 byte-exact allocation plans show library-minus-native deltas of
+236,222,976 bytes on one rank and 244,364,032 bytes on two ranks. State,
+generation, routing and previous/current hash allocations are identical.
+The difference is the 268,435,456-byte library pool plus 1,966,080-byte layout
+scratch, minus the native accepted/selection/owner storage that is already
+omitted in the library runtime. Therefore there is no evidence here of both
+complete owner backends being allocated simultaneously.
+
+cuco requested-suballocation peaks in the first sample were 179,555,431 bytes
+(one rank) and 107,400,615 bytes (two ranks), within the 256 MiB physical pool.
+These peaks neither establish an admissible smaller pool nor bound fragmentation.
+Source audit identifies one incoming-capacity transient table per shard despite
+serialized shared-workspace use. Main notebook v51 tests its extra allocation
+at source `fecb35b711376684be23399e30a830c526ba28a3`, launch `01d3a23`;
+expected RED condition is `SHARED_WORKSPACE_MUST_REMOVE_DUPLICATED_TRANSIENT_TABLE`.
+The test has been launched, not yet observed failing. Runtime remains unchanged.
+
+Follow-up harness regression now tags the standalone `measure.json` as profiled
+too, not only the screen summary. RED observed, then 36 tests passed (two POSIX
+tests skipped). Already-running capacity v4 predates this follow-up: its raw
+`measure.json` files must be interpreted using the enclosing diagnostic screen
+summary and must NOT be included in unprofiled statistics. Do not restart the
+live diagnostic just to change metadata.

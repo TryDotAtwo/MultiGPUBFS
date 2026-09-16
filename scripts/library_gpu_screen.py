@@ -90,6 +90,9 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
     try:
         row = run_group(command, output, 'measure', env, timeout=1800)
         row['profiled'] = nsys is not None
+        # Keep the standalone measurement artifact as unambiguous as the
+        # enclosing screen summary; downstream consumers may read either.
+        (output/'measure.json').write_text(json.dumps(row, indent=2))
         report['measurement'] = row
         validate_result(row, expected_states, pool_bytes, owner=owner,
             expected=dict(group=group, batch=batch, world_size=world,

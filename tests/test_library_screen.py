@@ -19,6 +19,7 @@ class ScreenContract(unittest.TestCase):
         def launch(command, out, label, env, timeout):
             launched.append(command)
             (out/'timeline.nsys-rep').write_bytes(b'trace fixture')
+            (out/'measure.json').write_text(json.dumps(row))
             return row
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -41,6 +42,8 @@ class ScreenContract(unittest.TestCase):
             saved = json.loads((root/'logs'/'screen-summary.json').read_text())
             self.assertNotIn('statistics', saved)
             self.assertTrue(saved['measurement']['profiled'])
+            raw = json.loads((root/'logs'/'measure.json').read_text())
+            self.assertTrue(raw.get('profiled'), 'raw timings must retain profiler provenance')
 
     def test_profile_without_trace_is_failure_not_timing_evidence(self):
         row = self.row()
