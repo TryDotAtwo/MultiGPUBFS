@@ -480,3 +480,10 @@ All 117 Python tests passed locally. CPU tests for mgbfs-core, mgbfs-runtime,
 mgbfs-cli and mgbfs-cuda passed; the workspace-wide command cannot build the
 separate root GPU package without MULTIGPUBFS_CUDA_LIB_DIR. Neither CPU result
 establishes GPU correctness or performance.
+
+Screen-result validation also checks the requested group, batch, profile,
+pre-dedup, world/rank inventory, declared capacities and generation mode against
+every rank record. Agreement between ranks alone is insufficient: both ranks
+could otherwise have run the same unintended configuration. Ten screen contract
+tests pass, including wrong-workload and missing-peer rejection. V43 remains
+running; the next screening source is not launched over that live job.

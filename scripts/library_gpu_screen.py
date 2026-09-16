@@ -7,7 +7,7 @@ from pathlib import Path
 from distributed_gpu_bench import run_group, stats
 
 
-def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'):
+def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL', expected=None):
     """Reject incomplete/search-only/fallback runs before interpreting timings."""
     if row.get('status') != 'COMPLETE':
         raise ValueError('SCREEN_INCOMPLETE')
@@ -20,14 +20,23 @@ def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'
     if type(durable) not in (int, float) or not math.isfinite(durable) or durable < 0:
         raise ValueError('SCREEN_DURABLE')
     ranks = row.get('rank_results')
-    if not ranks:
+    if not isinstance(ranks, list) or not ranks or any(not isinstance(rank, dict) for rank in ranks):
         raise ValueError('SCREEN_RANKS')
+    if expected is not None and 'world_size' in expected:
+        world = expected['world_size']
+        ids = [rank.get('rank') for rank in ranks]
+        if (len(ranks) != world or any(type(rank) is not int for rank in ids)
+                or sorted(ids) != list(range(world))):
+            raise ValueError('SCREEN_RANKS')
     for rank in ranks:
         if (rank.get('owner_backend') != owner
                 or rank.get('archive_enabled') is not True
                 or rank.get('warmup_completed') is not True
                 or rank.get('library_pool_reserved_bytes') != pool_bytes):
             raise ValueError('SCREEN_LIBRARY_CONTRACT')
+        for field, value in (expected or {}).items():
+            if type(rank.get(field)) is not type(value) or rank[field] != value:
+                raise ValueError('SCREEN_CONFIGURATION: ' + field)
 
 
 def run_case(cli, output, archive_root, group, expected_states, world, batch,
@@ -66,7 +75,11 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
     try:
         row = run_group(command, output, 'measure', env, timeout=1800)
         report['measurement'] = row
-        validate_result(row, expected_states, pool_bytes, owner=owner)
+        validate_result(row, expected_states, pool_bytes, owner=owner,
+            expected=dict(group=group, batch=batch, world_size=world,
+                frontier_profile=profile, pre_dedup=pre_dedup,
+                declared_capacity_records=capacity, declared_state_ring_records=ring,
+                capacity_mode='MaxPerRank', hash_first_generation='SCALAR', generation_variant=1))
         for rank in range(world):
             archive = archive_root/f'archive-rank-{rank}.mgbfsar1'
             verified = subprocess.run([str(cli), 'verify', str(archive)], env=env,
