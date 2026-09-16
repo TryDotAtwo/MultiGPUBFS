@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "c6348bba6f7d9f6937c48e06b168f281b7ccf7c7"
+SOURCE_COMMIT = "7bd6a6a6f907774ac01b827735770c672c1155a7"
 FULL_BFS_GATE = True
 LOAD_SCREEN = False
 CUCO_GATE = True
