@@ -213,6 +213,11 @@ def main():
                         cuco_command = ["compute-sanitizer", "--tool", tool,
                                         "--error-exitcode", "97", *cuco_command]
                     run(cuco_command, f"cuco-gpu{gpu['index']}-{tool}", extra_env=device_env)
+                    owner_command = [str(build / "cuco_owner_probe")]
+                    if tool != "plain":
+                        owner_command = ["compute-sanitizer", "--tool", tool,
+                                         "--error-exitcode", "97", *owner_command]
+                    run(owner_command, f"cuco-owner-gpu{gpu['index']}-{tool}", extra_env=device_env)
                 command = [executable] if tool == "plain" else [
                     "compute-sanitizer", "--tool", tool, "--error-exitcode", "97", executable]
                 run(command, f"gpu{gpu['index']}-{tool}", extra_env=device_env)

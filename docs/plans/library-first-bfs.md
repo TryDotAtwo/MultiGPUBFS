@@ -454,3 +454,11 @@ the fixed 1 GiB library pool; it excludes NCCL/driver and pinned archive memory.
 Evidence: `test_results/library-owner-v36/library-owner/screen-s10-dense/`.
 This single untuned sample does not establish the <=20% acceptance requirement
 or a speed/memory win against the preserved baseline. The full panel is pending.
+
+V40 at `e6a10f8fb56bfac483bf3d79c22b9bd7e5175578` completed the cuco
+indexed-Hash128 membership fixture independently on both T4s, plain and all four
+sanitizers, with zero errors or racecheck warnings. Equality covered every hash
+word and duplicate aliases across all four storage tags. This is not a multi-GPU
+owner or BFS result: candidate-slot reuse, stable commit, deterministic provenance
+and actual CUCO_INDEXED runtime integration are still outstanding. Full peak VRAM
+and the repeated baseline comparison remain required; the goal stays active.

@@ -133,3 +133,21 @@ not full device VRAM or an indexed-owner benchmark. Evidence is under
 `test_results/library-owner-v39/library-owner/cuco-gpu*-*.log`.
 Next required implementation remains indirect four-word Hash128 membership,
 stable committed indices, deterministic survivor provenance and owner commit.
+
+V40 completed PASS at source `e6a10f8fb56bfac483bf3d79c22b9bd7e5175578`.
+Downloaded summary and all ten cuco logs were inspected. On each physical T4,
+the indexed fixture inserted 20 indices spanning four storage tags and retained
+five distinct full-128-bit keys; reinsertion added zero. The four non-base keys
+each differ in exactly one word. Plain execution and memcheck, racecheck,
+initcheck and synccheck passed independently on both devices, with zero errors
+and zero racecheck warnings. The fixed pool remained 64 MiB, with zero live
+allocations at teardown and 1281 bytes peak suballocation (not device VRAM).
+Evidence: `test_results/library-owner-v40/library-owner/`.
+
+Coverage limitation: storage views alias the same immutable planes in this
+fixture. It does not exercise candidate-slot overwrite, stable commit publication,
+deterministic KEEP_FIRST selection, capacity exhaustion, communication or full
+BFS. The emitted scope still says `cuco_pool_binding_only`; the source pin and
+fixture identify the additional indexed-key coverage. No CUCO_INDEXED owner is
+integrated yet. The next implementation must establish stable committed indices
+and transient-slot lifetime before any end-to-end performance comparison.
