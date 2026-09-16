@@ -43,13 +43,17 @@ int main() {
   auto copied = allocator;
   copied.deallocate(pointer, 3, Stream{19});
   assert(first.releases == 1 && first.bytes == 24 && first.stream == 19);
+  mgbfs::CucoPoolAllocator<char, Resource, View> rebound{allocator};
+  auto* scratch = rebound.allocate(13, Stream{23});
+  assert(first.bytes == 13 && first.stream == 23 && other.allocations == 0);
+  rebound.deallocate(scratch, 13, Stream{23});
   try {
     allocator.allocate(std::numeric_limits<std::size_t>::max(), Stream{17});
     return 1;
   } catch (std::bad_array_new_length const&) {}
-  assert(first.allocations == 1);
+  assert(first.allocations == 2);
   first.full = true;
   try { allocator.allocate(1, Stream{17}); return 2; }
   catch (std::bad_alloc const&) {}
-  assert(first.allocations == 2 && other.allocations == 0);
+  assert(first.allocations == 3 && other.allocations == 0);
 }

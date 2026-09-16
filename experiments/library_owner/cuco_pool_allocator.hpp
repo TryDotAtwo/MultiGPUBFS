@@ -19,6 +19,10 @@ class CucoPoolAllocator {
 
   explicit CucoPoolAllocator(ResourceRef resource) : resource_(std::move(resource)) {}
 
+  template <class U>
+  CucoPoolAllocator(CucoPoolAllocator<U, ResourceRef, ResourceStream> const& other)
+      : resource_(other.resource_) {}
+
   template <class Stream>
   T* allocate(std::size_t count, Stream stream) {
     if (count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
@@ -35,6 +39,7 @@ class CucoPoolAllocator {
   }
 
  private:
+  template <class, class, class> friend class CucoPoolAllocator;
   ResourceRef resource_;
 };
 
