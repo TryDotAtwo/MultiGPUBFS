@@ -13,6 +13,11 @@ SOURCE_COMMIT = "b3c79190f4d937b67bc8f77a6bf6af53032db328"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 CUCO_GATE = True
+# Screening run: native sources are unchanged from the completed v43 gate.
+# Set all four names for a fresh sanitizer gate after native code changes.
+SANITIZER_TOOLS = ()
+PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 43,
+    "source_commit": "7bd6a6a6f907774ac01b827735770c672c1155a7"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
@@ -65,7 +70,9 @@ def main():
         "--format=csv,noheader,nounits"], text=True)
     gpus = gate.validate_gpus(inventory)
     manifest = {"source_commit": actual, "packages_requested": PACKAGES,
-                "gpus": gpus, "kind": "library_characterization", "status": "RUNNING"}
+                "gpus": gpus, "kind": "library_characterization", "status": "RUNNING",
+                "sanitizer_tools": list(SANITIZER_TOOLS),
+                "prior_sanitizer_evidence": PRIOR_SANITIZER_EVIDENCE}
     summary_path = logs / "summary.json"
     summary_path.write_text(json.dumps(manifest, indent=2))
     env = isolated_environment(os.environ)
@@ -206,7 +213,7 @@ def main():
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
-            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            for tool in ("plain", *SANITIZER_TOOLS):
                 if CUCO_GATE:
                     cuco_command = [str(build / "cuco_pool_probe")]
                     if tool != "plain":
@@ -240,7 +247,7 @@ def main():
             manifest["full_bfs_gate"] = bfs_executable is not None
         if multi_executable is not None:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=",".join(gpu["uuid"] for gpu in gpus))
-            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+            for tool in ("plain", *SANITIZER_TOOLS):
                 command = [multi_executable, "--test-threads=1"]
                 if tool != "plain":
                     command = ["compute-sanitizer", "--tool", tool,

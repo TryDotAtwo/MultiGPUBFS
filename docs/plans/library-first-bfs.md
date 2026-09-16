@@ -487,3 +487,20 @@ every rank record. Agreement between ranks alone is insufficient: both ranks
 could otherwise have run the same unintended configuration. Ten screen contract
 tests pass, including wrong-workload and missing-peer rejection. V43 remains
 running; the next screening source is not launched over that live job.
+
+V43 completed PASS at `7bd6a6a6f907774ac01b827735770c672c1155a7` on two
+physical T4s. Both owner backends passed full BFS oracle tests on each GPU
+and the two-device NCCL fixture, plain and all four sanitizers, with zero
+errors and zero racecheck warnings. The cuco common ABI fixture also passed
+all tools on both GPUs. Six actual two-process CLI scenarios completed:
+S4 DENSE (24 states), S4 HASH_FIRST Tensor (24), U4m2 DENSE (64), for each
+owner. All twelve rank archives have VERIFIED checksum/count reports.
+Evidence: `test_results/library-owner-v43/library-owner/`.
+These are correctness results, not performance acceptance.
+
+The next S10 paired screen retains plain correctness checks but does not
+repeat the unchanged sanitizer suite. Its manifest lists executed sanitizer
+tools (empty) separately from prior v43 provenance. No native/CUDA/Rust
+source changed since that gate. Both owners use identical matrix encoding,
+capacities and output contracts; one sample each cannot establish Pareto
+acceptance or the <=20% regression condition.
