@@ -242,7 +242,7 @@ class CucoOwner {
     cuco_owner_detail::check(cudaGetDevice(&device));
     if (device != device_) throw std::runtime_error("OWNER_DEVICE");
   }
-  rmm::device_buffer buffer(size_t bytes) { return {bytes, stream_, resource_}; }
+  rmm::device_buffer buffer(size_t bytes) { return rmm::device_buffer{bytes, stream_, resource_}; }
   std::unique_ptr<Set> make_set(size_t maximum_rows, IndexKeyViews views) {
     if (maximum_rows > std::numeric_limits<size_t>::max() / 2)
       throw std::runtime_error("OWNER_TABLE_CAPACITY");

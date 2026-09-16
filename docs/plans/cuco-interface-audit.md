@@ -151,3 +151,19 @@ BFS. The emitted scope still says `cuco_pool_binding_only`; the source pin and
 fixture identify the additional indexed-key coverage. No CUCO_INDEXED owner is
 integrated yet. The next implementation must establish stable committed indices
 and transient-slot lifetime before any end-to-end performance comparison.
+
+The first actual owner implementation is `42a7bd4`: fixed persistent/transient
+cuco sets with full-key indirect equality, candidate-row atomic minima, CUB stable
+selection, stable accepted-key copy before persistent-index insertion, and
+preallocated input/result/select scratch. Single-stream reference comparison
+has explicit host count/result waits; no speed/overlap claim. The GPU contract
+covers previous/current/accepted exclusion, slot reuse, KEEP_FIRST with descending
+source IDs, exact append-order export, credit/capacity poisoning and epoch replay.
+The missing-header local RED check preceded implementation; it is not a GPU test.
+
+Kaggle v41 at that source stopped in nvcc before execution: copy-list return
+cannot call RMM's explicit device_buffer constructor. The return expression is
+now explicitly typed. The next fixture also adds non-tile-aligned multi-block
+batches up to 4097 rows, independently checked against a CPU full-key set. Actual
+GPU owner execution, C ABI/runtime integration and end-to-end timings remain
+unverified until their respective gates run.

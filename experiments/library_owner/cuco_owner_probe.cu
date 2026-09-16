@@ -8,6 +8,7 @@
 #include <vector>
 #include <iostream>
 #include <stdexcept>
+#include <set>
 
 namespace {
 using Key = std::array<uint32_t, 4>;
@@ -144,6 +145,41 @@ int main() {
       owner.commit(9, 0);
       rejects([&] { owner.compare(9, {}); }, "EPOCH_REPLAY");
       stream.synchronize();
+    }
+    {
+      // Non-tile-aligned, multi-block batches with an independent full-key CPU
+      // oracle. This catches arbitrary insert-winner provenance, broken stable
+      // compaction, and keys lost when the transient planes are overwritten.
+      Input large(4097, stream.view(), resource);
+      mgbfs::CucoOwner owner({}, {}, 6000, 4097, stream.view(), resource);
+      std::set<Key> seen;
+      std::vector<Key> accepted;
+      for (uint32_t batch = 0; batch < 4; ++batch) {
+        std::vector<Key> keys;
+        std::vector<uint32_t> ids, expected;
+        for (uint32_t row = 0; row < 4097 - batch * 73; ++row) {
+          uint32_t const value = (row * 37 + batch * 613) % 5003;
+          // Intentional repeats plus variation in every hash component.
+          uint32_t const identity = value / 2;
+          Key key{identity % 17, identity / 17, identity ^ 0xaabbccdd,
+                  identity * 2654435761u};
+          uint32_t const source = 90000 - row * 3;
+          keys.push_back(key);
+          ids.push_back(source);
+          if (seen.insert(key).second) {
+            expected.push_back(source);
+            accepted.push_back(key);
+          }
+        }
+        large.upload(keys, ids);
+        auto result = owner.compare(batch + 1, large.candidates());
+        require(read(result, stream.view()) == expected, "MULTIBLOCK_CPU_SURVIVORS");
+        owner.commit(batch + 1, result.rows);
+        stream.synchronize();
+        require(read_keys(owner.export_committed(), stream.view()) == accepted,
+                "MULTIBLOCK_CPU_ACCEPTED_KEYS");
+      }
+      owner.seal();
     }
   }
   stream.synchronize();
