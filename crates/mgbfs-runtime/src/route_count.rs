@@ -3,11 +3,17 @@ use mgbfs_core::Result;
 
 /// Validate the split published by exchange packing before either owner reads
 /// its range. UINT32_MAX in the first word is the pack kernel's fatal marker.
-pub fn packed_count(input: u32, owners: [u32; 2]) -> Result<u32> {
+pub fn packed_count(input: u32, owners: impl AsRef<[u32]>) -> Result<u32> {
+    let owners = owners.as_ref();
+    if !owners.len().is_power_of_two() || owners.len() > 8 {
+        return Err("EXCHANGE_OWNER_COUNT".into());
+    }
     if owners[0] == u32::MAX {
         return Err("EXCHANGE_SOURCE_REF".into());
     }
-    let count = owners[0].checked_add(owners[1]).ok_or("EXCHANGE_COUNT_BOUND")?;
+    let count = owners.iter().try_fold(0u32, |total, &rows| {
+        total.checked_add(rows).ok_or("EXCHANGE_COUNT_BOUND")
+    })?;
     if count > input {
         return Err("EXCHANGE_COUNT_BOUND".into());
     }
