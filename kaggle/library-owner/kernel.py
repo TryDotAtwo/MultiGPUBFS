@@ -17,6 +17,8 @@ SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 256 << 20
+NATIVE_COMPARISON = True
+NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Screening run: native sources are unchanged from the completed v43 gate.
 # Set all four names for a fresh sanitizer gate after native code changes.
@@ -307,20 +309,49 @@ def main():
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
                 from distributed_gpu_bench import stats
+                if NATIVE_COMPARISON:
+                    preserved = work / "preserved-native"
+                    gate.checkout("https://github.com/TryDotAtwo/MultiGPUBFS.git",
+                                  NATIVE_BASELINE_COMMIT, preserved, env, logs, "preserved-native")
+                    preserved_build = work / "preserved-native-build"
+                    preserved_env = dict(device_env, MGBFS_CUDA_LIB_DIR=str(preserved_build),
+                        LD_LIBRARY_PATH=str(preserved_build) + ":" + device_env["LD_LIBRARY_PATH"])
+                    preserved_env.pop("MGBFS_LIBRARY_OWNER_LIB_DIR", None)
+                    def preserved_run(command, name):
+                        return gate.run(command, cwd=preserved, env=preserved_env,
+                                        logs=logs, name=name, timeout=1800)
+                    preserved_run([str(venv / "bin/cmake"), "-S", "cuda", "-B", str(preserved_build),
+                        "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
+                        "-DCMAKE_CUDA_ARCHITECTURES=75",
+                        "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+                        "-DCUTLASS_ROOT=" + str(cutlass)], "preserved-configure")
+                    preserved_run([str(venv / "bin/cmake"), "--build", str(preserved_build),
+                                   "--target", "mgbfs_cuda", "-j2"], "preserved-cuda-build")
+                    preserved_run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-runtime",
+                                   "--features", "cuda", "--example", "distributed_bench"], "preserved-rust-build")
+                    preserved_run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli"],
+                                  "preserved-cli-build")
+                    manifest["native_baseline_commit"] = NATIVE_BASELINE_COMMIT
                 panel = {}
                 for world in SCREEN_WORLDS:
                     for repeat in range(SCREEN_REPEATS):
                         owners = ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                        if NATIVE_COMPARISON:
+                            owners += ("CUB_SORT_MERGE",)
                         if repeat % 2:
                             owners = owners[::-1]
                         for owner in owners:
                             label = f"screen-s10-dense-{owner.lower()}-w{world}-r{repeat}"
-                            result = run_case(cli, logs / label, work / label,
+                            native = owner == "CUB_SORT_MERGE"
+                            case_cli = str(preserved / "target/release/mgbfs") if native else cli
+                            extra = {"native_example": str(preserved / "target/release/examples/distributed_bench")} if native else {}
+                            result = run_case(case_cli, logs / label, work / label,
                                 "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
-                                SCREEN_POOL_BYTES, "DENSE", "ON", device_env, owner=owner)
+                                0 if native else SCREEN_POOL_BYTES, "DENSE", "ON",
+                                preserved_env if native else device_env, owner=owner, **extra)
                             panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
                 manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
-                manifest["load_screen"] = "S10 DENSE paired owners, five repeats on 1/2 T4; reduced fixed reserves; native acceptance pending"
+                manifest["load_screen"] = "S10 DENSE owners and preserved native, five repeats on 1/2 T4; matched matrix settings; tuned Pareto acceptance pending"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

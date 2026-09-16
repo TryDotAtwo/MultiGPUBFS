@@ -534,3 +534,16 @@ screen settings retained. This is a fixed-capacity memory experiment, not a
 promise to predict an unknown graph peak; overflow remains fatal. Each run
 warms up and verifies both/every archive. Native/CayleyPy comparisons and
 full-peak acceptance remain outstanding regardless of this panel's outcome.
+
+The following panel adds preserved native commit
+`013ed5c979f4225db273e0015fa9ed72fd230c90`, built unmodified with the same pinned
+CUDA SDK and CUTLASS as the library reference. The screen helper accepts its
+old example-binary argument interface and verifies archives using that commit's
+CLI. It requires an explicit native selection, no library pool, and native
+backend records; library selection cannot silently invoke the old binary.
+Two added CPU tests cover native metadata and launcher/verifier dispatch.
+The paired settings remain S10 DENSE, matrix_u8 state/archive, batch 32768,
+pre-dedup ON, capacity/ring 1,000,000 per rank, five repeats on each topology.
+This is a matched baseline point, not proof against the best tuned native.
+V45 is still running the prior two-owner panel; this added native panel has
+not yet been submitted or GPU-verified.

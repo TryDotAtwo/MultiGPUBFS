@@ -29,10 +29,13 @@ def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'
                 or sorted(ids) != list(range(world))):
             raise ValueError('SCREEN_RANKS')
     for rank in ranks:
+        native = owner in ('CUB_SORT_MERGE', 'BMMA_BUCKET')
+        if native and (pool_bytes != 0 or not rank.get('backend', '').startswith('native_')):
+            raise ValueError('SCREEN_NATIVE_CONTRACT')
         if (rank.get('owner_backend') != owner
                 or rank.get('archive_enabled') is not True
                 or rank.get('warmup_completed') is not True
-                or rank.get('library_pool_reserved_bytes') != pool_bytes):
+                or rank.get('library_pool_reserved_bytes', 0 if native else None) != pool_bytes):
             raise ValueError('SCREEN_LIBRARY_CONTRACT')
         for field, value in (expected or {}).items():
             if type(rank.get(field)) is not type(value) or rank[field] != value:
@@ -40,13 +43,17 @@ def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'
 
 
 def run_case(cli, output, archive_root, group, expected_states, world, batch,
-             capacity, ring, pool_bytes, profile, pre_dedup, inherited, *, owner='CUDF_RELATIONAL'):
+             capacity, ring, pool_bytes, profile, pre_dedup, inherited, *, owner='CUDF_RELATIONAL',
+             native_example=None):
     """One unprofiled screening run; retain archives and all measurement logs."""
     if world not in (1, 2) or profile not in ('DENSE', 'HASH_FIRST'):
         raise ValueError('SCREEN_CONFIG')
-    if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED'):
+    native = owner in ('CUB_SORT_MERGE', 'BMMA_BUCKET')
+    if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('SCREEN_OWNER')
-    if pre_dedup not in ('ON', 'OFF') or min(batch, capacity, ring, pool_bytes) <= 0:
+    if native != (native_example is not None) or (pool_bytes != 0 if native else pool_bytes <= 0):
+        raise ValueError('SCREEN_BACKEND_CONFIG')
+    if pre_dedup not in ('ON', 'OFF') or min(batch, capacity, ring) <= 0:
         raise ValueError('SCREEN_CONFIG')
     output, archive_root = Path(output), Path(archive_root)
     output.mkdir(parents=True, exist_ok=False)
@@ -59,8 +66,9 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         MGBFS_FUTURE_CAPACITY=str(ring), MGBFS_CAPACITY_MODE='max_per_rank',
         MGBFS_STATE_CODEC='matrix_u8', MGBFS_ARCHIVE_CODEC='matrix_u8',
         MGBFS_BENCH_WARMUP='1', MGBFS_BENCH_SKIP_ARCHIVE='0', MGBFS_ARCHIVE_STREAM='0')
+    executable = [str(native_example)] if native else [str(cli), 'bench', '--reference']
     command = [sys.executable, '-m', 'torch.distributed.run', '--standalone',
-        f'--nproc-per-node={world}', '--no-python', str(cli), 'bench', '--reference',
+        f'--nproc-per-node={world}', '--no-python', *executable,
         group, str(batch), str(archive_root/'bootstrap'), str(archive_root/'archive'),
         '{RANK_OUT}']
     report = dict(status='INCOMPLETE', scope='single screening sample; not Pareto acceptance',

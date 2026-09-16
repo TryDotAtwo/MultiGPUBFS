@@ -11,6 +11,44 @@ import library_gpu_screen as screen
 
 
 class ScreenContract(unittest.TestCase):
+    def test_preserved_native_reports_need_no_library_pool(self):
+        row = self.row()
+        for rank in row['rank_results']:
+            rank['owner_backend'] = 'CUB_SORT_MERGE'
+            rank['backend'] = 'native_nccl_dense_ring_v2'
+            del rank['library_pool_reserved_bytes']
+        screen.validate_result(row, 6, 0, owner='CUB_SORT_MERGE')
+        row['rank_results'][0]['backend'] = 'library_nccl_dense_cuco_v1'
+        with self.assertRaises(ValueError):
+            screen.validate_result(row, 6, 0, owner='CUB_SORT_MERGE')
+
+    def test_native_example_uses_old_binary_arguments_and_same_archive_verifier(self):
+        row = self.row()
+        for rank in row['rank_results']:
+            rank.update(owner_backend='CUB_SORT_MERGE', backend='native_nccl_dense_ring_v2')
+            del rank['library_pool_reserved_bytes']
+        row.update(search_complete_seconds=1, smi_peak_mib_per_rank=[100, 100], smi_peak_mib_total=200)
+        launched = []
+        def launch(command, out, label, env, timeout):
+            launched.append((command, env))
+            return row
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(screen, 'run_group', launch), patch.object(
+                    screen.subprocess, 'run', return_value=SimpleNamespace(
+                        stdout='{"status":"VERIFIED"}', returncode=0)) as verify:
+                result = screen.run_case('old-mgbfs', root/'logs', root/'archive',
+                    's3', 6, 2, 7, 64, 128, 0, 'DENSE', 'ON', {},
+                    owner='CUB_SORT_MERGE', native_example='old-distributed-bench')
+            self.assertEqual(result['status'], 'COMPLETE')
+            command, env = launched[0]
+            self.assertEqual(command[command.index('--no-python') + 1:][:3],
+                             ['old-distributed-bench', 's3', '7'])
+            self.assertNotIn('--reference', command)
+            self.assertEqual(env['MGBFS_BENCH_CAPACITY'], '64')
+            self.assertEqual(env['MGBFS_STATE_CODEC'], 'matrix_u8')
+            self.assertEqual(verify.call_args_list[0].args[0][0], 'old-mgbfs')
+
     def test_cuco_measurement_cannot_be_replaced_by_cudf(self):
         row = self.row()
         with self.assertRaisesRegex(ValueError, 'SCREEN_LIBRARY_CONTRACT'):
