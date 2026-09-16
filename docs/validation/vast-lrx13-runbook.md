@@ -20,6 +20,33 @@ including compute, storage and network. Existing account credit is not the cap.
 - Prepare a way to stop billing and preserve small logs on failure. Do not start
   if the stopping procedure or total-cost bound is unresolved.
 
+### Quote-to-deadline calculation
+
+`python scripts/rental_budget.py <quote.json>` calculates a conservative elapsed
+deadline from **instance billing start**, including build and hardware gates.
+It is arithmetic only: `enforces_billing_stop=false` is intentional. It must not
+be used as evidence that a watchdog or provider-side termination exists.
+
+Required quote fields (no prices default implicitly):
+
+- Decimal strings: `cap_usd` (100 for this project), `spent_usd` (all prior
+  project rentals), `reserve_usd`, `compute_usd_hour`, `storage_usd_hour`,
+  `ingress_usd_unit`, `egress_usd_unit`. Hourly rates are for the whole instance.
+- Integer `transfer_unit_bytes` from the actual billing unit, `ingress_bytes`
+  and `egress_bytes` as conservative transfer budgets including retries and
+  dependency downloads, `billing_quantum_seconds`, `teardown_seconds`.
+
+Subtract spent money, reserves and both transfer directions first. Round the
+remaining affordable time **down** to the billing quantum, then subtract the
+teardown allowance. The work deadline covers build, gates, BFS and publication;
+it is not a fresh allowance for each stage. USD outputs use exact rational
+strings to avoid rounding a fractional-cent price into a longer deadline.
+Transfer budgets are assumptions, not enforced network limits. Recalculate or
+stop before exceeding them; an unlimited uploader retry policy is not a bound.
+Do not rent until independent teardown and external confirmation of stopped
+billing are ready. Stopping the search or GPU alone does not prove that storage
+billing has ended.
+
 ## Physical hardware gate
 
 Record `nvidia-smi -L`, `nvidia-smi topo -m`, driver/CUDA/NCCL versions and free
