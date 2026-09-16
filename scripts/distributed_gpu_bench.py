@@ -81,7 +81,9 @@ def aggregate_rank_results(ranks,world=2):
  if any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in search):raise ValueError('invalid search timing')
  if all(x is None for x in durable):durable_max=None
  elif any(x is None or not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('incomplete durable timing')
- else:durable_max=max(durable)
+ else:
+  if any(d<s for s,d in zip(search,durable)):raise ValueError('rank durable precedes search')
+  durable_max=max(durable)
  row=dict(status='COMPLETE',world_size=world,backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max)
  if 'local_layer_sizes' in ranks[0]:
   if any('local_layer_sizes' not in x or len(x['local_layer_sizes'])!=len(ranks[0]['local_layer_sizes']) for x in ranks):raise ValueError('rank depth mismatch')

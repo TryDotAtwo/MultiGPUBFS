@@ -10,6 +10,20 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_rank_durable_cannot_precede_its_search_even_if_global_max_hides_it(self):
+        rows = [dict(rank=0, status='COMPLETE', backend='native_test',
+                     local_layer_sizes=[1, 2], search_complete_seconds=10,
+                     durable_run_commit_seconds=11),
+                dict(rank=1, status='COMPLETE', backend='native_test',
+                     local_layer_sizes=[0, 3], search_complete_seconds=3,
+                     durable_run_commit_seconds=2)]
+        with self.assertRaisesRegex(ValueError, 'durable precedes search'):
+            aggregate_rank_results(rows)
+        rows[1]['durable_run_commit_seconds'] = 3
+        result = aggregate_rank_results(rows)
+        self.assertEqual(result['search_complete_seconds'], 10)
+        self.assertEqual(result['durable_run_commit_seconds'], 11)
+
     def test_invalid_capacity_mode_is_rejected_before_any_gpu_launch(self):
         for mode in ('', 'equal-global', 'auto'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
