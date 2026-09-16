@@ -1,5 +1,6 @@
 // Actual cuco/RMM binding gate, not an indexed Hash128 owner or speed result.
 #include "cuco_pool_allocator.hpp"
+#include "cuco_index.hpp"
 #include <cuco/static_set.cuh>
 #include <rmm/cuda_stream.hpp>
 #include <rmm/device_buffer.hpp>
@@ -41,6 +42,33 @@ int main() {
     set.clear(cu_stream);
     require(set.size(cu_stream) == 0, "CUCO_CLEAR");
     require(set.insert(keys, keys + 5, cu_stream) == 3, "CUCO_REUSE");
+    stream.synchronize();
+  }
+  {
+    std::uint32_t words[4][5] = {{11,12,11,11,11}, {22,22,23,22,22},
+                                 {33,33,33,34,33}, {44,44,44,44,45}};
+    rmm::device_buffer data{words, sizeof(words), stream.view(), resource};
+    auto* base = static_cast<std::uint32_t*>(data.data());
+    mgbfs::IndexKeyViews views{};
+    for (unsigned storage = 0; storage < 4; ++storage)
+      for (unsigned word = 0; word < 4; ++word)
+        views.planes[storage][word] = base + word * 5;
+    auto indexed = cuco::static_set{cuco::extent<std::size_t>{128},
+        cuco::empty_key<std::uint64_t>{mgbfs::empty_index},
+        mgbfs::IndexKeyEqual{views},
+        cuco::linear_probing<1, mgbfs::IndexKeyHasher>{mgbfs::IndexKeyHasher{views}},
+        cuco::cuda_thread_scope<cuda::thread_scope_device>{},
+        cuco::storage<1>{}, Allocator{resource}, cuda::stream_ref{stream.value()}};
+    std::uint64_t indices[20];
+    for (unsigned storage = 0; storage < 4; ++storage)
+      for (unsigned row = 0; row < 5; ++row)
+        indices[storage * 5 + row] = mgbfs::key_index(storage, row);
+    rmm::device_buffer input{indices, sizeof(indices), stream.view(), resource};
+    auto* keys = static_cast<std::uint64_t*>(input.data());
+    cuda::stream_ref cu_stream{stream.value()};
+    require(indexed.insert(keys, keys + 20, cu_stream) == 5, "CUCO_HASH128_IDENTITY");
+    require(indexed.insert(keys, keys + 20, cu_stream) == 0, "CUCO_HASH128_REPROBE");
+    require(indexed.size(cu_stream) == 5, "CUCO_HASH128_SIZE");
     stream.synchronize();
   }
   stream.synchronize();

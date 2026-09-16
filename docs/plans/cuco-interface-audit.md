@@ -123,3 +123,13 @@ extended to allocate/deallocate 13 bytes through a char rebind, failed before
 the change, then compiled and passed. V39 pins
 `12fcf4bfe37b7f630436f3cac8ea15fe28b59c08`; actual cuco/RMM GPU execution remains
 pending. No fallback allocator was added.
+
+V39 completed PASS with source `12fcf4bfe37b7f630436f3cac8ea15fe28b59c08`.
+The cuco/RMM binding fixture compiled and passed independently on both physical
+T4s, plain and all four sanitizers. Every sanitizer summary is zero, including
+racecheck warnings. Each fixture kept its 64 MiB pool fixed, returned all live
+allocations at teardown, and reported 1081 bytes peak suballocation. This is
+not full device VRAM or an indexed-owner benchmark. Evidence is under
+`test_results/library-owner-v39/library-owner/cuco-gpu*-*.log`.
+Next required implementation remains indirect four-word Hash128 membership,
+stable committed indices, deterministic survivor provenance and owner commit.
