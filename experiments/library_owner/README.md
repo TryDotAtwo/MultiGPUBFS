@@ -1,9 +1,17 @@
-# libcudf boundary characterization
+# Library owner adapters and characterization
 
-This executable is a test fixture, **not an integrated BFS implementation**.
-It checks Hash128 distinct/anti-join, stable source provenance, cached history,
-accepted-next exclusion, empty input, and fixed-pool OOM. Host synchronization
-in this fixture is deliberate and is not a pipeline/performance claim.
+This directory contains cuDF and cuCollections owner adapters, their common
+C ABI, and isolated characterization fixtures. The adapters are integrated
+as explicit `CUDF_RELATIONAL` / `CUCO_INDEXED` reference selections in the
+native distributed BFS. The production native owner remains available unchanged.
+
+Fixtures check Hash128 distinct/anti-join or indexed membership, stable source
+provenance, history, accepted-next exclusion, empty input, and fixed-pool OOM.
+Host synchronization remains explicit; integration is not evidence of overlap
+or competitive performance. See `docs/plans/library-first-bfs.md` for the
+versioned evidence: v43 passed full BFS and four sanitizer tools on two T4s,
+plus six actual torchrun scenarios and twelve archive verifications. Full
+performance/peak-memory acceptance is still pending.
 
 Inspected source pins:
 

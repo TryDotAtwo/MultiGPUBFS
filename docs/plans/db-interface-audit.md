@@ -90,3 +90,43 @@ baseline. The latter cannot silently count as the required closed-loop native
 owner. No HeavyDB execution, rejection, speed, or capacity claim is established.
 
 Source: https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/heavy.thrift
+
+### In-process ingestion and execution follow-up
+
+At the same HeavyDB SHA, a device-to-device ingress primitive does exist:
+`AbstractBuffer::write(..., GPU_LEVEL, src_device_id)` dispatches through
+`GpuCudaBuffer::writeData` to `CudaMgr::copyDeviceToDevice`. Therefore the RPC
+asymmetry is not evidence that all in-process ingestion must traverse the CPU.
+The buffer is owned by HeavyDB; this is a copy into its allocation, not adoption
+of a caller's recyclable pointer. The primitive alone does not register catalog
+columns, fragment metadata, statistics, or establish a query-visible batch.
+The next adapter should test those registrations and pin/unpin lifetimes around
+an existing GPU chunk, then measure both D2D ingress and output consumption.
+
+`setArrowTable` is not a shortcut to that device-buffer path. Its inspected
+`ArrowForeignStorageBase` implementation uses host Arrow allocations, CPU
+statistics access and `std::memcpy` in reads. Merely wrapping CUDA addresses
+as ordinary Arrow buffers is not a supported device ingestion demonstration.
+
+`TableFunctionManager::allocate_output_buffers` explicitly constructs its
+`QueryMemoryInitializer` with `ExecutorDeviceType::CPU`; `makeBuffer` uses
+host `checked_malloc`. This particular manager is not proof of a GPU external
+pointer table function. It does not rule out separate GPU UDTF execution paths.
+
+Capacity and fallback remain unproved. `GpuCudaBufferMgr::addSlab` calls the
+CUDA allocator when adding a slab, so a configured maximum pool is not by
+itself a fully preallocated physical reservation. `RelAlgExecutor` guards some
+CPU retries with `g_allow_cpu_retry` and query-step retries with
+`g_allow_query_step_cpu_retry`. Another inspected `QueryMustRunOnCpu` catch
+directly changes `co_copied.device_type` to CPU and retries the subsequence.
+A probe must establish which entry point it executes, disable all applicable
+fallbacks, and verify device execution; setting only one flag is insufficient
+evidence. No executable HeavyDB adapter or benchmark has passed yet.
+
+Sources (all at the immutable SHA above):
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/DataMgr/AbstractBuffer.h
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/DataMgr/BufferMgr/GpuCudaBufferMgr/GpuCudaBuffer.cpp
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/DataMgr/BufferMgr/GpuCudaBufferMgr/GpuCudaBufferMgr.cpp
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/DataMgr/ForeignStorage/ArrowForeignStorage.cpp
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/QueryEngine/TableFunctions/TableFunctionManager.h
+- https://github.com/heavyai/heavydb/blob/b348f14049a34b21cdc40f6fe94a80845134d5ad/QueryEngine/RelAlgExecutor.cpp
