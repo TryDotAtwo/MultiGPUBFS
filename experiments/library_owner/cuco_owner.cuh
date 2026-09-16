@@ -21,6 +21,21 @@ inline void check(cudaError_t status) {
   if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status));
 }
 inline unsigned grid(uint32_t rows) { return std::min(4096u, (rows + 255u) / 256u); }
+using Allocator = CucoPoolAllocator<uint64_t, rmm::device_async_resource_ref,
+                                   rmm::cuda_stream_view>;
+using Set = cuco::static_set<uint64_t, cuco::extent<size_t>,
+    cuda::thread_scope_device, IndexKeyEqual,
+    cuco::linear_probing<1, IndexKeyHasher>, Allocator, cuco::storage<1>>;
+inline std::unique_ptr<Set> make_set(size_t maximum_rows, IndexKeyViews views,
+    rmm::device_async_resource_ref resource, rmm::cuda_stream_view stream) {
+  if (maximum_rows > std::numeric_limits<size_t>::max() / 2)
+    throw std::runtime_error("OWNER_TABLE_CAPACITY");
+  return std::make_unique<Set>(cuco::extent<size_t>{std::max(size_t{2}, maximum_rows * 2)},
+      cuco::empty_key<uint64_t>{empty_index}, IndexKeyEqual{views},
+      cuco::linear_probing<1, IndexKeyHasher>{IndexKeyHasher{views}},
+      cuco::cuda_thread_scope<cuda::thread_scope_device>{}, cuco::storage<1>{},
+      Allocator{resource}, cuda::stream_ref{stream.value()});
+}
 
 // At most half the slots can be populated, even if every offered row is unique.
 // A full open-addressing table must never be used as a capacity detector.
@@ -83,6 +98,8 @@ struct CucoWorkspace {
   CucoWorkspaceLease lease;
   rmm::device_buffer candidates, minima, representatives, flags, selected,
                      sources, control, scratch;
+  // Only tag-3 indices live here. Destroy the table before candidate planes.
+  std::unique_ptr<cuco_owner_detail::Set> transient;
   CucoWorkspace(uint32_t rows, rmm::cuda_stream_view s,
                 rmm::device_async_resource_ref resource) : incoming(rows), stream(s) {
     if (!rows || rows > INT32_MAX) throw std::runtime_error("OWNER_CAPACITY");
@@ -101,6 +118,10 @@ struct CucoWorkspace {
         static_cast<uint32_t*>(selected.data()), static_cast<uint32_t*>(control.data()),
         static_cast<int>(rows), s.value()));
     scratch = allocate(scratch_bytes);
+    IndexKeyViews views{};
+    for (unsigned word = 0; word < 4; ++word)
+      views.planes[3][word] = static_cast<uint32_t*>(candidates.data()) + word * stride;
+    transient = cuco_owner_detail::make_set(rows, views, resource, s);
   }
 };
 
@@ -108,14 +129,10 @@ struct CucoWorkspace {
 // fallback. The caller supplies a fixed pool, drains before seal/destruction,
 // and does not overlap compares or consumers of the borrowed result. History
 // planes remain immutable until seal; accepted planes live through destruction.
-// Compare includes one explicit count readback and a final result-ready wait.
+// Compare includes one explicit count readback/result-ready wait.
 // This is a correctness reference, not yet an overlap/performance claim.
 class CucoOwner {
-  using Allocator = CucoPoolAllocator<uint64_t, rmm::device_async_resource_ref,
-                                     rmm::cuda_stream_view>;
-  using Set = cuco::static_set<uint64_t, cuco::extent<size_t>,
-      cuda::thread_scope_device, IndexKeyEqual,
-      cuco::linear_probing<1, IndexKeyHasher>, Allocator, cuco::storage<1>>;
+  using Set = cuco_owner_detail::Set;
  public:
   CucoOwner(MgbfsLibraryKeysV1 previous, MgbfsLibraryKeysV1 current,
       uint32_t capacity, uint32_t incoming_capacity, rmm::cuda_stream_view stream,
@@ -151,8 +168,8 @@ class CucoOwner {
     // Individual planes use signed-32-bit row bounds; the combined table size
     // uses size_t so previous + current + maximum accepted cannot wrap u32.
     size_t const persistent_rows = static_cast<size_t>(previous.rows) + current.rows + capacity;
-    persistent_ = make_set(persistent_rows, views);
-    transient_ = make_set(incoming_capacity, views);
+    persistent_ = cuco_owner_detail::make_set(persistent_rows, views, resource_, stream_);
+    transient_ = workspace_->transient.get();
     scratch_bytes_ = workspace_->scratch_bytes;
     insert(*persistent_, 0, 0, previous.rows);
     insert(*persistent_, 1, 0, current.rows);
@@ -263,7 +280,7 @@ class CucoOwner {
       check_device();
       if (poisoned_ || pending_ || sealed_) throw std::runtime_error("OWNER_ORDER");
       if (shared_workspace_) workspace_->lease.check_idle();
-      transient_.reset();
+      // The next shard still owns the shared transient table via workspace.
       persistent_.reset();
       sealed_ = true;
     } catch (...) { poisoned_ = true; throw; }
@@ -283,15 +300,6 @@ class CucoOwner {
     if (device != device_) throw std::runtime_error("OWNER_DEVICE");
   }
   rmm::device_buffer buffer(size_t bytes) { return rmm::device_buffer{bytes, stream_, resource_}; }
-  std::unique_ptr<Set> make_set(size_t maximum_rows, IndexKeyViews views) {
-    if (maximum_rows > std::numeric_limits<size_t>::max() / 2)
-      throw std::runtime_error("OWNER_TABLE_CAPACITY");
-    return std::make_unique<Set>(cuco::extent<size_t>{std::max(size_t{2}, maximum_rows * 2)},
-        cuco::empty_key<uint64_t>{empty_index}, IndexKeyEqual{views},
-        cuco::linear_probing<1, IndexKeyHasher>{IndexKeyHasher{views}},
-        cuco::cuda_thread_scope<cuda::thread_scope_device>{}, cuco::storage<1>{},
-        Allocator{resource_}, cuda::stream_ref{stream_.value()});
-  }
   void insert(Set& set, unsigned storage, uint32_t first, uint32_t rows) {
     if (!rows) return;
     cuco_owner_detail::insert_rows<<<cuco_owner_detail::grid(rows), 256, 0, stream_.value()>>>(
@@ -311,6 +319,7 @@ class CucoOwner {
   rmm::device_buffer &candidates_, &minima_, &representatives_, &flags_,
                      &selected_, &sources_, &control_, &scratch_;
   // Sets must be destroyed before the immutable views they reference.
-  std::unique_ptr<Set> persistent_, transient_;
+  std::unique_ptr<Set> persistent_;
+  Set* transient_{nullptr};  // Borrowed; workspace lease covers every GPU reader.
 };
 }

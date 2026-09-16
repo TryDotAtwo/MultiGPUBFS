@@ -13,6 +13,7 @@ SOURCE_COMMIT = "fecb35b711376684be23399e30a830c526ba28a3"
 FULL_BFS_GATE = False  # Isolated RED test: duplicated per-shard transient tables.
 LOAD_SCREEN = False
 SCREEN_REPEATS = 5
+SCREEN_OWNERS = ("CUDF_RELATIONAL", "CUCO_INDEXED")
 SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
@@ -386,7 +387,7 @@ def main():
                     manifest["previous_owner_commit"] = CUCO_PREVIOUS_COMMIT
                 for world in SCREEN_WORLDS:
                     for repeat in range(SCREEN_REPEATS):
-                        owners = ("CUCO_INDEXED",) if PROFILE_SCREEN else ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                        owners = ("CUCO_INDEXED",) if PROFILE_SCREEN else SCREEN_OWNERS
                         if CUCO_PREVIOUS_COMMIT:
                             owners += ("CUCO_PREVIOUS",)
                         if NATIVE_COMPARISON:
