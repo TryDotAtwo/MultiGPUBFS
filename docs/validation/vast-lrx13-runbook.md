@@ -47,6 +47,16 @@ Do not rent until independent teardown and external confirmation of stopped
 billing are ready. Stopping the search or GPU alone does not prove that storage
 billing has ended.
 
+The [2026-09-16 quote snapshot](vast-lrx13-quote-snapshot.json) records an
+available Italy 8xH200 offer, ID 51240296, at the instant inspected. It budgets
+both transfer directions at the higher displayed rate, 20 GB ingress and
+400 GB egress, plus USD 10 reserve. The calculator yields 7,685 billable seconds
+and a work deadline of 7,385 seconds from billing start (five minutes reserved
+for teardown). These are conditional on those transfer caps, not an enforced
+spending guarantee; recheck the offer and rates before renting.
+Vast documents [per-second compute/storage billing](https://docs.vast.ai/guides/reference/faq/billing)
+and that [stopped instances still incur storage charges](https://docs.vast.ai/guides/reference/faq/instances).
+
 ## Physical hardware gate
 
 ### Standalone build entry point
@@ -64,9 +74,10 @@ torchrun and Compute Sanitizer installed and accessible. Host NCCL development
 headers/library and Python >=3.10 are prerequisites. The build venv supplies C++
 library dependencies, not torchrun or the HF/Parquet Python dependencies.
 
-This new entry point has host parser/preflight tests only; its complete build
-has **not** yet been executed. The earlier SM90 evidence belongs to the Kaggle
-recipe, not to this wrapper. Do not infer hardware readiness from these tests.
+This entry point's complete compile/link path passed in
+[standalone Kaggle v1](standalone-sm90-build-v1.md), in addition to host
+parser/preflight tests. No SM90 binary was executed; Vast host prerequisites
+and physical H200 runtime gates remain unverified.
 One timeout covers its child commands. It does not stop rental billing.
 
 Record `nvidia-smi -L`, `nvidia-smi topo -m`, driver/CUDA/NCCL versions and free

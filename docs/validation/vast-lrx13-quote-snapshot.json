@@ -1,0 +1,28 @@
+{
+  "observed_date": "2026-09-16",
+  "offer_id": 51240296,
+  "machine_id": 38592,
+  "host_id": 259870,
+  "gpu": "8x H200",
+  "disk_gb": 100,
+  "cap_usd": "100",
+  "spent_usd": "0",
+  "reserve_usd": "10",
+  "compute_usd_hour": "36.843",
+  "storage_usd_hour": "0.138",
+  "ingress_usd_unit": "26.316",
+  "egress_usd_unit": "26.316",
+  "transfer_unit_bytes": 1000000000000,
+  "ingress_bytes": 20000000000,
+  "egress_bytes": 400000000000,
+  "billing_quantum_seconds": 1,
+  "teardown_seconds": 300,
+  "notes": [
+    "Quote snapshot only, not an instance rental or current availability guarantee.",
+    "UI displayed 36.980 total per hour; use sum 36.981 of rounded components conservatively.",
+    "UI showed transfer rates 26.316/TB and 19.737/TB. Direction not resolved; budget both directions at the larger rate.",
+    "Transfer byte quantities are chosen caps including retries, not measured usage or enforced network limits.",
+    "Five-minute teardown allowance is not a verified provider response-time guarantee. Independent watchdog remains required.",
+    "All build, test and publication time counts from billing start. Requote before renting."
+  ]
+}
