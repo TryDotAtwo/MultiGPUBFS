@@ -951,3 +951,49 @@ Requested pool peaks in v5's first samples are 80,464,495 bytes (one rank) and
 58,641,583 (two ranks), not fragmentation bounds or full VRAM measurements.
 Evidence: `test_results/library-owner-v52/library-owner/` and
 `test_results/library-capacity-v5/library-owner/`.
+
+### Smaller fixed pools: main v53
+
+Source remains `007da906164504c56d1bd5d7ddde14ca63b8e7a8`; launch
+`ded0b6d` changes only the screen pool selection before process startup:
+80 MiB on one rank, 64 MiB per rank on two. PASS, 20 unprofiled samples,
+identical 46 layer entries totaling 3,628,800 states, 30 rank archives VERIFIED.
+No new sanitizer run in this configuration. Runtime source was sanitized in
+capacity v5; this does not establish sanitizer coverage of the smaller pools.
+
+| S10 backend | T4s | Median search s | Median durable s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| cuco, 80 MiB pool | 1 | 1.559669 | 4.918026 | 885 |
+| native 013ed5c | 1 | 1.028707 | 4.851310 | 835 |
+| cuco, 64 MiB pool/rank | 2 | 1.329347 | 4.062817 | 497, 497 |
+| native 013ed5c | 2 | 0.857261 | 3.917292 | 457, 457 |
+
+Five repeats per cell, batch 32768, DENSE/pre-dedup ON, matrix_u8,
+256 archive slots. Search remains about 52%/55% slower: acceptance NOT met.
+VRAM is full-device 50 ms sampling, not a guaranteed peak. Archives enabled
+for both native implementations. Evidence: `test_results/library-owner-v53/`.
+
+### Capacity v6: control-transfer diagnostic
+
+Same source 007da90, fixed 96 MiB pools, launch b4650db. Four profiled S10
+samples (cuco/native, one/two ranks) completed and verified archives/counts.
+These are diagnostic runs, never speed acceptance samples. Whole-process
+CUDA API counts include initialization, warmup and archive activity:
+
+| Backend | T4s | cudaMemcpy | cudaMemcpyAsync | cudaStreamSynchronize |
+|---|---:|---:|---:|---:|
+| native | 1 | 3604 | 21702 | 5222 |
+| cuco | 1 | 2924 | 254564 | 82070 |
+| native | 2 | 6718 | 25416 | 8940 |
+| cuco | 2 | 5110 | 295392 | 97654 |
+
+The earlier cuco v4 diagnostic had 109712/130234 cudaMemcpy calls and
+117664/139358 stream synchronizations (one/two ranks). Batched control
+transfers removed much of the synchronous-copy overhead; excessive host
+drains remain. Source inspection finds `LibraryShard::complete` drains again
+after the nonempty branch's successful control snapshot already drained the
+same stream. Removing this requires preserving workspace lease completion
+and fatal-control checks; the empty branch cannot reuse the pre-commit drain.
+No completion-path change is implemented by this report.
+Evidence: `test_results/library-capacity-v6/library-owner/` (small summaries
+and nsys stats only; large traces remain on Kaggle).

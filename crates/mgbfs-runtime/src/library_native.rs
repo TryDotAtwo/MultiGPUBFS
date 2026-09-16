@@ -369,6 +369,24 @@ impl LibraryShard {
         self.gate.completed(epoch)
     }
 
+    /// Complete after all GPU readers on `drained_stream` have completed.
+    /// # Safety
+    /// Caller has successfully drained this owner's stream after commit and
+    /// every borrowed-result consumer, and checked native fatal controls.
+    pub unsafe fn complete_after_stream_drain(
+        &mut self,
+        epoch: u64,
+        drained_stream: *mut c_void,
+    ) -> Result<()> {
+        if drained_stream != self.stream {
+            self.gate.abort();
+            return Err("LIBRARY_COMPLETION_STREAM".into());
+        }
+        // RED baseline: preserve the existing wait until the T4 fixture proves
+        // it violates the no-new-wait contract.
+        self.complete(epoch)
+    }
+
     pub fn accepted(&self) -> u64 {
         self.gate.accepted()
     }

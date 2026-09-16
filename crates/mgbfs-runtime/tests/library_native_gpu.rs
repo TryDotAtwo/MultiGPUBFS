@@ -10,6 +10,83 @@ unsafe fn allocate(bytes: usize) -> *mut c_void {
     out
 }
 
+// Capture rejects stream synchronization. All real work is drained BEFORE
+// capture: this checks the adapter's no-new-wait completion contract, not
+// graph execution or an asynchronous completion claim.
+extern "C" {
+    fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
+    fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
+    fn cudaGraphDestroy(graph: *mut c_void) -> i32;
+}
+
+#[test]
+fn drained_owner_completion_releases_lease_without_another_cuda_wait() {
+    unsafe {
+        let mut stream = ptr::null_mut();
+        assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+        let mut pool = ptr::null_mut();
+        assert_eq!(
+            mgbfs_library_pool_create_v1(64 << 20, 1 << 30, &mut pool),
+            0
+        );
+        let input = allocate(16);
+        let scratch = allocate(1280);
+        let words = [1u32, 2, 3, 4];
+        assert_eq!(cudaMemcpy(input, words.as_ptr().cast(), 16, 1), 0);
+        let empty = KeysV1 {
+            words: [ptr::null(); 4],
+            rows: 0,
+            reserved: 0,
+        };
+        for incoming in [None, Some(8)] {
+            let mut owner =
+                LibraryShard::new_window_with_cuco_capacity(empty, empty, 2, incoming, stream)
+                    .unwrap();
+            for epoch in 1..=2 {
+                let mut candidates = CandidatesV1 {
+                    keys: empty,
+                    source_indices: ptr::null(),
+                };
+                assert_eq!(
+                    mgbfs_library_candidates_from_aos_v1(
+                        input,
+                        1,
+                        1,
+                        scratch,
+                        1280,
+                        stream,
+                        &mut candidates
+                    ),
+                    0
+                );
+                let selected = owner.compare(epoch, candidates).unwrap();
+                assert_eq!(selected.rows, if epoch == 1 { 1 } else { 0 });
+                owner.commit(epoch, selected.rows).unwrap();
+                assert_eq!(owner.accepted(), if epoch == 1 { 0 } else { 1 });
+                assert_eq!(cudaStreamSynchronize(stream), 0);
+                assert_eq!(cudaStreamBeginCapture(stream, 1), 0);
+                let completion = owner.complete_after_stream_drain(epoch, stream);
+                let mut graph = ptr::null_mut();
+                let ended = cudaStreamEndCapture(stream, &mut graph);
+                if !graph.is_null() {
+                    assert_eq!(cudaGraphDestroy(graph), 0);
+                }
+                assert!(
+                    completion.is_ok(),
+                    "DRAINED_COMPLETION_MUST_NOT_WAIT: {completion:?}"
+                );
+                assert_eq!(ended, 0, "DRAINED_COMPLETION_INVALIDATED_CAPTURE");
+                assert_eq!(owner.accepted(), 1);
+            }
+            owner.close().unwrap();
+        }
+        assert_eq!(mgbfs_library_pool_destroy_v1(pool), 0);
+        assert_eq!(cudaFree(input), 0);
+        assert_eq!(cudaFree(scratch), 0);
+        assert_eq!(cudaStreamDestroy(stream), 0);
+    }
+}
+
 #[test]
 fn control_snapshot_crosses_rust_abi_without_losing_fatal_or_grant_fields() {
     use mgbfs_cuda::native_owner::{Control, Extent, Ring};
