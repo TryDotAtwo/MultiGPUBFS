@@ -1,5 +1,9 @@
 import sys
 import unittest
+import tempfile
+import time
+import os
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
@@ -7,6 +11,49 @@ import streamed_bfs_launcher as launcher
 
 
 class StreamedLauncher(unittest.TestCase):
+    def test_publication_runs_after_consumers_finish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / 'drained'
+            plan = dict(env={}, consumers=[[sys.executable, '-c',
+                f'import time; from pathlib import Path; time.sleep(0.2); Path({str(marker)!r}).touch()']],
+                search=['unused'], promotion=[sys.executable, '-c',
+                f'import json; from pathlib import Path; assert Path({str(marker)!r}).exists(); '
+                'print(json.dumps(dict(status="COMPLETE",commit_url="fixture-receipt")))'])
+            with patch('distributed_gpu_bench.run_group', return_value=dict(status='COMPLETE')):
+                result = launcher.execute_plan(plan, root, dict(os.environ), 5)
+            self.assertEqual(result['publication']['commit_url'], 'fixture-receipt')
+            self.assertTrue((root / 'stream-summary.json').exists())
+
+    def test_failed_consumer_prevents_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / 'published'
+            plan = dict(env={}, consumers=[[sys.executable, '-c', 'raise SystemExit(7)']],
+                        search=['unused'], promotion=[sys.executable, '-c',
+                        f'from pathlib import Path; Path({str(marker)!r}).touch()'])
+            def search(*args, **kwargs):
+                self.assertEqual(len(kwargs['required_processes']), 1)
+                return dict(status='COMPLETE')
+            with patch('distributed_gpu_bench.run_group', side_effect=search):
+                with self.assertRaisesRegex(RuntimeError, 'CONSUMER_FAILED'):
+                    launcher.execute_plan(plan, root, dict(os.environ), 5)
+            self.assertFalse(marker.exists())
+
+    def test_shared_deadline_terminates_consumers_and_prevents_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = dict(env={}, consumers=[[sys.executable, '-c', 'import time; time.sleep(30)']],
+                        search=['unused'], promotion=['unused'])
+            processes = []
+            def search(*args, **kwargs):
+                processes.extend(kwargs['required_processes'])
+                return dict(status='COMPLETE')
+            with patch('distributed_gpu_bench.run_group', side_effect=search):
+                with self.assertRaises(TimeoutError):
+                    launcher.execute_plan(plan, root, dict(os.environ), 0.3)
+            self.assertTrue(all(p.poll() is not None for p in processes))
+
     def config(self):
         return dict(world=8, n=13, batch=262144, capacity=60000000,
                     archive_rows=262144, archive_slots=256, upload_slots=8,
@@ -29,6 +76,8 @@ class StreamedLauncher(unittest.TestCase):
         self.assertEqual(plan['env']['MGBFS_BENCH_SKIP_ARCHIVE'], '0')
         self.assertEqual(plan['env']['MGBFS_STATE_CODEC'], 'permutation_u8')
         self.assertEqual(plan['upload_bytes'], 8*8*134217728)
+        self.assertIn('--reference', plan['promotion'])
+        self.assertEqual(plan['promotion'][-8:], plan['commits'])
 
     def test_invalid_configuration_rejected_before_side_effects(self):
         for key, value in [('world', 3), ('capacity', 0), ('batch', True),

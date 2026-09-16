@@ -5,6 +5,10 @@ an independent rental deadline before launching any paid workload.
 """
 import re
 import sys
+import json
+import subprocess
+import time
+from contextlib import ExitStack
 
 
 def make_plan(config, source, root):
@@ -61,14 +65,75 @@ def make_plan(config, source, root):
             sys.executable, str(source / 'scripts/stream_hf_archive.py'),
             '--run-id', run_id, '--group-id', group, '--rank', str(rank),
             '--input', fifos[rank], '--staging-dir', str(staging),
-            '--repo-id', config['repo_id'], '--branch', branches[rank],
+            '--repo-id', config['repo_id'], '--branch', branches[rank], '--create-branch',
             '--rows-per-shard', str(config['rows_per_shard']),
             '--slot-count', str(config['upload_slots']),
             '--max-slot-bytes', str(config['max_slot_bytes'])])
     return dict(env=env, fifos=fifos, branches=branches, consumers=consumers,
                 commits=commits,
+                promotion=[sys.executable, str(source / 'scripts/promote_hf_stream.py'),
+                           '--repo-id', config['repo_id'], '--world-size', str(world),
+                           '--reference', str(config.get('reference',
+                               source / 'data/reference/lrx13-layers.json')), *commits],
                 upload_bytes=world*config['upload_slots']*config['max_slot_bytes'],
                 search=['torchrun', '--standalone', f'--nproc-per-node={world}',
                         '--no-python', str(source / 'target/release/mgbfs'),
                         'bench', '--reference', group, str(config['batch']),
                         str(root / 'bootstrap'), str(prefix), '{RANK_OUT}'])
+
+
+def execute_plan(plan, logs, env, timeout_seconds):
+    """One deadline for search, draining consumers and atomic publication.
+
+    Caller preflights resources and creates FIFOs. A timeout stops processes,
+    not rental billing. Failed staging branches are retained for diagnosis.
+    """
+    from distributed_gpu_bench import run_group, stop_group
+    deadline = time.monotonic() + timeout_seconds
+
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError('STREAM_RUN_DEADLINE')
+        return value
+
+    children = []
+    with ExitStack() as files:
+        try:
+            for rank, command in enumerate(plan['consumers']):
+                remaining()
+                output = files.enter_context((logs / f'consumer-{rank}.log').open('wb'))
+                children.append(subprocess.Popen(command, env=env, stdout=output,
+                                stderr=subprocess.STDOUT, start_new_session=True))
+            result = run_group(plan['search'], logs, 'search', env,
+                               timeout=remaining(), required_processes=children)
+            if result['status'] != 'COMPLETE':
+                raise RuntimeError('SEARCH_' + result['status'])
+            while True:
+                codes = [child.poll() for child in children]
+                if any(code not in (None, 0) for code in codes):
+                    raise RuntimeError(f'CONSUMER_FAILED {codes}')
+                if all(code == 0 for code in codes):
+                    break
+                time.sleep(min(0.1, remaining()))
+            remaining()
+            output = files.enter_context((logs / 'promotion.log').open('wb'))
+            publication = subprocess.Popen(plan['promotion'], env=env, stdout=output,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+            children.append(publication)
+            try:
+                code = publication.wait(timeout=remaining())
+            except subprocess.TimeoutExpired as error:
+                raise TimeoutError('STREAM_PUBLICATION_DEADLINE') from error
+            output.flush()
+            if code != 0:
+                raise RuntimeError(f'PROMOTION_FAILED {code}')
+            receipt = json.loads((logs / 'promotion.log').read_text(encoding='utf-8').splitlines()[-1])
+            if receipt.get('status') != 'COMPLETE' or not receipt.get('commit_url'):
+                raise RuntimeError('PROMOTION_RECEIPT')
+            result['publication'] = receipt
+            (logs / 'stream-summary.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+            return result
+        finally:
+            for child in children:
+                stop_group(child)
