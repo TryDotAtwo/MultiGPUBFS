@@ -39,6 +39,16 @@ typedef struct MgbfsLibrarySurvivorsV1 {
  */
 int mgbfs_library_pool_create_v1(uint64_t bytes, uint64_t reserve_bytes, void** pool);
 int mgbfs_library_pool_destroy_v1(void* pool);
+typedef struct MgbfsLibraryPoolUsageV1 {
+  uint64_t reserved_bytes;
+  uint64_t live_bytes;
+  uint64_t peak_bytes;
+} MgbfsLibraryPoolUsageV1;
+/* Requested suballocations since pool creation, not full VRAM and not a
+ * fragmentation-aware minimum reservation. Read outside timed GPU stages;
+ * no device drain/reset. Invalid handle/device/resource clears output.
+ */
+int mgbfs_library_pool_usage_v1(void* pool, MgbfsLibraryPoolUsageV1* usage);
 
 /* Allocation-free layout bridge. AoS is four consecutive u32 words per key.
  * scratch is 256-aligned with 5 * align_up(capacity*4,256) bytes: four
@@ -122,5 +132,6 @@ void mgbfs_library_owner_destroy_v1(void* owner);
 static_assert(sizeof(MgbfsLibraryKeysV1) == 40, "keys ABI");
 static_assert(sizeof(MgbfsLibraryCandidatesV1) == 48, "candidate ABI");
 static_assert(sizeof(MgbfsLibrarySurvivorsV1) == 24, "survivor ABI");
+static_assert(sizeof(MgbfsLibraryPoolUsageV1) == 24, "pool usage ABI");
 #endif
 #endif

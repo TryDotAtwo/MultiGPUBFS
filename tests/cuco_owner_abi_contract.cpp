@@ -9,11 +9,18 @@ void require(bool value, char const* message) {
 int main() {
   void* pool = nullptr;
   require(mgbfs_library_pool_create_v1(64ULL << 20, 1ULL << 30, &pool) == 0, "POOL_CREATE");
+  MgbfsLibraryPoolUsageV1 usage{};
+  require(mgbfs_library_pool_usage_v1(pool, &usage) == 0 &&
+          usage.reserved_bytes == (64ULL << 20) && usage.live_bytes == 0 &&
+          usage.peak_bytes == 0, "POOL_INITIAL_USAGE");
   void* owner = reinterpret_cast<void*>(1);
   require(mgbfs_library_owner_create_cuco_window_v1({}, {}, 8, 0, nullptr, &owner) != 0 &&
           owner == nullptr, "INVALID_FACTORY_CLEARS_HANDLE");
   require(mgbfs_library_owner_create_cuco_window_v1({}, {}, 8, 16, nullptr, &owner) == 0 &&
           owner != nullptr, "CUCO_FACTORY");
+  require(mgbfs_library_pool_usage_v1(pool, &usage) == 0 && usage.live_bytes > 0 &&
+          usage.peak_bytes >= usage.live_bytes && usage.peak_bytes <= usage.reserved_bytes,
+          "POOL_OWNER_USAGE");
   MgbfsLibrarySurvivorsV1 result{};
   require(mgbfs_library_owner_compare_v1(owner, 12, {}, &result) == 0 &&
           result.rows == 0 && result.epoch == 12, "CUCO_COMMON_COMPARE");
@@ -42,6 +49,11 @@ int main() {
   mgbfs_library_owner_destroy_v1(owner);
   require(mgbfs_library_cuco_workspace_destroy_v1(workspace) == 0, "WORKSPACE_DESTROY");
   require(cudaStreamSynchronize(nullptr) == cudaSuccess, "TEARDOWN_DRAIN");
+  require(mgbfs_library_pool_usage_v1(pool, &usage) == 0 && usage.live_bytes == 0 &&
+          usage.peak_bytes > 0, "POOL_RETAINS_HIGH_WATER");
+  require(mgbfs_library_pool_usage_v1(nullptr, &usage) != 0 &&
+          usage.reserved_bytes == 0 && usage.live_bytes == 0 && usage.peak_bytes == 0,
+          "POOL_USAGE_FAILURE_CLEARS_OUTPUT");
   require(mgbfs_library_pool_destroy_v1(pool) == 0, "CUCO_COMMON_DESTROY");
   std::cout << "CUCO_COMMON_ABI_PASS\n";
 }

@@ -37,9 +37,18 @@ const _: [(); 8] = [(); std::mem::align_of::<SurvivorsV1>()];
 pub type OwnerHandle = *mut c_void;
 pub type PoolHandle = *mut c_void;
 pub type WorkspaceHandle = *mut c_void;
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct PoolUsageV1 {
+    pub reserved_bytes: u64,
+    pub live_bytes: u64,
+    pub peak_bytes: u64,
+}
+const _: [(); 24] = [(); std::mem::size_of::<PoolUsageV1>()];
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    pub fn mgbfs_library_pool_usage_v1(pool: PoolHandle, usage: *mut PoolUsageV1) -> i32;
     pub fn mgbfs_library_cuco_workspace_create_v1(
         incoming_capacity: u32,
         cuda_stream: *mut c_void,

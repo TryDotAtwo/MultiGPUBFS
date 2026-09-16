@@ -338,6 +338,15 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
+        #[cfg(feature = "library-owner")]
+        if let Some(usage) = bfs.library_pool_usage()? {
+            value["library_pool_usage"] = serde_json::json!({
+                "reserved_bytes": usage.reserved_bytes,
+                "live_requested_bytes": usage.live_bytes,
+                "peak_requested_bytes": usage.peak_bytes,
+                "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
+            });
+        }
         if selection.owner == ReferenceOwner::CudfRelational {
             value["backend"] = serde_json::json!(if selection.materialization_capacity.is_some() {
                 "library_nccl_hash_first_cudf_v1"

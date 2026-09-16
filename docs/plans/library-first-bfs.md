@@ -628,3 +628,15 @@ empty compare/commit/complete/seal cleanup. Its initial syntax check failed on
 the four missing entry points; current Rust CUDA/library feature type-check
 passes. Linux C++ linking, full BFS, sanitizer and 256 MiB capacity evidence
 remain pending in the next hardware gate. No speed or full-memory win yet.
+
+While v47 runs the immutable integration source, a read-only RMM usage
+diagnostic was added for subsequent panels. It reports physical fixed pool
+reservation and current/peak requested suballocation bytes since pool creation.
+The existing statistics adaptor already maintained these counters; no new
+per-batch instrument or GPU synchronization was inserted. CLI reads them after
+timing and labels the scope explicitly: not full-device VRAM and not a
+fragmentation-aware minimum pool size. Invalid handle/device/resource rejects
+the request and clears output. Extended ABI fixture checks empty pool, live
+owner allocations, retained high water after teardown and invalid-query output.
+Rust type-check and C++ fixture syntax pass; linking/execution of this diagnostic
+is still unverified. V47 does not contain it and must not be credited with it.

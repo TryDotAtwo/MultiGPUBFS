@@ -1134,6 +1134,19 @@ impl DistributedNativeBfs {
     pub fn depth(&self) -> u32 {
         self.depth
     }
+    /// Requested pool suballocation high water, not whole-device VRAM.
+    /// Call on the rank's creating device, outside timed GPU stages.
+    #[cfg(feature = "library-owner")]
+    pub fn library_pool_usage(&self) -> Result<Option<PoolUsageV1>> {
+        match self.library_owner.as_ref() {
+            None => Ok(None),
+            Some(library) => {
+                let mut usage = PoolUsageV1::default();
+                check(unsafe { mgbfs_library_pool_usage_v1(library.pool, &mut usage) })?;
+                Ok(Some(usage))
+            }
+        }
+    }
     pub fn frontier_len(&self) -> u32 {
         self.current_count
     }

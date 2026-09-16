@@ -68,6 +68,25 @@ extern "C" int mgbfs_library_pool_destroy_v1(void* pool) {
   } catch (...) { return -1; }
 }
 
+extern "C" int mgbfs_library_pool_usage_v1(void* pool, MgbfsLibraryPoolUsageV1* usage) {
+  if (usage) *usage = {};
+  if (!pool || !usage) return -1;
+  try {
+    int device;
+    if (cudaGetDevice(&device) != cudaSuccess) return -1;
+    std::lock_guard<std::mutex> lock(pool_mutex);
+    auto found = device_pools.find(device);
+    if (found == device_pools.end() || found->second != pool) return -1;
+    auto* handle = found->second;
+    if (rmm::mr::get_current_device_resource_ref() !=
+        decltype(handle->previous){handle->stats}) return -1;
+    auto counters = handle->stats.get_bytes_counter();
+    *usage = {static_cast<uint64_t>(handle->pool.pool_size()),
+              static_cast<uint64_t>(counters.value), static_cast<uint64_t>(counters.peak)};
+    return 0;
+  } catch (...) { return -1; }
+}
+
 namespace {
 using Handle = mgbfs::LibraryOwnerHandle;
 
