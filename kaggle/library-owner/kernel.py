@@ -9,9 +9,9 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"
-FULL_BFS_GATE = True
-LOAD_SCREEN = True
+SOURCE_COMMIT = "fecb35b711376684be23399e30a830c526ba28a3"
+FULL_BFS_GATE = False  # Isolated RED test: duplicated per-shard transient tables.
+LOAD_SCREEN = False
 SCREEN_REPEATS = 5
 SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
@@ -24,9 +24,9 @@ PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistic
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
-SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
-PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 48,
-    "source_commit": "1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c"}
+SANITIZER_TOOLS = ()  # Expected plain fixture failure; no new sanitizer claim.
+PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 50,
+    "source_commit": "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
