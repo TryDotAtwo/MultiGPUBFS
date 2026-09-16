@@ -684,3 +684,26 @@ the later RMM usage diagnostic nor Release CPU-test hardening. It has no native
 or CayleyPy paired measurements, so it does not establish Pareto acceptance.
 Next panel pins `1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c`, reruns gates, and
 enables the preserved `013ed5c` native comparison at the same explicit settings.
+
+### V48 partial panel: archive capacity failure in preserved native
+
+Source `1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c` built successfully. Full BFS
+plain/all-four-sanitizer fixtures passed on both individual T4s and two-device
+NCCL; cuco common ABI fixtures (including new pool counters) passed with zero
+sanitizer errors/warnings. The first cuDF and cuCO S10 one-rank samples completed.
+The first preserved-native sample failed with `ARCHIVE_PIN_RING_FATAL:
+receiving on an empty channel`; the panel is FAILED, not a performance result.
+Logs are retained in `test_results/library-owner-v48/library-owner/`.
+
+The baseline already exposes `MGBFS_ARCHIVE_SLOTS` with default 64. The retry
+sets 256 slots identically for every timed backend, leaving baseline code and
+GPU capacity unchanged. At 32768 rows and 116 wire bytes per state this reserves
+973,078,528 pinned bytes per rank (previously 243,269,632). This is a host-memory
+increase, not a VRAM saving; successful sustained archival is still unproven.
+The retry retains full correctness gates and all four sanitizers.
+
+The first v48 cuco measurement reports a 268,435,456-byte fixed pool, peak
+requested suballocations 179,555,431 bytes and final live 3,245,575 bytes.
+Those counters do not prove a smaller pool would fit fragmentation or bound
+full-device VRAM. The updated timing validator also rejects per-rank durable
+time below search time; all 30 measured rank outputs from v47 satisfy it.

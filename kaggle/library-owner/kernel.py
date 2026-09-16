@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c"
+SOURCE_COMMIT = "5ea41ff0a9861c974f979a30c4562f92a168e0b8"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 SCREEN_REPEATS = 5
@@ -17,13 +17,14 @@ SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 256 << 20
+SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
 SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
-PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 47,
-    "source_commit": "7d7bcc192fcd0cab946b0538a5c37560c2516cbc"}
+PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 48,
+    "source_commit": "1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
@@ -307,6 +308,7 @@ def main():
                     raise RuntimeError(f"CLI {group} count mismatch: {total}")
             manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4/U4m2 correctness only"
             if LOAD_SCREEN:
+                manifest["screen_archive_slots"] = SCREEN_ARCHIVE_SLOTS
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
                 from distributed_gpu_bench import stats
@@ -346,10 +348,12 @@ def main():
                             native = owner == "CUB_SORT_MERGE"
                             case_cli = str(preserved / "target/release/mgbfs") if native else cli
                             extra = {"native_example": str(preserved / "target/release/examples/distributed_bench")} if native else {}
+                            case_env = dict(preserved_env if native else device_env,
+                                            MGBFS_ARCHIVE_SLOTS=str(SCREEN_ARCHIVE_SLOTS))
                             result = run_case(case_cli, logs / label, work / label,
                                 "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
                                 0 if native else SCREEN_POOL_BYTES, "DENSE", "ON",
-                                preserved_env if native else device_env, owner=owner, **extra)
+                                case_env, owner=owner, **extra)
                             panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
                 manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
                 manifest["load_screen"] = "S10 DENSE owners and preserved native, five repeats on 1/2 T4; matched matrix settings; tuned Pareto acceptance pending"
