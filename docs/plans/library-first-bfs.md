@@ -839,3 +839,25 @@ tests skipped). Already-running capacity v4 predates this follow-up: its raw
 `measure.json` files must be interpreted using the enclosing diagnostic screen
 summary and must NOT be included in unprofiled statistics. Do not restart the
 live diagnostic just to change metadata.
+
+V51 reached the intended RED failure on real T4: the second 16-key shard added
+66,832 requested device bytes at incoming capacity 4,096, then failed with
+`SHARED_WORKSPACE_MUST_REMOVE_DUPLICATED_TRANSIENT_TABLE`. Build was successful;
+this is not a compiler or setup failure. Small logs are retained under
+`test_results/library-owner-v51/library-owner/`.
+
+Implementation `e098462c5246a0e4e4d56b78a1fbab867af02343` moves the transient
+cuco set into `CucoWorkspace`. Its hasher/equality views contain only candidate
+tag-3 planes. Per-owner history, persistent membership and accepted storage
+remain independent. The existing lease protects reuse through final GPU readers;
+sealing an owner does not destroy the shared table. Table destruction precedes
+candidate-buffer destruction. No CUDA algorithm or C ABI is replaced.
+
+V52 (launch `6ab162a`) now runs this source with full BFS and all four sanitizer
+tools, followed by five-repeat cuco/native S10 screens on 1/2 T4. Physical pool
+is fixed at 96 MiB/rank, an explicit admission experiment without growth or
+fallback. cuDF correctness still runs, but this performance panel selects cuco
+and the preserved native only. GPU compilation, correctness, memory admission
+and speed for the shared-table implementation are all pending; do not infer
+them from the passing 36 local Python checks. Capacity v4's Nsight diagnostic
+continues on the earlier single-drain implementation independently.
