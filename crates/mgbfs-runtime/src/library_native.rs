@@ -101,6 +101,7 @@ pub struct LibraryShard {
     stream: *mut c_void,
     gate: OwnerCommitGate,
     completion: NativeEvent,
+    cuco_incoming_capacity: Option<u32>,
 }
 
 impl LibraryShard {
@@ -120,10 +121,11 @@ impl LibraryShard {
             return Err("LIBRARY_OWNER_STILL_OPEN".into());
         }
         let mut handle = ptr::null_mut();
-        let status = mgbfs_library_owner_create_window_v1(
+        let status = Self::create_window(
             previous,
             current,
             capacity,
+            self.cuco_incoming_capacity,
             self.stream,
             &mut handle,
         );
@@ -145,10 +147,30 @@ impl LibraryShard {
         capacity: u32,
         stream: *mut c_void,
     ) -> Result<Self> {
+        Self::new_window_with_cuco_capacity(previous, current, capacity, None, stream)
+    }
+
+    /// Select cuco with Some(fixed incoming capacity), otherwise cuDF. Selection
+    /// is retained across depth reopen; it is never changed after a failure.
+    /// # Safety
+    /// Same lifetime/stream/pool contract as new_window.
+    pub unsafe fn new_window_with_cuco_capacity(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        cuco_incoming_capacity: Option<u32>,
+        stream: *mut c_void,
+    ) -> Result<Self> {
         let completion = NativeEvent::new()?;
         let mut handle = ptr::null_mut();
-        let status =
-            mgbfs_library_owner_create_window_v1(previous, current, capacity, stream, &mut handle);
+        let status = Self::create_window(
+            previous,
+            current,
+            capacity,
+            cuco_incoming_capacity,
+            stream,
+            &mut handle,
+        );
         if status != 0 || handle.is_null() {
             return Err(format!("LIBRARY_OWNER_CREATE_WINDOW_{status}"));
         }
@@ -157,7 +179,26 @@ impl LibraryShard {
             stream,
             gate: OwnerCommitGate::new(u64::from(capacity)),
             completion,
+            cuco_incoming_capacity,
         })
+    }
+
+    unsafe fn create_window(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        incoming: Option<u32>,
+        stream: *mut c_void,
+        output: *mut OwnerHandle,
+    ) -> i32 {
+        match incoming {
+            Some(incoming) => mgbfs_library_owner_create_cuco_window_v1(
+                previous, current, capacity, incoming, stream, output,
+            ),
+            None => {
+                mgbfs_library_owner_create_window_v1(previous, current, capacity, stream, output)
+            }
+        }
     }
 
     /// # Safety
@@ -177,6 +218,7 @@ impl LibraryShard {
             stream,
             gate: OwnerCommitGate::new(u64::from(capacity)),
             completion,
+            cuco_incoming_capacity: None,
         })
     }
 

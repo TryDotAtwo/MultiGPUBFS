@@ -1,6 +1,25 @@
 use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection};
 
 #[test]
+fn cuco_reference_requires_fixed_pool_and_archive_without_native_substitution() {
+    for profile in ["DENSE", "HASH_FIRST"] {
+        let selected = ReferenceSelection::parse(profile, "CUCO_INDEXED", "ON", false, 64, 8)
+            .expect("explicit cuco selection");
+        assert!(selected.with_library_pool(None, true).is_err());
+        assert!(selected.with_library_pool(Some("67108864"), false).is_err());
+        assert!(selected.validate_archive(false).is_err());
+        let selected = selected.with_library_pool(Some("67108864"), true).unwrap();
+        assert_eq!(selected.library_pool_bytes, Some(64 << 20));
+        assert!(selected.validate_archive(true).is_ok());
+        assert_ne!(selected.owner, ReferenceOwner::CudfRelational);
+        assert_ne!(
+            selected.owner,
+            ReferenceOwner::Native(OwnerBackend::CubSortMerge)
+        );
+    }
+}
+
+#[test]
 fn library_dispatch_requires_compiled_support_and_an_explicit_fixed_pool() {
     let selection =
         ReferenceSelection::parse("DENSE", "CUDF_RELATIONAL", "OFF", false, 64, 8).unwrap();

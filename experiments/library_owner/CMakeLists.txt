@@ -18,6 +18,13 @@ add_test(NAME owner_abi_invalid COMMAND owner_abi_invalid)
 
 # Optional pinned cuco source supplied by the isolated GPU gate.
 if(DEFINED CUCO_ROOT)
+  target_sources(mgbfs_library_owner PRIVATE cuco_owner_abi.cu)
+  target_compile_definitions(mgbfs_library_owner PRIVATE MGBFS_HAS_CUCO=1)
+  target_compile_options(mgbfs_library_owner PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>)
+  target_include_directories(mgbfs_library_owner PRIVATE "${CUCO_ROOT}/include")
+  add_executable(cuco_owner_abi_contract ../../tests/cuco_owner_abi_contract.cpp)
+  target_link_libraries(cuco_owner_abi_contract PRIVATE mgbfs_library_owner)
+  add_test(NAME cuco_owner_abi_contract COMMAND cuco_owner_abi_contract)
   add_executable(cuco_pool_probe cuco_pool_probe.cu)
   target_compile_options(cuco_pool_probe PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>)
   target_include_directories(cuco_pool_probe PRIVATE "${CUCO_ROOT}/include")

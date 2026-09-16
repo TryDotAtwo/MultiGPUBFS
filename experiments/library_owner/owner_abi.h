@@ -67,6 +67,13 @@ int mgbfs_library_owner_create_v1(MgbfsLibraryKeysV1 history, uint32_t capacity,
  */
 int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1 previous,
     MgbfsLibraryKeysV1 current, uint32_t capacity, void* cuda_stream, void** owner);
+/* Explicit cuCollections implementation of the SAME remaining V1 operations.
+ * incoming_capacity is fixed and nonzero before creation. No table growth or
+ * fallback; an SDK built without CUCO_ROOT rejects creation and clears owner.
+ */
+int mgbfs_library_owner_create_cuco_window_v1(MgbfsLibraryKeysV1 previous,
+    MgbfsLibraryKeysV1 current, uint32_t capacity, uint32_t incoming_capacity,
+    void* cuda_stream, void** owner);
 /* Compare zeros a non-null result on failure and does not publish. Returned indices are borrowed until next compare
  * or destroy. Library count synchronization is included in this call's timing.
  */

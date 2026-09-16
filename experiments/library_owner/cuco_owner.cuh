@@ -60,12 +60,12 @@ __global__ void survivor_flags(Ref persistent, uint32_t rows,
                  !persistent.contains(key_index(3, row));
   }
 }
-__global__ void gather_sources(uint32_t const* selected, uint32_t rows,
+static __global__ void gather_sources(uint32_t const* selected, uint32_t rows,
                                uint32_t const* input, uint32_t* output) {
   for (uint32_t row = blockIdx.x * blockDim.x + threadIdx.x; row < rows;
        row += gridDim.x * blockDim.x) output[row] = input[selected[row]];
 }
-__global__ void append_keys(uint32_t const* selected, uint32_t rows,
+static __global__ void append_keys(uint32_t const* selected, uint32_t rows,
     uint32_t const* candidate, size_t candidate_stride,
     uint32_t* accepted, size_t accepted_stride, uint32_t first) {
   unsigned const word = blockIdx.y;

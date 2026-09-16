@@ -10,7 +10,7 @@ import hashlib
 import shutil
 
 SOURCE_COMMIT = "c6348bba6f7d9f6937c48e06b168f281b7ccf7c7"
-FULL_BFS_GATE = False
+FULL_BFS_GATE = True
 LOAD_SCREEN = False
 CUCO_GATE = True
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
@@ -218,6 +218,11 @@ def main():
                         owner_command = ["compute-sanitizer", "--tool", tool,
                                          "--error-exitcode", "97", *owner_command]
                     run(owner_command, f"cuco-owner-gpu{gpu['index']}-{tool}", extra_env=device_env)
+                    abi_command = [str(build / "cuco_owner_abi_contract")]
+                    if tool != "plain":
+                        abi_command = ["compute-sanitizer", "--tool", tool,
+                                       "--error-exitcode", "97", *abi_command]
+                    run(abi_command, f"cuco-abi-gpu{gpu['index']}-{tool}", extra_env=device_env)
                 command = [executable] if tool == "plain" else [
                     "compute-sanitizer", "--tool", tool, "--error-exitcode", "97", executable]
                 run(command, f"gpu{gpu['index']}-{tool}", extra_env=device_env)
@@ -247,15 +252,18 @@ def main():
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "cli-build")
             cli = str(source / "target/release/mgbfs")
-            for group, expected_count, profile, generation in [
+            scenarios = [
                     ("s4", 24, "DENSE", "SCALAR"),
                     ("s4", 24, "HASH_FIRST", "INT_MMA_SM75"),
-                    ("u4m2", 64, "DENSE", "SCALAR")]:
-                label = group + "-" + profile.lower()
+                    ("u4m2", 64, "DENSE", "SCALAR")]
+            for owner, group, expected_count, profile, generation in [
+                    (owner, *scenario) for owner in ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                    for scenario in scenarios]:
+                label = owner.lower() + "-" + group + "-" + profile.lower()
                 run_root = work / ("cli-" + label)
                 run_root.mkdir()
                 output_dir = logs / ("cli-" + label)
-                process_env = dict(device_env, MGBFS_OWNER_BACKEND="CUDF_RELATIONAL",
+                process_env = dict(device_env, MGBFS_OWNER_BACKEND=owner,
                     MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE=profile,
                     MGBFS_HASH_FIRST_GENERATION=generation, MGBFS_BENCH_CAPACITY="64",
                     MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8", MGBFS_SHARDS="4",
@@ -272,7 +280,7 @@ def main():
                 total = 0
                 for rank in range(2):
                     result = json.loads((output_dir / f"rank-{rank}.json").read_text())
-                    if (result["status"] != "COMPLETE" or result["owner_backend"] != "CUDF_RELATIONAL"
+                    if (result["status"] != "COMPLETE" or result["owner_backend"] != owner
                             or result["library_pool_reserved_bytes"] != (64 << 20)
                             or result["group"] != group or not result["backend"].startswith("library_")
                             or not result["archive_enabled"] or not result["warmup_completed"]):

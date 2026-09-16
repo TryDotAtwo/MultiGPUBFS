@@ -6,7 +6,7 @@ use crate::jobs::{split, JobSpan};
 use crate::library_native::{finalize_shards, LibraryShard};
 use crate::parent_batches::{ParentBatch, ParentCursor};
 use mgbfs_core::{
-    config::OwnerBackend,
+    config::{OwnerBackend, ReferenceOwner},
     hash::GemmHash,
     matrix::{encode_permutation_matrix, MatrixGroup},
     Result,
@@ -443,6 +443,34 @@ impl DistributedNativeBfs {
         pool_bytes: u64,
         tensor_generation: bool,
     ) -> Result<Self> {
+        Self::new_library_reference_with_owner(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            pool_bytes,
+            tensor_generation,
+            ReferenceOwner::CudfRelational,
+        )
+    }
+
+    /// Explicit reference library selection; no substitution on pool/capacity
+    /// failure. All variants share the native route/materialization/archive path.
+    #[cfg(feature = "library-owner")]
+    pub fn new_library_reference_with_owner(
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        pool_bytes: u64,
+        tensor_generation: bool,
+        library_owner: ReferenceOwner,
+    ) -> Result<Self> {
+        if matches!(library_owner, ReferenceOwner::Native(_)) {
+            return Err("REFERENCE_LIBRARY_OWNER".into());
+        }
         if tensor_generation && materialization_capacity.is_none() {
             return Err("REFERENCE_HASH_FIRST_GENERATION".into());
         }
@@ -455,7 +483,7 @@ impl DistributedNativeBfs {
             OwnerBackend::CubSortMerge,
             256,
             tensor_generation,
-            Some(pool_bytes),
+            Some((pool_bytes, library_owner)),
         )
     }
     /// The 29 shared Buffer allocations, excluding library/profile/transport
@@ -566,8 +594,9 @@ impl DistributedNativeBfs {
         owner_backend: OwnerBackend,
         tile_limit: u32,
         hash_first_tensor_generation: bool,
-        library_pool_bytes: Option<u64>,
+        library_options: Option<(u64, ReferenceOwner)>,
     ) -> Result<Self> {
+        let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if let Some(bytes) = library_pool_bytes {
             if !cfg!(feature = "library-owner")
                 || bytes == 0
@@ -1067,12 +1096,19 @@ impl DistributedNativeBfs {
             }
             for shard in 0..cfg.shards as usize {
                 unsafe {
-                    library.shards.push(LibraryShard::new_window(
-                        history_view(&result.prev, plane_words, &library.previous[shard]),
-                        history_view(&result.curr, plane_words, &library.current[shard]),
-                        capacity,
-                        raw,
-                    )?);
+                    library
+                        .shards
+                        .push(LibraryShard::new_window_with_cuco_capacity(
+                            history_view(&result.prev, plane_words, &library.previous[shard]),
+                            history_view(&result.curr, plane_words, &library.current[shard]),
+                            capacity,
+                            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
+                                Some(candidates)
+                            } else {
+                                None
+                            },
+                            raw,
+                        )?);
                 }
             }
             result.library_owner = Some(library);

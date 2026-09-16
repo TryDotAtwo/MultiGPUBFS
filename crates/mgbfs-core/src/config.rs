@@ -21,6 +21,7 @@ pub enum OwnerBackend {
 pub enum ReferenceOwner {
     Native(OwnerBackend),
     CudfRelational,
+    CucoIndexed,
 }
 
 /// Explicit selection for the current reference benchmark, not production
@@ -37,7 +38,7 @@ pub struct ReferenceSelection {
 }
 impl ReferenceSelection {
     pub fn validate_archive(&self, enabled: bool) -> Result<()> {
-        if self.owner == ReferenceOwner::CudfRelational && !enabled {
+        if !matches!(self.owner, ReferenceOwner::Native(_)) && !enabled {
             return Err("REFERENCE_LIBRARY_ARCHIVE_REQUIRED".into());
         }
         Ok(())
@@ -49,7 +50,7 @@ impl ReferenceSelection {
                     return Err("REFERENCE_UNUSED_LIBRARY_POOL".into());
                 }
             }
-            ReferenceOwner::CudfRelational => {
+            ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
                 if !available {
                     return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
                 }
@@ -90,6 +91,7 @@ impl ReferenceSelection {
             "CUB_SORT_MERGE" => ReferenceOwner::Native(OwnerBackend::CubSortMerge),
             "BMMA_BUCKET" => ReferenceOwner::Native(OwnerBackend::BmmaBucket),
             "CUDF_RELATIONAL" => ReferenceOwner::CudfRelational,
+            "CUCO_INDEXED" => ReferenceOwner::CucoIndexed,
             _ => return Err("REFERENCE_OWNER_BACKEND".into()),
         };
         let prededup = match pre {

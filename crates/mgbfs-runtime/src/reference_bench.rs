@@ -219,10 +219,10 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let pinned = archive.pinned_bytes();
     let setup = Instant::now();
     let mut bfs = match selection.owner {
-        ReferenceOwner::CudfRelational => {
+        ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
             #[cfg(feature = "library-owner")]
             {
-                DistributedNativeBfs::new_library_reference_with_generation(
+                DistributedNativeBfs::new_library_reference_with_owner(
                     &graph,
                     20260828u128.to_le_bytes(),
                     id,
@@ -232,6 +232,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                         .library_pool_bytes
                         .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?,
                     selection.tensor_generation,
+                    selection.owner,
                 )?
             }
             #[cfg(not(feature = "library-owner"))]
@@ -342,6 +343,13 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                 "library_nccl_hash_first_cudf_v1"
             } else {
                 "library_nccl_dense_cudf_v1"
+            });
+        }
+        if selection.owner == ReferenceOwner::CucoIndexed {
+            value["backend"] = serde_json::json!(if selection.materialization_capacity.is_some() {
+                "library_nccl_hash_first_cuco_v1"
+            } else {
+                "library_nccl_dense_cuco_v1"
             });
         }
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?

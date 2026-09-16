@@ -1,5 +1,6 @@
 #include "owner_abi.h"
 #include "cudf_owner.hpp"
+#include "owner_handle.hpp"
 #include <limits>
 #include <vector>
 #include <map>
@@ -68,14 +69,7 @@ extern "C" int mgbfs_library_pool_destroy_v1(void* pool) {
 }
 
 namespace {
-struct Handle {
-  mgbfs::CudfOwner owner;
-  uint64_t epoch{0}, last_epoch{0};
-  bool pending{false}, has_last{false}, poisoned{false};
-  Handle(cudf::table_view history, int32_t capacity, rmm::cuda_stream_view stream,
-         std::optional<cudf::table_view> current = std::nullopt)
-      : owner(history, capacity, stream, current) {}
-};
+using Handle = mgbfs::LibraryOwnerHandle;
 
 int32_t count(uint32_t rows) {
   if (rows > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
@@ -92,6 +86,30 @@ std::vector<cudf::column_view> columns(MgbfsLibraryKeysV1 input) {
   }
   return out;
 }
+struct CudfHandle final : Handle {
+  mgbfs::CudfOwner owner;
+  CudfHandle(cudf::table_view history, int32_t capacity, rmm::cuda_stream_view stream,
+             std::optional<cudf::table_view> current = std::nullopt)
+      : owner(history, capacity, stream, current) {}
+  MgbfsLibrarySurvivorsV1 compare(uint64_t epoch, MgbfsLibraryCandidatesV1 input) override {
+    auto cols = columns(input.keys);
+    if (input.keys.rows && !input.source_indices) throw std::runtime_error("OWNER_NULL_SOURCE");
+    cols.emplace_back(cudf::data_type{cudf::type_id::UINT32}, count(input.keys.rows),
+                      input.source_indices, nullptr, 0, 0);
+    auto staged = owner.compare(cudf::table_view(cols));
+    return {staged.column(4).data<uint32_t>(), epoch,
+            static_cast<uint32_t>(staged.num_rows()), 0};
+  }
+  void commit(uint64_t, uint32_t granted) override { owner.commit(count(granted)); }
+  MgbfsLibraryKeysV1 export_committed() override {
+    auto view = owner.export_committed();
+    MgbfsLibraryKeysV1 result{};
+    result.rows = static_cast<uint32_t>(view.num_rows());
+    for (int c = 0; c < 4; ++c) result.words[c] = view.column(c).data<uint32_t>();
+    return result;
+  }
+  void seal() override { owner.seal(); }
+};
 int fail(Handle* handle) {
   if (handle) handle->poisoned = true;
   return -1;
@@ -104,8 +122,8 @@ extern "C" int mgbfs_library_owner_create_v1(MgbfsLibraryKeysV1 history, uint32_
   *owner = nullptr;
   try {
     auto keys = columns(history);
-    *owner = new Handle(cudf::table_view(keys), count(capacity),
-                        rmm::cuda_stream_view{static_cast<cudaStream_t>(stream)});
+    *owner = static_cast<Handle*>(new CudfHandle(cudf::table_view(keys), count(capacity),
+                        rmm::cuda_stream_view{static_cast<cudaStream_t>(stream)}));
     return 0;
   } catch (...) { return -1; }
 }
@@ -117,14 +135,7 @@ extern "C" int mgbfs_library_owner_compare_v1(void* owner, uint64_t epoch,
   try {
     if (handle->poisoned || handle->pending ||
         (handle->has_last && epoch <= handle->last_epoch)) return fail(handle);
-    auto cols = columns(input.keys);
-    if (input.keys.rows && !input.source_indices) return fail(handle);
-    cols.emplace_back(cudf::data_type{cudf::type_id::UINT32}, count(input.keys.rows),
-                      input.source_indices, nullptr, 0, 0);
-    auto staged = handle->owner.compare(cudf::table_view(cols));
-    result->source_indices = staged.column(4).data<uint32_t>();
-    result->rows = static_cast<uint32_t>(staged.num_rows());
-    result->epoch = epoch;
+    *result = handle->compare(epoch, input);
     handle->epoch = epoch;
     handle->pending = true;
     return 0;
@@ -137,9 +148,9 @@ extern "C" int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1 previous,
   try {
     auto prev_keys = columns(previous);
     auto curr_keys = columns(current);
-    *owner = new Handle(cudf::table_view(prev_keys), count(capacity),
+    *owner = static_cast<Handle*>(new CudfHandle(cudf::table_view(prev_keys), count(capacity),
                         rmm::cuda_stream_view{static_cast<cudaStream_t>(stream)},
-                        cudf::table_view(curr_keys));
+                        cudf::table_view(curr_keys)));
     return 0;
   } catch (...) { return -1; }
 }
@@ -148,7 +159,8 @@ extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32
   if (!handle) return -1;
   try {
     if (handle->poisoned || !handle->pending || epoch != handle->epoch) return fail(handle);
-    handle->owner.commit(count(granted));
+    count(granted);
+    handle->commit(epoch, granted);
     handle->last_epoch = epoch;
     handle->has_last = true;
     handle->pending = false;
@@ -163,7 +175,7 @@ extern "C" int mgbfs_library_owner_seal_v1(void* owner) {
   if (!handle) return -1;
   try {
     if (handle->poisoned || handle->pending) return fail(handle);
-    handle->owner.seal();
+    handle->seal();
     return 0;
   } catch (...) { return fail(handle); }
 }
@@ -173,11 +185,15 @@ extern "C" int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* ke
   if (!handle || !keys) return fail(handle);
   try {
     if (handle->poisoned || handle->pending) return fail(handle);
-    auto view = handle->owner.export_committed();
-    MgbfsLibraryKeysV1 result{};
-    result.rows = static_cast<uint32_t>(view.num_rows());
-    for (int c = 0; c < 4; ++c) result.words[c] = view.column(c).data<uint32_t>();
-    *keys = result;
+    *keys = handle->export_committed();
     return 0;
   } catch (...) { return fail(handle); }
 }
+
+#ifndef MGBFS_HAS_CUCO
+extern "C" int mgbfs_library_owner_create_cuco_window_v1(MgbfsLibraryKeysV1,
+    MgbfsLibraryKeysV1, uint32_t, uint32_t, void*, void** owner) {
+  if (owner) *owner = nullptr;
+  return -1;
+}
+#endif

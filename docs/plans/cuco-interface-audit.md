@@ -167,3 +167,20 @@ now explicitly typed. The next fixture also adds non-tile-aligned multi-block
 batches up to 4097 rows, independently checked against a CPU full-key set. Actual
 GPU owner execution, C ABI/runtime integration and end-to-end timings remain
 unverified until their respective gates run.
+
+V42 at `c6348bba6f7d9f6937c48e06b168f281b7ccf7c7` completed PASS.
+The actual owner fixture (including four multi-block CPU-oracle batches) passed
+on each physical T4, plain plus memcheck/racecheck/initcheck/synccheck. All eight
+sanitizer logs have zero errors; racecheck also has zero warnings. Evidence is
+`test_results/library-owner-v42/library-owner/cuco-owner-gpu*-*.log`.
+This proves the isolated owner contract, not a distributed BFS or performance win.
+
+Follow-up integration adds an explicit cuco factory returning the same internal
+handle base as cuDF. Existing versioned compare/commit/export/seal/destroy calls
+retain their epoch, poison and borrowed-result semantics. SDKs without cuco reject
+the new factory rather than substituting cuDF. Rust selection `CUCO_INDEXED`
+requires an explicit fixed library pool and mandatory archive, retains the owner
+kind across depth reopen, and records separate benchmark backend names. Input
+capacity is the prevalidated route candidate capacity, not a growing allocation.
+The next GPU gate covers both library owners through full-state 1/2-device BFS,
+rank-map reversal, both profiles and actual two-process CLI/archive execution.

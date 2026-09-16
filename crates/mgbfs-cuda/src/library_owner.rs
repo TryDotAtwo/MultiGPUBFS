@@ -83,6 +83,16 @@ extern "C" {
         cuda_stream: *mut c_void,
         owner: *mut OwnerHandle,
     ) -> i32;
+    /// Same remaining owner ABI, with fixed cuco input/table capacities.
+    /// Unsupported SDK builds fail creation; no alternate owner is substituted.
+    pub fn mgbfs_library_owner_create_cuco_window_v1(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        incoming_capacity: u32,
+        cuda_stream: *mut c_void,
+        owner: *mut OwnerHandle,
+    ) -> i32;
     /// Result indices are device pointers borrowed until the next compare/destroy.
     /// Count synchronization performed by the library belongs in measured time.
     pub fn mgbfs_library_owner_compare_v1(

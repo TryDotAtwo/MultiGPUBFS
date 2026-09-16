@@ -30,16 +30,26 @@ impl Extent for TestDisk {
 
 #[test]
 fn library_two_rank_layers_and_archives_match_oracle() {
-    for symmetric in [false, true] {
-        for hash_first in [false, true] {
-            for owners in [[0, 1], [1, 0]] {
-                fixture(symmetric, hash_first, owners);
+    for library_owner in [
+        mgbfs_core::config::ReferenceOwner::CudfRelational,
+        mgbfs_core::config::ReferenceOwner::CucoIndexed,
+    ] {
+        for symmetric in [false, true] {
+            for hash_first in [false, true] {
+                for owners in [[0, 1], [1, 0]] {
+                    fixture(symmetric, hash_first, owners, library_owner);
+                }
             }
         }
     }
 }
 
-fn fixture(symmetric: bool, hash_first: bool, owners: [u32; 2]) {
+fn fixture(
+    symmetric: bool,
+    hash_first: bool,
+    owners: [u32; 2],
+    library_owner: mgbfs_core::config::ReferenceOwner,
+) {
     let graph = if symmetric {
         MatrixGroup::symmetric_permutation_matrices(4).unwrap()
     } else {
@@ -75,13 +85,15 @@ fn fixture(symmetric: bool, hash_first: bool, owners: [u32; 2]) {
                         generation_variant: 1,
                         untouched_vram_reserve: 1 << 30,
                     };
-                    let mut bfs = DistributedNativeBfs::new_library_reference(
+                    let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
                         &graph,
                         seed,
                         id,
                         cfg,
                         hash_first.then_some(128),
                         64 << 20,
+                        false,
+                        library_owner,
                     )
                     .unwrap();
                     let bytes = Arc::new(Mutex::new(Vec::new()));
