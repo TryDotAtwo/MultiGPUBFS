@@ -10,6 +10,13 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_profiled_rows_cannot_enter_performance_statistics(self):
+        row = dict(search_complete_seconds=1, durable_run_commit_seconds=2,
+                   smi_peak_mib_per_rank=[100], smi_peak_mib_total=100,
+                   profiled=True)
+        with self.assertRaisesRegex(ValueError, 'PROFILED_MEASUREMENTS'):
+            stats([row])
+
     def test_rank_durable_cannot_precede_its_search_even_if_global_max_hides_it(self):
         rows = [dict(rank=0, status='COMPLETE', backend='native_test',
                      local_layer_sizes=[1, 2], search_complete_seconds=10,

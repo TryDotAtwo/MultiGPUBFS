@@ -11,6 +11,49 @@ import library_gpu_screen as screen
 
 
 class ScreenContract(unittest.TestCase):
+    def test_profile_keeps_rank_command_and_archives_but_not_benchmark_statistics(self):
+        row = self.row()
+        row.update(search_complete_seconds=1, smi_peak_mib_per_rank=[100, 100],
+                   smi_peak_mib_total=200)
+        launched = []
+        def launch(command, out, label, env, timeout):
+            launched.append(command)
+            (out/'timeline.nsys-rep').write_bytes(b'trace fixture')
+            return row
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(screen, 'run_group', launch), patch.object(
+                    screen.subprocess, 'run', return_value=SimpleNamespace(
+                        stdout='{"status":"VERIFIED"}', returncode=0)):
+                result = screen.run_case('mgbfs', root/'logs', root/'archive',
+                    's3', 6, 2, 7, 64, 128, 67108864, 'DENSE', 'ON', {},
+                    nsys='/opt/nsys')
+            command = launched[0]
+            self.assertEqual(command[:2], ['/opt/nsys', 'profile'])
+            self.assertIn('--sample=none', command)
+            self.assertIn('--cpuctxsw=none', command)
+            self.assertIn('--nproc-per-node=2', command)
+            self.assertEqual(command[-1], '{RANK_OUT}')
+            self.assertEqual(result['status'], 'COMPLETE')
+            self.assertEqual(len(result['archive_verification']), 2)
+            self.assertTrue(result['profiled'])
+            self.assertNotIn('statistics', result)
+            saved = json.loads((root/'logs'/'screen-summary.json').read_text())
+            self.assertNotIn('statistics', saved)
+            self.assertTrue(saved['measurement']['profiled'])
+
+    def test_profile_without_trace_is_failure_not_timing_evidence(self):
+        row = self.row()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(screen, 'run_group', return_value=row):
+                with self.assertRaisesRegex(ValueError, 'SCREEN_TRACE_MISSING'):
+                    screen.run_case('mgbfs', root/'logs', root/'archive',
+                        's3', 6, 2, 7, 64, 128, 67108864, 'DENSE', 'ON', {}, nsys='nsys')
+            saved = json.loads((root/'logs'/'screen-summary.json').read_text())
+            self.assertEqual(saved['status'], 'FAILED')
+            self.assertNotIn('statistics', saved)
+
     def test_preserved_native_reports_need_no_library_pool(self):
         row = self.row()
         for rank in row['rank_results']:

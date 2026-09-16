@@ -133,6 +133,7 @@ def run_group(command,out,label,env,timeout=7200):
 
 def stats(rows):
  if not rows:raise ValueError('EMPTY_MEASUREMENTS')
+ if any(x.get('profiled',False) for x in rows):raise ValueError('PROFILED_MEASUREMENTS')
  world=len(rows[0]['smi_peak_mib_per_rank'])
  if world not in (1,2) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
  if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')

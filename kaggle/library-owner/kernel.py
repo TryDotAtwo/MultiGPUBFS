@@ -20,6 +20,7 @@ SCREEN_POOL_BYTES = 256 << 20
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
 CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
+PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistics.
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
@@ -318,6 +319,28 @@ def main():
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
                 from distributed_gpu_bench import stats
+                nsys = None
+                if PROFILE_SCREEN:
+                    # Official Ubuntu package; unpack into this job's private /tmp tree.
+                    package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
+                    package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
+                    package = work / package_name
+                    run(["curl", "--fail", "--location", "--max-time", "300",
+                         "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/" + package_name,
+                         "--output", str(package)], "nsys-download")
+                    with package.open("rb") as downloaded:
+                        digest = hashlib.file_digest(downloaded, "sha256").hexdigest()
+                    if digest != package_sha:
+                        raise RuntimeError("NSYS_DIGEST_MISMATCH")
+                    nsys_root = work / "nsys"
+                    run(["dpkg-deb", "--extract", str(package), str(nsys_root)], "nsys-extract")
+                    candidates = list(nsys_root.glob("opt/nvidia/nsight-systems/*/target-linux-x64/nsys"))
+                    if len(candidates) != 1:
+                        raise RuntimeError("NSYS_EXECUTABLE_INVENTORY")
+                    nsys = str(candidates[0])
+                    run([nsys, "--version"], "nsys-version")
+                    manifest["profiler"] = dict(package=package_name, sha256=digest,
+                        scope="diagnostic only; includes process startup, warmup, BFS and archive")
                 if NATIVE_COMPARISON:
                     preserved = work / "preserved-native"
                     gate.checkout("https://github.com/TryDotAtwo/MultiGPUBFS.git",
@@ -363,7 +386,7 @@ def main():
                     manifest["previous_owner_commit"] = CUCO_PREVIOUS_COMMIT
                 for world in SCREEN_WORLDS:
                     for repeat in range(SCREEN_REPEATS):
-                        owners = ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                        owners = ("CUCO_INDEXED",) if PROFILE_SCREEN else ("CUDF_RELATIONAL", "CUCO_INDEXED")
                         if CUCO_PREVIOUS_COMMIT:
                             owners += ("CUCO_PREVIOUS",)
                         if NATIVE_COMPARISON:
@@ -375,6 +398,8 @@ def main():
                             native = owner == "CUB_SORT_MERGE"
                             case_cli = str(preserved / "target/release/mgbfs") if native else cli
                             extra = {"native_example": str(preserved / "target/release/examples/distributed_bench")} if native else {}
+                            if PROFILE_SCREEN:
+                                extra["nsys"] = nsys
                             selected_env = previous_env if owner == "CUCO_PREVIOUS" else device_env
                             case_env = dict(preserved_env if native else selected_env,
                                             MGBFS_ARCHIVE_SLOTS=str(SCREEN_ARCHIVE_SLOTS))
@@ -383,8 +408,15 @@ def main():
                                 0 if native else SCREEN_POOL_BYTES, "DENSE", "ON",
                                 case_env, owner="CUCO_INDEXED" if owner == "CUCO_PREVIOUS" else owner, **extra)
                             panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
-                manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
-                manifest["load_screen"] = "S10 DENSE owners and preserved native, five repeats on 1/2 T4; matched matrix settings; tuned Pareto acceptance pending"
+                            if PROFILE_SCREEN:
+                                run([nsys, "stats", "--report", "cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,osrt_sum",
+                                     "--format", "csv", result["trace"]], label + "-nsys-stats", timeout=600)
+                if PROFILE_SCREEN:
+                    manifest["profile_runs"] = {key: len(rows) for key, rows in panel.items()}
+                    manifest["load_screen"] = "S10 DENSE diagnostic timelines; NOT speed or VRAM acceptance evidence"
+                else:
+                    manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
+                    manifest["load_screen"] = "S10 DENSE owners and preserved native; matched matrix settings; tuned Pareto acceptance pending"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

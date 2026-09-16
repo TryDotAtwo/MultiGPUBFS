@@ -44,8 +44,8 @@ def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'
 
 def run_case(cli, output, archive_root, group, expected_states, world, batch,
              capacity, ring, pool_bytes, profile, pre_dedup, inherited, *, owner='CUDF_RELATIONAL',
-             native_example=None):
-    """One unprofiled screening run; retain archives and all measurement logs."""
+             native_example=None, nsys=None):
+    """One screening run; optional diagnostic trace is never benchmark evidence."""
     if world not in (1, 2) or profile not in ('DENSE', 'HASH_FIRST'):
         raise ValueError('SCREEN_CONFIG')
     native = owner in ('CUB_SORT_MERGE', 'BMMA_BUCKET')
@@ -71,9 +71,16 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         f'--nproc-per-node={world}', '--no-python', *executable,
         group, str(batch), str(archive_root/'bootstrap'), str(archive_root/'archive'),
         '{RANK_OUT}']
+    if nsys is not None:
+        command = [str(nsys), 'profile', '--trace=cuda,nvtx,osrt',
+            '--sample=none', '--cpuctxsw=none', '--force-overwrite=false',
+            '--output=' + str(output/'timeline'), *command]
     report = dict(status='INCOMPLETE', scope='single screening sample; not Pareto acceptance',
                   memory_scope='50ms nvidia-smi sampled full device consumption; not exact peak',
                   configuration=env, archive_verification=[])
+    report['profiled'] = nsys is not None
+    if nsys is not None:
+        report['scope'] = 'diagnostic trace including startup/warmup/archive; not performance evidence'
     # Do not serialize inherited credentials or unrelated environment settings.
     report['configuration'] = {k: v for k, v in env.items()
                                if k.startswith('MGBFS_') and k in {
@@ -82,12 +89,18 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
                                    'MGBFS_FUTURE_CAPACITY', 'MGBFS_RANK_MAP'}}
     try:
         row = run_group(command, output, 'measure', env, timeout=1800)
+        row['profiled'] = nsys is not None
         report['measurement'] = row
         validate_result(row, expected_states, pool_bytes, owner=owner,
             expected=dict(group=group, batch=batch, world_size=world,
                 frontier_profile=profile, pre_dedup=pre_dedup,
                 declared_capacity_records=capacity, declared_state_ring_records=ring,
                 capacity_mode='MaxPerRank', hash_first_generation='SCALAR', generation_variant=1))
+        if nsys is not None:
+            trace = output/'timeline.nsys-rep'
+            if not trace.is_file() or trace.stat().st_size == 0:
+                raise ValueError('SCREEN_TRACE_MISSING')
+            report['trace'] = str(trace)
         for rank in range(world):
             archive = archive_root/f'archive-rank-{rank}.mgbfsar1'
             verified = subprocess.run([str(cli), 'verify', str(archive)], env=env,
@@ -98,7 +111,8 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
             if result.get('status') != 'VERIFIED':
                 raise ValueError('SCREEN_ARCHIVE_VERIFY')
             report['archive_verification'].append(result)
-        report['statistics'] = stats([row])
+        if nsys is None:
+            report['statistics'] = stats([row])
         report['status'] = 'COMPLETE'
         return report
     except Exception as error:
