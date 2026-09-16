@@ -16,6 +16,24 @@ sections below as retained instructions for a future archived run, not current
 acceptance requirements. Small oracle tests still exercise archive correctness.
 Search-only output's durable timing is not proof of an archive commit.
 
+### External deadline guard
+
+`scripts/vast_watchdog.py --lease <lease.json> --log <new-log.jsonl>` loads the
+approved DPAPI-protected credential on Windows. The lease must record the exact
+`id`, `machine_id`, project-specific `label` beginning `mgbfs-lrx13-`, and an
+absolute `destroy_at_unix` selected from the all-in budget before starting work.
+Never feed another project's lease to it. Start it as a hidden process, verify
+its live handle and first WAITING record before submitting GPU jobs.
+
+At deadline it requests irreversible deletion of the matching instance and
+rechecks absence. Small results must be copied off before that deadline.
+The guard disables idle sleep only while running, refuses redirects, retries
+transient API failures and never logs the key or raw provider responses.
+Its tests use a fixture API; no live instance has been deleted for testing.
+It is NOT a provider-side spending cap: user shutdown, lost connectivity or
+provider API failure can delay deletion. Preserve teardown budget and monitor
+the guard externally during rental; verify provider state and actual costs.
+
 Status: preparation only; no server rented. Total project cap is USD 100,
 including compute, storage and network. Existing account credit is not the cap.
 
