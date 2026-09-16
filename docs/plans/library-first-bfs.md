@@ -504,3 +504,13 @@ tools (empty) separately from prior v43 provenance. No native/CUDA/Rust
 source changed since that gate. Both owners use identical matrix encoding,
 capacities and output contracts; one sample each cannot establish Pareto
 acceptance or the <=20% regression condition.
+
+Benchmark timeout cleanup was independently reproduced with real Linux child
+processes in the existing `multigpubfs-ref046-green` container (no GPU/network,
+read-only source mount). Before the fix, killing the launcher left its child
+alive. Launchers now own an isolated process group and cleanup kills that group
+on timeout, exceptional exit, or normal completion before another sample starts.
+The wait respects the remaining deadline instead of always overshooting by a
+20-second polling interval. Two Linux tests pass: timeout and failed launcher
+with a surviving child. This is harness correctness evidence, not GPU evidence;
+the already-running v44 uses its original immutable harness source.

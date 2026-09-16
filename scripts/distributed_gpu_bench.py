@@ -1,5 +1,5 @@
 """Two-T4 native NCCL versus immutable CayleyPy torchrun matrix BFS."""
-import argparse,gc,json,math,os,shutil,statistics,subprocess,sys,time
+import argparse,gc,json,math,os,shutil,signal,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 
@@ -91,6 +91,15 @@ def aggregate_rank_results(ranks,world=2):
   row['layer_sizes']=ranks[0]['layer_sizes']
  return row
 
+def stop_group(process):
+ # Only a launcher created with start_new_session belongs here. Kill the
+ # session's original process group, including ranks if the leader exited.
+ try:
+  if os.name=='posix':os.killpg(process.pid,signal.SIGKILL)
+  elif process.poll() is None:process.kill()
+ except ProcessLookupError:pass
+ process.wait()
+
 def run_group(command,out,label,env,timeout=7200):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
  if world not in (1,2):raise ValueError('unsupported measurement world')
@@ -99,17 +108,21 @@ def run_group(command,out,label,env,timeout=7200):
  with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi,(out/(label+'.log')).open('rb') as progress:
   relay=ProgressRelay(progress,sys.stdout)
   sampler=subprocess.Popen(['stdbuf','-oL','nvidia-smi','--query-gpu=timestamp,index,uuid,memory.used,utilization.gpu,utilization.memory,clocks.sm,power.draw','--format=csv,noheader,nounits','-lms','50'],stdout=smi,stderr=subprocess.STDOUT)
+  process=None
   try:
-   process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT);started=time.monotonic()
+   process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);started=time.monotonic()
    while process.poll() is None:
-    try:process.wait(timeout=20)
+    try:process.wait(timeout=max(0.001,min(20,timeout-(time.monotonic()-started))))
     except subprocess.TimeoutExpired:
      relay.poll()
      print(f'RUNNING {label}: {time.monotonic()-started:.0f}s',flush=True)
-     if time.monotonic()-started>timeout:process.kill();process.wait();row['status']='TIMEOUT';break
+     if time.monotonic()-started>=timeout:stop_group(process);row['status']='TIMEOUT';break
    row['exit_code']=process.returncode
    relay.poll(final=True)
-  finally:sampler.terminate();sampler.wait()
+  finally:
+   try:
+    if process is not None:stop_group(process)
+   finally:sampler.terminate();sampler.wait()
  if row['exit_code']==0:
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
   row.update(aggregate_rank_results(ranks,world=world))
