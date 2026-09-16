@@ -37,6 +37,15 @@ pub struct ReferenceSelection {
     pub library_pool_bytes: Option<u64>,
 }
 impl ReferenceSelection {
+    pub fn validate_archive_contract(&self, enabled: bool, search_only: bool) -> Result<()> {
+        if search_only {
+            if enabled {
+                return Err("REFERENCE_SEARCH_ONLY_ARCHIVE_CONFLICT".into());
+            }
+            return Ok(());
+        }
+        self.validate_archive(enabled)
+    }
     pub fn validate_archive(&self, enabled: bool) -> Result<()> {
         if !matches!(self.owner, ReferenceOwner::Native(_)) && !enabled {
             return Err("REFERENCE_LIBRARY_ARCHIVE_REQUIRED".into());

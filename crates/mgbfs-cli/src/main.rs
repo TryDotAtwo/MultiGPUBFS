@@ -10,8 +10,10 @@ fn execute() -> Result<(), (i32, String)> {
             if args.len() == 8 {
                 // Explicit alternative output contract, never an implicit fallback.
                 std::env::set_var("MGBFS_BENCH_SKIP_ARCHIVE", "1");
+                std::env::set_var("MGBFS_SEARCH_ONLY", "1");
                 std::env::set_var("MGBFS_ARCHIVE_STREAM", "0");
             } else {
+              std::env::remove_var("MGBFS_SEARCH_ONLY");
               match std::env::var("MGBFS_BENCH_SKIP_ARCHIVE") {
                 Err(std::env::VarError::NotPresent) => (),
                 Ok(value) if value == "0" => (),

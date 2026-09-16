@@ -124,3 +124,11 @@ fn reference_backend_selection_is_explicit_and_rejects_unsupported_compact_hash_
         assert!(ReferenceSelection::parse(profile, owner, pre, false, cap, tile).is_err());
     }
 }
+#[test]
+fn search_only_explicitly_allows_library_without_archive() {
+    for owner in ["CUCO_INDEXED", "CUDF_RELATIONAL", "CUB_SORT_MERGE"] {
+        let selection = ReferenceSelection::parse("DENSE", owner, "ON", false, 64, 8).unwrap();
+        assert!(selection.validate_archive_contract(false, true).is_ok());
+        assert!(selection.validate_archive_contract(true, true).is_err());
+    }
+}

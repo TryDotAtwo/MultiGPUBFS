@@ -1,5 +1,5 @@
 use crate::{
-    archive::{create_archive_extent, Extent, StreamExtent},
+    archive::create_archive_extent,
     distributed_native::{DistributedConfig, DistributedNativeBfs},
     pinned_archive::PinnedArchive,
 };
@@ -149,16 +149,16 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
-    let disk_bytes = graph
+    let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
+    let disk_bytes = if archive_enabled { graph
         .expected_max_unique_states
         .checked_mul((archive_width + 16) as u64)
         .and_then(|x| x.checked_add(64 << 20))
-        .ok_or("DISK")?;
+        .ok_or("DISK")? } else { 0 };
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
-    // Test-only A/B switch. Production runs retain the mandatory archive.
-    let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
-    selection.validate_archive(archive_enabled)?;
+    selection.validate_archive_contract(archive_enabled,
+        std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"))?;
     let buckets = env_u32("MGBFS_BUCKETS", 256);
     let shards = env_u32("MGBFS_SHARDS", 64);
     let (local_buckets, _) =
@@ -199,21 +199,19 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     // epochs on them is a separate integration step, not claimed here.
     let _control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
     let id = _control_group.nccl_id;
-    let extent: Box<dyn Extent + Send> = if archive_enabled {
-        create_archive_extent(Path::new(&archive_path), stream_archive)
-            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?
-    } else {
-        Box::new(StreamExtent::new(std::io::sink()))
-    };
-    let mut archive = PinnedArchive::new(
+    let mut archive = if archive_enabled {
+        let extent = create_archive_extent(Path::new(&archive_path), stream_archive)
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
+        Some(PinnedArchive::new(
         extent,
         disk_bytes,
         archive_width,
         digest,
         archive_rows,
         env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
-    )?;
-    let pinned = archive.pinned_bytes();
+        )?)
+    } else { None };
+    let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let setup = Instant::now();
     let mut bfs = match selection.owner {
         ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
@@ -277,12 +275,12 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         if trace {
             eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
         }
-        let alive = if archive_enabled {
-            bfs.advance_archived(&mut archive)?
+        let alive = if let Some(archive) = archive.as_mut() {
+            bfs.advance_archived(archive)?
         } else {
             bfs.advance()?
         };
-        if trace {
+        if trace && archive_enabled {
             eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
         }
         let elapsed = tick.elapsed().as_secs_f64();
@@ -295,7 +293,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         }
     }
     let search = start.elapsed().as_secs_f64();
-    if archive_enabled {
+    if let Some(archive) = archive.take() {
         archive.finish()?;
     }
     let durable = start.elapsed().as_secs_f64();
@@ -329,6 +327,14 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     std::fs::write(Path::new(&args[5]).join(format!("rank-{rank}.json")), {
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+        value["output_contract"] = serde_json::json!(if archive_enabled {
+            "archive_and_layer_counts"
+        } else {
+            "search_only_layer_counts"
+        });
+        if !archive_enabled {
+            value["durable_run_commit_seconds"] = serde_json::Value::Null;
+        }
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["group"] = serde_json::json!(group);
