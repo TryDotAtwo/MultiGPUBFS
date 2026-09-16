@@ -2,14 +2,64 @@ import sys
 import unittest
 import tempfile
 import json
+import os
+import subprocess
 from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker
+from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker, run_group
 
 
 class RankMetrics(unittest.TestCase):
+    def test_launcher_collects_eight_rank_files_from_real_child_process(self):
+        # Only the unavailable GPU sampler is substituted; launch, file IO,
+        # process lifecycle and aggregation execute normally on the host.
+        popen = subprocess.Popen
+        class Sampler:
+            def terminate(self): pass
+            def wait(self): return 0
+        def launch(command, **kwargs):
+            if command[0] == 'stdbuf':
+                kwargs['stdout'].write('\n'.join(
+                    f't,{r},uuid,{100+r},0,0,0,0' for r in range(8)))
+                kwargs['stdout'].flush()
+                return Sampler()
+            return popen(command, **kwargs)
+        worker = (
+            "import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); "
+            "[(p/f'rank-{r}.json').write_text(json.dumps(dict(rank=r,"
+            "status='COMPLETE',backend='fixture',local_layer_sizes=[int(r==0),r],"
+            "search_complete_seconds=r+1,durable_run_commit_seconds=r+2))) "
+            "for r in range(8)]")
+        with tempfile.TemporaryDirectory() as directory, patch(
+                'distributed_gpu_bench.subprocess.Popen', side_effect=launch):
+            row = run_group([sys.executable, '-c', worker, '{RANK_OUT}'],
+                            Path(directory), 'eight',
+                            dict(os.environ, MGBFS_BENCH_WORLD_SIZE='8'), timeout=10)
+            self.assertEqual(row['status'], 'COMPLETE')
+            self.assertEqual(row['layer_sizes'], [1, 28])
+            self.assertEqual(row['smi_peak_mib_total'], 828)
+            self.assertEqual(len(row['rank_results']), 8)
+
+    def test_eight_rank_counts_timings_and_memory_include_last_rank(self):
+        ranks = [dict(rank=r, status='COMPLETE', backend='native_test',
+                      local_layer_sizes=[int(r == 0), r],
+                      search_complete_seconds=r + 1, durable_run_commit_seconds=r + 2)
+                 for r in reversed(range(8))]
+        row = aggregate_rank_results(ranks, world=8)
+        self.assertEqual(row['layer_sizes'], [1, 28])
+        self.assertEqual(row['search_complete_seconds'], 8)
+        self.assertEqual(row['durable_run_commit_seconds'], 9)
+        text = '\n'.join(f't,{r},uuid,{100+r},0,0,0,0' for r in range(8))
+        memory, total = smi_peaks(text, world=8)
+        self.assertEqual(memory, [100,101,102,103,104,105,106,107])
+        self.assertEqual(total, 828)
+        row.update(smi_peak_mib_per_rank=memory, smi_peak_mib_total=total)
+        self.assertEqual(stats([row])['peak_mib_total'], 828)
+        with self.assertRaisesRegex(ValueError, 'inventory'):
+            aggregate_rank_results(ranks[:-1], world=8)
+
     def test_profiled_rows_cannot_enter_performance_statistics(self):
         row = dict(search_complete_seconds=1, durable_run_commit_seconds=2,
                    smi_peak_mib_per_rank=[100], smi_peak_mib_total=100,

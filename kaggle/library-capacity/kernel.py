@@ -3,8 +3,8 @@ import hashlib
 import os
 import urllib.request
 
-RUNNER_COMMIT = "007da906164504c56d1bd5d7ddde14ca63b8e7a8"
-RUNNER_SHA256 = "54dd5a23dd63565adf9ba8b804b800b69e308b80f743b69e6e48dc535c81f632"
+RUNNER_COMMIT = "b95b1fbdb80f0141274279750f5c1e38a17ac823"
+RUNNER_SHA256 = "bbc36718eb1a7504615f218b30d8d3c45e488e3e7237e4efbdc06946e13fb127"
 
 if __name__ == "__main__":
     url = ("https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
@@ -15,7 +15,8 @@ if __name__ == "__main__":
         raise RuntimeError("PINNED_RUNNER_DIGEST_MISMATCH")
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
-    namespace.update(SOURCE_COMMIT="fce7de137d2ffb121854759efcea330b7c25a803",
+    namespace.update(SOURCE_COMMIT="b95b1fbdb80f0141274279750f5c1e38a17ac823",
+                     CUDA_ARCHITECTURES="75;90",
                      SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
                      SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
                      CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
@@ -26,6 +27,6 @@ if __name__ == "__main__":
     # runner preserves MGBFS_* environment for both native and library cases.
     os.environ["MGBFS_SHARDS"] = "4"
     os.environ["MGBFS_BUCKETS"] = "256"
-    print("N_PEER_REGRESSION: physical 1/2 T4 correctness, all sanitizers; "
+    print("N_PEER_REGRESSION: SM75/SM90 compilation, physical 1/2 T4 correctness, all sanitizers; "
           "eight-device test remains an explicit separate hardware gate", flush=True)
     namespace["main"]()

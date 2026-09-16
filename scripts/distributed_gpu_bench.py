@@ -47,7 +47,7 @@ def baseline_worker(n,batch,out):
  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/f'rank-{rank}.json').write_text(json.dumps(row))
 
 def smi_peaks(text,world=2):
- if world not in (1,2):raise ValueError('unsupported measurement world')
+ if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
  peaks={r:[] for r in range(world)}
  for line in text.splitlines():
   fields=line.split(',')
@@ -60,7 +60,7 @@ def smi_peaks(text,world=2):
  return values,sum(values) if all(x is not None for x in values) else None
 
 def aggregate_rank_results(ranks,world=2):
- if world not in (1,2):raise ValueError('unsupported measurement world')
+ if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
  ranks=sorted(ranks,key=lambda x:x['rank'])
  if [x['rank'] for x in ranks]!=list(range(world)):raise ValueError('rank result inventory')
  if any(x.get('world_size',world)!=world for x in ranks):raise ValueError('rank world mismatch')
@@ -104,7 +104,7 @@ def stop_group(process):
 
 def run_group(command,out,label,env,timeout=7200):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
- if world not in (1,2):raise ValueError('unsupported measurement world')
+ if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
  command=[x.replace('{RANK_OUT}',str(rank_out)) for x in command]
  with (out/(label+'.log')).open('w') as log,(out/(label+'-smi.csv')).open('w') as smi,(out/(label+'.log')).open('rb') as progress:
@@ -135,7 +135,7 @@ def stats(rows):
  if not rows:raise ValueError('EMPTY_MEASUREMENTS')
  if any(x.get('profiled',False) for x in rows):raise ValueError('PROFILED_MEASUREMENTS')
  world=len(rows[0]['smi_peak_mib_per_rank'])
- if world not in (1,2) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
+ if world not in (1,2,4,8) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
  if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')
  for row in rows:
   measurements=[row['search_complete_seconds'],row['smi_peak_mib_total'],*row['smi_peak_mib_per_rank']]
