@@ -15,3 +15,11 @@ add_executable(owner_abi_invalid ../../tests/library_owner_abi_invalid.cpp)
 target_include_directories(owner_abi_invalid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(owner_abi_invalid PRIVATE mgbfs_library_owner)
 add_test(NAME owner_abi_invalid COMMAND owner_abi_invalid)
+
+# Optional pinned cuco source supplied by the isolated GPU gate.
+if(DEFINED CUCO_ROOT)
+  add_executable(cuco_pool_probe cuco_pool_probe.cu)
+  target_include_directories(cuco_pool_probe PRIVATE "${CUCO_ROOT}/include")
+  target_link_libraries(cuco_pool_probe PRIVATE rmm::rmm CUDA::cudart)
+  add_test(NAME cuco_pool_probe COMMAND cuco_pool_probe)
+endif()

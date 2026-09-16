@@ -10,8 +10,10 @@ import hashlib
 import shutil
 
 SOURCE_COMMIT = "d8e33dc73730d96a13dae3f7f4e98de94bc1b8e6"
-FULL_BFS_GATE = True
-LOAD_SCREEN = True
+FULL_BFS_GATE = False
+LOAD_SCREEN = False
+CUCO_GATE = True
+CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]
 # NVIDIA redistrib_12.9.1.json, linux-x86_64. Downloaded on Kaggle only.
@@ -122,10 +124,18 @@ def main():
         env["LD_LIBRARY_PATH"] = ":".join([str(sdk / "lib"), str(sdk / "lib64")] + lib_dirs + [env.get("LD_LIBRARY_PATH", "")])
         env["PATH"] = str(venv / "bin") + ":" + env["PATH"]
         build = work / "build"
+        cuco_options = []
+        if CUCO_GATE:
+            cuco = work / "cuco"
+            gate.checkout("https://github.com/NVIDIA/cuCollections.git", CUCO_COMMIT,
+                          cuco, env, logs, "cuco")
+            manifest["cuco_commit"] = CUCO_COMMIT
+            cuco_options = ["-DCUCO_ROOT=" + str(cuco)]
         run([str(venv / "bin/cmake"), "-S", str(source / "experiments/library_owner"),
              "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
              "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
-             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes)], "configure")
+             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
+             *cuco_options], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
         run([str(build / "owner_abi_invalid")], "abi-invalid-handle")
         # Build the real Rust adapter without pulling the unrelated native BFS
@@ -197,6 +207,12 @@ def main():
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
             for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+                if CUCO_GATE:
+                    cuco_command = [str(build / "cuco_pool_probe")]
+                    if tool != "plain":
+                        cuco_command = ["compute-sanitizer", "--tool", tool,
+                                        "--error-exitcode", "97", *cuco_command]
+                    run(cuco_command, f"cuco-gpu{gpu['index']}-{tool}", extra_env=device_env)
                 command = [executable] if tool == "plain" else [
                     "compute-sanitizer", "--tool", tool, "--error-exitcode", "97", executable]
                 run(command, f"gpu{gpu['index']}-{tool}", extra_env=device_env)
