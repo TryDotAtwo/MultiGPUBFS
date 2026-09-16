@@ -1,5 +1,6 @@
-"""Independent fixed-96-MiB panel for already-drained owner completion."""
+"""Fixed-16-shard calibration, same geometry for cuco and native."""
 import hashlib
+import os
 import urllib.request
 
 RUNNER_COMMIT = "007da906164504c56d1bd5d7ddde14ca63b8e7a8"
@@ -21,6 +22,10 @@ if __name__ == "__main__":
                      FULL_BFS_GATE=True, LOAD_SCREEN=True,
                      NATIVE_COMPARISON=True,
                      SANITIZER_TOOLS=())
-    print("DRAINED_COMPLETION_PANEL: fixed 96MiB pools; five repetitions; "
-          "sanitizers run independently in main notebook", flush=True)
+    # Both pinned reference executables read these before allocation. The
+    # runner preserves MGBFS_* environment for both native and library cases.
+    os.environ["MGBFS_SHARDS"] = "16"
+    os.environ["MGBFS_BUCKETS"] = "256"
+    print("SHARD_CALIBRATION: shards=16 buckets=256 for BOTH cuco/native; "
+          "fixed 96MiB library pools; five repetitions; no fresh sanitizer claim", flush=True)
     namespace["main"]()

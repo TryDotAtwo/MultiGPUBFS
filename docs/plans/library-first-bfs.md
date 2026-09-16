@@ -1018,3 +1018,28 @@ synchronization. Fixture exercises nonempty and empty commits for cuDF and cuco;
 full integrated sanitizer gates are still required. Local CUDA-feature Rust
 typecheck passed (not GPU linking/execution), and CPU core/runtime tests passed
 before the candidate fix. Evidence: `test_results/library-capacity-v7/`.
+
+Candidate source is `f5b52c9f240e89c5b8b30828919ef56c367fdad6`, launch
+`c8e34ab`. Main v54 runs full correctness, all four sanitizer tools and five
+repeat S10 panels with 80/64 MiB pools on one/two ranks. Capacity v8 runs
+independent full plain correctness and five-repeat panels at 96 MiB/rank;
+it uses the checksummed runner from 007da90, not main's new pool mapping.
+Both were confirmed RUNNING after launch. Do not read either launch as a
+passing correctness or timing result. No baseline code was modified.
+
+Capacity v8 completed PASS on source f5b52c9. The new drained-completion
+fixture passes on both physical T4s (four Rust ABI tests each). All 20
+unprofiled S10 samples have identical 46 layer entries, 3,628,800 states and
+30 VERIFIED rank archives. Fixed 96 MiB pool, five repetitions per cell:
+
+| Backend | T4s | Median search s | Median durable s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| cuco | 1 | 1.517557 | 4.862519 | 901 |
+| native 013ed5c | 1 | 1.023950 | 4.798351 | 835 |
+| cuco | 2 | 1.307923 | 4.175266 | 529, 529 |
+| native 013ed5c | 2 | 0.848230 | 3.958561 | 457, 457 |
+
+Search remains about 48%/54% slower than native, so acceptance is still NOT
+met. This separate session is not a paired old/new cuco causal speedup test.
+Full VRAM is 50 ms sampling, not a guaranteed peak. No fresh sanitizers in
+v8; main v54 remains running. Evidence: `test_results/library-capacity-v8/`.
