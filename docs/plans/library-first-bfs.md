@@ -911,3 +911,11 @@ optional-count reset, fatal/grant fields and pending-DMA overwrite rejection.
 A Rust GPU fixture checks the cross-language layout. Neither fixture has passed
 on T4 yet. Existing full BFS gates cover the integrated DENSE/HASH_FIRST path.
 No speedup or regression claim is justified until those gates and A/B runs finish.
+
+Control transfer source is `007da906164504c56d1bd5d7ddde14ca63b8e7a8`.
+Capacity v5 (launch `f19e0ae`) is running full C++/Rust/BFS gates, four sanitizer
+tools, and a five-repeat unprofiled cuco/native panel at fixed 96 MiB/rank.
+Main v52 continues independently with shared transient tables but old control
+transfers. Neither running job was restarted. Local core/runtime integration
+tests (`cargo test --locked -p mgbfs-core -p mgbfs-runtime --tests`) completed
+with exit 0; these CPU tests do not execute the new CUDA transfer.
