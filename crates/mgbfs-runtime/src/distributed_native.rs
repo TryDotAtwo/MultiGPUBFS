@@ -1384,7 +1384,12 @@ impl DistributedNativeBfs {
                 append_extent(&mut self.next, extent)?;
             }
             unsafe {
-                owner.complete(epoch)?;
+                // The successful snapshot read above drained this stream AFTER
+                // commit and the final borrowed-result consumer. Fatal/ready
+                // checks passed; no device work was enqueued since that drain.
+                // The empty branch still uses complete(): its snapshot precedes
+                // commit and cannot establish post-commit completion.
+                owner.complete_after_stream_drain(epoch, s)?;
             }
         }
         Ok(())

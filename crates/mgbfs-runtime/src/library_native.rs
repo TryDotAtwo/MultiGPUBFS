@@ -364,9 +364,7 @@ impl LibraryShard {
         self.gate.check_completion(epoch)?;
         let status = cudaStreamSynchronize(self.stream);
         self.status(status, "COMPLETE")?;
-        let status = mgbfs_library_owner_complete_v1(self.handle, epoch);
-        self.status(status, "WORKSPACE_COMPLETE")?;
-        self.gate.completed(epoch)
+        self.complete_after_stream_drain(epoch, self.stream)
     }
 
     /// Complete after all GPU readers on `drained_stream` have completed.
@@ -382,9 +380,10 @@ impl LibraryShard {
             self.gate.abort();
             return Err("LIBRARY_COMPLETION_STREAM".into());
         }
-        // RED baseline: preserve the existing wait until the T4 fixture proves
-        // it violates the no-new-wait contract.
-        self.complete(epoch)
+        self.gate.check_completion(epoch)?;
+        let status = mgbfs_library_owner_complete_v1(self.handle, epoch);
+        self.status(status, "WORKSPACE_COMPLETE")?;
+        self.gate.completed(epoch)
     }
 
     pub fn accepted(&self) -> u64 {

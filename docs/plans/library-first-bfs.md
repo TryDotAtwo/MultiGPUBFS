@@ -997,3 +997,24 @@ and fatal-control checks; the empty branch cannot reuse the pre-commit drain.
 No completion-path change is implemented by this report.
 Evidence: `test_results/library-capacity-v6/library-owner/` (small summaries
 and nsys stats only; large traces remain on Kaggle).
+
+### Already-drained completion: RED and candidate fix
+
+Capacity v7 (source `11e2a274db5bff5619a56522957f062095e2f11c`, launch
+`3c9573b`) compiled on T4 and failed the new Rust fixture with
+`DRAINED_COMPLETION_MUST_NOT_WAIT: Err("LIBRARY_OWNER_COMPLETE_900")`.
+It drains actual owner commit work before beginning CUDA capture, then calls
+the completion adapter. Capture rejects the redundant stream synchronization.
+The next two tests fail pool creation after the assertion unwinds without
+destroying the fixture pool; these are secondary failures, not independent
+runtime regressions. No performance panel or sanitizers were run in this RED job.
+
+The candidate fix exposes unsafe `complete_after_stream_drain(epoch, stream)`:
+same-stream check, epoch gate, native workspace completion, then count publication.
+Only the nonempty integration branch uses it after successful control snapshot
+drain and fatal/ready/count checks. Empty results retain the original post-commit
+drain. Existing blocking completion delegates to the same publication path after
+synchronization. Fixture exercises nonempty and empty commits for cuDF and cuco;
+full integrated sanitizer gates are still required. Local CUDA-feature Rust
+typecheck passed (not GPU linking/execution), and CPU core/runtime tests passed
+before the candidate fix. Evidence: `test_results/library-capacity-v7/`.
