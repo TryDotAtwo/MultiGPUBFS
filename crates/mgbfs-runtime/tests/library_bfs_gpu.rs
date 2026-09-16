@@ -23,7 +23,7 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                 let cfg = DistributedConfig {
                     rank: 0,
                     world: 1,
-                    logical_owner_to_rank: [0, 0],
+                    logical_owner_to_rank: vec![0, 0],
                     batch: 7,
                     layer_capacity: 64,
                     state_ring_capacity: 128,
@@ -42,17 +42,21 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                         &graph,
                         [0; 16],
                         id,
-                        cfg,
+                        cfg.clone(),
                         128,
                         mgbfs_core::config::OwnerBackend::CubSortMerge,
                         256,
                     )
                 } else if let Some(capacity) = materialization_capacity {
                     DistributedNativeBfs::new_hash_first_reference(
-                        &graph, [0; 16], id, cfg, capacity,
+                        &graph,
+                        [0; 16],
+                        id,
+                        cfg.clone(),
+                        capacity,
                     )
                 } else {
-                    DistributedNativeBfs::new(&graph, [0; 16], id, cfg)
+                    DistributedNativeBfs::new(&graph, [0; 16], id, cfg.clone())
                 }
                 .unwrap();
                 for (depth, wanted) in expected.iter().enumerate() {

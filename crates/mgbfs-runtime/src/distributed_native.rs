@@ -70,11 +70,11 @@ unsafe fn history_view(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct DistributedConfig {
     pub rank: u32,
     pub world: u32,
-    pub logical_owner_to_rank: [u32; 2],
+    pub logical_owner_to_rank: Vec<u32>,
     pub batch: u32,
     pub layer_capacity: u32,
     pub state_ring_capacity: u32,
@@ -107,7 +107,7 @@ unsafe fn rank_directory(
     if world == 1 {
         mgbfs_bucket_directory(keys, n, cap, b, out, f, stream)
     } else {
-        mgbfs_owner_bucket_directory(keys, n, cap, b, owner, out, f, stream)
+        mgbfs_owner_bucket_directory_n(keys, n, cap, b, owner, world, out, f, stream)
     }
 }
 struct Buffer {
@@ -604,6 +604,11 @@ impl DistributedNativeBfs {
         library_options: Option<(u64, ReferenceOwner)>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
+        // Remove only with the N-peer receive/commit and HASH_FIRST integration.
+        // A wider ownership map alone must not admit a silently partial BFS.
+        if cfg.world > 2 {
+            return Err("N_RANK_EXCHANGE_NOT_INTEGRATED".into());
+        }
         if let Some(bytes) = library_pool_bytes {
             if !cfg!(feature = "library-owner")
                 || bytes == 0
@@ -630,7 +635,7 @@ impl DistributedNativeBfs {
         let (local_buckets, local_shards) = crate::topology::reference_owner_geometry(
             cfg.world,
             cfg.rank,
-            cfg.logical_owner_to_rank,
+            &cfg.logical_owner_to_rank,
             cfg.buckets,
             cfg.shards,
         )?;
@@ -909,7 +914,7 @@ impl DistributedNativeBfs {
         let prev = b("prev")?;
         let curr = b("curr")?;
         let start_hash = contract.hash(&start_state)?;
-        let start_owner = (start_hash.0[3] >> 31) as usize;
+        let start_owner = crate::topology::hash_owner(cfg.world, start_hash.0[3])?;
         let start_rank = cfg.logical_owner_to_rank[start_owner];
         let current_count = (start_rank == cfg.rank) as u32;
         if current_count == 1 {
@@ -937,7 +942,10 @@ impl DistributedNativeBfs {
                 route_count.ptr.cast(),
                 cfg.layer_capacity,
                 cfg.buckets,
-                u32::from(cfg.logical_owner_to_rank[1] == cfg.rank),
+                cfg.logical_owner_to_rank
+                    .iter()
+                    .position(|&r| r == cfg.rank)
+                    .ok_or("OWNER_MAP")? as u32,
                 directory.ptr.cast(),
                 fatal.ptr.cast(),
                 raw,
@@ -970,7 +978,7 @@ impl DistributedNativeBfs {
         let result = Self {
             #[cfg(feature = "library-owner")]
             library_owner: None,
-            cfg,
+            cfg: cfg.clone(),
             width,
             stride,
             permutation_n,
@@ -1215,7 +1223,11 @@ impl DistributedNativeBfs {
                 self.route_count.ptr.cast(),
                 self.candidates,
                 self.cfg.buckets,
-                u32::from(self.cfg.logical_owner_to_rank[1] == self.cfg.rank),
+                self.cfg
+                    .logical_owner_to_rank
+                    .iter()
+                    .position(|&r| r == self.cfg.rank)
+                    .ok_or("OWNER_MAP")? as u32,
                 self.directory.ptr.cast(),
                 self.fatal.ptr.cast(),
                 s,
@@ -1425,7 +1437,11 @@ impl DistributedNativeBfs {
                 self.route_count.ptr.cast(),
                 self.candidates,
                 self.cfg.buckets,
-                u32::from(self.cfg.logical_owner_to_rank[1] == self.cfg.rank),
+                self.cfg
+                    .logical_owner_to_rank
+                    .iter()
+                    .position(|&r| r == self.cfg.rank)
+                    .ok_or("OWNER_MAP")? as u32,
                 self.directory.ptr.cast(),
                 self.fatal.ptr.cast(),
                 s,

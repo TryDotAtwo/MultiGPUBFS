@@ -73,7 +73,7 @@ fn fixture(
                     let cfg = DistributedConfig {
                         rank,
                         world: 2,
-                        logical_owner_to_rank: owners,
+                        logical_owner_to_rank: owners.to_vec(),
                         batch: 1,
                         layer_capacity: 64,
                         state_ring_capacity: 64,

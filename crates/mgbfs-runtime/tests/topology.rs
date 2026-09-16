@@ -1,4 +1,39 @@
 use mgbfs_runtime::topology::reference_owner_geometry;
+
+#[test]
+fn rank_map_parses_eight_owners_and_rejects_non_permutations() {
+    use mgbfs_runtime::topology::reference_rank_map;
+    assert_eq!(
+        reference_rank_map(8, Some("7,3,0,6,1,5,2,4")).unwrap(),
+        [7, 3, 0, 6, 1, 5, 2, 4]
+    );
+    assert_eq!(reference_rank_map(4, None).unwrap(), [0, 1, 2, 3]);
+    assert_eq!(reference_rank_map(1, Some("0")).unwrap(), [0, 0]);
+    assert_eq!(reference_rank_map(1, None).unwrap(), [0, 0]);
+    for text in ["0,1", "0,1,2,2", "0,1,2,4", "", "0,1,2,x"] {
+        assert!(reference_rank_map(4, Some(text)).is_err());
+    }
+    assert!(reference_rank_map(1, Some("0,1")).is_err());
+    assert!(reference_rank_map(3, None).is_err());
+}
+
+#[test]
+fn hash_owner_uses_all_rank_prefix_bits_including_single_rank() {
+    use mgbfs_runtime::topology::hash_owner;
+    for (w, h, want) in [
+        (1, u32::MAX, 0),
+        (2, 0x80000000, 1),
+        (4, 0xc0000000, 3),
+        (8, 0x1fffffff, 0),
+        (8, 0x20000000, 1),
+        (8, u32::MAX, 7),
+    ] {
+        assert_eq!(hash_owner(w, h).unwrap(), want);
+    }
+    assert!(hash_owner(0, 0).is_err());
+    assert!(hash_owner(3, 0).is_err());
+    assert!(hash_owner(16, 0).is_err());
+}
 #[test]
 fn eight_ranks_partition_global_buckets_and_shards_with_permuted_owners() {
     let map = [7, 3, 0, 6, 1, 5, 2, 4];

@@ -97,13 +97,10 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let future_plan = cluster_capacity_plan(mode, u64::from(declared_future), world)?;
     let capacity = u32::try_from(capacity_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
     let future = u32::try_from(future_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
-    let rank_map = match std::env::var("MGBFS_RANK_MAP").as_deref() {
-        Ok("0") if world == 1 => [0, 0],
-        Err(_) if world == 1 => [0, 0],
-        Ok("1,0") => [1, 0],
-        Ok("0,1") | Err(_) => [0, 1],
-        _ => return Err("RANK_MAP".into()),
-    };
+    let rank_map = crate::topology::reference_rank_map(
+        world,
+        std::env::var("MGBFS_RANK_MAP").ok().as_deref(),
+    )?;
     // Archive config identity is cluster-wide.  Rank is already carried by the
     // stream frames; including it here prevents otherwise compatible rank
     // archives from being atomically combined.
@@ -165,7 +162,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let buckets = env_u32("MGBFS_BUCKETS", 256);
     let shards = env_u32("MGBFS_SHARDS", 64);
     let (local_buckets, _) =
-        crate::topology::reference_owner_geometry(world, rank, rank_map, buckets, shards)?;
+        crate::topology::reference_owner_geometry(world, rank, &rank_map, buckets, shards)?;
     let default_bucket_capacity =
         crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
     let cfg = DistributedConfig {
@@ -226,7 +223,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                     &graph,
                     20260828u128.to_le_bytes(),
                     id,
-                    cfg,
+                    cfg.clone(),
                     selection.materialization_capacity,
                     selection
                         .library_pool_bytes
@@ -246,7 +243,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                     &graph,
                     20260828u128.to_le_bytes(),
                     id,
-                    cfg,
+                    cfg.clone(),
                     selection
                         .materialization_capacity
                         .ok_or("REFERENCE_HASH_FIRST_CAPACITY")?,
@@ -258,7 +255,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                     &graph,
                     20260828u128.to_le_bytes(),
                     id,
-                    cfg,
+                    cfg.clone(),
                     selection.materialization_capacity,
                     owner,
                     selection.tile_limit,

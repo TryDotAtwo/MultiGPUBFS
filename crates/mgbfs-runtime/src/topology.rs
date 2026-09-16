@@ -1,5 +1,29 @@
 use mgbfs_core::Result;
 
+pub fn reference_rank_map(world: u32, text: Option<&str>) -> Result<Vec<u32>> {
+    if !world.is_power_of_two() || world > 8 {
+        return Err("RANK_MAP".into());
+    }
+    let map = if world == 1 && matches!(text, None | Some("0")) {
+        vec![0, 0] // Preserve the legacy single-rank serialized identity.
+    } else if let Some(text) = text {
+        text.split(',')
+            .map(|v| v.parse::<u32>().map_err(|_| "RANK_MAP".to_string()))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        (0..world).collect()
+    };
+    reference_owner_geometry(world, 0, &map, world, world).map_err(|_| "RANK_MAP".to_string())?;
+    Ok(map)
+}
+
+pub fn hash_owner(world: u32, high_word: u32) -> Result<usize> {
+    if !world.is_power_of_two() || world > 8 {
+        return Err("REFERENCE_TOPOLOGY".into());
+    }
+    Ok(((u64::from(high_word) * u64::from(world)) >> 32) as usize)
+}
+
 /// Average local occupancy plus explicit fixed headroom, not a worst-case
 /// hash-distribution guarantee. Runtime bucket overflow remains fatal.
 pub fn reference_bucket_capacity(records: u32, local_buckets: u32, slack: u32) -> Result<u32> {
