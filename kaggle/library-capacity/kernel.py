@@ -1,4 +1,4 @@
-"""Fixed-16-shard calibration, same geometry for cuco and native."""
+"""Fixed-4-shard calibration, same geometry for cuco and native."""
 import hashlib
 import os
 import urllib.request
@@ -24,8 +24,8 @@ if __name__ == "__main__":
                      SANITIZER_TOOLS=())
     # Both pinned reference executables read these before allocation. The
     # runner preserves MGBFS_* environment for both native and library cases.
-    os.environ["MGBFS_SHARDS"] = "16"
+    os.environ["MGBFS_SHARDS"] = "4"
     os.environ["MGBFS_BUCKETS"] = "256"
-    print("SHARD_CALIBRATION: shards=16 buckets=256 for BOTH cuco/native; "
+    print("SHARD_CALIBRATION: shards=4 buckets=256 for BOTH cuco/native; "
           "fixed 96MiB library pools; five repetitions; no fresh sanitizer claim", flush=True)
     namespace["main"]()

@@ -18,7 +18,7 @@ SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 96 << 20  # Explicit admission experiment, never grow/fallback.
-SCREEN_POOL_BYTES_BY_WORLD = {1: 80 << 20, 2: 64 << 20}  # Fixed before each process starts.
+SCREEN_POOL_BYTES_BY_WORLD = {}  # Same 96 MiB/rank as 4/16-shard calibration.
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
 CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
@@ -60,6 +60,9 @@ def cmake_prefixes(site):
 
 
 def main():
+    os.environ["MGBFS_SHARDS"] = "8"
+    os.environ["MGBFS_BUCKETS"] = "256"
+    print("SHARD_CALIBRATION: shards=8 buckets=256 for BOTH cuco/native", flush=True)
     logs = Path("/kaggle/working/library-owner")
     logs.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="mgbfs-library-", dir="/tmp"))
