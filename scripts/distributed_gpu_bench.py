@@ -2,6 +2,7 @@
 import argparse,gc,json,math,os,shutil,signal,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
+from process_scope import spawn_group, stop_group
 
 class ProgressRelay:
  """Bounded, read-only tail of depth telemetry; retain the full log on disk."""
@@ -69,7 +70,8 @@ def aggregate_rank_results(ranks,world=2):
  for key in ('group','batch','frontier_profile','owner_backend','pre_dedup',
              'capacity_mode','global_capacity_records','global_state_ring_records',
              'archive_enabled','archive_state_bytes','generation_variant',
-             'hash_first_generation','warmup_completed','library_pool_reserved_bytes'):
+             'hash_first_generation','warmup_completed','library_pool_reserved_bytes',
+             'graph_kind','start_state','expected_unique_states','generators'):
   if any(key in x for x in ranks) and (any(key not in x for x in ranks) or any(x[key]!=ranks[0][key] for x in ranks)):
    raise ValueError('rank configuration mismatch: '+key)
  for result in ranks:
@@ -93,15 +95,6 @@ def aggregate_rank_results(ranks,world=2):
   row['layer_sizes']=ranks[0]['layer_sizes']
  return row
 
-def stop_group(process):
- # Only a launcher created with start_new_session belongs here. Kill the
- # session's original process group, including ranks if the leader exited.
- try:
-  if os.name=='posix':os.killpg(process.pid,signal.SIGKILL)
-  elif process.poll() is None:process.kill()
- except ProcessLookupError:pass
- process.wait()
-
 def run_group(command,out,label,env,timeout=7200,required_processes=()):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
  if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
@@ -112,7 +105,7 @@ def run_group(command,out,label,env,timeout=7200,required_processes=()):
   sampler=subprocess.Popen(['stdbuf','-oL','nvidia-smi','--query-gpu=timestamp,index,uuid,memory.used,utilization.gpu,utilization.memory,clocks.sm,power.draw','--format=csv,noheader,nounits','-lms','50'],stdout=smi,stderr=subprocess.STDOUT)
   process=None
   try:
-   process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);started=time.monotonic()
+   process=spawn_group(command,env=env,stdout=log,stderr=subprocess.STDOUT);started=time.monotonic()
    while True:
     failures=[dict(index=i,exit_code=code) for i,p in enumerate(required_processes)
               if (code:=p.poll()) not in (None,0)]

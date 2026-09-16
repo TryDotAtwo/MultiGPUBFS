@@ -3,6 +3,7 @@
 pub mod config;
 pub mod hash;
 pub mod library_memory;
+pub mod lrx_multiset;
 pub mod macro_generators;
 pub mod macro_memory;
 pub mod matrix;

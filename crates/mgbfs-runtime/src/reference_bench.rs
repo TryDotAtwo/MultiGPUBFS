@@ -73,7 +73,13 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
-    let (group, graph) = MatrixGroup::from_reference_label(&args[1])?;
+    let multiset = if args[1].starts_with("lrx") {
+        Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
+    } else { None };
+    let (group, graph) = if let Some(word) = &multiset {
+        (word.label(), word.position_group()?)
+    } else { MatrixGroup::from_reference_label(&args[1])? };
+    let expected_states = multiset.as_ref().map_or(graph.expected_max_unique_states, |x| x.order());
     let n = graph.rows;
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
     let rank = required("RANK")?;
@@ -87,7 +93,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     }
     let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
-        Err(std::env::VarError::NotPresent) => u32::try_from(graph.expected_max_unique_states)
+        Err(std::env::VarError::NotPresent) => u32::try_from(expected_states)
             .map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
         Err(_) => return Err("CAPACITY".into()),
     };
@@ -118,7 +124,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if compact_states && archive_width != n {
         return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
     }
-    if !group.starts_with('s') && (compact_states || archive_width != graph.start.len()) {
+    if group.starts_with('u') && (compact_states || archive_width != graph.start.len()) {
         return Err("UNITRIANGULAR_REQUIRES_MATRIX_CODEC".into());
     }
     let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
@@ -144,14 +150,16 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
         cfg!(feature = "library-owner"),
     )?;
+    if multiset.is_some() && (!compact_states || profile != "DENSE" || selection.tensor_generation) {
+        return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
+    }
     let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
-    let disk_bytes = if archive_enabled { graph
-        .expected_max_unique_states
+    let disk_bytes = if archive_enabled { expected_states
         .checked_mul((archive_width + 16) as u64)
         .and_then(|x| x.checked_add(64 << 20))
         .ok_or("DISK")? } else { 0 };
@@ -213,7 +221,10 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     } else { None };
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let setup = Instant::now();
-    let mut bfs = match selection.owner {
+    let mut bfs = if let Some(word) = &multiset {
+        DistributedNativeBfs::new_lrx_multiset_reference(word, 20260828u128.to_le_bytes(),
+            id, cfg.clone(), selection.owner, selection.library_pool_bytes)?
+    } else { match selection.owner {
         ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
             #[cfg(feature = "library-owner")]
             {
@@ -260,7 +271,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                 )?
             }
         }
-    };
+    }};
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
@@ -338,6 +349,12 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["group"] = serde_json::json!(group);
+        if let Some(word) = &multiset {
+            value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
+            value["start_state"] = serde_json::json!(word.start());
+            value["expected_unique_states"] = serde_json::json!(word.order());
+            value["generators"] = serde_json::json!(["L", "R", "X"]);
+        }
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);

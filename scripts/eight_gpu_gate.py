@@ -54,12 +54,11 @@ def validate_log(text, tool):
 
 
 def run_command(command, log_path, env, timeout):
-    from distributed_gpu_bench import stop_group
+    from process_scope import spawn_group, stop_group
     if timeout <= 0:
         raise TimeoutError('EIGHT_GPU_GATE_DEADLINE')
     with log_path.open('wb') as log:
-        child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-                                 env=env, start_new_session=True)
+        child = spawn_group(command, stdout=log, stderr=subprocess.STDOUT, env=env)
         try:
             try:
                 code = child.wait(timeout=timeout)

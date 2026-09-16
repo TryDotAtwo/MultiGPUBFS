@@ -252,7 +252,8 @@ class RankMetrics(unittest.TestCase):
                     'pre_dedup', 'capacity_mode', 'global_capacity_records',
                     'global_state_ring_records', 'archive_enabled', 'archive_state_bytes',
                     'generation_variant', 'hash_first_generation', 'warmup_completed',
-                    'library_pool_reserved_bytes'):
+                    'library_pool_reserved_bytes', 'graph_kind', 'start_state',
+                    'expected_unique_states', 'generators'):
             rows = self.rows()
             rows[0][key] = 1
             rows[1][key] = 2

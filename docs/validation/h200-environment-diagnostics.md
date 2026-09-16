@@ -70,8 +70,9 @@ under that tool, with successful NCCL initialization. Thus the initial toolchain
 mismatch is real but is not the explanation for these vendor probe diagnostics.
 
 `remote_build.py` now includes the matching sanitizer in its verified downloads
-and exported PATH. Unit tests reject compiler/runtime version drift. This change
-has not yet been exercised through a full fresh remote build.
+and exported PATH. Unit tests reject compiler/runtime version drift. A fresh
+eight-H200 build at source `2893d6d54d8b6ba53a2327ce6b6ebf8ca2202518`
+subsequently completed with this recipe.
 
 `audit_nccl_sanitizer.py` classifies the complete initial memcheck log as 384
 kernel-availability and 5,374 peer-already-enabled diagnostics at the exact
@@ -117,7 +118,28 @@ The eight-H200 production run has not yet happened at this checkpoint.
 
 Local, ignored evidence for the retired first rental:
 `test_results/vast-51248110/evidence/` and its `termination.json`.
-Current two-GPU raw logs are under `/workspace/gate2-raw/` on the setup rental;
-they must be copied before rental deletion. No graph-state dataset is downloaded
+Two-GPU raw logs were preserved under `test_results/vast-51249892/evidence/`
+before the setup rental was deleted. No graph-state dataset is downloaded
 to the workstation. Rental details and watchdog records are local ignored files,
 not credentials in source control.
+
+## Eight-H200 full-state oracle checkpoint
+
+On the next eight-H200 rental, the uninstrumented
+`library_eight_rank_layers_and_archives_match_oracle` passed in **322.96 s**:
+1 passed, 0 failed, 0 ignored. All 32 cases execute eight physical-device
+threads: CUB/cuCollections, pre-dedup OFF/ON, DENSE/HASH_FIRST, identity/permuted
+rank maps, and S4/U3(mod 3). Each case compares complete layer state sets and
+archived state/hash records against the independent CPU oracle.
+
+The first attempt was terminated at its 300 s runner deadline after emitting
+232 of 256 expected per-rank archive summaries. A fresh run of the identical
+executable and environment with a 600 s test deadline completed. This was a
+test-harness deadline adjustment, not a BFS-code fix; the rental deadline was
+not extended. A summary count alone was never accepted as a correctness pass.
+
+Runtime uses the pinned NCCL 2.28.9 build and `NCCL_CUMEM_ENABLE=0` described
+above. This is an uninstrumented correctness pass, **not** an eight-device
+Compute Sanitizer pass. Full S13 and performance results remain separate gates.
+The raw passing log is preserved locally at
+`test_results/vast-51251891/evidence/eight-rank-oracle-pass.log`.

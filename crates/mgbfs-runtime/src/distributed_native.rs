@@ -491,6 +491,7 @@ impl DistributedNativeBfs {
             256,
             tensor_generation,
             Some((pool_bytes, library_owner)),
+            None,
         )
     }
     /// The 29 shared Buffer allocations, excluding library/profile/transport
@@ -524,6 +525,7 @@ impl DistributedNativeBfs {
             256,
             false,
             None,
+            None,
         )
     }
     /// Explicit scalar CUDA HASH_FIRST reference; never silently uses DENSE.
@@ -543,6 +545,7 @@ impl DistributedNativeBfs {
             OwnerBackend::CubSortMerge,
             256,
             false,
+            None,
             None,
         )
     }
@@ -567,6 +570,7 @@ impl DistributedNativeBfs {
             tile_limit,
             false,
             None,
+            None,
         )
     }
     /// Explicit experimental Tensor Core generation; hash projection still
@@ -590,7 +594,32 @@ impl DistributedNativeBfs {
             tile_limit,
             true,
             None,
+            None,
         )
+    }
+    /// Explicit DENSE position-action graph with a repeated-symbol start.
+    /// Ordinary MatrixGroup constructors retain their invertibility checks.
+    pub fn new_lrx_multiset_reference(
+        word_graph: &mgbfs_core::lrx_multiset::LrxMultiset,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        owner: ReferenceOwner,
+        pool_bytes: Option<u64>,
+    ) -> Result<Self> {
+        if cfg.generation_variant != 5 {
+            return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
+        }
+        let (native, library) = match (owner, pool_bytes) {
+            (ReferenceOwner::Native(OwnerBackend::CubSortMerge), None) =>
+                (OwnerBackend::CubSortMerge, None),
+            (ReferenceOwner::CucoIndexed, Some(bytes)) =>
+                (OwnerBackend::CubSortMerge, Some((bytes, owner))),
+            _ => return Err("LRX_MULTISET_OWNER_CONFIG".into()),
+        };
+        let graph = word_graph.position_group()?;
+        Self::new_profile(&graph, seed, id, cfg, None, native, 256, false,
+            library, Some(word_graph.start()))
     }
     fn new_profile(
         graph: &MatrixGroup,
@@ -602,6 +631,7 @@ impl DistributedNativeBfs {
         tile_limit: u32,
         hash_first_tensor_generation: bool,
         library_options: Option<(u64, ReferenceOwner)>,
+        compact_start: Option<&[u8]>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if let Some(bytes) = library_pool_bytes {
@@ -665,7 +695,14 @@ impl DistributedNativeBfs {
             if permutation_n.is_none() {
                 return Err("COMPACT_REQUIRES_PERMUTATION_GROUP".into());
             }
-            encode_permutation_matrix(&graph.start, graph.rows)?
+            if let Some(start) = compact_start {
+                if start.len() != graph.rows || start.iter().any(|&x| usize::from(x) >= graph.rows) {
+                    return Err("LRX_MULTISET_STATE".into());
+                }
+                start.to_vec()
+            } else {
+                encode_permutation_matrix(&graph.start, graph.rows)?
+            }
         } else {
             graph.start.clone()
         };
