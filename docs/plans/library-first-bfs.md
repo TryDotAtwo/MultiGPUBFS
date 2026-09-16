@@ -776,3 +776,40 @@ v2 session was slower for both changed cuco and unchanged cuDF; retain those
 measurements, but do not attribute all cross-session drift to this patch.
 Evidence: `test_results/library-capacity-v3/library-owner/`; five samples and
 MAD are retained in summary.json. Fresh sanitizer evidence remains pending.
+
+### V50 single-drain full gate and matched native comparison
+
+V50 completed PASS at source `05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96`.
+Downloaded and checked 28 individual sanitizer logs: full BFS on GPU0, GPU1,
+and two-GPU NCCL; cuco ABI and device-count source gather on each GPU; all four
+tools in every case. Zero errors, zero racecheck warnings. This closes the
+single-drain patch's pending hardware gate, not the entire project checklist.
+
+All 30 S10 screen results are COMPLETE, have identical 46 layer entries and
+3,628,800 states; all 45 per-rank archives report VERIFIED. Five-repeat medians,
+same 256 MiB library pool and 256 pinned archive slots as v49:
+
+| Backend | T4s | Search s | Durable s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| Native `013ed5c` | 1 | 1.033655 | 4.831536 | 835 |
+| cuco single-drain | 1 | 2.004264 | 4.954202 | 1061 |
+| cuDF | 1 | 10.016791 | 12.213562 | 1099 |
+| Native `013ed5c` | 2 | 0.840553 | 3.846228 | 457, 457 |
+| cuco single-drain | 2 | 1.584078 | 4.292320 | 689, 689 |
+| cuDF | 2 | 6.509470 | 8.787759 | 719, 719 |
+
+Evidence: `test_results/library-owner-v50/library-owner/`. Full device memory
+is sampled every 50 ms, not a guaranteed exact peak. cuco still fails the
+search <=20% regression requirement and does not save full VRAM. These are
+library owners, not an executed Sirius/HeavyDB comparison.
+
+Capacity notebook v4 is now the paired Nsight diagnostic, runner/source
+`b829df97f4c0ff676dffcb8068309c9892709773`, launch `45a1040`. It captures S10
+cuco/native on 1/2 T4 with 192 MiB pools, retaining mandatory archive and
+verification. Diagnostic rows are tagged `profiled`; statistics reject them.
+The trace includes startup, warmup and archive and must not be interpreted as
+unprofiled performance or solely the timed BFS interval. Fixed Nsight package
+2025.3.2.474 is downloaded and SHA256-checked on Kaggle, not on the user's PC.
+Reference: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/Packages
+Local harness tests: 36 passed, two POSIX process tests skipped on Windows.
+Actual diagnostic capture is still pending; do not claim profiler attribution.

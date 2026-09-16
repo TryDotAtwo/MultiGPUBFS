@@ -92,8 +92,17 @@ int main() {
     stream.synchronize();
     auto workspace = std::make_shared<mgbfs::CucoWorkspace>(incoming, stream.view(), resource);
     mgbfs::CucoOwner a({}, {}, 16, incoming, stream.view(), resource, workspace);
+    stream.synchronize();
+    auto const one_shard_bytes = stats.get_bytes_counter().value;
     mgbfs::CucoOwner b({}, {}, 16, incoming, stream.view(), resource, workspace);
     stream.synchronize();
+    auto const added_shard_bytes = stats.get_bytes_counter().value - one_shard_bytes;
+    std::cout << "SHARED_OWNER_INCREMENT_BYTES " << added_shard_bytes << std::endl;
+    // A 16-key persistent shard must not reserve another incoming-sized table.
+    // This bound is deliberately loose for cuco extent rounding, but less than
+    // even one uint64 slot per incoming candidate (load factor requires >=2).
+    require(added_shard_bytes < incoming * sizeof(uint64_t),
+            "SHARED_WORKSPACE_MUST_REMOVE_DUPLICATED_TRANSIENT_TABLE");
     require(stats.get_bytes_counter().value + incoming * 16 <= private_bytes,
             "SHARED_WORKSPACE_MUST_REMOVE_DUPLICATED_COLUMNS");
     Input input(incoming, stream.view(), resource);
