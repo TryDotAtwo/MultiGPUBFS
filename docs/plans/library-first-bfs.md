@@ -547,3 +547,31 @@ pre-dedup ON, capacity/ring 1,000,000 per rank, five repeats on each topology.
 This is a matched baseline point, not proof against the best tuned native.
 V45 is still running the prior two-owner panel; this added native panel has
 not yet been submitted or GPU-verified.
+
+V45 failed at immutable source `11230ca009acbd176bda2d5176354349fa7ac446`.
+CUDF_RELATIONAL S10 on one T4 completed its first sample and verified the
+archive: search 9.672742343 s, durable 11.42103416 s, sampled peak 1097 MiB.
+The following CUCO_INDEXED run failed in owner construction: fixed RMM pool
+256 MiB exhausted while requesting another 1,573,120 bytes. There are no
+completed cuco measurements or five-repeat/topology panel results from v45.
+Evidence: `test_results/library-owner-v45/library-owner/`.
+
+Source inspection identifies avoidable replication: each of 64 logical
+shards constructs a `CucoOwner` with full `batch * moves` incoming capacity,
+allocating its own candidate columns, minima, representatives, flags,
+selection, sources, CUB scratch and transient set. The integrated shard loop
+is currently serial on one owner stream. At batch 32768 and three moves,
+candidate columns alone require 1.5 MiB per shard before the other temporary
+buffers. Persistent accepted/hash storage must remain shard-local, but an
+explicit shared transient workspace is the next memory optimization candidate.
+It must retain candidate data through commit and survivor consumption and
+reject overlapping use; tiny single-owner fixtures cannot prove that lifetime.
+Do not hide this failed configuration by growing the pool or replacing v45.
+The prepared preserved-native comparison is held until that correction is
+tested. This does not reject the cuco backend or certify a shared-workspace fix.
+
+Additional local Linux check: all 12 screen contract tests pass in the existing
+container. The full Linux Python suite is not green: five modules could not
+import missing PyArrow, and the container has no pip. This is a test-environment
+limitation, not an archive regression; Windows ran 123 tests with two POSIX
+skips, and the two actual Linux process-cleanup tests passed separately.
