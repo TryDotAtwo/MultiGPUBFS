@@ -746,3 +746,33 @@ attribution of the 2x regression. Profile these boundaries and table operations
 before claiming cuCollections itself is the bottleneck. A possible optimization
 is device-count-guarded source gathering before the existing count drain,
 preserving ready-on-return indices and capacity/credit semantics; not yet coded.
+
+### Single-drain cuco implementation and paired evidence
+
+Implemented in `05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96`: source-index
+gather reads the GPU selection count and runs before the existing count D2H
+drain. The second drain is removed. Zero/error/out-of-range counts do not read
+selected tails; host count/capacity checks still reject before owner publication.
+The standalone CUDA count/tail fixture compiles for sm75; its actual T4
+sanitizer execution belongs to the still-pending main v50 gate.
+
+`mgbfs-library-capacity-t4` v3 completed PASS. Thirty S10 runs have identical
+layer counts and verified rank archives. The same executable alternates new
+and previous (`5ea41ff`) cuco shared libraries on the same GPUs; saved `ldd`
+output confirms the previous library path. Pool 192 MiB and archive 256 slots
+are identical. Medians of five runs:
+
+| cuco version | T4s | Search s | Durable s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| Previous | 1 | 2.066534 | 4.900646 | 997 |
+| Single drain | 1 | 2.028851 | 4.925394 | 997 |
+| Previous | 2 | 1.766404 | 4.358485 | 625, 625 |
+| Single drain | 2 | 1.627938 | 4.279716 | 625, 625 |
+
+Two-rank median search time is 7.84% lower; one-rank difference is small against
+sample dispersion. No full VRAM reduction. This does not close the gap to
+native or certify the <=20% acceptance target. The earlier separate capacity
+v2 session was slower for both changed cuco and unchanged cuDF; retain those
+measurements, but do not attribute all cross-session drift to this patch.
+Evidence: `test_results/library-capacity-v3/library-owner/`; five samples and
+MAD are retained in summary.json. Fresh sanitizer evidence remains pending.
