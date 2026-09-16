@@ -1,6 +1,17 @@
 use mgbfs_runtime::distributed_memory::{shared_buffers, SharedBufferShape};
 
 #[test]
+fn packed_owner_count_storage_fits_all_eight_ranks() {
+    let ledger = shared_buffers(shape()).unwrap();
+    let counts = ledger
+        .allocations
+        .iter()
+        .find(|a| a.name == "owner_counts")
+        .unwrap();
+    assert!(counts.payload_bytes >= 8 * 4);
+}
+
+#[test]
 fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     use mgbfs_runtime::distributed_memory::library_shared_buffers;
     let mut s = shape();

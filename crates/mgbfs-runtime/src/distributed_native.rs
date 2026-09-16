@@ -1,4 +1,4 @@
-//! Native one/two-rank NCCL BFS reference. Torchrun supplies only rank env.
+//! Native 1/2/4/8-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::event_generation::NativeEvent;
 use crate::failure::process_owner_pair;
 use crate::jobs::{split, JobSpan};
@@ -604,11 +604,6 @@ impl DistributedNativeBfs {
         library_options: Option<(u64, ReferenceOwner)>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
-        // Remove only with the N-peer receive/commit and HASH_FIRST integration.
-        // A wider ownership map alone must not admit a silently partial BFS.
-        if cfg.world > 2 {
-            return Err("N_RANK_EXCHANGE_NOT_INTEGRATED".into());
-        }
         if let Some(bytes) = library_pool_bytes {
             if !cfg!(feature = "library-owner")
                 || bytes == 0
@@ -653,7 +648,7 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_CONFIG".into());
         }
         // Public config retains global prefix geometry. Persistent storage and
-        // owner jobs use the whole space on one rank, or its half on two ranks.
+        // owner jobs use the local contiguous hash-prefix partition.
         cfg.buckets = local_buckets;
         cfg.shards = local_shards;
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
@@ -1631,6 +1626,7 @@ impl DistributedNativeBfs {
         parent: Option<Extent>,
         offset: u64,
         parents: u32,
+        round: u32,
     ) -> Result<()> {
         use crate::hash_first_exchange::{enqueue_round_trip, ExchangeBuffers, MatrixSource};
         let s = self.stream.0;
@@ -1644,6 +1640,7 @@ impl DistributedNativeBfs {
             modulus: h.modulus,
             stride: self.stride as u32,
             rank: self.cfg.rank,
+            world: self.cfg.world,
             parent_begin: begin,
             parent_count: parents,
             parents: unsafe { self.states.at(physical as usize * self.stride).cast() },
@@ -1653,13 +1650,19 @@ impl DistributedNativeBfs {
         // final extents remain a FIFO StateRing frontier. Every rank enters
         // both groups on two ranks even with no requests; one rank has only
         // the local group and must not issue a call to nonexistent peer 1.
-        for group in 0..self.cfg.world as usize {
+        // Local plus first remote source, then reuse the remote request slot
+        // for one peer at a time. Keep parents alive until all rounds finish.
+        for group in usize::from(round > 1)..self.cfg.world.min(2) as usize {
             let count = h.pending_counts[group];
             h.count.put(&[count])?;
             check(unsafe {
                 mgbfs_materialize_sort_origins(
                     h.materialize.0,
-                    self.cfg.rank ^ group as u32,
+                    if group == 0 {
+                        self.cfg.rank
+                    } else {
+                        self.cfg.rank ^ round
+                    },
                     h.requests[group].ptr.cast(),
                     h.targets[group].ptr.cast(),
                     h.count.ptr.cast(),
@@ -1704,7 +1707,7 @@ impl DistributedNativeBfs {
                         self.comm.0,
                         self.collective_send.ptr,
                         4,
-                        self.cfg.rank ^ 1,
+                        self.cfg.rank ^ round,
                         self.recv_count.ptr,
                         4,
                         s,
@@ -1718,7 +1721,7 @@ impl DistributedNativeBfs {
                 unsafe {
                     enqueue_round_trip(
                         self.comm.0,
-                        self.cfg.rank ^ 1,
+                        self.cfg.rank ^ round,
                         &source,
                         &ExchangeBuffers {
                             capacity: h.capacity,
@@ -1868,13 +1871,6 @@ impl DistributedNativeBfs {
             }
         }
         self.next.clear();
-        let local_owner = self
-            .cfg
-            .logical_owner_to_rank
-            .iter()
-            .position(|&rank| rank == self.cfg.rank)
-            .ok_or("OWNER_MAP")?;
-        let remote_owner = local_owner ^ 1;
         let mut cursor = ParentCursor::default();
         let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
@@ -1976,7 +1972,8 @@ impl DistributedNativeBfs {
                 self.stride
             };
             check(unsafe {
-                mgbfs_exchange_pack(
+                mgbfs_exchange_pack_n(
+                    self.cfg.world,
                     packet_stride as u32,
                     self.candidates,
                     self.children.ptr.cast(),
@@ -1990,9 +1987,14 @@ impl DistributedNativeBfs {
                 )
             })?;
             check(unsafe { cudaStreamSynchronize(s) })?;
-            let mut owner_counts = [0u32; 2];
-            self.owner_counts.read(&mut owner_counts)?;
-            if crate::route_count::packed_count(candidate_count, owner_counts)? != routed {
+            let mut owner_counts = [0u32; 8];
+            self.owner_counts
+                .read(&mut owner_counts[..self.cfg.world as usize])?;
+            if crate::route_count::packed_count(
+                candidate_count,
+                &owner_counts[..self.cfg.world as usize],
+            )? != routed
+            {
                 return Err("EXCHANGE_COUNT_MISMATCH".into());
             }
             if let Some(sequence) = generation {
@@ -2013,139 +2015,148 @@ impl DistributedNativeBfs {
                         .ok_or("GENERATION_COUNTER_OVERFLOW")?;
                 }
             }
-            if self.cfg.world == 1 {
-                // Both sorted hash halves belong to this single physical rank.
-                owner_counts = [routed, 0];
-            }
-            let (local_offset, remote_offset, exchange_peer) = if self.cfg.world == 1 {
-                (0, 0, 0)
-            } else {
-                let ranges = crate::route_count::packed_rank_ranges(
-                    self.candidates,
-                    &owner_counts,
-                    &self.cfg.logical_owner_to_rank,
-                )?;
-                // One round for the existing two-rank runtime. The scheduler
-                // also covers 4/8 ranks; those still require the receive/commit
-                // loop and HASH_FIRST lifetimes to be generalized.
-                let peer = crate::route_count::exchange_peer(self.cfg.world, self.cfg.rank, 1)?;
-                (
-                    ranges[self.cfg.rank as usize].0,
-                    ranges[peer as usize].0,
-                    peer,
-                )
-            };
-            let received = if self.cfg.world == 1 {
-                0
-            } else {
-                let communication = self.exchange_stream.0;
-                // Pack/count publication has already completed on s. These
-                // immutable send ranges remain live until the remote wait and
-                // the batch's failure collective have completed.
-                self.collective_send.put(&[owner_counts[remote_owner]])?;
-                check(unsafe {
-                    mgbfs_nccl_send_recv(
-                        self.comm.0,
-                        self.collective_send.ptr,
-                        4,
-                        exchange_peer,
-                        self.recv_count.ptr,
-                        4,
-                        communication,
-                    )
-                })?;
-                check(unsafe { cudaStreamSynchronize(communication) })?;
-                let received = self.recv_count.one::<u32>()?;
-                if received > self.candidates {
-                    return Err("EXCHANGE_CAPACITY".into());
-                }
-                check(unsafe {
-                    mgbfs_nccl_send_recv(
-                        self.comm.0,
-                        self.sorted_hashes.at(remote_offset as usize * 16),
-                        u64::from(owner_counts[remote_owner]) * 16,
-                        exchange_peer,
-                        self.recv_hashes.ptr,
-                        u64::from(received) * 16,
-                        communication,
-                    )
-                })?;
-                check(unsafe {
-                    mgbfs_nccl_send_recv(
-                        self.comm.0,
-                        self.packed_states
-                            .at(remote_offset as usize * packet_stride),
-                        u64::from(owner_counts[remote_owner]) * packet_stride as u64,
-                        exchange_peer,
-                        self.recv_states.ptr,
-                        u64::from(received) * packet_stride as u64,
-                        communication,
-                    )
-                })?;
-                check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
-                received
-            };
-            if let Some(parent_extent) = parent.filter(|_| self.hash_first.is_none()) {
-                if archive.is_some()
-                    || (self.archived_depth == Some(self.depth) && !archive_released[extent_index])
-                {
-                    check(unsafe { cudaStreamWaitEvent(s, self.archive_done[extent_index].0, 0) })?;
-                    archive_released[extent_index] = true;
-                }
-                let mut live = parent_extent;
-                live.sequence += extent_offset;
-                live.begin = live.sequence % u64::from(self.cfg.state_ring_capacity);
-                live.count -= extent_offset;
-                live.granted_rows = live.count as u32;
-                self.extent.put(&[live])?;
-                check(unsafe {
-                    mgbfs_state_retire_dense_prefix(
-                        self.ring.ptr.cast(),
-                        self.extent.ptr.cast(),
-                        u64::from(parents),
-                        s,
-                    )
-                })?;
-                check(unsafe { cudaStreamSynchronize(s) })?;
-                let ring = self.ring.one::<Ring>()?;
-                if ring.fatal != 0 {
-                    return Err(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
-                }
-            }
-            check(unsafe { cudaStreamSynchronize(s) })?;
-            let local_states = unsafe {
-                self.packed_states
-                    .at(local_offset as usize * packet_stride)
-                    .cast()
-            };
-            let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
-            let remote_ready = self.exchange_done.0;
             let world = self.cfg.world;
-            let batch_error = process_owner_pair(
-                (0, (local_states, local_hashes, owner_counts[local_owner])),
-                (
-                    1,
-                    (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
-                ),
-                |(group, (states, hashes, rows))| {
-                    self.commit_owner_batch(states, hashes, rows, group)
-                },
-                || {
-                    if world == 2 {
-                        // Executed even after a local owner failure and for
-                        // empty receive payloads. The next failure collective
-                        // on s therefore cannot overtake the P2P operations.
-                        check(unsafe { cudaStreamWaitEvent(s, remote_ready, 0) })?;
+            let ranges = crate::route_count::packed_rank_ranges(
+                self.candidates,
+                &owner_counts[..world as usize],
+                &self.cfg.logical_owner_to_rank[..world as usize],
+            )?;
+            let (local_offset, local_rows) = ranges[self.cfg.rank as usize];
+            // The same bounded receive slot serves every XOR peer round.
+            // All ranks enter even when their parent batch or payload is empty.
+            for round in 1..world.max(2) {
+                let exchange_peer = if world == 1 {
+                    0
+                } else {
+                    crate::route_count::exchange_peer(world, self.cfg.rank, round)?
+                };
+                let (remote_offset, remote_rows) = ranges[exchange_peer as usize];
+                let received = if self.cfg.world == 1 {
+                    0
+                } else {
+                    let communication = self.exchange_stream.0;
+                    // Pack/count publication has already completed on s. These
+                    // immutable send ranges remain live until the remote wait and
+                    // the batch's failure collective have completed.
+                    self.collective_send.put(&[remote_rows])?;
+                    check(unsafe {
+                        mgbfs_nccl_send_recv(
+                            self.comm.0,
+                            self.collective_send.ptr,
+                            4,
+                            exchange_peer,
+                            self.recv_count.ptr,
+                            4,
+                            communication,
+                        )
+                    })?;
+                    check(unsafe { cudaStreamSynchronize(communication) })?;
+                    let received = self.recv_count.one::<u32>()?;
+                    if received > self.candidates {
+                        return Err("EXCHANGE_CAPACITY".into());
                     }
-                    Ok(())
-                },
-            )
-            .err();
-            if self.all_max(u32::from(batch_error.is_some()))? != 0 {
-                return Err(batch_error.unwrap_or_else(|| "REMOTE_OWNER_BATCH_FATAL".into()));
+                    check(unsafe {
+                        mgbfs_nccl_send_recv(
+                            self.comm.0,
+                            self.sorted_hashes.at(remote_offset as usize * 16),
+                            u64::from(remote_rows) * 16,
+                            exchange_peer,
+                            self.recv_hashes.ptr,
+                            u64::from(received) * 16,
+                            communication,
+                        )
+                    })?;
+                    check(unsafe {
+                        mgbfs_nccl_send_recv(
+                            self.comm.0,
+                            self.packed_states
+                                .at(remote_offset as usize * packet_stride),
+                            u64::from(remote_rows) * packet_stride as u64,
+                            exchange_peer,
+                            self.recv_states.ptr,
+                            u64::from(received) * packet_stride as u64,
+                            communication,
+                        )
+                    })?;
+                    check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
+                    received
+                };
+                if let Some(parent_extent) =
+                    parent.filter(|_| round == 1 && self.hash_first.is_none())
+                {
+                    if archive.is_some()
+                        || (self.archived_depth == Some(self.depth)
+                            && !archive_released[extent_index])
+                    {
+                        check(unsafe {
+                            cudaStreamWaitEvent(s, self.archive_done[extent_index].0, 0)
+                        })?;
+                        archive_released[extent_index] = true;
+                    }
+                    let mut live = parent_extent;
+                    live.sequence += extent_offset;
+                    live.begin = live.sequence % u64::from(self.cfg.state_ring_capacity);
+                    live.count -= extent_offset;
+                    live.granted_rows = live.count as u32;
+                    self.extent.put(&[live])?;
+                    check(unsafe {
+                        mgbfs_state_retire_dense_prefix(
+                            self.ring.ptr.cast(),
+                            self.extent.ptr.cast(),
+                            u64::from(parents),
+                            s,
+                        )
+                    })?;
+                    check(unsafe { cudaStreamSynchronize(s) })?;
+                    let ring = self.ring.one::<Ring>()?;
+                    if ring.fatal != 0 {
+                        return Err(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
+                    }
+                }
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                let local_states = unsafe {
+                    self.packed_states
+                        .at(local_offset as usize * packet_stride)
+                        .cast()
+                };
+                let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
+                let remote_ready = self.exchange_done.0;
+                let world = self.cfg.world;
+                let batch_error = process_owner_pair(
+                    (
+                        0,
+                        (
+                            local_states,
+                            local_hashes,
+                            if round == 1 { local_rows } else { 0 },
+                        ),
+                    ),
+                    (
+                        1,
+                        (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
+                    ),
+                    |(group, (states, hashes, rows))| {
+                        self.commit_owner_batch(states, hashes, rows, group)
+                    },
+                    || {
+                        if world > 1 {
+                            // Executed even after a local owner failure and for
+                            // empty receive payloads. The next failure collective
+                            // on s therefore cannot overtake the P2P operations.
+                            check(unsafe { cudaStreamWaitEvent(s, remote_ready, 0) })?;
+                        }
+                        Ok(())
+                    },
+                )
+                .err();
+                if self.all_max(u32::from(batch_error.is_some()))? != 0 {
+                    return Err(batch_error.unwrap_or_else(|| "REMOTE_OWNER_BATCH_FATAL".into()));
+                }
+                if self.hash_first.is_some() {
+                    self.materialize_hash_first(parent, extent_offset, parents, round)?;
+                }
             }
             if self.hash_first.is_some() {
-                self.materialize_hash_first(parent, extent_offset, parents)?;
                 if let Some(parent_extent) = parent {
                     if archive.is_some()
                         || (self.archived_depth == Some(self.depth)

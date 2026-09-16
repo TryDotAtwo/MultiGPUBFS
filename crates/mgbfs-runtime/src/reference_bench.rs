@@ -79,7 +79,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let rank = required("RANK")?;
     let local = required("LOCAL_RANK")?;
     let world = required("WORLD_SIZE")?;
-    if !(1..=2).contains(&world) || rank != local {
+    if !world.is_power_of_two() || world > 8 || rank != local {
         return Err("TOPOLOGY".into());
     }
     if unsafe { cudaSetDevice(local as i32) } != 0 {

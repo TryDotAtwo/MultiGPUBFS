@@ -100,6 +100,7 @@ fn native_request_response_epochs_include_empty_ranks_and_group_fatal() {
                 let fatal = upload(&0u32.to_le_bytes());
                 let group_fatal = upload(&0u32.to_le_bytes());
                 let source = MatrixSource {
+                    world: 2,
                     n: 2,
                     moves: 2,
                     modulus: 5,

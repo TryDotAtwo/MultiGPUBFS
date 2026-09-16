@@ -1,4 +1,4 @@
-//! Native two-rank HASH_FIRST request/response epoch. No allocation or host sync.
+//! Native paired HASH_FIRST request/response epoch. No allocation or host sync.
 //! The scheduler owns count agreement, source leases, slots and final publication.
 use mgbfs_core::Result;
 use mgbfs_cuda::ffi::*;
@@ -10,6 +10,7 @@ pub struct MatrixSource {
     pub modulus: u32,
     pub stride: u32,
     pub rank: u32,
+    pub world: u32,
     pub parent_begin: u64,
     pub parent_count: u32,
     pub parents: *const u8,
@@ -42,7 +43,8 @@ fn check(status: i32) -> Result<()> {
 /// Success means enqueue only: no StateReady publication occurs here.
 ///
 /// # Safety
-/// `comm` is a live two-rank communicator; both ranks enter matching epochs.
+/// `comm` is a live 2/4/8-rank communicator. All ranks enter matching symmetric
+/// peer rounds, including zero-count pairs, and the same final all-reduce.
 /// Counts must have been agreed before entry; incoming_count_device must equal
 /// incoming_count. Inputs are canonical and buffers disjoint, device resident,
 /// preallocated for capacity rows (16-byte origins, stride-byte responses).
@@ -61,8 +63,11 @@ pub unsafe fn enqueue_round_trip(
     let b = buffers;
     let s = source;
     if comm.is_null()
-        || s.rank >= 2
-        || peer != (s.rank ^ 1)
+        || !s.world.is_power_of_two()
+        || s.world > 8
+        || s.rank >= s.world
+        || peer >= s.world
+        || peer == s.rank
         || s.n == 0
         || u64::from(s.n) * u64::from(s.n) > 33025
         || u64::from(s.n) * u64::from(s.n) > u64::from(s.stride)

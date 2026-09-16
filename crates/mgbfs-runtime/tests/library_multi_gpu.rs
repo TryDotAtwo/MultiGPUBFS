@@ -37,8 +37,25 @@ fn library_two_rank_layers_and_archives_match_oracle() {
         for symmetric in [false, true] {
             for hash_first in [false, true] {
                 for owners in [[0, 1], [1, 0]] {
-                    fixture(symmetric, hash_first, owners, library_owner);
+                    fixture(symmetric, hash_first, &owners, library_owner);
                 }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires eight physical CUDA devices; run explicitly on 8-GPU host"]
+fn library_eight_rank_layers_and_archives_match_oracle() {
+    for hash_first in [false, true] {
+        for owners in [[0, 1, 2, 3, 4, 5, 6, 7], [7, 3, 0, 6, 1, 5, 2, 4]] {
+            for symmetric in [false, true] {
+                fixture(
+                    symmetric,
+                    hash_first,
+                    &owners,
+                    mgbfs_core::config::ReferenceOwner::CucoIndexed,
+                );
             }
         }
     }
@@ -47,7 +64,7 @@ fn library_two_rank_layers_and_archives_match_oracle() {
 fn fixture(
     symmetric: bool,
     hash_first: bool,
-    owners: [u32; 2],
+    owners: &[u32],
     library_owner: mgbfs_core::config::ReferenceOwner,
 ) {
     let graph = if symmetric {
@@ -63,22 +80,24 @@ fn fixture(
         unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
         0
     );
-    let workers: Vec<_> = (0..2u32)
+    let world = owners.len() as u32;
+    let workers: Vec<_> = (0..world)
         .map(|rank| {
             let graph = graph.clone();
+            let owners = owners.to_vec();
             std::thread::spawn(move || {
                 // A failed rank must not leave its peer blocked in a collective.
                 // The test executable is an isolated rank group owned by the runner.
                 std::panic::catch_unwind(|| {
                     let cfg = DistributedConfig {
                         rank,
-                        world: 2,
+                        world,
                         logical_owner_to_rank: owners.to_vec(),
                         batch: 1,
                         layer_capacity: 64,
                         state_ring_capacity: 64,
-                        buckets: 8,
-                        shards: 4,
+                        buckets: world * 4,
+                        shards: world * 2,
                         job_buckets: 2,
                         bucket_capacity: 32,
                         prededup: true,
@@ -149,7 +168,10 @@ fn fixture(
                 for row in 0..count {
                     let state = &payload[row * width..(row + 1) * width];
                     let key = hash.hash(state).unwrap();
-                    assert_eq!(owners[(key.0[3] >> 31) as usize], rank as u32);
+                    assert_eq!(
+                        owners[((u64::from(key.0[3]) * u64::from(world)) >> 32) as usize],
+                        rank as u32
+                    );
                     assert_eq!(
                         key.to_le_bytes(),
                         payload[count * width + row * 16..count * width + (row + 1) * 16]

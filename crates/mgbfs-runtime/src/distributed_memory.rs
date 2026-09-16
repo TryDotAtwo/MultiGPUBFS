@@ -89,7 +89,7 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
         ("sorted_refs", s.candidates, 8),
         ("route_count", 1, 4),
         ("packed_states", s.candidates, s.packet_stride),
-        ("owner_counts", 1, 8),
+        ("owner_counts", 1, 32),
         ("recv_states", s.candidates, s.packet_stride),
         ("recv_hashes", s.candidates, 16),
         ("recv_count", 1, 4),
