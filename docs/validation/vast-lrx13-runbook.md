@@ -49,6 +49,26 @@ billing has ended.
 
 ## Physical hardware gate
 
+### Standalone build entry point
+
+```sh
+python scripts/remote_build.py --source <clean-pinned-checkout> --commit <full-commit> --work <new-build-directory> --jobs 2 --timeout-seconds <remaining-build-budget>
+```
+
+The script reuses dependency pins from the checked-out Kaggle recipe, verifies
+CUDA archive checksums, builds SM90 native/cuCollections libraries, the release
+eight-GPU oracle executable and the CLI. It emits `build-summary.json`, complete
+stage logs and credential-free `runtime-env.json` containing library/tool paths.
+Load these environment entries into the process running the gate; keep the host
+torchrun and Compute Sanitizer installed and accessible. Host NCCL development
+headers/library and Python >=3.10 are prerequisites. The build venv supplies C++
+library dependencies, not torchrun or the HF/Parquet Python dependencies.
+
+This new entry point has host parser/preflight tests only; its complete build
+has **not** yet been executed. The earlier SM90 evidence belongs to the Kaggle
+recipe, not to this wrapper. Do not infer hardware readiness from these tests.
+One timeout covers its child commands. It does not stop rental billing.
+
 Record `nvidia-smi -L`, `nvidia-smi topo -m`, driver/CUDA/NCCL versions and free
 GPU/host/disk memory. Require eight distinct H200 devices; verify the actual
 interconnect rather than assuming NVLink from the model name.
