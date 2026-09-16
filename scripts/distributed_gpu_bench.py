@@ -102,7 +102,7 @@ def stop_group(process):
  except ProcessLookupError:pass
  process.wait()
 
-def run_group(command,out,label,env,timeout=7200):
+def run_group(command,out,label,env,timeout=7200,required_processes=()):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))
  if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
  row=dict(label=label,command=command,status='INCOMPLETE');rank_out=out/(label+'-ranks');rank_out.mkdir()
@@ -113,11 +113,16 @@ def run_group(command,out,label,env,timeout=7200):
   process=None
   try:
    process=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True);started=time.monotonic()
-   while process.poll() is None:
-    try:process.wait(timeout=max(0.001,min(20,timeout-(time.monotonic()-started))))
+   while True:
+    failures=[dict(index=i,exit_code=code) for i,p in enumerate(required_processes)
+              if (code:=p.poll()) not in (None,0)]
+    if failures:
+     stop_group(process);row.update(status='AUXILIARY_FAILED',auxiliary_failures=failures);break
+    if process.poll() is not None:break
+    try:process.wait(timeout=max(0.001,min(0.25 if required_processes else 20,timeout-(time.monotonic()-started))))
     except subprocess.TimeoutExpired:
      relay.poll()
-     print(f'RUNNING {label}: {time.monotonic()-started:.0f}s',flush=True)
+     if not required_processes:print(f'RUNNING {label}: {time.monotonic()-started:.0f}s',flush=True)
      if time.monotonic()-started>=timeout:stop_group(process);row['status']='TIMEOUT';break
    row['exit_code']=process.returncode
    relay.poll(final=True)
@@ -125,7 +130,7 @@ def run_group(command,out,label,env,timeout=7200):
    try:
     if process is not None:stop_group(process)
    finally:sampler.terminate();sampler.wait()
- if row['exit_code']==0:
+ if row['exit_code']==0 and row['status']=='INCOMPLETE':
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
   row.update(aggregate_rank_results(ranks,world=world))
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']

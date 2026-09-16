@@ -12,6 +12,24 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_failed_archive_consumer_stops_real_search_process(self):
+        popen = subprocess.Popen
+        class Sampler:
+            def terminate(self): pass
+            def wait(self): return 0
+        def launch(command, **kwargs):
+            return Sampler() if command[0] == 'stdbuf' else popen(command, **kwargs)
+        with popen([sys.executable, '-c', 'import time; time.sleep(0.4); raise SystemExit(7)']) as consumer:
+            with tempfile.TemporaryDirectory() as directory, patch(
+                    'distributed_gpu_bench.subprocess.Popen', side_effect=launch):
+                row = run_group([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                Path(directory), 'broken-upload',
+                                dict(os.environ, MGBFS_BENCH_WORLD_SIZE='8'),
+                                timeout=2, required_processes=[consumer])
+                self.assertEqual(row['status'], 'AUXILIARY_FAILED')
+                self.assertEqual(row['auxiliary_failures'], [{'index': 0, 'exit_code': 7}])
+                self.assertNotEqual(row['exit_code'], 0)
+
     def test_launcher_collects_eight_rank_files_from_real_child_process(self):
         # Only the unavailable GPU sampler is substituted; launch, file IO,
         # process lifecycle and aggregation execute normally on the host.
