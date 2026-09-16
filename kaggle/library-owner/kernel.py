@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "7d7bcc192fcd0cab946b0538a5c37560c2516cbc"
+SOURCE_COMMIT = "1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 SCREEN_REPEATS = 5
@@ -17,13 +17,13 @@ SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 256 << 20
-NATIVE_COMPARISON = False
+NATIVE_COMPARISON = True
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
-# Fresh full-BFS shared-workspace integration gate, followed by capacity rerun.
+# Recheck pool diagnostics, then compare against the immutable native baseline.
 SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
-PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 43,
-    "source_commit": "7bd6a6a6f907774ac01b827735770c672c1155a7"}
+PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 47,
+    "source_commit": "7d7bcc192fcd0cab946b0538a5c37560c2516cbc"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
             "cmake==3.31.6", "ninja==1.11.1.4"]

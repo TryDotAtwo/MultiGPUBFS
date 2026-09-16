@@ -650,3 +650,31 @@ registers that probe as WILL_FAIL; the next runner explicitly executes both
 CPU lease tests. The GPU fixture uses its own throwing require/rejects helpers,
 so this issue does not invalidate the v46 CUDA sanitizer evidence. V47 remains
 on its immutable pre-audit source and is still running.
+
+### V47 shared-workspace integration and repeated S10 screen
+
+Kaggle v47 completed PASS on two distinct physical Tesla T4 devices, source
+`7d7bcc192fcd0cab946b0538a5c37560c2516cbc`. Full BFS fixtures passed on each
+device and the two-device NCCL fixture, plain and under all four sanitizers;
+zero errors and zero racecheck warnings. Shared cuco C ABI fixtures passed.
+Six two-process CLI cases passed with all 12 rank archives verified.
+
+All 20 S10 screening runs completed: two owners, one/two ranks, five fresh
+process repetitions. Every run has 3,628,800 states, identical 46 layer counts,
+and verified archive checksums/counts. DENSE, pre-dedup ON, batch 32768,
+matrix_u8 states, capacity/ring 1,000,000 per rank, fixed pool 256 MiB/rank.
+
+| Owner | T4s | Search median / MAD (s) | Durable median / MAD (s) | Sampled peak MiB/rank |
+|---|---:|---:|---:|---|
+| cuDF | 1 | 9.878636 / 0.043913 | 11.840244 / 0.026213 | 1097 |
+| cuCO | 1 | 2.201111 / 0.041403 | 4.764812 / 0.019088 | 1059 |
+| cuDF | 2 | 6.543897 / 0.032248 | 8.532304 / 0.112281 | 717, 717 |
+| cuCO | 2 | 1.676349 / 0.005855 | 4.016069 / 0.087720 | 687, 687 |
+
+Raw measurements: `test_results/library-owner-v47/library-owner/`. These are
+50 ms full-device samples, not exact peaks. This resolves the v45 cuco pool
+construction failure without increasing the 256 MiB pool. V47 contains neither
+the later RMM usage diagnostic nor Release CPU-test hardening. It has no native
+or CayleyPy paired measurements, so it does not establish Pareto acceptance.
+Next panel pins `1ed0eaf56dbf79c34fcb3c6caedc97c725d8ef9c`, reruns gates, and
+enables the preserved `013ed5c` native comparison at the same explicit settings.
