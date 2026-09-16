@@ -152,6 +152,13 @@ int mgbfs_future_merge_run_bounded(void* plan,uint8_t* future_states,void* futur
   uint32_t old_count_bound,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,
   const uint64_t* incoming_refs,const uint32_t* incoming_count,uint32_t incoming_count_bound,void* stream);
 void mgbfs_future_merge_destroy(void* plan);
+/* Sorted Hash128 ranges use high log2(world) bits, world in {1,2,4,8}.
+ * owner_counts holds world words in LOGICAL-owner order, not rank-map order.
+ * First-word UINT32_MAX is sticky source-reference failure; drain before read. */
+int mgbfs_exchange_pack_n(uint32_t world,uint32_t stride,uint32_t capacity,
+    const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
+    const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,
+    uint32_t* owner_counts,void* stream);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
 int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,

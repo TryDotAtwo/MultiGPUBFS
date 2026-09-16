@@ -294,6 +294,19 @@ pub mod ffi {
             owner_counts: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_exchange_pack_n(
+            world: u32,
+            stride: u32,
+            capacity: u32,
+            source_states: *const u8,
+            source_count: u32,
+            sorted_hashes: *const c_void,
+            sorted_refs: *const u64,
+            count: u32,
+            packed_states: *mut u8,
+            owner_counts: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_unique_id(id128: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create(
             rank: u32,

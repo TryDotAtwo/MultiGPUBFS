@@ -1,4 +1,5 @@
 #include "directories.h"
+#include "owner_partition.h"
 #include <cuda_runtime.h>
 #include <climits>
 namespace {
@@ -13,6 +14,14 @@ __global__ void directory(const Key*keys,const uint32_t*count,uint32_t buckets,u
 __global__ void check_owner(const Key*keys,const uint32_t*n,uint32_t cap,unsigned owner,uint32_t*f){
  if(*n>cap){*f=30;return;}
  if(*n && ((keys[0].w[3]>>31)!=owner || (keys[*n-1].w[3]>>31)!=owner))*f=32;
+}
+__global__ void check_owner_n(const Key*keys,const uint32_t*n,uint32_t cap,
+    unsigned owner,unsigned world,uint32_t*f){
+ if(*f)return;
+ if(*n>cap){*f=30;return;}
+ const auto words=reinterpret_cast<const uint32_t*>(keys);
+ if(mgbfs_owner_boundary(words,*n,owner,world)!=0 ||
+    mgbfs_owner_boundary(words,*n,owner+1,world)!=*n)*f=32;
 }
 __global__ void bind(MgbfsBucketJob*jobs,uint32_t n,const uint32_t*counts,uint32_t buckets){unsigned i=blockIdx.x*blockDim.x+threadIdx.x;if(i<n&&jobs[i].bucket<buckets)jobs[i].accepted_count=counts[jobs[i].bucket];}
 __global__ void prefix(const uint32_t*counts,uint32_t b,uint32_t k,uint32_t cap,MgbfsOwnerRange*dir,uint32_t*n,uint32_t*f){
@@ -35,6 +44,17 @@ extern "C" int mgbfs_owner_bucket_directory(const void*keys,const uint32_t*n,uin
  auto s=static_cast<cudaStream_t>(stream);
  check_owner<<<1,1,0,s>>>(static_cast<const Key*>(keys),n,cap,owner,f);
  directory<<<(b+255)/256,256,0,s>>>(static_cast<const Key*>(keys),n,b,bits,out,f,owner*b);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_bucket_directory_n(const void*keys,const uint32_t*n,
+    uint32_t cap,uint32_t b,uint32_t owner,uint32_t world,MgbfsOwnerRange*out,
+    uint32_t*f,void*stream){
+ if(!keys||!n||!out||!f||!world||(world&(world-1))||world>8||owner>=world||
+    !b||(b&(b-1))||uint64_t(b)*world>(uint64_t{1}<<31)||cap>INT_MAX)return 1;
+ unsigned bits=0;for(uint64_t v=uint64_t(b)*world;v>1;v>>=1)++bits;
+ auto s=static_cast<cudaStream_t>(stream);
+ check_owner_n<<<1,1,0,s>>>(static_cast<const Key*>(keys),n,cap,owner,world,f);
+ directory<<<(b+255u)/256u,256,0,s>>>(static_cast<const Key*>(keys),n,b,bits,out,f,owner*b);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_bind_owner_jobs(MgbfsBucketJob*jobs,uint32_t n,const uint32_t*counts,uint32_t b,void*stream){

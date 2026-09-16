@@ -1,6 +1,7 @@
 #include "mgbfs_cuda.h"
 #include <cuda_runtime.h>
 #include "dense_frame_layout.h"
+#include "owner_partition.h"
 #include <cstdint>
 #include <cstring>
 namespace {
@@ -29,6 +30,11 @@ __global__ void split(const Key* keys,uint32_t count,uint32_t* output){
   if(threadIdx.x||blockIdx.x)return;uint32_t lo=0,hi=count;
   while(lo<hi){uint32_t mid=lo+(hi-lo)/2;if((keys[mid].w[3]>>31)==0)lo=mid+1;else hi=mid;}
   output[0]=lo;output[1]=count-lo;
+}
+__global__ void split_n(const uint32_t* keys,uint32_t count,uint32_t world,uint32_t* output){
+  const uint32_t owner=threadIdx.x;
+  if(owner<world) output[owner]=mgbfs_owner_boundary(keys,count,owner+1,world)-
+      mgbfs_owner_boundary(keys,count,owner,world);
 }
 } // namespace
 extern "C" int mgbfs_frame_write_header(const uint8_t* host_header,
@@ -69,4 +75,17 @@ __global__ void gather(const uint4* source,const uint64_t* refs,uint4* output,ui
 }
 extern "C" int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* raw_stream){
   if(!stride||stride%16||!capacity||count>capacity||!source_states||!sorted_hashes||!sorted_refs||!packed_states||!owner_counts)return 1;auto stream=static_cast<cudaStream_t>(raw_stream);split<<<1,1,0,stream>>>(static_cast<const Key*>(sorted_hashes),count,owner_counts);if(count)gather<<<(uint64_t(count)*(stride/16)+255)/256,256,0,stream>>>(reinterpret_cast<const uint4*>(source_states),sorted_refs,reinterpret_cast<uint4*>(packed_states),count,stride/16,source_count,owner_counts);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_exchange_pack_n(uint32_t world,uint32_t stride,uint32_t capacity,
+    const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
+    const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,
+    uint32_t* owner_counts,void* raw_stream){
+  if(!world||(world&(world-1))||world>8||!stride||stride%16||!capacity||count>capacity||
+      !source_states||!sorted_hashes||!sorted_refs||!packed_states||!owner_counts)return 1;
+  auto stream=static_cast<cudaStream_t>(raw_stream);
+  split_n<<<1,8,0,stream>>>(static_cast<const uint32_t*>(sorted_hashes),count,world,owner_counts);
+  if(count)gather<<<(uint64_t(count)*(stride/16)+255)/256,256,0,stream>>>(
+      reinterpret_cast<const uint4*>(source_states),sorted_refs,
+      reinterpret_cast<uint4*>(packed_states),count,stride/16,source_count,owner_counts);
+  return cudaGetLastError()==cudaSuccess?0:2;
 }
