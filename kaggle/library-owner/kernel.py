@@ -9,15 +9,15 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "fecb35b711376684be23399e30a830c526ba28a3"
-FULL_BFS_GATE = False  # Isolated RED test: duplicated per-shard transient tables.
-LOAD_SCREEN = False
+SOURCE_COMMIT = "e098462c5246a0e4e4d56b78a1fbab867af02343"
+FULL_BFS_GATE = True
+LOAD_SCREEN = True
 SCREEN_REPEATS = 5
-SCREEN_OWNERS = ("CUDF_RELATIONAL", "CUCO_INDEXED")
+SCREEN_OWNERS = ("CUCO_INDEXED",)  # cuDF full correctness still runs below.
 SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
-SCREEN_POOL_BYTES = 256 << 20
+SCREEN_POOL_BYTES = 96 << 20  # Explicit admission experiment, never grow/fallback.
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
 CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
@@ -25,7 +25,7 @@ PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistic
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
-SANITIZER_TOOLS = ()  # Expected plain fixture failure; no new sanitizer claim.
+SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 50,
     "source_commit": "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
