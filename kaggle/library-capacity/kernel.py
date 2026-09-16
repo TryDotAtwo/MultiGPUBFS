@@ -1,9 +1,9 @@
-"""Fixed-192-MiB cuco/native diagnostic timelines; not a timing benchmark."""
+"""Full gate and fixed-96-MiB cuco/native screen with batched control DMA."""
 import hashlib
 import urllib.request
 
-RUNNER_COMMIT = "b829df97f4c0ff676dffcb8068309c9892709773"
-RUNNER_SHA256 = "b90a7fbdac3386479a8f35e26753aea860578b14fd7c1bcd4868b1f6a928d98b"
+RUNNER_COMMIT = "007da906164504c56d1bd5d7ddde14ca63b8e7a8"
+RUNNER_SHA256 = "54dd5a23dd63565adf9ba8b804b800b69e308b80f743b69e6e48dc535c81f632"
 
 if __name__ == "__main__":
     url = ("https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
@@ -15,12 +15,11 @@ if __name__ == "__main__":
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
     namespace.update(SOURCE_COMMIT=RUNNER_COMMIT,
-                     SCREEN_POOL_BYTES=192 << 20, SCREEN_ARCHIVE_SLOTS=256,
-                     SCREEN_REPEATS=1, SCREEN_WORLDS=(1, 2),
-                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=True,
-                     NATIVE_COMPARISON=True, SANITIZER_TOOLS=())
-    # Full plain correctness remains enabled. Sanitizers at this configuration
-    # are not claimed; prior unchanged runtime evidence is recorded separately.
-    print("NSYS_DIAGNOSTIC pool=192MiB archive_slots=256 worlds=1,2; "
-          "cuco and preserved native; no performance or sanitizer claim", flush=True)
+                     SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
+                     SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
+                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
+                     NATIVE_COMPARISON=True,
+                     SANITIZER_TOOLS=("memcheck", "racecheck", "initcheck", "synccheck"))
+    print("CONTROL_DMA_GATE pool=96MiB archive_slots=256 worlds=1,2; "
+          "four sanitizers then cuco/native five-repeat screen", flush=True)
     namespace["main"]()
