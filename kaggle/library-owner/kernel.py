@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "5ea41ff0a9861c974f979a30c4562f92a168e0b8"
+SOURCE_COMMIT = "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 SCREEN_REPEATS = 5

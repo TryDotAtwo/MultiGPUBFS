@@ -14,7 +14,8 @@ if __name__ == "__main__":
         raise RuntimeError("PINNED_RUNNER_DIGEST_MISMATCH")
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
-    namespace.update(SCREEN_POOL_BYTES=192 << 20, SCREEN_ARCHIVE_SLOTS=256,
+    namespace.update(SOURCE_COMMIT="05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96",
+                     SCREEN_POOL_BYTES=192 << 20, SCREEN_ARCHIVE_SLOTS=256,
                      SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
                      NATIVE_COMPARISON=False, SANITIZER_TOOLS=())
     # Full plain correctness remains enabled. Sanitizers at this configuration
