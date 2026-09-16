@@ -11,7 +11,7 @@ import shutil
 
 SOURCE_COMMIT = "7bd6a6a6f907774ac01b827735770c672c1155a7"
 FULL_BFS_GATE = True
-LOAD_SCREEN = False
+LOAD_SCREEN = True
 CUCO_GATE = True
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 PACKAGES = ["libcudf-cu12==26.4.0", "librmm-cu12==26.4.0",
@@ -294,10 +294,12 @@ def main():
             if LOAD_SCREEN:
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
-                run_case(cli, logs / "screen-s10-dense", work / "screen-s10-dense",
-                         "s10", 3628800, 2, 32768, 3628800, 3628800,
-                         1 << 30, "DENSE", "ON", device_env)
-                manifest["load_screen"] = "S10 DENSE cuDF; one sample, not Pareto acceptance"
+                for owner in ("CUDF_RELATIONAL", "CUCO_INDEXED"):
+                    label = "screen-s10-dense-" + owner.lower()
+                    run_case(cli, logs / label, work / label,
+                             "s10", 3628800, 2, 32768, 3628800, 3628800,
+                             1 << 30, "DENSE", "ON", device_env, owner=owner)
+                manifest["load_screen"] = "S10 DENSE cuDF/cuCO matched configuration; one sample each, not Pareto acceptance"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))

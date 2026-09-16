@@ -462,3 +462,21 @@ word and duplicate aliases across all four storage tags. This is not a multi-GPU
 owner or BFS result: candidate-slot reuse, stable commit, deterministic provenance
 and actual CUCO_INDEXED runtime integration are still outstanding. Full peak VRAM
 and the repeated baseline comparison remain required; the goal stays active.
+
+The cuco owner contract passed on both T4s in v42 at
+`c6348bba6f7d9f6937c48e06b168f281b7ccf7c7`, including multi-block full-key CPU
+oracle checks, candidate-slot reuse, deterministic first-row provenance, and
+all four sanitizers with zero errors/warnings. Integration source
+`7bd6a6a6f907774ac01b827735770c672c1155a7` adds the common owner ABI and explicit
+CUCO_INDEXED reference dispatch; v43 is testing full BFS rather than just the
+isolated owner. Its outcome must be checked before any integration claim.
+
+The screening helper now accepts an explicit CUCO_INDEXED or CUDF_RELATIONAL
+selection and rejects a returned owner different from the requested one. The
+next runner configuration compares one S10 DENSE sample for each with identical
+batch, state/ring capacity, pool reservation, pre-dedup and mandatory archives.
+This is an untuned paired screen, not the required repeated baseline panel.
+All 117 Python tests passed locally. CPU tests for mgbfs-core, mgbfs-runtime,
+mgbfs-cli and mgbfs-cuda passed; the workspace-wide command cannot build the
+separate root GPU package without MULTIGPUBFS_CUDA_LIB_DIR. Neither CPU result
+establishes GPU correctness or performance.

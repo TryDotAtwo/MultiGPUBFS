@@ -11,6 +11,35 @@ import library_gpu_screen as screen
 
 
 class ScreenContract(unittest.TestCase):
+    def test_cuco_measurement_cannot_be_replaced_by_cudf(self):
+        row = self.row()
+        with self.assertRaisesRegex(ValueError, 'SCREEN_LIBRARY_CONTRACT'):
+            screen.validate_result(row, 6, 67108864, owner='CUCO_INDEXED')
+        row['rank_results'][0]['owner_backend'] = 'CUCO_INDEXED'
+        screen.validate_result(row, 6, 67108864, owner='CUCO_INDEXED')
+
+    def test_explicit_cuco_run_preserves_dispatch_and_archive_contract(self):
+        row = self.row()
+        row['rank_results'][0]['owner_backend'] = 'CUCO_INDEXED'
+        row.update(search_complete_seconds=1, smi_peak_mib_per_rank=[100], smi_peak_mib_total=100)
+        launched = []
+        def launch(command, out, label, env, timeout):
+            launched.append(env.copy())
+            return row
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(screen, 'run_group', launch), patch.object(
+                    screen.subprocess, 'run', return_value=SimpleNamespace(
+                        stdout='{"status":"VERIFIED"}', returncode=0)):
+                report = screen.run_case('mgbfs', root/'logs', root/'archive',
+                    's3', 6, 1, 7, 64, 128, 67108864, 'DENSE', 'OFF', {},
+                    owner='CUCO_INDEXED')
+            self.assertEqual(report['status'], 'COMPLETE')
+            self.assertEqual(launched[0]['MGBFS_OWNER_BACKEND'], 'CUCO_INDEXED')
+            self.assertEqual(launched[0]['MGBFS_PRE_DEDUP'], 'OFF')
+            self.assertEqual(launched[0]['MGBFS_BENCH_SKIP_ARCHIVE'], '0')
+            self.assertEqual(len(report['archive_verification']), 1)
+
     def test_failed_gpu_run_is_saved_without_archive_verification(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

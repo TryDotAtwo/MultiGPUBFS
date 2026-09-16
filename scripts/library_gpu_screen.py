@@ -7,7 +7,7 @@ from pathlib import Path
 from distributed_gpu_bench import run_group, stats
 
 
-def validate_result(row, expected_states, pool_bytes):
+def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'):
     """Reject incomplete/search-only/fallback runs before interpreting timings."""
     if row.get('status') != 'COMPLETE':
         raise ValueError('SCREEN_INCOMPLETE')
@@ -23,7 +23,7 @@ def validate_result(row, expected_states, pool_bytes):
     if not ranks:
         raise ValueError('SCREEN_RANKS')
     for rank in ranks:
-        if (rank.get('owner_backend') != 'CUDF_RELATIONAL'
+        if (rank.get('owner_backend') != owner
                 or rank.get('archive_enabled') is not True
                 or rank.get('warmup_completed') is not True
                 or rank.get('library_pool_reserved_bytes') != pool_bytes):
@@ -31,10 +31,12 @@ def validate_result(row, expected_states, pool_bytes):
 
 
 def run_case(cli, output, archive_root, group, expected_states, world, batch,
-             capacity, ring, pool_bytes, profile, pre_dedup, inherited):
+             capacity, ring, pool_bytes, profile, pre_dedup, inherited, *, owner='CUDF_RELATIONAL'):
     """One unprofiled screening run; retain archives and all measurement logs."""
     if world not in (1, 2) or profile not in ('DENSE', 'HASH_FIRST'):
         raise ValueError('SCREEN_CONFIG')
+    if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED'):
+        raise ValueError('SCREEN_OWNER')
     if pre_dedup not in ('ON', 'OFF') or min(batch, capacity, ring, pool_bytes) <= 0:
         raise ValueError('SCREEN_CONFIG')
     output, archive_root = Path(output), Path(archive_root)
@@ -42,7 +44,7 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
     archive_root.mkdir(parents=True, exist_ok=False)
     env = dict(inherited, CUDA_VISIBLE_DEVICES=','.join(map(str, range(world))),
         MGBFS_BENCH_WORLD_SIZE=str(world), MGBFS_RANK_MAP=','.join(map(str, range(world))),
-        MGBFS_OWNER_BACKEND='CUDF_RELATIONAL', MGBFS_LIBRARY_POOL_BYTES=str(pool_bytes),
+        MGBFS_OWNER_BACKEND=owner, MGBFS_LIBRARY_POOL_BYTES=str(pool_bytes),
         MGBFS_PROFILE=profile, MGBFS_PRE_DEDUP=pre_dedup,
         MGBFS_HASH_FIRST_GENERATION='SCALAR', MGBFS_BENCH_CAPACITY=str(capacity),
         MGBFS_FUTURE_CAPACITY=str(ring), MGBFS_CAPACITY_MODE='max_per_rank',
@@ -64,7 +66,7 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
     try:
         row = run_group(command, output, 'measure', env, timeout=1800)
         report['measurement'] = row
-        validate_result(row, expected_states, pool_bytes)
+        validate_result(row, expected_states, pool_bytes, owner=owner)
         for rank in range(world):
             archive = archive_root/f'archive-rank-{rank}.mgbfsar1'
             verified = subprocess.run([str(cli), 'verify', str(archive)], env=env,
