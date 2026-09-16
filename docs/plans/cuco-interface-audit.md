@@ -99,3 +99,11 @@ must translate both calls, not forward the cuco argument list unchanged.
 No `cl`, `g++` or `clang++` is currently available on PATH in the Windows host;
 the adapter's real compile/run gate will use the pinned Kaggle SDK, not a claimed
 local C++ build.
+
+Follow-up: MSVC 14.44.35207 was found under Program Files (x86)/Microsoft Visual
+Studio/2022/BuildTools (not PATH). The new dependency-free allocator adapter and
+`tests/cuco_pool_allocator_contract.cpp` compiled and ran with MSVC C++20 after
+the missing-header RED build. The CPU fixture checks stream translation, byte
+counts, captured resource identity, allocator copy/deallocation, overflow before
+allocation, and propagation of pool exhaustion without fallback. This does not
+compile the actual cuco/RMM binding and does not validate CUDA device execution.

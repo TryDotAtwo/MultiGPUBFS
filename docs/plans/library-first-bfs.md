@@ -444,3 +444,13 @@ measurements and failures, verifies archive commits, and labels the external
 50 ms device-memory sampler as sampled consumption, not exact peak. Six CPU
 screen-contract tests pass. This is not a tuned or repeated baseline comparison;
 the actual S10 result is still pending.
+
+V36 completed PASS. The S10 screening produced 3,628,800 states across 46
+nonempty depths and verified both rank archives. Search: 7.178855308 seconds;
+durable commit: 9.342252056 seconds. External 50 ms nvidia-smi maxima were
+1885 MiB on each T4 (3770 MiB sum of per-device maxima, not exact simultaneous
+peak). Explicit aligned allocation plan: 1,699,719,936 bytes per rank, including
+the fixed 1 GiB library pool; it excludes NCCL/driver and pinned archive memory.
+Evidence: `test_results/library-owner-v36/library-owner/screen-s10-dense/`.
+This single untuned sample does not establish the <=20% acceptance requirement
+or a speed/memory win against the preserved baseline. The full panel is pending.
