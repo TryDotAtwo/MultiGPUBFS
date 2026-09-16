@@ -2001,11 +2001,23 @@ impl DistributedNativeBfs {
                 // Both sorted hash halves belong to this single physical rank.
                 owner_counts = [routed, 0];
             }
-            let local_offset = if local_owner == 0 { 0 } else { owner_counts[0] };
-            let remote_offset = if remote_owner == 0 {
-                0
+            let (local_offset, remote_offset, exchange_peer) = if self.cfg.world == 1 {
+                (0, 0, 0)
             } else {
-                owner_counts[0]
+                let ranges = crate::route_count::packed_rank_ranges(
+                    self.candidates,
+                    &owner_counts,
+                    &self.cfg.logical_owner_to_rank,
+                )?;
+                // One round for the existing two-rank runtime. The scheduler
+                // also covers 4/8 ranks; those still require the receive/commit
+                // loop and HASH_FIRST lifetimes to be generalized.
+                let peer = crate::route_count::exchange_peer(self.cfg.world, self.cfg.rank, 1)?;
+                (
+                    ranges[self.cfg.rank as usize].0,
+                    ranges[peer as usize].0,
+                    peer,
+                )
             };
             let received = if self.cfg.world == 1 {
                 0
@@ -2020,7 +2032,7 @@ impl DistributedNativeBfs {
                         self.comm.0,
                         self.collective_send.ptr,
                         4,
-                        self.cfg.rank ^ 1,
+                        exchange_peer,
                         self.recv_count.ptr,
                         4,
                         communication,
@@ -2036,7 +2048,7 @@ impl DistributedNativeBfs {
                         self.comm.0,
                         self.sorted_hashes.at(remote_offset as usize * 16),
                         u64::from(owner_counts[remote_owner]) * 16,
-                        self.cfg.rank ^ 1,
+                        exchange_peer,
                         self.recv_hashes.ptr,
                         u64::from(received) * 16,
                         communication,
@@ -2048,7 +2060,7 @@ impl DistributedNativeBfs {
                         self.packed_states
                             .at(remote_offset as usize * packet_stride),
                         u64::from(owner_counts[remote_owner]) * packet_stride as u64,
-                        self.cfg.rank ^ 1,
+                        exchange_peer,
                         self.recv_states.ptr,
                         u64::from(received) * packet_stride as u64,
                         communication,
