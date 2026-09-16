@@ -11,6 +11,7 @@ import shutil
 
 SOURCE_COMMIT = "f5b52c9f240e89c5b8b30828919ef56c367fdad6"
 FULL_BFS_GATE = True
+CUDA_ARCHITECTURES = "75"  # Use "75;90" for T4 execution plus H200 compile gate.
 LOAD_SCREEN = True
 SCREEN_REPEATS = 5
 SCREEN_OWNERS = ("CUCO_INDEXED",)  # cuDF full correctness still runs below.
@@ -86,6 +87,7 @@ def main():
     manifest = {"source_commit": actual, "packages_requested": PACKAGES,
                 "gpus": gpus, "kind": "library_characterization", "status": "RUNNING",
                 "sanitizer_tools": list(SANITIZER_TOOLS),
+                "cuda_architectures": CUDA_ARCHITECTURES,
                 "prior_sanitizer_evidence": PRIOR_SANITIZER_EVIDENCE}
     summary_path = logs / "summary.json"
     summary_path.write_text(json.dumps(manifest, indent=2))
@@ -155,7 +157,7 @@ def main():
         run([str(venv / "bin/cmake"), "-S", str(source / "experiments/library_owner"),
              "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
              "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
-             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
+             "-DCMAKE_CUDA_ARCHITECTURES=" + CUDA_ARCHITECTURES, "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
              *cuco_options], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
         run([str(build / "owner_abi_invalid")], "abi-invalid-handle")
@@ -201,7 +203,7 @@ def main():
             native_build = work / "native-build"
             run([str(venv / "bin/cmake"), "-S", str(source / "cuda"),
                  "-B", str(native_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                 "-DBUILD_TESTING=OFF", "-DCMAKE_CUDA_ARCHITECTURES=75",
+                 "-DBUILD_TESTING=OFF", "-DCMAKE_CUDA_ARCHITECTURES=" + CUDA_ARCHITECTURES,
                  "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
                  "-DCUTLASS_ROOT=" + str(cutlass)], "native-configure")
             run([str(venv / "bin/cmake"), "--build", str(native_build),
@@ -367,7 +369,7 @@ def main():
                                         logs=logs, name=name, timeout=1800)
                     preserved_run([str(venv / "bin/cmake"), "-S", "cuda", "-B", str(preserved_build),
                         "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
-                        "-DCMAKE_CUDA_ARCHITECTURES=75",
+                        "-DCMAKE_CUDA_ARCHITECTURES=" + CUDA_ARCHITECTURES,
                         "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
                         "-DCUTLASS_ROOT=" + str(cutlass)], "preserved-configure")
                     preserved_run([str(venv / "bin/cmake"), "--build", str(preserved_build),
@@ -386,7 +388,7 @@ def main():
                     run([str(venv / "bin/cmake"), "-S", str(previous_source / "experiments/library_owner"),
                          "-B", str(previous_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                          "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
-                         "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
+                         "-DCMAKE_CUDA_ARCHITECTURES=" + CUDA_ARCHITECTURES, "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
                          *cuco_options], "previous-owner-configure")
                     run([str(venv / "bin/cmake"), "--build", str(previous_build),
                          "--target", "mgbfs_library_owner", "-j2"], "previous-owner-build")
