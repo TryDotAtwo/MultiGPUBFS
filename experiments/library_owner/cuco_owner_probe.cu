@@ -81,6 +81,60 @@ int main() {
   rmm::mr::statistics_resource_adaptor stats{&pool};
   rmm::device_async_resource_ref resource{stats};
   {
+    constexpr uint32_t incoming = 4096;
+    size_t private_bytes;
+    {
+      mgbfs::CucoOwner a({}, {}, 16, incoming, stream.view(), resource);
+      mgbfs::CucoOwner b({}, {}, 16, incoming, stream.view(), resource);
+      stream.synchronize();
+      private_bytes = stats.get_bytes_counter().value;
+    }
+    stream.synchronize();
+    auto workspace = std::make_shared<mgbfs::CucoWorkspace>(incoming, stream.view(), resource);
+    mgbfs::CucoOwner a({}, {}, 16, incoming, stream.view(), resource, workspace);
+    mgbfs::CucoOwner b({}, {}, 16, incoming, stream.view(), resource, workspace);
+    stream.synchronize();
+    require(stats.get_bytes_counter().value + incoming * 16 <= private_bytes,
+            "SHARED_WORKSPACE_MUST_REMOVE_DUPLICATED_COLUMNS");
+    Input input(incoming, stream.view(), resource);
+    Key x{1,2,3,4}, y{1,2,3,5};
+    input.upload({x,x}, {70,10});
+    auto first = a.compare(1, input.candidates());
+    a.commit(1, first.rows);
+    // Borrowed result is consumed AFTER commit, before workspace completion.
+    require(read(first, stream.view()) == std::vector<uint32_t>{70}, "SHARED_LATE_READER");
+    a.complete(1);
+    input.upload({x,y,y}, {90,80,20});
+    auto second = b.compare(1, input.candidates());
+    require(read(second, stream.view()) == std::vector<uint32_t>{90,80}, "SHARED_SHARD_ISOLATION");
+    b.commit(1, second.rows);
+    stream.synchronize();
+    b.complete(1);
+    input.upload({x,y}, {4,3});
+    auto third = a.compare(2, input.candidates());
+    require(read(third, stream.view()) == std::vector<uint32_t>{3}, "SHARED_PERSISTENT_KEYS");
+    a.commit(2, third.rows);
+    stream.synchronize();
+    a.complete(2);
+    require(read_keys(a.export_committed(), stream.view()) == std::vector<Key>{x,y}, "SHARED_KEYS_A");
+    require(read_keys(b.export_committed(), stream.view()) == std::vector<Key>{x,y}, "SHARED_KEYS_B");
+    a.seal();
+    b.seal();
+  }
+  {
+    auto workspace = std::make_shared<mgbfs::CucoWorkspace>(16, stream.view(), resource);
+    mgbfs::CucoOwner a({}, {}, 8, 16, stream.view(), resource, workspace);
+    mgbfs::CucoOwner b({}, {}, 8, 16, stream.view(), resource, workspace);
+    Input input(16, stream.view(), resource);
+    input.upload({Key{7,8,9,10}}, {42});
+    auto result = a.compare(1, input.candidates());
+    a.commit(1, result.rows);
+    rejects([&] { b.compare(1, input.candidates()); }, "SHARED_COMMIT_IS_NOT_RELEASE");
+    require(read(result, stream.view()) == std::vector<uint32_t>{42}, "SHARED_REJECT_KEEPS_READER");
+    a.complete(1);
+    a.seal();
+  }
+  {
     Input previous(1, stream.view(), resource), current(1, stream.view(), resource);
     Input input(16, stream.view(), resource);
     Key a{10,20,30,40}, b{11,20,30,40}, c{10,21,30,40};

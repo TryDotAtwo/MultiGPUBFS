@@ -575,3 +575,20 @@ container. The full Linux Python suite is not green: five modules could not
 import missing PyArrow, and the container has no pip. This is a test-environment
 limitation, not an archive regression; Windows ran 123 tests with two POSIX
 skips, and the two actual Linux process-cleanup tests passed separately.
+
+Shared temporary buffers are now implemented in the isolated C++ owner API:
+`CucoWorkspace` owns candidate planes, minima, representatives, flags, selected
+rows, source indices, counts and CUB selection scratch. Accepted keys and
+persistent/transient hash sets remain per-owner. Optional explicit sharing is
+restricted to the same device, stream and incoming capacity; callers must keep
+the captured fixed resource alive. The unshared constructor remains compatible.
+
+`CucoWorkspaceLease` keeps the workspace acquired through compare, commit and
+downstream result consumption, until an explicit caller-drained complete.
+Wrong owner/epoch, overlap, premature completion and reuse after abort are
+rejected. Its CPU contract test passes in Linux. The CUDA fixture now covers
+two shared owners, independent accepted keys, delayed readers, overlap rejection
+and less allocated memory than two private workspaces. Those CUDA checks have
+not run yet. The next gate runs the isolated owner on both T4s with all four
+sanitizers, not performance or full BFS. C ABI/Rust sharing integration and
+the 256 MiB full-BFS rerun remain to be implemented and verified.

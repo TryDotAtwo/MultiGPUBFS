@@ -2,6 +2,7 @@
 #include "owner_abi.h"
 #include "cuco_index.hpp"
 #include "cuco_pool_allocator.hpp"
+#include "cuco_workspace_lease.hpp"
 #include <cuco/static_set.cuh>
 #include <cub/device/device_select.cuh>
 #include <thrust/iterator/counting_iterator.h>
@@ -76,6 +77,37 @@ static __global__ void append_keys(uint32_t const* selected, uint32_t rows,
 }
 }
 
+// One fixed temporary allocation set for serialized shard jobs. Persistent
+// accepted keys and membership tables are deliberately NOT stored here.
+struct CucoWorkspace {
+  uint32_t incoming;
+  size_t stride, scratch_bytes{0};
+  rmm::cuda_stream_view stream;
+  int device;
+  CucoWorkspaceLease lease;
+  rmm::device_buffer candidates, minima, representatives, flags, selected,
+                     sources, control, scratch;
+  CucoWorkspace(uint32_t rows, rmm::cuda_stream_view s,
+                rmm::device_async_resource_ref resource) : incoming(rows), stream(s) {
+    if (!rows || rows > INT32_MAX) throw std::runtime_error("OWNER_CAPACITY");
+    cuco_owner_detail::check(cudaGetDevice(&device));
+    stride = (static_cast<size_t>(rows) + 63) & ~size_t{63};
+    auto allocate = [&](size_t bytes) { return rmm::device_buffer{bytes, s, resource}; };
+    candidates = allocate(stride * 16);
+    minima = allocate(static_cast<size_t>(rows) * 4);
+    representatives = allocate(static_cast<size_t>(rows) * 4);
+    flags = allocate(rows);
+    selected = allocate(static_cast<size_t>(rows) * 4);
+    sources = allocate(static_cast<size_t>(rows) * 4);
+    control = allocate(8);
+    cuco_owner_detail::check(cub::DeviceSelect::Flagged(nullptr, scratch_bytes,
+        thrust::counting_iterator<uint32_t>{0}, static_cast<uint8_t*>(flags.data()),
+        static_cast<uint32_t*>(selected.data()), static_cast<uint32_t*>(control.data()),
+        static_cast<int>(rows), s.value()));
+    scratch = allocate(scratch_bytes);
+  }
+};
+
 // Experimental single-stream owner. No default allocator, table growth or
 // fallback. The caller supplies a fixed pool, drains before seal/destruction,
 // and does not overlap compares or consumers of the borrowed result. History
@@ -91,24 +123,28 @@ class CucoOwner {
  public:
   CucoOwner(MgbfsLibraryKeysV1 previous, MgbfsLibraryKeysV1 current,
       uint32_t capacity, uint32_t incoming_capacity, rmm::cuda_stream_view stream,
-      rmm::device_async_resource_ref resource)
+      rmm::device_async_resource_ref resource,
+      std::shared_ptr<CucoWorkspace> workspace = {})
       : stream_(stream), resource_(resource), capacity_(capacity),
-        incoming_capacity_(incoming_capacity) {
+        incoming_capacity_(incoming_capacity), shared_workspace_(bool(workspace)),
+        workspace_(workspace ? std::move(workspace) :
+            std::make_shared<CucoWorkspace>(incoming_capacity, stream, resource)),
+        candidates_(workspace_->candidates), minima_(workspace_->minima),
+        representatives_(workspace_->representatives), flags_(workspace_->flags),
+        selected_(workspace_->selected), sources_(workspace_->sources),
+        control_(workspace_->control), scratch_(workspace_->scratch) {
     validate(previous);
     validate(current);
     if (!capacity || !incoming_capacity || capacity > INT32_MAX || incoming_capacity > INT32_MAX)
       throw std::runtime_error("OWNER_CAPACITY");
     cuco_owner_detail::check(cudaGetDevice(&device_));
+    if (workspace_->incoming != incoming_capacity || workspace_->device != device_ ||
+        workspace_->stream.value() != stream_.value())
+      throw std::runtime_error("WORKSPACE_CONFIGURATION");
+    workspace_->lease.check_idle();
     accepted_stride_ = aligned_words(capacity);
-    candidate_stride_ = aligned_words(incoming_capacity);
+    candidate_stride_ = workspace_->stride;
     accepted_ = buffer(accepted_stride_ * 16);
-    candidates_ = buffer(candidate_stride_ * 16);
-    minima_ = buffer(static_cast<size_t>(incoming_capacity) * 4);
-    representatives_ = buffer(static_cast<size_t>(incoming_capacity) * 4);
-    flags_ = buffer(incoming_capacity);
-    selected_ = buffer(static_cast<size_t>(incoming_capacity) * 4);
-    sources_ = buffer(static_cast<size_t>(incoming_capacity) * 4);
-    control_ = buffer(8);
     IndexKeyViews views{};
     for (unsigned word = 0; word < 4; ++word) {
       views.planes[0][word] = previous.words[word];
@@ -121,15 +157,13 @@ class CucoOwner {
     size_t const persistent_rows = static_cast<size_t>(previous.rows) + current.rows + capacity;
     persistent_ = make_set(persistent_rows, views);
     transient_ = make_set(incoming_capacity, views);
-    cuco_owner_detail::check(cub::DeviceSelect::Flagged(nullptr, scratch_bytes_,
-        thrust::counting_iterator<uint32_t>{0}, static_cast<uint8_t*>(flags_.data()),
-        data(selected_), data(control_), static_cast<int>(incoming_capacity_), stream_.value()));
-    scratch_ = buffer(scratch_bytes_);
+    scratch_bytes_ = workspace_->scratch_bytes;
     insert(*persistent_, 0, 0, previous.rows);
     insert(*persistent_, 1, 0, current.rows);
   }
   CucoOwner(CucoOwner const&) = delete;
   CucoOwner& operator=(CucoOwner const&) = delete;
+  ~CucoOwner() { workspace_->lease.abort(this); }
 
   MgbfsLibrarySurvivorsV1 compare(uint64_t epoch, MgbfsLibraryCandidatesV1 input) {
     try {
@@ -140,6 +174,7 @@ class CucoOwner {
       auto const rows = input.keys.rows;
       if (rows > incoming_capacity_) throw std::runtime_error("OWNER_INPUT_CAPACITY");
       if (rows && !input.source_indices) throw std::runtime_error("OWNER_NULL_SOURCE");
+      if (shared_workspace_) workspace_->lease.acquire(this, epoch);
       staged_count_ = 0;
       if (rows) {
         // All old readers precede this clear on the exclusive owner stream.
@@ -181,7 +216,7 @@ class CucoOwner {
       pending_ = true;
       pending_epoch_ = epoch;
       return {data(sources_), epoch, staged_count_, 0};
-    } catch (...) { poisoned_ = true; throw; }
+    } catch (...) { workspace_->lease.abort(this); poisoned_ = true; throw; }
   }
 
   void commit(uint64_t epoch, uint32_t granted) {
@@ -204,7 +239,18 @@ class CucoOwner {
       pending_ = false;
       has_epoch_ = true;
       last_epoch_ = epoch;
-    } catch (...) { poisoned_ = true; throw; }
+      if (shared_workspace_) workspace_->lease.commit(this, epoch);
+    } catch (...) { workspace_->lease.abort(this); poisoned_ = true; throw; }
+  }
+
+  // The caller has completed ALL GPU readers, not only accepted-key writes.
+  void complete(uint64_t epoch) {
+    try {
+      check_device();
+      if (poisoned_ || pending_ || !has_epoch_ || last_epoch_ != epoch)
+        throw std::runtime_error("OWNER_ORDER");
+      if (shared_workspace_) workspace_->lease.complete(this, epoch);
+    } catch (...) { workspace_->lease.abort(this); poisoned_ = true; throw; }
   }
 
   MgbfsLibraryKeysV1 export_committed() {
@@ -223,6 +269,7 @@ class CucoOwner {
     try {
       check_device();
       if (poisoned_ || pending_ || sealed_) throw std::runtime_error("OWNER_ORDER");
+      if (shared_workspace_) workspace_->lease.check_idle();
       transient_.reset();
       persistent_.reset();
       sealed_ = true;
@@ -265,8 +312,11 @@ class CucoOwner {
   int device_{0};
   uint64_t pending_epoch_{0}, last_epoch_{0};
   bool pending_{false}, has_epoch_{false}, poisoned_{false}, sealed_{false};
-  rmm::device_buffer accepted_, candidates_, minima_, representatives_, flags_,
-                     selected_, sources_, control_, scratch_;
+  bool shared_workspace_;
+  std::shared_ptr<CucoWorkspace> workspace_;
+  rmm::device_buffer accepted_;
+  rmm::device_buffer &candidates_, &minima_, &representatives_, &flags_,
+                     &selected_, &sources_, &control_, &scratch_;
   // Sets must be destroyed before the immutable views they reference.
   std::unique_ptr<Set> persistent_, transient_;
 };

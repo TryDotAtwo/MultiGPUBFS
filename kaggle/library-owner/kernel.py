@@ -10,19 +10,18 @@ import hashlib
 import shutil
 
 SOURCE_COMMIT = "8a6b9a7a4783f0473dc6ccd268f2b8f63a1554eb"
-FULL_BFS_GATE = True
-LOAD_SCREEN = True
+FULL_BFS_GATE = False
+LOAD_SCREEN = False
 SCREEN_REPEATS = 5
 SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 256 << 20
-NATIVE_COMPARISON = True
+NATIVE_COMPARISON = False
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
-# Screening run: native sources are unchanged from the completed v43 gate.
-# Set all four names for a fresh sanitizer gate after native code changes.
-SANITIZER_TOOLS = ()
+# Fresh isolated shared-workspace gate; full BFS integration follows separately.
+SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 43,
     "source_commit": "7bd6a6a6f907774ac01b827735770c672c1155a7"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
