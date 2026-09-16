@@ -18,6 +18,7 @@ SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 96 << 20  # Explicit admission experiment, never grow/fallback.
+SCREEN_POOL_BYTES_BY_WORLD = {1: 80 << 20, 2: 64 << 20}  # Fixed before each process starts.
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
 CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
@@ -25,7 +26,7 @@ PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistic
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
-SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
+SANITIZER_TOOLS = ()  # Same tested runtime; smaller-pool admission/timing panel.
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 50,
     "source_commit": "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
@@ -322,6 +323,9 @@ def main():
             manifest["cli_gate"] = "torchrun two-process DENSE and HASH_FIRST Tensor; S4/U4m2 correctness only"
             if LOAD_SCREEN:
                 manifest["screen_archive_slots"] = SCREEN_ARCHIVE_SLOTS
+                manifest["screen_pool_bytes_by_world"] = {
+                    str(world): SCREEN_POOL_BYTES_BY_WORLD.get(world, SCREEN_POOL_BYTES)
+                    for world in SCREEN_WORLDS}
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
                 from distributed_gpu_bench import stats
@@ -411,7 +415,7 @@ def main():
                                             MGBFS_ARCHIVE_SLOTS=str(SCREEN_ARCHIVE_SLOTS))
                             result = run_case(case_cli, logs / label, work / label,
                                 "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
-                                0 if native else SCREEN_POOL_BYTES, "DENSE", "ON",
+                                0 if native else SCREEN_POOL_BYTES_BY_WORLD.get(world, SCREEN_POOL_BYTES), "DENSE", "ON",
                                 case_env, owner="CUCO_INDEXED" if owner == "CUCO_PREVIOUS" else owner, **extra)
                             panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
                             if PROFILE_SCREEN:
