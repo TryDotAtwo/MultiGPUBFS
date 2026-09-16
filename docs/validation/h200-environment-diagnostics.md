@@ -82,6 +82,37 @@ proved by a diagnostic classifier. The existing eight-GPU gate is unchanged.
 The raw log SHA256 is
 `82d0385d35c7f12762419a376bbbb0597d0ab336e930921fe96468e84ad8c70d`.
 
+## Completed two-H200 follow-up
+
+- Raw racecheck: oracle passed, 753.96 s, 0 hazards/errors/warnings.
+- Raw synccheck: oracle passed, 26.75 s, 0 errors.
+- Raw initcheck with default NCCL allocation: oracle passed, 166.76 s, but
+  **4,633 uninitialized-memory diagnostics**. These are not API probe messages
+  and were not allowlisted.
+- An independent C++ NCCL-only collective probe fully initializes 4 KiB send
+  and receive buffers on both devices, checks 1/1024-element max reductions and
+  a 4 KiB peer exchange. Correct results with default NCCL allocation still
+  produce 3,589 initcheck diagnostics under matched sanitizer 12.9.
+- Changing only `NCCL_CUMEM_ENABLE=0` yields **0 errors** on that probe.
+- The complete two-device BFS full-state/archive oracle was then repeated with
+  `NCCL_CUMEM_ENABLE=0` and sanitizer 12.9: **PASS, exit 0, 0 initcheck errors**,
+  56.31 s test time (57.60 s including tool overhead). This localizes the
+  diagnostic to NCCL's virtual-allocation path; it does not prove whether the
+  underlying issue is NCCL behavior or sanitizer alias tracking.
+- Production configuration will explicitly use `NCCL_CUMEM_ENABLE=0`; this is
+  selected before startup, not a runtime fallback or disabled memory check.
+- Actual two-process torchrun, DENSE compact permutation states, search-only:
+  CUB and cuCollections both completed S4 (24 states, 7 layers) and S8
+  (40,320 states, 29 layers), with matching complete layer counts. These are
+  smoke tests, not a statistically meaningful performance comparison.
+- The first CLI attempt rejected an incorrectly supplied library-pool setting
+  for CUB (`REFERENCE_UNUSED_LIBRARY_POOL`). Correcting the harness to set that
+  option only for cuCollections resolved the configuration error.
+
+The two-H200 rental was deleted after preserving logs. Estimated base rental
+cost is USD 4.67; final invoice/traffic reconciliation is still pending.
+The eight-H200 production run has not yet happened at this checkpoint.
+
 ## Evidence location
 
 Local, ignored evidence for the retired first rental:
