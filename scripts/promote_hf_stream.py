@@ -11,6 +11,11 @@ from types import SimpleNamespace
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+if __package__:
+    from .verify_lrx_layers import verify_layers
+else:
+    from verify_lrx_layers import verify_layers
+
 
 def combine_rank_commits(commits, expected_world):
     if expected_world <= 0 or len(commits) != expected_world:
@@ -41,7 +46,7 @@ def combine_rank_commits(commits, expected_world):
             raise ValueError("STREAM_CONFIG")
         counts = item.get("layer_counts")
         if not isinstance(counts, list) or len(counts) != layer_count or any(
-            not isinstance(value, int) or value < 0 for value in counts
+            type(value) is not int or value < 0 for value in counts
         ):
             raise ValueError("STREAM_LAYERS")
         if sum(counts) != item.get("total_unique_states"):
@@ -194,8 +199,15 @@ def reconcile_publication(api, repo_id, combined, revision=None):
         f"https://huggingface.co/datasets/{repo_id}/commit/{revision}"))
 
 
-def promote_verified(api, repo_id, commits, expected_world):
+def promote_verified(api, repo_id, commits, expected_world, reference=None):
     combined = combine_rank_commits(commits, expected_world)
+    if reference is not None:
+        # Validate archive histograms before reads, reconciliation or publication.
+        # Equal cardinality alone does not establish correct BFS depths.
+        records = [dict(rank=item['rank'], status=item['status'],
+                        group=item['group_id'], local_layer_sizes=item['layer_counts'])
+                   for item in commits]
+        verify_layers(records, reference['layers'], reference['n'], expected_world)
     revision = api.repo_info(repo_id=repo_id, repo_type="dataset").sha
     existing = reconcile_publication(api, repo_id, combined, revision=revision)
     if existing is not None:
@@ -246,6 +258,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-id", required=True)
     parser.add_argument("--world-size", type=int, required=True)
+    parser.add_argument("--reference", type=Path,
+                        help="Require archive layers to match a frozen LRX reference before publication")
     parser.add_argument("commits", nargs="+")
     args = parser.parse_args()
     token = os.environ.get("HF_TOKEN")
@@ -256,7 +270,9 @@ def main():
     for path in args.commits:
         with open(path, "r", encoding="utf-8") as source:
             commits.append(json.load(source))
-    combined, receipt = promote_verified(HfApi(token=token), args.repo_id, commits, args.world_size)
+    reference = json.loads(args.reference.read_text(encoding='utf-8')) if args.reference else None
+    combined, receipt = promote_verified(HfApi(token=token), args.repo_id, commits,
+                                        args.world_size, reference=reference)
     print(json.dumps({
         "status": combined["status"],
         "run_id": combined["run_id"],

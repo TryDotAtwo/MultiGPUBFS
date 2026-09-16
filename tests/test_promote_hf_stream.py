@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.promote_hf_stream import combine_rank_commits, promote
+from scripts.promote_hf_stream import combine_rank_commits, promote, promote_verified
 
 
 def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
@@ -34,6 +34,22 @@ def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
 
 
 class PromoteStream(unittest.TestCase):
+    def test_reference_rejects_wrong_layers_before_any_hub_access(self):
+        class NoNetwork:
+            def repo_info(self, **kwargs):
+                raise AssertionError('Hub accessed before reference validation')
+
+        records = [commit(0, (1, 1, 1)), commit(1, (0, 1, 2))]
+        # Six states in both cases, but the depth histogram is wrong.
+        with self.assertRaisesRegex(ValueError, 'LAYER_MISMATCH'):
+            promote_verified(NoNetwork(), 'unused/results', records, 2,
+                             reference={'n': 3, 'layers': [1, 3, 2]})
+
+    def test_boolean_archive_count_is_not_a_state_count(self):
+        record = commit(0, (True, 2))
+        with self.assertRaisesRegex(ValueError, 'STREAM_LAYERS'):
+            combine_rank_commits([record], 1)
+
     def test_eight_rank_publication_requires_complete_disjoint_inventory(self):
         records = [commit(r, (int(r == 0), r), branch=f'fixture-rank-{r}')
                    for r in reversed(range(8))]

@@ -59,6 +59,11 @@ prove process bootstrap. Use a fresh rendezvous/output path for every case.
   6,227,020,800 states, 79 depth entries, diameter 78. This checks counts only.
 - Verify archive commits/checksums and publication receipts separately. Upload
   large artifacts directly from the remote machine, never through the laptop.
+  Promote with `scripts/promote_hf_stream.py --repo-id
+  TryDotAtwo/multigpubfs-bfs-results --world-size 8 --reference
+  data/reference/lrx13-layers.json <all-eight-rank-stream-commits>`.
+  The reference flag checks archive layer counts before any Hub access, including
+  publication reconciliation. It is a histogram gate, not a full-state oracle.
 - Record actual billed cost and terminate the rental after durable outputs are
   secured. Report partial/capacity/deadline failures as INCOMPLETE.
 
