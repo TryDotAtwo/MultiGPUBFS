@@ -3,7 +3,7 @@ use crate::event_generation::NativeEvent;
 use crate::failure::process_owner_pair;
 use crate::jobs::{split, JobSpan};
 #[cfg(feature = "library-owner")]
-use crate::library_native::{finalize_shards, LibraryShard};
+use crate::library_native::{finalize_shards, ControlTransfer, LibraryShard};
 use crate::parent_batches::{ParentBatch, ParentCursor};
 use mgbfs_core::{
     config::{OwnerBackend, ReferenceOwner},
@@ -18,6 +18,7 @@ use std::ffi::{c_void, CStr};
 
 #[cfg(feature = "library-owner")]
 struct LibraryOwnerStorage {
+    control_transfer: ControlTransfer,
     shards: Vec<LibraryShard>,
     scratch: Buffer,
     previous: Vec<std::ops::Range<u32>>,
@@ -1072,6 +1073,7 @@ impl DistributedNativeBfs {
                     .allocation_bytes as usize,
                 raw,
             )?;
+            let control_transfer = unsafe { ControlTransfer::new(raw)? };
             let mut pool = std::ptr::null_mut();
             check(unsafe {
                 mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
@@ -1083,6 +1085,7 @@ impl DistributedNativeBfs {
             )
             .map_err(|_| "LIBRARY_SHARD_CAPACITY")?;
             let mut library = LibraryOwnerStorage {
+                control_transfer,
                 shards: Vec::with_capacity(cfg.shards as usize),
                 scratch,
                 previous: vec![0..0; cfg.shards as usize],
@@ -1278,8 +1281,10 @@ impl DistributedNativeBfs {
                 survivors: survivors.rows,
                 ..Control::default()
             };
-            self.control.put(&[control])?;
             unsafe {
+                library
+                    .control_transfer
+                    .upload(&control, self.control.ptr.cast())?;
                 check(mgbfs_state_reserve_layer(
                     self.ring.ptr.cast(),
                     self.control.ptr.cast(),
@@ -1288,11 +1293,18 @@ impl DistributedNativeBfs {
                     self.cfg.layer_capacity,
                     s,
                 ))?;
-                check(cudaStreamSynchronize(s))?;
             }
-            control = self.control.one()?;
-            let reserved = self.extent.one::<Extent>()?;
-            if control.error != 0 || self.ring.one::<Ring>()?.fatal != 0 {
+            let reserved_snapshot = unsafe {
+                library.control_transfer.read(
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    std::ptr::null(),
+                )?
+            };
+            control = reserved_snapshot.control;
+            let reserved = reserved_snapshot.extent;
+            if control.error != 0 || reserved_snapshot.ring.fatal != 0 {
                 return Err(format!("LIBRARY_RESERVE_FATAL_{}", control.error));
             }
             unsafe {
@@ -1308,8 +1320,10 @@ impl DistributedNativeBfs {
                 continue;
             }
             control.stage = 2;
-            self.control.put(&[control])?;
             unsafe {
+                library
+                    .control_transfer
+                    .upload(&control, self.control.ptr.cast())?;
                 if let Some(h) = self.hash_first.as_ref() {
                     let offset = h.pending_counts[source_group] as usize;
                     check(mgbfs_state_build_requests(
@@ -1341,15 +1355,24 @@ impl DistributedNativeBfs {
                         s,
                     ))?;
                 }
-                check(cudaStreamSynchronize(s))?;
             }
-            let control = self.control.one::<Control>()?;
-            if control.error != 0 || self.ring.one::<Ring>()?.fatal != 0 {
+            let completed_snapshot = unsafe {
+                library.control_transfer.read(
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    self.hash_first
+                        .as_ref()
+                        .map_or(std::ptr::null(), |h| h.count.ptr.cast()),
+                )?
+            };
+            let control = completed_snapshot.control;
+            if control.error != 0 || completed_snapshot.ring.fatal != 0 {
                 return Err(format!("LIBRARY_MATERIALIZE_FATAL_{}", control.error));
             }
-            let extent = self.extent.one::<Extent>()?;
+            let extent = completed_snapshot.extent;
             if let Some(h) = self.hash_first.as_mut() {
-                if extent.ready != 0 || u64::from(h.count.one::<u32>()?) != extent.count {
+                if extent.ready != 0 || u64::from(completed_snapshot.count) != extent.count {
                     return Err("HASH_FIRST_REQUEST_PUBLICATION".into());
                 }
                 h.pending_counts[source_group] += extent.count as u32;

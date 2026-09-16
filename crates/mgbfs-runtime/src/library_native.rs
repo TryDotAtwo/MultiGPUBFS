@@ -9,6 +9,58 @@ use mgbfs_cuda::{
 };
 use std::{ffi::c_void, ptr};
 
+/// One pinned upload/snapshot slot, allocated before depth zero. No commit
+/// checks are replaced by this transport; its snapshot contains raw flags.
+pub struct ControlTransfer(*mut c_void);
+impl ControlTransfer {
+    /// # Safety
+    /// The current device and stream must remain valid until this handle drops.
+    pub unsafe fn new(stream: *mut c_void) -> Result<Self> {
+        let mut handle = ptr::null_mut();
+        if mgbfs_control_transfer_create_v1(stream, &mut handle) != 0 || handle.is_null() {
+            return Err("LIBRARY_CONTROL_CREATE".into());
+        }
+        Ok(Self(handle))
+    }
+    /// # Safety
+    /// Destination is a writable device Control on this handle's stream/device.
+    /// Read must complete before another upload or destruction of device data.
+    pub unsafe fn upload(
+        &mut self,
+        value: &mgbfs_cuda::native_owner::Control,
+        device: *mut mgbfs_cuda::native_owner::Control,
+    ) -> Result<()> {
+        if mgbfs_control_transfer_upload_v1(self.0, value, device) != 0 {
+            return Err("LIBRARY_CONTROL_UPLOAD".into());
+        }
+        Ok(())
+    }
+    /// # Safety
+    /// All pointers reference live device structs on this handle's stream;
+    /// producers precede this call on that stream. Count alone may be null.
+    pub unsafe fn read(
+        &mut self,
+        control: *const mgbfs_cuda::native_owner::Control,
+        extent: *const mgbfs_cuda::native_owner::Extent,
+        ring: *const mgbfs_cuda::native_owner::Ring,
+        count: *const u32,
+    ) -> Result<ControlSnapshotV1> {
+        let mut result = ControlSnapshotV1::default();
+        if mgbfs_control_transfer_read_v1(self.0, control, extent, ring, count, &mut result) != 0 {
+            return Err("LIBRARY_CONTROL_READ".into());
+        }
+        Ok(result)
+    }
+}
+impl Drop for ControlTransfer {
+    fn drop(&mut self) {
+        // Failed GPU drain deliberately preserves pinned DMA storage until exit.
+        unsafe {
+            mgbfs_control_transfer_destroy_v1(self.0);
+        }
+    }
+}
+
 /// Finalize one rank's disjoint shards into a preallocated SoA history buffer.
 /// Output ranges are shard-major, not sorted within a shard.
 /// # Safety

@@ -11,6 +11,83 @@ unsafe fn allocate(bytes: usize) -> *mut c_void {
 }
 
 #[test]
+fn control_snapshot_crosses_rust_abi_without_losing_fatal_or_grant_fields() {
+    use mgbfs_cuda::native_owner::{Control, Extent, Ring};
+    use mgbfs_runtime::library_native::ControlTransfer;
+    unsafe {
+        let mut stream = ptr::null_mut();
+        assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+        let memory = allocate(256);
+        let control = memory.cast::<Control>();
+        let extent = memory.cast::<u8>().add(64).cast::<Extent>();
+        let ring = memory.cast::<u8>().add(128).cast::<Ring>();
+        let count = memory.cast::<u8>().add(192).cast::<u32>();
+        let mut transfer = ControlTransfer::new(stream).unwrap();
+        let c = Control {
+            error: 17,
+            stage: 2,
+            survivors: 11,
+            ..Control::default()
+        };
+        let e = Extent {
+            begin: 100,
+            count: 11,
+            granted_rows: 11,
+            ready: 1,
+            ..Extent::default()
+        };
+        let r = Ring {
+            head: 50,
+            tail: 111,
+            fatal: 23,
+            ..Ring::default()
+        };
+        let n = 29u32;
+        transfer.upload(&c, control).unwrap();
+        assert_eq!(
+            cudaMemcpyAsync(extent.cast(), (&e as *const Extent).cast(), 64, 1, stream),
+            0
+        );
+        assert_eq!(
+            cudaMemcpyAsync(ring.cast(), (&r as *const Ring).cast(), 64, 1, stream),
+            0
+        );
+        assert_eq!(
+            cudaMemcpyAsync(count.cast(), (&n as *const u32).cast(), 4, 1, stream),
+            0
+        );
+        let snapshot = transfer.read(control, extent, ring, count).unwrap();
+        assert_eq!(
+            (
+                snapshot.control.error,
+                snapshot.control.stage,
+                snapshot.control.survivors
+            ),
+            (17, 2, 11)
+        );
+        assert_eq!(
+            (
+                snapshot.extent.begin,
+                snapshot.extent.granted_rows,
+                snapshot.extent.ready
+            ),
+            (100, 11, 1)
+        );
+        assert_eq!(
+            (snapshot.ring.head, snapshot.ring.tail, snapshot.ring.fatal),
+            (50, 111, 23)
+        );
+        assert_eq!((snapshot.count, snapshot.reserved), (29, 0));
+        transfer.upload(&Control::default(), control).unwrap();
+        let snapshot = transfer.read(control, extent, ring, ptr::null()).unwrap();
+        assert_eq!((snapshot.control.stage, snapshot.count), (0, 0));
+        drop(transfer);
+        assert_eq!(cudaFree(memory), 0);
+        assert_eq!(cudaStreamDestroy(stream), 0);
+    }
+}
+
+#[test]
 fn shard_finalization_reuses_old_history_and_preserves_empty_shard_offsets() {
     unsafe {
         let mut stream = ptr::null_mut();

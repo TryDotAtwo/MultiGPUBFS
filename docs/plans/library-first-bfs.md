@@ -890,3 +890,24 @@ drains the stream. These are concrete next optimization targets: consolidate
 control readback/publication while preserving actual credits, fatal guards,
 materialization completion and workspace lifetime. Do not omit correctness
 checks to reduce API counts. A replacement has not yet been implemented.
+
+### Batched control transport implementation, GPU verification pending
+
+Added a stable C ABI for one 264-byte pinned upload/snapshot slot per library
+runtime. Upload is stream-ordered without a host drain; snapshot queues the
+control/extent/ring copies (and optional HASH_FIRST count) and drains once.
+It returns all raw flags and grants; the Rust adapter still checks actual
+credits, fatal values, ready state, and request counts before publication.
+Repeated upload before snapshot poisons the slot without overwriting the DMA
+source. Teardown drains before freeing; a failed drain retains storage until
+process exit. Pinned control bytes are reported separately from archive RAM.
+
+RED: the standalone C++ fixture compiled and reached `CONTROL_TRANSFER_CREATE`
+against missing implementation in the Linux container. This RED used no GPU.
+Implemented C++ subsequently compiled/linked with Linux CUDA; Rust runtime and
+tests pass `cargo check --features cuda,library-owner` (type checking, not GPU
+link/execution). C++ fixture covers repeated nonblocking-stream transfers,
+optional-count reset, fatal/grant fields and pending-DMA overwrite rejection.
+A Rust GPU fixture checks the cross-language layout. Neither fixture has passed
+on T4 yet. Existing full BFS gates cover the integrated DENSE/HASH_FIRST path.
+No speedup or regression claim is justified until those gates and A/B runs finish.

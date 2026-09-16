@@ -340,6 +340,8 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         #[cfg(feature = "library-owner")]
         if let Some(usage) = bfs.library_pool_usage()? {
+            value["library_control_pinned_bytes"] =
+                serde_json::json!(mgbfs_cuda::library_owner::CONTROL_TRANSFER_PINNED_BYTES);
             value["library_pool_usage"] = serde_json::json!({
                 "reserved_bytes": usage.reserved_bytes,
                 "live_requested_bytes": usage.live_bytes,

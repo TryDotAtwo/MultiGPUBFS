@@ -226,6 +226,11 @@ def main():
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
             for tool in ("plain", *SANITIZER_TOOLS):
+                transfer_command = [str(build / "control_transfer_contract")]
+                if tool != "plain":
+                    transfer_command = ["compute-sanitizer", "--tool", tool,
+                                        "--error-exitcode", "97", *transfer_command]
+                run(transfer_command, f"control-transfer-gpu{gpu['index']}-{tool}", extra_env=device_env)
                 gather_command = [str(build / "owner_source_gather")]
                 if tool != "plain":
                     gather_command = ["compute-sanitizer", "--tool", tool,

@@ -39,6 +39,17 @@ pub type PoolHandle = *mut c_void;
 pub type WorkspaceHandle = *mut c_void;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
+pub struct ControlSnapshotV1 {
+    pub control: crate::native_owner::Control,
+    pub extent: crate::native_owner::Extent,
+    pub ring: crate::native_owner::Ring,
+    pub count: u32,
+    pub reserved: u32,
+}
+const _: [(); 200] = [(); std::mem::size_of::<ControlSnapshotV1>()];
+pub const CONTROL_TRANSFER_PINNED_BYTES: usize = 264;
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
 pub struct PoolUsageV1 {
     pub reserved_bytes: u64,
     pub live_bytes: u64,
@@ -48,6 +59,21 @@ const _: [(); 24] = [(); std::mem::size_of::<PoolUsageV1>()];
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    pub fn mgbfs_control_transfer_create_v1(stream: *mut c_void, out: *mut *mut c_void) -> i32;
+    pub fn mgbfs_control_transfer_destroy_v1(handle: *mut c_void) -> i32;
+    pub fn mgbfs_control_transfer_upload_v1(
+        handle: *mut c_void,
+        host: *const crate::native_owner::Control,
+        device: *mut crate::native_owner::Control,
+    ) -> i32;
+    pub fn mgbfs_control_transfer_read_v1(
+        handle: *mut c_void,
+        control: *const crate::native_owner::Control,
+        extent: *const crate::native_owner::Extent,
+        ring: *const crate::native_owner::Ring,
+        count: *const u32,
+        out: *mut ControlSnapshotV1,
+    ) -> i32;
     pub fn mgbfs_library_pool_usage_v1(pool: PoolHandle, usage: *mut PoolUsageV1) -> i32;
     pub fn mgbfs_library_cuco_workspace_create_v1(
         incoming_capacity: u32,
