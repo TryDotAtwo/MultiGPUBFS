@@ -611,3 +611,20 @@ is state materialization; in HASH_FIRST it is request construction (later state
 responses no longer borrow those indices). Workspace destruction must follow
 all shard handles and precede fixed-pool destruction. These integration steps
 remain pending; the isolated passing fixture does not implement them implicitly.
+
+The shared workspace now has explicit C ABI create/destroy/shared-owner
+factories plus reader-completion notification. The factory captures device,
+stream and RMM resource; destroy rejects remaining owner references or a live
+lease. Unsupported cuco builds reject the new factories rather than falling
+back. The common completion operation rejects wrong/duplicate epochs.
+
+Rust now keeps one shared workspace in `LibraryOwnerStorage`, passes it to
+every cuco shard and retains that choice across depth reopen. Both synchronous
+and event-based completion notify the C++ owner only after the corresponding
+GPU drain. Teardown closes all owners, destroys workspace, then destroys the
+fixed pool; failed drain/destruction leaves storage for process termination.
+The added shared C ABI fixture checks refusal to destroy a live workspace and
+empty compare/commit/complete/seal cleanup. Its initial syntax check failed on
+the four missing entry points; current Rust CUDA/library feature type-check
+passes. Linux C++ linking, full BFS, sanitizer and 256 MiB capacity evidence
+remain pending in the next hardware gate. No speed or full-memory win yet.

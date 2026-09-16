@@ -164,6 +164,18 @@ extern "C" int mgbfs_library_owner_commit_v1(void* owner, uint64_t epoch, uint32
     handle->last_epoch = epoch;
     handle->has_last = true;
     handle->pending = false;
+    handle->completion_pending = true;
+    return 0;
+  } catch (...) { return fail(handle); }
+}
+extern "C" int mgbfs_library_owner_complete_v1(void* owner, uint64_t epoch) {
+  auto* handle = static_cast<Handle*>(owner);
+  if (!handle) return -1;
+  try {
+    if (handle->poisoned || handle->pending || !handle->completion_pending ||
+        !handle->has_last || handle->last_epoch != epoch) return fail(handle);
+    handle->complete(epoch);
+    handle->completion_pending = false;
     return 0;
   } catch (...) { return fail(handle); }
 }
@@ -191,6 +203,16 @@ extern "C" int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* ke
 }
 
 #ifndef MGBFS_HAS_CUCO
+extern "C" int mgbfs_library_cuco_workspace_create_v1(uint32_t, void*, void** workspace) {
+  if (workspace) *workspace = nullptr;
+  return -1;
+}
+extern "C" int mgbfs_library_cuco_workspace_destroy_v1(void*) { return -1; }
+extern "C" int mgbfs_library_owner_create_cuco_shared_v1(MgbfsLibraryKeysV1,
+    MgbfsLibraryKeysV1, uint32_t, void*, void** owner) {
+  if (owner) *owner = nullptr;
+  return -1;
+}
 extern "C" int mgbfs_library_owner_create_cuco_window_v1(MgbfsLibraryKeysV1,
     MgbfsLibraryKeysV1, uint32_t, uint32_t, void*, void** owner) {
   if (owner) *owner = nullptr;

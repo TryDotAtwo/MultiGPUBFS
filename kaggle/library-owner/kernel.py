@@ -10,8 +10,8 @@ import hashlib
 import shutil
 
 SOURCE_COMMIT = "8d015b01fde3e594b5d79250e295f78aed3c0934"
-FULL_BFS_GATE = False
-LOAD_SCREEN = False
+FULL_BFS_GATE = True
+LOAD_SCREEN = True
 SCREEN_REPEATS = 5
 SCREEN_WORLDS = (1, 2)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
@@ -20,7 +20,7 @@ SCREEN_POOL_BYTES = 256 << 20
 NATIVE_COMPARISON = False
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
-# Fresh isolated shared-workspace gate; full BFS integration follows separately.
+# Fresh full-BFS shared-workspace integration gate, followed by capacity rerun.
 SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 43,
     "source_commit": "7bd6a6a6f907774ac01b827735770c672c1155a7"}

@@ -74,6 +74,22 @@ int mgbfs_library_owner_create_window_v1(MgbfsLibraryKeysV1 previous,
 int mgbfs_library_owner_create_cuco_window_v1(MgbfsLibraryKeysV1 previous,
     MgbfsLibraryKeysV1 current, uint32_t capacity, uint32_t incoming_capacity,
     void* cuda_stream, void** owner);
+/* One shared workspace per serialized stream/device and captured fixed pool.
+ * Factories clear output on failure. All handles are opaque, valid handles
+ * only; calls are externally serialized. Destroy rejects live owner references
+ * or a live/poisoned lease and retains the workspace handle on failure.
+ * Owners must be destroyed before workspace, then workspace before pool.
+ */
+int mgbfs_library_cuco_workspace_create_v1(uint32_t incoming_capacity,
+    void* cuda_stream, void** workspace);
+int mgbfs_library_cuco_workspace_destroy_v1(void* workspace);
+int mgbfs_library_owner_create_cuco_shared_v1(MgbfsLibraryKeysV1 previous,
+    MgbfsLibraryKeysV1 current, uint32_t capacity, void* workspace, void** owner);
+/* Caller has drained EVERY result reader and checked native fatal controls.
+ * Releases shared scratch lease, not accepted/history storage. Does not wait.
+ * Exactly once for the last committed epoch; wrong order poisons the owner.
+ */
+int mgbfs_library_owner_complete_v1(void* owner, uint64_t epoch);
 /* Compare zeros a non-null result on failure and does not publish. Returned indices are borrowed until next compare
  * or destroy. Library count synchronization is included in this call's timing.
  */

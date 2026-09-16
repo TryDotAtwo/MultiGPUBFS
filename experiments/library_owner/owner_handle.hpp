@@ -8,9 +8,11 @@ namespace mgbfs {
 struct LibraryOwnerHandle {
   uint64_t epoch{0}, last_epoch{0};
   bool pending{false}, has_last{false}, poisoned{false};
+  bool completion_pending{false};
   virtual ~LibraryOwnerHandle() = default;
   virtual MgbfsLibrarySurvivorsV1 compare(uint64_t epoch, MgbfsLibraryCandidatesV1 input) = 0;
   virtual void commit(uint64_t epoch, uint32_t granted) = 0;
+  virtual void complete(uint64_t) {}
   virtual MgbfsLibraryKeysV1 export_committed() = 0;
   virtual void seal() = 0;
 };

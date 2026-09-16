@@ -102,6 +102,7 @@ pub struct LibraryShard {
     gate: OwnerCommitGate,
     completion: NativeEvent,
     cuco_incoming_capacity: Option<u32>,
+    cuco_workspace: WorkspaceHandle,
 }
 
 impl LibraryShard {
@@ -126,6 +127,7 @@ impl LibraryShard {
             current,
             capacity,
             self.cuco_incoming_capacity,
+            self.cuco_workspace,
             self.stream,
             &mut handle,
         );
@@ -161,6 +163,28 @@ impl LibraryShard {
         cuco_incoming_capacity: Option<u32>,
         stream: *mut c_void,
     ) -> Result<Self> {
+        Self::new_window_with_workspace(
+            previous,
+            current,
+            capacity,
+            cuco_incoming_capacity,
+            ptr::null_mut(),
+            stream,
+        )
+    }
+
+    /// # Safety
+    /// A non-null workspace must belong to this device/stream/fixed pool,
+    /// have the same incoming capacity, and outlive this shard including reopen.
+    /// All participating shards are serialized through completed result readers.
+    pub unsafe fn new_window_with_workspace(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        cuco_incoming_capacity: Option<u32>,
+        cuco_workspace: WorkspaceHandle,
+        stream: *mut c_void,
+    ) -> Result<Self> {
         let completion = NativeEvent::new()?;
         let mut handle = ptr::null_mut();
         let status = Self::create_window(
@@ -168,6 +192,7 @@ impl LibraryShard {
             current,
             capacity,
             cuco_incoming_capacity,
+            cuco_workspace,
             stream,
             &mut handle,
         );
@@ -180,6 +205,7 @@ impl LibraryShard {
             gate: OwnerCommitGate::new(u64::from(capacity)),
             completion,
             cuco_incoming_capacity,
+            cuco_workspace,
         })
     }
 
@@ -188,9 +214,18 @@ impl LibraryShard {
         current: KeysV1,
         capacity: u32,
         incoming: Option<u32>,
+        workspace: WorkspaceHandle,
         stream: *mut c_void,
         output: *mut OwnerHandle,
     ) -> i32 {
+        if !workspace.is_null() {
+            if incoming.is_none() {
+                return -1;
+            }
+            return mgbfs_library_owner_create_cuco_shared_v1(
+                previous, current, capacity, workspace, output,
+            );
+        }
         match incoming {
             Some(incoming) => mgbfs_library_owner_create_cuco_window_v1(
                 previous, current, capacity, incoming, stream, output,
@@ -219,6 +254,7 @@ impl LibraryShard {
             gate: OwnerCommitGate::new(u64::from(capacity)),
             completion,
             cuco_incoming_capacity: None,
+            cuco_workspace: ptr::null_mut(),
         })
     }
 
@@ -273,8 +309,11 @@ impl LibraryShard {
     /// All native error controls must have been checked; enqueue work only on
     /// this owner's stream or join its dependencies before this completion.
     pub unsafe fn complete(&mut self, epoch: u64) -> Result<()> {
+        self.gate.check_completion(epoch)?;
         let status = cudaStreamSynchronize(self.stream);
         self.status(status, "COMPLETE")?;
+        let status = mgbfs_library_owner_complete_v1(self.handle, epoch);
+        self.status(status, "WORKSPACE_COMPLETE")?;
         self.gate.completed(epoch)
     }
 
@@ -332,6 +371,8 @@ impl LibraryShard {
             self.gate.abort();
             return Err(error);
         }
+        let status = mgbfs_library_owner_complete_v1(self.handle, epoch);
+        self.status(status, "WORKSPACE_COMPLETE")?;
         self.gate.completed(epoch)
     }
 

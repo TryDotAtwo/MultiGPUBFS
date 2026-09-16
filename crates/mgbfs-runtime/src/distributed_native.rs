@@ -27,6 +27,7 @@ struct LibraryOwnerStorage {
     epoch: u64,
     closed: bool,
     pool: PoolHandle,
+    cuco_workspace: WorkspaceHandle,
 }
 #[cfg(feature = "library-owner")]
 impl Drop for LibraryOwnerStorage {
@@ -39,7 +40,12 @@ impl Drop for LibraryOwnerStorage {
         }
         if drained {
             unsafe {
-                mgbfs_library_pool_destroy_v1(self.pool);
+                if !self.cuco_workspace.is_null() {
+                    drained = mgbfs_library_cuco_workspace_destroy_v1(self.cuco_workspace) == 0;
+                }
+                if drained {
+                    mgbfs_library_pool_destroy_v1(self.pool);
+                }
             }
         }
     }
@@ -1086,7 +1092,17 @@ impl DistributedNativeBfs {
                 epoch: 0,
                 closed: false,
                 pool,
+                cuco_workspace: std::ptr::null_mut(),
             };
+            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
+                check(unsafe {
+                    mgbfs_library_cuco_workspace_create_v1(
+                        candidates,
+                        raw,
+                        &mut library.cuco_workspace,
+                    )
+                })?;
+            }
             for directories in result.curr_dir.chunks(per_shard as usize) {
                 let first = directories[0].begin as u32;
                 let last = directories.last().unwrap();
@@ -1096,19 +1112,18 @@ impl DistributedNativeBfs {
             }
             for shard in 0..cfg.shards as usize {
                 unsafe {
-                    library
-                        .shards
-                        .push(LibraryShard::new_window_with_cuco_capacity(
-                            history_view(&result.prev, plane_words, &library.previous[shard]),
-                            history_view(&result.curr, plane_words, &library.current[shard]),
-                            capacity,
-                            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
-                                Some(candidates)
-                            } else {
-                                None
-                            },
-                            raw,
-                        )?);
+                    library.shards.push(LibraryShard::new_window_with_workspace(
+                        history_view(&result.prev, plane_words, &library.previous[shard]),
+                        history_view(&result.curr, plane_words, &library.current[shard]),
+                        capacity,
+                        if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
+                            Some(candidates)
+                        } else {
+                            None
+                        },
+                        library.cuco_workspace,
+                        raw,
+                    )?);
                 }
             }
             result.library_owner = Some(library);

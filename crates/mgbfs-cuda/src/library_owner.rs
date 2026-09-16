@@ -36,9 +36,24 @@ const _: [(); 8] = [(); std::mem::align_of::<SurvivorsV1>()];
 /// Opaque handle: only the C++ adapter creates/destroys the object.
 pub type OwnerHandle = *mut c_void;
 pub type PoolHandle = *mut c_void;
+pub type WorkspaceHandle = *mut c_void;
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    pub fn mgbfs_library_cuco_workspace_create_v1(
+        incoming_capacity: u32,
+        cuda_stream: *mut c_void,
+        workspace: *mut WorkspaceHandle,
+    ) -> i32;
+    pub fn mgbfs_library_cuco_workspace_destroy_v1(workspace: WorkspaceHandle) -> i32;
+    pub fn mgbfs_library_owner_create_cuco_shared_v1(
+        previous: KeysV1,
+        current: KeysV1,
+        capacity: u32,
+        workspace: WorkspaceHandle,
+        owner: *mut OwnerHandle,
+    ) -> i32;
+    pub fn mgbfs_library_owner_complete_v1(owner: OwnerHandle, epoch: u64) -> i32;
     /// Convert native Hash128 AoS into five aligned u32 planes in preallocated
     /// scratch. No input/output aliasing. Data readiness is stream-ordered.
     pub fn mgbfs_library_candidates_from_aos_v1(

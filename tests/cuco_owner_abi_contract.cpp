@@ -26,6 +26,21 @@ int main() {
   require(mgbfs_library_owner_export_v1(owner, &keys) == 0 && keys.rows == 0,
           "CUCO_COMMON_EXPORT");
   mgbfs_library_owner_destroy_v1(owner);
+  void* workspace = nullptr;
+  require(mgbfs_library_cuco_workspace_create_v1(16, nullptr, &workspace) == 0,
+          "WORKSPACE_FACTORY");
+  require(mgbfs_library_owner_create_cuco_shared_v1({}, {}, 8, workspace, &owner) == 0,
+          "SHARED_FACTORY");
+  require(mgbfs_library_cuco_workspace_destroy_v1(workspace) != 0,
+          "WORKSPACE_REJECTS_LIVE_OWNER");
+  require(mgbfs_library_owner_compare_v1(owner, 21, {}, &result) == 0,
+          "SHARED_COMPARE");
+  require(mgbfs_library_owner_commit_v1(owner, 21, 0) == 0, "SHARED_COMMIT");
+  require(cudaStreamSynchronize(nullptr) == cudaSuccess, "SHARED_DRAIN");
+  require(mgbfs_library_owner_complete_v1(owner, 21) == 0, "SHARED_COMPLETE");
+  require(mgbfs_library_owner_seal_v1(owner) == 0, "SHARED_SEAL");
+  mgbfs_library_owner_destroy_v1(owner);
+  require(mgbfs_library_cuco_workspace_destroy_v1(workspace) == 0, "WORKSPACE_DESTROY");
   require(cudaStreamSynchronize(nullptr) == cudaSuccess, "TEARDOWN_DRAIN");
   require(mgbfs_library_pool_destroy_v1(pool) == 0, "CUCO_COMMON_DESTROY");
   std::cout << "CUCO_COMMON_ABI_PASS\n";
