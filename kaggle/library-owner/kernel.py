@@ -9,7 +9,7 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "007da906164504c56d1bd5d7ddde14ca63b8e7a8"
+SOURCE_COMMIT = "f5b52c9f240e89c5b8b30828919ef56c367fdad6"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
 SCREEN_REPEATS = 5
@@ -26,7 +26,7 @@ PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistic
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
-SANITIZER_TOOLS = ()  # Same tested runtime; smaller-pool admission/timing panel.
+SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 50,
     "source_commit": "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"

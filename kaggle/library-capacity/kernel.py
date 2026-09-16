@@ -1,4 +1,4 @@
-"""RED contract: already-drained owner completion must not synchronize again."""
+"""Independent fixed-96-MiB panel for already-drained owner completion."""
 import hashlib
 import urllib.request
 
@@ -14,12 +14,13 @@ if __name__ == "__main__":
         raise RuntimeError("PINNED_RUNNER_DIGEST_MISMATCH")
     namespace = {"__name__": "capacity_runner", "__file__": url}
     exec(compile(payload, url, "exec"), namespace)
-    namespace.update(SOURCE_COMMIT="11e2a274db5bff5619a56522957f062095e2f11c",
+    namespace.update(SOURCE_COMMIT="f5b52c9f240e89c5b8b30828919ef56c367fdad6",
                      SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
-                     SCREEN_REPEATS=1, SCREEN_WORLDS=(1, 2),
+                     SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
                      CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
-                     FULL_BFS_GATE=False, LOAD_SCREEN=False,
-                     NATIVE_COMPARISON=False,
+                     FULL_BFS_GATE=True, LOAD_SCREEN=True,
+                     NATIVE_COMPARISON=True,
                      SANITIZER_TOOLS=())
-    print("DRAINED_COMPLETION_RED: expected runtime assertion, not benchmark", flush=True)
+    print("DRAINED_COMPLETION_PANEL: fixed 96MiB pools; five repetitions; "
+          "sanitizers run independently in main notebook", flush=True)
     namespace["main"]()
