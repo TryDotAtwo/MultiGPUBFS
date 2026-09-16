@@ -115,3 +115,11 @@ V38 pins `72bae3bc030d9e1fd597c7ab6171e70b030123d9`; its result is pending.
 The fixture checks integer-set insertion, duplicate counts, clear/reuse, fixed
 pool size and zero live pool allocations at teardown. Even a pass will not
 certify the proposed indirect Hash128 owner or full BFS integration.
+
+V38 progressed past the device-lambda requirement but failed compilation because
+cuco rebinds the allocator to temporary element types. `12fcf4b` adds a converting
+constructor preserving the original resource reference. The MSVC fixture was
+extended to allocate/deallocate 13 bytes through a char rebind, failed before
+the change, then compiled and passed. V39 pins
+`12fcf4bfe37b7f630436f3cac8ea15fe28b59c08`; actual cuco/RMM GPU execution remains
+pending. No fallback allocator was added.
