@@ -34,6 +34,21 @@ def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
 
 
 class PromoteStream(unittest.TestCase):
+    def test_eight_rank_publication_requires_complete_disjoint_inventory(self):
+        records = [commit(r, (int(r == 0), r), branch=f'fixture-rank-{r}')
+                   for r in reversed(range(8))]
+        combined = combine_rank_commits(records, expected_world=8)
+        self.assertEqual(combined['layer_counts'], [1, 28])
+        self.assertEqual(combined['total_unique_states'], 29)
+        self.assertEqual(len({x['path'] for x in combined['files']}), 8)
+        self.assertEqual(combined['branches'], [f'fixture-rank-{r}' for r in range(8)])
+        for broken in (records[:-1], records[:-1] + [records[0]]):
+            with self.assertRaisesRegex(ValueError, 'RANK_SET'):
+                combine_rank_commits(broken, expected_world=8)
+        records[0]['status'] = 'INCOMPLETE'
+        with self.assertRaisesRegex(ValueError, 'STREAM_SCHEMA'):
+            combine_rank_commits(records, expected_world=8)
+
     def test_combines_rank_layers_and_builds_disjoint_final_paths(self):
         combined = combine_rank_commits([commit(1, (0, 2)), commit(0, (1, 0))], expected_world=2)
         self.assertEqual(combined["layer_counts"], [1, 2])
