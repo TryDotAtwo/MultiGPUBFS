@@ -19,6 +19,7 @@ SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 256 << 20
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
 NATIVE_COMPARISON = True
+CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
@@ -341,9 +342,30 @@ def main():
                                   "preserved-cli-build")
                     manifest["native_baseline_commit"] = NATIVE_BASELINE_COMMIT
                 panel = {}
+                if CUCO_PREVIOUS_COMMIT:
+                    previous_source = work / "previous-owner"
+                    previous_build = work / "previous-owner-build"
+                    gate.checkout("https://github.com/TryDotAtwo/MultiGPUBFS.git",
+                                  CUCO_PREVIOUS_COMMIT, previous_source, env, logs, "previous-owner")
+                    run([str(venv / "bin/cmake"), "-S", str(previous_source / "experiments/library_owner"),
+                         "-B", str(previous_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                         "-DCUDAToolkit_ROOT=" + str(sdk), "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+                         "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
+                         *cuco_options], "previous-owner-configure")
+                    run([str(venv / "bin/cmake"), "--build", str(previous_build),
+                         "--target", "mgbfs_library_owner", "-j2"], "previous-owner-build")
+                    previous_env = dict(device_env,
+                        LD_LIBRARY_PATH=str(previous_build) + ":" + device_env["LD_LIBRARY_PATH"])
+                    linkage = subprocess.check_output(["ldd", cli], env=previous_env, text=True)
+                    (logs / "previous-owner-linkage.log").write_text(linkage)
+                    if str(previous_build / "libmgbfs_library_owner.so") not in linkage:
+                        raise RuntimeError("PREVIOUS_OWNER_LINKAGE_MISMATCH")
+                    manifest["previous_owner_commit"] = CUCO_PREVIOUS_COMMIT
                 for world in SCREEN_WORLDS:
                     for repeat in range(SCREEN_REPEATS):
                         owners = ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                        if CUCO_PREVIOUS_COMMIT:
+                            owners += ("CUCO_PREVIOUS",)
                         if NATIVE_COMPARISON:
                             owners += ("CUB_SORT_MERGE",)
                         if repeat % 2:
@@ -353,12 +375,13 @@ def main():
                             native = owner == "CUB_SORT_MERGE"
                             case_cli = str(preserved / "target/release/mgbfs") if native else cli
                             extra = {"native_example": str(preserved / "target/release/examples/distributed_bench")} if native else {}
-                            case_env = dict(preserved_env if native else device_env,
+                            selected_env = previous_env if owner == "CUCO_PREVIOUS" else device_env
+                            case_env = dict(preserved_env if native else selected_env,
                                             MGBFS_ARCHIVE_SLOTS=str(SCREEN_ARCHIVE_SLOTS))
                             result = run_case(case_cli, logs / label, work / label,
                                 "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
                                 0 if native else SCREEN_POOL_BYTES, "DENSE", "ON",
-                                case_env, owner=owner, **extra)
+                                case_env, owner="CUCO_INDEXED" if owner == "CUCO_PREVIOUS" else owner, **extra)
                             panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
                 manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
                 manifest["load_screen"] = "S10 DENSE owners and preserved native, five repeats on 1/2 T4; matched matrix settings; tuned Pareto acceptance pending"
