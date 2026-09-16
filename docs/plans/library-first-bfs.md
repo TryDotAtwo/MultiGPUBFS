@@ -592,3 +592,22 @@ and less allocated memory than two private workspaces. Those CUDA checks have
 not run yet. The next gate runs the isolated owner on both T4s with all four
 sanitizers, not performance or full BFS. C ABI/Rust sharing integration and
 the 256 MiB full-BFS rerun remain to be implemented and verified.
+
+V46 completed PASS at `8d015b01fde3e594b5d79250e295f78aed3c0934` on two
+distinct physical T4s. The shared-workspace owner fixture passed plain,
+memcheck, racecheck, initcheck and synccheck on each device, with zero errors
+and zero racecheck warnings. Its executed assertions cover late borrowed
+result consumption after commit, rejection of another owner's premature
+compare, independent persistent accepted keys, slot reuse, and at least one
+candidate-plane allocation saved versus two private workspaces. This is
+isolated owner evidence, not full BFS peak-VRAM or speed evidence. Raw logs:
+`test_results/library-owner-v46/library-owner/`.
+
+Runtime integration audit: `LibraryShard::complete` drains its stream, whereas
+`publish_completion` retires a previously observed ready event after the caller
+checks native fatal controls. Both paths must notify the C++ workspace lease
+before publishing the gate as completed. In DENSE the last survivor-index reader
+is state materialization; in HASH_FIRST it is request construction (later state
+responses no longer borrow those indices). Workspace destruction must follow
+all shard handles and precede fixed-pool destruction. These integration steps
+remain pending; the isolated passing fixture does not implement them implicitly.
