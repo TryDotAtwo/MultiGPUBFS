@@ -919,3 +919,35 @@ Main v52 continues independently with shared transient tables but old control
 transfers. Neither running job was restarted. Local core/runtime integration
 tests (`cargo test --locked -p mgbfs-core -p mgbfs-runtime --tests`) completed
 with exit 0; these CPU tests do not execute the new CUDA transfer.
+
+### Shared-table and batched-control T4 results
+
+Main v52 and capacity v5 both completed PASS. Each panel has 20 complete S10
+samples, identical 3,628,800-state layer counts and all rank archives VERIFIED.
+Individually inspected sanitizer logs: v52 has 20 (cuco owner on both GPUs,
+full BFS on each GPU and two-GPU NCCL); v5 has those plus eight control-transfer
+logs. All four tools report zero errors and racecheck zero warnings. The shared
+owner fixture now reports a 1,288-byte second-shard increment instead of the
+66,832-byte RED value. New control pinned storage is reported as 264 bytes/rank.
+
+Five-repeat medians, fixed 96 MiB library pool and 256 archive slots:
+
+| Session / backend | T4s | Search s | Durable s | Sampled MiB/rank |
+|---|---:|---:|---:|---|
+| v52 shared-table cuco | 1 | 2.157771 | 5.191172 | 901 |
+| v52 native | 1 | 1.034703 | 5.109975 | 835 |
+| v52 shared-table cuco | 2 | 1.739992 | 4.364902 | 529, 529 |
+| v52 native | 2 | 0.895204 | 4.139202 | 457, 457 |
+| v5 batched-control cuco | 1 | 1.554442 | 4.891004 | 901 |
+| v5 native | 1 | 1.038558 | 4.770643 | 835 |
+| v5 batched-control cuco | 2 | 1.343869 | 3.977881 | 529, 529 |
+| v5 native | 2 | 0.869198 | 3.866469 | 457, 457 |
+
+Within v5, cuco search is still about 50%/55% slower than native on 1/2 T4,
+respectively: acceptance NOT met. Do not attribute the full cross-session
+v52-to-v5 timing delta solely to the patch. Full-device samples are 160 MiB
+lower than the old 256 MiB-pool panel; samples are not guaranteed absolute peaks.
+Requested pool peaks in v5's first samples are 80,464,495 bytes (one rank) and
+58,641,583 (two ranks), not fragmentation bounds or full VRAM measurements.
+Evidence: `test_results/library-owner-v52/library-owner/` and
+`test_results/library-capacity-v5/library-owner/`.
