@@ -861,3 +861,32 @@ and the preserved native only. GPU compilation, correctness, memory admission
 and speed for the shared-table implementation are all pending; do not infer
 them from the passing 36 local Python checks. Capacity v4's Nsight diagnostic
 continues on the earlier single-drain implementation independently.
+
+### First paired Nsight evidence, capacity v4 PASS
+
+The four diagnostic runs completed with identical S10 layer counts and verified
+archives. Saved screen summaries are marked profiled and contain no performance
+statistics. Source is `b829df9` (single-drain, before shared transient tables),
+native baseline `013ed5c`; Nsight 2025.3.2.474. Small summaries and exported
+CUDA API/kernel/memory/OS-runtime statistics are under
+`test_results/library-capacity-v4/library-owner/`. Large traces remain on Kaggle.
+
+Whole-process CUDA API call counts, including warmup/startup/archive and both
+rank processes where applicable:
+
+| Backend | T4s | cudaMemcpy | cudaStreamSynchronize | cudaLaunchKernel |
+|---|---:|---:|---:|---:|
+| Native | 1 | 3,604 | 5,222 | 368,234 |
+| cuco | 1 | 109,712 | 117,664 | 351,632 |
+| Native | 2 | 6,718 | 8,940 | 435,768 |
+| cuco | 2 | 130,234 | 139,358 | 409,798 |
+
+This establishes substantially more host/GPU control boundaries in the cuco
+adapter, not more kernel launches overall. It does not assign a percentage of
+unprofiled BFS time to those boundaries. `commit_library_batch` reads control,
+extent and ring separately after reservation and materialization. Each
+`Buffer::one` uses synchronous cudaMemcpy; `Buffer::put` uploads then explicitly
+drains the stream. These are concrete next optimization targets: consolidate
+control readback/publication while preserving actual credits, fatal guards,
+materialization completion and workspace lifetime. Do not omit correctness
+checks to reduce API counts. A replacement has not yet been implemented.
