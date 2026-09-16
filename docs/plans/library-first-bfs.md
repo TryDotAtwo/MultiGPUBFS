@@ -663,6 +663,12 @@ All 20 S10 screening runs completed: two owners, one/two ranks, five fresh
 process repetitions. Every run has 3,628,800 states, identical 46 layer counts,
 and verified archive checksums/counts. DENSE, pre-dedup ON, batch 32768,
 matrix_u8 states, capacity/ring 1,000,000 per rank, fixed pool 256 MiB/rank.
+Generation is the DENSE Tensor Core GEMM variant 1, not scalar generation.
+The recorded `hash_first_generation=SCALAR` field configures only HASH_FIRST
+and is inactive for this panel. `distributed_native.rs` creates the generation
+plan and calls `mgbfs_generate_run`; `generate.cu` dispatches variant 1 to
+`gemm64k32`. Thus the packed-parent and int32-product allocations in this
+panel are used by the running generator, not removable scalar-path leftovers.
 
 | Owner | T4s | Search median / MAD (s) | Durable median / MAD (s) | Sampled peak MiB/rank |
 |---|---:|---:|---:|---|
