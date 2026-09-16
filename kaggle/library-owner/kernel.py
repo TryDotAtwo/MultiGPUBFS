@@ -151,6 +151,8 @@ def main():
              *cuco_options], "configure")
         run([str(venv / "bin/cmake"), "--build", str(build), "-j2"], "build")
         run([str(build / "owner_abi_invalid")], "abi-invalid-handle")
+        run([str(venv / "bin/ctest"), "--test-dir", str(build),
+             "--output-on-failure", "-R", "^cuco_workspace_lease_"], "workspace-lease-contract")
         # Build the real Rust adapter without pulling the unrelated native BFS
         # library into this ABI gate. All data-plane calls remain native CUDA.
         env["CARGO_HOME"] = str(work / "cargo")

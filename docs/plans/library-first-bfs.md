@@ -640,3 +640,13 @@ the request and clears output. Extended ABI fixture checks empty pool, live
 owner allocations, retained high water after teardown and invalid-query output.
 Rust type-check and C++ fixture syntax pass; linking/execution of this diagnostic
 is still unverified. V47 does not contain it and must not be credited with it.
+
+Release-test audit found the CPU lease fixture's rejection helper used assert,
+which is removed by NDEBUG. The fixture now throws on an unexpectedly successful
+operation and includes a rejection-helper probe. A real Linux -DNDEBUG compile
+first reproduced the missing failure, then passed the normal lease sequence
+and rejected the deliberately successful operation after correction. CTest
+registers that probe as WILL_FAIL; the next runner explicitly executes both
+CPU lease tests. The GPU fixture uses its own throwing require/rejects helpers,
+so this issue does not invalidate the v46 CUDA sanitizer evidence. V47 remains
+on its immutable pre-audit source and is still running.

@@ -1,14 +1,19 @@
 #include "../experiments/library_owner/cuco_workspace_lease.hpp"
-#include <cassert>
 #include <stdexcept>
 
 template<class F> void rejects(F fn) {
   bool rejected = false;
   try { fn(); } catch (std::runtime_error const&) { rejected = true; }
-  assert(rejected);
+  if (!rejected) throw std::runtime_error("EXPECTED_REJECTION");
 }
 
-int main() {
+int main(int argc, char**) {
+  // Harness self-check: an operation that unexpectedly succeeds must fail the
+  // fixture even when Release defines NDEBUG. No production code is bypassed.
+  if (argc > 1) {
+    try { rejects([] {}); } catch (std::runtime_error const&) { return 2; }
+    return 0;
+  }
   mgbfs::CucoWorkspaceLease lease;
   int first, second;
   lease.acquire(&first, 10);
