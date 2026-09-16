@@ -1,4 +1,4 @@
-"""Full gate and fixed-96-MiB cuco/native screen with batched control DMA."""
+"""Diagnostic timelines for fixed-96-MiB cuco/native with batched control DMA."""
 import hashlib
 import urllib.request
 
@@ -16,10 +16,10 @@ if __name__ == "__main__":
     exec(compile(payload, url, "exec"), namespace)
     namespace.update(SOURCE_COMMIT=RUNNER_COMMIT,
                      SCREEN_POOL_BYTES=96 << 20, SCREEN_ARCHIVE_SLOTS=256,
-                     SCREEN_REPEATS=5, SCREEN_WORLDS=(1, 2),
-                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=False,
+                     SCREEN_REPEATS=1, SCREEN_WORLDS=(1, 2),
+                     CUCO_PREVIOUS_COMMIT=None, PROFILE_SCREEN=True,
                      NATIVE_COMPARISON=True,
-                     SANITIZER_TOOLS=("memcheck", "racecheck", "initcheck", "synccheck"))
-    print("CONTROL_DMA_GATE pool=96MiB archive_slots=256 worlds=1,2; "
-          "four sanitizers then cuco/native five-repeat screen", flush=True)
+                     SANITIZER_TOOLS=())
+    print("CONTROL_DMA_PROFILE pool=96MiB archive_slots=256 worlds=1,2; "
+          "diagnostic traces only; no new performance or sanitizer claim", flush=True)
     namespace["main"]()
