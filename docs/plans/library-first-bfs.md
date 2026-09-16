@@ -514,3 +514,23 @@ The wait respects the remaining deadline instead of always overshooting by a
 20-second polling interval. Two Linux tests pass: timeout and failed launcher
 with a surviving child. This is harness correctness evidence, not GPU evidence;
 the already-running v44 uses its original immutable harness source.
+
+V44 passed at `89a6873d2ee6afa4bff7a945f02383d6f33b87c5`. S10 DENSE, two
+T4s, one matched sample per owner: CUCO_INDEXED search 1.841799048 s, durable
+4.126001532 s, sampled device maxima 1815/1815 MiB; CUDF_RELATIONAL search
+6.501415079 s, durable 8.445665735 s, sampled maxima 1885/1885 MiB. Both
+returned the same 46 layer counts totaling 3,628,800 states, and both rank
+archives verified. Fixed pool 1 GiB/rank, state/ring capacity 3,628,800/rank,
+batch 32768, matrix_u8, pre-dedup ON. Explicit device allocation for both is
+1,699,719,936 bytes/rank; pinned archive reservation is 243,269,632 bytes/rank.
+The 50 ms external sampler is not an exact peak measurement. Sanitizers were
+not repeated in v44; v43 is the unchanged-native-source sanitizer evidence.
+Raw results: `test_results/library-owner-v44/library-owner/`.
+
+Next panel uses five independent fresh-process samples per owner on 1 and 2
+T4s, alternating owner order. S10 capacities are explicitly reduced to
+1,000,000 state/hash/ring records and a 256 MiB pool per rank, with all other
+screen settings retained. This is a fixed-capacity memory experiment, not a
+promise to predict an unknown graph peak; overflow remains fatal. Each run
+warms up and verifies both/every archive. Native/CayleyPy comparisons and
+full-peak acceptance remain outstanding regardless of this panel's outcome.

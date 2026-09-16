@@ -12,6 +12,11 @@ import shutil
 SOURCE_COMMIT = "89a6873d2ee6afa4bff7a945f02383d6f33b87c5"
 FULL_BFS_GATE = True
 LOAD_SCREEN = True
+SCREEN_REPEATS = 5
+SCREEN_WORLDS = (1, 2)
+SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
+SCREEN_RING = 1_000_000
+SCREEN_POOL_BYTES = 256 << 20
 CUCO_GATE = True
 # Screening run: native sources are unchanged from the completed v43 gate.
 # Set all four names for a fresh sanitizer gate after native code changes.
@@ -301,12 +306,21 @@ def main():
             if LOAD_SCREEN:
                 sys.path.insert(0, str(source / "scripts"))
                 from library_gpu_screen import run_case
-                for owner in ("CUDF_RELATIONAL", "CUCO_INDEXED"):
-                    label = "screen-s10-dense-" + owner.lower()
-                    run_case(cli, logs / label, work / label,
-                             "s10", 3628800, 2, 32768, 3628800, 3628800,
-                             1 << 30, "DENSE", "ON", device_env, owner=owner)
-                manifest["load_screen"] = "S10 DENSE cuDF/cuCO matched configuration; one sample each, not Pareto acceptance"
+                from distributed_gpu_bench import stats
+                panel = {}
+                for world in SCREEN_WORLDS:
+                    for repeat in range(SCREEN_REPEATS):
+                        owners = ("CUDF_RELATIONAL", "CUCO_INDEXED")
+                        if repeat % 2:
+                            owners = owners[::-1]
+                        for owner in owners:
+                            label = f"screen-s10-dense-{owner.lower()}-w{world}-r{repeat}"
+                            result = run_case(cli, logs / label, work / label,
+                                "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
+                                SCREEN_POOL_BYTES, "DENSE", "ON", device_env, owner=owner)
+                            panel.setdefault(f"{owner}-w{world}", []).append(result["measurement"])
+                manifest["screen_statistics"] = {key: stats(rows) for key, rows in panel.items()}
+                manifest["load_screen"] = "S10 DENSE paired owners, five repeats on 1/2 T4; reduced fixed reserves; native acceptance pending"
         manifest["status"] = "PASS"
     except Exception as error:
         manifest.update(status="FAILED", error=str(error))
