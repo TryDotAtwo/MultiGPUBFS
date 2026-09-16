@@ -49,7 +49,7 @@ def main():
     initial_wall, initial_monotonic = time.time(), time.monotonic()
     headers = {'Authorization':'Bearer '+load_key()}
     def api(method, instance):
-        response = requests.request(method, f'https://console.vast.ai/api/v0/instances/{instance}',
+        response = requests.request(method, f'https://console.vast.ai/api/v0/instances/{instance}/',
                                     headers=headers, timeout=10, allow_redirects=False)
         if response.status_code == 404 and method == 'GET':
             body = response.json()
