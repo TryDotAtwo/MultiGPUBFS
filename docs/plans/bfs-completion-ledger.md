@@ -162,7 +162,8 @@ depth, target depth, weight and source-state index. The adapter exposes its
 enqueue through the receive lease, and the two-rank fixture calls it before
 materialization. This closes the isolated transport/metadata gate, **not**
 distributed weighted owner settlement or production BFS. A second physical
-2xT4 gate using source `787a9fe` is pending.
+2xT4 gate using source `787a9fe` passed plain and all four sanitizer tools.
+Its invalid-weight rejection fixture is running as a separate pinned version.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
