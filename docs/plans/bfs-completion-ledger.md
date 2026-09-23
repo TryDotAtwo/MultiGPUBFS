@@ -182,6 +182,13 @@ claimed for v4. The expectation is corrected at `a7a9d5f`. Version 5 then
 passed both the two-rank provisional merge and standalone failure-atomic merge
 fixtures plain and under all four Compute Sanitizer tools on 2xT4; details are
 in `docs/validation/kaggle-weighted-scatter-2xt4-v1.md`.
+
+The next two-rank gate feeds the provisional target-depth slot through the
+existing GPU macro settlement primitive. Its depth-2 history is deliberately
+synthetic: owner 0 contains the same key and must discard the depth-3 offer;
+owner 1 has no such key and must retain its offer. This checks the receive ->
+future -> history-membership boundary, not complete distributed BFS generation
+at depth 2. Private Kaggle version 6 pinned to `a4cfe56` is running.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
