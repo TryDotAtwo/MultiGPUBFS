@@ -188,7 +188,11 @@ existing GPU macro settlement primitive. Its depth-2 history is deliberately
 synthetic: owner 0 contains the same key and must discard the depth-3 offer;
 owner 1 has no such key and must retain its offer. This checks the receive ->
 future -> history-membership boundary, not complete distributed BFS generation
-at depth 2. Private Kaggle version 6 pinned to `a4cfe56` is running.
+at depth 2. Private Kaggle version 6 pinned to `a4cfe56` passed the two-rank
+fixture and independent guarded-merge fixture plain and under all four
+sanitizer tools on physical 2xT4. See the validation record. The missing
+boundary is now the production scheduler that supplies genuinely generated
+history and finalizes each depth in globally agreed order.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
