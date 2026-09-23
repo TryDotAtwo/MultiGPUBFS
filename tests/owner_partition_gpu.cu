@@ -76,9 +76,11 @@ int main(){
   // rank-to-logical-owner assignment must not change the packed offset.
   const std::array<uint32_t,4> partition{1,2,0,3};
   ck(cudaMemcpyAsync(counts,partition.data(),16,cudaMemcpyHostToDevice,s));
+  uint32_t expected_total=6;
+  ck(cudaMemcpyAsync(n,&expected_total,4,cudaMemcpyHostToDevice,s));
   for(uint32_t owner:{3u,1u,2u,0u}){
     require(!mgbfs_owner_window_from_counts(4,6,owner,counts,
-        window_begin,window_rows,s));
+        n,window_begin,window_rows,s));
     uint32_t begin=99,rows=99;
     ck(cudaMemcpyAsync(&begin,window_begin,4,cudaMemcpyDeviceToHost,s));
     ck(cudaMemcpyAsync(&rows,window_rows,4,cudaMemcpyDeviceToHost,s));
@@ -88,13 +90,21 @@ int main(){
   }
   const std::array<uint32_t,4> over_capacity{1,2,1,3};
   ck(cudaMemcpyAsync(counts,over_capacity.data(),16,cudaMemcpyHostToDevice,s));
-  require(!mgbfs_owner_window_from_counts(4,6,1,counts,window_begin,window_rows,s));
+  require(!mgbfs_owner_window_from_counts(4,6,1,counts,n,
+      window_begin,window_rows,s));
   uint32_t bad_rows=0;
   ck(cudaMemcpyAsync(&bad_rows,window_rows,4,cudaMemcpyDeviceToHost,s));
   ck(cudaStreamSynchronize(s));require(bad_rows==UINT32_MAX);
   const std::array<uint32_t,4> failed_source{UINT32_MAX,0,0,0};
   ck(cudaMemcpyAsync(counts,failed_source.data(),16,cudaMemcpyHostToDevice,s));
-  require(!mgbfs_owner_window_from_counts(4,6,3,counts,window_begin,window_rows,s));
+  require(!mgbfs_owner_window_from_counts(4,6,3,counts,n,
+      window_begin,window_rows,s));
+  ck(cudaMemcpyAsync(&bad_rows,window_rows,4,cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(bad_rows==UINT32_MAX);
+  const std::array<uint32_t,4> short_partition{1,2,0,2};
+  ck(cudaMemcpyAsync(counts,short_partition.data(),16,cudaMemcpyHostToDevice,s));
+  require(!mgbfs_owner_window_from_counts(4,6,3,counts,n,
+      window_begin,window_rows,s));
   ck(cudaMemcpyAsync(&bad_rows,window_rows,4,cudaMemcpyDeviceToHost,s));
   ck(cudaStreamSynchronize(s));require(bad_rows==UINT32_MAX);
   uint64_t invalid=6;ck(cudaMemcpyAsync(refs,&invalid,8,cudaMemcpyHostToDevice,s));
