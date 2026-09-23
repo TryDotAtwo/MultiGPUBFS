@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import urllib.request
 
-SOURCE_COMMIT = "abceacffb3891d74f6befe0de21d0e080a6c84a8"
+SOURCE_COMMIT = "0b7adf1cd50961331434cc5a19ac6aef9b5623bd"
 
 if __name__ == "__main__":
     script = Path("/tmp/mgbfs-library-gate.py")
