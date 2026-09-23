@@ -252,6 +252,11 @@ underflow; the full default `mgbfs-runtime` CPU suite passed locally. This
 module is **not yet wired** to the actual GPU completion events or global
 `FinalizeDepth` pump, so it is a CPU scheduling contract, not an end-to-end
 macro-runtime proof.
+After commit `0155190`, `cargo test -p mgbfs-core -p mgbfs-runtime -p
+mgbfs-cli --quiet` passed locally. The broader `cargo test --workspace`
+could not start its CUDA package because this Windows checkout lacks
+`MULTIGPUBFS_CUDA_LIB_DIR`; this is an environment/build prerequisite, not a
+passing or failing GPU-runtime result.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
