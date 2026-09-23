@@ -13,6 +13,9 @@
 #include <stdexcept>
 #include <set>
 #include <type_traits>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 template<class Ref>
 __global__ void probe_dynamic_refs(Ref const* refs, uint32_t const* high_words,
@@ -299,7 +302,16 @@ int main() {
     require(mgbfs_library_rank_export_shard_v1(rank_owner,0,2,&shard0)==0&&
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_ABI_SEALED_KEYS_OWN_STORAGE");
-    require(mgbfs_library_rank_destroy_v1(rank_owner)==0,"RANK_ABI_DESTROY");
+    std::atomic<int> callback_done{0};
+    check(cudaLaunchHostFunc(stream.value(), [](void* value) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      static_cast<std::atomic<int>*>(value)->store(1, std::memory_order_release);
+    }, &callback_done));
+    int destroy_status=mgbfs_library_rank_destroy_v1(rank_owner);
+    bool drained_before_return=callback_done.load(std::memory_order_acquire)!=0;
+    stream.synchronize(); // Keep callback_done alive even when the assertion is RED.
+    require(destroy_status==0,"RANK_ABI_DESTROY");
+    require(drained_before_return,"RANK_DESTROY_MUST_DRAIN_IN_FLIGHT_WORK");
     rmm::mr::set_current_device_resource_ref(prior_resource);
   }
   {
