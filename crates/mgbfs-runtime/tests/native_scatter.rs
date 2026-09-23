@@ -92,6 +92,20 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 assert_eq!(cudaMemsetAsync(future_state, 0, 8, owner_stream), 0);
                 let one = 1u32;
                 assert_eq!(cudaMemcpy(future_count, (&one as *const u32).cast(), 4, 1), 0);
+                let mut settle_plan = std::ptr::null_mut();
+                let mut settle_error = [0i8; 256];
+                assert_eq!(mgbfs_macro_settle_create(
+                    4, 4, 4, &mut settle_plan,
+                    settle_error.as_mut_ptr(), settle_error.len(),
+                ), 0);
+                let mut settle_storage = [std::ptr::null_mut(); 6];
+                for (ptr, bytes) in settle_storage.iter_mut()
+                    .zip([256, 16, 64, 32, 4, 16]) {
+                    assert_eq!(cudaMalloc(ptr, bytes), 0);
+                }
+                let [history, history_counts, survivors, survivor_refs,
+                    survivor_count, settle_state] = settle_storage;
+                assert_eq!(cudaMemsetAsync(settle_state, 0, 16, owner_stream), 0);
                 use mgbfs_cuda::native_owner::{Control, Extent, Ring};
                 let ring = Ring {
                     tail: 1,
@@ -401,6 +415,46 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                         std::thread::yield_now();
                     }
                 }
+                // Synthetic already-settled depth-2 history: on rank 0 a
+                // shorter route to the provisional depth-3 key is known;
+                // rank 1 has no such route. This tests GPU settlement after
+                // transport, not a full graph expansion through depth 2.
+                let mut history_words = [0u32; 64];
+                if rank == 0 {
+                    history_words[32..36].copy_from_slice(&[31, 32, 33, 34]);
+                }
+                let history_sizes = [0u32, 0, u32::from(rank == 0), 0];
+                assert_eq!(cudaMemcpy(
+                    history, history_words.as_ptr().cast(), 256, 1,
+                ), 0);
+                assert_eq!(cudaMemcpy(
+                    history_counts, history_sizes.as_ptr().cast(), 16, 1,
+                ), 0);
+                assert_eq!(mgbfs_macro_settle_run(
+                    settle_plan, future_hashes, refs.cast(), future_count.cast(),
+                    history, history_counts.cast(), survivors, survivor_refs.cast(),
+                    survivor_count.cast(), settle_state.cast(), 4, owner_stream,
+                ), 0);
+                assert_eq!(cudaStreamSynchronize(owner_stream), 0);
+                let mut settled = MacroSettleState::default();
+                let mut survivor_rows = 99u32;
+                assert_eq!(cudaMemcpy(
+                    (&mut settled as *mut MacroSettleState).cast(), settle_state,
+                    std::mem::size_of::<MacroSettleState>(), 2,
+                ), 0);
+                assert_eq!(cudaMemcpy(
+                    (&mut survivor_rows as *mut u32).cast(), survivor_count, 4, 2,
+                ), 0);
+                assert_eq!((settled.fatal, settled.last_epoch), (0, 4));
+                assert_eq!((settled.count, survivor_rows),
+                    if rank == 0 { (0, 0) } else { (1, 1) });
+                if rank == 1 {
+                    let mut surviving_hash = [0u32; 4];
+                    assert_eq!(cudaMemcpy(
+                        surviving_hash.as_mut_ptr().cast(), survivors, 16, 2,
+                    ), 0);
+                    assert_eq!(surviving_hash, [41, 42, 43, 44]);
+                }
                 assert_eq!(mgbfs_nccl_abort(comm), 0);
                 mgbfs_nccl_destroy(comm);
                 assert_eq!(cudaFree(send), 0);
@@ -414,7 +468,11 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 for ptr in future_storage {
                     assert_eq!(cudaFree(ptr), 0);
                 }
+                for ptr in settle_storage {
+                    assert_eq!(cudaFree(ptr), 0);
+                }
                 mgbfs_future_merge_destroy(future_plan);
+                mgbfs_macro_settle_destroy(settle_plan);
                 assert_eq!(cudaStreamDestroy(owner_stream), 0);
                 assert_eq!(cudaStreamDestroy(generate_stream), 0);
                 assert_eq!(cudaStreamDestroy(stream), 0);
