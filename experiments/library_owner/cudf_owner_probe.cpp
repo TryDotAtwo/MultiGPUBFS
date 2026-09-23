@@ -341,6 +341,52 @@ void layout_fixture(rmm::cuda_stream_view stream) {
       check(window_words[c * window_stride / 4 + i] == expected,
             "LAYOUT_DEVICE_WINDOW_VALUE_OR_PADDING");
     }
+  // The bridge retains absolute source ordinals. Materialization must be
+  // bounded by the entire packed source, not the owner-window row count.
+  std::vector<uint8_t> source_bytes(rows * 16);
+  for (uint32_t row = 0; row < rows; ++row)
+    std::fill_n(source_bytes.data() + row * 16, 16, uint8_t(row));
+  rmm::device_buffer source_states(source_bytes.data(), source_bytes.size(), stream);
+  rmm::device_buffer next_states(16 * 16, stream);
+  rmm::device_buffer source_rows(&rows, sizeof(rows), stream);
+  uint32_t one = 1;
+  rmm::device_buffer selected_count(&one, sizeof(one), stream);
+  MgbfsStateRingControl materialize_ring{};
+  materialize_ring.tail = 1;
+  materialize_ring.descriptor_tail = 1;
+  materialize_ring.capacity = 16;
+  materialize_ring.descriptor_capacity = 4;
+  MgbfsOwnerControl materialize_control{};
+  materialize_control.stage = 2;
+  materialize_control.survivors = 1;
+  MgbfsStateExtent materialize_extent{};
+  materialize_extent.count = 1;
+  materialize_extent.granted_rows = 1;
+  rmm::device_buffer m_ring(&materialize_ring, sizeof(materialize_ring), stream);
+  rmm::device_buffer m_control(&materialize_control, sizeof(materialize_control), stream);
+  rmm::device_buffer m_extent(&materialize_extent, sizeof(materialize_extent), stream);
+  cuda_check(cudaMemsetAsync(next_states.data(), 0, next_states.size(), stream.value()));
+  check(mgbfs_state_materialize_rank_batch(
+      static_cast<const uint8_t*>(source_states.data()),
+      static_cast<const uint32_t*>(source_rows.data()), rows,
+      window.source_indices + 12, static_cast<const uint32_t*>(selected_count.data()),
+      window_capacity, 16, static_cast<uint8_t*>(next_states.data()),
+      static_cast<MgbfsStateRingControl*>(m_ring.data()),
+      static_cast<MgbfsOwnerControl*>(m_control.data()),
+      static_cast<MgbfsStateExtent*>(m_extent.data()), stream.value()) == 0,
+      "LAYOUT_ABSOLUTE_MATERIALIZE_ENQUEUE");
+  std::array<uint8_t, 16> selected_state{};
+  cuda_check(cudaMemcpyAsync(selected_state.data(), next_states.data(),
+                             selected_state.size(), cudaMemcpyDeviceToHost, stream.value()));
+  cuda_check(cudaMemcpyAsync(&materialize_extent, m_extent.data(),
+                             sizeof(materialize_extent), cudaMemcpyDeviceToHost, stream.value()));
+  cuda_check(cudaMemcpyAsync(&materialize_control, m_control.data(),
+                             sizeof(materialize_control), cudaMemcpyDeviceToHost, stream.value()));
+  stream.synchronize();
+  check(materialize_extent.ready == 1 && materialize_control.error == 0 &&
+        std::all_of(selected_state.begin(), selected_state.end(),
+                    [](uint8_t x) { return x == 19; }),
+        "LAYOUT_ABSOLUTE_MATERIALIZE_STATE");
   begin_value = 60; count_value = 10; // Outside the 65-row source.
   cuda_check(cudaMemcpyAsync(begin.data(), &begin_value, 4,
                             cudaMemcpyHostToDevice, stream.value()));
