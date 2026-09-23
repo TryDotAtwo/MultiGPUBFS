@@ -9,6 +9,7 @@ pub struct FutureBucketLayout {
     macro_depth: u32,
     buckets: u32,
     offsets: Vec<u64>,
+    capacities: Vec<u32>,
     pub hash_records: u64,
     pub hash_bytes: u64,
     pub metadata_bytes: u64,
@@ -67,10 +68,22 @@ impl FutureBucketLayout {
             macro_depth,
             buckets,
             offsets,
+            capacities: capacities.to_vec(),
             hash_records: future_records,
             hash_bytes,
             metadata_bytes,
         })
+    }
+
+    /// Upload these immutable slot-local directories once before depth zero.
+    /// The terminal offset is included for device-side prefix validation.
+    pub fn slot_directory(&self, slot: u32) -> Result<(&[u64], &[u32])> {
+        if slot >= self.macro_depth {
+            return Err("MACRO_FUTURE_BUCKET_INDEX".into());
+        }
+        let begin = slot as usize * self.buckets as usize;
+        let end = begin + self.buckets as usize;
+        Ok((&self.offsets[begin..=end], &self.capacities[begin..end]))
     }
 
     pub fn bucket_range(&self, slot: u32, bucket: u32) -> Result<(u64, u32)> {

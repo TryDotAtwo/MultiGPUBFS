@@ -11,6 +11,7 @@ fn sparse_fixed_bucket_extents_are_disjoint_and_depth_slots_rotate() {
     assert_eq!(layout.bucket_range(0, 0).unwrap(), (0, 2));
     assert_eq!(layout.bucket_range(1, 1).unwrap(), (6, 4));
     assert_eq!(layout.bucket_range(2, 3).unwrap(), (12, 2));
+    assert_eq!(layout.slot_directory(1).unwrap(), (&[6, 6, 10, 10, 10][..], &[0, 4, 0, 0][..]));
     assert_eq!(layout.target_bucket(0, 1, 1).unwrap(), (6, 4));
     assert_eq!(layout.target_bucket(0, 3, 0).unwrap(), (0, 2));
     assert_eq!(layout.target_bucket(1, 4, 0).unwrap(), (6, 0));
