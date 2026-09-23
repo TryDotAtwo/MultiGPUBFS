@@ -42,6 +42,7 @@ architecture contract; `library-first-bfs.md` is the library experiment log.
 | HASH_FIRST | Runtime request/response/materialization path | Small 8xH200 matrix oracle | Large LRX unsupported; profile/VRAM gate |
 | BMMA_BUCKET | CUDA backend and runtime selection | Isolated and small tests | Large end-to-end win or explicit experimental label |
 | Macro depth | `macro_native.rs`, `macro_owner.rs`, single-rank reference CLI | T4 full-state/sanitizer macro tests and archived K=1/2/3 CLI | Connect to distributed runtime; full-state 2/8-rank oracle |
+| Weighted DENSE exchange leaf | `exchange_pack.cu`, schema2 macro frame and `MacroExchangeMemoryPlan` | sm75 compile, RTX 3070 word-for-word GPU fixture; CPU memory-bound tests | Integrate NCCL/owner, T4 execution and sanitizer |
 | Async state archive | `pinned_archive.rs`, `advance_archived` | Bounded T4 archive tests | Complete large-run throughput and durable verification |
 | Search-only LRX15r4 | `lrx_multiset.rs`, CLI reference | 8xH200 54,486,432,000 states, 93 layers, 90.093 s | Independent large histogram; no state archive exists for this run |
 | HF Parquet catalog | `stream_hf_archive.py`, `promote_hf_stream.py`, verifiers | Full S13: 6,227,020,800 archived states and 6,228 Parquet objects verified by size/SHA on HF | Full-state remote replay and later LRX15 archive/publication |
@@ -135,6 +136,14 @@ offer and a later shorter offer through ticket issue/ACK/consume and depth
 finalization; only the shorter one commits. The GPU receive/owner path does not
 yet use these new frame kinds, so this fixture is a protocol oracle, not a
 claim of native multi-rank K>1 correctness.
+The next leaf writes weighted DENSE frames directly on GPU from a sorted owner
+range: hash16, MacroCandidateRef16 and padded state bytes, with zero padding
+and sticky invalid-reference failure. A checked preallocation plan bounds send
+and receive frame regions per route slot; it is not yet wired to runtime
+admission. Local RTX 3070 execution passed byte-for-byte; `sm75` compilation
+passed, but this is not T4 execution or a multi-GPU run. Compute Sanitizer on
+Windows could not launch the test executable (exit 13). Full evidence:
+`docs/validation/2026-09-23-macro-pack-local-gpu.md`.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 

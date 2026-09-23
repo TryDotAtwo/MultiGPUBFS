@@ -636,6 +636,26 @@ length; equal padded byte lengths do not imply equal record counts. This is
 the framing contract for the new path, not a claim that the reference BFS has
 already migrated to it.
 
+Weighted DENSE macro frame (schema2 kind 6) has three payload planes:
+Hash128[valid_count], MacroCandidateRef[valid_count], and
+stateStride[valid_count], each separately padded to 256 bytes. A separate
+256-byte prefix carries the ticket-bound header. The pack leaf takes a sorted
+contiguous owner range and writes the frame directly; the source child ordinal
+is kept in MacroCandidateRef.state_ref. Its source_depth and weight are uniform
+for the weight run, with checked target-depth addition. It writes zero padding
+and sets a sticky device fatal on an out-of-range child reference. This leaf
+is implemented; NCCL admission/receive and owner settlement are not yet wired.
+
+For one DENSE macro route slot with candidate bound C, state stride S, and W
+logical owners, allocate a send frame region of at least C*(S+32)+976*W
+bytes and a one-peer-at-a-time receive region of at least C*(S+32)+976 bytes.
+The 976 bound is a 256-byte prefix plus at most 240 bytes of padding for each
+of three 16-byte-aligned planes. Also reserve W*4 owner-count bytes and two
+u32 count-exchange words per slot; one shared pair of u32 words serves the
+fatal collective. Slots cannot be reused until NCCL and owner readers release
+their leases. The calculation is implemented in MacroExchangeMemoryPlan, but
+it is not yet added to a live multi-rank allocator or admission decision.
+
 FileHeader schema2: 4096 bytes, zero reserved. Offsets:
 magic0:8 bytes ASCII MGBFSAR2; schema8:u32=2; header_bytes12:u32=4096;
 config_digest16:32 bytes; run_uuid48:16 bytes; rank64:u32; W68:u32;

@@ -277,6 +277,22 @@ pub mod ffi {
             fatal: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_macro_exchange_pack_frame(
+            stride: u32,
+            source_depth: u32,
+            weight: u32,
+            source_states: *const u8,
+            source_count: u32,
+            sorted_hashes: *const c_void,
+            sorted_refs: *const u64,
+            sorted_count: u32,
+            begin: u32,
+            count: u32,
+            output: *mut u8,
+            output_capacity: u64,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_frame_write_header(
             host_header: *const u8,
             device_prefix: *mut u8,

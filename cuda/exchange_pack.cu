@@ -26,6 +26,22 @@ __global__ void gather_frame(MgbfsDenseFrameLayout layout, uint32_t stride,
     output[word] = value;
   }
 }
+__global__ void gather_macro_frame(MgbfsMacroFrameLayout layout, uint32_t stride,
+    uint32_t begin, uint32_t source_count, uint32_t source_depth,
+    uint32_t weight, const uint32_t* hashes, const uint64_t* refs,
+    const uint32_t* states, uint32_t* output, uint32_t* fatal) {
+  const uint64_t step = uint64_t(blockDim.x) * gridDim.x;
+  for (uint64_t word = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+       word < layout.total_bytes / 4; word += step) {
+    uint32_t value = 0;
+    if (!mgbfs_macro_frame_word(layout, stride, begin, source_count,
+                                source_depth, weight, hashes, refs, states,
+                                word, &value)) {
+      atomicExch(fatal, 1u);
+    }
+    output[word] = value;
+  }
+}
 __global__ void split(const Key* keys,uint32_t count,uint32_t* output){
   if(threadIdx.x||blockIdx.x)return;uint32_t lo=0,hi=count;
   while(lo<hi){uint32_t mid=lo+(hi-lo)/2;if((keys[mid].w[3]>>31)==0)lo=mid+1;else hi=mid;}
@@ -65,6 +81,30 @@ extern "C" int mgbfs_exchange_pack_frame(uint32_t stride,
   gather_frame<<<blocks, 256, 0, static_cast<cudaStream_t>(raw_stream)>>>(
       layout, stride, begin, source_count, static_cast<const uint32_t*>(sorted_hashes),
       sorted_refs, reinterpret_cast<const uint32_t*>(source_states),
+      reinterpret_cast<uint32_t*>(output), fatal);
+  return cudaGetLastError() == cudaSuccess ? 0 : 2;
+}
+extern "C" int mgbfs_macro_exchange_pack_frame(uint32_t stride,
+    uint32_t source_depth, uint32_t weight, const uint8_t* source_states,
+    uint32_t source_count, const void* sorted_hashes, const uint64_t* sorted_refs,
+    uint32_t sorted_count, uint32_t begin, uint32_t count,
+    uint8_t* output, uint64_t output_capacity, uint32_t* fatal,
+    void* raw_stream) {
+  MgbfsMacroFrameLayout layout{};
+  if (!weight || source_depth > UINT32_MAX - weight ||
+      mgbfs_macro_frame_layout(count, stride, &layout) ||
+      begin > sorted_count || count > sorted_count - begin ||
+      layout.total_bytes > output_capacity || !fatal) return 1;
+  if (!count) return 0;
+  if (!source_states || !sorted_hashes || !sorted_refs || !output ||
+      uintptr_t(source_states) % 16 || uintptr_t(sorted_hashes) % 16 ||
+      uintptr_t(sorted_refs) % 8 || uintptr_t(output) % 256) return 1;
+  const uint64_t needed = (layout.total_bytes / 4 + 255) / 256;
+  const uint32_t blocks = uint32_t(needed > 65535 ? 65535 : needed);
+  gather_macro_frame<<<blocks, 256, 0, static_cast<cudaStream_t>(raw_stream)>>>(
+      layout, stride, begin, source_count, source_depth, weight,
+      static_cast<const uint32_t*>(sorted_hashes), sorted_refs,
+      reinterpret_cast<const uint32_t*>(source_states),
       reinterpret_cast<uint32_t*>(output), fatal);
   return cudaGetLastError() == cudaSuccess ? 0 : 2;
 }

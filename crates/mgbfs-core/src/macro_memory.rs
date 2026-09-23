@@ -1,5 +1,71 @@
 use crate::Result;
 
+/// Additional fixed GPU allocations required by each rank's DENSE macro
+/// owner exchange. CUDA/NCCL context-internal memory is guarded separately by
+/// the untouched VRAM reserve; this counts every explicit cudaMalloc request.
+#[derive(Debug, Clone, Copy)]
+pub struct MacroExchangeInput {
+    pub world: u32,
+    pub candidate_capacity: u32,
+    pub state_stride: u64,
+    pub route_slots: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacroExchangeMemoryPlan {
+    pub send_frame_bytes_per_slot: u64,
+    pub receive_frame_bytes_per_slot: u64,
+    pub owner_count_bytes_per_slot: u64,
+    pub count_exchange_bytes_per_slot: u64,
+    pub slot_bytes: u64,
+    pub failure_collective_bytes: u64,
+    pub requested_device_bytes: u64,
+}
+
+impl MacroExchangeMemoryPlan {
+    pub fn derive(input: MacroExchangeInput) -> Result<Self> {
+        if !matches!(input.world, 1 | 2 | 4 | 8)
+            || input.candidate_capacity == 0
+            || input.candidate_capacity > i32::MAX as u32
+            || input.state_stride == 0
+            || input.state_stride % 16 != 0
+            || input.route_slots == 0
+        {
+            return Err("MACRO_EXCHANGE_SHAPE".into());
+        }
+        let rows = u64::from(input.candidate_capacity);
+        let record_bytes = input.state_stride.checked_add(32).ok_or("MACRO_EXCHANGE_BYTES")?;
+        let payload = rows.checked_mul(record_bytes).ok_or("MACRO_EXCHANGE_BYTES")?;
+        // Each of three 16-byte-aligned planes pads by at most 240 bytes;
+        // the versioned frame prefix adds 256 more. Empty peers send no frame.
+        const FRAME_OVERHEAD: u64 = 256 + 3 * 240;
+        let send_frame = payload
+            .checked_add(u64::from(input.world).checked_mul(FRAME_OVERHEAD).ok_or("MACRO_EXCHANGE_BYTES")?)
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
+        let receive_frame = payload.checked_add(FRAME_OVERHEAD).ok_or("MACRO_EXCHANGE_BYTES")?;
+        let owners = u64::from(input.world).checked_mul(4).ok_or("MACRO_EXCHANGE_BYTES")?;
+        let count_exchange = 8u64; // one u32 sent, one u32 received
+        let slot_bytes = send_frame.checked_add(receive_frame)
+            .and_then(|sum| sum.checked_add(owners))
+            .and_then(|sum| sum.checked_add(count_exchange))
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
+        let failure_collective_bytes = 8u64; // one u32 send and receive
+        let requested_device_bytes = slot_bytes
+            .checked_mul(u64::from(input.route_slots))
+            .and_then(|sum| sum.checked_add(failure_collective_bytes))
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
+        Ok(Self {
+            send_frame_bytes_per_slot: send_frame,
+            receive_frame_bytes_per_slot: receive_frame,
+            owner_count_bytes_per_slot: owners,
+            count_exchange_bytes_per_slot: count_exchange,
+            slot_bytes,
+            failure_collective_bytes,
+            requested_device_bytes,
+        })
+    }
+}
+
 /// Storage contract shared by the weighted runtime and its archive producer.
 /// Compact generation applies permutation matrices directly to these vectors.
 pub struct MacroStateLayout {

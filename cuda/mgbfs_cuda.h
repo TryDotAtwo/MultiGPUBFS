@@ -29,6 +29,15 @@ int mgbfs_exchange_pack_frame(uint32_t stride,const uint8_t* source_states,
     uint32_t source_count,const void* sorted_hashes,const uint64_t* sorted_refs,
     uint32_t sorted_count,uint32_t begin,uint32_t count,uint8_t* output,
     uint64_t output_capacity,uint32_t* fatal,void* stream);
+/* Weighted DENSE payload: hash16*N, MacroCandidateRef16*N, stateStride*N;
+ * each plane is 256-byte padded. Reference state_ref is the original sorted
+ * child ordinal. source_depth+weight must fit u32. Caller checks sticky fatal
+ * after completion before publishing the frame. No allocation or host sync. */
+int mgbfs_macro_exchange_pack_frame(uint32_t stride,uint32_t source_depth,
+    uint32_t weight,const uint8_t* source_states,uint32_t source_count,
+    const void* sorted_hashes,const uint64_t* sorted_refs,
+    uint32_t sorted_count,uint32_t begin,uint32_t count,
+    uint8_t* output,uint64_t output_capacity,uint32_t* fatal,void* stream);
 /* host_header is a HOST pointer to 64 encoded bytes, consumed before return.
  * Kernel arguments own a copy; no asynchronous reference to host_header remains.
  * device_prefix is a 256-byte aligned DEVICE range of at least 256 bytes.
