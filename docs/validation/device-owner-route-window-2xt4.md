@@ -57,6 +57,9 @@ returns every thread before any candidate read when `valid_rows > capacity`.
 Private v27 passed the full plain owner fixture on both T4s. Raw outputs:
 ignored `test_results/kaggle_owner_overcap_red_v26/` and
 `test_results/kaggle_owner_overcap_green_v27/`.
+Private v28 at the same source passed plain and all four Compute Sanitizer
+modes on both T4s: zero errors and zero racecheck hazards/warnings. Raw output:
+ignored `test_results/kaggle_owner_overcap_sanitizers_v28/`.
 
 This is a route-window leaf gate, **not** evidence that the Rust BFS scheduler
 uses the device-only path. Host-sized NCCL exchange, owner control snapshots

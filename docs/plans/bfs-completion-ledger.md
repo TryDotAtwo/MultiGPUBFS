@@ -547,5 +547,6 @@ the owner path into Rust or remove transport/retirement host dependencies.
 The initially clean `valid_rows > capacity` case then produced a distinct v26
 RED: one thread set fatal while others still copied candidate input. A
 uniform early return in `copy_candidates` at `62bec61` passed the v27 plain
-owner fixture on both T4s; sanitizer validation is separate. This strengthens
+owner fixture on both T4s. V28 passed all four sanitizer modes on both T4s,
+with zero errors and racecheck hazards/warnings. This strengthens
 fail-fast but remains an isolated owner leaf, not end-to-end BFS integration.

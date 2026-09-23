@@ -1,11 +1,13 @@
 """Focused cuCO dynamic-shard-ref build and GPU contract gate."""
 import importlib.util
+import os
 from pathlib import Path
 import urllib.request
 
-SOURCE_COMMIT = "4241d9ddded08d48d29c138247b59080dd61460b"
+SOURCE_COMMIT = "62bec6155edae372b244309b2a044bbb13f226a6"
 
 if __name__ == "__main__":
+    os.environ.setdefault("PIP_DEFAULT_TIMEOUT", "180")
     script = Path("/tmp/mgbfs-library-gate.py")
     urllib.request.urlretrieve(
         "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
