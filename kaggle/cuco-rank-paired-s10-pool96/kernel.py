@@ -26,4 +26,13 @@ if __name__ == "__main__":
     gate.SCREEN_POOL_BYTES_BY_WORLD = {2: 96 << 20}
     gate.NATIVE_COMPARISON = True
     gate.SANITIZER_TOOLS = ()
+    original_run = gate.run
+
+    def run_with_download_headroom(command, *, cwd, env, logs, name, timeout=900):
+        # RAPIDS' 678 MB wheel can exceed the generic 900 s task timeout on Kaggle.
+        if name == "install":
+            timeout = 2700
+        return original_run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
+
+    gate.run = run_with_download_headroom
     gate.main()

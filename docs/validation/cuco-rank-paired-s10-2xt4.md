@@ -30,6 +30,16 @@ Pool fragmentation/allocator requirements are not captured by that requested
 counter. A second paired run with a 96 MiB fixed pool is needed before
 interpreting the memory Pareto point.
 
+The first 96 MiB attempt (`trydotatwo/mgbfs-cuco-rank-paired-s10-pool96-t4`
+v1) failed before build or BFS: installation of the pinned 678 MB
+`libcudf-cu12==26.4.0` wheel reached the notebook's 900 s task timeout.
+Its `summary.json` reports `FAILED` / `TIMEOUT: install`; the downloaded
+`install.log` ends at the wheel download. No 96 MiB capacity or speed
+conclusion follows. Raw logs are in
+`test_results/kaggle_cuco_rank_paired_s10_pool96_v1/`. The v2 wrapper raises
+only that installation task's timeout to 2700 s; its BFS source commit,
+pool size, workload and paired baseline remain unchanged.
+
 The two owner builds come from pinned different commits, so this is a
 matched-workload comparison, not an otherwise byte-identical binary A/B.
 It does not prove performance on S13/LRX or that removing remaining CPU
