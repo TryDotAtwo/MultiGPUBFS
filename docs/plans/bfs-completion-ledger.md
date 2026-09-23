@@ -481,3 +481,10 @@ captured compare/commit, reuse and overflow; see
 `docs/validation/cuco-rank-c-abi-2xt4.md`. The production Rust scheduler still
 does not invoke it, so this closes an interface gate only, not the runtime
 CPU-dependency audit.
+
+The C-ABI cuCO owner and device-count DENSE materializer have now been
+composed in one captured CUDA Graph. The v8 Rust-toolchain failure and v9
+two-T4 pass (actual state bytes, reuse, overflow, four sanitizers) are in
+`docs/validation/cuco-rank-dense-state-2xt4.md`. This validates the local
+owner→StateRing edge only; it does not remove the runtime's host-sized NCCL
+exchange or CPU-driven retirement, nor prove complete BFS layers.
