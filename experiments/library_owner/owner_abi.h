@@ -60,6 +60,11 @@ int mgbfs_library_rank_commit_v1(void* rank_owner, uint64_t epoch,
     MgbfsOwnerControl* owner, MgbfsStateRingControl* ring,
     const MgbfsStateExtent* extent);
 int mgbfs_library_rank_complete_v1(void* rank_owner, uint64_t epoch);
+/* FinalizeDepth only: caller drains all GPU readers first. Drop borrowed
+ * previous/current membership tables but retain committed key planes for
+ * export. Reject a pending epoch; no host/device synchronization here.
+ */
+int mgbfs_library_rank_seal_v1(void* rank_owner);
 int mgbfs_library_rank_export_shard_v1(void* rank_owner, uint32_t shard,
     uint32_t rows, MgbfsLibraryKeysV1* result);
 int mgbfs_library_rank_destroy_v1(void* rank_owner);

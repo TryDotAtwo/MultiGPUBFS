@@ -244,6 +244,8 @@ int main() {
         cudaMemcpyDeviceToHost));
     require(dense_states[0]==12&&dense_states[16]==15&&got_extent.ready==1,
         "RANK_ABI_FIRST_DENSE_STATES");
+    require(mgbfs_library_rank_seal_v1(rank_owner)!=0,
+        "RANK_ABI_SEAL_REJECTS_PENDING_READERS");
     require(mgbfs_library_rank_complete_v1(rank_owner,1)==0,"RANK_ABI_COMPLETE_FIRST");
     Key z{7,8,9,0x120};
     batch.upload({x,z,y},{0,1,2});
@@ -288,6 +290,12 @@ int main() {
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
     require(mgbfs_library_rank_complete_v1(rank_owner,3)==0,"RANK_ABI_COMPLETE_FATAL");
+    require(mgbfs_library_rank_seal_v1(rank_owner)==0,"RANK_ABI_SEAL");
+    Key replacement{90,91,92,0x100};
+    previous0.upload({replacement},{0});
+    require(mgbfs_library_rank_export_shard_v1(rank_owner,0,2,&shard0)==0&&
+        read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
+        "RANK_ABI_SEALED_KEYS_OWN_STORAGE");
     require(mgbfs_library_rank_destroy_v1(rank_owner)==0,"RANK_ABI_DESTROY");
     rmm::mr::set_current_device_resource_ref(prior_resource);
   }
