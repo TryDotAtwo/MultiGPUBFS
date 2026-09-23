@@ -93,7 +93,8 @@ Evidence: `docs/validation/lrx13-eight-h200.md`.
    evidence (`docs/validation/cuco-rank-runtime-2xt4.md`), but it is not an
    end-to-end GPU-driven pipeline. Route counts, payload sizes, collective
    control, and retirement still cause host dependencies; the whole-run S10
-   Nsight diagnostic records them but does not isolate the timed BFS interval
+   Nsight diagnostic records aggregate host operations but cannot attribute
+   them by stage or isolate the timed BFS interval
    (`docs/validation/cuco-rank-nsight-2xt4.md`). Remove or justify each
    dependency without changing NCCL issue order or fail-fast semantics, then
    rerun the full-state 1/2-rank and four-sanitizer gates.
