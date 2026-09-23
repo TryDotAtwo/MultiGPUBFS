@@ -195,6 +195,27 @@ pub fn validate_payload(payload: &[u8], layout: &PayloadLayout) -> Result<()> {
     }
     Ok(())
 }
+/// CPU protocol oracle for a received weighted candidate frame. The live GPU
+/// data plane must enforce the same predicate without copying rows to host.
+pub fn validate_macro_candidate_payload(
+    payload: &[u8],
+    header: &FrameHeader,
+    state_stride: u64,
+    max_weight: u32,
+) -> Result<()> {
+    if !matches!(header.kind, FrameKind::MacroDense | FrameKind::MacroHashFirst) {
+        return Err("WIRE_MACRO_KIND".into());
+    }
+    let layout = payload_layout(header.kind, header.count, state_stride)?;
+    validate_payload(payload, &layout)?;
+    let refs = &layout.planes[1];
+    let begin = usize::try_from(refs.offset).map_err(|_| "WIRE_BYTE_OVERFLOW")?;
+    let end = usize::try_from(refs.offset + refs.bytes).map_err(|_| "WIRE_BYTE_OVERFLOW")?;
+    for reference in payload[begin..end].chunks_exact(16) {
+        MacroCandidateRef::decode_at(reference, max_weight, header.depth)?;
+    }
+    Ok(())
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OriginRef {
     pub source: u32,

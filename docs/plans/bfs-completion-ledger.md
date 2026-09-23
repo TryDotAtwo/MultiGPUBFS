@@ -129,6 +129,12 @@ Schema2 adds `MacroDense` and `MacroHashFirst` frames with separate 16-byte
 `source_depth + weight` to equal the frame's target depth. Wire and transport
 tests pass. This does **not** yet route those frames through NCCL or settle
 distributed weighted depths on GPU.
+The follow-up payload validator checks each macro reference against its frame
+target before owner offer. An end-to-end CPU protocol fixture drives a distant
+offer and a later shorter offer through ticket issue/ACK/consume and depth
+finalization; only the shorter one commits. The GPU receive/owner path does not
+yet use these new frame kinds, so this fixture is a protocol oracle, not a
+claim of native multi-rank K>1 correctness.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 

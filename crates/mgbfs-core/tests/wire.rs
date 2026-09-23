@@ -147,3 +147,21 @@ fn macro_candidate_frames_have_explicit_metadata_plane_and_target_depth() {
     assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 7).unwrap(), reference);
     assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 8).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
 }
+
+#[test]
+fn macro_frame_payload_rejects_a_mismatched_or_unbounded_weight_before_owner_commit() {
+    let frame = FrameHeader { kind: FrameKind::MacroDense, depth: 7, count: 2, ..header() };
+    let layout = payload_layout(frame.kind, frame.count, 32).unwrap();
+    let mut payload = vec![0; layout.bytes as usize];
+    let refs = layout.planes[1].offset as usize;
+    let first = MacroCandidateRef { source_depth: 3, weight: 4, state_ref: 10 };
+    let second = MacroCandidateRef { source_depth: 5, weight: 2, state_ref: 11 };
+    payload[refs..refs + 16].copy_from_slice(&first.encode());
+    payload[refs + 16..refs + 32].copy_from_slice(&second.encode());
+    validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap();
+    payload[refs + 16..refs + 32].copy_from_slice(&MacroCandidateRef { weight: 1, ..second }.encode());
+    assert_eq!(validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
+    payload[refs + 16..refs + 32].copy_from_slice(&MacroCandidateRef { weight: 5, ..second }.encode());
+    assert_eq!(validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(), "WIRE_MACRO_WEIGHT");
+    assert!(validate_macro_candidate_payload(&payload, &header(), 32, 4).is_err());
+}
