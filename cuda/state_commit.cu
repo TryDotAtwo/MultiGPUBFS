@@ -105,6 +105,21 @@ __global__ void validate_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,Mg
      e->descriptor<r->descriptor_head||e->descriptor>=r->descriptor_tail){fatal(r,o,14);return;}
 }
 __global__ void gate_rows(MgbfsOwnerControl* o,const MgbfsStateExtent* e,uint64_t* count){*count=o->error?0:e->count;}
+__global__ void validate_rank_batch_shape(const uint32_t* source_rows,
+    uint32_t source_capacity,const uint32_t* selected_count,uint32_t selected_capacity,
+    MgbfsStateRingControl* r,MgbfsOwnerControl* o,const MgbfsStateExtent* e){
+  if(o->error||r->fatal)return;
+  if(*source_rows>source_capacity||*selected_count>selected_capacity||
+     *selected_count!=e->count)fatal(r,o,15);
+}
+__global__ void validate_rank_batch_indices(const uint32_t* selected,
+    const uint32_t* source_rows,MgbfsStateRingControl* r,
+    MgbfsOwnerControl* o,const MgbfsStateExtent* e){
+  if(o->error||r->fatal)return;
+  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<e->padding[0];
+      i+=uint64_t(gridDim.x)*blockDim.x)
+    if(selected[i]>=*source_rows)fatal(r,o,15);
+}
 // No temporary allocation: validated count is carried in extent padding[0].
 // The index kernel never reads error while other blocks may atomically set it.
 template<bool Packed=false>
@@ -219,6 +234,26 @@ extern "C" int mgbfs_state_materialize_packed(const uint8_t* input,uint32_t rows
   validate_indices<true><<<blocks,256,0,s>>>(nullptr,rows,selected,rows,r,o,e);
   copy_states<true><<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),nullptr,selected,stride/16,reinterpret_cast<uint4*>(output),o,e);
   publish_ready<<<1,1,0,s>>>(o,e);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_materialize_rank_batch(const uint8_t* input,
+    const uint32_t* source_rows,uint32_t source_capacity,
+    const uint32_t* source_indices,const uint32_t* selected_count,
+    uint32_t selected_capacity,uint32_t stride,uint8_t* output,
+    MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
+  if(!input||!source_rows||!source_capacity||source_capacity>INT_MAX||
+     !source_indices||!selected_count||!selected_capacity||selected_capacity>INT_MAX||
+     !stride||stride%16||!output||!r||!o||!e)return 1;
+  auto s=static_cast<cudaStream_t>(stream);
+  unsigned blocks=(selected_capacity+255)/256;if(blocks>4096)blocks=4096;
+  validate_extent<<<1,1,0,s>>>(r,o,e,selected_capacity,stride);
+  gate_rows<<<1,1,0,s>>>(o,e,&e->padding[0]);
+  validate_rank_batch_shape<<<1,1,0,s>>>(source_rows,source_capacity,
+      selected_count,selected_capacity,r,o,e);
+  validate_rank_batch_indices<<<blocks,256,0,s>>>(source_indices,source_rows,r,o,e);
+  copy_states<true><<<blocks,256,0,s>>>(reinterpret_cast<const uint4*>(input),
+      nullptr,source_indices,stride/16,reinterpret_cast<uint4*>(output),o,e);
+  publish_ready<<<1,1,0,s>>>(o,e);
+  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t candidates,
  const uint64_t* refs,uint32_t sorted,const uint32_t* selected,uint32_t capacity,
