@@ -20,6 +20,16 @@
   the owner stream before state materialization. Plain and all four sanitizer
   tools passed; racecheck reported zero hazards, errors and warnings.
 - Raw output is under ignored `target/macro-scatter-gate-v2/` and retained on
-  the private Kaggle notebook. This is a positive-frame check. Version 3 is
-  separately testing a corrupted weight; neither version settles a complete
-  distributed weighted BFS depth.
+  the private Kaggle notebook. This is a positive-frame check.
+
+## Version 3: corrupted-reference rejection
+
+- Pinned source: `4e08b44e47dcdd5b0bed5607ecb1f945de502ec9`.
+- Each rank validates the received ref, corrupts its weight to zero, checks
+  sticky device fatal=1 before owner materialization, restores the weight,
+  and then materializes the state.
+- Plain and all four sanitizer tools passed on two physical Tesla T4 GPUs;
+  racecheck reported zero hazards, errors and warnings. Raw output is under
+  ignored `target/macro-scatter-gate-v3/` and retained on Kaggle.
+- This validates the transport/metadata rejection boundary, not exact
+  distributed weighted-layer settlement or production performance.

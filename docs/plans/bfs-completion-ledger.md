@@ -163,7 +163,10 @@ enqueue through the receive lease, and the two-rank fixture calls it before
 materialization. This closes the isolated transport/metadata gate, **not**
 distributed weighted owner settlement or production BFS. A second physical
 2xT4 gate using source `787a9fe` passed plain and all four sanitizer tools.
-Its invalid-weight rejection fixture is running as a separate pinned version.
+The subsequent invalid-weight rejection fixture at source `4e08b44` also
+passed on 2xT4 under all four sanitizers, before owner materialization. The
+weighted future-slot/settlement path remains unconnected to the distributed
+runtime, so full multi-rank macro BFS is not yet verified.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
