@@ -60,7 +60,8 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
         &graph, [0; 16], id, cfg.clone(), None, 64 << 20, false,
         mgbfs_core::config::ReferenceOwner::CucoRank,
     ).unwrap();
-    assert!(failed.advance().unwrap_err().contains("LIBRARY_RANK_BATCH_FATAL_"));
+    let error = failed.advance().unwrap_err();
+    assert!(error.contains("LIBRARY_RANK_DEPTH_FATAL_"), "{error}");
     drop(failed);
     cfg.layer_capacity = 64;
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
