@@ -447,3 +447,11 @@ with all four Compute Sanitizer modes. Per-candidate GPU selection from two
 persistent table refs is therefore demonstrated, but the rank-batch cuCO
 compare/commit, GPU shard offsets and runtime wiring remain absent. See
 `docs/validation/cuco-dynamic-refs-2xt4.md`.
+
+The GPU shard-count/offset leaf at `ec988b7` passed the focused two-T4 v10
+gate (20/20 plain/sanitizer checks). It derives counts from device-resident
+CUB-selected indices and sorted hash prefixes without a host readback, with
+malformed input failing before offset publication. The RED v9 link failure
+and GREEN v10 logs are recorded in
+`docs/validation/rank-shard-counts-2xt4.md`. The production cuCO rank-batch
+compare/commit and runtime wiring remain unfinished.
