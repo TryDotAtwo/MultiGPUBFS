@@ -1,4 +1,4 @@
-use mgbfs_runtime::failure::process_owner_pair;
+use mgbfs_runtime::failure::{process_owner_pair, vote_group_error};
 use std::cell::RefCell;
 
 #[test]
@@ -59,4 +59,30 @@ fn failed_readiness_does_not_expose_remote_payload() {
         assert_eq!(result, Err(if local_error { "local" } else { "ready" }));
         assert_eq!(*events.borrow(), ["local"]);
     }
+}
+
+#[test]
+fn local_retirement_failure_still_enters_group_vote_before_owner_work() {
+    let events = RefCell::new(Vec::new());
+    let result = vote_group_error(
+        Err("local_retirement"),
+        |failed| {
+            events.borrow_mut().push(if failed { "vote_failed" } else { "vote_clear" });
+            Ok(true)
+        },
+        "remote_retirement",
+    );
+    assert_eq!(result, Err("local_retirement"));
+    assert_eq!(*events.borrow(), ["vote_failed"]);
+
+    let result = vote_group_error(
+        Ok::<(), &str>(()),
+        |failed| {
+            events.borrow_mut().push(if failed { "vote_failed" } else { "vote_clear" });
+            Ok(true)
+        },
+        "remote_retirement",
+    );
+    assert_eq!(result, Err("remote_retirement"));
+    assert_eq!(*events.borrow(), ["vote_failed", "vote_clear"]);
 }

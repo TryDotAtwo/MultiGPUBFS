@@ -47,3 +47,18 @@ pub fn process_owner_pair<T, E>(
     let second = process(remote);
     first.and(second)
 }
+
+/// Enter the same failure vote on every rank before irreversible owner work.
+/// A local error must not skip the collective; a remote error stops this rank.
+pub fn vote_group_error<E>(
+    local: Result<(), E>,
+    vote: impl FnOnce(bool) -> Result<bool, E>,
+    remote_error: E,
+) -> Result<(), E> {
+    let failed = vote(local.is_err())?;
+    if failed {
+        Err(local.err().unwrap_or(remote_error))
+    } else {
+        local
+    }
+}

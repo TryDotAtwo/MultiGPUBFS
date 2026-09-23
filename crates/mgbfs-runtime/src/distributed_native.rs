@@ -1,6 +1,6 @@
 //! Native 1/2/4/8-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::event_generation::NativeEvent;
-use crate::failure::process_owner_pair;
+use crate::failure::{process_owner_pair, vote_group_error};
 use crate::jobs::{split, JobSpan};
 #[cfg(feature = "library-owner")]
 use crate::library_native::{finalize_shards, ControlTransfer, LibraryShard};
@@ -2331,6 +2331,7 @@ impl DistributedNativeBfs {
                     check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
                     received
                 };
+                let mut retirement_error = None;
                 if let Some(parent_extent) =
                     parent.filter(|_| round == 1 && self.hash_first.is_none())
                 {
@@ -2359,8 +2360,20 @@ impl DistributedNativeBfs {
                     check(unsafe { cudaStreamSynchronize(s) })?;
                     let ring = self.ring.one::<Ring>()?;
                     if ring.fatal != 0 {
-                        return Err(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
+                        retirement_error = Some(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
                     }
+                }
+                if round == 1 && self.hash_first.is_none() {
+                    if world > 1 {
+                        // The vote must follow this round's P2P on the same
+                        // communicator, including zero-payload exchange.
+                        check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
+                    }
+                    vote_group_error(
+                        retirement_error.map_or(Ok(()), Err),
+                        |failed| Ok(self.all_max(u32::from(failed))? != 0),
+                        "REMOTE_STATE_RING_RETIRE_FATAL".into(),
+                    )?;
                 }
                 check(unsafe { cudaStreamSynchronize(s) })?;
                 let local_states = unsafe {
