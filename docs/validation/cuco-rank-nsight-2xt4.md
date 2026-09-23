@@ -33,6 +33,19 @@ whole-trace GPU kernel table includes 1,080 NCCL SendRecv, 2,188 NCCL
 AllReduce, 4,704 CUB radix-sort, and 354 generation GEMM launches. Summed
 kernel durations can overlap across devices and are not end-to-end fractions.
 
+There are two separated active GPU-kernel clusters, at approximately
+5.96–6.50 s and 11.84–12.35 s on the trace clock. The second is consistent
+with the measured pass after warmup, but lacks an explicit search start/end
+marker; its 11.80–12.36 s envelope is therefore **not** an exact BFS timing
+range. Within that envelope, rank 0 has 1,734 `cudaStreamSynchronize` calls
+totaling 210.244 ms of API duration and 1,238 synchronous `cudaMemcpy` calls
+totaling 58.649 ms. Rank 1 has 1,729/223.973 ms and 1,237/59.314 ms,
+respectively. The 2,507 D2H copies of at most 4,096 bytes carry only 68,512
+bytes; another 308 larger D2H copies carry 420,904,480 bytes, predominantly
+archive traffic. These are sums across calls, not a fraction of the 0.490 s
+search wall time: ranks and streams overlap, and the envelope still includes
+work outside the exact measured interval.
+
 Next diagnostic gate: mark each rank's measured search interval and depth
 boundaries in the trace, then report per-interval host waits, D2H sizes,
 stream idle gaps and NCCL/compute overlap. The existing static owner, route,
