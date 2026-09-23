@@ -175,7 +175,7 @@ def main():
         run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli", "--features", "cuda"], "cli-build", source)
         cli_contracts = run(["cargo", "test", "--locked", "--release", "-p", "mgbfs-cli",
                              "--features", "cuda", "--test", "bench"], "cli-contracts", source)
-        require_fixture(cli_contracts, 3)
+        require_fixture(cli_contracts, 6)
         report["cli_scope"] = "Linux CUDA mgbfs bench --reference; same shared reference runtime; mandatory archive; explicit torchrun ranks; 1/2-rank profile smoke below uses CLI entry point"
         report["reference_profile_smoke"] = []
         expected_layers = None

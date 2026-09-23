@@ -350,3 +350,20 @@ memcheck, racecheck, initcheck and synccheck; see
 Kaggle v47 stopped because the harness expected 12 archive tests while 13
 passed. The corrected v48, pinned to the same source, is running. This slice is not an owner DAG capture,
 transport redesign or latency improvement claim.
+
+## 2026-09-23 completed library calibration audit
+
+The previously described Kaggle `trydotatwo/mgbfs-library-owner-t4` v55 is
+**COMPLETE**, not running. Its remote `summary.json` was downloaded again and
+matches the preserved `test_results/library-owner-v55/library-owner/summary.json`
+(SHA256 `29cb7dbc6537bc7ff9afc814399d854a2e3a24d972b7e41e24d681ffc70a637`).
+Source was `f5b52c9f240e89c5b8b30828919ef56c367fdad6`. The five-repeat S10
+DENSE screen gives cuCollections/cuCO search medians 0.488662 s (1 T4) and
+0.465600 s (2 T4), versus the preserved native CUB medians 1.032990 s and
+0.824495 s. Durable medians were 4.837174/3.843546 s for cuCO versus
+4.797040/3.995748 s for native. The 50 ms sampled full-device VRAM was
+901 versus 835 MiB (one rank), and 529 versus 457 MiB per rank (two ranks).
+Thus this 8-shard cuCO setting wins search but *not* peak VRAM, and the
+archive-inclusive result is mixed. It does not resolve the CPU-driven owner
+hot path; the summary's sanitizer field points to earlier v50 evidence rather
+than sanitizers of this exact v55 source/configuration.
