@@ -435,3 +435,9 @@ archive pack on each GPU. Raw output is in
 `test_results/kaggle_state_commit_v8/state-commit-gate/`. This is a tested
 leaf only: cuCO compare still returns host counts, and the runtime does not
 yet call the new rank-batch ABI. It is not evidence of a CPU-free BFS.
+
+The follow-up distributed regression v52 completed at the same source SHA on
+two T4s: plain plus all four Compute Sanitizer modes PASS, 24/24 reference
+profile smokes PASS with verified S4 archives and layers `[1,3,5,6,5,3,1]`.
+It tests the unchanged runtime path, not integration of the new reservation
+leaf. See `docs/validation/distributed-sanitizer-2xt4-v52.md`.
