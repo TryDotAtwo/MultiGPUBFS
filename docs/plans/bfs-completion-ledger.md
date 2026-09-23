@@ -218,6 +218,18 @@ present their positive tests as production acceptance. Next implementation
 gate: define/prove bounded future bucket ranges and owner reservation before
 integrating the distributed weighted scheduler.
 
+A first CPU preflight slice now exists as `FutureBucketLayout` in
+`mgbfs-core::macro_memory`. It assigns each `(target_depth mod Km, bucket)` a
+fixed contiguous hash extent, with configured per-bucket capacities whose
+sum is exactly the physically reserved `Qfuture`. This avoids an implicit
+`Km*B*K` future allocation. Its target-depth window and checked byte/count
+arithmetic have standalone tests. This is **not yet** the production GPU
+future owner: the capacity vector must be frozen in RunConfig, GPU compare/
+commit must accept per-bucket offsets/caps, slot reuse must wait for settlement
+and archive leases, and the full memory query must include the new metadata.
+The per-bucket capacity distribution is a proposed preflight policy, not a
+measured choice; skew overflow remains fatal rather than dynamically growing.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly

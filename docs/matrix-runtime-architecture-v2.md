@@ -158,6 +158,17 @@ pre-dedup ON/OFF, CUB_SORT_MERGE/BMMA_BUCKET, prefix ownership, flat buckets,
 | Ng,Nr,Nx,No,Nm | число generation,route,receive,owner,materialization lanes |
 | A,Q | pinned archive slots и bytes/slot |
 
+Предлагаемый физический layout для `Qfuture` (CPU preflight-контракт уже
+реализован, GPU owner ещё нет): конфиг задаёт ёмкость каждого
+`(target_depth mod Km, bucket)` в диапазоне `0..K`. Checked prefix sum этих
+ёмкостей равен ровно `Qfuture`; каждому bucket принадлежит один неизменный
+contiguous extent. Тем самым нет неявной аллокации `Km*B*K`. При перекосе
+отдельная ёмкость может исчерпаться раньше общего пула — это fatal, не рост
+или перераспределение во время BFS. Слот depth нельзя переиспользовать до
+завершения settlement и всех его archive/materialization leases. Такой layout
+требует расширить bounded owner с `bucket*K` на явные offsets/capacities,
+включить metadata bytes в preflight и измерить skew на целевых графах.
+
 Defaults только как старт calibration: H=64, B=64*256, W=2, 1 GiB untouched
 reserve на rank. P,K,L,R,E,I,J и числа lanes обязательны в конфиге, не угаданы
 из полного числа вершин. `expected_max_unique_states` — collision/archive

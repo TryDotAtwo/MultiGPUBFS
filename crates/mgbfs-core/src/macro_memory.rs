@@ -1,5 +1,108 @@
 use crate::Result;
 
+/// Preflight layout for provisional macro-depth owner buckets. Each
+/// `(target_depth mod macro_depth, bucket)` gets one contiguous fixed extent;
+/// the configured capacities sum to the physically reserved future arena.
+/// This is a storage contract, not a CPU-side runtime allocator or owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FutureBucketLayout {
+    macro_depth: u32,
+    buckets: u32,
+    offsets: Vec<u64>,
+    pub hash_records: u64,
+    pub hash_bytes: u64,
+    pub metadata_bytes: u64,
+}
+
+impl FutureBucketLayout {
+    pub fn derive(
+        macro_depth: u32,
+        buckets: u32,
+        bucket_limit: u32,
+        capacities: &[u32],
+        future_records: u64,
+    ) -> Result<Self> {
+        if macro_depth == 0 || buckets == 0 || bucket_limit == 0 {
+            return Err("MACRO_FUTURE_BUCKET_SHAPE".into());
+        }
+        let len = u64::from(macro_depth)
+            .checked_mul(u64::from(buckets))
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or("MACRO_FUTURE_BUCKET_OVERFLOW")?;
+        if capacities.len() != len || capacities.iter().any(|&v| v > bucket_limit) {
+            return Err("MACRO_FUTURE_BUCKET_CAPACITY".into());
+        }
+        let mut offsets = Vec::new();
+        offsets
+            .try_reserve_exact(len.checked_add(1).ok_or("MACRO_FUTURE_BUCKET_OVERFLOW")?)
+            .map_err(|_| "MACRO_FUTURE_BUCKET_ALLOCATION")?;
+        offsets.push(0u64);
+        for &cap in capacities {
+            offsets.push(
+                offsets
+                    .last()
+                    .copied()
+                    .unwrap()
+                    .checked_add(u64::from(cap))
+                    .ok_or("MACRO_FUTURE_BUCKET_OVERFLOW")?,
+            );
+        }
+        if future_records == 0 || offsets[len] != future_records {
+            return Err("MACRO_FUTURE_RECORD_BUDGET".into());
+        }
+        let hash_bytes = future_records
+            .checked_mul(16)
+            .ok_or("MACRO_FUTURE_BUCKET_OVERFLOW")?;
+        let metadata_bytes = u64::try_from(len)
+            .ok()
+            .and_then(|v| v.checked_mul(4))
+            .and_then(|count_bytes| {
+                u64::try_from(len + 1)
+                    .ok()
+                    .and_then(|v| v.checked_mul(8))
+                    .and_then(|offset_bytes| count_bytes.checked_add(offset_bytes))
+            })
+            .ok_or("MACRO_FUTURE_BUCKET_OVERFLOW")?;
+        Ok(Self {
+            macro_depth,
+            buckets,
+            offsets,
+            hash_records: future_records,
+            hash_bytes,
+            metadata_bytes,
+        })
+    }
+
+    pub fn bucket_range(&self, slot: u32, bucket: u32) -> Result<(u64, u32)> {
+        if slot >= self.macro_depth || bucket >= self.buckets {
+            return Err("MACRO_FUTURE_BUCKET_INDEX".into());
+        }
+        let index = (slot as usize) * (self.buckets as usize) + bucket as usize;
+        Ok((
+            self.offsets[index],
+            u32::try_from(self.offsets[index + 1] - self.offsets[index])
+                .map_err(|_| "MACRO_FUTURE_BUCKET_OVERFLOW")?,
+        ))
+    }
+
+    /// One active window uses each physical slot exactly once. Reuse of a
+    /// slot after advancing current depth requires an external drain/reset.
+    pub fn target_bucket(
+        &self,
+        current_depth: u32,
+        target_depth: u32,
+        bucket: u32,
+    ) -> Result<(u64, u32)> {
+        let delta = target_depth
+            .checked_sub(current_depth)
+            .ok_or("MACRO_FUTURE_DEPTH")?;
+        if delta == 0 || delta > self.macro_depth {
+            return Err("MACRO_FUTURE_DEPTH".into());
+        }
+        self.bucket_range(target_depth % self.macro_depth, bucket)
+    }
+}
+
 /// Additional fixed GPU allocations required by each rank's DENSE macro
 /// owner exchange. CUDA/NCCL context-internal memory is guarded separately by
 /// the untouched VRAM reserve; this counts every explicit cudaMalloc request.
