@@ -337,3 +337,15 @@ traffic inflation is `W` (8x at eight ranks), before retransmission or extra
 staging. A fixed-size NCCL scheme is therefore **not accepted by default**;
 the count/transport protocol remains open until its full cost and GPU event
 ownership are measured.
+
+The first route-to-pack dependency is now removed at source `a272a17`:
+`mgbfs_exchange_pack_device_n` consumes the route's device-resident valid
+count, launches at admitted capacity and guards the tail/overflow on GPU.
+`distributed_native.rs` queues route and pack on the same stream without
+reading `route_count` between them. The count and owner directory are still
+read after pack to schedule NCCL payloads, so **the batch remains CPU-driven**.
+The independent T4 primitive gate passed on both physical T4s with plain,
+memcheck, racecheck, initcheck and synccheck; see
+`docs/validation/device-count-pack-2xt4.md`. Full `mgbfs-distributed-sanitizer`
+Kaggle v47 at this source is pending. This slice is not an owner DAG capture,
+transport redesign or latency improvement claim.
