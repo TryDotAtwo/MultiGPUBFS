@@ -112,7 +112,12 @@ __global__ void lsa_publish_count(ncclDevComm dev,ncclWindow_t win,
   if(threadIdx.x==0){
     auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
     auto* remote=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,peer));
-    uint32_t bad=local[1]||local[2]||counts[logical_owner]>cap;
+    uint64_t total=0;
+    for(unsigned owner=0;owner<unsigned(dev.nRanks);++owner)total+=counts[owner];
+    // This one capacity covers both the sorted source slot and the peer's
+    // symmetric receive slot. Do not read past the source when only the
+    // outgoing partition itself fits.
+    uint32_t bad=local[1]||local[2]||total>cap;
     local[1]=bad;
     remote[0]=bad?0:counts[logical_owner];
   }

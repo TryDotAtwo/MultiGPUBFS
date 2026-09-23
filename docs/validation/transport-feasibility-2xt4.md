@@ -42,4 +42,30 @@ It does **not** yet prove variable device-count exchange, throughput, error
 propagation, buffer lifetime, zero-payload epochs, 8-rank topology or complete
 BFS correctness. The current production runtime still links system NCCL 2.25.1.
 
+## Counted exchange and Kaggle host variation (2026-09-23)
+
+The isolated counted LSA leaf in private notebook v6 passed on 2×T4 for
+`(3,1)`, `(0,5)` and `(33,1)` with 32-row capacity. The over-capacity case
+set a global fatal on both ranks without payload writes. This is leaf evidence,
+not runtime integration.
+
+An opt-in production C ABI candidate was committed as `3bbb416` with
+`MGBFS_NCCL_LSA=ON`. Notebook v9 compiled its `nccl_transport.cpp` against
+pinned NCCL 2.29.7; v10 compiled and linked a production C ABI harness.
+However, v10 could not execute `mgbfs_nccl_lsa_init`: it returned 4 on both
+ranks because `deviceApiSupport=0`. That host's `nvidia-smi topo -p2p p`
+reported `NS` between the two physical T4s. V8 landed on a different 2×T4
+host with P2P `OK`, `deviceApiSupport=1`, and passed all three isolated
+counted cases. Thus “2×T4 Kaggle” does **not** guarantee LSA support. No
+BFS runtime path uses the production C ABI yet. Raw results are in
+`test_results/kaggle_transport_probe_v8/`, `_v9/`, and `_v10/`.
+
+V13 subsequently landed on P2P `OK` T4s and the production C ABI harness
+passed exact hash/state payload checks for `(3,1)` and `(0,5)`, plus a
+no-payload global-fatal check for `(33,1)`. V11 exposed an incorrect expected
+source offset in the harness; v13 has the corrected oracle. These results
+still cover only a single two-rank exchange, not repeated epochs, 8 ranks,
+full owner integration, sanitizers or performance. Raw evidence:
+`test_results/kaggle_transport_probe_v13/`.
+
 Reference: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html
