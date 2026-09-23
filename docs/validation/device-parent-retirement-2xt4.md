@@ -65,7 +65,12 @@ zero errors and racecheck hazards/warnings. Raw:
 the integration source passed its plain single-device and two-device
 full-state/layer/archive fixtures; raw
 `test_results/kaggle_ring_fatal_vote_full_bfs_v3/`. A separate v4 full-BFS
-four-sanitizer gate is running. Neither v3 nor the leaf test injects a
+four-sanitizer gate completed at source `8aacb24` with 3/3 one-GPU tests
+on each physical T4 and 2/2 two-GPU tests in plain and every sanitizer
+mode (one eight-GPU case ignored). memcheck/initcheck/synccheck reported
+zero errors; racecheck reported zero hazards/errors/warnings. Raw logs:
+`test_results/kaggle_ring_fatal_vote_full_bfs_sanitizers_v4/`.
+Neither v3 nor v4 nor the leaf test injects a
 retirement FIFO error. The group vote still synchronizes the host
 to branch before owner commit, so this is not CPU-free retirement.
 
@@ -78,6 +83,13 @@ proves the CUDA retirement → device word → NCCL vote chain under an injected
 local fault; it does not inject the fault through the full BFS scheduler or
 measure its latency. Raw `test_results/kaggle_retire_fifo_fault_v3/`.
 
-The runtime still drains the stream and reads ring fatal after retirement;
+The follow-on source `ced41ab` removes a redundant DENSE stream wait after
+the first-round fatal vote, whose own completion already covers the stream.
+Private full-BFS notebook `trydotatwo/mgbfs-rank-retire-fatal-gate-t4` v5
+was launched for a plain 1/2-T4 gate at this exact source; its result is
+pending.
+
+The runtime still has host-side completion and branch dependencies after
+retirement;
 transport counts and NCCL sizes also remain CPU-driven. No end-to-end latency
 or VRAM improvement is claimed.
