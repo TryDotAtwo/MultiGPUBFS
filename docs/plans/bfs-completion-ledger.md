@@ -494,3 +494,17 @@ releases borrowed cuCO history tables after caller drain, and retains accepted
 keys for export. The v10 RED link failure and v11 two-T4 plain/sanitizer gate
 are in `docs/validation/cuco-rank-seal-2xt4.md`. Runtime creation, event
 ordering and finalization remain to be wired; this is not full BFS evidence.
+
+The Rust DENSE reference runtime now invokes `CucoRankBatch` through the C ABI.
+The private two-T4 v12 test failed at the expected `REFERENCE_CUCO_RANK_NOT_WIRED`
+marker before integration; v13 passed the one-rank full-state oracle on both
+physical T4s. The separate two-T4 v56 run passed the two-rank full-state and
+archive oracle with both rank maps and pre-dedup ON/OFF, then completed the
+S4 and U4(m=2) torchrun CLI fixtures. Exact commits and downloaded records are
+listed in `docs/validation/cuco-rank-runtime-2xt4.md`. This proves small-graph
+runtime correctness for DENSE/CUCO_RANK, not HASH_FIRST support, large-graph
+capacity, speed, memory superiority, or removal of host dependencies. The
+per-batch route count upload and owner control snapshot still synchronize in
+`distributed_native.rs`; transport size exchange and parent retirement still
+use CPU readbacks. The v15 full-path sanitizer and v57 capacity-cleanup runs
+are pending, so neither gate is credited yet.
