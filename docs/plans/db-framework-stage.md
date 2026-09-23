@@ -78,6 +78,17 @@ not a paired causal experiment. Source and archived logs:
 `test_results/library-capacity-v10/`. This is a Pareto trade, **not**
 evidence that cuCollections is faster or smaller on every graph.
 
+The later device-count `CUCO_RANK` owner has its own paired physical 2×T4
+S10 archive screen (five repeats, source `4b68552`, preserved native
+`013ed5c`): search medians 0.380726 s versus CUB's 0.823757 s, durable
+medians 3.774029 s versus 3.899147 s, and sampled peak VRAM 945 versus
+457 MiB **per rank**. This run reserved a 512 MiB fixed cuCO pool/rank;
+its highest requested suballocations were about 59 MB, which is not by
+itself a proof that a smaller pool fits. A 96 MiB fixed-pool paired gate is
+pending. See `docs/validation/cuco-rank-paired-s10-2xt4.md`. Neither the
+older `CUCO_INDEXED` result nor this small S10 result proves a universal
+owner choice or removes the host-controlled route/transport path.
+
 On eight H200, the cuCollections S13 search-only run completed in
 11.716894 seconds (five-run median) at 195.55 GiB externally sampled total
 VRAM. The CUB counterpart used 76.10 GiB sampled total VRAM but timed out at
