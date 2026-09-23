@@ -86,8 +86,10 @@ measure its latency. Raw `test_results/kaggle_retire_fifo_fault_v3/`.
 The follow-on source `ced41ab` removes a redundant DENSE stream wait after
 the first-round fatal vote, whose own completion already covers the stream.
 Private full-BFS notebook `trydotatwo/mgbfs-rank-retire-fatal-gate-t4` v5
-was launched for a plain 1/2-T4 gate at this exact source; its result is
-pending.
+passed the plain gate at this exact source: 3/3 one-GPU tests on each T4 and
+3/3 two-GPU tests, including the injected FIFO fatal vote (one eight-GPU case
+ignored). Raw logs: `test_results/kaggle_dense_wait_full_bfs_v5/`. V6 was
+launched at the same source for all four sanitizer tools; its result is pending.
 
 The runtime still has host-side completion and branch dependencies after
 retirement;

@@ -612,5 +612,7 @@ ranks without a hang. Full scheduler-level fault injection remains open.
 This removes one ring-fatal D2H but the collective remains host-blocking and
 owner/transport count decisions remain CPU-driven.
 The follow-up `ced41ab` removes a duplicate DENSE stream drain after the
-blocking first-round fatal vote. Its plain 1/2-T4 full-BFS gate is running
-in private Kaggle notebook v5; no physical-GPU result for that source yet.
+blocking first-round fatal vote. Its plain 1/2-T4 full-BFS gate passed in
+private Kaggle notebook v5: 3/3 tests per GPU and 3/3 two-GPU tests,
+including the injected FIFO fatal vote. V6 at the same source is running
+all four sanitizer tools; no sanitizer result for this source yet.

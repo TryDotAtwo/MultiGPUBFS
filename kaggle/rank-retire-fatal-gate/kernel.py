@@ -19,5 +19,5 @@ if __name__ == "__main__":
     gate.SOURCE_COMMIT = SOURCE_COMMIT
     gate.FULL_BFS_GATE = True
     gate.LOAD_SCREEN = False
-    gate.SANITIZER_TOOLS = ()
+    gate.SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
     gate.main()
