@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "4e08b44e47dcdd5b0bed5607ecb1f945de502ec9"
+SOURCE = "b05ebe460e4d522feb9591ae75397b7bafd8b2d2"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 FIXTURE = "admitted_adapter_native_scatter_and_depth_rollover"
 
@@ -62,6 +62,9 @@ def main():
              "-DCUTLASS_ROOT=" + str(cutlass)], "cmake", source)
         run(["cmake", "--build", str(build), "--target", "mgbfs_cuda",
              "--parallel", "2"], "cuda-build", source)
+        run(["cmake", "--build", str(build), "--target",
+             "mgbfs-macro-future-checked-test", "--parallel", "2"],
+            "future-build", source)
         output = run(["cargo", "test", "--locked", "--release", "-p",
                       "mgbfs-runtime", "--features", "cuda", "--test",
                       "native_scatter", "--no-run", "--message-format=json"],
@@ -88,6 +91,21 @@ def main():
             elif tool != "plain" and not re.search(r"ERROR SUMMARY: 0 errors", result):
                 raise RuntimeError("SANITIZER_NOT_CLEAN")
             report["tests"].append({"tool": tool, "status": "PASS"})
+            save()
+        for tool in ["plain", "memcheck", "racecheck", "initcheck", "synccheck"]:
+            command = [str(build / "mgbfs-macro-future-checked-test")]
+            if tool != "plain":
+                command = ["compute-sanitizer", "--error-exitcode", "99",
+                           "--tool", tool] + command
+            result = run(command, "future-" + tool, source, timeout=600)
+            if "MACRO_FUTURE_CHECKED_PASS" not in result:
+                raise RuntimeError("FUTURE_RESULT_MISMATCH")
+            if tool == "racecheck":
+                if not re.search(r"RACECHECK SUMMARY: 0 hazards displayed \(0 errors, 0 warnings\)", result):
+                    raise RuntimeError("FUTURE_RACECHECK_NOT_CLEAN")
+            elif tool != "plain" and not re.search(r"ERROR SUMMARY: 0 errors", result):
+                raise RuntimeError("FUTURE_SANITIZER_NOT_CLEAN")
+            report["tests"].append({"tool": "future-" + tool, "status": "PASS"})
             save()
         report["status"] = "COMPLETE"
     finally:

@@ -168,6 +168,17 @@ passed on 2xT4 under all four sanitizers, before owner materialization. The
 weighted future-slot/settlement path remains unconnected to the distributed
 runtime, so full multi-rank macro BFS is not yet verified.
 
+Next, `mgbfs_future_merge_run_bounded_checked` accepts the GPU metadata-fatal
+word and refuses to publish a future slot when it is nonzero. Its failure
+preserves the previously committed slot count as well as hashes/states; a
+local RTX 3070 regression found and fixed the old count-reset behavior.
+`MacroDenseRead::enqueue_future_merge` validates then merges a received sorted
+frame using local dense identity refs (the sender's state_ref is not a receive
+row). The two-rank fixture now tests that same-key offers from two sources
+retain the first future state. Private Kaggle 2xT4 version 4 is running this
+fixture and the standalone checked-merge regression under four sanitizers.
+This still lacks distributed depth settlement and a production scheduler.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly
