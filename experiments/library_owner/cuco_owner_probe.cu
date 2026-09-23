@@ -9,6 +9,17 @@
 #include <iostream>
 #include <stdexcept>
 #include <set>
+#include <type_traits>
+
+template<class Ref>
+__global__ void probe_dynamic_refs(Ref const* refs, uint32_t const* high_words,
+    uint8_t* hits, uint32_t rows) {
+  for (uint32_t row = blockIdx.x * blockDim.x + threadIdx.x; row < rows;
+       row += blockDim.x * gridDim.x) {
+    uint32_t const shard = high_words[row] >> 31;
+    hits[row] = refs[shard].contains(mgbfs::key_index(3, row));
+  }
+}
 
 namespace {
 using Key = std::array<uint32_t, 4>;
@@ -80,6 +91,46 @@ int main() {
   rmm::mr::pool_memory_resource pool{&upstream, pool_bytes, pool_bytes};
   rmm::mr::statistics_resource_adaptor stats{&pool};
   rmm::device_async_resource_ref resource{stats};
+  {
+    // Characterization gate for the rank-batch design: a GPU row picks one
+    // persistent cuco ref by hash prefix, with shared candidate planes.
+    Input history0(1, stream.view(), resource), history1(1, stream.view(), resource);
+    Input candidates(3, stream.view(), resource);
+    Key a{1,2,3,0x11}, b{4,5,6,0x80000022}, c{4,5,7,0x80000022};
+    history0.upload({a}, {0});history1.upload({b}, {0});
+    candidates.upload({a,b,c}, {0,1,2});
+    auto const h0=history0.keys(),h1=history1.keys(),v=candidates.keys();
+    mgbfs::IndexKeyViews views[2]{};
+    for(unsigned word=0;word<4;++word){
+      views[0].planes[0][word]=h0.words[word];
+      views[1].planes[0][word]=h1.words[word];
+      views[0].planes[3][word]=v.words[word];
+      views[1].planes[3][word]=v.words[word];
+    }
+    auto set0=mgbfs::cuco_owner_detail::make_set(2,views[0],resource,stream.view());
+    auto set1=mgbfs::cuco_owner_detail::make_set(2,views[1],resource,stream.view());
+    mgbfs::cuco_owner_detail::insert_rows<<<1,32,0,stream.value()>>>(
+        set0->ref(cuco::insert),0,0,1);
+    mgbfs::cuco_owner_detail::insert_rows<<<1,32,0,stream.value()>>>(
+        set1->ref(cuco::insert),0,0,1);
+    check(cudaGetLastError());
+    using Ref=decltype(set0->ref(cuco::contains));
+    static_assert(std::is_trivially_copyable_v<Ref>);
+    std::array<Ref,2> host_refs{set0->ref(cuco::contains),set1->ref(cuco::contains)};
+    rmm::device_buffer refs(sizeof(host_refs),stream.view(),resource);
+    rmm::device_buffer hits(3,stream.view(),resource);
+    check(cudaMemcpyAsync(refs.data(),host_refs.data(),sizeof(host_refs),
+        cudaMemcpyHostToDevice,stream.value()));
+    probe_dynamic_refs<<<1,32,0,stream.value()>>>(
+        static_cast<Ref const*>(refs.data()),v.words[3],
+        static_cast<uint8_t*>(hits.data()),3);
+    check(cudaGetLastError());
+    std::array<uint8_t,3> actual{};
+    check(cudaMemcpyAsync(actual.data(),hits.data(),actual.size(),
+        cudaMemcpyDeviceToHost,stream.value()));
+    stream.synchronize();
+    require(actual==std::array<uint8_t,3>{1,1,0},"DYNAMIC_SHARD_REF_MEMBERSHIP");
+  }
   {
     constexpr uint32_t incoming = 4096;
     size_t private_bytes;
