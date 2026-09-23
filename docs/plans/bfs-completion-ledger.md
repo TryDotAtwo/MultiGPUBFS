@@ -526,3 +526,10 @@ sanitizers on both T4s, with zero racecheck hazards/warnings. See
 `docs/validation/device-owner-window-2xt4.md`. The Rust scheduler
 does not yet call this bridge or the experimental LSA transport, so no
 end-to-end CPU-dependency claim follows.
+
+The next device route-window leaf derives logical-owner packed begin/count
+from GPU `owner_counts`. Private 2×T4 v4 failed at the expected undefined
+symbol, and v5 passed plain plus all four Compute Sanitizer modes on both
+physical T4s; see `docs/validation/device-owner-route-window-2xt4.md`.
+The Rust scheduler does not yet consume this output, and transport/retirement
+remain CPU-driven. This closes a primitive contract only.
