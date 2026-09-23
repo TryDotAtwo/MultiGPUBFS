@@ -58,9 +58,15 @@ this timing screen. Raw output:
 | CUCO_RANK, fixed 96 MiB pool | 0.407692 / 0.008896 s | 3.635942 / 0.042948 s | 529, 529 |
 | Native CUB_SORT_MERGE | 0.840257 / 0.017192 s | 3.775333 / 0.052005 s | 457, 457 |
 
-The five search samples were 0.406767, 0.416588, 0.407692, 0.421317,
-0.395751 s for CUCO_RANK and 0.840257, 0.851486, 0.823065, 0.911582,
-0.821769 s for CUB. Thus CUCO_RANK is about 2.06x faster for search here,
+| Repeat | CUCO search / durable, s | CUB search / durable, s |
+| ---: | ---: | ---: |
+| 0 | 0.406767 / 3.635942 | 0.840257 / 3.775333 |
+| 1 | 0.416588 / 3.535148 | 0.851486 / 3.826461 |
+| 2 | 0.407692 / 3.592994 | 0.823065 / 3.723329 |
+| 3 | 0.421317 / 3.759709 | 0.911582 / 3.906288 |
+| 4 | 0.395751 / 3.650308 | 0.821769 / 3.688242 |
+
+Thus CUCO_RANK is about 2.06x faster for search here,
 with 72 MiB (15.8%) more sampled device VRAM per rank. The fixed pool fits
 this S10 workload; its peak requested suballocations are 58,623,603 and
 58,613,139 bytes, not a fragmentation bound. Relative to the earlier 512 MiB
