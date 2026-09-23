@@ -476,6 +476,8 @@ pub struct DistributedNativeBfs {
     sorted_hashes: Buffer,
     sorted_refs: Buffer,
     route_count: Buffer,
+    #[cfg(feature = "library-owner")]
+    owner_window: Option<Buffer>,
     packed_states: Buffer,
     owner_counts: Buffer,
     recv_states: Buffer,
@@ -1152,6 +1154,8 @@ impl DistributedNativeBfs {
             sorted_hashes: b("sorted_hashes")?,
             sorted_refs: b("sorted_refs")?,
             route_count,
+            #[cfg(feature = "library-owner")]
+            owner_window: if library_pool_bytes.is_some() { Some(b("owner_window")?) } else { None },
             packed_states: b("packed_states")?,
             owner_counts: b("owner_counts")?,
             recv_states: b("recv_states")?,
@@ -1370,10 +1374,11 @@ impl DistributedNativeBfs {
         &mut self,
         source_states: *const u8,
         source_hashes: *const c_void,
-        rows: u32,
+        begin: *const u32,
+        rows: *const u32,
+        source_rows: *const u32,
     ) -> Result<()> {
         let stream = self.stream.0;
-        self.route_count.put(&[rows])?;
         let library = self.library_owner.as_mut().ok_or("LIBRARY_OWNER_MISSING")?;
         if library.rank.is_null() || !library.rank_mode {
             return Err("LIBRARY_RANK_NOT_OPEN".into());
@@ -1385,12 +1390,11 @@ impl DistributedNativeBfs {
             source_indices: std::ptr::null(),
         };
         unsafe {
-            check(mgbfs_library_candidates_from_aos_v1(
-                source_hashes, rows, self.candidates, library.scratch.ptr,
-                library.scratch.bytes as u64, stream, &mut candidates,
+            check(mgbfs_library_candidates_from_aos_window_v1(
+                source_hashes, begin, rows, self.candidates, self.candidates,
+                library.scratch.ptr, library.scratch.bytes as u64,
+                self.ring.ptr.cast(), self.control.ptr.cast(), stream, &mut candidates,
             ))?;
-            // The fixed-capacity rank ABI reads only valid_rows on device.
-            candidates.keys.rows = self.candidates;
         }
         let mut batch = RankDeviceBatchV1 {
             high_words: std::ptr::null(), valid_rows: std::ptr::null(),
@@ -1401,7 +1405,7 @@ impl DistributedNativeBfs {
         };
         unsafe {
             check(mgbfs_library_rank_compare_v1(
-                library.rank, epoch, candidates, self.route_count.ptr.cast(),
+                library.rank, epoch, candidates, rows,
                 self.control.ptr.cast(), self.ring.ptr.cast(), &mut batch,
             ))?;
             check(mgbfs_owner_shard_counts(
@@ -1421,7 +1425,7 @@ impl DistributedNativeBfs {
                 self.extent.ptr.cast(),
             ))?;
             check(mgbfs_state_materialize_rank_batch(
-                source_states, batch.valid_rows, self.candidates, batch.source_indices,
+                source_states, source_rows, self.candidates, batch.source_indices,
                 batch.selected_count, self.candidates, self.stride as u32,
                 self.states.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(),
                 self.extent.ptr.cast(), stream,
@@ -1446,7 +1450,7 @@ impl DistributedNativeBfs {
         source_group: usize,
     ) -> Result<()> {
         if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
-            return self.commit_rank_library_batch(source_states, source_hashes, rows);
+            return Err("RANK_OWNER_REQUIRES_DEVICE_WINDOW".into());
         }
         let s = self.stream.0;
         self.route_count.put(&[rows])?;
@@ -2247,6 +2251,17 @@ impl DistributedNativeBfs {
                     s,
                 )
             })?;
+            #[cfg(feature = "library-owner")]
+            if let Some(library) = self.library_owner.as_ref().filter(|library| library.rank_mode) {
+                let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
+                check(unsafe {
+                    mgbfs_owner_window_from_counts(
+                        self.cfg.world, self.candidates, library.logical_owner,
+                        self.owner_counts.ptr.cast(), self.route_count.ptr.cast(),
+                        window.ptr.cast(), window.at(4).cast(), s,
+                    )
+                })?;
+            }
             check(unsafe { cudaStreamSynchronize(s) })?;
             let routed = self.route_count.one::<u32>()?;
             let mut owner_counts = [0u32; 8];
@@ -2397,6 +2412,8 @@ impl DistributedNativeBfs {
                 let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
+                #[cfg(feature = "library-owner")]
+                let rank_mode = self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
@@ -2414,6 +2431,23 @@ impl DistributedNativeBfs {
                         (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
                     ),
                     |(group, (states, hashes, rows))| {
+                        #[cfg(feature = "library-owner")]
+                        if rank_mode {
+                            if !crate::route_count::rank_owner_group_active(world, round, group)? {
+                                return Ok(());
+                            }
+                            let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
+                            let (states, hashes, begin, rows, source_rows) = if group == 0 {
+                                (self.packed_states.ptr.cast(), self.sorted_hashes.ptr,
+                                 window.ptr.cast(), unsafe { window.at(4) }.cast(),
+                                 self.route_count.ptr.cast())
+                            } else {
+                                (self.recv_states.ptr.cast(), self.recv_hashes.ptr,
+                                 unsafe { window.at(8) }.cast(), self.recv_count.ptr.cast(),
+                                 self.recv_count.ptr.cast())
+                            };
+                            return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows);
+                        }
                         self.commit_owner_batch(states, hashes, rows, group)
                     },
                     || {

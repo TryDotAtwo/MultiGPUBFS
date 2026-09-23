@@ -375,6 +375,16 @@ pub mod ffi {
             owner_counts: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_owner_window_from_counts(
+            world: u32,
+            packed_capacity: u32,
+            logical_owner: u32,
+            owner_counts: *const u32,
+            routed_count: *const u32,
+            begin: *mut u32,
+            rows: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_unique_id(id128: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create(
             rank: u32,

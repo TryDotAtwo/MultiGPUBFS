@@ -90,6 +90,19 @@ extern "C" {
         cuda_stream: *mut c_void,
         rank_owner: *mut RankHandle,
     ) -> i32;
+    pub fn mgbfs_library_candidates_from_aos_window_v1(
+        hashes: *const c_void,
+        begin: *const u32,
+        rows: *const u32,
+        source_capacity: u32,
+        window_capacity: u32,
+        scratch: *mut c_void,
+        scratch_bytes: u64,
+        ring: *mut crate::native_owner::Ring,
+        owner: *mut crate::native_owner::Control,
+        cuda_stream: *mut c_void,
+        result: *mut CandidatesV1,
+    ) -> i32;
     pub fn mgbfs_library_rank_compare_v1(
         rank_owner: RankHandle,
         epoch: u64,

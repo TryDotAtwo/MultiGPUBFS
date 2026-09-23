@@ -31,6 +31,7 @@ fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     assert_eq!(bytes("states"), 4096);
     assert_eq!(bytes("next_extents"), 2 * std::mem::size_of::<mgbfs_cuda::native_owner::Extent>() as u64);
     assert_eq!(bytes("next_extent_count"), 4);
+    assert_eq!(bytes("owner_window"), 3 * std::mem::size_of::<u32>() as u64);
     for legacy in ["accepted", "lengths", "counts", "selected"] {
         assert!(!ledger.allocations.iter().any(|a| a.name == legacy));
     }

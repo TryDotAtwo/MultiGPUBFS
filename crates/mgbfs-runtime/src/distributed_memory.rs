@@ -135,6 +135,7 @@ pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> 
         result.add(&allocation.name, bytes, 1, 256)?;
     }
     result.add("library_candidates", candidates.allocation_bytes, 1, 256)?;
+    result.add("owner_window", 3, 4, 256)?;
     result.add("next_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
     result.add("next_extent_count", 1, 4, 256)?;
     Ok(result)

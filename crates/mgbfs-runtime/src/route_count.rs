@@ -9,6 +9,16 @@ pub fn exchange_peer(world: u32, rank: u32, round: u32) -> Result<u32> {
     Ok(rank ^ round)
 }
 
+/// Fixed owner job order independent of the peer's device-resident row count.
+/// Group 0 consumes local rows once; group 1 consumes every real peer round,
+/// including an empty payload. The world-one synthetic round has no peer.
+pub fn rank_owner_group_active(world: u32, round: u32, group: usize) -> Result<bool> {
+    if !world.is_power_of_two() || world > 8 || round == 0 || round >= world.max(2) || group > 1 {
+        return Err("RANK_OWNER_ROUND".into());
+    }
+    Ok(if group == 0 { round == 1 } else { world > 1 })
+}
+
 /// Rank-indexed contiguous intervals in a logical-owner-sorted packed buffer.
 /// Only metadata is permuted; payload bytes are not copied or resorted.
 pub fn packed_rank_ranges(

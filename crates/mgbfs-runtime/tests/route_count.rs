@@ -1,6 +1,20 @@
 use mgbfs_runtime::route_count::routed_count;
 
 #[test]
+fn rank_owner_executes_local_once_and_remote_including_empty_peer_rounds() {
+    use mgbfs_runtime::route_count::rank_owner_group_active;
+    assert!(rank_owner_group_active(2, 1, 0).unwrap());
+    assert!(!rank_owner_group_active(4, 2, 0).unwrap());
+    assert!(rank_owner_group_active(2, 1, 1).unwrap());
+    assert!(rank_owner_group_active(8, 7, 1).unwrap());
+    assert!(rank_owner_group_active(1, 1, 0).unwrap());
+    assert!(!rank_owner_group_active(1, 1, 1).unwrap());
+    for (world, round, group) in [(0, 1, 0), (3, 1, 1), (2, 0, 0), (2, 2, 1), (2, 1, 2)] {
+        assert!(rank_owner_group_active(world, round, group).is_err());
+    }
+}
+
+#[test]
 fn mapped_ranges_preserve_packed_offsets_with_empty_late_owners() {
     use mgbfs_runtime::route_count::packed_rank_ranges;
     let ranges =
