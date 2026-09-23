@@ -540,3 +540,7 @@ see the same validation record. The nonzero-window materialization fixture
 passed plain on both T4s in v21 and all four sanitizer modes in v22, proving
 that absolute source ordinals need the *whole source* row bound rather than
 the narrower owner-window count.
+The rank-owner candidate-copy guard had a v23 expected RED after sticky fatal,
+then v24 plain and v25 four-sanitizer GREEN on both physical T4s at exact
+source `540698c`; see the same validation record. This still does not wire
+the owner path into Rust or remove transport/retirement host dependencies.

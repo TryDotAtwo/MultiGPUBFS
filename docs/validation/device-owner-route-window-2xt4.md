@@ -35,6 +35,19 @@ on both T4s: zero reported errors and zero racecheck hazards/warnings.
 Raw output: ignored `test_results/kaggle_absolute_source_materialize_v21/`
 and `test_results/kaggle_absolute_source_materialize_sanitizers_v22/`.
 
+The rank-owner candidate-copy guard was tested separately. At source
+`486a5a390287e8001930b535cf536a756a00c399`, private v23 reproduced
+`RANK_FATAL_MUST_NOT_READ_CANDIDATES`: after a sticky capacity fatal, another
+queued compare overwrote the shared candidate plane. Source
+`540698c1cab3b50c8d966bb66390f66d7da71666` added a device-side early
+return in `copy_candidates`. Private v24 passed the fixture in plain mode on
+both T4s; v25 passed plain and all four Compute Sanitizer modes on both T4s,
+with zero errors and zero racecheck hazards/warnings. Raw outputs: ignored
+`test_results/kaggle_owner_fatal_scratch_red_v23/`,
+`test_results/kaggle_owner_fatal_scratch_green_v24/`, and
+`test_results/kaggle_owner_fatal_scratch_sanitizers_v25/`. This covers a
+preexisting fatal, not an initially clean `valid_rows > capacity` input.
+
 This is a route-window leaf gate, **not** evidence that the Rust BFS scheduler
 uses the device-only path. Host-sized NCCL exchange, owner control snapshots
 and CPU retirement still remain in the current runtime.
