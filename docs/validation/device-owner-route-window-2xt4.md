@@ -30,7 +30,10 @@ not the owner-window row count, when the window begins after zero. Private
 `trydotatwo/mgbfs-cuco-dynamic-shard-refs-t4` v21 at source
 `9b8e28221770a91cb0d260bb197adb6031a5b9c7` passed the actual
 nonzero-window materialization fixture on both physical T4s in plain mode.
-Raw output: ignored `test_results/kaggle_absolute_source_materialize_v21/`.
+The same source in v22 passed plain plus all four Compute Sanitizer tools
+on both T4s: zero reported errors and zero racecheck hazards/warnings.
+Raw output: ignored `test_results/kaggle_absolute_source_materialize_v21/`
+and `test_results/kaggle_absolute_source_materialize_sanitizers_v22/`.
 
 This is a route-window leaf gate, **not** evidence that the Rust BFS scheduler
 uses the device-only path. Host-sized NCCL exchange, owner control snapshots
