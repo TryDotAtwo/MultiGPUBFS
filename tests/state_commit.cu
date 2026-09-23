@@ -7,6 +7,9 @@
 #include <array>
 #include <set>
 #include <numeric>
+extern "C" int mgbfs_state_publish_next_extent(MgbfsStateRingControl*,
+    MgbfsOwnerControl*,const MgbfsStateExtent*,uint32_t*,
+    MgbfsStateExtent*,uint32_t,void*);
 struct alignas(16) Hash {uint32_t w[4];};
 using Matrix=std::array<uint8_t,16>;
 static Matrix child(Matrix a,unsigned move,unsigned modulus){unsigned row=move/2;int sign=move%2?-1:1;
@@ -72,6 +75,42 @@ static void rank_batch_reservation(unsigned mode){
     req(rr.tail==9&&rr.descriptor_tail==2&&layer.get()[0]==5,"rank batch counters");
     req(offsets.get()==std::vector<uint32_t>({0,2,2,3}),"rank batch offsets");
   }
+}
+static void next_extent_publication(){
+  Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);
+  Device<MgbfsStateExtent> incoming(1),next(2);Device<uint32_t> count(1);
+  ring.put({{0,10,0,3,8,4,0,0,0}});owner.put({MgbfsOwnerControl{}});
+  auto publish=[&](MgbfsStateExtent e){
+    incoming.put({e});
+    req(mgbfs_state_publish_next_extent(ring.p,owner.p,incoming.p,count.p,
+        next.p,2,nullptr)==0,"next extent enqueue");
+    ck(cudaDeviceSynchronize());
+  };
+  MgbfsStateExtent first{};first.sequence=4;first.begin=4;first.count=2;
+  first.descriptor=0;first.granted_rows=2;first.ready=1;
+  publish(first);
+  req(count.get()[0]==1&&next.get()[0].count==2&&
+      next.get()[0].padding[1]==0,"first next extent");
+  MgbfsStateExtent adjacent{};adjacent.sequence=6;adjacent.begin=6;
+  adjacent.count=2;adjacent.descriptor=1;adjacent.granted_rows=2;
+  adjacent.ready=1;
+  publish(adjacent);
+  req(count.get()[0]==1&&next.get()[0].count==4&&
+      next.get()[0].padding[1]==1,"adjacent next extents merge");
+  MgbfsStateExtent wrapped{};wrapped.sequence=8;wrapped.begin=0;
+  wrapped.count=2;wrapped.descriptor=2;wrapped.granted_rows=2;
+  wrapped.ready=1;
+  publish(wrapped);
+  auto entries=next.get();
+  req(count.get()[0]==2&&entries[0].sequence==4&&entries[0].count==4&&
+      entries[1].sequence==8&&entries[1].count==2,
+      "wrapped next extent remains separate");
+  ring.put({{4,12,0,4,8,4,0,0,0}});
+  MgbfsStateExtent third{};third.sequence=11;third.begin=3;third.count=1;
+  third.descriptor=3;third.granted_rows=1;third.ready=1;
+  publish(third);
+  req(ring.get()[0].fatal&&owner.get()[0].error&&count.get()[0]==2&&
+      next.get()[1].count==2,"third extent must fail atomically");
 }
 static void shard_count_directory(unsigned mode){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);
@@ -222,5 +261,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
