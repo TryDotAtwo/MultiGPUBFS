@@ -306,7 +306,7 @@ Commit `0efee98` adds nonblocking completion polling for settlement, reader rele
 
 ## 2026-09-23 CPU synchronization audit, verified against e18859b
 
-The transferred static audit is preserved as the user-owned working file
+The transferred static audit is preserved as the tracked file
 `docs/validation/2026-09-23-hot-path-sync-audit.md`. The following source
 dependencies remain on current HEAD; their performance cost is **unmeasured**.
 
@@ -347,5 +347,6 @@ read after pack to schedule NCCL payloads, so **the batch remains CPU-driven**.
 The independent T4 primitive gate passed on both physical T4s with plain,
 memcheck, racecheck, initcheck and synccheck; see
 `docs/validation/device-count-pack-2xt4.md`. Full `mgbfs-distributed-sanitizer`
-Kaggle v47 at this source is pending. This slice is not an owner DAG capture,
+Kaggle v47 stopped because the harness expected 12 archive tests while 13
+passed. The corrected v48, pinned to the same source, is running. This slice is not an owner DAG capture,
 transport redesign or latency improvement claim.
