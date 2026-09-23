@@ -544,3 +544,8 @@ The rank-owner candidate-copy guard had a v23 expected RED after sticky fatal,
 then v24 plain and v25 four-sanitizer GREEN on both physical T4s at exact
 source `540698c`; see the same validation record. This still does not wire
 the owner path into Rust or remove transport/retirement host dependencies.
+The initially clean `valid_rows > capacity` case then produced a distinct v26
+RED: one thread set fatal while others still copied candidate input. A
+uniform early return in `copy_candidates` at `62bec61` passed the v27 plain
+owner fixture on both T4s; sanitizer validation is separate. This strengthens
+fail-fast but remains an isolated owner leaf, not end-to-end BFS integration.

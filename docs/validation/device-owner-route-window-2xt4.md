@@ -48,6 +48,16 @@ with zero errors and zero racecheck hazards/warnings. Raw outputs: ignored
 `test_results/kaggle_owner_fatal_scratch_sanitizers_v25/`. This covers a
 preexisting fatal, not an initially clean `valid_rows > capacity` input.
 
+The clean over-capacity case was reproduced at source
+`5769e7356eb9a9e014ee6fc11664a3a1bd6b86d1`: private v26 failed the
+focused fixture with `RANK_OVERCAP_MUST_NOT_READ_CANDIDATES`. The copying
+kernel poisoned the control from one thread but other threads still read
+candidate input. Source `62bec6155edae372b244309b2a044bbb13f226a6`
+returns every thread before any candidate read when `valid_rows > capacity`.
+Private v27 passed the full plain owner fixture on both T4s. Raw outputs:
+ignored `test_results/kaggle_owner_overcap_red_v26/` and
+`test_results/kaggle_owner_overcap_green_v27/`.
+
 This is a route-window leaf gate, **not** evidence that the Rust BFS scheduler
 uses the device-only path. Host-sized NCCL exchange, owner control snapshots
 and CPU retirement still remain in the current runtime.
