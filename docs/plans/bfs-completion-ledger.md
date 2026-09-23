@@ -631,5 +631,9 @@ both with verified archives and identical 46-layer histograms. Search medians
 were 0.380726 and 0.823757 s, while sampled full-device peaks were 945 and
 457 MiB/rank. Durable medians were 3.774029 and 3.899147 s. This is a
 search-speed/VRAM trade, not a durable throughput win or proof for larger
-graphs. The paired 96 MiB-pool screen is a pending capacity/Pareto gate; see
-`docs/validation/cuco-rank-paired-s10-2xt4.md`.
+graphs. The paired 96 MiB-pool screen subsequently completed on physical
+2×T4: ten archive-verified S10 runs, identical 46-layer histograms,
+CUCO_RANK/CUB search medians 0.407692/0.840257 s and sampled device peaks
+529/457 MiB per rank. This establishes a smaller-pool S10 Pareto point,
+not full-state cross-backend equality for S10, larger-graph capacity or a
+CPU-free runtime. See `docs/validation/cuco-rank-paired-s10-2xt4.md`.

@@ -44,6 +44,35 @@ raising only that task's timeout to 2700 s. Its BFS code, pool size, workload
 and paired baseline remain unchanged; the source pin advances to `8b5fb3f`
 only for this notebook configuration change.
 
+Version 3 **completed** on two physical T4s at source
+`8b5fb3fa0acfc93b93a02e5911f511547f37ead9` (native baseline still
+`013ed5c`). All ten measured runs are `COMPLETE`, unprofiled, with two
+`VERIFIED` rank archives apiece; all have the same 46-layer histogram totaling
+3,628,800 states. The library runs report the same 128-bit seed and a fixed
+100,663,296-byte pool on each rank. No four-sanitizer run was included in
+this timing screen. Raw output:
+`test_results/kaggle_cuco_rank_paired_s10_pool96_v3/library-owner/`.
+
+| Owner, 2xT4 | Search median / MAD | Durable median / MAD | Sampled peak MiB/rank |
+| --- | ---: | ---: | ---: |
+| CUCO_RANK, fixed 96 MiB pool | 0.407692 / 0.008896 s | 3.635942 / 0.042948 s | 529, 529 |
+| Native CUB_SORT_MERGE | 0.840257 / 0.017192 s | 3.775333 / 0.052005 s | 457, 457 |
+
+The five search samples were 0.406767, 0.416588, 0.407692, 0.421317,
+0.395751 s for CUCO_RANK and 0.840257, 0.851486, 0.823065, 0.911582,
+0.821769 s for CUB. Thus CUCO_RANK is about 2.06x faster for search here,
+with 72 MiB (15.8%) more sampled device VRAM per rank. The fixed pool fits
+this S10 workload; its peak requested suballocations are 58,623,603 and
+58,613,139 bytes, not a fragmentation bound. Relative to the earlier 512 MiB
+pool run, the 96 MiB version reduces sampled peak by 416 MiB/rank while its
+search median is about 7.1% slower; these are separate Kaggle sessions, not
+a controlled pool-only timing experiment. The archive-inclusive median is
+about 3.7% faster than CUB in v3, but the graph is too short for a durable
+throughput or larger-graph claim. Archive verification checks committed
+checksums/counts; equal histograms are not a cross-backend full-state set
+comparison. No result here removes the remaining CPU route, collective or
+retirement dependencies.
+
 The two owner builds come from pinned different commits, so this is a
 matched-workload comparison, not an otherwise byte-identical binary A/B.
 It does not prove performance on S13/LRX or that removing remaining CPU

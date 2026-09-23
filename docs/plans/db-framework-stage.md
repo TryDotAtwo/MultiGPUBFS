@@ -85,9 +85,13 @@ medians 3.774029 s versus 3.899147 s, and sampled peak VRAM 945 versus
 457 MiB **per rank**. This run reserved a 512 MiB fixed cuCO pool/rank;
 its highest requested suballocations were about 59 MB, which is not by
 itself a proof that a smaller pool fits. A 96 MiB fixed-pool paired gate is
-pending. See `docs/validation/cuco-rank-paired-s10-2xt4.md`. Neither the
-older `CUCO_INDEXED` result nor this small S10 result proves a universal
-owner choice or removes the host-controlled route/transport path.
+now complete: all ten S10 runs have verified rank archives and matching
+46-layer histograms. With 96 MiB fixed pool/rank, CUCO_RANK versus CUB
+search medians are 0.407692 versus 0.840257 s, durable medians 3.635942
+versus 3.775333 s, and sampled full-device peaks 529 versus 457 MiB/rank.
+The smaller pool therefore gives a measured S10 search-speed/VRAM Pareto
+point, not a universal owner choice or an end-to-end CPU-free path. See
+`docs/validation/cuco-rank-paired-s10-2xt4.md` for all samples and limits.
 
 On eight H200, the cuCollections S13 search-only run completed in
 11.716894 seconds (five-run median) at 195.55 GiB externally sampled total
