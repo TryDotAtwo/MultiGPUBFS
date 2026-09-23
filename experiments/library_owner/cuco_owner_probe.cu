@@ -1,5 +1,6 @@
 // Real indexed owner contract: stable committed keys, KEEP_FIRST and fail-fast.
 #include "cuco_owner.cuh"
+#include "cuco_rank_batch.cuh"
 #include <rmm/cuda_stream.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
@@ -130,6 +131,64 @@ int main() {
         cudaMemcpyDeviceToHost,stream.value()));
     stream.synchronize();
     require(actual==std::array<uint8_t,3>{1,1,0},"DYNAMIC_SHARD_REF_MEMBERSHIP");
+  }
+  {
+    // One GPU transaction spans two persistent shards. The host supplies only
+    // fixed capacities and launches; all survivor and reservation counts stay
+    // on device until this assertion point.
+    constexpr uint32_t cap=8;
+    Input previous0(1,stream.view(),resource),previous1(1,stream.view(),resource);
+    Input batch(cap,stream.view(),resource);
+    Key old0{1,2,3,0x100},x{4,5,6,0x110};
+    Key old1{1,2,3,0x80000100},y{4,5,6,0x80000110};
+    previous0.upload({old0},{0});previous1.upload({old1},{0});
+    batch.upload({old0,x,x,old1,y,y},{0,10,99,0,20,98});
+    rmm::device_buffer valid(sizeof(uint32_t),stream.view(),resource);
+    uint32_t six=6;
+    check(cudaMemcpyAsync(valid.data(),&six,sizeof(six),cudaMemcpyHostToDevice,stream.value()));
+    rmm::device_buffer ring(sizeof(MgbfsStateRingControl),stream.view(),resource);
+    rmm::device_buffer control(sizeof(MgbfsOwnerControl),stream.view(),resource);
+    rmm::device_buffer extent(sizeof(MgbfsStateExtent),stream.view(),resource);
+    rmm::device_buffer layer(sizeof(uint32_t),stream.view(),resource);
+    MgbfsStateRingControl initial_ring{0,0,0,0,16,8,0,0,0};
+    uint32_t zero=0;
+    check(cudaMemcpyAsync(ring.data(),&initial_ring,sizeof(initial_ring),cudaMemcpyHostToDevice,stream.value()));
+    check(cudaMemsetAsync(control.data(),0,sizeof(MgbfsOwnerControl),stream.value()));
+    check(cudaMemcpyAsync(layer.data(),&zero,sizeof(zero),cudaMemcpyHostToDevice,stream.value()));
+    mgbfs::CucoRankBatch owner({previous0.keys(),previous1.keys()},{{},{}},
+        {2,2},cap,0,2,stream.view(),resource);
+    auto d=owner.compare(1,batch.candidates(),static_cast<uint32_t const*>(valid.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()));
+    require(mgbfs_owner_shard_counts(d.high_words,d.valid_rows,d.selected,d.selected_count,
+        cap,0,2,2,d.shard_counts,d.shard_offsets,
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()),stream.value())==0,
+        "RANK_SHARD_COUNTS_ENQUEUE");
+    require(mgbfs_state_reserve_rank_batch(
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateExtent*>(extent.data()),d.shard_counts,
+        d.accepted_counts,d.accepted_capacities,2,d.shard_offsets,
+        static_cast<uint32_t*>(layer.data()),16,cap,0,stream.value())==0,
+        "RANK_RESERVE_ENQUEUE");
+    owner.commit(1,static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsStateExtent*>(extent.data()));
+    stream.synchronize();
+    uint32_t got_layer=0;std::array<uint32_t,2> got_counts{};
+    MgbfsOwnerControl got_control{};MgbfsStateExtent got_extent{};
+    check(cudaMemcpy(&got_layer,layer.data(),sizeof(got_layer),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(got_counts.data(),d.accepted_counts,sizeof(got_counts),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(&got_control,control.data(),sizeof(got_control),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(&got_extent,extent.data(),sizeof(got_extent),cudaMemcpyDeviceToHost));
+    require(!got_control.error&&got_control.stage==2&&got_layer==2&&
+        got_extent.count==2&&got_counts==std::array<uint32_t,2>{1,1},
+        "RANK_BATCH_DEVICE_COMMIT");
+    require(read_keys(owner.export_shard(0,1),stream.view())==std::vector<Key>{x}&&
+        read_keys(owner.export_shard(1,1),stream.view())==std::vector<Key>{y},
+        "RANK_BATCH_ACCEPTED_KEYS");
+    owner.complete(1);
   }
   {
     constexpr uint32_t incoming = 4096;
