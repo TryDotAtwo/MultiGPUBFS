@@ -79,7 +79,7 @@ static void rank_batch_reservation(unsigned mode){
 static void next_extent_publication(){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);
   Device<MgbfsStateExtent> incoming(1),next(2);Device<uint32_t> count(1);
-  ring.put({{0,10,0,3,8,4,0,0,0}});owner.put({MgbfsOwnerControl{}});
+  ring.put({{4,10,0,3,8,4,0,0,0}});owner.put({MgbfsOwnerControl{}});
   auto publish=[&](MgbfsStateExtent e){
     incoming.put({e});
     req(mgbfs_state_publish_next_extent(ring.p,owner.p,incoming.p,count.p,
