@@ -236,6 +236,12 @@ passed the stricter compact-layout fixture at `e085f0a` (15/15 checks).
 See `docs/validation/bounded-owner-compact-layout-2xt4.md`.
 The new ABI has **not** been wired into `RunConfigV1`, provisional slot
 lifecycles, the `2*Km` history-window compare, or the distributed scheduler.
+An additional `compare_history_layout` leaf now accepts a fixed sequence of
+bounded read-only history ranges and the same compact accepted directory. Its
+three-slot CUB fixture passed physical 2xT4 plain + all four sanitizers per
+GPU at source `80be3aa`; BMMA passed 15/15 checks at the same source. This covers GPU
+membership across more than two old layers but **not** the host/device slot
+rotation, full 2*Km residency, or weighted distributed finalization.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 

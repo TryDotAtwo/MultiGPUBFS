@@ -42,6 +42,12 @@ and device-side `[slot][bucket]` ranges. The fixture covers three history
 slots, duplicate priority, accepted-next membership, stable survivor order,
 and an invalid history range that must not mutate accepted counts.
 
-Private Kaggle CUB version 4 and BMMA version 6 were launched on physical
-2xT4. Their compile/sanitizer outcomes are **pending**. The implementation
-is still a leaf and does not establish history-slot rotation or full BFS.
+Private Kaggle CUB version 4 completed on two physical T4s: source
+`80be3aa`, 10/10 plain and sanitizer checks passed, with zero reported
+racecheck hazards/errors/warnings. Its raw logs are in ignored
+`target/bounded-owner-history-v4/`. BMMA version 6 at the same source passed
+15/15 checks over tile limits 1/8/256, including all four sanitizers, and
+SASS contains `BMMA.88128.XOR.POPC`. Raw logs are in ignored
+`target/bmma-owner-history-v6/`; both summaries report `COMPLETE` and two
+Tesla T4 devices. The implementation is still a leaf and does not establish
+history-slot rotation or full BFS.
