@@ -46,9 +46,10 @@ int mgbfs_bounded_owner_commit(void* plan, const MgbfsBucketJob* jobs,
     uint32_t* accepted_counts, const MgbfsOwnerCounts* counts,
     MgbfsOwnerControl* control, const uint32_t* granted_rows,
     uint32_t* survivor_indices, void* stream);
-/* Compact future arena variant. offsets[bucket] and capacities[bucket] are
- * immutable device arrays; every configured bucket extent must lie within
- * accepted_records. The compare validates touched extents before any commit.
+/* Compact future arena variant. offsets has buckets+1 elements and capacities
+ * has buckets elements. Both are immutable device arrays. Compare validates
+ * touched extents against the prefix directory and accepted_records before
+ * any commit; preflight validates the whole directory and uploads it once.
  * Both calls must use the same plan, ordered stream and layout arrays. */
 int mgbfs_bounded_owner_compare_layout(void* plan, const MgbfsBucketJob* jobs,
     uint32_t job_count, uint32_t rows, const void* incoming,

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 
-SOURCE_COMMIT = "0c27d0a491cc733bc6d87d688de8adc396db880c"
+SOURCE_COMMIT = "a98fceb7bf75689ba0de89472573af50b32f427f"
 
 def main():
     output = Path("/kaggle/working/bounded-owner-gate")

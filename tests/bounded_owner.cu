@@ -32,13 +32,13 @@ static void compact_layout() {
   void* plan=nullptr;require(create_owner(8,2,8,&plan)==0,"layout create");
   Device<Key> in(8),old(1),accepted(8);
   Device<uint32_t> lengths(2),caps(2),grant(1),selected(8);
-  Device<uint64_t> offsets(2);
+  Device<uint64_t> offsets(3);
   Device<MgbfsBucketJob> jobs(2);Device<MgbfsOwnerCounts> counts(2);
   Device<MgbfsOwnerControl> control(1);
   in.put(keys({1,2,2,4,8,9}));
   auto hashes=std::vector<Key>(8);hashes[0]={{1,0,0,0}};
   hashes[5]={{8,0,0,0}};accepted.put(hashes);
-  lengths.put({1,1});caps.put({5,3});offsets.put({0,5});grant.put({3});
+  lengths.put({1,1});caps.put({5,3});offsets.put({0,5,8});grant.put({3});
   jobs.put({{0,0,{0,4},{0,0},{0,0},1,11},
             {1,0,{4,2},{0,0},{0,0},1,11}});
   auto compare=[&]{return mgbfs_bounded_owner_compare_layout(plan,jobs.p,2,6,
@@ -57,11 +57,16 @@ static void compact_layout() {
   require(selected.get()[0]==1&&selected.get()[1]==3&&selected.get()[2]==5,
           "layout survivors");
   // Invalid physical extent must fail before the persistent store changes.
-  offsets.put({0,7});jobs.put({{0,0,{0,4},{0,0},{0,0},3,11},
+  offsets.put({0,7,8});jobs.put({{0,0,{0,4},{0,0},{0,0},3,11},
                              {1,0,{4,2},{0,0},{0,0},2,11}});
   require(compare()==0,"bad layout enqueue");
   ck(cudaDeviceSynchronize());require(control.get()[0].error==1,"bad layout rejection");
   require(lengths.get()==std::vector<uint32_t>({3,2}),"bad layout unchanged");
+  // A valid extent with too many new keys fails without partial publication.
+  offsets.put({0,5,8});in.put(keys({10,11,12,13,14,15}));
+  require(compare()==0,"full bucket enqueue");
+  ck(cudaDeviceSynchronize());require(control.get()[0].error==2,"full bucket rejection");
+  require(lengths.get()==std::vector<uint32_t>({3,2}),"full bucket unchanged");
   mgbfs_bounded_owner_destroy(plan);
 }
 static void sweep(unsigned seed,unsigned mode) {

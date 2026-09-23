@@ -56,7 +56,8 @@ __global__ void validate(const MgbfsBucketJob* jobs,uint32_t count,uint32_t rows
     end+=d.incoming.count;
     uint32_t cap=accepted_limit(d.bucket,k,caps);
     uint64_t begin=accepted_begin(d.bucket,k,offsets);
-    if(cap>k||begin>accepted_records||cap>accepted_records-begin){c->error=1;return;}
+    if(cap>k||begin>accepted_records||cap>accepted_records-begin||
+       (offsets&&(offsets[d.bucket+1]<begin||offsets[d.bucket+1]-begin!=cap))){c->error=1;return;}
     if(d.prev.count>k||d.curr.count>k||d.accepted_count>cap){c->error=2;return;}
     if(d.prev.begin>pn||d.prev.count>pn-d.prev.begin||d.curr.begin>cn||d.curr.count>cn-d.curr.begin||
        d.accepted_count!=lengths[d.bucket]){c->error=1;return;}
