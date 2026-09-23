@@ -32,3 +32,16 @@ Local Windows `nvcc` compilation was unavailable because `cl.exe` is absent.
 `mgbfs-cuda --features cuda` Cargo check also requires a locally built
 `MGBFS_CUDA_LIB_DIR`; the Kaggle CUDA compilation and execution are the
 authoritative target-device leaf evidence here.
+
+## Multi-layer history extension pending hardware result
+
+Source `80be3aa02544355235f99e0eabe0a57872f0333c` adds a bounded
+`compare_history_layout` ABI. Its fixed `history_slots` loop compares one
+incoming microbucket job against a flat, immutable `2*Km`-style history arena
+and device-side `[slot][bucket]` ranges. The fixture covers three history
+slots, duplicate priority, accepted-next membership, stable survivor order,
+and an invalid history range that must not mutate accepted counts.
+
+Private Kaggle CUB version 4 and BMMA version 6 were launched on physical
+2xT4. Their compile/sanitizer outcomes are **pending**. The implementation
+is still a leaf and does not establish history-slot rotation or full BFS.
