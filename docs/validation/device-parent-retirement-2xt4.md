@@ -82,6 +82,12 @@ two-GPU test binary passed 3/3 plain tests (one eight-GPU case ignored). This
 proves the CUDA retirement → device word → NCCL vote chain under an injected
 local fault; it does not inject the fault through the full BFS scheduler or
 measure its latency. Raw `test_results/kaggle_retire_fifo_fault_v3/`.
+The v4 run at the same exact source passed 3/3 one-GPU tests on each physical
+T4 and 3/3 two-GPU tests in plain mode and under memcheck, racecheck,
+initcheck and synccheck. The two-GPU set includes the injected FIFO fault;
+memcheck/initcheck/synccheck reported zero errors and racecheck reported zero
+hazards/errors/warnings. The eight-GPU case remained ignored. Raw logs:
+`test_results/kaggle_retire_fifo_fault_sanitizers_v4/`.
 
 The follow-on source `ced41ab` removes a redundant DENSE stream wait after
 the first-round fatal vote, whose own completion already covers the stream.

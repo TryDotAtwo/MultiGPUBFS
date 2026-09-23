@@ -609,6 +609,10 @@ initcheck and synccheck (zero reported errors or hazards). A focused two-rank
 FIFO fault injection at `4bd474b` passed on
 two physical T4s: one local sticky fatal 17 became group fatal 1 on both
 ranks without a hang. Full scheduler-level fault injection remains open.
+The same source passed a second 2×T4 v4 gate with the injected fault under
+plain, memcheck, racecheck, initcheck and synccheck; all reported zero test
+failures and zero sanitizer errors/hazards. This still exercises the focused
+rank fixture, not scheduler-level injected failure.
 This removes one ring-fatal D2H but the collective remains host-blocking and
 owner/transport count decisions remain CPU-driven.
 The follow-up `ced41ab` removes a duplicate DENSE stream drain after the
