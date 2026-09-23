@@ -618,5 +618,18 @@ owner/transport count decisions remain CPU-driven.
 The follow-up `ced41ab` removes a duplicate DENSE stream drain after the
 blocking first-round fatal vote. Its plain 1/2-T4 full-BFS gate passed in
 private Kaggle notebook v5: 3/3 tests per GPU and 3/3 two-GPU tests,
-including the injected FIFO fatal vote. V6 at the same source is running
-all four sanitizer tools; no sanitizer result for this source yet.
+including the injected FIFO fatal vote. V6 at the same source completed
+plain, memcheck, racecheck, initcheck and synccheck on both physical T4s:
+3/3 per device and 3/3 two-rank tests in each mode, with zero sanitizer
+errors/hazards. The two-rank set includes the injected FIFO fatal vote.
+This validates the scoped wait removal, not a CPU-free owner→transport→retirement
+path (`docs/validation/dense-wait-full-bfs-2xt4-v6.md`).
+
+The subsequent unprofiled S10 DENSE five-repeat screen on physical 2×T4
+compared `CUCO_RANK` (512 MiB fixed pool/rank) with preserved native CUB,
+both with verified archives and identical 46-layer histograms. Search medians
+were 0.380726 and 0.823757 s, while sampled full-device peaks were 945 and
+457 MiB/rank. Durable medians were 3.774029 and 3.899147 s. This is a
+search-speed/VRAM trade, not a durable throughput win or proof for larger
+graphs. The paired 96 MiB-pool screen is a pending capacity/Pareto gate; see
+`docs/validation/cuco-rank-paired-s10-2xt4.md`.
