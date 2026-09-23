@@ -2348,11 +2348,10 @@ impl DistributedNativeBfs {
                     live.begin = live.sequence % u64::from(self.cfg.state_ring_capacity);
                     live.count -= extent_offset;
                     live.granted_rows = live.count as u32;
-                    self.extent.put(&[live])?;
                     check(unsafe {
-                        mgbfs_state_retire_dense_prefix(
+                        mgbfs_state_retire_dense_prefix_value(
                             self.ring.ptr.cast(),
-                            self.extent.ptr.cast(),
+                            live,
                             u64::from(parents),
                             s,
                         )
@@ -2428,11 +2427,10 @@ impl DistributedNativeBfs {
                     live.begin = live.sequence % u64::from(self.cfg.state_ring_capacity);
                     live.count -= extent_offset;
                     live.granted_rows = live.count as u32;
-                    self.extent.put(&[live])?;
                     check(unsafe {
-                        mgbfs_state_retire_dense_prefix(
+                        mgbfs_state_retire_dense_prefix_value(
                             self.ring.ptr.cast(),
-                            self.extent.ptr.cast(),
+                            live,
                             u64::from(parents),
                             s,
                         )

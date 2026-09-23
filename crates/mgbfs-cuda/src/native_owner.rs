@@ -115,6 +115,12 @@ mod calls {
             records: u64,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_retire_dense_prefix_value(
+            ring: *mut Ring,
+            extent: Extent,
+            records: u64,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_archive_pack_permutation_u8(
             n: u32,
             stride: u32,
