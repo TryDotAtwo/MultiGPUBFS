@@ -165,3 +165,21 @@ fn macro_frame_payload_rejects_a_mismatched_or_unbounded_weight_before_owner_com
     assert_eq!(validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(), "WIRE_MACRO_WEIGHT");
     assert!(validate_macro_candidate_payload(&payload, &header(), 32, 4).is_err());
 }
+
+#[test]
+fn macro_header_binds_source_ticket_depth_and_future_target_without_changing_unit_frames() {
+    let frame = FrameHeader { kind: FrameKind::MacroDense, depth: 7, count: 1, ..header() };
+    let encoded = encode_macro_header(frame, 3, 4, 16).unwrap();
+    assert_eq!(&encoded[12..16], &3u32.to_le_bytes());
+    let mut expected = expected();
+    expected.kind = FrameKind::MacroDense;
+    expected.depth = 3; // Source depth from the transport ticket.
+    expected.max_records = 1;
+    expected.max_payload = 768;
+    assert_eq!(decode_macro_header(&encoded, &expected, 4).unwrap(), frame);
+    assert_eq!(decode_macro_header(&encoded, &expected, 3).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
+    expected.depth = 2;
+    assert!(decode_macro_header(&encoded, &expected, 4).is_err());
+    assert!(FrameHeader::decode(&encoded, &expected).is_err());
+    assert!(encode_macro_header(frame, 2, 4, 16).is_err());
+}

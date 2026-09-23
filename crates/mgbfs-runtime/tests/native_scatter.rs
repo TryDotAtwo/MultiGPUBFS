@@ -68,8 +68,6 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 assert_eq!(cudaMemcpy(hashes, hash_words.as_ptr().cast(), 32, 1), 0);
                 assert_eq!(cudaMemcpy(refs, ref_words.as_ptr().cast(), 16, 1), 0);
                 assert_eq!(cudaMemsetAsync(fatal, 0, 4, generate_stream), 0);
-                let mut frames =
-                    mgbfs_runtime::dense_frames::DenseFrames::new(&[0, 1], 16, 2, 2048).unwrap();
                 // Isolate materialization from transport. This fixture supplies
                 // an already committed one-row owner result, not an owner BFS.
                 let mut owner_stream = std::ptr::null_mut();
@@ -100,6 +98,15 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 };
                 assert_eq!(cudaMemsetAsync(selected_ptr, 0, 4, owner_stream), 0);
                 for depth in 0..2 {
+                    let mut frames = if depth == 1 {
+                        mgbfs_runtime::dense_frames::DenseFrames::new_macro(
+                            &[0, 1], 16, 2, 2048, depth as u32, 2, 3,
+                        ).unwrap()
+                    } else {
+                        mgbfs_runtime::dense_frames::DenseFrames::new(
+                            &[0, 1], 16, 2, 2048,
+                        ).unwrap()
+                    };
                     for source in 0..2 {
                         for empty in [false, true] {
                             if rank == source {
@@ -189,12 +196,32 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     ),
                                     0
                                 );
-                                let (reader, input) = buffers
-                                    .dense_consumer(launch, &prefix, 7, 16, 2)
-                                    .unwrap()
-                                    .unwrap();
-                                assert_eq!(input.rows, 1);
-                                assert_eq!(input.source_pool, view.source_pool);
+                                let (reader, rows, state_offset, source_pool) = if depth == 1 {
+                                    let (reader, input) = buffers
+                                        .macro_dense_consumer(launch, &prefix, 7, 16, 2, 3)
+                                        .unwrap().unwrap();
+                                    assert_eq!((input.source_depth, input.target_depth), (1, 3));
+                                    let mut encoded_ref = [0u8; 16];
+                                    assert_eq!(cudaMemcpy(
+                                        encoded_ref.as_mut_ptr().cast(),
+                                        base.cast::<u8>().add(input.macro_ref_offset as usize).cast(),
+                                        16, 2,
+                                    ), 0);
+                                    assert_eq!(
+                                        mgbfs_core::wire::MacroCandidateRef::decode_at(
+                                            &encoded_ref, 3, 3,
+                                        ).unwrap().weight,
+                                        2,
+                                    );
+                                    (reader, input.rows, input.state_offset, input.source_pool)
+                                } else {
+                                    let (reader, input) = buffers
+                                        .dense_consumer(launch, &prefix, 7, 16, 2)
+                                        .unwrap().unwrap();
+                                    (reader, input.rows, input.state_offset, input.source_pool)
+                                };
+                                assert_eq!(rows, 1);
+                                assert_eq!(source_pool, view.source_pool);
                                 buffers.seal(launch).unwrap();
                                 assert!(!buffers.drained(launch).unwrap());
                                 assert_eq!(
@@ -221,8 +248,8 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                 );
                                 assert_eq!(
                                     mgbfs_cuda::native_owner::mgbfs_state_materialize_packed(
-                                        base.cast::<u8>().add(input.state_offset as usize),
-                                        input.rows,
+                                        base.cast::<u8>().add(state_offset as usize),
+                                        rows,
                                         selected_ptr.cast(),
                                         1,
                                         16,
@@ -268,10 +295,15 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                 materialized.retire(launch.key.epoch).unwrap();
                                 buffers.complete(reader).unwrap();
                             } else {
-                                assert!(buffers
-                                    .dense_consumer(launch, &[], 7, 16, 2)
-                                    .unwrap()
-                                    .is_none());
+                                if depth == 1 {
+                                    assert!(buffers.macro_dense_consumer(
+                                        launch, &[], 7, 16, 2, 3,
+                                    ).unwrap().is_none());
+                                } else {
+                                    assert!(buffers.dense_consumer(
+                                        launch, &[], 7, 16, 2,
+                                    ).unwrap().is_none());
+                                }
                                 buffers.seal(launch).unwrap();
                             }
                             done.retire(launch.key.epoch).unwrap();

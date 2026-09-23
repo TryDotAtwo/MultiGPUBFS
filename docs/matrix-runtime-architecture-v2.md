@@ -609,8 +609,13 @@ tables above describe device records; the following fixes persisted framing.
 MessageHeader offsets: magic0:u32, schema4:u32, kind8:u32, flags12:u32,
 run_tag16:u64, transport_seq24:u64, source_batch_seq32:u64, depth40:u32,
 src44:u32, dst48:u32, count52:u32, payload_bytes56:u64. Magic=0x4d474232.
-kind: candidate_dense1, candidate_hash2, request3, response4, receipt5.
-flags currently zero. Frames >u32 records must be fragmented before admission.
+kind: candidate_dense1, candidate_hash2, request3, response4, receipt5,
+macro_dense6, macro_hash7. For kinds 1..5 flags are zero. For macro kinds,
+flags12:u32 is the source/current depth from the control ticket, while
+depth40:u32 is the target depth. Require source<target<=source+configured K;
+each MacroCandidateRef must then have source_depth+weight=target. This uses the
+already reserved four bytes without changing legacy kind encoding. Frames
+>u32 records must be fragmented before admission.
 Control TCP envelope: length u64 + run UUID16 + seq u64 + message bytes;
 length bounded before reading/allocating, peer/run/seq validated.
 

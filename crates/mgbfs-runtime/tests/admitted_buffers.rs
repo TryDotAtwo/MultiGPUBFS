@@ -54,6 +54,31 @@ fn validated_dense_consumer_keeps_original_source_bank_until_materialization_fin
 }
 
 #[test]
+fn weighted_consumer_leases_future_depth_frame_from_current_source_ticket() {
+    use mgbfs_core::wire::{encode_macro_header, FrameHeader, FrameKind};
+    let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [2048; 4], 1).unwrap();
+    let source = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
+    d.ready(source, &[2048]).unwrap();
+    let launch = (0..64).find_map(|_| match d.poll().unwrap() {
+        Some(BufferEvent::Launch(l)) => Some(l), _ => None,
+    }).unwrap();
+    let header = FrameHeader { kind: FrameKind::MacroDense, run_tag: 7,
+        sequence: launch.key.epoch, batch: launch.key.generation,
+        depth: 2, source: 0, destination: 0, count: 17 };
+    let mut prefix = [0u8; 256];
+    prefix[..64].copy_from_slice(&encode_macro_header(header, 0, 3, 32).unwrap());
+    d.submit(launch, || Ok(())).unwrap();
+    d.transfer_complete(launch).unwrap();
+    let (consumer, input) = d.macro_dense_consumer(launch, &prefix, 7, 32, 17, 3).unwrap().unwrap();
+    assert_eq!((input.rows, input.target_depth), (17, 2));
+    assert_eq!((input.hash_offset, input.macro_ref_offset, input.state_offset), (256, 768, 1280));
+    d.seal(launch).unwrap();
+    assert!(!d.drained(launch).unwrap());
+    d.complete(consumer).unwrap();
+    d.consume(launch).unwrap();
+}
+
+#[test]
 fn dense_input_rejects_pending_transfer_or_corrupt_prefix_and_poisoning_is_terminal() {
     use mgbfs_core::wire::{FrameHeader, FrameKind};
     for corrupt in [false, true] {

@@ -144,6 +144,15 @@ admission. Local RTX 3070 execution passed byte-for-byte; `sm75` compilation
 passed, but this is not T4 execution or a multi-GPU run. Compute Sanitizer on
 Windows could not launch the test executable (exit 13). Full evidence:
 `docs/validation/2026-09-23-macro-pack-local-gpu.md`.
+The framed NCCL adapter now prepares MacroDense rank ranges, writes ticket-bound
+headers, and decodes source depth separately from target depth. The existing
+ControlPump keeps its unit-depth ticket at the **source** layer; macro header
+byte 12..15 stores that source depth and header.depth stores the weighted
+target. `AdmittedBuffers::macro_dense_consumer` returns a leased, validated
+hash/ref/state view. CPU control and Linux CUDA cross-target checks pass; the
+modified two-rank `native_scatter` gate is prepared but has not yet executed
+on 2xT4. The GPU owner still lacks device-side per-row ref validation and
+future-slot merge wiring, so distributed K>1 is still unavailable.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 

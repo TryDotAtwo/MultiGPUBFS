@@ -4,6 +4,19 @@ use mgbfs_runtime::{
 };
 
 #[test]
+fn weighted_prefix_cannot_be_decoded_as_unit_cost_dense() {
+    use mgbfs_core::wire::{FrameHeader, FrameKind};
+    use mgbfs_runtime::dense_frames::decode_macro_prefix;
+    let key = TicketKey { depth: 3, epoch: 9, source: 0, plane: Plane::Candidate, generation: 3 };
+    let header = FrameHeader { kind: FrameKind::MacroDense, run_tag: 5, sequence: 9,
+        batch: 3, depth: 7, source: 0, destination: 1, count: 2 };
+    let mut prefix = [0u8; 256];
+    prefix[..64].copy_from_slice(&mgbfs_core::wire::encode_macro_header(header, 3, 4, 16).unwrap());
+    assert_eq!(decode_macro_prefix(&prefix, key, 5, 1, 2, 16, 2, 1024, 4).unwrap(), Some(header));
+    assert!(decode_prefix(&prefix, key, 5, 1, 2, 16, 2, 1024).is_err());
+}
+
+#[test]
 fn received_prefix_is_bound_to_ticket_and_exact_envelope_before_owner_use() {
     let key = TicketKey {
         depth: 9,

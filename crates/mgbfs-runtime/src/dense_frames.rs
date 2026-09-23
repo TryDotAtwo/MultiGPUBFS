@@ -19,7 +19,38 @@ pub fn decode_prefix(
     max_records: u32,
     wire_bytes: u64,
 ) -> Result<Option<mgbfs_core::wire::FrameHeader>> {
-    use mgbfs_core::wire::{payload_bytes, ExpectedFrame, FrameHeader, FrameKind};
+    decode_prefix_kind(prefix, key, run_tag, rank, world, stride,
+        max_records, wire_bytes, mgbfs_core::wire::FrameKind::Dense, None)
+}
+
+pub fn decode_macro_prefix(
+    prefix: &[u8],
+    key: crate::scatter_admission::TicketKey,
+    run_tag: u64,
+    rank: u32,
+    world: u32,
+    stride: u32,
+    max_records: u32,
+    wire_bytes: u64,
+    max_weight: u32,
+) -> Result<Option<mgbfs_core::wire::FrameHeader>> {
+    decode_prefix_kind(prefix, key, run_tag, rank, world, stride,
+        max_records, wire_bytes, mgbfs_core::wire::FrameKind::MacroDense, Some(max_weight))
+}
+
+fn decode_prefix_kind(
+    prefix: &[u8],
+    key: crate::scatter_admission::TicketKey,
+    run_tag: u64,
+    rank: u32,
+    world: u32,
+    stride: u32,
+    max_records: u32,
+    wire_bytes: u64,
+    kind: mgbfs_core::wire::FrameKind,
+    max_weight: Option<u32>,
+) -> Result<Option<mgbfs_core::wire::FrameHeader>> {
+    use mgbfs_core::wire::{payload_bytes, ExpectedFrame, FrameHeader};
     if world == 0
         || rank >= world
         || key.source >= world
@@ -29,7 +60,7 @@ pub fn decode_prefix(
         return Err("DENSE_PREFIX_TICKET".into());
     }
     let depth = u32::try_from(key.depth).map_err(|_| "DENSE_PREFIX_DEPTH")?;
-    payload_bytes(FrameKind::Dense, 0, u64::from(stride))?;
+    payload_bytes(kind, 0, u64::from(stride))?;
     if wire_bytes == 0 {
         return if prefix.is_empty() {
             Ok(None)
@@ -44,9 +75,7 @@ pub fn decode_prefix(
         return Err("DENSE_PREFIX_SHAPE".into());
     }
     let bytes = wire_bytes - DENSE_FRAME_PREFIX_BYTES;
-    let header = FrameHeader::decode(
-        &prefix[..64],
-        &ExpectedFrame {
+    let expected = ExpectedFrame {
             run_tag,
             sequence: key.epoch,
             batch: key.generation,
@@ -54,14 +83,18 @@ pub fn decode_prefix(
             source: key.source,
             destination: rank,
             world,
-            kind: FrameKind::Dense,
+            kind,
             max_records,
             max_payload: bytes,
             state_stride: u64::from(stride),
-        },
-    )?;
+        };
+    let header = if let Some(weight) = max_weight {
+        mgbfs_core::wire::decode_macro_header(&prefix[..64], &expected, weight)?
+    } else {
+        FrameHeader::decode(&prefix[..64], &expected)?
+    };
     if header.count == 0
-        || payload_bytes(FrameKind::Dense, header.count, u64::from(stride))? != bytes
+        || payload_bytes(kind, header.count, u64::from(stride))? != bytes
     {
         return Err("DENSE_PREFIX_LENGTH".into());
     }
@@ -75,6 +108,11 @@ pub struct DenseFrame {
     pub offset: u64,
     pub bytes: u64,
 }
+#[derive(Clone, Copy)]
+enum FrameMode {
+    Unit,
+    Macro { source_depth: u32, weight: u32 },
+}
 pub struct DenseFrames {
     owner_to_rank: Vec<u32>,
     frames: Vec<DenseFrame>,
@@ -82,10 +120,29 @@ pub struct DenseFrames {
     stride: u32,
     max_records: u32,
     capacity: u64,
+    mode: FrameMode,
     prepared: bool,
     failed: bool,
 }
 impl DenseFrames {
+    pub fn new_macro(
+        map: &[u32], stride: u32, max_records: u32, capacity: u64,
+        source_depth: u32, weight: u32, max_weight: u32,
+    ) -> Result<Self> {
+        if !map.len().is_power_of_two() || map.len() > 8 ||
+            weight == 0 || weight > max_weight || source_depth.checked_add(weight).is_none() {
+            return Err("MACRO_DENSE_FRAME_CONFIG".into());
+        }
+        let mut frames = Self::new(map, stride, max_records, capacity)?;
+        frames.mode = FrameMode::Macro { source_depth, weight };
+        Ok(frames)
+    }
+    fn kind(&self) -> mgbfs_core::wire::FrameKind {
+        match self.mode {
+            FrameMode::Unit => mgbfs_core::wire::FrameKind::Dense,
+            FrameMode::Macro { .. } => mgbfs_core::wire::FrameKind::MacroDense,
+        }
+    }
     pub fn new(map: &[u32], stride: u32, max_records: u32, capacity: u64) -> Result<Self> {
         if map.is_empty() || map.len() > 128 || stride == 0 || stride % 16 != 0 {
             return Err("DENSE_FRAME_CONFIG".into());
@@ -117,6 +174,7 @@ impl DenseFrames {
             stride,
             max_records,
             capacity,
+            mode: FrameMode::Unit,
             prepared: false,
             failed: false,
         })
@@ -146,7 +204,7 @@ impl DenseFrames {
                 return Err("DENSE_FRAME_RECORD_CAPACITY".into());
             }
             let payload = mgbfs_core::wire::payload_bytes(
-                mgbfs_core::wire::FrameKind::Dense,
+                self.kind(),
                 count,
                 u64::from(self.stride),
             )?;
@@ -200,7 +258,7 @@ impl DenseFrames {
         run_tag: u64,
         out: &mut [[u8; 64]],
     ) -> Result<()> {
-        use mgbfs_core::wire::{FrameHeader, FrameKind};
+        use mgbfs_core::wire::FrameHeader;
         self.frames()?;
         if key.plane != crate::control_wire::Plane::Candidate
             || key.source as usize >= self.frames.len()
@@ -210,18 +268,32 @@ impl DenseFrames {
             return Err("DENSE_FRAME_HEADER_TICKET".into());
         }
         let depth = u32::try_from(key.depth).map_err(|_| "DENSE_FRAME_HEADER_DEPTH")?;
+        let target_depth = match self.mode {
+            FrameMode::Unit => depth,
+            FrameMode::Macro { source_depth, weight } => {
+                if source_depth != depth {
+                    return Err("MACRO_DENSE_FRAME_SOURCE".into());
+                }
+                source_depth.checked_add(weight).ok_or("MACRO_DENSE_FRAME_TARGET")?
+            }
+        };
         for (rank, (frame, bytes)) in self.frames.iter().zip(out).enumerate() {
-            *bytes = FrameHeader {
-                kind: FrameKind::Dense,
+            let header = FrameHeader {
+                kind: self.kind(),
                 run_tag,
                 sequence: key.epoch,
                 batch: key.generation,
-                depth,
+                depth: target_depth,
                 source: key.source,
                 destination: rank as u32,
                 count: frame.count,
-            }
-            .encode(u64::from(self.stride))?;
+            };
+            *bytes = match self.mode {
+                FrameMode::Unit => header.encode(u64::from(self.stride))?,
+                FrameMode::Macro { source_depth, weight } =>
+                    mgbfs_core::wire::encode_macro_header(
+                        header, source_depth, weight, u64::from(self.stride))?,
+            };
         }
         Ok(())
     }
@@ -305,20 +377,20 @@ impl DenseFrames {
                 if frame.count == 0 {
                     continue;
                 }
-                let status = mgbfs_cuda::ffi::mgbfs_exchange_pack_frame(
-                    self.stride,
-                    states,
-                    source_count,
-                    hashes,
-                    refs,
-                    sorted_count,
-                    frame.begin,
-                    frame.count,
-                    output.add((frame.offset + DENSE_FRAME_PREFIX_BYTES) as usize),
-                    frame.bytes - DENSE_FRAME_PREFIX_BYTES,
-                    fatal,
-                    stream,
-                );
+                let payload = output.add((frame.offset + DENSE_FRAME_PREFIX_BYTES) as usize);
+                let bytes = frame.bytes - DENSE_FRAME_PREFIX_BYTES;
+                let status = match self.mode {
+                    FrameMode::Unit => mgbfs_cuda::ffi::mgbfs_exchange_pack_frame(
+                        self.stride, states, source_count, hashes, refs, sorted_count,
+                        frame.begin, frame.count, payload, bytes, fatal, stream,
+                    ),
+                    FrameMode::Macro { source_depth, weight } =>
+                        mgbfs_cuda::ffi::mgbfs_macro_exchange_pack_frame(
+                            self.stride, source_depth, weight, states, source_count,
+                            hashes, refs, sorted_count, frame.begin, frame.count,
+                            payload, bytes, fatal, stream,
+                        ),
+                };
                 if status != 0 {
                     return Err(format!("DENSE_FRAME_NATIVE_{status}"));
                 }

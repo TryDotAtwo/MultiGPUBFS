@@ -58,6 +58,16 @@ pub struct DenseRead {
     pub ordinal_offset: u64,
     pub state_offset: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MacroDenseRead {
+    pub source_pool: bool,
+    pub rows: u32,
+    pub source_depth: u32,
+    pub target_depth: u32,
+    pub hash_offset: u64,
+    pub macro_ref_offset: u64,
+    pub state_offset: u64,
+}
 pub enum BufferEvent {
     Launch(BufferLaunch),
     Finalize(ControlFrame),
@@ -416,6 +426,69 @@ impl AdmittedBuffers {
                     state_offset,
                 },
             )))
+        })
+    }
+    /// The control ticket belongs to the current source depth; the frame may
+    /// target any depth within the fixed macro window. The returned lease keeps
+    /// the original packed source/receive bank alive through owner settlement.
+    /// MacroCandidateRef values still need device-side validation before offer.
+    pub fn macro_dense_consumer(
+        &mut self,
+        l: BufferLaunch,
+        prefix: &[u8],
+        run_tag: u64,
+        stride: u32,
+        max_records: u32,
+        max_weight: u32,
+    ) -> Result<Option<(BufferConsumer, MacroDenseRead)>> {
+        let view = self.payload_view(l)?;
+        self.apply(|s| {
+            let rank = s.rank;
+            let world = s.world as u32;
+            let (p, i) = s.active(l)?;
+            let a = p.live[i].as_ref().unwrap();
+            if !a.transferred {
+                return Err("BUFFER_TRANSFER_PENDING".into());
+            }
+            let Some(header) = crate::dense_frames::decode_macro_prefix(
+                prefix, l.key, run_tag, rank, world, stride,
+                max_records, view.bytes, max_weight,
+            )? else {
+                return Ok(None);
+            };
+            let layout = mgbfs_core::wire::payload_layout(
+                mgbfs_core::wire::FrameKind::MacroDense,
+                header.count,
+                u64::from(stride),
+            )?;
+            let hash_offset = view.offset
+                .checked_add(crate::dense_frames::DENSE_FRAME_PREFIX_BYTES)
+                .ok_or("MACRO_READ_OFFSET")?;
+            let macro_ref_offset = hash_offset
+                .checked_add(layout.planes[1].offset)
+                .ok_or("MACRO_READ_OFFSET")?;
+            let state_offset = hash_offset
+                .checked_add(layout.planes[2].offset)
+                .ok_or("MACRO_READ_OFFSET")?;
+            let end = state_offset
+                .checked_add(layout.planes[2].bytes)
+                .ok_or("MACRO_READ_OFFSET")?;
+            if end > view.offset.checked_add(view.bytes).ok_or("MACRO_READ_OFFSET")? {
+                return Err("MACRO_READ_CAPACITY".into());
+            }
+            let consumer = BufferConsumer {
+                plane: l.key.plane,
+                token: p.receive.consumer(a.bank)?,
+            };
+            Ok(Some((consumer, MacroDenseRead {
+                source_pool: view.source_pool,
+                rows: header.count,
+                source_depth: u32::try_from(l.key.depth).map_err(|_| "MACRO_READ_DEPTH")?,
+                target_depth: header.depth,
+                hash_offset,
+                macro_ref_offset,
+                state_offset,
+            })))
         })
     }
     /// Copy the immutable per-destination byte counts for native scatter into
