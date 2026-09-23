@@ -1,6 +1,7 @@
 #ifndef MGBFS_LIBRARY_OWNER_ABI_H
 #define MGBFS_LIBRARY_OWNER_ABI_H
 #include <stdint.h>
+#include "../../cuda/state_commit.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +29,40 @@ typedef struct MgbfsLibrarySurvivorsV1 {
   uint32_t rows;
   uint32_t reserved;
 } MgbfsLibrarySurvivorsV1;
+
+/* Device-count, multi-shard cuCO owner. Creation borrows host arrays only for
+ * setup, then owns its tables; previous/current GPU key planes remain borrowed
+ * until destruction. Every pointer in the result is device-resident and is
+ * borrowed through the final ordered consumer of this epoch. Call complete
+ * only after all such consumers have completed on the creating stream/event.
+ * No hot-path call reads a survivor count or synchronizes the host.
+ */
+typedef struct MgbfsLibraryRankDeviceBatchV1 {
+  const uint32_t* high_words;
+  const uint32_t* valid_rows;
+  const uint32_t* selected;
+  const uint32_t* selected_count;
+  const uint32_t* source_indices;
+  const uint32_t* accepted_counts;
+  const uint32_t* accepted_capacities;
+  uint32_t* shard_counts;
+  uint32_t* shard_offsets;
+} MgbfsLibraryRankDeviceBatchV1;
+int mgbfs_library_rank_create_cuco_v1(const MgbfsLibraryKeysV1* previous,
+    const MgbfsLibraryKeysV1* current, const uint32_t* accepted_capacities,
+    uint32_t shards, uint32_t incoming_capacity, uint32_t logical_owner,
+    uint32_t world, void* cuda_stream, void** rank_owner);
+int mgbfs_library_rank_compare_v1(void* rank_owner, uint64_t epoch,
+    MgbfsLibraryCandidatesV1 input, const uint32_t* valid_rows,
+    MgbfsOwnerControl* owner, MgbfsStateRingControl* ring,
+    MgbfsLibraryRankDeviceBatchV1* result);
+int mgbfs_library_rank_commit_v1(void* rank_owner, uint64_t epoch,
+    MgbfsOwnerControl* owner, MgbfsStateRingControl* ring,
+    const MgbfsStateExtent* extent);
+int mgbfs_library_rank_complete_v1(void* rank_owner, uint64_t epoch);
+int mgbfs_library_rank_export_shard_v1(void* rank_owner, uint32_t shard,
+    uint32_t rows, MgbfsLibraryKeysV1* result);
+void mgbfs_library_rank_destroy_v1(void* rank_owner);
 
 /* One fixed RMM pool per device, installed before any owner/input allocation.
  * bytes is nonzero and 256-byte aligned; reserve_bytes is at least 1 GiB.
@@ -133,5 +168,6 @@ static_assert(sizeof(MgbfsLibraryKeysV1) == 40, "keys ABI");
 static_assert(sizeof(MgbfsLibraryCandidatesV1) == 48, "candidate ABI");
 static_assert(sizeof(MgbfsLibrarySurvivorsV1) == 24, "survivor ABI");
 static_assert(sizeof(MgbfsLibraryPoolUsageV1) == 24, "pool usage ABI");
+static_assert(sizeof(MgbfsLibraryRankDeviceBatchV1) == 72, "rank batch ABI");
 #endif
 #endif
