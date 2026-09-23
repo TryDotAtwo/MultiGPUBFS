@@ -175,8 +175,11 @@ local RTX 3070 regression found and fixed the old count-reset behavior.
 `MacroDenseRead::enqueue_future_merge` validates then merges a received sorted
 frame using local dense identity refs (the sender's state_ref is not a receive
 row). The two-rank fixture now tests that same-key offers from two sources
-retain the first future state. Private Kaggle 2xT4 version 4 is running this
-fixture and the standalone checked-merge regression under four sanitizers.
+retain the first future state. Private Kaggle 2xT4 version 4 reached the plain
+fixture but failed at an incorrect test expectation: the two owners correctly
+receive different rank-sorted keys (31 and 41). No sanitizer result is
+claimed for v4. The expectation is corrected at `a7a9d5f`; a new pinned
+run is required for the fixture and standalone checked-merge regression.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
