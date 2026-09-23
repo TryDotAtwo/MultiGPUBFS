@@ -303,3 +303,37 @@ CUDA path still needs compile and physical GPU execution before it is relied on.
 Commit `edc738b` added an `AdmittedBuffers` gate: `FinalizeDepth` ACK requires settled macro history and a free replacement slot; admitted `Publish` advances the history window. CPU tests pass. Kaggle private version 9 on two Tesla T4s completed from exact source `edc738be1498fe2b1b1bd5dca881a88f80da5ceb`: the two-rank scatter/rollover fixture and compact-future-bucket fixture each passed plain, memcheck, racecheck, initcheck and synccheck. The Kaggle `summary.json` and logs are retained locally under `test_results/macro-scatter-gate-v9/`; the digest-free summary is transcribed in `docs/validation/macro-scatter-gate-2xt4-v9.md`. This is control-plane and leaf integration, **not** a complete weighted BFS. Full CUDA event binding and end-to-end weighted scheduler remain open.
 
 Commit `0efee98` adds nonblocking completion polling for settlement, reader release and archive D2H lease release; a not-ready poll leaves all control/lease state unchanged. The two-rank fixture now records and queries a real owner-stream CUDA event before settlement. Kaggle private version 10 passed plain and all four Compute Sanitizer modes for both the two-rank fixture and the future-bucket leaf, at exact source `0efee986ac59fd195ef45e5e656d782cec3239b9`; see `docs/validation/macro-event-gate-2xt4-v10.md`. **The production multi-GPU weighted scheduler still does not call this API.** Its event ownership, archive D2H notification, full weighted owner exchange and graph oracle remain outstanding.
+
+## 2026-09-23 CPU synchronization audit, verified against e18859b
+
+The transferred static audit is preserved as the user-owned working file
+`docs/validation/2026-09-23-hot-path-sync-audit.md`. The following source
+dependencies remain on current HEAD; their performance cost is **unmeasured**.
+
+| Boundary | Current code dependency | Required end-state gate |
+|---|---|---|
+| Buffer upload/readback | `distributed_native.rs` `Buffer::put/read/one` synchronizes uploaded host slices and reads device words; `native.rs` has the same synchronous upload pattern | Stable pinned lifetime and device-resident control; no unsafe removal of the wait |
+| cuCollections owner | `commit_library_batch` reads the device directory, loops over shards on CPU, receives a host survivor count, snapshots reserve/materialization, then appends host extents; `cuco_owner.cuh` and `control_transfer.cpp` also drain streams | One bounded device-driven owner transaction across compare, all-capacity reservation, commit and descriptor publication |
+| Native owner/HASH_FIRST | `commit_owner_batch` reads directory and extents; HASH_FIRST reads extra controls/counts and `materialize_hash_first` has its own host waits | Device descriptors and source/target identity preserved through materialization; full profile parity |
+| Route/transport | `advance_inner` reads routed/owner counts; each peer round exchanges host-sized count before variable-size NCCL payload | Explicit device-count transport protocol with bounded bytes, identical collective order and zero-peer participation; fixed-size padding only after a measured traffic/VRAM decision |
+| Parent retirement | `advance_inner` drains producer/owner streams and reads the ring before recycling parent storage | Event- and consumer-owned retirement after archive, transport and owner readers drain |
+| Fatal consensus | `all_max` performs a blocking upload, NCCL reduction, stream drain and readback several times per depth, including batch rounds | Preserve fail-fast and rank-wide fatal propagation while removing per-batch host decision chains or proving their cost acceptable |
+
+This invalidates any claim that the current BFS is fully asynchronous or has
+only a `FinalizeDepth` barrier. The next implementation slice must cover the
+owner-to-transport-to-retirement DAG, not a standalone cuCollections wait.
+Required evidence: exact capacity/traffic formulas, CPU oracle for descriptor
+and lifetime ordering, full-owner CUDA Graph capture without host readback,
+Nsight Systems timeline of a real BFS, complete DENSE/HASH_FIRST and 1/2-rank
+oracles, all four sanitizer modes, and repeated end-to-end time/VRAM panels.
+
+The current NCCL wrapper takes `send_bytes` and `recv_bytes` as host scalars
+(`cuda/nccl_transport.cpp`). If a future protocol sent each peer's entire
+candidate capacity, let `C = batch * moves`, `W = world`, and
+`Q = 16 + packet_stride` bytes per hash+payload pair. Padding would send
+`(W-1)*C*Q` bytes per rank per batch, versus at most `C*Q` actual remote
+bytes and approximately `(W-1)*C*Q/W` when ownership is balanced. Balanced
+traffic inflation is `W` (8x at eight ranks), before retransmission or extra
+staging. A fixed-size NCCL scheme is therefore **not accepted by default**;
+the count/transport protocol remains open until its full cost and GPU event
+ownership are measured.

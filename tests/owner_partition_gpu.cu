@@ -50,6 +50,27 @@ int main(){
     ck(cudaMemcpyAsync(got.data(),counts,36,cudaMemcpyDeviceToHost,s));ck(cudaStreamSynchronize(s));
     for(unsigned i=0;i<w;++i)require(!got[i]);
   }
+  // The producer publishes only a device count. Packing must not require a
+  // host readback before launch, including zero, partial and overflow tails.
+  for (uint32_t valid:{0u,3u,6u,7u}) {
+    ck(cudaMemcpyAsync(n,&valid,4,cudaMemcpyHostToDevice,s));
+    ck(cudaMemsetAsync(counts,0xff,36,s));
+    ck(cudaMemsetAsync(packed,0xcd,96,s));
+    require(!mgbfs_exchange_pack_device_n(4,16,6,(uint8_t*)states,6,
+        keys,refs,n,(uint8_t*)packed,counts,s));
+    std::array<uint32_t,9> got{};std::array<uint32_t,24> actual{};
+    ck(cudaMemcpyAsync(got.data(),counts,36,cudaMemcpyDeviceToHost,s));
+    ck(cudaMemcpyAsync(actual.data(),packed,96,cudaMemcpyDeviceToHost,s));
+    ck(cudaStreamSynchronize(s));
+    if(valid==7){require(got[0]==UINT32_MAX);continue;}
+    std::array<uint32_t,4> want{};
+    for(unsigned i=0;i<valid;++i)++want[(uint64_t(high[i])*4)>>32];
+    for(unsigned i=0;i<4;++i)require(got[i]==want[i]);
+    require(got[4]==UINT32_MAX);
+    for(unsigned i=0;i<valid;++i)for(unsigned j=0;j<4;++j)
+      require(actual[4*i+j]==payload[4*order[i]+j]);
+    for(unsigned i=valid*4;i<24;++i)require(actual[i]==0xcdcdcdcdu);
+  }
   uint64_t invalid=6;ck(cudaMemcpyAsync(refs,&invalid,8,cudaMemcpyHostToDevice,s));
   require(!mgbfs_exchange_pack_n(8,16,6,(uint8_t*)states,6,keys,refs,6,(uint8_t*)packed,counts,s));
   uint32_t marker;ck(cudaMemcpyAsync(&marker,counts,4,cudaMemcpyDeviceToHost,s));ck(cudaStreamSynchronize(s));require(marker==UINT32_MAX);
