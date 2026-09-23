@@ -16,7 +16,7 @@ fn lrx_multiset_one_two_eight_rank_full_state_oracle() {
                         std::panic::catch_unwind(|| {
                             let graph = LrxMultiset::new(n,4).unwrap();
                             let cfg = DistributedConfig {
-                                rank, world, logical_owner_to_rank: (0..world).rev().collect(),
+                                rank, world, logical_owner_to_rank: if world == 1 { vec![0, 0] } else { (0..world).rev().collect() },
                                 batch: 2, layer_capacity: 256, state_ring_capacity: 512,
                                 buckets: world*4, shards: world*2, job_buckets: 2,
                                 bucket_capacity: 256, prededup, generation_variant: 5,
