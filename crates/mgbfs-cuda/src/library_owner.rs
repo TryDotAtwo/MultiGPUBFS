@@ -108,6 +108,9 @@ extern "C" {
     ) -> i32;
     /// Caller must first complete every GPU reader of this borrowed epoch.
     pub fn mgbfs_library_rank_complete_v1(rank_owner: RankHandle, epoch: u64) -> i32;
+    /// FinalizeDepth: all epoch readers have drained; releases borrowed
+    /// history tables while retaining accepted key planes for export.
+    pub fn mgbfs_library_rank_seal_v1(rank_owner: RankHandle) -> i32;
     pub fn mgbfs_library_rank_export_shard_v1(
         rank_owner: RankHandle,
         shard: u32,

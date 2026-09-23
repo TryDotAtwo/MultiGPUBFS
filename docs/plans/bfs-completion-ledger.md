@@ -488,3 +488,9 @@ two-T4 pass (actual state bytes, reuse, overflow, four sanitizers) are in
 `docs/validation/cuco-rank-dense-state-2xt4.md`. This validates the local
 owner→StateRing edge only; it does not remove the runtime's host-sized NCCL
 exchange or CPU-driven retirement, nor prove complete BFS layers.
+
+The rank owner now exposes a FinalizeDepth `seal`: it rejects a pending epoch,
+releases borrowed cuCO history tables after caller drain, and retains accepted
+keys for export. The v10 RED link failure and v11 two-T4 plain/sanitizer gate
+are in `docs/validation/cuco-rank-seal-2xt4.md`. Runtime creation, event
+ordering and finalization remain to be wired; this is not full BFS evidence.
