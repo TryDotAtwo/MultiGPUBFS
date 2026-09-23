@@ -9,6 +9,91 @@ use mgbfs_runtime::{
 use std::sync::{Arc, Mutex};
 
 struct TestDisk(Arc<Mutex<Vec<u8>>>);
+
+#[test]
+fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
+    use mgbfs_cuda::{ffi::*, native_owner::*};
+    use std::ffi::c_void;
+
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let workers: Vec<_> = (0..2u32)
+        .map(|rank| {
+            std::thread::spawn(move || unsafe {
+                assert_eq!(cudaSetDevice(rank as i32), 0);
+                let mut comm = std::ptr::null_mut();
+                let mut error = [0i8; 512];
+                assert_eq!(
+                    mgbfs_nccl_create(
+                        rank,
+                        2,
+                        rank,
+                        id.as_ptr().cast(),
+                        &mut comm,
+                        error.as_mut_ptr(),
+                        error.len(),
+                    ),
+                    0
+                );
+                let mut stream = std::ptr::null_mut();
+                assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                let mut ring_gpu: *mut c_void = std::ptr::null_mut();
+                let mut send: *mut c_void = std::ptr::null_mut();
+                let mut receive: *mut c_void = std::ptr::null_mut();
+                assert_eq!(cudaMalloc(&mut ring_gpu, std::mem::size_of::<Ring>()), 0);
+                assert_eq!(cudaMalloc(&mut send, 4), 0);
+                assert_eq!(cudaMalloc(&mut receive, 4), 0);
+                let ring = Ring {
+                    head: 6,
+                    tail: 14,
+                    descriptor_head: 0,
+                    descriptor_tail: 2,
+                    capacity: 10,
+                    descriptor_capacity: 4,
+                    ..Ring::default()
+                };
+                assert_eq!(
+                    cudaMemcpy(ring_gpu, (&ring as *const Ring).cast(), 64, 1),
+                    0
+                );
+                let extent = Extent {
+                    sequence: 6,
+                    begin: 6,
+                    count: 3,
+                    descriptor: if rank == 0 { 1 } else { 0 },
+                    granted_rows: 3,
+                    ready: 1,
+                    ..Extent::default()
+                };
+                assert_eq!(
+                    mgbfs_state_retire_dense_prefix_value(ring_gpu.cast(), extent, 3, stream),
+                    0
+                );
+                assert_eq!(
+                    mgbfs_state_ring_fatal_vote_word(ring_gpu.cast(), send.cast(), stream),
+                    0
+                );
+                assert_eq!(
+                    mgbfs_nccl_all_reduce_max_u32(comm, send.cast(), receive.cast(), stream),
+                    0
+                );
+                assert_eq!(cudaStreamSynchronize(stream), 0);
+                let mut group_fatal = 0u32;
+                let mut local = Ring::default();
+                assert_eq!(cudaMemcpy((&mut group_fatal as *mut u32).cast(), receive, 4, 2), 0);
+                assert_eq!(cudaMemcpy((&mut local as *mut Ring).cast(), ring_gpu, 64, 2), 0);
+                assert_eq!(cudaFree(receive), 0);
+                assert_eq!(cudaFree(send), 0);
+                assert_eq!(cudaFree(ring_gpu), 0);
+                assert_eq!(cudaStreamDestroy(stream), 0);
+                mgbfs_nccl_destroy(comm);
+                (group_fatal, local.fatal, local.head)
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    assert_eq!(results, [(1, 17, 6), (1, 0, 9)]);
+}
 impl Extent for TestDisk {
     fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
         self.0.lock().unwrap().resize(bytes as usize, 0);
