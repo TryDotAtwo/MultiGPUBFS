@@ -28,6 +28,42 @@ template<class T> struct Device {
 static std::vector<Key> keys(std::initializer_list<uint32_t> v) {std::vector<Key> r; for(auto x:v) r.push_back({{x,0,0,0}});return r;}
 static Key wide(uint32_t x){return {{x%3,(x/3)%3,(x/9)%3,x/27}};}
 static bool same(Key a,Key b){return std::equal(a.w,a.w+4,b.w);}
+static void compact_layout() {
+  void* plan=nullptr;require(create_owner(8,2,8,&plan)==0,"layout create");
+  Device<Key> in(8),old(1),accepted(8);
+  Device<uint32_t> lengths(2),caps(2),grant(1),selected(8);
+  Device<uint64_t> offsets(2);
+  Device<MgbfsBucketJob> jobs(2);Device<MgbfsOwnerCounts> counts(2);
+  Device<MgbfsOwnerControl> control(1);
+  in.put(keys({1,2,2,4,8,9}));
+  auto hashes=std::vector<Key>(8);hashes[0]={{1,0,0,0}};
+  hashes[5]={{8,0,0,0}};accepted.put(hashes);
+  lengths.put({1,1});caps.put({5,3});offsets.put({0,5});grant.put({3});
+  jobs.put({{0,0,{0,4},{0,0},{0,0},1,11},
+            {1,0,{4,2},{0,0},{0,0},1,11}});
+  auto compare=[&]{return mgbfs_bounded_owner_compare_layout(plan,jobs.p,2,6,
+      in.p,old.p,0,old.p,0,accepted.p,lengths.p,offsets.p,caps.p,8,
+      2,2,0,11,counts.p,control.p,nullptr);};
+  require(compare()==0,"layout compare enqueue");
+  require(mgbfs_bounded_owner_commit_layout(plan,jobs.p,2,in.p,accepted.p,
+      lengths.p,offsets.p,caps.p,counts.p,control.p,grant.p,selected.p,
+      nullptr)==0,"layout commit enqueue");
+  ck(cudaDeviceSynchronize());
+  require(control.get()[0].error==0&&control.get()[0].stage==2,"layout commit");
+  require(lengths.get()==std::vector<uint32_t>({3,2}),"layout lengths");
+  auto got=accepted.get();
+  require(got[0].w[0]==1&&got[1].w[0]==2&&got[2].w[0]==4&&
+          got[5].w[0]==8&&got[6].w[0]==9,"layout offsets");
+  require(selected.get()[0]==1&&selected.get()[1]==3&&selected.get()[2]==5,
+          "layout survivors");
+  // Invalid physical extent must fail before the persistent store changes.
+  offsets.put({0,7});jobs.put({{0,0,{0,4},{0,0},{0,0},3,11},
+                             {1,0,{4,2},{0,0},{0,0},2,11}});
+  require(compare()==0,"bad layout enqueue");
+  ck(cudaDeviceSynchronize());require(control.get()[0].error==1,"bad layout rejection");
+  require(lengths.get()==std::vector<uint32_t>({3,2}),"bad layout unchanged");
+  mgbfs_bounded_owner_destroy(plan);
+}
 static void sweep(unsigned seed,unsigned mode) {
   constexpr unsigned I=8192,J=4,K=2048;
   std::mt19937 rng(seed);std::vector<Key> input,pv,cv,av(J*K);
@@ -116,5 +152,6 @@ int main(int argc,char** argv) { try {
   mgbfs_bounded_owner_destroy(plan);
   for(unsigned seed=0;seed<12;++seed)sweep(seed,0);
   for(unsigned mode=1;mode<=4;++mode)sweep(99,mode);
+  compact_layout();
   std::puts("BOUNDED_OWNER_PASS");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

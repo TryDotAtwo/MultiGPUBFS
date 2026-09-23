@@ -46,6 +46,24 @@ int mgbfs_bounded_owner_commit(void* plan, const MgbfsBucketJob* jobs,
     uint32_t* accepted_counts, const MgbfsOwnerCounts* counts,
     MgbfsOwnerControl* control, const uint32_t* granted_rows,
     uint32_t* survivor_indices, void* stream);
+/* Compact future arena variant. offsets[bucket] and capacities[bucket] are
+ * immutable device arrays; every configured bucket extent must lie within
+ * accepted_records. The compare validates touched extents before any commit.
+ * Both calls must use the same plan, ordered stream and layout arrays. */
+int mgbfs_bounded_owner_compare_layout(void* plan, const MgbfsBucketJob* jobs,
+    uint32_t job_count, uint32_t rows, const void* incoming,
+    const void* prev, uint64_t prev_count, const void* curr, uint64_t curr_count,
+    const void* accepted, const uint32_t* accepted_counts,
+    const uint64_t* accepted_offsets, const uint32_t* accepted_capacities,
+    uint64_t accepted_records, uint32_t buckets, uint32_t buckets_per_shard,
+    uint32_t lane, uint32_t generation, MgbfsOwnerCounts* counts,
+    MgbfsOwnerControl* control, void* stream);
+int mgbfs_bounded_owner_commit_layout(void* plan, const MgbfsBucketJob* jobs,
+    uint32_t job_count, const void* incoming, void* accepted,
+    uint32_t* accepted_counts, const uint64_t* accepted_offsets,
+    const uint32_t* accepted_capacities, const MgbfsOwnerCounts* counts,
+    MgbfsOwnerControl* control, const uint32_t* granted_rows,
+    uint32_t* survivor_indices, void* stream);
 #ifdef __cplusplus
 }
 #endif

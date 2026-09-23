@@ -23,6 +23,12 @@ unsigned tile_count(const Plan* p,unsigned j){
 }
 __device__ bool less(Key a,Key b){for(int w=3;w>=0;--w){if(a.w[w]!=b.w[w])return a.w[w]<b.w[w];}return false;}
 __device__ bool equal(Key a,Key b){return !less(a,b)&&!less(b,a);}
+__device__ uint64_t accepted_begin(uint32_t bucket,uint32_t k,const uint64_t* offsets){
+  return offsets?offsets[bucket]:uint64_t(bucket)*k;
+}
+__device__ uint32_t accepted_limit(uint32_t bucket,uint32_t k,const uint32_t* caps){
+  return caps?caps[bucket]:k;
+}
 struct Read {
   const Key* keys; const uint32_t* indices; uint64_t offset;
   __device__ Key operator[](uint32_t x)const{return keys[indices?indices[offset+x]:offset+x];}
@@ -39,14 +45,19 @@ __device__ uint32_t rank_a(uint64_t d,Read a,uint32_t m,Read b,uint32_t n){
 }
 __global__ void validate(const MgbfsBucketJob* jobs,uint32_t count,uint32_t rows,
     uint32_t k,const uint32_t* lengths,uint32_t buckets,uint32_t per_shard,
-    uint32_t lane,uint32_t generation,uint64_t pn,uint64_t cn,MgbfsOwnerControl* c){
+    uint32_t lane,uint32_t generation,uint64_t pn,uint64_t cn,
+    const uint64_t* offsets,const uint32_t* caps,uint64_t accepted_records,
+    MgbfsOwnerControl* c){
   *c={};uint64_t end=0;uint32_t shard=jobs[0].bucket/per_shard;
   for(uint32_t j=0;j<count;++j){auto d=jobs[j];
     if(d.bucket>=buckets||d.bucket/per_shard!=shard||d.lane!=lane||d.generation!=generation||
        (j&&d.bucket<=jobs[j-1].bucket)||d.incoming.begin!=end||!d.incoming.count||
        d.incoming.count>rows-end){c->error=1;return;}
     end+=d.incoming.count;
-    if(d.prev.count>k||d.curr.count>k||d.accepted_count>k){c->error=2;return;}
+    uint32_t cap=accepted_limit(d.bucket,k,caps);
+    uint64_t begin=accepted_begin(d.bucket,k,offsets);
+    if(cap>k||begin>accepted_records||cap>accepted_records-begin){c->error=1;return;}
+    if(d.prev.count>k||d.curr.count>k||d.accepted_count>cap){c->error=2;return;}
     if(d.prev.begin>pn||d.prev.count>pn-d.prev.begin||d.curr.begin>cn||d.curr.count>cn-d.curr.begin||
        d.accepted_count!=lengths[d.bucket]){c->error=1;return;}
   }
@@ -69,13 +80,13 @@ __device__ uint32_t bit_boundary(const Key* keys,uint64_t begin,uint32_t count,u
 // uses all warps, coalescing four adjacent words per candidate/reference key.
 __global__ void bmma_membership(const MgbfsBucketJob* jobs,const Key* in,const Key* old,
     uint32_t k,uint32_t tile_limit,uint8_t* flags,uint32_t* errors,
-    const MgbfsOwnerControl* control,unsigned category){
+    const MgbfsOwnerControl* control,unsigned category,const uint64_t* offsets){
   __shared__ RefinedRange stack[129],work;
   __shared__ unsigned top,action;
   const unsigned tid=threadIdx.x,lane=tid&31,warp=tid>>5;
   if(control->error){if(tid==0)errors[blockIdx.x]=0;return;}
   if(tid==0){auto d=jobs[blockIdx.x];
-    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{uint64_t(d.bucket)*k,d.accepted_count};
+    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
     stack[0]={d.incoming.begin,r.begin,uint32_t(d.incoming.count),uint32_t(r.count)};
     top=1;errors[blockIdx.x]=0;
   }__syncthreads();
@@ -141,12 +152,13 @@ __global__ void refinement_status(const uint32_t* errors,uint32_t count,MgbfsOwn
 }
 template<bool Commit> __global__ void merge_tiles(const MgbfsBucketJob* jobs,const Key* in,
     const Key* old,uint32_t k,uint8_t* flags,const uint32_t* indices,Key* merged,
-    const MgbfsOwnerCounts* counts,const MgbfsOwnerControl* c,unsigned category){
+    const MgbfsOwnerCounts* counts,const MgbfsOwnerControl* c,unsigned category,
+    const uint64_t* offsets){
   if(c->error)return;auto d=jobs[blockIdx.x];Read a{},b{};uint32_t m,n;
-  if constexpr(Commit){a={old,nullptr,uint64_t(d.bucket)*k};m=d.accepted_count;
+  if constexpr(Commit){a={old,nullptr,accepted_begin(d.bucket,k,offsets)};m=d.accepted_count;
     b={in,indices,d.incoming.begin};n=counts[blockIdx.x].survivors;
   }else{a={in,nullptr,d.incoming.begin};m=uint32_t(d.incoming.count);
-    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{uint64_t(d.bucket)*k,d.accepted_count};
+    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
     b={old,nullptr,r.begin};n=uint32_t(r.count);
   }
   __shared__ Key sa[T],sb[T];__shared__ uint32_t ab[4];
@@ -183,9 +195,11 @@ __global__ void compact(const MgbfsBucketJob* jobs,const uint8_t* flags,uint32_t
   unsigned totals[5];for(unsigned f=0;f<5;++f){totals[f]=Reduce(reduce).Sum(categories[f]);__syncthreads();}
   if(threadIdx.x==0)out[blockIdx.x]={totals[1],totals[2],totals[3],totals[4],totals[0],0,0};
 }
-__global__ void finish_compare(const MgbfsBucketJob* jobs,uint32_t j,uint32_t k,MgbfsOwnerCounts* counts,MgbfsOwnerControl* c){
+__global__ void finish_compare(const MgbfsBucketJob* jobs,uint32_t j,uint32_t k,
+    const uint32_t* caps,MgbfsOwnerCounts* counts,MgbfsOwnerControl* c){
   if(c->error)return;uint32_t sum=0;
-  for(unsigned b=0;b<j;++b){auto& x=counts[b];if(x.survivors>k-jobs[b].accepted_count){c->error=2;return;}
+  for(unsigned b=0;b<j;++b){auto& x=counts[b];uint32_t cap=accepted_limit(jobs[b].bucket,k,caps);
+    if(x.survivors>cap-jobs[b].accepted_count){c->error=2;return;}
     x.new_count=jobs[b].accepted_count+x.survivors;x.output_offset=sum;sum+=x.survivors;}
   c->survivors=sum;c->stage=1;
 }
@@ -193,9 +207,10 @@ __global__ void check_grant(const uint32_t* grant,MgbfsOwnerControl* c){
   if(c->error)return;if(c->stage!=1){c->error=3;return;}if(*grant<c->survivors)c->error=4;
 }
 __global__ void publish(const MgbfsBucketJob* jobs,uint32_t k,const Key* merged,Key* accepted,
-    uint32_t* lengths,const uint32_t* local_indices,uint32_t* indices,const MgbfsOwnerCounts* counts,const MgbfsOwnerControl* c){
+    uint32_t* lengths,const uint32_t* local_indices,uint32_t* indices,const MgbfsOwnerCounts* counts,
+    const MgbfsOwnerControl* c,const uint64_t* offsets){
   if(c->error)return;auto d=jobs[blockIdx.x];auto x=counts[blockIdx.x];
-  for(uint64_t r=uint64_t(blockIdx.y)*T+threadIdx.x;r<x.new_count;r+=uint64_t(gridDim.y)*T)accepted[uint64_t(d.bucket)*k+r]=merged[uint64_t(blockIdx.x)*k+r];
+  for(uint64_t r=uint64_t(blockIdx.y)*T+threadIdx.x;r<x.new_count;r+=uint64_t(gridDim.y)*T)accepted[accepted_begin(d.bucket,k,offsets)+r]=merged[uint64_t(blockIdx.x)*k+r];
   for(uint64_t r=uint64_t(blockIdx.y)*T+threadIdx.x;r<x.survivors;r+=uint64_t(gridDim.y)*T)indices[x.output_offset+r]=local_indices[d.incoming.begin+r];
   // No concurrent consumer: stream completion of this whole kernel publishes
   // both data and count before finish_commit or the next owner's job can read.
@@ -228,38 +243,59 @@ extern "C" int mgbfs_bounded_owner_create_backend(uint32_t i,uint32_t j,uint32_t
   if(cudaMalloc(&p->refinement_errors,q.refinement_errors)!=cudaSuccess)return 2;
   p->backend=1;p->tile_limit=tile_limit;*out=p.release();return 0;
 }
-extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,
+extern "C" int mgbfs_bounded_owner_compare_layout(void* raw,const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,
     const void* in,const void* prev,uint64_t pn,const void* curr,uint64_t cn,const void* accepted,
-    const uint32_t* lengths,uint32_t buckets,uint32_t per_shard,uint32_t lane,uint32_t generation,
+    const uint32_t* lengths,const uint64_t* offsets,const uint32_t* caps,uint64_t accepted_records,
+    uint32_t buckets,uint32_t per_shard,uint32_t lane,uint32_t generation,
     MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,void* stream){
   auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
   if(!p||!jobs||!j||j>p->j||!rows||rows>p->i||!in||!prev||!curr||!accepted||!lengths||!counts||!control||
-     !buckets||!per_shard||(per_shard&(per_shard-1))||buckets%per_shard)return 1;
-  validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,generation,pn,cn,control);
+     !buckets||!per_shard||(per_shard&(per_shard-1))||buckets%per_shard||!accepted_records||
+     (!!offsets!=!!caps))return 1;
+  validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,generation,pn,cn,
+      offsets,caps,accepted_records,control);
   initial<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),p->flags,control);
   unsigned tiles=tile_count(p,j);
   for(unsigned tag=2;tag<=4;++tag){
     const auto old=static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted);
     if(p->backend==1){
       bmma_membership<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),old,p->k,p->tile_limit,
-        p->flags,p->refinement_errors,control,tag);
+        p->flags,p->refinement_errors,control,tag,offsets);
       refinement_status<<<1,1,0,s>>>(p->refinement_errors,j,control);
     }else merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
-      old,p->k,p->flags,p->indices,p->merged,counts,control,tag);
+      old,p->k,p->flags,p->indices,p->merged,counts,control,tag,offsets);
   }
   compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
-  finish_compare<<<1,1,0,s>>>(jobs,j,p->k,counts,control);
+  finish_compare<<<1,1,0,s>>>(jobs,j,p->k,caps,counts,control);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,
+    const void* in,const void* prev,uint64_t pn,const void* curr,uint64_t cn,const void* accepted,
+    const uint32_t* lengths,uint32_t buckets,uint32_t per_shard,uint32_t lane,uint32_t generation,
+    MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,void* stream){
+  auto p=static_cast<Plan*>(raw);
+  if(!p||!buckets||uint64_t(buckets)>UINT64_MAX/p->k)return 1;
+  return mgbfs_bounded_owner_compare_layout(raw,jobs,j,rows,in,prev,pn,curr,cn,accepted,
+      lengths,nullptr,nullptr,uint64_t(buckets)*p->k,buckets,per_shard,lane,generation,
+      counts,control,stream);
+}
+extern "C" int mgbfs_bounded_owner_commit_layout(void* raw,const MgbfsBucketJob* jobs,uint32_t j,const void* in,
+    void* accepted,uint32_t* lengths,const uint64_t* offsets,const uint32_t* caps,
+    const MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,
+    const uint32_t* grant,uint32_t* selected,void* stream){
+  auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
+  if(!p||!jobs||!j||j>p->j||!in||!accepted||!lengths||!counts||!control||!grant||!selected||
+     (!!offsets!=!!caps))return 1;
+  check_grant<<<1,1,0,s>>>(grant,control);
+  unsigned tiles=tile_count(p,j);
+  merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0,offsets);
+  publish<<<dim3(j,tiles),T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control,offsets);
+  finish_commit<<<1,1,0,s>>>(control);
   return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_bounded_owner_commit(void* raw,const MgbfsBucketJob* jobs,uint32_t j,const void* in,
     void* accepted,uint32_t* lengths,const MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,
     const uint32_t* grant,uint32_t* selected,void* stream){
-  auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
-  if(!p||!jobs||!j||j>p->j||!in||!accepted||!lengths||!counts||!control||!grant||!selected)return 1;
-  check_grant<<<1,1,0,s>>>(grant,control);
-  unsigned tiles=tile_count(p,j);
-  merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0);
-  publish<<<dim3(j,tiles),T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control);
-  finish_commit<<<1,1,0,s>>>(control);
-  return cudaGetLastError()==cudaSuccess?0:2;
+  return mgbfs_bounded_owner_commit_layout(raw,jobs,j,in,accepted,lengths,nullptr,nullptr,
+      counts,control,grant,selected,stream);
 }
