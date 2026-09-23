@@ -514,3 +514,15 @@ capacity-failure/drop/recreation fixture passed memcheck on both physical T4s
 at exact source `c16c8c7`, zero errors. V15 predates that fixture; its other
 three sanitizer modes have not been rerun on capacity cleanup. Neither gate
 removes the confirmed CPU-driven route/retirement dependencies.
+
+The rank-owner teardown had an independently reproduced lifetime defect:
+private 2xT4 v16 failed `RANK_DESTROY_MUST_DRAIN_IN_FLIGHT_WORK` after a delayed
+same-stream callback; v17 passed on both GPUs after destruction synchronized
+the creating stream. This is teardown-only and adds no hot-path wait. The
+device-count AoS→SoA owner-window bridge then showed the expected v18 RED
+link failure and v19 GREEN exact-data/fatal fixture on both T4s. Its begin
+and count stay on GPU and source ordinals remain absolute. V20 passed all four
+sanitizers on both T4s, with zero racecheck hazards/warnings. See
+`docs/validation/device-owner-window-2xt4.md`. The Rust scheduler
+does not yet call this bridge or the experimental LSA transport, so no
+end-to-end CPU-dependency claim follows.
