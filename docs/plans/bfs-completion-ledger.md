@@ -154,6 +154,16 @@ modified two-rank `native_scatter` gate is prepared but has not yet executed
 on 2xT4. The GPU owner still lacks device-side per-row ref validation and
 future-slot merge wiring, so distributed K>1 is still unavailable.
 
+The subsequent private Kaggle gate on 2xT4 passed the weighted DENSE scatter
+fixture plain and under memcheck/racecheck/initcheck/synccheck, all with zero
+errors (`docs/validation/kaggle-weighted-scatter-2xt4-v1.md`). The received
+`MacroCandidateRef` plane now has a no-allocation CUDA validator for source
+depth, target depth, weight and source-state index. The adapter exposes its
+enqueue through the receive lease, and the two-rank fixture calls it before
+materialization. This closes the isolated transport/metadata gate, **not**
+distributed weighted owner settlement or production BFS. A second physical
+2xT4 gate using source `787a9fe` is pending.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly
