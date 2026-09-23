@@ -382,3 +382,16 @@ replaced by a device-side call on this environment. A newer pinned NCCL LSA
 stack or a separate CUDA IPC peer-memory protocol needs a real transfer and
 failure/lifetime gate before implementation selection; this is a platform
 feasibility result, not yet an asynchronous transport implementation.
+The follow-up private notebook v5 installed pinned NCCL 2.29.7 in isolation
+and passed a real two-T4 LSA device-kernel round trip with exact results on
+both ranks. The newer communicator reported one LSA team and device API
+support. Thus the NCCL LSA route is viable on the target pair, subject to a
+device-count, capacity/fatal/lifetime protocol and end-to-end BFS gates; see
+the updated transport feasibility report. Production still uses NCCL 2.25.1.
+
+The corrected full small-graph regression Kaggle v49 completed at pinned
+source `a272a17` with all four sanitizer tools clean and 24/24 one/two-rank
+CLI profile smokes passing, each with verified archives and S4 global layers.
+See `docs/validation/distributed-sanitizer-2xt4-v49.md`. This removes the
+v47/v48 harness uncertainty, not the CPU hot-path or large-graph validation
+gaps.
