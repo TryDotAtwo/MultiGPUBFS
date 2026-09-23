@@ -316,6 +316,34 @@ int main() {
         "RANK_FATAL_COMMIT_ENQUEUE");
     stream.synchronize();
     require(mgbfs_library_rank_complete_v1(rank_owner,4)==0,"RANK_ABI_COMPLETE_REJECTED");
+    // An over-capacity device count must poison the transaction before any
+    // thread reads candidate input or changes the shared candidate plane.
+    final_ring.fatal=0;
+    uint32_t too_many=cap+1;
+    check(cudaMemcpyAsync(ring.data(),&final_ring,sizeof(final_ring),
+        cudaMemcpyHostToDevice,stream.value()));
+    check(cudaMemsetAsync(control.data(),0,sizeof(MgbfsOwnerControl),stream.value()));
+    check(cudaMemcpyAsync(valid.data(),&too_many,sizeof(too_many),
+        cudaMemcpyHostToDevice,stream.value()));
+    check(cudaMemcpyAsync(const_cast<uint32_t*>(d.high_words),&untouched,4,
+        cudaMemcpyHostToDevice,stream.value()));
+    MgbfsLibraryRankDeviceBatchV1 d5{};
+    require(mgbfs_library_rank_compare_v1(rank_owner,5,rejected,
+        static_cast<uint32_t const*>(valid.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()),&d5)==0,
+        "RANK_OVERCAP_COMPARE_ENQUEUE");
+    check(cudaMemcpyAsync(&observed,d5.high_words,4,cudaMemcpyDeviceToHost,stream.value()));
+    stream.synchronize();
+    require(observed==untouched,"RANK_OVERCAP_MUST_NOT_READ_CANDIDATES");
+    require(mgbfs_library_rank_commit_v1(rank_owner,5,
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsStateExtent*>(extent.data()))==0,
+        "RANK_OVERCAP_COMMIT_ENQUEUE");
+    stream.synchronize();
+    require(mgbfs_library_rank_complete_v1(rank_owner,5)==0,
+        "RANK_ABI_COMPLETE_OVERCAP");
     auto bytes_before_seal=stats.get_bytes_counter().value;
     require(mgbfs_library_rank_seal_v1(rank_owner)==0,"RANK_ABI_SEAL");
     require(stats.get_bytes_counter().value<bytes_before_seal,
