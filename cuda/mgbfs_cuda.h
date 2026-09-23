@@ -165,6 +165,15 @@ int mgbfs_future_merge_run(void* plan,uint8_t* future_states,void* future_hashes
 int mgbfs_future_merge_run_bounded(void* plan,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,
   uint32_t old_count_bound,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,
   const uint64_t* incoming_refs,const uint32_t* incoming_count,uint32_t incoming_count_bound,void* stream);
+/* As above, but a caller-owned sticky device metadata fatal word poisons the
+ * merge before any future state/hash publication. fatal=4 means invalid input
+ * metadata. For a received MacroDense frame, incoming_refs must index its
+ * dense state payload (0..count), not the sender's MacroCandidateRef.state_ref.
+ * The caller retains the receive bank through completion. */
+int mgbfs_future_merge_run_bounded_checked(void* plan,uint8_t* future_states,void* future_hashes,MgbfsFrontierState* future_state,
+  uint32_t old_count_bound,const uint8_t* source_states,uint32_t source_count,const void* incoming_hashes,
+  const uint64_t* incoming_refs,const uint32_t* incoming_count,uint32_t incoming_count_bound,
+  const uint32_t* input_fatal,void* stream);
 void mgbfs_future_merge_destroy(void* plan);
 /* Sorted Hash128 ranges use high log2(world) bits, world in {1,2,4,8}.
  * owner_counts holds world words in LOGICAL-owner order, not rank-map order.

@@ -101,6 +101,57 @@ impl MacroDenseRead {
         }
         Ok(())
     }
+    /// Validate a received weighted frame and append its sorted rows to one
+    /// provisional target-depth slot without host synchronization. The owner
+    /// must inspect `future_state.fatal` before publishing/settling that slot.
+    /// The caller's `identity_refs` contains device u64 values 0..rows-1;
+    /// sender-side MacroCandidateRef.state_ref is not an index into this pool.
+    ///
+    /// # Safety
+    /// All pointers designate live, disjoint, suitably sized device storage
+    /// on this CUDA device. `incoming_count` contains exactly `rows` and the
+    /// identity refs are initialized before enqueue. The plan is preallocated
+    /// for at least `rows` incoming rows. The receive lease stays live until
+    /// stream completion; no concurrent writer may use the future slot/plan.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn enqueue_future_merge(
+        self,
+        pool_base: *const u8,
+        future_plan: *mut std::ffi::c_void,
+        future_states: *mut u8,
+        future_hashes: *mut std::ffi::c_void,
+        future_state: *mut mgbfs_cuda::ffi::FrontierState,
+        old_count_bound: u32,
+        identity_refs: *const u64,
+        incoming_count: *const u32,
+        max_weight: u32,
+        max_state_ref: u64,
+        fatal: *mut u32,
+        stream: *mut std::ffi::c_void,
+    ) -> Result<()> {
+        if pool_base.is_null() || future_plan.is_null() || future_states.is_null()
+            || future_hashes.is_null() || future_state.is_null()
+            || identity_refs.is_null() || incoming_count.is_null() {
+            return Err("MACRO_FUTURE_POINTER".into());
+        }
+        self.enqueue_ref_validation(
+            pool_base, max_weight, max_state_ref, fatal, stream,
+        )?;
+        let hash_offset = usize::try_from(self.hash_offset)
+            .map_err(|_| "MACRO_FUTURE_OFFSET")?;
+        let state_offset = usize::try_from(self.state_offset)
+            .map_err(|_| "MACRO_FUTURE_OFFSET")?;
+        let status = mgbfs_cuda::ffi::mgbfs_future_merge_run_bounded_checked(
+            future_plan, future_states, future_hashes, future_state,
+            old_count_bound, pool_base.add(state_offset), self.rows,
+            pool_base.add(hash_offset).cast(), identity_refs, incoming_count,
+            self.rows, fatal, stream,
+        );
+        if status != 0 {
+            return Err(format!("MACRO_FUTURE_ENQUEUE_{status}"));
+        }
+        Ok(())
+    }
 }
 pub enum BufferEvent {
     Launch(BufferLaunch),

@@ -78,6 +78,20 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                     assert_eq!(cudaMalloc(ptr, bytes), 0);
                 }
                 let [ring_ptr, control_ptr, extent_ptr, selected_ptr, final_states] = owner_storage;
+                let mut future_plan = std::ptr::null_mut();
+                let mut future_error = [0i8; 256];
+                assert_eq!(mgbfs_future_merge_create(
+                    16, 4, 2, &mut future_plan,
+                    future_error.as_mut_ptr(), future_error.len(),
+                ), 0);
+                let mut future_storage = [std::ptr::null_mut(); 4];
+                for (ptr, bytes) in future_storage.iter_mut().zip([64, 64, 8, 4]) {
+                    assert_eq!(cudaMalloc(ptr, bytes), 0);
+                }
+                let [future_states, future_hashes, future_state, future_count] = future_storage;
+                assert_eq!(cudaMemsetAsync(future_state, 0, 8, owner_stream), 0);
+                let one = 1u32;
+                assert_eq!(cudaMemcpy(future_count, (&one as *const u32).cast(), 4, 1), 0);
                 use mgbfs_cuda::native_owner::{Control, Extent, Ring};
                 let ring = Ring {
                     tail: 1,
@@ -249,6 +263,29 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                         (&correct_weight as *const u32).cast(), 4, 1,
                                     ), 0);
                                     assert_eq!(cudaMemsetAsync(fatal, 0, 4, owner_stream), 0);
+                                    input.enqueue_future_merge(
+                                        base.cast(), future_plan, future_states.cast(),
+                                        future_hashes, future_state.cast(), source,
+                                        refs.cast(), future_count.cast(), 3, 2,
+                                        fatal.cast(), owner_stream,
+                                    ).unwrap();
+                                    assert_eq!(cudaStreamSynchronize(owner_stream), 0);
+                                    let mut future_status = FrontierState::default();
+                                    let mut future_key = [0u32; 4];
+                                    let mut future_value = [0u32; 4];
+                                    assert_eq!(cudaMemcpy(
+                                        (&mut future_status as *mut FrontierState).cast(),
+                                        future_state, 8, 2,
+                                    ), 0);
+                                    assert_eq!(cudaMemcpy(
+                                        future_key.as_mut_ptr().cast(), future_hashes, 16, 2,
+                                    ), 0);
+                                    assert_eq!(cudaMemcpy(
+                                        future_value.as_mut_ptr().cast(), future_states, 16, 2,
+                                    ), 0);
+                                    assert_eq!((future_status.count, future_status.fatal), (1, 0));
+                                    assert_eq!(future_key, [31, 32, 33, 34]);
+                                    assert_eq!(future_value, [11, 12, 13, 14]);
                                     (reader, input.rows, input.state_offset, input.source_pool)
                                 } else {
                                     let (reader, input) = buffers
@@ -372,6 +409,10 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 for ptr in owner_storage {
                     assert_eq!(cudaFree(ptr), 0);
                 }
+                for ptr in future_storage {
+                    assert_eq!(cudaFree(ptr), 0);
+                }
+                mgbfs_future_merge_destroy(future_plan);
                 assert_eq!(cudaStreamDestroy(owner_stream), 0);
                 assert_eq!(cudaStreamDestroy(generate_stream), 0);
                 assert_eq!(cudaStreamDestroy(stream), 0);
