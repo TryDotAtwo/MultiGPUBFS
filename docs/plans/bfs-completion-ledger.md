@@ -441,3 +441,9 @@ two T4s: plain plus all four Compute Sanitizer modes PASS, 24/24 reference
 profile smokes PASS with verified S4 archives and layers `[1,3,5,6,5,3,1]`.
 It tests the unchanged runtime path, not integration of the new reservation
 leaf. See `docs/validation/distributed-sanitizer-2xt4-v52.md`.
+
+The pinned-cuCO dynamic-ref feasibility probe at `e836a11` passed on both T4s
+with all four Compute Sanitizer modes. Per-candidate GPU selection from two
+persistent table refs is therefore demonstrated, but the rank-batch cuCO
+compare/commit, GPU shard offsets and runtime wiring remain absent. See
+`docs/validation/cuco-dynamic-refs-2xt4.md`.
