@@ -1868,6 +1868,10 @@ impl DistributedNativeBfs {
         &mut self,
         mut archive: Option<&mut crate::pinned_archive::PinnedArchive>,
     ) -> Result<bool> {
+        // Diagnostic only: bracket the CUB route, pack, exchange and owner
+        // phases without adding synchronizations to an ordinary run.
+        let trace_route = std::env::var_os("MGBFS_TRACE_ROUTE").is_some();
+        let mut batch_index = 0u64;
         if let Some(a) = archive.as_ref() {
             let error = if self.archived_depth == Some(self.depth) {
                 Some("ARCHIVE_DEPTH_ALREADY_SUBMITTED".to_string())
@@ -1920,6 +1924,9 @@ impl DistributedNativeBfs {
             let next_work = cursor.peek(&self.front, self.cfg.batch)?;
             let mut generation = None;
             let candidate_count = parents * self.moves;
+            if trace_route {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=batch_begin parents={parents} candidates={candidate_count}", self.cfg.rank, self.depth);
+            }
             if let Some(a) = archive.as_deref_mut() {
                 let error = if let Some(extent) = parent {
                     self.archive_range(
@@ -1985,7 +1992,14 @@ impl DistributedNativeBfs {
                 }
                 generation = Some(sequence);
             }
+            if trace_route {
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end", self.cfg.rank, self.depth);
+            }
             unsafe {
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_begin", self.cfg.rank, self.depth);
+                }
                 check(mgbfs_route_run(
                     self.route.0,
                     self.child_hashes.ptr,
@@ -2003,6 +2017,12 @@ impl DistributedNativeBfs {
                     check(unsafe { cudaStreamSynchronize(s) })?;
                     self.route_count.one::<u32>()
                 })?;
+            if trace_route {
+                check(unsafe { cudaStreamSynchronize(s) })?;
+            }
+            if trace_route {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={routed}", self.cfg.rank, self.depth);
+            }
             let packet_stride = if self.hash_first.is_some() {
                 16
             } else {
@@ -2034,6 +2054,9 @@ impl DistributedNativeBfs {
             {
                 return Err("EXCHANGE_COUNT_MISMATCH".into());
             }
+            if trace_route {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
+            }
             if let Some(sequence) = generation {
                 // Pack's host-observed completion includes the generation wait
                 // and the last reads of children/child_hashes. Owner and NCCL
@@ -2062,6 +2085,9 @@ impl DistributedNativeBfs {
             // The same bounded receive slot serves every XOR peer round.
             // All ranks enter even when their parent batch or payload is empty.
             for round in 1..world.max(2) {
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=exchange_begin", self.cfg.rank, self.depth);
+                }
                 let exchange_peer = if world == 1 {
                     0
                 } else {
@@ -2159,6 +2185,9 @@ impl DistributedNativeBfs {
                 let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
+                }
                 let batch_error = process_owner_pair(
                     (
                         0,
@@ -2186,6 +2215,9 @@ impl DistributedNativeBfs {
                     },
                 )
                 .err();
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
+                }
                 if self.all_max(u32::from(batch_error.is_some()))? != 0 {
                     return Err(batch_error.unwrap_or_else(|| "REMOTE_OWNER_BATCH_FATAL".into()));
                 }
@@ -2228,6 +2260,9 @@ impl DistributedNativeBfs {
             let more = u32::from(next_work.is_some());
             if self.all_max(more)? == 0 {
                 break;
+            }
+            if trace_route {
+                batch_index = batch_index.checked_add(1).ok_or("TRACE_BATCH_OVERFLOW")?;
             }
         }
         if let Some(a) = archive.as_deref_mut() {

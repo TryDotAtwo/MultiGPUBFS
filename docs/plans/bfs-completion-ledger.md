@@ -111,7 +111,8 @@ The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly
 for `GEMM_U8_P32X4_V1`. If unset, its historical seed is 20260828
 (`000000000000000000000000013527dc`). The canonical seed is included in the
 cluster/archive config digest, so ranks with different seeds reject one another
-at bootstrap. Parsing and byte order have CPU tests. A new-seed GPU end-to-end
+at bootstrap. The result JSON records `hash_seed_hex`. Parsing and byte order
+have CPU tests. A new-seed GPU end-to-end
 run remains to be done; changing seed only changes collision sampling, not
 graph semantics or the need for exact-state validation.
 
@@ -135,3 +136,10 @@ Nsight trace for that attempt. Next reproduce first on a bounded S11/S12
 configuration with per-stage GPU event timings and a timeline, then compare the
 same fixed configuration with cuCollections. Do not call the timeout a CUB
 correctness failure or claim that this trace identifies the hot kernel.
+
+`MGBFS_TRACE_ROUTE=1` now emits per-rank/depth/batch markers for generation,
+route, pack, exchange and owner completion. It forces diagnostic stream drains
+around generation/route, so use it only to locate a stalled stage on a bounded
+reproducer; its wall times are **not** benchmark numbers. On Windows the CUDA
+feature check cannot run without a built `MGBFS_CUDA_LIB_DIR`; the added Linux
+CUDA path still needs compile and physical GPU execution before it is relied on.

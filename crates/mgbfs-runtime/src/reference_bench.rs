@@ -354,6 +354,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         }
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
+        value["hash_seed_hex"] = serde_json::json!(seed_hex);
         value["group"] = serde_json::json!(group);
         if let Some(word) = &multiset {
             value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
