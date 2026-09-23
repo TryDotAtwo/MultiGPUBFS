@@ -155,7 +155,7 @@ __global__ void guard_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,const ui
  if(!o->error&&(*n>cap||o->survivors>cap-*n))fatal(r,o,16);
 }
 __global__ void count_layer(const MgbfsOwnerControl*o,uint32_t*n){if(!o->error)*n+=o->survivors;}
-__global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
+__device__ void retire_dense_prefix_impl(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
   if(r->fatal)return;
   if(!r->capacity){atomicCAS(&r->fatal,0u,17u);return;}
   uint64_t gap=e->sequence>=r->head?e->sequence-r->head:UINT64_MAX;
@@ -170,6 +170,12 @@ __global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e
   r->head=next;e->sequence=next;e->begin=next%r->capacity;e->count-=n;
   e->granted_rows=unsigned(e->count);
   if(!e->count){r->descriptor_head=e->padding[1]+1;e->ready=0;}
+}
+__global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e,uint64_t n){
+  retire_dense_prefix_impl(r,e,n);
+}
+__global__ void retire_dense_prefix_value(MgbfsStateRingControl* r,MgbfsStateExtent e,uint64_t n){
+  retire_dense_prefix_impl(r,&e,n);
 }
 __global__ void publish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
     const MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap){
@@ -239,6 +245,10 @@ extern "C" int mgbfs_owner_shard_counts(const uint32_t*high,
 }
 extern "C" int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl*r,MgbfsStateExtent*e,uint64_t n,void*stream){
  if(!r||!e||!n)return 1;retire_dense_prefix<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,e,n);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl*r,MgbfsStateExtent e,uint64_t n,void*stream){
+ if(!r||!n)return 1;retire_dense_prefix_value<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,e,n);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_publish_next_extent(MgbfsStateRingControl*r,

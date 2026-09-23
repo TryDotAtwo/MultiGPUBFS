@@ -60,6 +60,11 @@ int mgbfs_owner_shard_counts(const uint32_t* high_words,
  * completed for this prefix. The caller owns those event dependencies. */
 int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl* ring,
     MgbfsStateExtent* current, uint64_t records, void* stream);
+/* Same FIFO validation, but the caller passes its immutable extent snapshot
+ * by value. No per-batch H2D extent upload or device extent mutation. The
+ * caller must retain generation, transport and archive reader ordering. */
+int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl* ring,
+    MgbfsStateExtent current, uint64_t records, void* stream);
 /* Dense input is source-order, sorted_refs maps sorted hashes to those rows.
  * All output rows and indices are validated before any state copy. Hash commit
  * must already have completed on this stream. Extent.ready publishes StateReady.
