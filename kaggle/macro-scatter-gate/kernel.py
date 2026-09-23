@@ -7,7 +7,7 @@ import re
 import tempfile
 import urllib.request
 
-SOURCE = "a4cfe56516bf971db9e3609edd64a2598d5a2a7b"
+SOURCE = "278d439a2f2d74fdfe0aeabe8831b1ab06a1d2c4"
 CUTLASS = "ffa119a1255d78998536107466cc7097ecefa393"
 FIXTURE = "admitted_adapter_native_scatter_and_depth_rollover"
 

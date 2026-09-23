@@ -193,6 +193,13 @@ fixture and independent guarded-merge fixture plain and under all four
 sanitizer tools on physical 2xT4. See the validation record. The missing
 boundary is now the production scheduler that supplies genuinely generated
 history and finalizes each depth in globally agreed order.
+
+The next fixture exercises a narrower scheduling invariant: after a source
+depth with no parents, the existing control pump still emits `FinalizeDepth`,
+and the pending depth-3 future is settled inside that event, before rank
+`Finalized` acknowledgement and `Publish`. It does not replace the synthetic
+depth-2 history with generated states. Private Kaggle version 7 is pinned to
+`278d439` for physical 2xT4 execution.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
