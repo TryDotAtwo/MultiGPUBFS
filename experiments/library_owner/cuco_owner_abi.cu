@@ -84,12 +84,14 @@ namespace {
 struct RankHandle {
   int device;
   rmm::device_async_resource_ref resource;
+  rmm::cuda_stream_view stream;
   mgbfs::CucoRankBatch batch;
   RankHandle(std::vector<MgbfsLibraryKeysV1> previous,
       std::vector<MgbfsLibraryKeysV1> current,std::vector<uint32_t> capacities,
       uint32_t incoming,uint32_t logical_owner,uint32_t world,
       rmm::cuda_stream_view stream)
       : device(current_device()),resource(rmm::mr::get_current_device_resource_ref()),
+        stream(stream),
         batch(std::move(previous),std::move(current),std::move(capacities),
             incoming,logical_owner,world,stream,resource) {}
   static int current_device(){
@@ -176,7 +178,9 @@ extern "C" int mgbfs_library_rank_destroy_v1(void* handle){
   if(!handle)return -1;
   try {
     auto* h=static_cast<RankHandle*>(handle);
-    h->check();delete h;
+    h->check();
+    mgbfs::cuco_owner_detail::check(cudaStreamSynchronize(h->stream.value()));
+    delete h;
     return 0;
   } catch (...) {return -1;}
 }
