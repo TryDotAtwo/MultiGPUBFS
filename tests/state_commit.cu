@@ -244,6 +244,24 @@ static void retire_value_prefix(){
   r=ring.get()[0];req(r.fatal==17&&r.head==11&&r.descriptor_head==1,
       "value reject stale descriptor without mutation");
 }
+// The NCCL input word must be derived on GPU after retirement, without a
+// separate D2H read of the sticky ring fatal on the host.
+extern "C" int mgbfs_state_ring_fatal_vote_word(const MgbfsStateRingControl*,
+    uint32_t*, void*);
+static void retire_fatal_vote_word(){
+  Device<MgbfsStateRingControl> ring(1);
+  Device<uint32_t> word(1);
+  ring.put({{6,14,0,2,10,4,0,0,0}});
+  req(mgbfs_state_ring_fatal_vote_word(ring.p,word.p,nullptr)==0,
+      "clear fatal vote enqueue");
+  ck(cudaDeviceSynchronize());
+  req(word.get()[0]==0,"clear fatal vote word");
+  ring.put({{6,14,0,2,10,4,17,0,0}});
+  req(mgbfs_state_ring_fatal_vote_word(ring.p,word.p,nullptr)==0,
+      "sticky fatal vote enqueue");
+  ck(cudaDeviceSynchronize());
+  req(word.get()[0]==1,"sticky fatal vote word");
+}
 // Verification harness only: CPU prepares candidates/descriptors and reads
 // snapshots. It is NOT a production CPU data plane or performance benchmark.
 static void full_layers(unsigned modulus){
@@ -291,5 +309,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();retire_value_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();retire_value_prefix();retire_fatal_vote_word();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
