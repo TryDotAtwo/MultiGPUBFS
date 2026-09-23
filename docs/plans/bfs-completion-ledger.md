@@ -92,3 +92,16 @@ reject it; do not infer rejection from its public SQL/RPC surface alone.
 5. Execute the independent DB/framework probes and final Pareto comparison.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
+
+### CUB S13 diagnostic, preserved trace
+
+The 180-second CUB run emitted only torchrun startup text before the harness
+timeout. Its last 800 external nvidia-smi samples show GPU utilization
+min=99%, mean=100%, while memory-controller utilization averaged 3%; all eight
+devices were resident at about 9.5 GiB each. This is evidence of sustained GPU
+work, not evidence of an idle NCCL deadlock or a capacity failure. The exact
+kernel/stage is still unknown because there is no per-rank progress artifact or
+Nsight trace for that attempt. Next reproduce first on a bounded S11/S12
+configuration with per-stage GPU event timings and a timeline, then compare the
+same fixed configuration with cuCollections. Do not call the timeout a CUB
+correctness failure or claim that this trace identifies the hot kernel.
