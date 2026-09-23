@@ -73,6 +73,43 @@ static void rank_batch_reservation(unsigned mode){
     req(offsets.get()==std::vector<uint32_t>({0,2,2,3}),"rank batch offsets");
   }
 }
+static void shard_count_directory(unsigned mode){
+  Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);
+  Device<uint32_t> high(6),candidate_count(1),selected(6),selected_count(1);
+  Device<uint32_t> counts(4),offsets(5);
+  MgbfsStateRingControl r{0,0,0,0,16,4,0,0,0};
+  MgbfsOwnerControl o{};
+  std::vector<uint32_t> words{0x80000000,0x80000001,0xa0000000,
+      0xa0000001,0xe0000000,0xe0000001};
+  std::vector<uint32_t> indices{0,2,3,4,0,0};
+  uint32_t n=4;
+  if(mode==1){n=0;}
+  if(mode==2){indices[2]=2;} // duplicate selected index
+  if(mode==3){indices[3]=6;} // out of candidate range
+  if(mode==4){words[2]=0x00000000;} // wrong owner and broken order
+  if(mode==5){indices[2]=1;} // selected order goes backwards
+  if(mode==6){n=7;} // selected count exceeds capacity
+  ring.put({r});owner.put({o});high.put(words);candidate_count.put({6});
+  selected.put(indices);selected_count.put({n});
+  counts.put({99,99,99,99});offsets.put({99,99,99,99,99});
+  req(mgbfs_owner_shard_counts(high.p,candidate_count.p,selected.p,selected_count.p,
+      6,1,2,4,counts.p,offsets.p,ring.p,owner.p,nullptr)==0,"shard counts enqueue");
+  ck(cudaDeviceSynchronize());
+  if(mode>=2){
+    req(owner.get()[0].error&&ring.get()[0].fatal,"malformed shard selection not fatal");
+    req(counts.get()==std::vector<uint32_t>({99,99,99,99}),"partial shard counts");
+    req(offsets.get()==std::vector<uint32_t>({99,99,99,99,99}),"partial shard offsets");
+  }else if(mode==1){
+    req(!owner.get()[0].error,"empty shard selection fatal");
+    req(counts.get()==std::vector<uint32_t>({0,0,0,0}),"empty shard counts");
+    req(offsets.get()==std::vector<uint32_t>({0,0,0,0,0}),"empty shard offsets");
+  }else{
+    req(!owner.get()[0].error,"valid shard selection fatal");
+    req(counts.get()==std::vector<uint32_t>({1,2,0,1}),"shard counts");
+    req(offsets.get()==std::vector<uint32_t>({0,1,3,3,4}),"shard offsets");
+  }
+  req(ring.get()[0].tail==r.tail,"shard counting changed ring");
+}
 static void materialization(bool invalid,bool packed=false){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);Device<MgbfsStateExtent> extent(1);
   Device<uint8_t> input(64),states(128);Device<uint64_t> refs(4);Device<uint32_t> selected(2);
@@ -158,5 +195,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

@@ -37,6 +37,18 @@ int mgbfs_state_reserve_rank_batch(MgbfsStateRingControl* ring,
     const uint32_t* accepted_capacities, uint32_t shard_count,
     uint32_t* offsets, uint32_t* layer_count, uint32_t layer_capacity,
     uint32_t request_capacity, uint32_t hash_first, void* stream);
+/* Build per-shard counts from CUB-selected indices in sorted Hash128 order.
+ * high_words points to candidate SoA word 3; candidate_count and selected_count
+ * are device words. Outputs are valid only when owner.error==0. On malformed
+ * indices/order/owner, sticky fatal is set before any output write. Fixed
+ * launch shape supports graph capture; no host count readback.
+ */
+int mgbfs_owner_shard_counts(const uint32_t* high_words,
+    const uint32_t* candidate_count, const uint32_t* selected,
+    const uint32_t* selected_count, uint32_t candidate_capacity,
+    uint32_t logical_owner, uint32_t world, uint32_t shards,
+    uint32_t* shard_counts, uint32_t* shard_offsets,
+    MgbfsStateRingControl* ring, MgbfsOwnerControl* owner, void* stream);
 /* DENSE-only FIFO reclamation after both generation and archive DMA have
  * completed for this prefix. The caller owns those event dependencies. */
 int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl* ring,
