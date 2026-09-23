@@ -199,7 +199,10 @@ depth with no parents, the existing control pump still emits `FinalizeDepth`,
 and the pending depth-3 future is settled inside that event, before rank
 `Finalized` acknowledgement and `Publish`. It does not replace the synthetic
 depth-2 history with generated states. Private Kaggle version 7 is pinned to
-`278d439` for physical 2xT4 execution.
+`278d439` passed on physical 2xT4 plain and under all four sanitizers (v7).
+The next device-driven settlement API consumes the future slot's count/fatal
+directly, removing that D2H/re-upload dependency. Local RTX 3070 test passed;
+private Kaggle v8 is pending.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
