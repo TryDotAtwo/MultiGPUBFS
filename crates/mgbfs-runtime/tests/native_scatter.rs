@@ -284,8 +284,10 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                         future_value.as_mut_ptr().cast(), future_states, 16, 2,
                                     ), 0);
                                     assert_eq!((future_status.count, future_status.fatal), (1, 0));
-                                    assert_eq!(future_key, [31, 32, 33, 34]);
-                                    assert_eq!(future_value, [11, 12, 13, 14]);
+                                    assert_eq!(future_key,
+                                        [31, 32, 33, 34].map(|n| n + 10 * rank));
+                                    assert_eq!(future_value,
+                                        [11, 12, 13, 14].map(|n| n + 10 * rank));
                                     (reader, input.rows, input.state_offset, input.source_pool)
                                 } else {
                                     let (reader, input) = buffers
