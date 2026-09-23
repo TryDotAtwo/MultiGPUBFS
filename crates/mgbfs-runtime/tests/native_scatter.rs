@@ -125,7 +125,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                     ..Extent::default()
                 };
                 assert_eq!(cudaMemsetAsync(selected_ptr, 0, 4, owner_stream), 0);
-                for depth in 0..2 {
+                for depth in 0..3 {
                     let mut frames = if depth == 1 {
                         mgbfs_runtime::dense_frames::DenseFrames::new_macro(
                             &[0, 1], 16, 2, 2048, depth as u32, 2, 3,
@@ -136,7 +136,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                         ).unwrap()
                     };
                     for source in 0..2 {
-                        for empty in [false, true] {
+                        for &empty in if depth == 2 { &[true][..] } else { &[false, true][..] } {
                             if rank == source {
                                 let h = buffers.reserve(Plane::Candidate, depth).unwrap().unwrap();
                                 let offset = buffers.source_offset(h).unwrap();
@@ -403,7 +403,50 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                     let deadline = Instant::now() + Duration::from_secs(30);
                     loop {
                         match buffers.poll().unwrap() {
-                            Some(BufferEvent::Finalize(_)) => buffers.finalized(true).unwrap(),
+                            Some(BufferEvent::Finalize(_)) => {
+                                if depth == 2 {
+                                    // Only after every source at depth 2 has
+                                    // closed and all exchanges have drained
+                                    // may the target depth 3 be settled.
+                                    let mut history_words = [0u32; 64];
+                                    if rank == 0 {
+                                        history_words[32..36].copy_from_slice(&[31, 32, 33, 34]);
+                                    }
+                                    let history_sizes = [0u32, 0, u32::from(rank == 0), 0];
+                                    assert_eq!(cudaMemcpy(
+                                        history, history_words.as_ptr().cast(), 256, 1,
+                                    ), 0);
+                                    assert_eq!(cudaMemcpy(
+                                        history_counts, history_sizes.as_ptr().cast(), 16, 1,
+                                    ), 0);
+                                    assert_eq!(mgbfs_macro_settle_run(
+                                        settle_plan, future_hashes, refs.cast(), future_count.cast(),
+                                        history, history_counts.cast(), survivors, survivor_refs.cast(),
+                                        survivor_count.cast(), settle_state.cast(), 4, owner_stream,
+                                    ), 0);
+                                    assert_eq!(cudaStreamSynchronize(owner_stream), 0);
+                                    let mut settled = MacroSettleState::default();
+                                    let mut survivor_rows = 99u32;
+                                    assert_eq!(cudaMemcpy(
+                                        (&mut settled as *mut MacroSettleState).cast(), settle_state,
+                                        std::mem::size_of::<MacroSettleState>(), 2,
+                                    ), 0);
+                                    assert_eq!(cudaMemcpy(
+                                        (&mut survivor_rows as *mut u32).cast(), survivor_count, 4, 2,
+                                    ), 0);
+                                    assert_eq!((settled.fatal, settled.last_epoch), (0, 4));
+                                    assert_eq!((settled.count, survivor_rows),
+                                        if rank == 0 { (0, 0) } else { (1, 1) });
+                                    if rank == 1 {
+                                        let mut surviving_hash = [0u32; 4];
+                                        assert_eq!(cudaMemcpy(
+                                            surviving_hash.as_mut_ptr().cast(), survivors, 16, 2,
+                                        ), 0);
+                                        assert_eq!(surviving_hash, [41, 42, 43, 44]);
+                                    }
+                                }
+                                buffers.finalized(true).unwrap();
+                            }
                             Some(BufferEvent::Publish(f)) => {
                                 assert_eq!(f.depth, depth + 1);
                                 break;
@@ -414,46 +457,6 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                         assert!(Instant::now() < deadline);
                         std::thread::yield_now();
                     }
-                }
-                // Synthetic already-settled depth-2 history: on rank 0 a
-                // shorter route to the provisional depth-3 key is known;
-                // rank 1 has no such route. This tests GPU settlement after
-                // transport, not a full graph expansion through depth 2.
-                let mut history_words = [0u32; 64];
-                if rank == 0 {
-                    history_words[32..36].copy_from_slice(&[31, 32, 33, 34]);
-                }
-                let history_sizes = [0u32, 0, u32::from(rank == 0), 0];
-                assert_eq!(cudaMemcpy(
-                    history, history_words.as_ptr().cast(), 256, 1,
-                ), 0);
-                assert_eq!(cudaMemcpy(
-                    history_counts, history_sizes.as_ptr().cast(), 16, 1,
-                ), 0);
-                assert_eq!(mgbfs_macro_settle_run(
-                    settle_plan, future_hashes, refs.cast(), future_count.cast(),
-                    history, history_counts.cast(), survivors, survivor_refs.cast(),
-                    survivor_count.cast(), settle_state.cast(), 4, owner_stream,
-                ), 0);
-                assert_eq!(cudaStreamSynchronize(owner_stream), 0);
-                let mut settled = MacroSettleState::default();
-                let mut survivor_rows = 99u32;
-                assert_eq!(cudaMemcpy(
-                    (&mut settled as *mut MacroSettleState).cast(), settle_state,
-                    std::mem::size_of::<MacroSettleState>(), 2,
-                ), 0);
-                assert_eq!(cudaMemcpy(
-                    (&mut survivor_rows as *mut u32).cast(), survivor_count, 4, 2,
-                ), 0);
-                assert_eq!((settled.fatal, settled.last_epoch), (0, 4));
-                assert_eq!((settled.count, survivor_rows),
-                    if rank == 0 { (0, 0) } else { (1, 1) });
-                if rank == 1 {
-                    let mut surviving_hash = [0u32; 4];
-                    assert_eq!(cudaMemcpy(
-                        surviving_hash.as_mut_ptr().cast(), survivors, 16, 2,
-                    ), 0);
-                    assert_eq!(surviving_hash, [41, 42, 43, 44]);
                 }
                 assert_eq!(mgbfs_nccl_abort(comm), 0);
                 mgbfs_nccl_destroy(comm);
