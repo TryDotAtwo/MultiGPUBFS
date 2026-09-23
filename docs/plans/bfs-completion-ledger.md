@@ -121,6 +121,15 @@ Evidence and limitations: `docs/validation/2026-09-23-macro-reference-cli-t4.md`
 The broader requirement for distributed weighted settlement is **not**
 discharged by the single-rank path.
 
+The next distributed-macro contract slice is CPU-only: transport now has an
+explicit lookahead window, so unit-cost K=1 rejects offers beyond the next
+depth, while `new_macro(..., K)` admits only depths `current+1..current+K`.
+Schema2 adds `MacroDense` and `MacroHashFirst` frames with separate 16-byte
+`MacroCandidateRef` planes; `decode_at` requires the metadata's
+`source_depth + weight` to equal the frame's target depth. Wire and transport
+tests pass. This does **not** yet route those frames through NCCL or settle
+distributed weighted depths on GPU.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly

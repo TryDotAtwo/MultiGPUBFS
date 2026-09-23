@@ -129,3 +129,21 @@ fn macro_candidate_ref_freezes_source_depth_weight_and_absolute_state_ref() {
     );
     assert!(MacroCandidateRef::decode(&frozen[..15], 8, 20).is_err());
 }
+
+#[test]
+fn macro_candidate_frames_have_explicit_metadata_plane_and_target_depth() {
+    for (kind, bytes) in [(FrameKind::MacroDense, 1792), (FrameKind::MacroHashFirst, 1536)] {
+        let layout = payload_layout(kind, 17, 32).unwrap();
+        assert_eq!(layout.bytes, bytes);
+        assert_eq!(layout.planes.len(), 3);
+        let frame = FrameHeader { kind, depth: 7, ..header() };
+        let mut expected = expected();
+        expected.kind = kind;
+        expected.depth = 7;
+        expected.max_payload = bytes;
+        assert_eq!(FrameHeader::decode(&frame.encode(32).unwrap(), &expected).unwrap(), frame);
+    }
+    let reference = MacroCandidateRef { source_depth: 3, weight: 4, state_ref: 9 };
+    assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 7).unwrap(), reference);
+    assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 8).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
+}

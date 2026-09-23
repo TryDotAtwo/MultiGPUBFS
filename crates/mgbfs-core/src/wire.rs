@@ -9,6 +9,8 @@ pub enum FrameKind {
     Request = 3,
     Response = 4,
     Receipt = 5,
+    MacroDense = 6,
+    MacroHashFirst = 7,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameHeader {
@@ -65,6 +67,7 @@ fn visit_payload(
         return Err("WIRE_STATE_STRIDE".into());
     }
     let dense = [16, 4, stride];
+    let macro_dense = [16, 16, stride];
     let response = [stride];
     let sizes: &[u64] = match kind {
         FrameKind::Dense => &dense,
@@ -72,6 +75,8 @@ fn visit_payload(
         FrameKind::Request => &[16],
         FrameKind::Response => &response,
         FrameKind::Receipt => &[32],
+        FrameKind::MacroDense => &macro_dense,
+        FrameKind::MacroHashFirst => &[16, 16, 16],
     };
     let mut offset = 0u64;
     for &s in sizes {
@@ -126,6 +131,8 @@ impl FrameHeader {
             3 => FrameKind::Request,
             4 => FrameKind::Response,
             5 => FrameKind::Receipt,
+            6 => FrameKind::MacroDense,
+            7 => FrameKind::MacroHashFirst,
             _ => return Err("WIRE_KIND".into()),
         };
         let h = Self {
@@ -250,6 +257,14 @@ impl MacroCandidateRef {
             .filter(|&depth| depth <= max_target_depth)
             .is_none()
         {
+            return Err("WIRE_MACRO_TARGET_DEPTH".into());
+        }
+        Ok(value)
+    }
+    /// A received candidate must name exactly the frame's target depth.
+    pub fn decode_at(bytes: &[u8], max_weight: u32, target_depth: u32) -> Result<Self> {
+        let value = Self::decode(bytes, max_weight, target_depth)?;
+        if value.source_depth + value.weight != target_depth {
             return Err("WIRE_MACRO_TARGET_DEPTH".into());
         }
         Ok(value)

@@ -154,7 +154,7 @@ fn round_robin_sources_and_empty_rank_participation() {
 
 #[test]
 fn macro_candidate_tickets_preserve_target_depth_across_ready_reordering() {
-    let mut t = Transport::new(2, 3, 8).unwrap();
+    let mut t = Transport::new_macro(2, 3, 8, 3).unwrap();
     t.offer_at(Candidate, 3, 0, 10, vec![0, 2]).unwrap();
     t.offer_at(Candidate, 1, 1, 11, vec![2, 0]).unwrap();
     let first = t.issue().unwrap().unwrap();
@@ -166,4 +166,17 @@ fn macro_candidate_tickets_preserve_target_depth_across_ready_reordering() {
     t.consume(first.seq).unwrap();
     t.consume(second.seq).unwrap();
     assert!(t.offer_at(Candidate, 0, 0, 12, vec![0, 1]).is_err());
+}
+
+#[test]
+fn unit_cost_transport_rejects_future_depth_outside_its_window() {
+    let mut transport = Transport::new(2, 3, 8).unwrap();
+    assert_eq!(
+        transport
+            .offer_at(Candidate, 2, 0, 10, vec![0, 1])
+            .unwrap_err(),
+        "FUTURE_DEPTH_EXCEEDS_WINDOW"
+    );
+    transport.offer_at(Candidate, 1, 0, 10, vec![0, 1]).unwrap();
+    assert_eq!(transport.issue().unwrap().unwrap().target_depth, 1);
 }

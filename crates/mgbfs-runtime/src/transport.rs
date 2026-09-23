@@ -26,6 +26,7 @@ pub struct Transport {
     ranks: usize,
     slots: usize,
     records: u64,
+    lookahead: u32,
     limit: usize,
     pending: Vec<VecDeque<Ticket>>,
     live: BTreeMap<u64, Live>,
@@ -62,7 +63,10 @@ impl Transport {
         Ok(())
     }
     pub fn new(ranks: usize, slots: usize, records: u64) -> Result<Self> {
-        if ranks == 0 || slots == 0 || records == 0 {
+        Self::new_macro(ranks, slots, records, 1)
+    }
+    pub fn new_macro(ranks: usize, slots: usize, records: u64, lookahead: u32) -> Result<Self> {
+        if ranks == 0 || slots == 0 || records == 0 || lookahead == 0 {
             return Err("TRANSPORT_CAPACITY".into());
         }
         let queues = ranks.checked_mul(4).ok_or("TRANSPORT_CAPACITY")?;
@@ -71,6 +75,7 @@ impl Transport {
             ranks,
             slots,
             records,
+            lookahead,
             limit,
             pending: (0..queues).map(|_| VecDeque::new()).collect(),
             live: BTreeMap::new(),
@@ -97,6 +102,10 @@ impl Transport {
         counts: Vec<u64>,
     ) -> Result<()> {
         let k = index(kind)?;
+        let maximum = self.depth.checked_add(self.lookahead).ok_or("DEPTH_OVERFLOW")?;
+        if target_depth > maximum {
+            return Err("FUTURE_DEPTH_EXCEEDS_WINDOW".into());
+        }
         let total = counts.iter().try_fold(0u64, |sum, &n| sum.checked_add(n));
         if self.finalizing
             || target_depth <= self.depth
