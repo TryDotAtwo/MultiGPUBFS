@@ -31,6 +31,17 @@ oracles, and the two-process CLI S4/U4m2 DENSE/HASH_FIRST verification passed.
 Raw logs: ignored `test_results/kaggle_rank_extent_full_bfs_v29/` and
 `test_results/kaggle_rank_extent_full_bfs_v30/`.
 
-The integrated full-runtime sanitizer gate and Nsight timeline are still
-required. Route counts, NCCL payload sizing and parent retirement remain
-CPU-dependent.
+V31 on the same exact source completed with `summary.status=PASS`. The
+rank-owner two-GPU fixture passed plain and all four Compute Sanitizer tools:
+two full-state/archive tests passed in every mode, with zero memcheck,
+initcheck and synccheck errors and zero racecheck hazards/warnings. The
+one-GPU full-state/fatal-recreation suite passed on **each** T4 in all five
+modes (three tests per run). Two-process CLI S4/U4m2 verification also ran,
+but its scenarios cover cuDF/cuCO-indexed, not the rank owner; the latter is
+covered by the two-GPU fixture. Raw logs and manifest:
+`test_results/kaggle_rank_extent_full_bfs_sanitizers_v31/` (ignored local
+artifact). This is a clean sanitizer gate for the integrated extent change,
+not evidence of an asynchronous transport or an Nsight timeline.
+
+Route counts, NCCL payload sizing and parent retirement still require
+separate CPU-dependency work.

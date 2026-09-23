@@ -560,6 +560,17 @@ Integration source `b15b74b` passed local Rust type-check with CUDA/library
 features and the CPU suite. V29 passed the 1-GPU full-state oracle but stopped
 on the old capacity-error assertion; v30 at `5f87e24` passed the full plain
 1/2-GPU layer/archive oracle and two-process CLI S4/U4m2 verification. The
-integrated sanitizer/timeline gate remains pending. This does not
-remove per-batch route count upload, NCCL host size exchange or parent
-retirement readback.
+v31 at the same source passed the full integrated plain/four-sanitizer
+1/2-T4 rank-owner fixture gate with zero reported errors/hazards; see the
+validation record. An Nsight timeline is still pending. This does not remove
+per-batch route count upload, NCCL host size exchange or parent retirement
+readback.
+
+The next retirement cut passes the parent extent by value into CUDA, removing
+the `Buffer::put()` H2D extent upload and its protecting host wait on both
+DENSE and HASH_FIRST paths. The CUDA leaf had expected v15 RED and v16
+plain/four-sanitizer GREEN on both T4s; Rust integration at `0e3d1d6`
+passed local typecheck and the CPU suite. A separate full BFS 2xT4 gate is
+still running. The stream drain and ring-fatal D2H after retirement remain,
+so this is **not** yet CPU-free retirement. Evidence:
+`docs/validation/device-parent-retirement-2xt4.md`.
