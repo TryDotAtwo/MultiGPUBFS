@@ -68,11 +68,11 @@ impl MacroHistoryWindow {
     /// Publish the final hash layer after settlement. The slot it replaces
     /// held depth `depth - 2*Km`, which was still required during settlement.
     /// A live owner reader or archive D2H lease makes reuse illegal.
-    pub fn publish(&mut self, depth: u32) -> Result<usize> {
+    pub fn can_publish(&self, depth: u32) -> Result<usize> {
         if depth != self.next_depth || !self.settled {
             return Err("MACRO_HISTORY_NOT_SETTLED".into());
         }
-        let next = depth.checked_add(1).ok_or("MACRO_HISTORY_DEPTH_OVERFLOW")?;
+        depth.checked_add(1).ok_or("MACRO_HISTORY_DEPTH_OVERFLOW")?;
         let index = self.index(depth);
         let old = self.slots[index];
         let expected = depth.checked_sub(self.slots.len() as u32);
@@ -82,12 +82,17 @@ impl MacroHistoryWindow {
         if old.readers != 0 || old.archive_pending {
             return Err("MACRO_HISTORY_SLOT_BUSY".into());
         }
+        Ok(index)
+    }
+
+    pub fn publish(&mut self, depth: u32) -> Result<usize> {
+        let index = self.can_publish(depth)?;
         self.slots[index] = Slot {
             depth: Some(depth),
             readers: 0,
             archive_pending: true,
         };
-        self.next_depth = next;
+        self.next_depth = depth + 1;
         self.settled = false;
         Ok(index)
     }

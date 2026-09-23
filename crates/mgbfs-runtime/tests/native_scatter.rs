@@ -30,6 +30,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 peers[(rank ^ 1) as usize] =
                     Some(ControlConnection::new(socket, 2, rank, rank ^ 1).unwrap());
                 let mut buffers = AdmittedBuffers::new(2, rank, 2, peers, [2048; 4], 1).unwrap();
+                buffers.enable_macro_history(2).unwrap();
                 let mut comm = std::ptr::null_mut();
                 let mut error = [0i8; 512];
                 assert_eq!(
@@ -67,6 +68,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 assert_eq!(cudaMemcpy(states, state_words.as_ptr().cast(), 32, 1), 0);
                 assert_eq!(cudaMemcpy(hashes, hash_words.as_ptr().cast(), 32, 1), 0);
                 assert_eq!(cudaMemcpy(refs, ref_words.as_ptr().cast(), 16, 1), 0);
+                buffers.macro_seed_ready().unwrap();
                 assert_eq!(cudaMemsetAsync(fatal, 0, 4, generate_stream), 0);
                 // Isolate materialization from transport. This fixture supplies
                 // an already committed one-row owner result, not an owner BFS.
@@ -445,10 +447,17 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                         assert_eq!(surviving_hash, [41, 42, 43, 44]);
                                     }
                                 }
+                                // The caller reports settlement only after
+                                // the owner stream's completion event/result.
+                                buffers.macro_settled((depth + 1) as u32).unwrap();
                                 buffers.finalized(true).unwrap();
                             }
                             Some(BufferEvent::Publish(f)) => {
                                 assert_eq!(f.depth, depth + 1);
+                                assert_eq!(
+                                    buffers.macro_history_slot_depth(((depth + 1) % 4) as usize).unwrap(),
+                                    Some((depth + 1) as u32),
+                                );
                                 break;
                             }
                             Some(BufferEvent::Launch(_)) => panic!("unexpected payload"),

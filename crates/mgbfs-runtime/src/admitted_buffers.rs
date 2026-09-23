@@ -192,6 +192,8 @@ pub struct AdmittedBuffers {
     rank: u32,
     world: usize,
     pools: Vec<Pool>,
+    macro_history: Option<crate::macro_history_window::MacroHistoryWindow>,
+    macro_finalized: bool,
 }
 impl AdmittedBuffers {
     pub fn new(
@@ -246,7 +248,58 @@ impl AdmittedBuffers {
             rank,
             world: world as usize,
             pools,
+            macro_history: None,
+            macro_finalized: false,
         })
+    }
+    /// Setup-only opt-in. The caller must register seed depth zero after its
+    /// GPU StateReady/hash publish event, before opening source offers.
+    pub fn enable_macro_history(&mut self, max_weight: u32) -> Result<()> {
+        self.apply(|s| {
+            if s.depth != 0 || s.source_closed || s.macro_history.is_some() ||
+                s.pools.iter().any(|p| p.descriptions.iter().any(|d| d.handle.is_some())) {
+                return Err("MACRO_HISTORY_SETUP_PHASE".into());
+            }
+            s.macro_history = Some(crate::macro_history_window::MacroHistoryWindow::new(max_weight)?);
+            Ok(())
+        })
+    }
+    pub fn macro_seed_ready(&mut self) -> Result<()> {
+        self.apply(|s| {
+            if s.depth != 0 || s.source_closed { return Err("MACRO_HISTORY_SEED_PHASE".into()); }
+            let history = s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?;
+            history.settled(0)?;
+            history.publish(0)?;
+            Ok(())
+        })
+    }
+    /// Caller observed the hash archive D2H completion event; disk durability
+    /// is tracked independently by the archive subsystem.
+    pub fn macro_archive_copied(&mut self, depth: u32) -> Result<()> {
+        self.apply(|s| s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.archive_copied(depth))
+    }
+    pub fn macro_hold_history_reader(&mut self, depth: u32) -> Result<usize> {
+        self.apply(|s| {
+            if s.macro_finalized { return Err("MACRO_HISTORY_ADMISSION_CLOSED".into()); }
+            s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.hold_reader(depth)
+        })
+    }
+    /// Caller observed the owner compare completion event for this reader.
+    pub fn macro_release_history_reader(&mut self, depth: u32) -> Result<()> {
+        self.apply(|s| s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.release_reader(depth))
+    }
+    /// Caller observed local settlement completion for the next depth after
+    /// the globally admitted FinalizeDepth command and all owner jobs drained.
+    pub fn macro_settled(&mut self, target_depth: u32) -> Result<()> {
+        self.apply(|s| {
+            if !s.finalizing || s.depth.checked_add(1) != Some(u64::from(target_depth)) {
+                return Err("MACRO_HISTORY_SETTLE_PHASE".into());
+            }
+            s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.settled(target_depth)
+        })
+    }
+    pub fn macro_history_slot_depth(&self, slot: usize) -> Result<Option<u32>> {
+        self.macro_history.as_ref().ok_or("MACRO_HISTORY_DISABLED")?.slot_depth(slot)
     }
     fn apply<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if self.pump.is_none() {
@@ -412,10 +465,14 @@ impl AdmittedBuffers {
                     Ok(Some(BufferEvent::Finalize(f)))
                 }
                 Action::Publish => {
+                    if let Some(history) = &mut s.macro_history {
+                        history.publish(u32::try_from(f.depth).map_err(|_| "MACRO_HISTORY_DEPTH_OVERFLOW")?)?;
+                    }
                     s.next_submission = f.epoch.checked_add(1).ok_or("BUFFER_SEQUENCE")?;
                     s.depth = f.depth;
                     s.finalizing = false;
                     s.source_closed = false;
+                    s.macro_finalized = false;
                     Ok(Some(BufferEvent::Publish(f)))
                 }
                 _ => Err("BUFFER_COMMAND".into()),
@@ -798,10 +855,18 @@ impl AdmittedBuffers {
                 p.live.iter().all(Option::is_none)
                     && p.descriptions.iter().all(|d| d.handle.is_none())
             });
+            if let Some(history) = &s.macro_history {
+                let target = s.depth.checked_add(1)
+                    .and_then(|d| u32::try_from(d).ok())
+                    .ok_or("MACRO_HISTORY_DEPTH_OVERFLOW")?;
+                history.can_publish(target)?;
+            }
             s.pump
                 .as_mut()
                 .unwrap()
-                .finalized(drained && buffers_drained)
+                .finalized(drained && buffers_drained)?;
+            s.macro_finalized = true;
+            Ok(())
         })
     }
 }

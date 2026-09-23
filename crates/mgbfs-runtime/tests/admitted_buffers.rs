@@ -286,6 +286,44 @@ fn finalization_cannot_ignore_reserved_unoffered_response() {
 }
 
 #[test]
+fn macro_finalize_ack_requires_settled_history_and_free_reuse_slot() {
+    let mut missing = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
+    missing.enable_macro_history(1).unwrap();
+    missing.macro_seed_ready().unwrap();
+    missing.close_source().unwrap();
+    assert!((0..64).any(|_| matches!(missing.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+    assert_eq!(missing.finalized(true).unwrap_err(), "MACRO_HISTORY_NOT_SETTLED");
+
+    let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
+    d.enable_macro_history(1).unwrap();
+    d.macro_seed_ready().unwrap();
+    d.close_source().unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+    d.macro_settled(1).unwrap();
+    d.finalized(true).unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Publish(_)))));
+    assert_eq!(d.macro_history_slot_depth(1).unwrap(), Some(1));
+
+    d.close_source().unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+    d.macro_settled(2).unwrap();
+    assert_eq!(d.finalized(true).unwrap_err(), "MACRO_HISTORY_SLOT_BUSY");
+
+    let mut ready = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
+    ready.enable_macro_history(1).unwrap();
+    ready.macro_seed_ready().unwrap();
+    ready.macro_archive_copied(0).unwrap();
+    for target in 1..=2 {
+        ready.close_source().unwrap();
+        assert!((0..64).any(|_| matches!(ready.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+        ready.macro_settled(target).unwrap();
+        ready.finalized(true).unwrap();
+        assert!((0..64).any(|_| matches!(ready.poll().unwrap(), Some(BufferEvent::Publish(_)))));
+    }
+    assert_eq!(ready.macro_history_slot_depth(0).unwrap(), Some(2));
+}
+
+#[test]
 fn ticket_reservation_does_not_authorize_consumer_before_launch() {
     use mgbfs_runtime::{admitted_buffers::BufferLaunch, scatter_admission::TicketKey};
     let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
