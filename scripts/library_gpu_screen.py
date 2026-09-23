@@ -49,7 +49,7 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
     if world not in (1, 2) or profile not in ('DENSE', 'HASH_FIRST'):
         raise ValueError('SCREEN_CONFIG')
     native = owner in ('CUB_SORT_MERGE', 'BMMA_BUCKET')
-    if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
+    if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED', 'CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('SCREEN_OWNER')
     if native != (native_example is not None) or (pool_bytes != 0 if native else pool_bytes <= 0):
         raise ValueError('SCREEN_BACKEND_CONFIG')

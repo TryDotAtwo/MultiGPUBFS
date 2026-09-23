@@ -401,7 +401,7 @@ def main():
                     manifest["previous_owner_commit"] = CUCO_PREVIOUS_COMMIT
                 for world in SCREEN_WORLDS:
                     for repeat in range(SCREEN_REPEATS):
-                        owners = ("CUCO_INDEXED",) if PROFILE_SCREEN else SCREEN_OWNERS
+                        owners = SCREEN_OWNERS
                         if CUCO_PREVIOUS_COMMIT:
                             owners += ("CUCO_PREVIOUS",)
                         if NATIVE_COMPARISON:

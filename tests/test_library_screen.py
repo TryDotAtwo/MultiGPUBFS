@@ -127,6 +127,30 @@ class ScreenContract(unittest.TestCase):
             self.assertEqual(launched[0]['MGBFS_BENCH_SKIP_ARCHIVE'], '0')
             self.assertEqual(len(report['archive_verification']), 1)
 
+    def test_cuco_rank_profile_preserves_requested_owner_and_archive(self):
+        row = self.row()
+        for rank in row['rank_results']:
+            rank['owner_backend'] = 'CUCO_RANK'
+        row.update(search_complete_seconds=1, smi_peak_mib_per_rank=[100, 100],
+                   smi_peak_mib_total=200)
+        launched = []
+        def launch(command, out, label, env, timeout):
+            launched.append((command, env.copy()))
+            (out/'timeline.nsys-rep').write_bytes(b'trace fixture')
+            return row
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(screen, 'run_group', launch), patch.object(
+                    screen.subprocess, 'run', return_value=SimpleNamespace(
+                        stdout='{"status":"VERIFIED"}', returncode=0)):
+                report = screen.run_case('mgbfs', root/'logs', root/'archive',
+                    's3', 6, 2, 7, 64, 128, 67108864, 'DENSE', 'ON', {},
+                    owner='CUCO_RANK', nsys='/opt/nsys')
+            self.assertEqual(report['status'], 'COMPLETE')
+            self.assertEqual(launched[0][1]['MGBFS_OWNER_BACKEND'], 'CUCO_RANK')
+            self.assertIn('--nproc-per-node=2', launched[0][0])
+            self.assertEqual(len(report['archive_verification']), 2)
+
     def test_failed_gpu_run_is_saved_without_archive_verification(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
