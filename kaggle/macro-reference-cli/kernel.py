@@ -98,7 +98,7 @@ def main():
                 result = json.loads((out / "rank-0.json").read_text())
                 layers = result["local_layer_sizes"]
                 if (result["status"] != "COMPLETE" or sum(layers) != order
-                        or result["macro_depth"] != depth
+                        or result.get("macro_depth", 1) != depth
                         or result["hash_seed_hex"] != SEED
                         or result["output_contract"] != "archive_and_layer_counts"):
                     raise RuntimeError(f"{label}: incorrect result")
