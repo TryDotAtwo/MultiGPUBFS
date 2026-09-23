@@ -419,8 +419,8 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                     assert_eq!(cudaMemcpy(
                                         history_counts, history_sizes.as_ptr().cast(), 16, 1,
                                     ), 0);
-                                    assert_eq!(mgbfs_macro_settle_run(
-                                        settle_plan, future_hashes, refs.cast(), future_count.cast(),
+                                    assert_eq!(mgbfs_macro_settle_run_frontier(
+                                        settle_plan, future_hashes, refs.cast(), future_state.cast(),
                                         history, history_counts.cast(), survivors, survivor_refs.cast(),
                                         survivor_count.cast(), settle_state.cast(), 4, owner_stream,
                                     ), 0);

@@ -150,6 +150,15 @@ int mgbfs_macro_settle_run(void* plan,const void* future,const uint64_t* refs,co
   uint32_t* survivor_count,MgbfsMacroSettleState* state,uint64_t epoch,void* stream);
 void mgbfs_macro_settle_destroy(void* plan);
 typedef struct MgbfsFrontierState { uint32_t count, fatal; } MgbfsFrontierState;
+/* Consume the count/fatal fields produced by future merge directly on device.
+ * No D2H count or host re-upload is required. A poisoned future sets settle
+ * fatal=4 and publishes zero survivors. The caller must still check group
+ * fatal before accepting a depth. Enqueue on the same stream or wait on the
+ * merge completion event. */
+int mgbfs_macro_settle_run_frontier(void* plan,const void* future,const uint64_t* refs,
+  const MgbfsFrontierState* future_state,const void* history,const uint32_t* history_counts,
+  void* survivors,uint64_t* survivor_refs,uint32_t* survivor_count,
+  MgbfsMacroSettleState* state,uint64_t epoch,void* stream);
 /* Incrementally commit one sorted candidate run into a sorted provisional
  * target-depth set. Existing rows win equal hashes. State payloads are copied
  * only for unique hashes; output is copied back densely into the fixed future

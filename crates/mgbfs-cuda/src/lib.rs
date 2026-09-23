@@ -227,6 +227,20 @@ pub mod ffi {
             epoch: u64,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_macro_settle_run_frontier(
+            plan: *mut c_void,
+            future: *const c_void,
+            refs: *const u64,
+            future_state: *const FrontierState,
+            history: *const c_void,
+            history_counts: *const u32,
+            survivors: *mut c_void,
+            survivor_refs: *mut u64,
+            survivor_count: *mut u32,
+            state: *mut MacroSettleState,
+            epoch: u64,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_macro_settle_destroy(plan: *mut c_void);
         pub fn mgbfs_future_merge_create(
             stride: u32,
