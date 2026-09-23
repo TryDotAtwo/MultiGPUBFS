@@ -601,6 +601,8 @@ from sticky ring fatal. Private T4 v17 failed at the expected undefined
 symbol, then v18 at `8aacb24` passed 20/20 state-commit/archive-pack plain
 and four-sanitizer checks on two physical T4s. Rust now uses the device word
 for both DENSE and HASH_FIRST retirement votes; local CUDA-feature typecheck
-and the CPU suite pass. The full 2×T4 BFS v3 integration gate is running.
+and the CPU suite pass. The full 2×T4 BFS v3 integration gate passed plain
+single-device and rank-owner layer/archive fixtures; four-sanitizer v4 is
+running. An injected retirement-failure two-rank fixture remains open.
 This removes one ring-fatal D2H but the collective remains host-blocking and
 owner/transport count decisions remain CPU-driven.

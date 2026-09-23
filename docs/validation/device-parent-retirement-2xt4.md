@@ -58,7 +58,11 @@ completed 20/20 plain and four-sanitizer checks on two physical T4s, with
 zero errors and racecheck hazards/warnings. Raw:
 `test_results/kaggle_ring_fatal_vote_red_v17/` and
 `test_results/kaggle_ring_fatal_vote_green_v18/`. Full 2×T4 BFS gate v3 at
-the integration source is running. The group vote still synchronizes the host
+the integration source passed its plain single-device and two-device
+full-state/layer/archive fixtures; raw
+`test_results/kaggle_ring_fatal_vote_full_bfs_v3/`. A separate v4 full-BFS
+four-sanitizer gate is running. Neither v3 nor the leaf test injects a
+retirement FIFO error. The group vote still synchronizes the host
 to branch before owner commit, so this is not CPU-free retirement.
 
 The runtime still drains the stream and reads ring fatal after retirement;
