@@ -132,3 +132,14 @@ fn search_only_explicitly_allows_library_without_archive() {
         assert!(selection.validate_archive_contract(true, true).is_err());
     }
 }
+
+#[test]
+fn rank_owner_is_explicit_dense_only_and_requires_fixed_pool() {
+    let selected = ReferenceSelection::parse("DENSE", "CUCO_RANK", "ON", false, 64, 8)
+        .expect("rank owner must be selectable without aliasing CUCO_INDEXED");
+    assert_eq!(selected.owner, ReferenceOwner::CucoRank);
+    assert!(selected.with_library_pool(None, true).is_err());
+    assert!(selected.with_library_pool(Some("67108864"), false).is_err());
+    assert!(selected.with_library_pool(Some("67108864"), true).is_ok());
+    assert!(ReferenceSelection::parse("HASH_FIRST", "CUCO_RANK", "ON", false, 64, 8).is_err());
+}

@@ -236,7 +236,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         DistributedNativeBfs::new_lrx_multiset_reference(word, seed,
             id, cfg.clone(), selection.owner, selection.library_pool_bytes)?
     } else { match selection.owner {
-        ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
+        ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
             #[cfg(feature = "library-owner")]
             {
                 DistributedNativeBfs::new_library_reference_with_owner(

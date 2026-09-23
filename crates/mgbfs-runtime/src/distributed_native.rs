@@ -478,6 +478,9 @@ impl DistributedNativeBfs {
         if matches!(library_owner, ReferenceOwner::Native(_)) {
             return Err("REFERENCE_LIBRARY_OWNER".into());
         }
+        if matches!(library_owner, ReferenceOwner::CucoRank) {
+            return Err("REFERENCE_CUCO_RANK_NOT_WIRED".into());
+        }
         if tensor_generation && materialization_capacity.is_none() {
             return Err("REFERENCE_HASH_FIRST_GENERATION".into());
         }

@@ -22,6 +22,7 @@ pub enum ReferenceOwner {
     Native(OwnerBackend),
     CudfRelational,
     CucoIndexed,
+    CucoRank,
 }
 
 /// Explicit selection for the current reference benchmark, not production
@@ -59,7 +60,7 @@ impl ReferenceSelection {
                     return Err("REFERENCE_UNUSED_LIBRARY_POOL".into());
                 }
             }
-            ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
+            ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
                 if !available {
                     return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
                 }
@@ -101,6 +102,7 @@ impl ReferenceSelection {
             "BMMA_BUCKET" => ReferenceOwner::Native(OwnerBackend::BmmaBucket),
             "CUDF_RELATIONAL" => ReferenceOwner::CudfRelational,
             "CUCO_INDEXED" => ReferenceOwner::CucoIndexed,
+            "CUCO_RANK" if profile == FrontierProfile::Dense => ReferenceOwner::CucoRank,
             _ => return Err("REFERENCE_OWNER_BACKEND".into()),
         };
         let prededup = match pre {
