@@ -26,6 +26,25 @@ pub struct SurvivorsV1 {
     pub reserved: u32,
 }
 
+/// All fields are borrowed device pointers valid through the ordered final
+/// consumer of the rank-batch epoch. No host-visible survivor count.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RankDeviceBatchV1 {
+    pub high_words: *const u32,
+    pub valid_rows: *const u32,
+    pub selected: *const u32,
+    pub selected_count: *const u32,
+    pub source_indices: *const u32,
+    pub accepted_counts: *const u32,
+    pub accepted_capacities: *const u32,
+    pub shard_counts: *mut u32,
+    pub shard_offsets: *mut u32,
+}
+
+const _: [(); 72] = [(); std::mem::size_of::<RankDeviceBatchV1>()];
+const _: [(); 8] = [(); std::mem::align_of::<RankDeviceBatchV1>()];
+
 const _: [(); 40] = [(); std::mem::size_of::<KeysV1>()];
 const _: [(); 48] = [(); std::mem::size_of::<CandidatesV1>()];
 const _: [(); 24] = [(); std::mem::size_of::<SurvivorsV1>()];
@@ -37,6 +56,7 @@ const _: [(); 8] = [(); std::mem::align_of::<SurvivorsV1>()];
 pub type OwnerHandle = *mut c_void;
 pub type PoolHandle = *mut c_void;
 pub type WorkspaceHandle = *mut c_void;
+pub type RankHandle = *mut c_void;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct ControlSnapshotV1 {
@@ -59,6 +79,43 @@ const _: [(); 24] = [(); std::mem::size_of::<PoolUsageV1>()];
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    pub fn mgbfs_library_rank_create_cuco_v1(
+        previous: *const KeysV1,
+        current: *const KeysV1,
+        accepted_capacities: *const u32,
+        shards: u32,
+        incoming_capacity: u32,
+        logical_owner: u32,
+        world: u32,
+        cuda_stream: *mut c_void,
+        rank_owner: *mut RankHandle,
+    ) -> i32;
+    pub fn mgbfs_library_rank_compare_v1(
+        rank_owner: RankHandle,
+        epoch: u64,
+        input: CandidatesV1,
+        valid_rows: *const u32,
+        owner: *mut crate::native_owner::Control,
+        ring: *mut crate::native_owner::Ring,
+        result: *mut RankDeviceBatchV1,
+    ) -> i32;
+    pub fn mgbfs_library_rank_commit_v1(
+        rank_owner: RankHandle,
+        epoch: u64,
+        owner: *mut crate::native_owner::Control,
+        ring: *mut crate::native_owner::Ring,
+        extent: *const crate::native_owner::Extent,
+    ) -> i32;
+    /// Caller must first complete every GPU reader of this borrowed epoch.
+    pub fn mgbfs_library_rank_complete_v1(rank_owner: RankHandle, epoch: u64) -> i32;
+    pub fn mgbfs_library_rank_export_shard_v1(
+        rank_owner: RankHandle,
+        shard: u32,
+        rows: u32,
+        result: *mut KeysV1,
+    ) -> i32;
+    /// Requires the creating device/resource and a drained owner stream.
+    pub fn mgbfs_library_rank_destroy_v1(rank_owner: RankHandle) -> i32;
     pub fn mgbfs_control_transfer_create_v1(stream: *mut c_void, out: *mut *mut c_void) -> i32;
     pub fn mgbfs_control_transfer_destroy_v1(handle: *mut c_void) -> i32;
     pub fn mgbfs_control_transfer_upload_v1(

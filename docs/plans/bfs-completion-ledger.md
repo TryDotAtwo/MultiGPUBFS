@@ -474,3 +474,10 @@ v12 GREEN 20/20 plain/sanitizer checks are recorded in
 `docs/validation/rank-batch-materialize-2xt4.md`. A Rust FFI declaration is
 present, but the runtime still does not call this leaf. HASH_FIRST and the
 owner→transport→retirement event/lifetime protocol remain open.
+
+The cuCO rank-batch now has a stable C ABI and matching Rust FFI declarations.
+The v6 RED link failure and v7 two-T4 GREEN gate exercise that ABI across
+captured compare/commit, reuse and overflow; see
+`docs/validation/cuco-rank-c-abi-2xt4.md`. The production Rust scheduler still
+does not invoke it, so this closes an interface gate only, not the runtime
+CPU-dependency audit.
