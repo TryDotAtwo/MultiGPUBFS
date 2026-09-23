@@ -71,6 +71,17 @@ int mgbfs_state_materialize_packed(const uint8_t* input, uint32_t rows,
     const uint32_t* selected, uint32_t selected_capacity, uint32_t stride,
     uint8_t* states, MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
+/* Rank-batch DENSE path: both source row count and survivor count are device
+ * words. source_indices holds compacted source-row ordinals, not hash values.
+ * All indices are checked before any state copy; output is one dense extent.
+ * No host count readback, allocation, or stream synchronization.
+ */
+int mgbfs_state_materialize_rank_batch(const uint8_t* input,
+    const uint32_t* source_rows, uint32_t source_capacity,
+    const uint32_t* source_indices, const uint32_t* selected_count,
+    uint32_t selected_capacity, uint32_t stride, uint8_t* states,
+    MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
+    MgbfsStateExtent* extent, void* stream);
 /* HASH_FIRST after irreversible owner commit (stage 2). Compact selected
  * origins and absolute target StateRefs into dense request order. Does not
  * publish StateReady or release source origins. Caller preserves request/target
