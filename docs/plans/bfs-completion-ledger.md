@@ -104,6 +104,16 @@ value until distributed macro settlement is connected. The new CLI regression
 failed before the guard and passed afterward (5/5 bench tests). This is a
 correctness guard, **not** implementation of distributed macro depth.
 
+The follow-up connects `MGBFS_MACRO_DEPTH>1` for a **single rank** to the
+existing `MacroNativeBfs` weighted CUDA backend, with the same reference CLI
+archive/search-only contract, seed and timing JSON. The CLI still rejects
+multi-rank K>1 before launch; the runtime independently rejects it. This
+exposes a real macro runtime rather than quietly substituting depth-one BFS.
+The CLI acceptance test was RED on the old guard and GREEN after wiring; Linux
+CUDA cross-target `cargo check` passes. GPU archive/oracle execution of this
+new CLI path remains an explicit gate. The broader requirement for distributed
+weighted settlement is **not** discharged by the single-rank path.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly

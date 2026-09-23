@@ -9,6 +9,8 @@ fn execute() -> Result<(), (i32, String)> {
         Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only")) && args[1] == "--reference" => {
             match std::env::var("MGBFS_MACRO_DEPTH").as_deref() {
                 Ok("1") | Err(std::env::VarError::NotPresent) => (),
+                Ok(value) if value.parse::<u32>().is_ok_and(|depth| depth > 1)
+                    && std::env::var("WORLD_SIZE").as_deref() == Ok("1") => (),
                 _ => return Err((2, "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE".into())),
             }
             if args.len() == 8 {

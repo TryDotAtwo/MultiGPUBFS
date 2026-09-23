@@ -104,3 +104,20 @@ fn macro_depth_must_not_be_silently_ignored_by_reference_bench() {
         assert_eq!(result["error"], "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE");
     }
 }
+
+#[test]
+fn single_rank_macro_reference_reaches_native_launcher() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mgbfs"))
+        .args(["bench", "--reference", "s3", "16", "bootstrap", "archive", "results"])
+        .env("MGBFS_MACRO_DEPTH", "2")
+        .env("WORLD_SIZE", "1")
+        .output()
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    let expected = if cfg!(all(feature = "cuda", target_os = "linux")) {
+        "ENV_RANK"
+    } else {
+        "CLI_BENCH_REQUIRES_LINUX_CUDA"
+    };
+    assert_eq!(result["error"], expected);
+}

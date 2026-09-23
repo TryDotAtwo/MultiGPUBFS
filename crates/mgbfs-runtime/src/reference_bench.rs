@@ -1,10 +1,12 @@
 use crate::{
     archive::create_archive_extent,
     distributed_native::{DistributedConfig, DistributedNativeBfs},
+    macro_native::{MacroNativeBfs, MacroNativeConfig},
     pinned_archive::PinnedArchive,
 };
 use mgbfs_core::{
     config::{ReferenceOwner, ReferenceSelection},
+    macro_memory::MacroStateLayout,
     matrix::MatrixGroup,
     rank_plan::{cluster_capacity_plan, CapacityMode},
     Result,
@@ -72,6 +74,9 @@ fn used() -> Result<usize> {
 fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
+    }
+    if env_u32("MGBFS_MACRO_DEPTH", 1) > 1 {
+        return run_macro_pass(args, warmup_completed);
     }
     let multiset = if args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
@@ -393,6 +398,149 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
     })
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The existing weighted CUDA backend is single-rank. It remains separate
+/// from the unit-cost NCCL runtime until distributed weighted settlement exists.
+fn run_macro_pass(args: &[String], warmup_completed: bool) -> Result<()> {
+    let rank = required("RANK")?;
+    let world = required("WORLD_SIZE")?;
+    let local = required("LOCAL_RANK")?;
+    if rank != 0 || local != 0 || world != 1 {
+        return Err("MACRO_REFERENCE_SINGLE_RANK_ONLY".into());
+    }
+    let macro_depth: u32 = std::env::var("MGBFS_MACRO_DEPTH")
+        .map_err(|_| "MACRO_DEPTH")?
+        .parse()
+        .map_err(|_| "MACRO_DEPTH")?;
+    if macro_depth <= 1 {
+        return Err("MACRO_DEPTH".into());
+    }
+    if std::env::var("MGBFS_PROFILE").as_deref().is_ok_and(|x| x != "DENSE")
+        || std::env::var("MGBFS_OWNER_BACKEND").as_deref().is_ok_and(|x| x != "CUB_SORT_MERGE")
+    {
+        return Err("MACRO_REFERENCE_DENSE_CUB_ONLY".into());
+    }
+    if unsafe { cudaSetDevice(local as i32) } != 0 {
+        return Err("CUDA_SET_DEVICE".into());
+    }
+    let (group, graph) = MatrixGroup::from_reference_label(&args[1])?;
+    let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
+    let capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
+        Ok(value) => value.parse().map_err(|_| "CAPACITY")?,
+        Err(std::env::VarError::NotPresent) => graph.expected_max_unique_states
+            .try_into().map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
+        Err(_) => return Err("CAPACITY".into()),
+    };
+    let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity);
+    let compact = match std::env::var("MGBFS_STATE_CODEC").as_deref() {
+        Ok("permutation_u8") => true,
+        Ok("matrix_u8") | Err(_) => false,
+        _ => return Err("STATE_CODEC".into()),
+    };
+    let generation_variant = if compact { 5 } else { 1 };
+    let layout = MacroStateLayout::derive(&graph, generation_variant)?;
+    match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
+        Ok("permutation_u8") if compact => (),
+        Ok("matrix_u8") if !compact => (),
+        Err(_) => (),
+        _ => return Err("MACRO_ARCHIVE_CODEC_MISMATCH".into()),
+    }
+    let prededup = match std::env::var("MGBFS_PRE_DEDUP").as_deref() {
+        Ok("OFF") => false,
+        Ok("ON") | Err(_) => true,
+        _ => return Err("PRE_DEDUP".into()),
+    };
+    let seed = match std::env::var("MGBFS_HASH_SEED_HEX") {
+        Ok(value) => mgbfs_core::hash::parse_seed_hex(&value)?,
+        Err(std::env::VarError::NotPresent) => 20260828u128.to_le_bytes(),
+        Err(_) => return Err("HASH_SEED_HEX_32".into()),
+    };
+    let seed_hex = format!("{:032x}", u128::from_le_bytes(seed));
+    let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
+    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
+    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
+    let cfg = MacroNativeConfig {
+        macro_depth,
+        batch,
+        layer_capacity: capacity,
+        future_capacity_per_depth: future,
+        prededup,
+        generation_variant,
+        untouched_vram_reserve_bytes: 1 << 30,
+    };
+    let description = format!("macro-reference-v1;group={group};batch={batch};capacity={capacity};future={future};K={macro_depth};pre={prededup};generation={generation_variant};seed=0x{seed_hex};archive_width={};archive_enabled={archive_enabled}", layout.width);
+    let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
+    let disk_bytes = if archive_enabled {
+        graph.expected_max_unique_states
+            .checked_mul((layout.width + 16) as u64)
+            .and_then(|x| x.checked_add(64 << 20))
+            .ok_or("DISK")?
+    } else {
+        0
+    };
+    let archive_path = format!("{}-rank-0.mgbfsar1", args[4]);
+    let mut archive = if archive_enabled {
+        let extent = create_archive_extent(Path::new(&archive_path), stream_archive)
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
+        Some(PinnedArchive::new(
+            extent, disk_bytes, layout.width, digest, archive_rows,
+            env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+        )?)
+    } else {
+        None
+    };
+    let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
+    let setup_start = Instant::now();
+    let mut bfs = MacroNativeBfs::new(&graph, seed, cfg)?;
+    let setup_seconds = setup_start.elapsed().as_secs_f64();
+    let allocated = used()?;
+    let start = Instant::now();
+    let mut layers = Vec::new();
+    let mut times = Vec::new();
+    loop {
+        let tick = Instant::now();
+        layers.push(bfs.frontier_len());
+        if let Some(archive) = archive.as_mut() {
+            bfs.archive_current(archive)?;
+        }
+        let alive = bfs.advance()?;
+        times.push(tick.elapsed().as_secs_f64());
+        if !alive {
+            break;
+        }
+    }
+    let search = start.elapsed().as_secs_f64();
+    if let Some(archive) = archive.take() {
+        archive.finish()?;
+    }
+    let durable = start.elapsed().as_secs_f64();
+    std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
+    let record = serde_json::json!({
+        "status": "COMPLETE", "backend": "macro_native_single_rank_v1",
+        "rank": 0, "world_size": 1, "group": group, "batch": batch,
+        "macro_depth": macro_depth, "frontier_profile": "DENSE",
+        "owner_backend": "CUB_SORT_MERGE", "pre_dedup": if prededup { "ON" } else { "OFF" },
+        "hash_seed_hex": seed_hex, "generation_variant": generation_variant,
+        "archive_enabled": archive_enabled, "archive_state_bytes": layout.width,
+        "output_contract": if archive_enabled { "archive_and_layer_counts" } else { "search_only_layer_counts" },
+        "search_complete_seconds": search,
+        "durable_run_commit_seconds": if archive_enabled { Some(durable) } else { None },
+        "setup_seconds": setup_seconds, "local_layer_sizes": layers,
+        "per_depth_seconds": times, "declared_capacity_records": capacity,
+        "future_capacity_per_depth": future,
+        "explicit_device_aligned_bytes": bfs.requested_device_bytes(),
+        "cuda_allocated_used_bytes": allocated,
+        "cuda_peak_observed_bytes": used()?.max(allocated),
+        "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
+        "pinned_bytes": pinned, "disk_reserved_bytes": disk_bytes,
+        "warmup_completed": warmup_completed,
+    });
+    std::fs::write(
+        Path::new(&args[5]).join("rank-0.json"),
+        serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 /// Shared reference benchmark entry point. Argument zero is the launcher name;
