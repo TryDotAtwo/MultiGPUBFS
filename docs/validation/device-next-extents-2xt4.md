@@ -21,5 +21,16 @@ warnings. Raw logs: ignored `test_results/kaggle_next_extent_red_v13/` and
 
 This validates the CUDA leaf, not the Rust full BFS integration. The rank
 runtime integration is at `b15b74b4c946d7e551e991fa0b0c04087baf9c89`;
-its full-state 1/2-rank gate and timeline are still required. Route counts,
-NCCL payload sizing and parent retirement remain CPU-dependent.
+private `trydotatwo/mgbfs-cuco-dynamic-shard-refs-t4` v29 at that source
+passed the 1-GPU full-state oracle but stopped on an obsolete capacity-test
+error-string assertion. The test was updated at
+`5f87e241f25356b0317346dcd06e245560a77aea`. V30 at that exact source
+passed the full plain gate: both physical T4s passed the 1-GPU full-state
+and fatal/recreation tests, the two-GPU NCCL fixture passed layer/archive
+oracles, and the two-process CLI S4/U4m2 DENSE/HASH_FIRST verification passed.
+Raw logs: ignored `test_results/kaggle_rank_extent_full_bfs_v29/` and
+`test_results/kaggle_rank_extent_full_bfs_v30/`.
+
+The integrated full-runtime sanitizer gate and Nsight timeline are still
+required. Route counts, NCCL payload sizing and parent retirement remain
+CPU-dependent.

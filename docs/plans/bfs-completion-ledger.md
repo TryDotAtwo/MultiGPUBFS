@@ -557,6 +557,9 @@ physical ranges on GPU, then the Rust runtime reads them once at
 `FinalizeDepth`. The C ABI v13 RED/v14 plain and four-sanitizer GREEN on two
 T4s are recorded in `docs/validation/device-next-extents-2xt4.md`.
 Integration source `b15b74b` passed local Rust type-check with CUDA/library
-features and the CPU suite; full GPU runtime gate is pending. This does not
+features and the CPU suite. V29 passed the 1-GPU full-state oracle but stopped
+on the old capacity-error assertion; v30 at `5f87e24` passed the full plain
+1/2-GPU layer/archive oracle and two-process CLI S4/U4m2 verification. The
+integrated sanitizer/timeline gate remains pending. This does not
 remove per-batch route count upload, NCCL host size exchange or parent
 retirement readback.
