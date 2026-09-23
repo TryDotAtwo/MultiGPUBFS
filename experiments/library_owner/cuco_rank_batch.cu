@@ -113,7 +113,7 @@ __global__ void append_rank(const uint32_t* selected,const uint32_t* count,
       view.words[word][dest]=candidate[uint64_t(word)*stride+source];
   }
 }
-__global__ void insert_rank(const InsertRef* refs,const uint32_t* selected,
+__global__ void insert_rank(InsertRef* refs,const uint32_t* selected,
     const uint32_t* count,const uint32_t* candidate,uint32_t stride,
     uint32_t shift,uint32_t shards,const uint32_t* offsets,
     const uint32_t* accepted,const MgbfsOwnerControl* owner){
@@ -286,7 +286,7 @@ void CucoRankBatch::commit(uint64_t epoch,MgbfsOwnerControl* owner,
       data(p.shard_offsets),data(p.accepted_counts),
       static_cast<AcceptedView const*>(p.accepted_views.data()),owner);
   insert_rank<<<cuco_owner_detail::grid(cap),256,0,s>>>(
-      static_cast<InsertRef const*>(p.insert_refs.data()),data(p.workspace->selected),
+      static_cast<InsertRef*>(p.insert_refs.data()),data(p.workspace->selected),
       data(p.workspace->control),data(p.workspace->candidates),
       uint32_t(p.workspace->stride),p.shift,p.shards,data(p.shard_offsets),
       data(p.accepted_counts),owner);
