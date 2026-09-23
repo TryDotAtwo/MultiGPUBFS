@@ -424,3 +424,14 @@ That does not sanitize or exercise the LSA code. See
 V51 repeated this gate at `ae22e29` and again reports COMPLETE, all five
 tool modes PASS, 24/24 profile smokes PASS and identical S4 layers; it also
 kept LSA off. See `test_results/kaggle_distributed_sanitizer_v51/`.
+
+The device-side rank-batch reservation leaf was added at `63377c4`. It checks
+all shard accepted capacities, aggregate/layer/request capacity and the
+StateRing/descriptor capacity before advancing the ring or layer count. One
+extent and GPU offsets cover the batch. The private Kaggle state-commit gate
+v8 built that exact source on two physical T4s and completed 20/20 checks:
+plain plus memcheck, racecheck, initcheck and synccheck for state commit and
+archive pack on each GPU. Raw output is in
+`test_results/kaggle_state_commit_v8/state-commit-gate/`. This is a tested
+leaf only: cuCO compare still returns host counts, and the runtime does not
+yet call the new rank-batch ABI. It is not evidence of a CPU-free BFS.
