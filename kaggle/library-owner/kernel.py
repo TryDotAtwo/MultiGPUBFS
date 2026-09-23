@@ -128,7 +128,8 @@ def main():
         requirements = source / "experiments/library_owner/requirements-linux-x86_64.lock"
         manifest["requirements_sha256"] = hashlib.sha256(requirements.read_bytes()).hexdigest()
         run([*pip, "install", "--only-binary=:all:", "--no-cache-dir", "--require-hashes",
-             "--report", str(logs / "pip-install.json"), "-r", str(requirements)], "install", 900)
+             "--report", str(logs / "pip-install.json"), "-r", str(requirements)], "install",
+            int(os.environ.get("MGBFS_INSTALL_TIMEOUT_SEC", "900")))
         run([*pip, "freeze", "--all"], "packages")
         run([*pip, "show", "-f", "libcudf-cu12", "librmm-cu12", "rapids-logger"],
             "sdk-inventory")
