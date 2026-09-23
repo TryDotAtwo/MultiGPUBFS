@@ -214,6 +214,36 @@ static void retire_prefix(){
   req(mgbfs_state_retire_dense_prefix(ring.p,extent.p,1,nullptr)==0,"retire after wrap");ck(cudaDeviceSynchronize());
   r=ring.get()[0];e=extent.get()[0];req(!r.fatal&&r.head==11&&e.sequence==11&&e.count==3,"wrap padding reclaimed");
 }
+// Value-form retirement must not require a per-batch host-to-device extent
+// upload. This also checks that a rejected descriptor cannot advance FIFO.
+extern "C" int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl*,
+    MgbfsStateExtent, uint64_t, void*);
+static void retire_value_prefix(){
+  Device<MgbfsStateRingControl> ring(1);
+  ring.put({{6,14,0,2,10,4,0,0,0}});
+  MgbfsStateExtent first{};
+  first.sequence=6;first.begin=6;first.count=3;first.descriptor=0;
+  first.granted_rows=3;first.ready=1;first.padding[1]=0;
+  req(mgbfs_state_retire_dense_prefix_value(ring.p,first,3,nullptr)==0,
+      "value retire first enqueue");
+  ck(cudaDeviceSynchronize());
+  auto r=ring.get()[0];req(!r.fatal&&r.head==9&&r.descriptor_head==1,
+      "value retire first FIFO descriptor");
+  MgbfsStateExtent wrapped{};
+  wrapped.sequence=10;wrapped.begin=0;wrapped.count=4;wrapped.descriptor=1;
+  wrapped.granted_rows=4;wrapped.ready=1;wrapped.padding[1]=1;
+  req(mgbfs_state_retire_dense_prefix_value(ring.p,wrapped,1,nullptr)==0,
+      "value retire wrapped enqueue");
+  ck(cudaDeviceSynchronize());
+  r=ring.get()[0];req(!r.fatal&&r.head==11&&r.descriptor_head==1,
+      "value retire wrap padding");
+  wrapped.descriptor=0;
+  req(mgbfs_state_retire_dense_prefix_value(ring.p,wrapped,1,nullptr)==0,
+      "value reject stale descriptor enqueue");
+  ck(cudaDeviceSynchronize());
+  r=ring.get()[0];req(r.fatal==17&&r.head==11&&r.descriptor_head==1,
+      "value reject stale descriptor without mutation");
+}
 // Verification harness only: CPU prepares candidates/descriptors and reads
 // snapshots. It is NOT a production CPU data plane or performance benchmark.
 static void full_layers(unsigned modulus){
@@ -261,5 +291,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();retire_value_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
