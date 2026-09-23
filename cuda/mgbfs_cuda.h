@@ -38,6 +38,11 @@ int mgbfs_macro_exchange_pack_frame(uint32_t stride,uint32_t source_depth,
     const void* sorted_hashes,const uint64_t* sorted_refs,
     uint32_t sorted_count,uint32_t begin,uint32_t count,
     uint8_t* output,uint64_t output_capacity,uint32_t* fatal,void* stream);
+/* Validate the received MacroCandidateRef16 plane on device before owner use.
+ * fatal is a caller-zeroed sticky device word. Status 0 means enqueue only. */
+int mgbfs_macro_validate_refs(const void* refs,uint32_t count,
+    uint32_t source_depth,uint32_t target_depth,uint32_t max_weight,
+    uint64_t max_state_ref,uint32_t* fatal,void* stream);
 /* host_header is a HOST pointer to 64 encoded bytes, consumed before return.
  * Kernel arguments own a copy; no asynchronous reference to host_header remains.
  * device_prefix is a 256-byte aligned DEVICE range of at least 256 bytes.

@@ -42,6 +42,21 @@ __global__ void gather_macro_frame(MgbfsMacroFrameLayout layout, uint32_t stride
     output[word] = value;
   }
 }
+__global__ void validate_macro_refs(const uint4* refs, uint32_t count,
+    uint32_t source_depth, uint32_t target_depth, uint32_t max_weight,
+    uint64_t max_state_ref, uint32_t* fatal) {
+  const uint64_t step = uint64_t(blockDim.x) * gridDim.x;
+  for (uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+       i < count; i += step) {
+    const uint4 ref = refs[i];
+    const uint64_t state_ref = uint64_t(ref.z) | (uint64_t(ref.w) << 32);
+    if (state_ref >= max_state_ref || ref.x != source_depth ||
+        ref.y == 0 || ref.y > max_weight ||
+        uint64_t(ref.x) + ref.y != target_depth) {
+      atomicExch(fatal, 1u);
+    }
+  }
+}
 __global__ void split(const Key* keys,uint32_t count,uint32_t* output){
   if(threadIdx.x||blockIdx.x)return;uint32_t lo=0,hi=count;
   while(lo<hi){uint32_t mid=lo+(hi-lo)/2;if((keys[mid].w[3]>>31)==0)lo=mid+1;else hi=mid;}
@@ -106,6 +121,19 @@ extern "C" int mgbfs_macro_exchange_pack_frame(uint32_t stride,
       static_cast<const uint32_t*>(sorted_hashes), sorted_refs,
       reinterpret_cast<const uint32_t*>(source_states),
       reinterpret_cast<uint32_t*>(output), fatal);
+  return cudaGetLastError() == cudaSuccess ? 0 : 2;
+}
+extern "C" int mgbfs_macro_validate_refs(const void* refs, uint32_t count,
+    uint32_t source_depth, uint32_t target_depth, uint32_t max_weight,
+    uint64_t max_state_ref, uint32_t* fatal, void* raw_stream) {
+  if (!fatal || !max_weight || target_depth <= source_depth ||
+      uint64_t(target_depth) > uint64_t(source_depth) + max_weight ||
+      (count && (!refs || uintptr_t(refs) % 16))) return 1;
+  if (!count) return 0;
+  const uint32_t blocks = count / 256 + (count % 256 != 0);
+  validate_macro_refs<<<blocks, 256, 0, static_cast<cudaStream_t>(raw_stream)>>>(
+      static_cast<const uint4*>(refs), count, source_depth, target_depth,
+      max_weight, max_state_ref, fatal);
   return cudaGetLastError() == cudaSuccess ? 0 : 2;
 }
 namespace {

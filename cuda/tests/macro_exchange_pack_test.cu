@@ -58,6 +58,29 @@ int main() {
   }
   for (size_t i=32;i<256;++i)
     if (output[i] || output[256+i] || output[512+i]) return 9;
+  cudaMemset(d_fatal, 0, sizeof(uint32_t));
+  if (mgbfs_macro_validate_refs(d_output + 256, count, 2, 5, 3, 3,
+      d_fatal, nullptr)) return 14;
+  cudaDeviceSynchronize();
+  cudaMemcpy(&fatal, d_fatal, sizeof(fatal), cudaMemcpyDeviceToHost);
+  if (fatal) return 15;
+  const uint32_t bad_weight = 2;
+  cudaMemcpy(d_output + 260, &bad_weight, sizeof(bad_weight), cudaMemcpyHostToDevice);
+  if (mgbfs_macro_validate_refs(d_output + 256, count, 2, 5, 3, 3,
+      d_fatal, nullptr)) return 16;
+  cudaDeviceSynchronize();
+  cudaMemcpy(&fatal, d_fatal, sizeof(fatal), cudaMemcpyDeviceToHost);
+  if (fatal != 1) return 17;
+  const uint32_t restored_weight = 3;
+  cudaMemcpy(d_output + 260, &restored_weight, sizeof(restored_weight), cudaMemcpyHostToDevice);
+  cudaMemset(d_fatal, 0, sizeof(uint32_t));
+  if (mgbfs_macro_validate_refs(d_output + 256, count, 2, 5, 3, 2,
+      d_fatal, nullptr)) return 18;
+  cudaDeviceSynchronize();
+  cudaMemcpy(&fatal, d_fatal, sizeof(fatal), cudaMemcpyDeviceToHost);
+  if (fatal != 1) return 19;
+  if (mgbfs_macro_validate_refs(d_output + 256, count, 5, 2, 3, 3,
+      d_fatal, nullptr) != 1) return 20;
   const uint64_t bad_ref=3;
   cudaMemcpy(d_refs, &bad_ref, sizeof(bad_ref), cudaMemcpyHostToDevice);
   cudaMemset(d_fatal, 0, sizeof(uint32_t));

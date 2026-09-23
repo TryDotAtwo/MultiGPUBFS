@@ -293,6 +293,16 @@ pub mod ffi {
             fatal: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_macro_validate_refs(
+            refs: *const c_void,
+            count: u32,
+            source_depth: u32,
+            target_depth: u32,
+            max_weight: u32,
+            max_state_ref: u64,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_frame_write_header(
             host_header: *const u8,
             device_prefix: *mut u8,
