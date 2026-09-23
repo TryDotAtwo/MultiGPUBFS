@@ -7,13 +7,12 @@ namespace {
 __device__ void fatal(MgbfsStateRingControl* r,MgbfsOwnerControl* o,unsigned code){
   atomicCAS(&o->error,0u,code);atomicCAS(&r->fatal,0u,code);
 }
-__global__ void reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e){
+__device__ void reserve_checked(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,uint64_t n){
   *e={};
   if(r->fatal||o->error){fatal(r,o,r->fatal?r->fatal:o->error);return;}
   if(o->stage!=1||!r->capacity||!r->descriptor_capacity||r->head>r->tail||
      r->descriptor_head>r->descriptor_tail||r->tail-r->head>r->capacity||
      r->descriptor_tail-r->descriptor_head>r->descriptor_capacity){fatal(r,o,10);return;}
-  uint64_t n=o->survivors;
   if(!n)return;
   if(n>r->capacity){fatal(r,o,11);return;}
   if(r->descriptor_tail-r->descriptor_head==r->descriptor_capacity){fatal(r,o,12);return;}
@@ -28,6 +27,32 @@ __global__ void reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsState
   e->sequence=start;e->begin=start%r->capacity;e->count=n;
   e->descriptor=r->descriptor_tail;e->granted_rows=unsigned(n);
   r->head=head;r->tail=end;++r->descriptor_tail;
+}
+__global__ void reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e){
+  reserve_checked(r,o,e,o->survivors);
+}
+__global__ void reserve_rank_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
+ MgbfsStateExtent* e,const uint32_t* survivors,const uint32_t* accepted,
+ const uint32_t* capacities,uint32_t shards,uint32_t* offsets,uint32_t* layer,
+ uint32_t layer_capacity,uint32_t request_capacity,bool hash_first){
+ *e={};
+ if(r->fatal||o->error){fatal(r,o,r->fatal?r->fatal:o->error);return;}
+ if(o->stage!=1){fatal(r,o,10);return;}
+ uint64_t total=0;
+ for(uint32_t i=0;i<shards;++i){
+   uint32_t n=survivors[i];
+   if(accepted[i]>capacities[i]||n>capacities[i]-accepted[i]||
+      total>UINT32_MAX-n){fatal(r,o,19);return;}
+   total+=n;
+ }
+ if(*layer>layer_capacity||total>layer_capacity-*layer||
+    (hash_first&&total>request_capacity)){fatal(r,o,16);return;}
+ reserve_checked(r,o,e,total);
+ if(o->error)return;
+ uint32_t prefix=0;offsets[0]=0;
+ for(uint32_t i=0;i<shards;++i){prefix+=survivors[i];offsets[i+1]=prefix;}
+ o->survivors=prefix;
+ *layer+=prefix;
 }
 __global__ void validate_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,
     unsigned capacity,unsigned stride){
@@ -98,6 +123,15 @@ extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o
 extern "C" int mgbfs_state_reserve_layer(MgbfsStateRingControl*r,MgbfsOwnerControl*o,MgbfsStateExtent*e,uint32_t*n,uint32_t cap,void*stream){
  if(!r||!o||!e||!n)return 1;auto s=static_cast<cudaStream_t>(stream);
  guard_layer<<<1,1,0,s>>>(r,o,n,cap);reserve<<<1,1,0,s>>>(r,o,e);count_layer<<<1,1,0,s>>>(o,n);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_reserve_rank_batch(MgbfsStateRingControl*r,MgbfsOwnerControl*o,
+ MgbfsStateExtent*e,const uint32_t*survivors,const uint32_t*accepted,
+ const uint32_t*capacities,uint32_t shards,uint32_t*offsets,uint32_t*layer,
+ uint32_t layer_capacity,uint32_t request_capacity,uint32_t hash_first,void*stream){
+ if(!r||!o||!e||!survivors||!accepted||!capacities||!shards||!offsets||!layer)return 1;
+ reserve_rank_batch<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e,survivors,
+   accepted,capacities,shards,offsets,layer,layer_capacity,request_capacity,hash_first!=0);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl*r,MgbfsStateExtent*e,uint64_t n,void*stream){

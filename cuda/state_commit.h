@@ -24,6 +24,19 @@ int mgbfs_state_reserve(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, void* stream);
 int mgbfs_state_reserve_layer(MgbfsStateRingControl* ring, MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent, uint32_t* layer_count, uint32_t layer_capacity, void* stream);
+/* One rank-batch transaction. shard_survivors, accepted_counts and capacities
+ * have shard_count device entries. offsets has shard_count+1 entries and is
+ * valid only if owner.error==0. One contiguous extent covers the whole batch;
+ * no accepted table is modified here. request_capacity is checked only for
+ * HASH_FIRST (hash_first != 0). All validation precedes ring/layer mutation.
+ * Caller must serialize this single-writer operation on the owner stream.
+ */
+int mgbfs_state_reserve_rank_batch(MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner, MgbfsStateExtent* extent,
+    const uint32_t* shard_survivors, const uint32_t* accepted_counts,
+    const uint32_t* accepted_capacities, uint32_t shard_count,
+    uint32_t* offsets, uint32_t* layer_count, uint32_t layer_capacity,
+    uint32_t request_capacity, uint32_t hash_first, void* stream);
 /* DENSE-only FIFO reclamation after both generation and archive DMA have
  * completed for this prefix. The caller owns those event dependencies. */
 int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl* ring,

@@ -37,6 +37,42 @@ static void reservation(unsigned mode){
   else if(mode==3){req(!oo.error&&e.count==0&&e.granted_rows==0&&rr.tail==r.tail&&rr.descriptor_tail==r.descriptor_tail,"zero reserve");}
   else{unsigned n=mode==4?8:3;req(!oo.error&&e.sequence==8&&e.begin==0&&e.count==n&&e.granted_rows==n&&rr.tail==8+n,"wrap reserve");}
 }
+static void rank_batch_reservation(unsigned mode){
+  Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);Device<MgbfsStateExtent> extent(1);
+  Device<uint32_t> survivors(3),accepted(3),capacities(3),offsets(4),layer(1);
+  MgbfsStateRingControl r{4,6,0,1,12,4,0,0,0};
+  MgbfsOwnerControl o{};o.stage=1;
+  std::vector<uint32_t> s{2,0,1},a{1,3,2},c{4,4,4};
+  uint32_t layer_cap=10,request_cap=3,hash_first=0;
+  if(mode==1)c[2]=2; // accepted capacity, but only shard 2 fails
+  if(mode==2)layer_cap=4;
+  if(mode==3){hash_first=1;request_cap=2;}
+  if(mode==4)r.descriptor_tail=4;
+  if(mode==5)s={0,0,0};
+  if(mode==6){o.error=23;}
+  if(mode==7){r.head=0;r.capacity=8;} // wrap plus live rows exceed capacity
+  if(mode==8){hash_first=1;request_cap=3;}
+  ring.put({r});owner.put({o});survivors.put(s);accepted.put(a);capacities.put(c);layer.put({2});
+  offsets.put({99,99,99,99});
+  req(mgbfs_state_reserve_rank_batch(ring.p,owner.p,extent.p,survivors.p,accepted.p,
+      capacities.p,3,offsets.p,layer.p,layer_cap,request_cap,hash_first,nullptr)==0,
+      "rank batch enqueue");
+  ck(cudaDeviceSynchronize());auto rr=ring.get()[0];auto oo=owner.get()[0];auto e=extent.get()[0];
+  if((mode>=1&&mode<=4)||mode==6||mode==7){
+    req(rr.tail==r.tail&&rr.descriptor_tail==r.descriptor_tail&&layer.get()[0]==2,
+        "rank batch partial mutation");
+    req(e.count==0&&e.granted_rows==0&&oo.error,"rank batch failure not atomic");
+  }else if(mode==5){
+    req(!oo.error&&e.count==0&&rr.tail==r.tail&&layer.get()[0]==2,
+        "empty rank batch changed ring");
+    req(offsets.get()==std::vector<uint32_t>({0,0,0,0}),"empty offsets");
+  }else{
+    req(!oo.error&&oo.survivors==3&&e.sequence==6&&e.begin==6&&e.count==3,
+        "rank batch extent");
+    req(rr.tail==9&&rr.descriptor_tail==2&&layer.get()[0]==5,"rank batch counters");
+    req(offsets.get()==std::vector<uint32_t>({0,2,2,3}),"rank batch offsets");
+  }
+}
 static void materialization(bool invalid,bool packed=false){
   Device<MgbfsStateRingControl> ring(1);Device<MgbfsOwnerControl> owner(1);Device<MgbfsStateExtent> extent(1);
   Device<uint8_t> input(64),states(128);Device<uint64_t> refs(4);Device<uint32_t> selected(2);
@@ -122,5 +158,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);retire_prefix();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
