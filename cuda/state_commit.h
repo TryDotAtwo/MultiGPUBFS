@@ -65,6 +65,11 @@ int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl* ring,
  * caller must retain generation, transport and archive reader ordering. */
 int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl* ring,
     MgbfsStateExtent current, uint64_t records, void* stream);
+/* Build the NCCL max-reduction input on the device after queued retirement.
+ * The result is exactly 0 or 1. Caller orders this kernel after the ring
+ * writer and before the collective on the same stream. */
+int mgbfs_state_ring_fatal_vote_word(const MgbfsStateRingControl* ring,
+    uint32_t* word, void* stream);
 /* Dense input is source-order, sorted_refs maps sorted hashes to those rows.
  * All output rows and indices are validated before any state copy. Hash commit
  * must already have completed on this stream. Extent.ready publishes StateReady.

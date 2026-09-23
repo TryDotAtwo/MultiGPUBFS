@@ -1346,6 +1346,25 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         self.collective_recv.one()
     }
+    fn all_max_ring_fatal(&self) -> Result<u32> {
+        check(unsafe {
+            mgbfs_state_ring_fatal_vote_word(
+                self.ring.ptr.cast(),
+                self.collective_send.ptr.cast(),
+                self.stream.0,
+            )
+        })?;
+        check(unsafe {
+            mgbfs_nccl_all_reduce_max_u32(
+                self.comm.0,
+                self.collective_send.ptr.cast(),
+                self.collective_recv.ptr.cast(),
+                self.stream.0,
+            )
+        })?;
+        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        self.collective_recv.one()
+    }
     #[cfg(feature = "library-owner")]
     fn commit_rank_library_batch(
         &mut self,
@@ -2331,7 +2350,6 @@ impl DistributedNativeBfs {
                     check(unsafe { cudaEventRecord(self.exchange_done.0, communication) })?;
                     received
                 };
-                let mut retirement_error = None;
                 if let Some(parent_extent) =
                     parent.filter(|_| round == 1 && self.hash_first.is_none())
                 {
@@ -2357,11 +2375,6 @@ impl DistributedNativeBfs {
                             s,
                         )
                     })?;
-                    check(unsafe { cudaStreamSynchronize(s) })?;
-                    let ring = self.ring.one::<Ring>()?;
-                    if ring.fatal != 0 {
-                        retirement_error = Some(format!("STATE_RING_RETIRE_FATAL_{}", ring.fatal));
-                    }
                 }
                 if round == 1 && self.hash_first.is_none() {
                     if world > 1 {
@@ -2369,11 +2382,9 @@ impl DistributedNativeBfs {
                         // communicator, including zero-payload exchange.
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
                     }
-                    vote_group_error(
-                        retirement_error.map_or(Ok(()), Err),
-                        |failed| Ok(self.all_max(u32::from(failed))? != 0),
-                        "REMOTE_STATE_RING_RETIRE_FATAL".into(),
-                    )?;
+                    if self.all_max_ring_fatal()? != 0 {
+                        return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
+                    }
                 }
                 check(unsafe { cudaStreamSynchronize(s) })?;
                 let local_states = unsafe {
@@ -2417,9 +2428,11 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
-                if self.all_max(u32::from(batch_error.is_some()))? != 0 {
-                    return Err(batch_error.unwrap_or_else(|| "REMOTE_OWNER_BATCH_FATAL".into()));
-                }
+                vote_group_error(
+                    batch_error.map_or(Ok(()), Err),
+                    |failed| Ok(self.all_max(u32::from(failed))? != 0),
+                    "REMOTE_OWNER_BATCH_FATAL".into(),
+                )?;
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
                 }
@@ -2448,10 +2461,8 @@ impl DistributedNativeBfs {
                             s,
                         )
                     })?;
-                    check(unsafe { cudaStreamSynchronize(s) })?;
                 }
-                let fatal = self.ring.one::<Ring>()?.fatal;
-                if self.all_max(fatal)? != 0 {
+                if self.all_max_ring_fatal()? != 0 {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
             }

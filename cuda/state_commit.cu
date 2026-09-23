@@ -251,6 +251,14 @@ extern "C" int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl*r,Mgb
  if(!r||!n)return 1;retire_dense_prefix_value<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,e,n);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
+__global__ void ring_fatal_vote_word(const MgbfsStateRingControl* ring,uint32_t* word){
+ *word=ring->fatal!=0;
+}
+extern "C" int mgbfs_state_ring_fatal_vote_word(const MgbfsStateRingControl*ring,uint32_t*word,void*stream){
+ if(!ring||!word)return 1;
+ ring_fatal_vote_word<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(ring,word);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
 extern "C" int mgbfs_state_publish_next_extent(MgbfsStateRingControl*r,
  MgbfsOwnerControl*o,const MgbfsStateExtent*e,uint32_t*count,
  MgbfsStateExtent*out,uint32_t capacity,void*stream){

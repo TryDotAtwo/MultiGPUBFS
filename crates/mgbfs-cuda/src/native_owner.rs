@@ -121,6 +121,11 @@ mod calls {
             records: u64,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_ring_fatal_vote_word(
+            ring: *const Ring,
+            word: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_archive_pack_permutation_u8(
             n: u32,
             stride: u32,
