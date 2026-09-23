@@ -143,6 +143,7 @@ struct CucoRankBatch::Impl {
   uint32_t incoming,shards,logical_owner,world,shift;
   uint64_t pending_epoch{0},committed_epoch{0};
   bool pending{false},needs_complete{false};
+  bool sealed{false};
   std::shared_ptr<CucoWorkspace> workspace;
   std::vector<uint32_t> capacities;
   std::vector<rmm::device_buffer> accepted_keys;
@@ -228,7 +229,7 @@ CucoRankBatch::~CucoRankBatch()=default;
 CucoRankDeviceBatch CucoRankBatch::compare(uint64_t epoch,MgbfsLibraryCandidatesV1 input,
     const uint32_t* valid,MgbfsOwnerControl* owner,MgbfsStateRingControl* ring){
   auto& p=*impl_;
-  if(p.pending||p.needs_complete||!valid||!owner||!ring||
+  if(p.sealed||p.pending||p.needs_complete||!valid||!owner||!ring||
      input.keys.rows!=p.incoming||input.keys.reserved||!input.source_indices||
      (p.committed_epoch&&epoch<=p.committed_epoch))
     throw std::runtime_error("RANK_OWNER_ORDER_OR_INPUT");
@@ -298,6 +299,16 @@ void CucoRankBatch::complete(uint64_t epoch){
   auto& p=*impl_;
   if(!p.needs_complete||p.committed_epoch!=epoch)throw std::runtime_error("RANK_OWNER_ORDER");
   p.needs_complete=false;
+}
+
+void CucoRankBatch::seal(){
+  auto& p=*impl_;
+  if(p.sealed||p.pending||p.needs_complete)
+    throw std::runtime_error("RANK_OWNER_SEAL_ORDER");
+  // FinalizeDepth caller has drained the stream and all borrowed readers.
+  // Accepted key planes are owned separately and remain exportable.
+  p.sets.clear();
+  p.sealed=true;
 }
 
 MgbfsLibraryKeysV1 CucoRankBatch::export_shard(uint32_t shard,uint32_t rows) const {

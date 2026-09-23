@@ -38,6 +38,7 @@ class CucoRankBatch {
   void commit(uint64_t epoch, MgbfsOwnerControl* owner,
       MgbfsStateRingControl* ring, const MgbfsStateExtent* extent);
   void complete(uint64_t epoch);
+  void seal();
   MgbfsLibraryKeysV1 export_shard(uint32_t shard, uint32_t rows) const;
  private:
   struct Impl;

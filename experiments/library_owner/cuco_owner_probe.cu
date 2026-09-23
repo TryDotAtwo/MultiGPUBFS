@@ -290,7 +290,10 @@ int main() {
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
     require(mgbfs_library_rank_complete_v1(rank_owner,3)==0,"RANK_ABI_COMPLETE_FATAL");
+    auto bytes_before_seal=stats.get_bytes_counter().value;
     require(mgbfs_library_rank_seal_v1(rank_owner)==0,"RANK_ABI_SEAL");
+    require(stats.get_bytes_counter().value<bytes_before_seal,
+        "RANK_ABI_SEAL_RELEASES_HISTORY_TABLES");
     Key replacement{90,91,92,0x100};
     previous0.upload({replacement},{0});
     require(mgbfs_library_rank_export_shard_v1(rank_owner,0,2,&shard0)==0&&

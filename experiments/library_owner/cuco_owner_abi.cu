@@ -154,6 +154,14 @@ extern "C" int mgbfs_library_rank_complete_v1(void* handle,uint64_t epoch){
     return 0;
   } catch (...) {return -1;}
 }
+extern "C" int mgbfs_library_rank_seal_v1(void* handle){
+  if(!handle)return -1;
+  try {
+    auto* h=static_cast<RankHandle*>(handle);
+    h->check();h->batch.seal();
+    return 0;
+  } catch (...) {return -1;}
+}
 extern "C" int mgbfs_library_rank_export_shard_v1(void* handle,uint32_t shard,
     uint32_t rows,MgbfsLibraryKeysV1* output){
   if(output)*output={};
