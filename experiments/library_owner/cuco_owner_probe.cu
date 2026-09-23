@@ -293,6 +293,29 @@ int main() {
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
     require(mgbfs_library_rank_complete_v1(rank_owner,3)==0,"RANK_ABI_COMPLETE_FATAL");
+    // A rejected window/capacity transaction leaves sticky device fatal.
+    // The next fixed-shape compare may still be queued for rank ordering, but
+    // must not read candidate scratch or overwrite shared candidate planes.
+    uint32_t untouched=0x5a5a5a5a,observed=0;
+    check(cudaMemcpyAsync(const_cast<uint32_t*>(d.high_words),&untouched,4,
+        cudaMemcpyHostToDevice,stream.value()));
+    auto rejected=batch.candidates();rejected.keys.rows=cap;
+    MgbfsLibraryRankDeviceBatchV1 d4{};
+    require(mgbfs_library_rank_compare_v1(rank_owner,4,rejected,
+        static_cast<uint32_t const*>(valid.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()),&d4)==0,
+        "RANK_FATAL_COMPARE_ENQUEUE");
+    check(cudaMemcpyAsync(&observed,d4.high_words,4,cudaMemcpyDeviceToHost,stream.value()));
+    stream.synchronize();
+    require(observed==untouched,"RANK_FATAL_MUST_NOT_READ_CANDIDATES");
+    require(mgbfs_library_rank_commit_v1(rank_owner,4,
+        static_cast<MgbfsOwnerControl*>(control.data()),
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsStateExtent*>(extent.data()))==0,
+        "RANK_FATAL_COMMIT_ENQUEUE");
+    stream.synchronize();
+    require(mgbfs_library_rank_complete_v1(rank_owner,4)==0,"RANK_ABI_COMPLETE_REJECTED");
     auto bytes_before_seal=stats.get_bytes_counter().value;
     require(mgbfs_library_rank_seal_v1(rank_owner)==0,"RANK_ABI_SEAL");
     require(stats.get_bytes_counter().value<bytes_before_seal,
