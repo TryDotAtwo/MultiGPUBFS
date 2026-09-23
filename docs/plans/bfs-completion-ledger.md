@@ -371,3 +371,14 @@ Thus this 8-shard cuCO setting wins search but *not* peak VRAM, and the
 archive-inclusive result is mixed. It does not resolve the CPU-driven owner
 hot path; the summary's sanitizer field points to earlier v50 evidence rather
 than sanitizers of this exact v55 source/configuration.
+
+## 2026-09-23 transport platform preflight
+
+The private Kaggle two-T4 preflight in
+`docs/validation/transport-feasibility-2xt4.md` found bidirectional CUDA P2P
+access but NCCL runtime 2.25.1. NCCL's device-initiated LSA API requires
+2.28+. Current host-sized NCCL payload submission therefore cannot simply be
+replaced by a device-side call on this environment. A newer pinned NCCL LSA
+stack or a separate CUDA IPC peer-memory protocol needs a real transfer and
+failure/lifetime gate before implementation selection; this is a platform
+feasibility result, not yet an asynchronous transport implementation.
