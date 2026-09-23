@@ -65,6 +65,21 @@ int mgbfs_bounded_owner_commit_layout(void* plan, const MgbfsBucketJob* jobs,
     const uint32_t* accepted_capacities, const MgbfsOwnerCounts* counts,
     MgbfsOwnerControl* control, const uint32_t* granted_rows,
     uint32_t* survivor_indices, void* stream);
+/* Macro settlement compare. history_ranges is [history_slots][buckets] in
+ * device memory; each range indexes one concatenated, immutable history hash
+ * arena and contains at most K sorted keys. Matching any history slot marks
+ * category `prev`. Commit uses mgbfs_bounded_owner_commit_layout unchanged.
+ * A fixed history_slots launch sequence has no host count readback. */
+int mgbfs_bounded_owner_compare_history_layout(void* plan,
+    const MgbfsBucketJob* jobs, uint32_t job_count, uint32_t rows,
+    const void* incoming, const void* history,
+    const MgbfsOwnerRange* history_ranges, uint32_t history_slots,
+    uint64_t history_records, const void* accepted,
+    const uint32_t* accepted_counts, const uint64_t* accepted_offsets,
+    const uint32_t* accepted_capacities, uint64_t accepted_records,
+    uint32_t buckets, uint32_t buckets_per_shard, uint32_t lane,
+    uint32_t generation, MgbfsOwnerCounts* counts,
+    MgbfsOwnerControl* control, void* stream);
 #ifdef __cplusplus
 }
 #endif

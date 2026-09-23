@@ -20,12 +20,13 @@ distributed owner ordering.
 |---|---|---|
 | `trydotatwo/mgbfs-bounded-owner-t4` version 3 | `e085f0a5dcd6de93e77be187e487dca868457e72` | CUB fixture passed plain + memcheck/racecheck/initcheck/synccheck on each of two physical Tesla T4s; 10/10 checks, zero reported errors/hazards/warnings. |
 | `trydotatwo/mgbfs-bmma-owner-gate` version 4 | `a98fceb7bf75689ba0de89472573af50b32f427f` | BMMA fixture passed tile limits 1/8/256, each plain + four sanitizer tools (15/15 checks) on 2xT4; SASS contains `BMMA.88128.XOR.POPC`. This source predates the stricter prefix-directory/full-bucket assertions. |
+| `trydotatwo/mgbfs-bmma-owner-gate` version 5 | `e085f0a5dcd6de93e77be187e487dca868457e72` | Stricter BMMA compact-layout fixture passed 15/15 checks on two physical T4s; SASS contains `BMMA.88128.XOR.POPC`, racecheck reports zero hazards/errors/warnings. |
 
 The run's `summary.json` is `COMPLETE`; raw outputs are retained on the
 private Kaggle notebook and in ignored `target/bounded-owner-layout-v3/`.
-BMMA version 5 is pinned to the stricter `e085f0a` source and is running
-separately; its result must be recorded after terminal status and output
-inspection, not inferred from version 4.
+BMMA version 5 is separately verified from its terminal `COMPLETE`
+`summary.json` and downloaded logs under ignored
+`target/bmma-owner-layout-v5/`.
 
 Local Windows `nvcc` compilation was unavailable because `cl.exe` is absent.
 `mgbfs-cuda --features cuda` Cargo check also requires a locally built

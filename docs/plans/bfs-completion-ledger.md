@@ -232,8 +232,8 @@ measured choice; skew overflow remains fatal rather than dynamically growing.
 The CUDA bounded owner now has a compatible `compare_layout/commit_layout`
 ABI taking device-side prefix offsets and capacities. Its CUB leaf passed
 physical 2xT4 plain + four sanitizers per GPU at `e085f0a`; the BMMA leaf
-passed an earlier compact-layout fixture at `a98fceb` and the stricter
-retest is pending. See `docs/validation/bounded-owner-compact-layout-2xt4.md`.
+passed the stricter compact-layout fixture at `e085f0a` (15/15 checks).
+See `docs/validation/bounded-owner-compact-layout-2xt4.md`.
 The new ABI has **not** been wired into `RunConfigV1`, provisional slot
 lifecycles, the `2*Km` history-window compare, or the distributed scheduler.
 

@@ -68,6 +68,16 @@ __global__ void initial(const MgbfsBucketJob* jobs,const Key* in,uint8_t* flags,
   if(c->error)return;auto d=jobs[blockIdx.x];
   for(uint64_t x=threadIdx.x;x<d.incoming.count;x+=T){uint64_t r=d.incoming.begin+x;flags[r]=x&&equal(in[r],in[r-1])?1:0;}
 }
+__global__ void validate_history(const MgbfsBucketJob* jobs,uint32_t count,
+    const MgbfsOwnerRange* ranges,uint32_t slots,uint32_t buckets,uint32_t k,
+    uint64_t records,MgbfsOwnerControl* c){
+  if(c->error)return;
+  for(uint32_t slot=0;slot<slots;++slot)for(uint32_t j=0;j<count;++j){
+    auto r=ranges[uint64_t(slot)*buckets+jobs[j].bucket];
+    if(r.count>k){c->error=2;return;}
+    if(r.begin>records||r.count>records-r.begin){c->error=1;return;}
+  }
+}
 struct RefinedRange { uint64_t a,b; uint32_t m,n; };
 static_assert(sizeof(RefinedRange)==24);
 __device__ uint32_t bit_boundary(const Key* keys,uint64_t begin,uint32_t count,unsigned bit){
@@ -81,13 +91,15 @@ __device__ uint32_t bit_boundary(const Key* keys,uint64_t begin,uint32_t count,u
 // uses all warps, coalescing four adjacent words per candidate/reference key.
 __global__ void bmma_membership(const MgbfsBucketJob* jobs,const Key* in,const Key* old,
     uint32_t k,uint32_t tile_limit,uint8_t* flags,uint32_t* errors,
-    const MgbfsOwnerControl* control,unsigned category,const uint64_t* offsets){
+    const MgbfsOwnerControl* control,unsigned category,const uint64_t* offsets,
+    const MgbfsOwnerRange* histories,uint32_t history_slot,uint32_t buckets){
   __shared__ RefinedRange stack[129],work;
   __shared__ unsigned top,action;
   const unsigned tid=threadIdx.x,lane=tid&31,warp=tid>>5;
   if(control->error){if(tid==0)errors[blockIdx.x]=0;return;}
   if(tid==0){auto d=jobs[blockIdx.x];
-    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
+    auto r=histories?histories[uint64_t(history_slot)*buckets+d.bucket]:
+      category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
     stack[0]={d.incoming.begin,r.begin,uint32_t(d.incoming.count),uint32_t(r.count)};
     top=1;errors[blockIdx.x]=0;
   }__syncthreads();
@@ -154,12 +166,14 @@ __global__ void refinement_status(const uint32_t* errors,uint32_t count,MgbfsOwn
 template<bool Commit> __global__ void merge_tiles(const MgbfsBucketJob* jobs,const Key* in,
     const Key* old,uint32_t k,uint8_t* flags,const uint32_t* indices,Key* merged,
     const MgbfsOwnerCounts* counts,const MgbfsOwnerControl* c,unsigned category,
-    const uint64_t* offsets){
+    const uint64_t* offsets,const MgbfsOwnerRange* histories,
+    uint32_t history_slot,uint32_t buckets){
   if(c->error)return;auto d=jobs[blockIdx.x];Read a{},b{};uint32_t m,n;
   if constexpr(Commit){a={old,nullptr,accepted_begin(d.bucket,k,offsets)};m=d.accepted_count;
     b={in,indices,d.incoming.begin};n=counts[blockIdx.x].survivors;
   }else{a={in,nullptr,d.incoming.begin};m=uint32_t(d.incoming.count);
-    auto r=category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
+    auto r=histories?histories[uint64_t(history_slot)*buckets+d.bucket]:
+      category==2?d.prev:category==3?d.curr:MgbfsOwnerRange{accepted_begin(d.bucket,k,offsets),d.accepted_count};
     b={old,nullptr,r.begin};n=uint32_t(r.count);
   }
   __shared__ Key sa[T],sb[T];__shared__ uint32_t ab[4];
@@ -261,10 +275,10 @@ extern "C" int mgbfs_bounded_owner_compare_layout(void* raw,const MgbfsBucketJob
     const auto old=static_cast<const Key*>(tag==2?prev:tag==3?curr:accepted);
     if(p->backend==1){
       bmma_membership<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),old,p->k,p->tile_limit,
-        p->flags,p->refinement_errors,control,tag,offsets);
+        p->flags,p->refinement_errors,control,tag,offsets,nullptr,0,buckets);
       refinement_status<<<1,1,0,s>>>(p->refinement_errors,j,control);
     }else merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),
-      old,p->k,p->flags,p->indices,p->merged,counts,control,tag,offsets);
+      old,p->k,p->flags,p->indices,p->merged,counts,control,tag,offsets,nullptr,0,buckets);
   }
   compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
   finish_compare<<<1,1,0,s>>>(jobs,j,p->k,caps,counts,control);
@@ -280,6 +294,48 @@ extern "C" int mgbfs_bounded_owner_compare(void* raw,const MgbfsBucketJob* jobs,
       lengths,nullptr,nullptr,uint64_t(buckets)*p->k,buckets,per_shard,lane,generation,
       counts,control,stream);
 }
+extern "C" int mgbfs_bounded_owner_compare_history_layout(void* raw,
+    const MgbfsBucketJob* jobs,uint32_t j,uint32_t rows,const void* in,
+    const void* history,const MgbfsOwnerRange* ranges,uint32_t history_slots,
+    uint64_t history_records,const void* accepted,const uint32_t* lengths,
+    const uint64_t* offsets,const uint32_t* caps,uint64_t accepted_records,
+    uint32_t buckets,uint32_t per_shard,uint32_t lane,uint32_t generation,
+    MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,void* stream){
+  auto p=static_cast<Plan*>(raw);auto s=static_cast<cudaStream_t>(stream);
+  if(!p||!jobs||!j||j>p->j||!rows||rows>p->i||!in||!history||!ranges||
+     !history_slots||!accepted||!lengths||!offsets||!caps||!accepted_records||
+     !buckets||!per_shard||(per_shard&(per_shard-1))||buckets%per_shard||
+     !counts||!control||uint64_t(history_slots)>UINT64_MAX/buckets)return 1;
+  // Prev/curr in BucketJob must be empty; all settled layers are represented
+  // by the bounded history directory. No host count is read between launches.
+  validate<<<1,1,0,s>>>(jobs,j,rows,p->k,lengths,buckets,per_shard,lane,
+      generation,0,0,offsets,caps,accepted_records,control);
+  validate_history<<<1,1,0,s>>>(jobs,j,ranges,history_slots,buckets,p->k,
+      history_records,control);
+  initial<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),p->flags,control);
+  unsigned tiles=tile_count(p,j);
+  for(uint32_t slot=0;slot<history_slots;++slot){
+    if(p->backend==1){
+      bmma_membership<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),
+          static_cast<const Key*>(history),p->k,p->tile_limit,p->flags,
+          p->refinement_errors,control,2,offsets,ranges,slot,buckets);
+      refinement_status<<<1,1,0,s>>>(p->refinement_errors,j,control);
+    }else merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,
+        static_cast<const Key*>(in),static_cast<const Key*>(history),p->k,
+        p->flags,p->indices,p->merged,counts,control,2,offsets,ranges,slot,buckets);
+  }
+  if(p->backend==1){
+    bmma_membership<<<j,T,0,s>>>(jobs,static_cast<const Key*>(in),
+        static_cast<const Key*>(accepted),p->k,p->tile_limit,p->flags,
+        p->refinement_errors,control,4,offsets,nullptr,0,buckets);
+    refinement_status<<<1,1,0,s>>>(p->refinement_errors,j,control);
+  }else merge_tiles<false><<<dim3(j,tiles),T,0,s>>>(jobs,
+      static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,
+      p->flags,p->indices,p->merged,counts,control,4,offsets,nullptr,0,buckets);
+  compact<<<j,T,0,s>>>(jobs,p->flags,p->indices,counts,control);
+  finish_compare<<<1,1,0,s>>>(jobs,j,p->k,caps,counts,control);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
 extern "C" int mgbfs_bounded_owner_commit_layout(void* raw,const MgbfsBucketJob* jobs,uint32_t j,const void* in,
     void* accepted,uint32_t* lengths,const uint64_t* offsets,const uint32_t* caps,
     const MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,
@@ -289,7 +345,7 @@ extern "C" int mgbfs_bounded_owner_commit_layout(void* raw,const MgbfsBucketJob*
      (!!offsets!=!!caps))return 1;
   check_grant<<<1,1,0,s>>>(grant,control);
   unsigned tiles=tile_count(p,j);
-  merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0,offsets);
+  merge_tiles<true><<<dim3(j,tiles),T,0,s>>>(jobs,static_cast<const Key*>(in),static_cast<const Key*>(accepted),p->k,p->flags,p->indices,p->merged,counts,control,0,offsets,nullptr,0,0);
   publish<<<dim3(j,tiles),T,0,s>>>(jobs,p->k,p->merged,static_cast<Key*>(accepted),lengths,p->indices,selected,counts,control,offsets);
   finish_commit<<<1,1,0,s>>>(control);
   return cudaGetLastError()==cudaSuccess?0:2;

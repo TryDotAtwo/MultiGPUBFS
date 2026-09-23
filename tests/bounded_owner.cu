@@ -69,6 +69,40 @@ static void compact_layout() {
   require(lengths.get()==std::vector<uint32_t>({3,2}),"full bucket unchanged");
   mgbfs_bounded_owner_destroy(plan);
 }
+static void macro_history_layout() {
+  void* plan=nullptr;require(create_owner(8,1,8,&plan)==0,"history create");
+  Device<Key> in(8),history(3),accepted(5);
+  Device<MgbfsOwnerRange> ranges(3);
+  Device<uint32_t> lengths(1),caps(1),grant(1),selected(8);
+  Device<uint64_t> offsets(2);
+  Device<MgbfsBucketJob> jobs(1);Device<MgbfsOwnerCounts> counts(1);
+  Device<MgbfsOwnerControl> control(1);
+  in.put(keys({1,2,2,3,4,5,6,7}));history.put(keys({1,3,5}));
+  ranges.put({{0,1},{1,1},{2,1}});
+  auto old=std::vector<Key>(5);old[0]={{4,0,0,0}};accepted.put(old);
+  lengths.put({1});caps.put({5});offsets.put({0,5});grant.put({3});
+  jobs.put({{0,0,{0,8},{0,0},{0,0},1,12}});
+  auto compare=[&]{return mgbfs_bounded_owner_compare_history_layout(plan,
+      jobs.p,1,8,in.p,history.p,ranges.p,3,3,accepted.p,lengths.p,
+      offsets.p,caps.p,5,1,1,0,12,counts.p,control.p,nullptr);};
+  require(compare()==0,"history compare enqueue");
+  require(mgbfs_bounded_owner_commit_layout(plan,jobs.p,1,in.p,accepted.p,
+      lengths.p,offsets.p,caps.p,counts.p,control.p,grant.p,selected.p,
+      nullptr)==0,"history commit enqueue");
+  ck(cudaDeviceSynchronize());auto c=control.get()[0];
+  require(c.error==0&&c.stage==2&&c.survivors==3,"history control");
+  auto x=counts.get()[0];require(x.duplicates==1&&x.prev==3&&x.curr==0&&
+      x.accepted==1&&x.survivors==3,"history categories");
+  require(lengths.get()[0]==4,"history count");
+  auto got=accepted.get();require(got[0].w[0]==2&&got[1].w[0]==4&&
+      got[2].w[0]==6&&got[3].w[0]==7,"history hashes");
+  // Invalid history range poisons the whole job before any persistent write.
+  ranges.put({{0,1},{1,1},{3,1}});jobs.put({{0,0,{0,8},{0,0},{0,0},4,12}});
+  require(compare()==0,"bad history enqueue");
+  ck(cudaDeviceSynchronize());require(control.get()[0].error==1,"bad history range");
+  require(lengths.get()[0]==4,"bad history unchanged");
+  mgbfs_bounded_owner_destroy(plan);
+}
 static void sweep(unsigned seed,unsigned mode) {
   constexpr unsigned I=8192,J=4,K=2048;
   std::mt19937 rng(seed);std::vector<Key> input,pv,cv,av(J*K);
@@ -158,5 +192,6 @@ int main(int argc,char** argv) { try {
   for(unsigned seed=0;seed<12;++seed)sweep(seed,0);
   for(unsigned mode=1;mode<=4;++mode)sweep(99,mode);
   compact_layout();
+  macro_history_layout();
   std::puts("BOUNDED_OWNER_PASS");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
