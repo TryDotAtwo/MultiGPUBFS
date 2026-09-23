@@ -37,6 +37,41 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
 }
 
 #[test]
+fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
+    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let mut cfg = DistributedConfig {
+        rank: 0,
+        world: 1,
+        logical_owner_to_rank: vec![0, 0],
+        batch: 7,
+        layer_capacity: 2,
+        state_ring_capacity: 128,
+        buckets: 8,
+        shards: 2,
+        job_buckets: 2,
+        bucket_capacity: 32,
+        prededup: true,
+        generation_variant: 1,
+        untouched_vram_reserve: 1 << 30,
+    };
+    let mut failed = DistributedNativeBfs::new_library_reference_with_owner(
+        &graph, [0; 16], id, cfg.clone(), None, 64 << 20, false,
+        mgbfs_core::config::ReferenceOwner::CucoRank,
+    ).unwrap();
+    assert!(failed.advance().unwrap_err().contains("LIBRARY_RANK_BATCH_FATAL_"));
+    drop(failed);
+    cfg.layer_capacity = 64;
+    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let mut recovered = DistributedNativeBfs::new_library_reference_with_owner(
+        &graph, [0; 16], id, cfg, None, 64 << 20, false,
+        mgbfs_core::config::ReferenceOwner::CucoRank,
+    ).unwrap();
+    assert!(recovered.advance().unwrap());
+}
+
+#[test]
 fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
