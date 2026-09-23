@@ -198,6 +198,11 @@ int mgbfs_exchange_pack_device_n(uint32_t world,uint32_t stride,uint32_t capacit
     const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
     const uint64_t* sorted_refs,const uint32_t* count,uint8_t* packed_states,
     uint32_t* owner_counts,void* stream);
+/* Device-only route window for a logical owner. On a failed count/sum,
+ * rows is UINT32_MAX; consumers must treat that as a fatal, never as data. */
+int mgbfs_owner_window_from_counts(uint32_t world,uint32_t packed_capacity,
+    uint32_t logical_owner,const uint32_t* owner_counts,
+    uint32_t* begin,uint32_t* rows,void* stream);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
 int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,

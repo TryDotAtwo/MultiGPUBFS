@@ -8,10 +8,11 @@ static void ck(cudaError_t e){if(e!=cudaSuccess)throw std::runtime_error(cudaGet
 static void require(bool ok){if(!ok)throw std::runtime_error("OWNER_PARTITION_GPU");}
 int main(){
   cudaStream_t s;ck(cudaStreamCreateWithFlags(&s,cudaStreamNonBlocking));
-  uint32_t *keys,*states,*packed,*counts,*n,*fatal;uint64_t* refs;MgbfsOwnerRange* dir;
+  uint32_t *keys,*states,*packed,*counts,*n,*fatal,*window_begin,*window_rows;uint64_t* refs;MgbfsOwnerRange* dir;
   ck(cudaMalloc(&keys,96));ck(cudaMalloc(&states,96));ck(cudaMalloc(&packed,96));
   ck(cudaMalloc(&counts,36));ck(cudaMalloc(&refs,48));ck(cudaMalloc(&n,4));
   ck(cudaMalloc(&fatal,4));ck(cudaMalloc(&dir,4*sizeof(MgbfsOwnerRange)));
+  ck(cudaMalloc(&window_begin,4));ck(cudaMalloc(&window_rows,4));
   std::array<uint32_t,24> input{};
   const uint32_t high[6]={0,0x1fffffff,0x40000000,0xa0000000,0xe0000000,0xffffffff};
   for(unsigned i=0;i<6;++i)input[4*i+3]=high[i];
@@ -71,12 +72,37 @@ int main(){
       require(actual[4*i+j]==payload[4*order[i]+j]);
     for(unsigned i=valid*4;i<24;++i)require(actual[i]==0xcdcdcdcdu);
   }
+  // A route window is derived entirely from device counts. A reversed
+  // rank-to-logical-owner assignment must not change the packed offset.
+  const std::array<uint32_t,4> partition{1,2,0,3};
+  ck(cudaMemcpyAsync(counts,partition.data(),16,cudaMemcpyHostToDevice,s));
+  for(uint32_t owner:{3u,1u,2u,0u}){
+    require(!mgbfs_owner_window_from_counts(4,6,owner,counts,
+        window_begin,window_rows,s));
+    uint32_t begin=99,rows=99;
+    ck(cudaMemcpyAsync(&begin,window_begin,4,cudaMemcpyDeviceToHost,s));
+    ck(cudaMemcpyAsync(&rows,window_rows,4,cudaMemcpyDeviceToHost,s));
+    ck(cudaStreamSynchronize(s));
+    const uint32_t expected_begin[4]={0,1,3,3};
+    require(begin==expected_begin[owner]&&rows==partition[owner]);
+  }
+  const std::array<uint32_t,4> over_capacity{1,2,1,3};
+  ck(cudaMemcpyAsync(counts,over_capacity.data(),16,cudaMemcpyHostToDevice,s));
+  require(!mgbfs_owner_window_from_counts(4,6,1,counts,window_begin,window_rows,s));
+  uint32_t bad_rows=0;
+  ck(cudaMemcpyAsync(&bad_rows,window_rows,4,cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(bad_rows==UINT32_MAX);
+  const std::array<uint32_t,4> failed_source{UINT32_MAX,0,0,0};
+  ck(cudaMemcpyAsync(counts,failed_source.data(),16,cudaMemcpyHostToDevice,s));
+  require(!mgbfs_owner_window_from_counts(4,6,3,counts,window_begin,window_rows,s));
+  ck(cudaMemcpyAsync(&bad_rows,window_rows,4,cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(bad_rows==UINT32_MAX);
   uint64_t invalid=6;ck(cudaMemcpyAsync(refs,&invalid,8,cudaMemcpyHostToDevice,s));
   require(!mgbfs_exchange_pack_n(8,16,6,(uint8_t*)states,6,keys,refs,6,(uint8_t*)packed,counts,s));
   uint32_t marker;ck(cudaMemcpyAsync(&marker,counts,4,cudaMemcpyDeviceToHost,s));ck(cudaStreamSynchronize(s));require(marker==UINT32_MAX);
   uint32_t six=6;ck(cudaMemcpyAsync(n,&six,4,cudaMemcpyHostToDevice,s));ck(cudaMemsetAsync(fatal,0,4,s));
   require(!mgbfs_owner_bucket_directory_n(keys,n,6,4,0,8,dir,fatal,s));
   ck(cudaMemcpyAsync(&marker,fatal,4,cudaMemcpyDeviceToHost,s));ck(cudaStreamSynchronize(s));require(marker==32);
-  for(void* p:{(void*)keys,(void*)states,(void*)packed,(void*)counts,(void*)refs,(void*)n,(void*)fatal,(void*)dir})ck(cudaFree(p));
+  for(void* p:{(void*)keys,(void*)states,(void*)packed,(void*)counts,(void*)refs,(void*)n,(void*)fatal,(void*)dir,(void*)window_begin,(void*)window_rows})ck(cudaFree(p));
   ck(cudaStreamDestroy(s));std::puts("OWNER_PARTITION_GPU_PASS");
 }
