@@ -191,6 +191,13 @@ int mgbfs_exchange_pack_n(uint32_t world,uint32_t stride,uint32_t capacity,
     const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
     const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,
     uint32_t* owner_counts,void* stream);
+/* count is a device word published before this stream operation. Fixed launch
+ * geometry covers capacity; no host count readback is needed for packing.
+ * count > capacity or a bad source ref marks owner_counts[0] UINT32_MAX. */
+int mgbfs_exchange_pack_device_n(uint32_t world,uint32_t stride,uint32_t capacity,
+    const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
+    const uint64_t* sorted_refs,const uint32_t* count,uint8_t* packed_states,
+    uint32_t* owner_counts,void* stream);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
 int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,

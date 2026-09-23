@@ -67,6 +67,30 @@ __global__ void split_n(const uint32_t* keys,uint32_t count,uint32_t world,uint3
   if(owner<world) output[owner]=mgbfs_owner_boundary(keys,count,owner+1,world)-
       mgbfs_owner_boundary(keys,count,owner,world);
 }
+__global__ void split_n_device(const uint32_t* keys,const uint32_t* count,
+    uint32_t capacity,uint32_t world,uint32_t* output){
+  const uint32_t owner=threadIdx.x;
+  if(owner>=world)return;
+  const uint32_t n=*count;
+  if(n>capacity){output[owner]=owner==0?UINT32_MAX:0;return;}
+  output[owner]=mgbfs_owner_boundary(keys,n,owner+1,world)-
+      mgbfs_owner_boundary(keys,n,owner,world);
+}
+__global__ void gather_device(const uint4* source,const uint64_t* refs,
+    uint4* output,const uint32_t* count,uint32_t capacity,uint32_t chunks,
+    uint32_t source_count,uint32_t* owner_counts){
+  const uint32_t n=*count;
+  if(n>capacity)return;
+  const uint64_t step=uint64_t(blockDim.x)*gridDim.x;
+  for(uint64_t p=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+      p<uint64_t(capacity)*chunks;p+=step){
+    const uint32_t row=p/chunks;
+    if(row>=n)continue;
+    const uint64_t ref=refs[row];
+    if(ref>=source_count){atomicExch(owner_counts,UINT32_MAX);continue;}
+    output[p]=source[ref*chunks+p%chunks];
+  }
+}
 } // namespace
 extern "C" int mgbfs_frame_write_header(const uint8_t* host_header,
     uint8_t* device_prefix, void* raw_stream) {
@@ -155,5 +179,22 @@ extern "C" int mgbfs_exchange_pack_n(uint32_t world,uint32_t stride,uint32_t cap
   if(count)gather<<<(uint64_t(count)*(stride/16)+255)/256,256,0,stream>>>(
       reinterpret_cast<const uint4*>(source_states),sorted_refs,
       reinterpret_cast<uint4*>(packed_states),count,stride/16,source_count,owner_counts);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_exchange_pack_device_n(uint32_t world,uint32_t stride,
+    uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
+    const void* sorted_hashes,const uint64_t* sorted_refs,const uint32_t* count,
+    uint8_t* packed_states,uint32_t* owner_counts,void* raw_stream){
+  if(!world||(world&(world-1))||world>8||!stride||stride%16||!capacity||
+      !source_states||!sorted_hashes||!sorted_refs||!count||!packed_states||
+      !owner_counts)return 1;
+  auto stream=static_cast<cudaStream_t>(raw_stream);
+  split_n_device<<<1,8,0,stream>>>(static_cast<const uint32_t*>(sorted_hashes),
+      count,capacity,world,owner_counts);
+  const uint64_t words=uint64_t(capacity)*(stride/16);
+  const uint32_t blocks=uint32_t((words+255)/256>65535?65535:(words+255)/256);
+  gather_device<<<blocks,256,0,stream>>>(reinterpret_cast<const uint4*>(source_states),
+      sorted_refs,reinterpret_cast<uint4*>(packed_states),count,capacity,
+      stride/16,source_count,owner_counts);
   return cudaGetLastError()==cudaSuccess?0:2;
 }

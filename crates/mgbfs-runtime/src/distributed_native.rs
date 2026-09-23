@@ -2012,24 +2012,13 @@ impl DistributedNativeBfs {
                     s,
                 ))?;
             }
-            let routed =
-                crate::route_count::routed_count(self.cfg.prededup, candidate_count, || {
-                    check(unsafe { cudaStreamSynchronize(s) })?;
-                    self.route_count.one::<u32>()
-                })?;
-            if trace_route {
-                check(unsafe { cudaStreamSynchronize(s) })?;
-            }
-            if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={routed}", self.cfg.rank, self.depth);
-            }
             let packet_stride = if self.hash_first.is_some() {
                 16
             } else {
                 self.stride
             };
             check(unsafe {
-                mgbfs_exchange_pack_n(
+                mgbfs_exchange_pack_device_n(
                     self.cfg.world,
                     packet_stride as u32,
                     self.candidates,
@@ -2037,13 +2026,14 @@ impl DistributedNativeBfs {
                     candidate_count,
                     self.sorted_hashes.ptr,
                     self.sorted_refs.ptr.cast(),
-                    routed,
+                    self.route_count.ptr.cast(),
                     self.packed_states.ptr.cast(),
                     self.owner_counts.ptr.cast(),
                     s,
                 )
             })?;
             check(unsafe { cudaStreamSynchronize(s) })?;
+            let routed = self.route_count.one::<u32>()?;
             let mut owner_counts = [0u32; 8];
             self.owner_counts
                 .read(&mut owner_counts[..self.cfg.world as usize])?;
@@ -2055,6 +2045,7 @@ impl DistributedNativeBfs {
                 return Err("EXCHANGE_COUNT_MISMATCH".into());
             }
             if trace_route {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={routed}", self.cfg.rank, self.depth);
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
             }
             if let Some(sequence) = generation {
