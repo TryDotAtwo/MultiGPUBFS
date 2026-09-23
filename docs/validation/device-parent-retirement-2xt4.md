@@ -69,6 +69,15 @@ four-sanitizer gate is running. Neither v3 nor the leaf test injects a
 retirement FIFO error. The group vote still synchronizes the host
 to branch before owner commit, so this is not CPU-free retirement.
 
+A focused two-device fault-injection fixture at `4bd474b` passed in private
+`trydotatwo/mgbfs-rank-retirement-gate-t4` v3. It sends an invalid FIFO
+descriptor to rank 0 only: rank 0 observes sticky fatal 17, rank 1 has no
+local fatal, and both receive group fatal 1 from NCCL without hanging. The
+two-GPU test binary passed 3/3 plain tests (one eight-GPU case ignored). This
+proves the CUDA retirement → device word → NCCL vote chain under an injected
+local fault; it does not inject the fault through the full BFS scheduler or
+measure its latency. Raw `test_results/kaggle_retire_fifo_fault_v3/`.
+
 The runtime still drains the stream and reads ring fatal after retirement;
 transport counts and NCCL sizes also remain CPU-driven. No end-to-end latency
 or VRAM improvement is claimed.

@@ -604,6 +604,8 @@ and four-sanitizer checks on two physical T4s. Rust now uses the device word
 for both DENSE and HASH_FIRST retirement votes; local CUDA-feature typecheck
 and the CPU suite pass. The full 2×T4 BFS v3 integration gate passed plain
 single-device and rank-owner layer/archive fixtures; four-sanitizer v4 is
-running. An injected retirement-failure two-rank fixture remains open.
+running. A focused two-rank FIFO fault injection at `4bd474b` passed on
+two physical T4s: one local sticky fatal 17 became group fatal 1 on both
+ranks without a hang. Full scheduler-level fault injection remains open.
 This removes one ring-fatal D2H but the collective remains host-blocking and
 owner/transport count decisions remain CPU-driven.
