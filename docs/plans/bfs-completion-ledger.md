@@ -575,3 +575,16 @@ passed plain full-state/layer/archive fixtures; the v2 four-sanitizer gate
 is still running. The stream drain and ring-fatal D2H after retirement remain,
 so this is **not** yet CPU-free retirement. Evidence:
 `docs/validation/device-parent-retirement-2xt4.md`.
+
+Static follow-up at `247d7ce`: in the DENSE round-1 path,
+`distributed_native.rs` returns immediately on `ring.fatal` after retiring a
+parent prefix, before the `process_owner_pair`/`all_max` failure vote. Another
+rank may already be waiting in that collective. This is a rank-ordering
+correctness risk, not merely a performance cost; the current capacity fixtures
+do not inject a retirement FIFO failure and therefore do not close it. A fix
+must route the retirement fatal through an identical collective sequence on
+all ranks before either rank proceeds to owner commit, including zero-payload
+rounds. Verify with a two-rank injected retirement-failure fixture and a
+bounded timeout before claiming fail-fast. The HASH_FIRST path already votes
+on its retirement fatal, but still reads the ring on CPU; neither path is
+device-driven end-to-end.
