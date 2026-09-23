@@ -130,6 +130,12 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
     let owner = std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
     let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
+    let seed = match std::env::var("MGBFS_HASH_SEED_HEX") {
+        Ok(value) => mgbfs_core::hash::parse_seed_hex(&value)?,
+        Err(std::env::VarError::NotPresent) => 20260828u128.to_le_bytes(),
+        Err(_) => return Err("HASH_SEED_HEX_32".into()),
+    };
+    let seed_hex = format!("{:032x}", u128::from_le_bytes(seed));
     let hash_first_generation =
         std::env::var("MGBFS_HASH_FIRST_GENERATION").unwrap_or_else(|_| "SCALAR".into());
     let selection = ReferenceSelection::parse(
@@ -153,7 +159,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     if multiset.is_some() && (!compact_states || profile != "DENSE" || selection.tensor_generation) {
         return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
     }
-    let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=20260828;archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
+    let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=0x{seed_hex};archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
@@ -222,7 +228,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let setup = Instant::now();
     let mut bfs = if let Some(word) = &multiset {
-        DistributedNativeBfs::new_lrx_multiset_reference(word, 20260828u128.to_le_bytes(),
+        DistributedNativeBfs::new_lrx_multiset_reference(word, seed,
             id, cfg.clone(), selection.owner, selection.library_pool_bytes)?
     } else { match selection.owner {
         ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed => {
@@ -230,7 +236,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
             {
                 DistributedNativeBfs::new_library_reference_with_owner(
                     &graph,
-                    20260828u128.to_le_bytes(),
+                    seed,
                     id,
                     cfg.clone(),
                     selection.materialization_capacity,
@@ -250,7 +256,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
             if selection.tensor_generation {
                 DistributedNativeBfs::new_hash_first_tc_with_owner(
                     &graph,
-                    20260828u128.to_le_bytes(),
+                    seed,
                     id,
                     cfg.clone(),
                     selection
@@ -262,7 +268,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
             } else {
                 DistributedNativeBfs::new_reference_with_owner(
                     &graph,
-                    20260828u128.to_le_bytes(),
+                    seed,
                     id,
                     cfg.clone(),
                     selection.materialization_capacity,

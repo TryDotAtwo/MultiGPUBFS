@@ -7,6 +7,46 @@ use sha3::{
 
 pub const PRIME: u64 = 4_294_967_291;
 
+/// Parse a 128-bit seed written as exactly 32 hexadecimal digits.
+/// The numeric value is serialized little-endian for the hash specification.
+pub fn parse_seed_hex(value: &str) -> Result<[u8; 16]> {
+    if value.len() != 32 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("HASH_SEED_HEX_32".into());
+    }
+    Ok(u128::from_str_radix(value, 16)
+        .map_err(|_| "HASH_SEED_HEX_32")?
+        .to_le_bytes())
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::parse_seed_hex;
+
+    #[test]
+    fn seed_hex_is_numeric_little_endian() {
+        assert_eq!(
+            parse_seed_hex("000000000000000000000000013527dc").unwrap(),
+            20_260_828u128.to_le_bytes()
+        );
+        assert_eq!(
+            parse_seed_hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap(),
+            [255; 16]
+        );
+    }
+
+    #[test]
+    fn seed_hex_rejects_ambiguous_inputs() {
+        for value in [
+            "0",
+            "0x0000000000000000000000000135261c",
+            "0000000000000000000000000135261g",
+            "",
+        ] {
+            assert!(parse_seed_hex(value).is_err(), "{value}");
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C, align(16))]
 pub struct Hash128(pub [u32; 4]);

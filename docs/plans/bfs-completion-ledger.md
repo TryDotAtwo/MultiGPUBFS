@@ -44,7 +44,7 @@ architecture contract; `library-first-bfs.md` is the library experiment log.
 | Macro depth | `macro_native.rs`, `macro_owner.rs` | Single-device macro fixtures | Connect to distributed runtime and CLI; full-state 1/2/8-rank oracle |
 | Async state archive | `pinned_archive.rs`, `advance_archived` | Bounded T4 archive tests | Complete large-run throughput and durable verification |
 | Search-only LRX15r4 | `lrx_multiset.rs`, CLI reference | 8xH200 54,486,432,000 states, 93 layers, 90.093 s | Independent large histogram; no state archive exists for this run |
-| HF Parquet catalog | Upload and codec experiments under `scripts/` | Earlier smaller published experiments | Large graph end-to-end archive/upload/replay certificate |
+| HF Parquet catalog | `stream_hf_archive.py`, `promote_hf_stream.py`, verifiers | Full S13: 6,227,020,800 archived states and 6,228 Parquet objects verified by size/SHA on HF | Full-state remote replay and later LRX15 archive/publication |
 | Device-driven library owner | Proposed in `device-driven-library-owner.md` | Synchronous cuCollections winner on S13 | Remove per-shard host readbacks and prove event-driven execution |
 | Production CLI `run`, hardware `preflight`, `calibrate` | `mgbfs-cli/src/main.rs` explicitly reports unavailable | `bench --reference` and offline config preflight only | Wire versioned RunConfigV1 to production dispatcher; test admission and output commits |
 
@@ -70,7 +70,7 @@ library experiment is `docs/plans/library-first-bfs.md`.
 | RMM/cuCollections | fixed pool and GPU key membership | integrated reference owner; fast S13, high reserved VRAM |
 | libcudf | relational dedup/join | isolated prototype; compare full owner semantics and host sync |
 | Taskflow/CUDA Graphs | scheduling repeated jobs | experiment only; require timeline and no CPU count dependency |
-| Arrow/Parquet, KvikIO, nvCOMP | durable archive | bounded codec experiments; require end-to-end drain rate |
+| Arrow/Parquet, KvikIO, nvCOMP | durable archive | S13 Parquet stream published; comparative codec/KvikIO/nvCOMP gate remains |
 | Sirius | GPU DB owner candidate | source audit only; pin-table adapter and fail-fast proof pending |
 | HeavyDB | GPU DB owner candidate | source audit only; D2D ingress exists but closed-loop table adapter pending |
 
@@ -105,6 +105,23 @@ failed before the guard and passed afterward (5/5 bench tests). This is a
 correctness guard, **not** implementation of distributed macro depth.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
+
+The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly
+32 hexadecimal digits interpreted as a numeric u128 and serialized little-endian
+for `GEMM_U8_P32X4_V1`. If unset, its historical seed is 20260828
+(`000000000000000000000000013527dc`). The canonical seed is included in the
+cluster/archive config digest, so ranks with different seeds reject one another
+at bootstrap. Parsing and byte order have CPU tests. A new-seed GPU end-to-end
+run remains to be done; changing seed only changes collision sampling, not
+graph semantics or the need for exact-state validation.
+
+The S13 HF publication is recorded in `docs/validation/2026-09-05-s13-hf-complete.md`:
+native search 4012.695 s, durable archive 4090.478 s on 2xT4; all 6,228
+objects matched manifest size and LFS SHA. The successful server commit initially
+returned HTTP 504 to its client. The later `promote_hf_stream.py`
+reconciliation path (commit `420b8a7`) and `tests/test_promotion_reconcile.py`
+already address ambiguous responses; do not reimplement or relaunch S13 for
+this issue. Remote object checks do not prove a fresh decode of every row.
 
 ### CUB S13 diagnostic, preserved trace
 
