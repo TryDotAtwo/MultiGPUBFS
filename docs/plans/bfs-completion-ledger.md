@@ -506,5 +506,11 @@ runtime correctness for DENSE/CUCO_RANK, not HASH_FIRST support, large-graph
 capacity, speed, memory superiority, or removal of host dependencies. The
 per-batch route count upload and owner control snapshot still synchronize in
 `distributed_native.rs`; transport size exchange and parent retirement still
-use CPU readbacks. The v15 full-path sanitizer and v57 capacity-cleanup runs
-are pending, so neither gate is credited yet.
+use CPU readbacks. The v57 capacity-failure/recreation fixture passed plain on
+both T4s. V15 passed the one-/two-rank full-state runtime oracles under
+memcheck, racecheck (zero hazards/warnings), initcheck and synccheck at exact
+source `aabbf45`; see `docs/validation/cuco-rank-runtime-2xt4.md`. The v58
+capacity-failure/drop/recreation fixture passed memcheck on both physical T4s
+at exact source `c16c8c7`, zero errors. V15 predates that fixture; its other
+three sanitizer modes have not been rerun on capacity cleanup. Neither gate
+removes the confirmed CPU-driven route/retirement dependencies.
