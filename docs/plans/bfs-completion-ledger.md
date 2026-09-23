@@ -603,9 +603,14 @@ symbol, then v18 at `8aacb24` passed 20/20 state-commit/archive-pack plain
 and four-sanitizer checks on two physical T4s. Rust now uses the device word
 for both DENSE and HASH_FIRST retirement votes; local CUDA-feature typecheck
 and the CPU suite pass. The full 2×T4 BFS v3 integration gate passed plain
-single-device and rank-owner layer/archive fixtures; four-sanitizer v4 is
-running. A focused two-rank FIFO fault injection at `4bd474b` passed on
+single-device and rank-owner layer/archive fixtures. The v4 gate at the same
+source passed these fixtures on both physical T4s under memcheck, racecheck,
+initcheck and synccheck (zero reported errors or hazards). A focused two-rank
+FIFO fault injection at `4bd474b` passed on
 two physical T4s: one local sticky fatal 17 became group fatal 1 on both
 ranks without a hang. Full scheduler-level fault injection remains open.
 This removes one ring-fatal D2H but the collective remains host-blocking and
 owner/transport count decisions remain CPU-driven.
+The follow-up `ced41ab` removes a duplicate DENSE stream drain after the
+blocking first-round fatal vote. Its plain 1/2-T4 full-BFS gate is running
+in private Kaggle notebook v5; no physical-GPU result for that source yet.
