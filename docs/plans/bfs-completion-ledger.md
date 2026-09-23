@@ -550,3 +550,13 @@ uniform early return in `copy_candidates` at `62bec61` passed the v27 plain
 owner fixture on both T4s. V28 passed all four sanitizer modes on both T4s,
 with zero errors and racecheck hazards/warnings. This strengthens
 fail-fast but remains an isolated owner leaf, not end-to-end BFS integration.
+
+The next rank-owner cut removes the **per-batch extent/control snapshot**:
+`mgbfs_state_publish_next_extent` accumulates at most two next-frontier
+physical ranges on GPU, then the Rust runtime reads them once at
+`FinalizeDepth`. The C ABI v13 RED/v14 plain and four-sanitizer GREEN on two
+T4s are recorded in `docs/validation/device-next-extents-2xt4.md`.
+Integration source `b15b74b` passed local Rust type-check with CUDA/library
+features and the CPU suite; full GPU runtime gate is pending. This does not
+remove per-batch route count upload, NCCL host size exchange or parent
+retirement readback.

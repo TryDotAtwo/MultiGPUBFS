@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 
-SOURCE_COMMIT = "4dcc48f65c1c7009e0759d99a73dd5aa725e3ae1"
+SOURCE_COMMIT = "f8ffb8b3fe79305d4ad6be1ecf084291fb91ad27"
 
 def main():
     output = Path("/kaggle/working/state-commit-gate")
