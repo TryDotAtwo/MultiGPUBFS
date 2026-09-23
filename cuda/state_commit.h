@@ -37,6 +37,13 @@ int mgbfs_state_reserve_rank_batch(MgbfsStateRingControl* ring,
     const uint32_t* accepted_capacities, uint32_t shard_count,
     uint32_t* offsets, uint32_t* layer_count, uint32_t layer_capacity,
     uint32_t request_capacity, uint32_t hash_first, void* stream);
+/* Single-writer DENSE rank-batch publication after materialization on the
+ * owner stream. Adjacent physical extents merge; a wrap uses the second slot.
+ * count and out[capacity] are preallocated device storage and read at
+ * FinalizeDepth only. Sticky fatal leaves count/output unchanged. */
+int mgbfs_state_publish_next_extent(MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner, const MgbfsStateExtent* extent,
+    uint32_t* count, MgbfsStateExtent* out, uint32_t capacity, void* stream);
 /* Build per-shard counts from CUB-selected indices in sorted Hash128 order.
  * high_words points to candidate SoA word 3; candidate_count and selected_count
  * are device words. Outputs are valid only when owner.error==0. On malformed

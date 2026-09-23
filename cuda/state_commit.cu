@@ -171,6 +171,34 @@ __global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e
   e->granted_rows=unsigned(e->count);
   if(!e->count){r->descriptor_head=e->padding[1]+1;e->ready=0;}
 }
+__global__ void publish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
+    const MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap){
+  if(r->fatal||o->error)return;
+  if(!e->count)return;
+  if(!cap||*count>cap||!e->ready||e->count!=e->granted_rows||
+     !r->capacity||e->begin>=r->capacity||e->count>r->capacity-e->begin||
+     e->begin!=e->sequence%r->capacity||e->sequence<r->head||
+     e->sequence>r->tail||e->count>r->tail-e->sequence||
+     e->descriptor<r->descriptor_head||e->descriptor>=r->descriptor_tail){
+    fatal(r,o,24);return;
+  }
+  uint32_t n=*count;
+  MgbfsStateExtent value=*e;value.padding[1]=e->descriptor;
+  if(n){
+    MgbfsStateExtent last=out[n-1];
+    if(last.sequence>UINT64_MAX-last.count||
+       last.begin>r->capacity-last.count||
+       last.padding[1]>=e->descriptor){fatal(r,o,24);return;}
+    if(last.sequence+last.count==e->sequence&&
+       last.begin+last.count==e->begin){
+      if(last.count>UINT32_MAX-e->count){fatal(r,o,24);return;}
+      last.count+=e->count;last.granted_rows=uint32_t(last.count);
+      last.padding[1]=e->descriptor;out[n-1]=last;return;
+    }
+  }
+  if(n==cap){fatal(r,o,24);return;}
+  out[n]=value;*count=n+1;
+}
 }
 extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
   if(!r||!o||!e)return 1;reserve<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e);return cudaGetLastError()==cudaSuccess?0:2;
@@ -211,6 +239,14 @@ extern "C" int mgbfs_owner_shard_counts(const uint32_t*high,
 }
 extern "C" int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl*r,MgbfsStateExtent*e,uint64_t n,void*stream){
  if(!r||!e||!n)return 1;retire_dense_prefix<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,e,n);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_publish_next_extent(MgbfsStateRingControl*r,
+ MgbfsOwnerControl*o,const MgbfsStateExtent*e,uint32_t*count,
+ MgbfsStateExtent*out,uint32_t capacity,void*stream){
+ if(!r||!o||!e||!count||!out||!capacity)return 1;
+ publish_next_extent<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(
+     r,o,e,count,out,capacity);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_materialize(const uint8_t* input,uint32_t candidates,const uint64_t* refs,uint32_t sorted,
