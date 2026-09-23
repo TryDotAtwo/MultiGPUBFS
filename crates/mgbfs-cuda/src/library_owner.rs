@@ -29,7 +29,7 @@ pub struct SurvivorsV1 {
 /// All fields are borrowed device pointers valid through the ordered final
 /// consumer of the rank-batch epoch. No host-visible survivor count.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct RankDeviceBatchV1 {
     pub high_words: *const u32,
     pub valid_rows: *const u32,
