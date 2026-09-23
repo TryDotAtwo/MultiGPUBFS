@@ -62,7 +62,7 @@ int mgbfs_library_rank_commit_v1(void* rank_owner, uint64_t epoch,
 int mgbfs_library_rank_complete_v1(void* rank_owner, uint64_t epoch);
 int mgbfs_library_rank_export_shard_v1(void* rank_owner, uint32_t shard,
     uint32_t rows, MgbfsLibraryKeysV1* result);
-void mgbfs_library_rank_destroy_v1(void* rank_owner);
+int mgbfs_library_rank_destroy_v1(void* rank_owner);
 
 /* One fixed RMM pool per device, installed before any owner/input allocation.
  * bytes is nonzero and 256-byte aligned; reserve_bytes is at least 1 GiB.

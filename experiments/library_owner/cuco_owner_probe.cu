@@ -254,7 +254,7 @@ int main() {
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
     require(mgbfs_library_rank_complete_v1(rank_owner,3)==0,"RANK_ABI_COMPLETE_FATAL");
-    mgbfs_library_rank_destroy_v1(rank_owner);
+    require(mgbfs_library_rank_destroy_v1(rank_owner)==0,"RANK_ABI_DESTROY");
     rmm::mr::set_current_device_resource_ref(prior_resource);
   }
   {
