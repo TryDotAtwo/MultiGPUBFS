@@ -46,6 +46,7 @@ architecture contract; `library-first-bfs.md` is the library experiment log.
 | Search-only LRX15r4 | `lrx_multiset.rs`, CLI reference | 8xH200 54,486,432,000 states, 93 layers, 90.093 s | Independent large histogram; no state archive exists for this run |
 | HF Parquet catalog | Upload and codec experiments under `scripts/` | Earlier smaller published experiments | Large graph end-to-end archive/upload/replay certificate |
 | Device-driven library owner | Proposed in `device-driven-library-owner.md` | Synchronous cuCollections winner on S13 | Remove per-shard host readbacks and prove event-driven execution |
+| Production CLI `run`, hardware `preflight`, `calibrate` | `mgbfs-cli/src/main.rs` explicitly reports unavailable | `bench --reference` and offline config preflight only | Wire versioned RunConfigV1 to production dispatcher; test admission and output commits |
 
 The LRX15 run's `ORBIT_TOTAL_AND_CONFIG_ONLY` certificate verifies count and
 configuration, not full state equality or independent per-layer distances.
@@ -85,11 +86,23 @@ reject it; do not infer rejection from its public SQL/RPC surface alone.
    LRX status document with the observed n=15 result.
 2. Diagnose CUB S13 using preserved logs and scoped reproducer. No new paid GPU
    run until an actionable failure hypothesis and capacity estimate exist.
-3. Specify and connect macro depth to multi-rank DENSE, with exact-distance
+3. Wire production `run`/hardware `preflight`/`calibrate` to a versioned config;
+   the current executable exposes only the reference benchmark. Add a fail-fast
+   guard for unsupported macro depth until the next item is implemented.
+4. Specify and connect macro depth to multi-rank DENSE, with exact-distance
    settlement tests before large hardware measurement.
-4. Complete profile/backend matrix, archive/HF path and device-driven library
+5. Complete profile/backend matrix, archive/HF path and device-driven library
    owner; test each vertical slice before performance claims.
-5. Execute the independent DB/framework probes and final Pareto comparison.
+6. Execute the independent DB/framework probes and final Pareto comparison.
+
+### 2026-09-23 implementation slice
+
+The `bench --reference` CLI previously ignored `MGBFS_MACRO_DEPTH`; requesting
+depth 2 or 10 therefore silently ran ordinary depth-one BFS. It now accepts
+only absent/`1` and returns `CLI_BENCH_MACRO_DEPTH_UNAVAILABLE` for every other
+value until distributed macro settlement is connected. The new CLI regression
+failed before the guard and passed afterward (5/5 bench tests). This is a
+correctness guard, **not** implementation of distributed macro depth.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 

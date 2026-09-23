@@ -90,3 +90,17 @@ fn explicit_search_only_reaches_launcher_without_weakening_default() {
     };
     assert_eq!(result["error"], expected);
 }
+
+#[test]
+fn macro_depth_must_not_be_silently_ignored_by_reference_bench() {
+    for value in ["0", "2", "10", "invalid"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mgbfs"))
+            .args(["bench", "--reference", "s3", "16", "bootstrap", "archive", "results"])
+            .env("MGBFS_MACRO_DEPTH", value)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let result: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(result["error"], "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE");
+    }
+}

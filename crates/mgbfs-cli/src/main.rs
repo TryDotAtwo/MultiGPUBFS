@@ -7,6 +7,10 @@ fn execute() -> Result<(), (i32, String)> {
             println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
         }
         Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only")) && args[1] == "--reference" => {
+            match std::env::var("MGBFS_MACRO_DEPTH").as_deref() {
+                Ok("1") | Err(std::env::VarError::NotPresent) => (),
+                _ => return Err((2, "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE".into())),
+            }
             if args.len() == 8 {
                 // Explicit alternative output contract, never an implicit fallback.
                 std::env::set_var("MGBFS_BENCH_SKIP_ARCHIVE", "1");
