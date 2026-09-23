@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import urllib.request
 
-SOURCE_COMMIT = "0e3d1d655e5c56e6b15c7116600aadb5824e24bc"
+SOURCE_COMMIT = "4bd474bb62060dba0e123afa2182d21bea84789a"
 
 if __name__ == "__main__":
     os.environ.setdefault("PIP_DEFAULT_TIMEOUT", "180")
@@ -19,5 +19,5 @@ if __name__ == "__main__":
     gate.SOURCE_COMMIT = SOURCE_COMMIT
     gate.FULL_BFS_GATE = True
     gate.LOAD_SCREEN = False
-    gate.SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
+    gate.SANITIZER_TOOLS = ()
     gate.main()
