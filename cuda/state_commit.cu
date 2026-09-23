@@ -54,6 +54,46 @@ __global__ void reserve_rank_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o
  o->survivors=prefix;
  *layer+=prefix;
 }
+__global__ void validate_shard_selection(const uint32_t* high,const uint32_t* candidate_count,
+ const uint32_t* selected,const uint32_t* selected_count,uint32_t capacity,
+ uint32_t logical_owner,uint32_t shards,uint32_t shift,
+ MgbfsStateRingControl* r,MgbfsOwnerControl* o){
+ uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;
+ if(r->fatal||o->error){if(i==0)fatal(r,o,r->fatal?r->fatal:o->error);return;}
+ if(i==0){
+   if(*candidate_count>capacity||*selected_count>*candidate_count)fatal(r,o,20);
+ }
+ uint32_t n=*selected_count<capacity?*selected_count:capacity;
+ for(uint32_t row=i;row<n;row+=gridDim.x*blockDim.x){
+   uint32_t source=selected[row];
+   if(source>=*candidate_count||source>=capacity){fatal(r,o,20);continue;}
+   uint32_t word=high[source];
+   if((word>>shift)/shards!=logical_owner){fatal(r,o,20);continue;}
+   if(row){
+     uint32_t previous=selected[row-1];
+     if(previous>=*candidate_count||previous>=capacity||source<=previous||
+        word<high[previous])fatal(r,o,20);
+   }
+ }
+}
+__global__ void shard_directory(const uint32_t* high,const uint32_t* selected,
+ const uint32_t* selected_count,uint32_t logical_owner,uint32_t shards,
+ uint32_t shift,uint32_t* counts,uint32_t* offsets,
+ const MgbfsStateRingControl* r,const MgbfsOwnerControl* o){
+ if(r->fatal||o->error)return;
+ uint32_t b=threadIdx.x;
+ if(b<=shards){
+   uint32_t target=logical_owner*shards+b;
+   uint32_t lo=0,hi=*selected_count;
+   while(lo<hi){
+     uint32_t mid=lo+(hi-lo)/2;
+     if((high[selected[mid]]>>shift)<target)lo=mid+1;else hi=mid;
+   }
+   offsets[b]=lo;
+ }
+ __syncthreads();
+ if(b<shards)counts[b]=offsets[b+1]-offsets[b];
+}
 __global__ void validate_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,
     unsigned capacity,unsigned stride){
   if(r->fatal||o->error){fatal(r,o,r->fatal?r->fatal:o->error);return;}
@@ -132,6 +172,26 @@ extern "C" int mgbfs_state_reserve_rank_batch(MgbfsStateRingControl*r,MgbfsOwner
  if(!r||!o||!e||!survivors||!accepted||!capacities||!shards||!offsets||!layer)return 1;
  reserve_rank_batch<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e,survivors,
    accepted,capacities,shards,offsets,layer,layer_capacity,request_capacity,hash_first!=0);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_shard_counts(const uint32_t*high,
+ const uint32_t*candidate_count,const uint32_t*selected,
+ const uint32_t*selected_count,uint32_t capacity,uint32_t logical_owner,
+ uint32_t world,uint32_t shards,uint32_t*counts,uint32_t*offsets,
+ MgbfsStateRingControl*r,MgbfsOwnerControl*o,void*stream){
+ if(!high||!candidate_count||!selected||!selected_count||!capacity||
+    capacity>INT_MAX||!world||(world&(world-1))||world>128||
+    logical_owner>=world||!shards||(shards&(shards-1))||shards>256||
+    !counts||!offsets||!r||!o)return 1;
+ uint32_t product=world*shards,shift=32;
+ for(uint32_t n=product;n>1;n>>=1)--shift;
+ auto s=static_cast<cudaStream_t>(stream);
+ uint32_t blocks=(capacity+255)/256;if(blocks>4096)blocks=4096;
+ validate_shard_selection<<<blocks,256,0,s>>>(high,candidate_count,selected,
+     selected_count,capacity,logical_owner,shards,shift,r,o);
+ uint32_t threads=1;while(threads<=shards)threads<<=1;
+ shard_directory<<<1,threads,0,s>>>(high,selected,selected_count,logical_owner,
+     shards,shift,counts,offsets,r,o);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 extern "C" int mgbfs_state_retire_dense_prefix(MgbfsStateRingControl*r,MgbfsStateExtent*e,uint64_t n,void*stream){
