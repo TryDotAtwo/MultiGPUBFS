@@ -348,7 +348,11 @@ The independent T4 primitive gate passed on both physical T4s with plain,
 memcheck, racecheck, initcheck and synccheck; see
 `docs/validation/device-count-pack-2xt4.md`. Full `mgbfs-distributed-sanitizer`
 Kaggle v47 stopped because the harness expected 12 archive tests while 13
-passed. The corrected v48, pinned to the same source, is running. This slice is not an owner DAG capture,
+passed. V48 then passed the five-mode two-T4 distributed/macro gate, but its
+CLI smoke panel did not start: six passing CLI tests exceeded the harness's
+stale expectation of three. The corrected private v49 is running, pinned to
+the same source. See `test_results/distributed-sanitizer-v48/REPORT.md`.
+This slice is not an owner DAG capture,
 transport redesign or latency improvement claim.
 
 ## 2026-09-23 completed library calibration audit
