@@ -466,3 +466,11 @@ capacity failure that leaves counts and ring tail unchanged. See
 library path: the Rust runtime uses its synchronous per-shard V1 owner, and
 transport/retirement retain CPU dependencies. No full BFS or performance
 claim follows from the captured leaf.
+
+The DENSE materialization leaf `mgbfs_state_materialize_rank_batch` now takes
+source and selected counts from device words and checks every source ordinal
+before copying into the reserved extent. The two-T4 v11 RED link failure and
+v12 GREEN 20/20 plain/sanitizer checks are recorded in
+`docs/validation/rank-batch-materialize-2xt4.md`. A Rust FFI declaration is
+present, but the runtime still does not call this leaf. HASH_FIRST and the
+owner→transport→retirement event/lifetime protocol remain open.

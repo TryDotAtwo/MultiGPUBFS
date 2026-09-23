@@ -232,6 +232,22 @@ mod calls {
             extent: *mut Extent,
             stream: *mut c_void,
         ) -> i32;
+        /// Device-count DENSE rank batch. Validates all source ordinals before
+        /// copying to the reserved dense extent; no host survivor readback.
+        pub fn mgbfs_state_materialize_rank_batch(
+            input: *const u8,
+            source_rows: *const u32,
+            source_capacity: u32,
+            source_indices: *const u32,
+            selected_count: *const u32,
+            selected_capacity: u32,
+            stride: u32,
+            output: *mut u8,
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *mut Extent,
+            stream: *mut c_void,
+        ) -> i32;
         /// Build HASH_FIRST requests after owner commit, without publishing ready.
         /// All pointers are device resident; target refs are absolute sequences.
         pub fn mgbfs_state_build_requests(
