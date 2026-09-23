@@ -243,6 +243,16 @@ GPU at source `80be3aa`; BMMA passed 15/15 checks at the same source. This cover
 membership across more than two old layers but **not** the host/device slot
 rotation, full 2*Km residency, or weighted distributed finalization.
 
+`MacroHistoryWindow` now supplies a fixed `2*Km` host control-plane slot
+generation and lease contract. A layer at `d-2*Km` remains readable while
+depth `d` settles; only after settlement, all owner reader events and its
+archive D2H event may physical slot `d mod (2*Km)` be rebound to depth `d`.
+Focused RED/green tests cover blocked reuse, stale depth, order and lease
+underflow; the full default `mgbfs-runtime` CPU suite passed locally. This
+module is **not yet wired** to the actual GPU completion events or global
+`FinalizeDepth` pump, so it is a CPU scheduling contract, not an end-to-end
+macro-runtime proof.
+
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
 The distributed reference benchmark now accepts `MGBFS_HASH_SEED_HEX`: exactly

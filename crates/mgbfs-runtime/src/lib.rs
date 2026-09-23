@@ -29,6 +29,7 @@ pub mod library_native;
 #[cfg(feature = "cuda")]
 pub mod macro_native;
 pub mod macro_owner;
+pub mod macro_history_window;
 pub mod macro_simulation;
 #[cfg(feature = "cuda")]
 pub mod native;
