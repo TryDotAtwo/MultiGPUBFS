@@ -41,7 +41,7 @@ architecture contract; `library-first-bfs.md` is the library experiment log.
 | Local pre-dedup and rank map | Runtime config and CUDA stages | 8xH200 small full-state oracle OFF/ON, reversed maps | Large asymmetric replay |
 | HASH_FIRST | Runtime request/response/materialization path | Small 8xH200 matrix oracle | Large LRX unsupported; profile/VRAM gate |
 | BMMA_BUCKET | CUDA backend and runtime selection | Isolated and small tests | Large end-to-end win or explicit experimental label |
-| Macro depth | `macro_native.rs`, `macro_owner.rs` | Single-device macro fixtures | Connect to distributed runtime and CLI; full-state 1/2/8-rank oracle |
+| Macro depth | `macro_native.rs`, `macro_owner.rs`, single-rank reference CLI | T4 full-state/sanitizer macro tests and archived K=1/2/3 CLI | Connect to distributed runtime; full-state 2/8-rank oracle |
 | Async state archive | `pinned_archive.rs`, `advance_archived` | Bounded T4 archive tests | Complete large-run throughput and durable verification |
 | Search-only LRX15r4 | `lrx_multiset.rs`, CLI reference | 8xH200 54,486,432,000 states, 93 layers, 90.093 s | Independent large histogram; no state archive exists for this run |
 | HF Parquet catalog | `stream_hf_archive.py`, `promote_hf_stream.py`, verifiers | Full S13: 6,227,020,800 archived states and 6,228 Parquet objects verified by size/SHA on HF | Full-state remote replay and later LRX15 archive/publication |
@@ -52,15 +52,18 @@ The LRX15 run's `ORBIT_TOTAL_AND_CONFIG_ONLY` certificate verifies count and
 configuration, not full state equality or independent per-layer distances.
 Its 8xH200 rental is deleted; evidence is in
 `test_results/vast-51254782/multiset-evidence.tgz` (ignored local artifact).
-The single-rank legacy map must be `[0,0]`; the corrected GPU test fixture is
-still uncommitted as of this ledger.
+The single-rank legacy map must be `[0,0]`; the corrected GPU test fixture was
+committed earlier on this branch.
 
 ## Independent DB and framework stage
 
 The user asked for a *separate* analysis of finished GPU DBs/frameworks to
 simplify code without sacrificing the fixed-memory, GPU-resident BFS hot path.
 The recovered source audit is `docs/plans/db-interface-audit.md`; the broader
-library experiment is `docs/plans/library-first-bfs.md`.
+library experiment is `docs/plans/library-first-bfs.md`. The separate
+component-role decision and executable gate are now
+`docs/plans/db-framework-stage.md`. It records the S10 cuCollections speed/VRAM
+Pareto trade without equating it to a universal improvement or a DB acceptance.
 
 | Candidate | Intended role | Evidence level / decision gate |
 |---|---|---|
