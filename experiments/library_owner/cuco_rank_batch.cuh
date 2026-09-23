@@ -10,6 +10,7 @@ struct CucoRankDeviceBatch {
   const uint32_t* valid_rows;
   const uint32_t* selected;
   const uint32_t* selected_count;
+  const uint32_t* source_indices;
   const uint32_t* accepted_counts;
   const uint32_t* accepted_capacities;
   uint32_t* shard_counts;

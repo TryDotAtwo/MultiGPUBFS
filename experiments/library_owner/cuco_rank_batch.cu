@@ -62,7 +62,7 @@ __global__ void rank_flags(const ContainsRef* refs,const uint32_t* high,
   for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<cap;
       row+=gridDim.x*blockDim.x){
     flags[row]=0;
-    if(row>=n||owner->error||*workspace_error)return;
+    if(row>=n||atomicAdd(&owner->error,0u)||*workspace_error)return;
     uint32_t prefix=high[uint64_t(3)*stride+row]>>shift;
     if(prefix/shards!=logical_owner){poison(ring,owner,21);continue;}
     uint32_t representative=first[row];
@@ -150,8 +150,6 @@ struct CucoRankBatch::Impl {
   std::vector<std::unique_ptr<Set>> sets;
   rmm::device_buffer contains_refs,insert_refs,accepted_views;
   rmm::device_buffer accepted_counts,accepted_capacities,shard_counts,shard_offsets;
-  const uint32_t* valid_rows{nullptr};
-  const uint32_t* input_sources{nullptr};
 
   Impl(std::vector<MgbfsLibraryKeysV1> previous,std::vector<MgbfsLibraryKeysV1> current,
       std::vector<uint32_t> caps,uint32_t cap,uint32_t logical,uint32_t world_size,
@@ -264,9 +262,10 @@ CucoRankDeviceBatch CucoRankBatch::compare(uint64_t epoch,MgbfsLibraryCandidates
       data(p.workspace->sources));
   finish_compare<<<1,1,0,s>>>(valid,cap,data(p.workspace->control),ring,owner);
   cuco_owner_detail::check(cudaGetLastError());
-  p.pending=true;p.pending_epoch=epoch;p.valid_rows=valid;p.input_sources=input.source_indices;
+  p.pending=true;p.pending_epoch=epoch;
   return {data(p.workspace->candidates)+3*p.workspace->stride,valid,
       data(p.workspace->selected),data(p.workspace->control),
+      data(p.workspace->sources),
       data(p.accepted_counts),data(p.accepted_capacities),
       data(p.shard_counts),data(p.shard_offsets)};
 }

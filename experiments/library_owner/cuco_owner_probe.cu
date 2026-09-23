@@ -157,26 +157,37 @@ int main() {
     check(cudaMemcpyAsync(layer.data(),&zero,sizeof(zero),cudaMemcpyHostToDevice,stream.value()));
     mgbfs::CucoRankBatch owner({previous0.keys(),previous1.keys()},{{},{}},
         {2,2},cap,0,2,stream.view(),resource);
-    auto capacity_view=batch.candidates();capacity_view.keys.rows=cap;
-    auto d=owner.compare(1,capacity_view,static_cast<uint32_t const*>(valid.data()),
-        static_cast<MgbfsOwnerControl*>(control.data()),
-        static_cast<MgbfsStateRingControl*>(ring.data()));
-    require(mgbfs_owner_shard_counts(d.high_words,d.valid_rows,d.selected,d.selected_count,
-        cap,0,2,2,d.shard_counts,d.shard_offsets,
-        static_cast<MgbfsStateRingControl*>(ring.data()),
-        static_cast<MgbfsOwnerControl*>(control.data()),stream.value())==0,
-        "RANK_SHARD_COUNTS_ENQUEUE");
-    require(mgbfs_state_reserve_rank_batch(
-        static_cast<MgbfsStateRingControl*>(ring.data()),
-        static_cast<MgbfsOwnerControl*>(control.data()),
-        static_cast<MgbfsStateExtent*>(extent.data()),d.shard_counts,
-        d.accepted_counts,d.accepted_capacities,2,d.shard_offsets,
-        static_cast<uint32_t*>(layer.data()),16,cap,0,stream.value())==0,
-        "RANK_RESERVE_ENQUEUE");
-    owner.commit(1,static_cast<MgbfsOwnerControl*>(control.data()),
-        static_cast<MgbfsStateRingControl*>(ring.data()),
-        static_cast<MgbfsStateExtent*>(extent.data()));
+    auto run_batch=[&](uint64_t epoch){
+      auto capacity_view=batch.candidates();capacity_view.keys.rows=cap;
+      auto d=owner.compare(epoch,capacity_view,static_cast<uint32_t const*>(valid.data()),
+          static_cast<MgbfsOwnerControl*>(control.data()),
+          static_cast<MgbfsStateRingControl*>(ring.data()));
+      require(mgbfs_owner_shard_counts(d.high_words,d.valid_rows,d.selected,d.selected_count,
+          cap,0,2,2,d.shard_counts,d.shard_offsets,
+          static_cast<MgbfsStateRingControl*>(ring.data()),
+          static_cast<MgbfsOwnerControl*>(control.data()),stream.value())==0,
+          "RANK_SHARD_COUNTS_ENQUEUE");
+      require(mgbfs_state_reserve_rank_batch(
+          static_cast<MgbfsStateRingControl*>(ring.data()),
+          static_cast<MgbfsOwnerControl*>(control.data()),
+          static_cast<MgbfsStateExtent*>(extent.data()),d.shard_counts,
+          d.accepted_counts,d.accepted_capacities,2,d.shard_offsets,
+          static_cast<uint32_t*>(layer.data()),16,cap,0,stream.value())==0,
+          "RANK_RESERVE_ENQUEUE");
+      owner.commit(epoch,static_cast<MgbfsOwnerControl*>(control.data()),
+          static_cast<MgbfsStateRingControl*>(ring.data()),
+          static_cast<MgbfsStateExtent*>(extent.data()));
+      return d;
+    };
+    cudaGraph_t graph=nullptr;cudaGraphExec_t executable=nullptr;
+    stream.synchronize(); // fixture uploads, outside the captured owner DAG
+    check(cudaStreamBeginCapture(stream.value(),cudaStreamCaptureModeGlobal));
+    auto d=run_batch(1);
+    check(cudaStreamEndCapture(stream.value(),&graph));
+    check(cudaGraphInstantiate(&executable,graph));
+    check(cudaGraphLaunch(executable,stream.value()));
     stream.synchronize();
+    check(cudaGraphExecDestroy(executable));check(cudaGraphDestroy(graph));
     uint32_t got_layer=0;std::array<uint32_t,2> got_counts{};
     MgbfsOwnerControl got_control{};MgbfsStateExtent got_extent{};
     check(cudaMemcpy(&got_layer,layer.data(),sizeof(got_layer),cudaMemcpyDeviceToHost));
@@ -189,7 +200,42 @@ int main() {
     require(read_keys(owner.export_shard(0,1),stream.view())==std::vector<Key>{x}&&
         read_keys(owner.export_shard(1,1),stream.view())==std::vector<Key>{y},
         "RANK_BATCH_ACCEPTED_KEYS");
+    std::array<uint32_t,2> first_sources{};
+    check(cudaMemcpy(first_sources.data(),d.source_indices,sizeof(first_sources),cudaMemcpyDeviceToHost));
+    require(first_sources==std::array<uint32_t,2>{10,20},"RANK_BATCH_FIRST_SOURCES");
     owner.complete(1);
+    Key z{7,8,9,0x120};
+    batch.upload({x,z,y},{1,33,2});
+    uint32_t three=3;
+    check(cudaMemcpyAsync(valid.data(),&three,sizeof(three),cudaMemcpyHostToDevice,stream.value()));
+    auto d2=run_batch(2);
+    stream.synchronize();
+    check(cudaMemcpy(&got_layer,layer.data(),sizeof(got_layer),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(got_counts.data(),d2.accepted_counts,sizeof(got_counts),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(&got_control,control.data(),sizeof(got_control),cudaMemcpyDeviceToHost));
+    require(!got_control.error&&got_layer==3&&got_counts==std::array<uint32_t,2>{2,1},
+        "RANK_BATCH_STABLE_PERSISTENT_INDICES");
+    require(read_keys(owner.export_shard(0,2),stream.view())==std::vector<Key>({x,z})&&
+        read_keys(owner.export_shard(1,1),stream.view())==std::vector<Key>{y},
+        "RANK_BATCH_SECOND_KEYS");
+    uint32_t second_source=0;
+    check(cudaMemcpy(&second_source,d2.source_indices,sizeof(second_source),cudaMemcpyDeviceToHost));
+    require(second_source==33,"RANK_BATCH_SECOND_SOURCE");
+    owner.complete(2);
+    Key full{10,11,12,0x130};
+    batch.upload({full},{44});
+    uint32_t one=1;
+    check(cudaMemcpyAsync(valid.data(),&one,sizeof(one),cudaMemcpyHostToDevice,stream.value()));
+    auto d3=run_batch(3);
+    stream.synchronize();
+    MgbfsStateRingControl final_ring{};
+    check(cudaMemcpy(&final_ring,ring.data(),sizeof(final_ring),cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(got_counts.data(),d3.accepted_counts,sizeof(got_counts),cudaMemcpyDeviceToHost));
+    require(final_ring.fatal&&final_ring.tail==3&&
+        got_counts==std::array<uint32_t,2>{2,1},"RANK_BATCH_OVERFLOW_ATOMICITY");
+    require(read_keys(owner.export_shard(0,2),stream.view())==std::vector<Key>({x,z}),
+        "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
+    owner.complete(3);
   }
   {
     constexpr uint32_t incoming = 4096;
