@@ -11,20 +11,20 @@ device-driven end-to-end scheduling or a speed improvement.
 | Same notebook v57 | `c16c8c7f25b39c6a0bbe0af16d998a302bab8860` | Both physical T4s passed `cuco_rank_capacity_failure_releases_pool_after_gpu_work` plus the other one-GPU full-state tests (3/3 per GPU); the two-GPU suite passed 2/2 with one ignored. Plain mode only. |
 | `trydotatwo/mgbfs-cuco-dynamic-shard-refs-t4` v15 | `aabbf45fd70815aee0d0f45e822dafe92bd917d5` | The one-rank full-state cuCO-rank BFS passed on both T4s and the two-rank full-state/archive oracle passed. `memcheck`, `racecheck`, `initcheck`, `synccheck` all passed for these runtime tests; racecheck reported zero hazards, errors and warnings. The eight-rank test was correctly ignored on two GPUs. This predates the new capacity cleanup fixture. |
 | `trydotatwo/mgbfs-library-owner-t4` v58 | `c16c8c7f25b39c6a0bbe0af16d998a302bab8860` | Capacity-failure/drop/recreation test passed under `memcheck` on each physical T4 (3/3 tests per GPU, zero memcheck errors); the two-GPU suite also passed 2/2, with eight-rank ignored. This is a bounded fixture, not a general asynchronous lifetime proof. |
+| Same notebook v59 | `c16c8c7f25b39c6a0bbe0af16d998a302bab8860` | The capacity-failure/drop/recreation test passed on both physical T4s in plain, `racecheck`, `initcheck`, and `synccheck` modes (3/3 per GPU). The two-GPU suite passed 2/2 in each mode, with the eight-rank test ignored. Racecheck reported zero hazards/errors/warnings; initcheck and synccheck reported zero errors. Combined with v58, this completes four sanitizer modes for this bounded fixture. |
 
 Raw downloaded outputs are in ignored `test_results/kaggle_cuco_rank_red_v12/`,
 `test_results/kaggle_cuco_rank_green_v13/` and
 `test_results/kaggle_cuco_rank_cli_v56/` and
 `test_results/kaggle_cuco_rank_capacity_v57/` and
 `test_results/kaggle_cuco_rank_sanitizers_v15/` and
-`test_results/kaggle_cuco_rank_capacity_memcheck_v58/`. The Kaggle CLI reports a Windows
+`test_results/kaggle_cuco_rank_capacity_memcheck_v58/` and
+`test_results/kaggle_cuco_rank_capacity_sanitizers_v59/`. The Kaggle CLI reports a Windows
 `charmap` error after downloading files; conclusions above come from the
 downloaded `summary.json`, BFS test logs and CLI rank records, not the CLI exit
 status.
 
-Not yet discharged: racecheck/initcheck/synccheck for the new capacity fixture,
-large-graph performance/VRAM, HASH_FIRST rank owner, and removal of host
-waits/readbacks across owner, transport and retirement. V58 checks one bounded
-failure/recreation path under memcheck; it does not establish general
-asynchronous lifetime safety. V15 covers only the existing small-graph
-runtime fixtures, not these outstanding requirements.
+Not yet discharged: large-graph performance/VRAM, HASH_FIRST rank owner,
+and removal of host waits/readbacks across owner, transport and retirement.
+V58/v59 cover one bounded failure/recreation path under all four sanitizer
+modes; they do not establish general asynchronous lifetime safety.

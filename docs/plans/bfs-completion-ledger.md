@@ -511,8 +511,9 @@ both T4s. V15 passed the one-/two-rank full-state runtime oracles under
 memcheck, racecheck (zero hazards/warnings), initcheck and synccheck at exact
 source `aabbf45`; see `docs/validation/cuco-rank-runtime-2xt4.md`. The v58
 capacity-failure/drop/recreation fixture passed memcheck on both physical T4s
-at exact source `c16c8c7`, zero errors. V15 predates that fixture; its other
-three sanitizer modes have not been rerun on capacity cleanup. Neither gate
+at exact source `c16c8c7`, zero errors. V59 subsequently passed racecheck,
+initcheck and synccheck for the same fixture on both T4s, with zero reported
+hazards/errors/warnings. Neither gate
 removes the confirmed CPU-driven route/retirement dependencies.
 
 The rank-owner teardown had an independently reproduced lifetime defect:
