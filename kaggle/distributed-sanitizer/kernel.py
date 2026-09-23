@@ -150,7 +150,7 @@ def main():
             if tool != "plain":
                 cmd = ["compute-sanitizer", "--tool", tool, "--error-exitcode", "99"] + cmd
             output = run(cmd, tool, source)
-            require_fixture(output, 12)
+            require_fixture(output, 13)
             require_clean(tool, output)
             macro_cmd = [macro_binaries[0], "native_macro_nonidentity_source_preserves_original_layers",
                          "--exact", "--test-threads=1", "--nocapture"]
