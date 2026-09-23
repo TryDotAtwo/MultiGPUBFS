@@ -23,8 +23,16 @@ TDD evidence on two physical Kaggle T4s:
 
 The Rust integration is commit `0e3d1d655e5c56e6b15c7116600aadb5824e24bc`.
 Local CUDA-feature typecheck and the complete CPU no-default-features test
-suite passed. A separate full BFS 2xT4 runtime gate is in flight in private
-`trydotatwo/mgbfs-rank-retirement-gate-t4` v1. The leaf result must not be
-confused with that still-unverified integration. The runtime still drains the
-stream and reads ring fatal after retirement; transport counts and NCCL sizes
-also remain CPU-driven. No end-to-end latency or VRAM improvement is claimed.
+suite passed. A separate private
+`trydotatwo/mgbfs-rank-retirement-gate-t4` v1 at the integration source
+completed with `summary.status=PASS`: both physical T4s passed the one-GPU
+full-state/capacity tests (3/3 each), and the two-GPU NCCL rank-owner layer
+and archive fixture passed (2/2; one unsupported case ignored). The
+two-process CLI S4/U4m2 scenarios also completed, but on that pinned source
+they exercise cuDF/cuCO-indexed, not CucoRank. Raw logs:
+`test_results/kaggle_retire_value_full_bfs_v1/`. V2 runs the same exact source
+under all four sanitizers and is pending.
+
+The runtime still drains the stream and reads ring fatal after retirement;
+transport counts and NCCL sizes also remain CPU-driven. No end-to-end latency
+or VRAM improvement is claimed.
