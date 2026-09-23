@@ -381,19 +381,10 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
                 "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
             });
         }
-        if selection.owner == ReferenceOwner::CudfRelational {
-            value["backend"] = serde_json::json!(if selection.materialization_capacity.is_some() {
-                "library_nccl_hash_first_cudf_v1"
-            } else {
-                "library_nccl_dense_cudf_v1"
-            });
-        }
-        if selection.owner == ReferenceOwner::CucoIndexed {
-            value["backend"] = serde_json::json!(if selection.materialization_capacity.is_some() {
-                "library_nccl_hash_first_cuco_v1"
-            } else {
-                "library_nccl_dense_cuco_v1"
-            });
+        if let Some(label) = crate::benchmark::library_backend_label(
+            selection.owner, selection.profile,
+        ) {
+            value["backend"] = serde_json::json!(label);
         }
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
     })
