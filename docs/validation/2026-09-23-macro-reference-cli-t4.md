@@ -25,5 +25,23 @@ comparison.
 
 The displayed times are rounded for readability; exact values remain in
 `summary.json`. This gate compares counts, not complete sorted state sets.
-The separate GPU full-state oracle and sanitizer gate must still pass. K>1
-multi-rank is not implemented.
+Version 2 alone did not run a full-state oracle or sanitizers. K>1 multi-rank
+is not implemented.
+
+## Follow-up: version 3
+
+Version 3 also completed on the same private Kaggle slug, pinned to the same
+source commit. Downloaded evidence is under
+`test_results/kaggle_macro_reference_cli_v3/macro-reference-cli/`.
+All six `macro_native` GPU tests passed in a plain run and under each of
+`memcheck`, `racecheck`, `initcheck`, and `synccheck`. Memcheck, initcheck and
+synccheck reported zero errors; racecheck reported **0 hazards, 0 errors,
+0 warnings**. The full-state fixtures compare exact sorted states for
+U3(2), U3(3), U4(2) at K=1,2,3, plus a nonidentity source at K=1,2,3,10.
+The archive test covers matrix and compact permutation representations.
+The CLI matrix above passed again, with six verified archives and identical
+layer counts across K.
+
+This upgrades the small single-device macro backend gate, but does not prove
+distributed K>1, large-graph capacity, or a performance win. The CLI test
+still compares layer counts rather than complete S5/U4 archive row sets.

@@ -110,9 +110,13 @@ archive/search-only contract, seed and timing JSON. The CLI still rejects
 multi-rank K>1 before launch; the runtime independently rejects it. This
 exposes a real macro runtime rather than quietly substituting depth-one BFS.
 The CLI acceptance test was RED on the old guard and GREEN after wiring; Linux
-CUDA cross-target `cargo check` passes. GPU archive/oracle execution of this
-new CLI path remains an explicit gate. The broader requirement for distributed
-weighted settlement is **not** discharged by the single-rank path.
+CUDA cross-target `cargo check` passes. Kaggle T4 version 3 then completed six
+CLI archive runs over U4(2)/S5 and K=1/2/3, all with matching layer counts and
+verified archives. The existing six GPU full-state macro tests passed plain and
+under memcheck/racecheck/initcheck/synccheck (racecheck: zero hazards/warnings).
+Evidence and limitations: `docs/validation/2026-09-23-macro-reference-cli-t4.md`.
+The broader requirement for distributed weighted settlement is **not**
+discharged by the single-rank path.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
