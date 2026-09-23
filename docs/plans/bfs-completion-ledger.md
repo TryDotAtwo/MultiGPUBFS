@@ -411,7 +411,16 @@ owner→transport→retirement integration remain open. Details and raw results:
 `docs/validation/transport-feasibility-2xt4.md` and
 `test_results/kaggle_transport_probe_v15/`.
 
+The follow-up v16 sanitizer gate was mixed: racecheck/synccheck clean,
+unfiltered memcheck reported NCCL setup CUDA API errors, and unfiltered
+initcheck timed out. V18 then passed a *kernel-filtered* memcheck for the two
+LSA kernels while filtered initcheck again timed out after 600 seconds. The
+LSA backend is still experimental and not accepted as fully sanitized.
+
 The default `MGBFS_NCCL_LSA=OFF` build at `3bbb416` repeated the full small
 two-T4 v50 gate: plain plus four sanitizers and 24/24 profile smokes PASS.
 That does not sanitize or exercise the LSA code. See
 `test_results/kaggle_distributed_sanitizer_v50/distributed-sanitizer/summary.json`.
+V51 repeated this gate at `ae22e29` and again reports COMPLETE, all five
+tool modes PASS, 24/24 profile smokes PASS and identical S4 layers; it also
+kept LSA off. See `test_results/kaggle_distributed_sanitizer_v51/`.

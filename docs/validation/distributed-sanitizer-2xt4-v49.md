@@ -26,3 +26,11 @@ NCCL LSA code. Its default build leaves `MGBFS_NCCL_LSA=OFF`. The downloaded
 reports `COMPLETE`, all five tool modes PASS, and 24/24 CLI profile smokes
 PASS with the same S4 layers. This is a no-regression check of the default
 path, not a sanitizer gate for the optional LSA code.
+
+Version 51 repeated the same suite against `ae22e29388f08ec426f0b70b867c34567a17ff7f`,
+including the aggregate LSA source-capacity guard. The default build again
+kept `MGBFS_NCCL_LSA=OFF`: `COMPLETE`, plain plus all four sanitizers PASS,
+24/24 CLI smokes PASS, each with `[1,3,5,6,5,3,1]`. The pinned source SHA in
+the downloaded `source-sha.log` matches `summary.json`. Raw output is under
+`test_results/kaggle_distributed_sanitizer_v51/`. This is still a small-graph
+default-path regression, not an LSA or CPU-free-pipeline proof.

@@ -87,4 +87,12 @@ API error reporting disabled; even if it passes, it is **not** equivalent to
 a clean unfiltered end-to-end sanitizer gate. Raw v16 output:
 `test_results/kaggle_transport_probe_v16/`.
 
+V18 landed on P2P `OK` T4s. All four plain production cases passed again.
+With Compute Sanitizer restricted to `lsa_publish_count` and `lsa_copy_exact`
+and CUDA API error reporting disabled, `memcheck` finished with zero errors.
+The similarly filtered `initcheck` still timed out after 600 seconds before
+producing a rank result. Thus there is focused memory-access evidence for our
+kernels, but **not** an initcheck pass or a clean unfiltered sanitizer gate.
+Raw result: `test_results/kaggle_transport_probe_v18/`.
+
 Reference: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html
