@@ -36,9 +36,13 @@ v1) failed before build or BFS: installation of the pinned 678 MB
 Its `summary.json` reports `FAILED` / `TIMEOUT: install`; the downloaded
 `install.log` ends at the wheel download. No 96 MiB capacity or speed
 conclusion follows. Raw logs are in
-`test_results/kaggle_cuco_rank_paired_s10_pool96_v1/`. The v2 wrapper raises
-only that installation task's timeout to 2700 s; its BFS source commit,
-pool size, workload and paired baseline remain unchanged.
+`test_results/kaggle_cuco_rank_paired_s10_pool96_v1/`. Version 2 then failed
+before cloning because its timeout override referenced a nonexistent
+module-level `run` (the function is local to `main`). Version 3 sets an
+environment override consumed by the library notebook's installation step,
+raising only that task's timeout to 2700 s. Its BFS code, pool size, workload
+and paired baseline remain unchanged; the source pin advances to `8b5fb3f`
+only for this notebook configuration change.
 
 The two owner builds come from pinned different commits, so this is a
 matched-workload comparison, not an otherwise byte-identical binary A/B.

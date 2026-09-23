@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import urllib.request
 
-SOURCE_COMMIT = "4b68552b0c0c865862d896a2ca1913043110e575"
+SOURCE_COMMIT = "8b5fb3fa0acfc93b93a02e5911f511547f37ead9"
 
 if __name__ == "__main__":
     os.environ.setdefault("PIP_DEFAULT_TIMEOUT", "180")
+    os.environ["MGBFS_INSTALL_TIMEOUT_SEC"] = "2700"
     script = Path("/tmp/mgbfs-library-paired-pool96.py")
     urllib.request.urlretrieve(
         f"https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/{SOURCE_COMMIT}/kaggle/library-owner/kernel.py",
@@ -26,13 +27,4 @@ if __name__ == "__main__":
     gate.SCREEN_POOL_BYTES_BY_WORLD = {2: 96 << 20}
     gate.NATIVE_COMPARISON = True
     gate.SANITIZER_TOOLS = ()
-    original_run = gate.run
-
-    def run_with_download_headroom(command, *, cwd, env, logs, name, timeout=900):
-        # RAPIDS' 678 MB wheel can exceed the generic 900 s task timeout on Kaggle.
-        if name == "install":
-            timeout = 2700
-        return original_run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
-
-    gate.run = run_with_download_headroom
     gate.main()
