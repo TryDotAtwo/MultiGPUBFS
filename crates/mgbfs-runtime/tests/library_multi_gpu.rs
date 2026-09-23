@@ -46,6 +46,18 @@ fn library_two_rank_layers_and_archives_match_oracle() {
 }
 
 #[test]
+fn cuco_rank_two_gpu_dense_layers_and_archives_match_oracle() {
+    for symmetric in [false, true] {
+        for owners in [[0, 1], [1, 0]] {
+            for prededup in [false, true] {
+                fixture(symmetric, false, &owners,
+                    mgbfs_core::config::ReferenceOwner::CucoRank, prededup);
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires eight physical CUDA devices; run explicitly on 8-GPU host"]
 fn library_eight_rank_layers_and_archives_match_oracle() {
     for backend in [
