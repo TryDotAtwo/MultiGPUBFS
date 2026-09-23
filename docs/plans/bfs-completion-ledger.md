@@ -178,8 +178,10 @@ row). The two-rank fixture now tests that same-key offers from two sources
 retain the first future state. Private Kaggle 2xT4 version 4 reached the plain
 fixture but failed at an incorrect test expectation: the two owners correctly
 receive different rank-sorted keys (31 and 41). No sanitizer result is
-claimed for v4. The expectation is corrected at `a7a9d5f`; a new pinned
-run is required for the fixture and standalone checked-merge regression.
+claimed for v4. The expectation is corrected at `a7a9d5f`. Version 5 then
+passed both the two-rank provisional merge and standalone failure-atomic merge
+fixtures plain and under all four Compute Sanitizer tools on 2xT4; details are
+in `docs/validation/kaggle-weighted-scatter-2xt4-v1.md`.
 This still lacks distributed depth settlement and a production scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.

@@ -33,3 +33,22 @@
   ignored `target/macro-scatter-gate-v3/` and retained on Kaggle.
 - This validates the transport/metadata rejection boundary, not exact
   distributed weighted-layer settlement or production performance.
+
+## Version 5: guarded future-slot merge
+
+- Version 4 at source `b05ebe4` failed in the *test expectation*: owner rank 1
+  correctly received hash words 41..44, while the assertion expected 31..34.
+  The failure was not a CUDA/sanitizer result. The assertion was corrected.
+- Pinned version-5 source: `a7a9d5f6669388aacf9a8e3e69b8ab5cd058ff9b`.
+- The two-rank fixture validates the received macro refs, merges each owner's
+  rank-sorted states into a provisional target-depth slot, and confirms that
+  equal-key offers from the second source do not replace the first state.
+- A separate `macro_future_checked` GPU fixture checks that a nonzero device
+  metadata-fatal flag poisons merge while preserving the previous slot count,
+  hash and state payload.
+- Both fixtures passed plain, memcheck, racecheck, initcheck and synccheck on
+  two physical Tesla T4s. Both racechecks reported zero hazards/errors/warnings.
+  Raw logs and summary are under ignored `target/macro-scatter-gate-v5/` and
+  retained on the private Kaggle notebook.
+- Still unproven: distributed target-depth settlement, exact full-state layers,
+  production scheduler, memory and throughput.
