@@ -140,7 +140,7 @@ int main() {
     Input previous0(1,stream.view(),resource),previous1(1,stream.view(),resource);
     Input batch(cap,stream.view(),resource);
     Key old0{1,2,3,0x100},x{4,5,6,0x110};
-    Key old1{1,2,3,0x80000100},y{4,5,6,0x80000110};
+    Key old1{1,2,3,0x40000100},y{4,5,6,0x40000110};
     previous0.upload({old0},{0});previous1.upload({old1},{0});
     batch.upload({old0,x,x,old1,y,y},{0,10,99,0,20,98});
     rmm::device_buffer valid(sizeof(uint32_t),stream.view(),resource);
@@ -157,7 +157,8 @@ int main() {
     check(cudaMemcpyAsync(layer.data(),&zero,sizeof(zero),cudaMemcpyHostToDevice,stream.value()));
     mgbfs::CucoRankBatch owner({previous0.keys(),previous1.keys()},{{},{}},
         {2,2},cap,0,2,stream.view(),resource);
-    auto d=owner.compare(1,batch.candidates(),static_cast<uint32_t const*>(valid.data()),
+    auto capacity_view=batch.candidates();capacity_view.keys.rows=cap;
+    auto d=owner.compare(1,capacity_view,static_cast<uint32_t const*>(valid.data()),
         static_cast<MgbfsOwnerControl*>(control.data()),
         static_cast<MgbfsStateRingControl*>(ring.data()));
     require(mgbfs_owner_shard_counts(d.high_words,d.valid_rows,d.selected,d.selected_count,
