@@ -26,7 +26,7 @@ call alone is not this boundary.
 | CUTLASS | Tiled GEMM kernels | Matrix successor and affine hash computation | Keep integrated; Tensor Core utilization and shape sweep remain measured gates. |
 | NCCL | GPU rank-to-rank transfers | Owner exchange | Keep integrated; it does not deduplicate. |
 | RMM | GPU memory resources/pools | Fixed-budget library allocation | Keep the project's physically reserved, non-growing pool; ordinary growable pool configuration is insufficient. |
-| cuCollections (`static_set`/device refs) | Fixed-size GPU hash table and device-side lookup/insert | Best ready-made primitive for owner membership | Retain as explicit `CUCO_INDEXED` backend. S10 4-shard search wins, but total VRAM rises and current host count/control drains remain. Device-driven transaction is unimplemented. |
+| cuCollections (`static_set`/device refs) | Fixed-size GPU hash table and device-side lookup/insert | Best ready-made primitive for owner membership | Retain `CUCO_INDEXED` and the newer `CUCO_RANK` rank-batch backend. The latter runs compare/reserve/commit/materialize on GPU, but route sizing, collective control and retirement still have host dependencies. S10 4-shard search wins in the older indexed comparison, with higher total VRAM; do not transfer that result to `CUCO_RANK`. |
 | libcudf | GPU tables, joins, relational transforms | Alternative owner join/dedup | Keep explicit experimental `CUDF_RELATIONAL`; currently no proof that per-batch table construction, control synchronization, and peak VRAM satisfy the acceptance gate. |
 | Taskflow / CUDA Graphs | Cached GPU task DAG / lower repeated launch overhead | Fixed-shape owner jobs and pipeline submission | Probe **after** device-count dependencies are removed; a graph cannot by itself eliminate a host count readback that determines the next launch. No integrated A/B result. |
 | Apache Arrow / Parquet | Portable columnar output and interchange | Durable catalog/HF artifacts, not owner | Keep archive format; CPU/Arrow and libcudf writer comparison remains open. An Arrow CUDA buffer alone does not make generic Arrow algorithms GPU-aware. |
@@ -88,13 +88,15 @@ Evidence: `docs/validation/lrx13-eight-h200.md`.
 
 ## Remaining executable gates
 
-1. Make the cuCollections owner device-driven as an all-or-nothing rank-batch
-   transaction, keeping shard tables and fixed preallocation. A detailed
-   local, currently untracked proposal exists in
-   `device-driven-library-owner.md`; **it is not implementation or published
-   branch evidence**. No host survivor count
-   may be needed to submit the next owner stage. Re-run full-state 1/2-rank
-   oracle, fatal-capacity fixtures and all four sanitizers.
+1. Finish the **end-to-end** device-driven path. The `CUCO_RANK` rank-batch
+   owner transaction exists and has bounded full-state/capacity/sanitizer
+   evidence (`docs/validation/cuco-rank-runtime-2xt4.md`), but it is not an
+   end-to-end GPU-driven pipeline. Route counts, payload sizes, collective
+   control, and retirement still cause host dependencies; the whole-run S10
+   Nsight diagnostic records them but does not isolate the timed BFS interval
+   (`docs/validation/cuco-rank-nsight-2xt4.md`). Remove or justify each
+   dependency without changing NCCL issue order or fail-fast semantics, then
+   rerun the full-state 1/2-rank and four-sanitizer gates.
 2. Pair native/cuCollections/cuDF on identical S10/S11/S12, U4 workloads,
    batch, rank count, shard count and archive contract. Record five runs,
    search and durable medians/MAD, external VRAM peak, allocation ledger,

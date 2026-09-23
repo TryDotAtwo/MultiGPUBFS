@@ -46,7 +46,7 @@ architecture contract; `library-first-bfs.md` is the library experiment log.
 | Async state archive | `pinned_archive.rs`, `advance_archived` | Bounded T4 archive tests | Complete large-run throughput and durable verification |
 | Search-only LRX15r4 | `lrx_multiset.rs`, CLI reference | 8xH200 54,486,432,000 states, 93 layers, 90.093 s | Independent large histogram; no state archive exists for this run |
 | HF Parquet catalog | `stream_hf_archive.py`, `promote_hf_stream.py`, verifiers | Full S13: 6,227,020,800 archived states and 6,228 Parquet objects verified by size/SHA on HF | Full-state remote replay and later LRX15 archive/publication |
-| Device-driven library owner | Proposed in `device-driven-library-owner.md` | Synchronous cuCollections winner on S13 | Remove per-shard host readbacks and prove event-driven execution |
+| Device-driven library owner | `CUCO_RANK` GPU rank-batch owner transaction in `distributed_native.rs`/`cuco_rank_batch.cu` | Physical 2xT4 full-state and bounded capacity/sanitizer gates; whole-run S10 Nsight trace | Remove host route-size, collective-control and retirement dependencies; capture/trace the full BFS DAG, then repeat correctness and sanitizer gates |
 | Production CLI `run`, hardware `preflight`, `calibrate` | `mgbfs-cli/src/main.rs` explicitly reports unavailable | `bench --reference` and offline config preflight only | Wire versioned RunConfigV1 to production dispatcher; test admission and output commits |
 
 The LRX15 run's `ORBIT_TOTAL_AND_CONFIG_ONLY` certificate verifies count and
