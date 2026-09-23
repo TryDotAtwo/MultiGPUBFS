@@ -214,6 +214,18 @@ int mgbfs_nccl_abort(void* comm);
 /* Health query for the blocking communicator created above, not transfer
  * completion. 0 healthy, 1 invalid/aborted, 2 query failure, 3 async failure. */
 int mgbfs_nccl_poll(void* comm);
+/* Optional NCCL 2.29+ LSA transport. All ranks initialize collectively
+ * before depth zero. Exchange consumes device-resident owner counts and
+ * submits no host count readback; a caller must keep source/receive slots
+ * leased until the supplied stream's completion event. No fallback. */
+int mgbfs_nccl_lsa_init(void* comm,uint32_t candidate_capacity,uint32_t state_stride,
+    char* error,size_t error_capacity);
+int mgbfs_nccl_lsa_exchange(void* comm,const void* sorted_hashes,
+    const void* packed_states,const uint32_t* owner_counts,
+    uint32_t logical_owner,uint32_t peer,void* stream);
+int mgbfs_nccl_lsa_view(void* comm,const uint32_t** received_count,
+    const uint32_t** fatal,const void** received_hashes,
+    const void** received_states);
 /* Single-source scatter, same source and matching byte counts on every rank.
  * sizes is a host array [world] on source; send holds dense rank-ordered ranges.
  * Source's own range stays a view (no copy). Receivers provide prevalidated
