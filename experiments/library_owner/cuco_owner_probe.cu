@@ -7,6 +7,7 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 #include <array>
+#include <algorithm>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
@@ -143,7 +144,7 @@ int main() {
     Key old0{1,2,3,0x100},x{4,5,6,0x110};
     Key old1{1,2,3,0x40000100},y{4,5,6,0x40000110};
     previous0.upload({old0},{0});previous1.upload({old1},{0});
-    batch.upload({old0,x,x,old1,y,y},{0,10,99,0,20,98});
+    batch.upload({old0,x,x,old1,y,y},{0,1,2,3,4,5});
     rmm::device_buffer valid(sizeof(uint32_t),stream.view(),resource);
     uint32_t six=6;
     check(cudaMemcpyAsync(valid.data(),&six,sizeof(six),cudaMemcpyHostToDevice,stream.value()));
@@ -151,6 +152,18 @@ int main() {
     rmm::device_buffer control(sizeof(MgbfsOwnerControl),stream.view(),resource);
     rmm::device_buffer extent(sizeof(MgbfsStateExtent),stream.view(),resource);
     rmm::device_buffer layer(sizeof(uint32_t),stream.view(),resource);
+    rmm::device_buffer source_states(cap*16,stream.view(),resource);
+    rmm::device_buffer next_states(16*16,stream.view(),resource);
+    check(cudaMemsetAsync(next_states.data(),0,next_states.size(),stream.value()));
+    auto upload_states=[&](std::initializer_list<uint8_t> labels){
+      std::vector<uint8_t> host(cap*16);
+      uint32_t row=0;
+      for(uint8_t label:labels){std::fill_n(host.begin()+row*16,16,label);++row;}
+      check(cudaMemcpyAsync(source_states.data(),host.data(),host.size(),
+          cudaMemcpyHostToDevice,stream.value()));
+      stream.synchronize();
+    };
+    upload_states({11,12,13,14,15,16});
     MgbfsStateRingControl initial_ring{0,0,0,0,16,8,0,0,0};
     uint32_t zero=0;
     check(cudaMemcpyAsync(ring.data(),&initial_ring,sizeof(initial_ring),cudaMemcpyHostToDevice,stream.value()));
@@ -189,6 +202,14 @@ int main() {
           static_cast<MgbfsOwnerControl*>(control.data()),
           static_cast<MgbfsStateRingControl*>(ring.data()),
           static_cast<MgbfsStateExtent*>(extent.data()))==0,"RANK_ABI_COMMIT");
+      require(mgbfs_state_materialize_rank_batch(
+          static_cast<uint8_t const*>(source_states.data()),
+          static_cast<uint32_t const*>(valid.data()),cap,d.source_indices,
+          d.selected_count,cap,16,static_cast<uint8_t*>(next_states.data()),
+          static_cast<MgbfsStateRingControl*>(ring.data()),
+          static_cast<MgbfsOwnerControl*>(control.data()),
+          static_cast<MgbfsStateExtent*>(extent.data()),stream.value())==0,
+          "RANK_ABI_MATERIALIZE");
       return d;
     };
     cudaGraph_t graph=nullptr;cudaGraphExec_t executable=nullptr;
@@ -217,10 +238,16 @@ int main() {
         "RANK_BATCH_ACCEPTED_KEYS");
     std::array<uint32_t,2> first_sources{};
     check(cudaMemcpy(first_sources.data(),d.source_indices,sizeof(first_sources),cudaMemcpyDeviceToHost));
-    require(first_sources==std::array<uint32_t,2>{10,20},"RANK_BATCH_FIRST_SOURCES");
+    require(first_sources==std::array<uint32_t,2>{1,4},"RANK_BATCH_FIRST_SOURCES");
+    std::array<uint8_t,16*16> dense_states{};
+    check(cudaMemcpy(dense_states.data(),next_states.data(),dense_states.size(),
+        cudaMemcpyDeviceToHost));
+    require(dense_states[0]==12&&dense_states[16]==15&&got_extent.ready==1,
+        "RANK_ABI_FIRST_DENSE_STATES");
     require(mgbfs_library_rank_complete_v1(rank_owner,1)==0,"RANK_ABI_COMPLETE_FIRST");
     Key z{7,8,9,0x120};
-    batch.upload({x,z,y},{1,33,2});
+    batch.upload({x,z,y},{0,1,2});
+    upload_states({21,22,23});
     uint32_t three=3;
     check(cudaMemcpyAsync(valid.data(),&three,sizeof(three),cudaMemcpyHostToDevice,stream.value()));
     auto d2=run_batch(2);
@@ -237,10 +264,14 @@ int main() {
         "RANK_BATCH_SECOND_KEYS");
     uint32_t second_source=0;
     check(cudaMemcpy(&second_source,d2.source_indices,sizeof(second_source),cudaMemcpyDeviceToHost));
-    require(second_source==33,"RANK_BATCH_SECOND_SOURCE");
+    require(second_source==1,"RANK_BATCH_SECOND_SOURCE");
+    check(cudaMemcpy(dense_states.data(),next_states.data(),dense_states.size(),
+        cudaMemcpyDeviceToHost));
+    require(dense_states[32]==22,"RANK_ABI_SECOND_DENSE_STATE");
     require(mgbfs_library_rank_complete_v1(rank_owner,2)==0,"RANK_ABI_COMPLETE_SECOND");
     Key full{10,11,12,0x130};
-    batch.upload({full},{44});
+    batch.upload({full},{0});
+    upload_states({31});
     uint32_t one=1;
     check(cudaMemcpyAsync(valid.data(),&one,sizeof(one),cudaMemcpyHostToDevice,stream.value()));
     auto d3=run_batch(3);
@@ -250,6 +281,9 @@ int main() {
     check(cudaMemcpy(got_counts.data(),d3.accepted_counts,sizeof(got_counts),cudaMemcpyDeviceToHost));
     require(final_ring.fatal&&final_ring.tail==3&&
         got_counts==std::array<uint32_t,2>{2,1},"RANK_BATCH_OVERFLOW_ATOMICITY");
+    check(cudaMemcpy(dense_states.data(),next_states.data(),dense_states.size(),
+        cudaMemcpyDeviceToHost));
+    require(dense_states[48]==0,"RANK_ABI_OVERFLOW_NO_DENSE_WRITE");
     require(mgbfs_library_rank_export_shard_v1(rank_owner,0,2,&shard0)==0&&
         read_keys(shard0,stream.view())==std::vector<Key>({x,z}),
         "RANK_BATCH_OVERFLOW_NO_PERSISTENT_WRITE");
