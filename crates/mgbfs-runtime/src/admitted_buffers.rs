@@ -68,6 +68,40 @@ pub struct MacroDenseRead {
     pub macro_ref_offset: u64,
     pub state_offset: u64,
 }
+#[cfg(feature = "cuda")]
+impl MacroDenseRead {
+    /// Enqueue device validation before any owner operation reads this frame.
+    /// `pool_base` is the source or receive allocation selected by `source_pool`.
+    /// The caller retains the `BufferConsumer` lease, pool, and fatal word until
+    /// completion, then treats nonzero fatal as a whole-run failure.
+    ///
+    /// # Safety
+    /// The pool and fatal pointers must designate live device allocations on
+    /// the current CUDA device; the ref range must fit the selected pool.
+    pub unsafe fn enqueue_ref_validation(
+        self,
+        pool_base: *const u8,
+        max_weight: u32,
+        max_state_ref: u64,
+        fatal: *mut u32,
+        stream: *mut std::ffi::c_void,
+    ) -> Result<()> {
+        if pool_base.is_null() || fatal.is_null() {
+            return Err("MACRO_REF_VALIDATE_POINTER".into());
+        }
+        let offset = usize::try_from(self.macro_ref_offset)
+            .map_err(|_| "MACRO_REF_VALIDATE_OFFSET")?;
+        let ptr = pool_base.add(offset);
+        let status = mgbfs_cuda::ffi::mgbfs_macro_validate_refs(
+            ptr.cast(), self.rows, self.source_depth, self.target_depth,
+            max_weight, max_state_ref, fatal, stream,
+        );
+        if status != 0 {
+            return Err(format!("MACRO_REF_VALIDATE_ENQUEUE_{status}"));
+        }
+        Ok(())
+    }
+}
 pub enum BufferEvent {
     Launch(BufferLaunch),
     Finalize(ControlFrame),

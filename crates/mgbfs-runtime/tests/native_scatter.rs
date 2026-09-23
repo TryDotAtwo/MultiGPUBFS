@@ -213,6 +213,17 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                         ).unwrap().weight,
                                         2,
                                     );
+                                    assert_eq!(cudaMemsetAsync(fatal, 0, 4, owner_stream), 0);
+                                    input.enqueue_ref_validation(
+                                        base.cast(), 3, 2, fatal.cast(), owner_stream,
+                                    ).unwrap();
+                                    assert_eq!(cudaStreamSynchronize(owner_stream), 0);
+                                    let mut validation_fatal = 99u32;
+                                    assert_eq!(cudaMemcpy(
+                                        (&mut validation_fatal as *mut u32).cast(), fatal,
+                                        4, 2,
+                                    ), 0);
+                                    assert_eq!(validation_fatal, 0);
                                     (reader, input.rows, input.state_offset, input.source_pool)
                                 } else {
                                     let (reader, input) = buffers
