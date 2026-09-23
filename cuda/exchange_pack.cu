@@ -76,6 +76,23 @@ __global__ void split_n_device(const uint32_t* keys,const uint32_t* count,
   output[owner]=mgbfs_owner_boundary(keys,n,owner+1,world)-
       mgbfs_owner_boundary(keys,n,owner,world);
 }
+__global__ void owner_window_from_counts(uint32_t world,uint32_t capacity,
+    uint32_t logical_owner,const uint32_t* counts,uint32_t* begin,
+    uint32_t* rows){
+  if(threadIdx.x||blockIdx.x)return;
+  uint64_t total=0,offset=0;
+  for(uint32_t owner=0;owner<world;++owner){
+    if(owner==logical_owner)offset=total;
+    total+=counts[owner];
+  }
+  if(counts[0]==UINT32_MAX||total>capacity){
+    *begin=0;
+    *rows=UINT32_MAX;
+    return;
+  }
+  *begin=uint32_t(offset);
+  *rows=counts[logical_owner];
+}
 __global__ void gather_device(const uint4* source,const uint64_t* refs,
     uint4* output,const uint32_t* count,uint32_t capacity,uint32_t chunks,
     uint32_t source_count,uint32_t* owner_counts){
@@ -196,5 +213,15 @@ extern "C" int mgbfs_exchange_pack_device_n(uint32_t world,uint32_t stride,
   gather_device<<<blocks,256,0,stream>>>(reinterpret_cast<const uint4*>(source_states),
       sorted_refs,reinterpret_cast<uint4*>(packed_states),count,capacity,
       stride/16,source_count,owner_counts);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_window_from_counts(uint32_t world,
+    uint32_t packed_capacity,uint32_t logical_owner,
+    const uint32_t* owner_counts,uint32_t* begin,uint32_t* rows,
+    void* raw_stream){
+  if(!world||(world&(world-1))||world>8||!packed_capacity||
+      logical_owner>=world||!owner_counts||!begin||!rows)return 1;
+  owner_window_from_counts<<<1,1,0,static_cast<cudaStream_t>(raw_stream)>>>(
+      world,packed_capacity,logical_owner,owner_counts,begin,rows);
   return cudaGetLastError()==cudaSuccess?0:2;
 }
