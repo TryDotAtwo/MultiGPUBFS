@@ -85,6 +85,15 @@ mod calls {
             hash_first: u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_publish_next_extent(
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *const Extent,
+            count: *mut u32,
+            out: *mut Extent,
+            capacity: u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_owner_shard_counts(
             high_words: *const u32,
             candidate_count: *const u32,

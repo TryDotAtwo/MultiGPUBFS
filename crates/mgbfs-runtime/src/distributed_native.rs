@@ -488,6 +488,8 @@ pub struct DistributedNativeBfs {
     control: Buffer,
     ring: Buffer,
     extent: Buffer,
+    next_extents: Option<Buffer>,
+    next_extent_count: Option<Buffer>,
     layer_count: Buffer,
     incoming_dir: Vec<Range>,
     prev_dir: Vec<Range>,
@@ -1029,6 +1031,11 @@ impl DistributedNativeBfs {
                 raw,
             )
         };
+        let (next_extents, next_extent_count) = if library_pool_bytes.is_some() {
+            (Some(b("next_extents")?), Some(b("next_extent_count")?))
+        } else {
+            (None, None)
+        };
         let states = b("states")?;
         let prev = b("prev")?;
         let curr = b("curr")?;
@@ -1157,6 +1164,8 @@ impl DistributedNativeBfs {
             control: b("control")?,
             ring,
             extent: b("extent")?,
+            next_extents,
+            next_extent_count,
             layer_count: b("layer_count")?,
             incoming_dir: vec![Range::default(); buckets],
             prev_dir: vec![Range::default(); buckets],
@@ -1398,16 +1407,13 @@ impl DistributedNativeBfs {
                 self.states.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(),
                 self.extent.ptr.cast(), stream,
             ))?;
+            check(mgbfs_state_publish_next_extent(
+                self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
+                self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
+                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(),
+                2, stream,
+            ))?;
         }
-        let snapshot = unsafe { library.control_transfer.read(
-            self.control.ptr.cast(), self.extent.ptr.cast(), self.ring.ptr.cast(),
-            std::ptr::null(),
-        )? };
-        if snapshot.control.error != 0 || snapshot.ring.fatal != 0 || snapshot.extent.ready != 1 {
-            return Err(format!("LIBRARY_RANK_BATCH_FATAL_{}_{}",
-                snapshot.control.error, snapshot.ring.fatal));
-        }
-        append_extent(&mut self.next, snapshot.extent)?;
         library.rank_accepted = batch.accepted_counts;
         check(unsafe { mgbfs_library_rank_complete_v1(library.rank, epoch) })?;
         Ok(())
@@ -2072,6 +2078,12 @@ impl DistributedNativeBfs {
                 ))?;
             }
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
+            if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+                check(cudaMemsetAsync(
+                    self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr,
+                    0, 4, s,
+                ))?;
+            }
         }
         #[cfg(feature = "library-owner")]
         if let Some(library) = self.library_owner.as_mut() {
@@ -2465,6 +2477,36 @@ impl DistributedNativeBfs {
                 ))?;
                 check(cudaStreamSynchronize(s))?;
             }
+        }
+        #[cfg(feature = "library-owner")]
+        if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+            let ready = (|| -> Result<Vec<Extent>> {
+                check(unsafe { cudaStreamSynchronize(s) })?;
+                let control = self.control.one::<Control>()?;
+                let ring = self.ring.one::<Ring>()?;
+                if control.error != 0 || ring.fatal != 0 {
+                    return Err(format!("LIBRARY_RANK_DEPTH_FATAL_{}_{}", control.error, ring.fatal));
+                }
+                let count = self.next_extent_count.as_ref()
+                    .ok_or("NEXT_EXTENT_COUNT_MISSING")?.one::<u32>()? as usize;
+                if count > 2 || !self.next.is_empty() {
+                    return Err("NEXT_EXTENT_CAPACITY".into());
+                }
+                let mut extents = vec![Extent::default(); count];
+                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?
+                    .read(&mut extents)?;
+                if extents.iter().any(|e| e.ready != 1 || e.count == 0 ||
+                    e.granted_rows as u64 != e.count) ||
+                    extents.iter().map(|e| e.count).sum::<u64>() !=
+                        u64::from(self.layer_count.one::<u32>()?) {
+                    return Err("NEXT_EXTENT_MISMATCH".into());
+                }
+                Ok(extents)
+            })();
+            if self.all_max(u32::from(ready.is_err()))? != 0 {
+                return Err(ready.err().unwrap_or_else(|| "REMOTE_NEXT_EXTENT_FATAL".into()));
+            }
+            self.next.extend(ready?);
         }
         #[cfg(feature = "library-owner")]
         if let Some(library) = self.library_owner.as_mut() {
