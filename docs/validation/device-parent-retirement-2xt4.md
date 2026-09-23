@@ -30,8 +30,12 @@ full-state/capacity tests (3/3 each), and the two-GPU NCCL rank-owner layer
 and archive fixture passed (2/2; one unsupported case ignored). The
 two-process CLI S4/U4m2 scenarios also completed, but on that pinned source
 they exercise cuDF/cuCO-indexed, not CucoRank. Raw logs:
-`test_results/kaggle_retire_value_full_bfs_v1/`. V2 runs the same exact source
-under all four sanitizers and is pending.
+`test_results/kaggle_retire_value_full_bfs_v1/`. V2 at the same exact source
+completed the full plain/four-sanitizer 1/2-T4 BFS fixture matrix: 3/3
+one-GPU tests on each T4 and 2/2 two-GPU NCCL rank-owner layer/archive tests
+in every mode. memcheck/initcheck/synccheck reported zero errors; racecheck
+reported zero hazards/errors/warnings. The eight-GPU case was intentionally
+ignored. Raw `test_results/kaggle_retire_value_full_bfs_sanitizers_v2/`.
 
 An audit found that DENSE could return on a local retirement FIFO fatal before
 its peer reached the next failure collective. Commit

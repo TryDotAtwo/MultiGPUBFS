@@ -572,7 +572,8 @@ DENSE and HASH_FIRST paths. The CUDA leaf had expected v15 RED and v16
 plain/four-sanitizer GREEN on both T4s; Rust integration at `0e3d1d6`
 passed local typecheck and the CPU suite. A separate full BFS 2xT4 v1 gate
 passed plain full-state/layer/archive fixtures; the v2 four-sanitizer gate
-is still running. The stream drain and ring-fatal D2H after retirement remain,
+also passed the full 1/2-T4 BFS fixtures with zero reported errors/hazards.
+The stream drain and ring-fatal D2H after retirement remain at this source,
 so this is **not** yet CPU-free retirement. Evidence:
 `docs/validation/device-parent-retirement-2xt4.md`.
 
