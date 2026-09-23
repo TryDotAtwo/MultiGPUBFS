@@ -24,8 +24,11 @@ __global__ void copy_candidates(MgbfsLibraryKeysV1 input,const uint32_t* valid,
     uint32_t cap,uint32_t* output,uint32_t stride,MgbfsStateRingControl* ring,
     MgbfsOwnerControl* owner){
   if(ring->fatal||owner->error)return;
-  if(blockIdx.x==0&&threadIdx.x==0&&*valid>cap)poison(ring,owner,21);
-  uint32_t n=*valid<cap?*valid:cap;
+  uint32_t n=*valid;
+  if(n>cap){
+    if(blockIdx.x==0&&threadIdx.x==0)poison(ring,owner,21);
+    return;
+  }
   for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<n;
       row+=gridDim.x*blockDim.x)
     for(unsigned word=0;word<4;++word)
