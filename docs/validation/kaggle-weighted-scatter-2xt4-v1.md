@@ -81,3 +81,20 @@
   and all four sanitizer tools on 2xT4, with zero racecheck hazards/warnings.
   Raw output: ignored `target/macro-scatter-gate-v7/` and private Kaggle.
 - Still synthetic depth-2 history, so not an end-to-end exact BFS proof.
+
+## Version 8: device-driven provisional settlement
+
+- Pinned source: `7462b69e70409acdddf4a4d0b5e2905fc351c99f`.
+- `mgbfs_macro_settle_run_frontier` consumes the provisional future slot's
+  device-side count and fatal flag directly. The independent CUDA fixture
+  checks future merge -> settlement on one stream without an intermediate
+  host count readback, and propagation of a poisoned future slot.
+- Private Kaggle run completed on two physical Tesla T4 GPUs. The two-rank
+  scatter/depth-rollover fixture and independent future fixture each passed
+  plain, memcheck, racecheck, initcheck, and synccheck (10/10 checks).
+  `summary.json` records `COMPLETE` and both T4 UUIDs. Raw output is under
+  ignored `target/macro-scatter-gate-v8/` and retained on Kaggle.
+- This is a tested reference boundary, **not** a production weighted BFS:
+  the fixture still supplies synthetic history, and the future merge works
+  on a whole rank-local layer. The production design instead requires
+  bounded microbucket owner jobs and a separately verified scheduler.

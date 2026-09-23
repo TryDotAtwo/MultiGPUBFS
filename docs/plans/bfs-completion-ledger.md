@@ -200,10 +200,23 @@ and the pending depth-3 future is settled inside that event, before rank
 `Finalized` acknowledgement and `Publish`. It does not replace the synthetic
 depth-2 history with generated states. Private Kaggle version 7 is pinned to
 `278d439` passed on physical 2xT4 plain and under all four sanitizers (v7).
-The next device-driven settlement API consumes the future slot's count/fatal
-directly, removing that D2H/re-upload dependency. Local RTX 3070 test passed;
-private Kaggle v8 is pending.
-This still lacks distributed depth settlement and a production scheduler.
+The device-driven settlement API consumes the future slot's count/fatal
+directly, removing that D2H/re-upload dependency. Local RTX 3070 test and
+private Kaggle v8 on physical 2xT4 passed plain and all four sanitizers for
+both fixtures; see the validation record. This remains a whole-layer
+reference boundary with synthetic shorter-depth history, not a production
+distributed macro BFS.
+
+Architectural correction before extending this path: section 3 of
+`docs/matrix-runtime-architecture-v2.md` explicitly rejects whole-layer
+per-batch owner merge and scratch. The production path must use existing
+`mgbfs_bounded_owner_compare/commit`-style per-microbucket jobs, with bounded
+`I,J,K` scratch, sole shard writer, provisional target-depth membership,
+and a `2*Km` committed-history window. Neither `macro_native.rs` nor the
+current two-rank full-layer fixture meets that memory contract. Do not
+present their positive tests as production acceptance. Next implementation
+gate: define/prove bounded future bucket ranges and owner reservation before
+integrating the distributed weighted scheduler.
 
 User-owned dirty files are not implicitly part of this ledger's implementation.
 
