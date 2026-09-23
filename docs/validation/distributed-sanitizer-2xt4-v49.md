@@ -18,3 +18,11 @@ some earlier two-device in-process leaf fixtures.
 This establishes regression correctness of that pinned small workload. It is
 not a full-state S10/S13 acceptance, an 8-rank gate, a performance comparison,
 or proof that the CPU-driven owner/transport/retirement hot path is gone.
+
+Version 50 repeated the same suite against source
+`3bbb4169cdc3a90006ad29ba05e057dd7fb6800f`, the commit adding opt-in
+NCCL LSA code. Its default build leaves `MGBFS_NCCL_LSA=OFF`. The downloaded
+`test_results/kaggle_distributed_sanitizer_v50/distributed-sanitizer/summary.json`
+reports `COMPLETE`, all five tool modes PASS, and 24/24 CLI profile smokes
+PASS with the same S4 layers. This is a no-regression check of the default
+path, not a sanitizer gate for the optional LSA code.

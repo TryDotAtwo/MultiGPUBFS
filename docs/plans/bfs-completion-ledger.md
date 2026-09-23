@@ -350,8 +350,9 @@ memcheck, racecheck, initcheck and synccheck; see
 Kaggle v47 stopped because the harness expected 12 archive tests while 13
 passed. V48 then passed the five-mode two-T4 distributed/macro gate, but its
 CLI smoke panel did not start: six passing CLI tests exceeded the harness's
-stale expectation of three. The corrected private v49 is running, pinned to
-the same source. See `test_results/distributed-sanitizer-v48/REPORT.md`.
+stale expectation of three. The corrected private v49 later completed, pinned
+to the same source; see the v49 result below and
+`test_results/distributed-sanitizer-v48/REPORT.md`.
 This slice is not an owner DAG capture,
 transport redesign or latency improvement claim.
 
@@ -395,3 +396,22 @@ CLI profile smokes passing, each with verified archives and S4 global layers.
 See `docs/validation/distributed-sanitizer-2xt4-v49.md`. This removes the
 v47/v48 harness uncertainty, not the CPU hot-path or large-graph validation
 gaps.
+
+An opt-in NCCL 2.29.7 LSA C ABI candidate is now on branch
+`codex/library-first-bfs` at `ae22e29`. The private two-T4 transport probe v15
+compiled and linked the production `nccl_transport.cpp`, then passed exact
+payload/control checks for `(3,1)` and `(0,5)` and all-rank no-payload fatal
+for aggregate capacity overflow `(20,20)` and `(33,1)` at capacity 32.
+Kaggle T4 hosts vary: the probe encountered both P2P `OK` with
+`deviceApiSupport=1` and P2P `NS` with `deviceApiSupport=0`. LSA is therefore
+an explicit preflight-selected backend, not a universal 2×T4 assumption or
+silent runtime fallback. The candidate is not connected to the BFS owner DAG;
+multi-epoch lifetime, sanitizer, 8-rank ordering, performance and full
+owner→transport→retirement integration remain open. Details and raw results:
+`docs/validation/transport-feasibility-2xt4.md` and
+`test_results/kaggle_transport_probe_v15/`.
+
+The default `MGBFS_NCCL_LSA=OFF` build at `3bbb416` repeated the full small
+two-T4 v50 gate: plain plus four sanitizers and 24/24 profile smokes PASS.
+That does not sanitize or exercise the LSA code. See
+`test_results/kaggle_distributed_sanitizer_v50/distributed-sanitizer/summary.json`.

@@ -68,4 +68,23 @@ still cover only a single two-rank exchange, not repeated epochs, 8 ranks,
 full owner integration, sanitizers or performance. Raw evidence:
 `test_results/kaggle_transport_probe_v13/`.
 
+V15 validated the subsequent source-capacity fix at `ae22e29` on P2P `OK`
+2×T4. The production C ABI compile/link and all four cases passed:
+`(3,1)`, `(0,5)`, `(20,20)` and `(33,1)`. In the latter two, aggregate
+source capacity 32 is exceeded and both ranks observe fatal with no payload
+writes. Evidence: `test_results/kaggle_transport_probe_v15/`.
+
+V16 ran the production C ABI harness under all four Compute Sanitizer tools
+on P2P `OK` 2×T4. The four plain cases again passed. `racecheck` reported
+zero hazards and `synccheck` zero errors. **The sanitizer gate is not clean**:
+`memcheck` exited 86 with 26 CUDA API errors during NCCL initialization,
+including `cudaErrorNoKernelImageForDevice` from NCCL kernel-attribute queries
+and `cuMemCreate` not permitted; the harness still printed both rank PASS
+lines. `initcheck` timed out after 300 seconds. These failures do not prove
+an LSA payload memory bug, but also cannot be dismissed as harmless. V17
+therefore runs a narrower kernel-filtered memcheck/initcheck probe with CUDA
+API error reporting disabled; even if it passes, it is **not** equivalent to
+a clean unfiltered end-to-end sanitizer gate. Raw v16 output:
+`test_results/kaggle_transport_probe_v16/`.
+
 Reference: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html
