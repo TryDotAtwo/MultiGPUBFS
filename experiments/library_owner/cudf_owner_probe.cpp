@@ -307,6 +307,68 @@ void layout_fixture(rmm::cuda_stream_view stream) {
   check(mgbfs_library_candidates_from_aos_v1(input.data(), rows, rows, scratch.data(),
         bytes - 1, stream.value(), &converted) != 0 && converted.keys.rows == 0 &&
         converted.source_indices == nullptr, "LAYOUT_SHORT_BUFFER");
+
+  constexpr uint32_t window_capacity = 32;
+  constexpr size_t window_stride = 256;
+  uint32_t begin_value = 7, count_value = 13;
+  rmm::device_buffer begin(&begin_value, 4, stream), count(&count_value, 4, stream);
+  rmm::device_buffer window_scratch(5 * window_stride, stream);
+  MgbfsStateRingControl empty_ring{};
+  MgbfsOwnerControl empty_control{};
+  rmm::device_buffer ring(&empty_ring, sizeof(empty_ring), stream);
+  rmm::device_buffer control(&empty_control, sizeof(empty_control), stream);
+  cuda_check(cudaMemsetAsync(window_scratch.data(), 0xa5, window_scratch.size(),
+                             stream.value()));
+  MgbfsLibraryCandidatesV1 window{};
+  check(mgbfs_library_candidates_from_aos_window_v1(input.data(),
+        static_cast<const uint32_t*>(begin.data()),
+        static_cast<const uint32_t*>(count.data()), rows, window_capacity,
+        window_scratch.data(), window_scratch.size(),
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()), stream.value(), &window) == 0,
+        "LAYOUT_DEVICE_WINDOW_ENQUEUE");
+  check(window.keys.rows == window_capacity && window.source_indices != nullptr,
+        "LAYOUT_DEVICE_WINDOW_METADATA");
+  std::vector<uint32_t> window_words(window_scratch.size() / 4);
+  cuda_check(cudaMemcpyAsync(window_words.data(), window_scratch.data(),
+                            window_scratch.size(), cudaMemcpyDeviceToHost, stream.value()));
+  stream.synchronize();
+  for (uint32_t c = 0; c < 5; ++c)
+    for (uint32_t i = 0; i < window_stride / 4; ++i) {
+      uint32_t expected = i < count_value
+          ? (c == 4 ? begin_value + i : original[(begin_value + i) * 4 + c])
+          : 0xa5a5a5a5;
+      check(window_words[c * window_stride / 4 + i] == expected,
+            "LAYOUT_DEVICE_WINDOW_VALUE_OR_PADDING");
+    }
+  begin_value = 60; count_value = 10; // Outside the 65-row source.
+  cuda_check(cudaMemcpyAsync(begin.data(), &begin_value, 4,
+                            cudaMemcpyHostToDevice, stream.value()));
+  cuda_check(cudaMemcpyAsync(count.data(), &count_value, 4,
+                            cudaMemcpyHostToDevice, stream.value()));
+  cuda_check(cudaMemsetAsync(window_scratch.data(), 0xa5, window_scratch.size(),
+                             stream.value()));
+  check(mgbfs_library_candidates_from_aos_window_v1(input.data(),
+        static_cast<const uint32_t*>(begin.data()),
+        static_cast<const uint32_t*>(count.data()), rows, window_capacity,
+        window_scratch.data(), window_scratch.size(),
+        static_cast<MgbfsStateRingControl*>(ring.data()),
+        static_cast<MgbfsOwnerControl*>(control.data()), stream.value(), &window) == 0,
+        "LAYOUT_DEVICE_WINDOW_INVALID_ENQUEUE");
+  MgbfsStateRingControl failed_ring{};
+  MgbfsOwnerControl failed_control{};
+  cuda_check(cudaMemcpyAsync(&failed_ring, ring.data(), sizeof(failed_ring),
+                            cudaMemcpyDeviceToHost, stream.value()));
+  cuda_check(cudaMemcpyAsync(&failed_control, control.data(), sizeof(failed_control),
+                            cudaMemcpyDeviceToHost, stream.value()));
+  cuda_check(cudaMemcpyAsync(window_words.data(), window_scratch.data(),
+                            window_scratch.size(), cudaMemcpyDeviceToHost, stream.value()));
+  stream.synchronize();
+  check(failed_ring.fatal != 0 && failed_control.error != 0,
+        "LAYOUT_DEVICE_WINDOW_FATAL");
+  check(std::all_of(window_words.begin(), window_words.end(),
+                    [](uint32_t x) { return x == 0xa5a5a5a5; }),
+        "LAYOUT_DEVICE_WINDOW_NO_PARTIAL_WRITE");
 }
 
 // Integration fixture, not timing evidence: uses actual native reserve/materialize

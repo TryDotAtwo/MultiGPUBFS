@@ -100,6 +100,16 @@ int mgbfs_library_pool_usage_v1(void* pool, MgbfsLibraryPoolUsageV1* usage);
 int mgbfs_library_candidates_from_aos_v1(const void* hashes, uint32_t rows,
     uint32_t capacity, void* scratch, uint64_t scratch_bytes, void* cuda_stream,
     MgbfsLibraryCandidatesV1* result);
+/* Device-count window of an AoS source. begin/rows are device u32 words;
+ * invalid windows poison ring/control before any scratch write. Source
+ * indices are absolute offsets into the original source_states plane.
+ * Result keys.rows is the fixed window capacity; valid rows remain on GPU.
+ */
+int mgbfs_library_candidates_from_aos_window_v1(const void* hashes,
+    const uint32_t* begin, const uint32_t* rows, uint32_t source_capacity,
+    uint32_t window_capacity, void* scratch, uint64_t scratch_bytes,
+    MgbfsStateRingControl* ring, MgbfsOwnerControl* control,
+    void* cuda_stream, MgbfsLibraryCandidatesV1* result);
 int mgbfs_library_keys_to_aos_v1(MgbfsLibraryKeysV1 keys, void* output,
     uint32_t capacity, void* cuda_stream);
 
