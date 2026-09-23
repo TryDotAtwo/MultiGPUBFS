@@ -455,3 +455,14 @@ malformed input failing before offset publication. The RED v9 link failure
 and GREEN v10 logs are recorded in
 `docs/validation/rank-shard-counts-2xt4.md`. The production cuCO rank-batch
 compare/commit and runtime wiring remain unfinished.
+
+The subsequent `CucoRankBatch` candidate at `a47ba02` captures cuCO compare,
+device shard counting, all-shard StateRing reservation and persistent commit
+as one CUDA Graph without reading survivor counts on the host. The private
+two-T4 v5 gate passed plain and all four sanitizer modes on both GPUs; it
+checked a second batch against the same persistent tables and an accepted-
+capacity failure that leaves counts and ring tail unchanged. See
+`docs/validation/cuco-rank-batch-2xt4.md`. This is still an isolated C++
+library path: the Rust runtime uses its synchronous per-shard V1 owner, and
+transport/retirement retain CPU dependencies. No full BFS or performance
+claim follows from the captured leaf.
