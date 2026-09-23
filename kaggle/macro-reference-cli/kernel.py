@@ -64,12 +64,34 @@ def main():
          "--features", "cuda"], "rust-build", source)
     binary = source / "target/release/mgbfs"
     report = {"schema": 1, "status": "INCOMPLETE", "source": SOURCE,
-              "cutlass": CUTLASS, "gpu": gpus[0], "rows": []}
+              "cutlass": CUTLASS, "gpu": gpus[0], "rows": [], "full_state_checks": []}
 
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
 
     try:
+        artifacts = run(["cargo", "test", "--locked", "--release", "-p",
+                         "mgbfs-runtime", "--features", "cuda", "--test",
+                         "macro_native", "--no-run", "--message-format=json"],
+                        "macro-oracle-build", source)
+        executable = None
+        for line in artifacts.splitlines():
+            if line.startswith("{"):
+                item = json.loads(line)
+                if (item.get("reason") == "compiler-artifact"
+                        and item.get("executable")
+                        and item["target"]["name"] == "macro_native"):
+                    executable = item["executable"]
+        if not executable:
+            raise RuntimeError("MACRO_ORACLE_EXECUTABLE_MISSING")
+        for tool in ["plain", "memcheck", "racecheck", "initcheck", "synccheck"]:
+            command = [executable, "--test-threads=1", "--nocapture"]
+            if tool != "plain":
+                command = ["compute-sanitizer", "--error-exitcode", "99",
+                           "--tool", tool] + command
+            run(command, "macro-oracle-" + tool, source, timeout=1200)
+            report["full_state_checks"].append({"tool": tool, "status": "PASS"})
+            save()
         for group, order, codec in [("u4m2", 64, "matrix_u8"),
                                     ("s5", math.factorial(5), "permutation_u8")]:
             expected_layers = None
