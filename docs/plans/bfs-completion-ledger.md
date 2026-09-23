@@ -534,3 +534,8 @@ symbol, and v5 passed plain plus all four Compute Sanitizer modes on both
 physical T4s; see `docs/validation/device-owner-route-window-2xt4.md`.
 The Rust scheduler does not yet consume this output, and transport/retirement
 remain CPU-driven. This closes a primitive contract only.
+The route-window contract now also rejects `sum(owner_counts) != route_count`
+on GPU. A 2×T4 v6 RED signature gate preceded v7 plain/four-sanitizer GREEN;
+see the same validation record. The nonzero-window materialization fixture
+passed plain on both T4s in v21, proving that absolute source ordinals need
+the *whole source* row bound rather than the narrower owner-window count.

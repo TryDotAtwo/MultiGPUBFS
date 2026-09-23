@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-SOURCE = "064185ae2784e8e627bde930c8acddbeb35ac350"
+SOURCE = "35c6db7d668fa0f39a5bce2af5e572e81ef24992"
 OUT = Path("/kaggle/working/device-count-gate")
 
 
