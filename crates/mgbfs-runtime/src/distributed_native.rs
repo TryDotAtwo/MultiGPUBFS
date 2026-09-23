@@ -29,6 +29,10 @@ struct LibraryOwnerStorage {
     closed: bool,
     pool: PoolHandle,
     cuco_workspace: WorkspaceHandle,
+    rank: RankHandle,
+    rank_mode: bool,
+    rank_accepted: *const u32,
+    logical_owner: u32,
 }
 #[cfg(feature = "library-owner")]
 impl Drop for LibraryOwnerStorage {
@@ -36,6 +40,12 @@ impl Drop for LibraryOwnerStorage {
         // This field is dropped BEFORE streams/history. On failed drain leave
         // pool destruction to rank-process exit rather than free GPU readers.
         let mut drained = true;
+        if !self.rank.is_null() {
+            drained &= unsafe { mgbfs_library_rank_destroy_v1(self.rank) == 0 };
+            if drained {
+                self.rank = std::ptr::null_mut();
+            }
+        }
         for shard in &mut self.shards {
             drained &= unsafe { shard.close().is_ok() };
         }
@@ -50,6 +60,80 @@ impl Drop for LibraryOwnerStorage {
             }
         }
     }
+}
+#[cfg(feature = "library-owner")]
+unsafe fn create_rank_owner(
+    library: &LibraryOwnerStorage,
+    previous: &Buffer,
+    current: &Buffer,
+    shards: u32,
+    incoming: u32,
+    world: u32,
+    stream: *mut c_void,
+) -> Result<RankHandle> {
+    let old: Vec<_> = library.previous.iter()
+        .map(|range| history_view(previous, library.plane_words, range)).collect();
+    let now: Vec<_> = library.current.iter()
+        .map(|range| history_view(current, library.plane_words, range)).collect();
+    let capacities = vec![library.capacity; shards as usize];
+    let mut rank = std::ptr::null_mut();
+    check(mgbfs_library_rank_create_cuco_v1(
+        old.as_ptr(), now.as_ptr(), capacities.as_ptr(), shards, incoming,
+        library.logical_owner, world, stream, &mut rank,
+    ))?;
+    if rank.is_null() {
+        return Err("LIBRARY_RANK_CREATE_NULL".into());
+    }
+    Ok(rank)
+}
+#[cfg(feature = "library-owner")]
+unsafe fn finalize_rank_owner(
+    library: &mut LibraryOwnerStorage,
+    destination: KeysV1,
+    stream: *mut c_void,
+) -> Result<u32> {
+    if library.rank.is_null() || destination.rows == 0 {
+        return Err("LIBRARY_RANK_FINALIZE_SHAPE".into());
+    }
+    // FinalizeDepth drains every candidate/materialization reader before
+    // releasing the history sets and reusing either SoA history buffer.
+    check(cudaStreamSynchronize(stream))?;
+    let mut counts = vec![0u32; library.previous.len()];
+    if !library.rank_accepted.is_null() {
+        check(cudaMemcpy(counts.as_mut_ptr().cast(), library.rank_accepted.cast(),
+            counts.len() * 4, 2))?;
+    }
+    let total = counts.iter().try_fold(0u32, |sum, &n| sum.checked_add(n))
+        .ok_or("LIBRARY_RANK_FINALIZE_OVERFLOW")?;
+    if total > destination.rows {
+        return Err("LIBRARY_RANK_FINALIZE_CAPACITY".into());
+    }
+    check(mgbfs_library_rank_seal_v1(library.rank))?;
+    let mut offset = 0u32;
+    for (shard, &rows) in counts.iter().enumerate() {
+        let mut keys = KeysV1 { words: [std::ptr::null(); 4], rows: 0, reserved: 0 };
+        check(mgbfs_library_rank_export_shard_v1(
+            library.rank, shard as u32, rows, &mut keys,
+        ))?;
+        if keys.rows != rows {
+            return Err("LIBRARY_RANK_EXPORT_COUNT".into());
+        }
+        for plane in 0..4 {
+            if rows != 0 {
+                check(cudaMemcpyAsync(
+                    destination.words[plane].cast_mut().add(offset as usize).cast(),
+                    keys.words[plane].cast(), rows as usize * 4, 3, stream,
+                ))?;
+            }
+        }
+        library.previous[shard] = offset..offset + rows;
+        offset += rows;
+    }
+    check(cudaStreamSynchronize(stream))?;
+    check(mgbfs_library_rank_destroy_v1(library.rank))?;
+    library.rank = std::ptr::null_mut();
+    library.rank_accepted = std::ptr::null();
+    Ok(total)
 }
 #[cfg(feature = "library-owner")]
 unsafe fn history_view(
@@ -478,8 +562,8 @@ impl DistributedNativeBfs {
         if matches!(library_owner, ReferenceOwner::Native(_)) {
             return Err("REFERENCE_LIBRARY_OWNER".into());
         }
-        if matches!(library_owner, ReferenceOwner::CucoRank) {
-            return Err("REFERENCE_CUCO_RANK_NOT_WIRED".into());
+        if matches!(library_owner, ReferenceOwner::CucoRank) && materialization_capacity.is_some() {
+            return Err("REFERENCE_CUCO_RANK_DENSE_ONLY".into());
         }
         if tensor_generation && materialization_capacity.is_none() {
             return Err("REFERENCE_HASH_FIRST_GENERATION".into());
@@ -1139,6 +1223,11 @@ impl DistributedNativeBfs {
                 closed: false,
                 pool,
                 cuco_workspace: std::ptr::null_mut(),
+                rank: std::ptr::null_mut(),
+                rank_mode: matches!(library_options, Some((_, ReferenceOwner::CucoRank))),
+                rank_accepted: std::ptr::null(),
+                logical_owner: cfg.logical_owner_to_rank.iter()
+                    .position(|&r| r == cfg.rank).ok_or("OWNER_MAP")? as u32,
             };
             if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
                 check(unsafe {
@@ -1156,20 +1245,27 @@ impl DistributedNativeBfs {
                     .current
                     .push(first..(last.begin + last.count) as u32);
             }
-            for shard in 0..cfg.shards as usize {
-                unsafe {
-                    library.shards.push(LibraryShard::new_window_with_workspace(
-                        history_view(&result.prev, plane_words, &library.previous[shard]),
-                        history_view(&result.curr, plane_words, &library.current[shard]),
-                        capacity,
-                        if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
-                            Some(candidates)
-                        } else {
-                            None
-                        },
-                        library.cuco_workspace,
-                        raw,
-                    )?);
+            if library.rank_mode {
+                library.rank = unsafe { create_rank_owner(
+                    &library, &result.prev, &result.curr, cfg.shards, candidates,
+                    cfg.world, raw,
+                )? };
+            } else {
+                for shard in 0..cfg.shards as usize {
+                    unsafe {
+                        library.shards.push(LibraryShard::new_window_with_workspace(
+                            history_view(&result.prev, plane_words, &library.previous[shard]),
+                            history_view(&result.curr, plane_words, &library.current[shard]),
+                            capacity,
+                            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
+                                Some(candidates)
+                            } else {
+                                None
+                            },
+                            library.cuco_workspace,
+                            raw,
+                        )?);
+                    }
                 }
             }
             result.library_owner = Some(library);
@@ -1242,6 +1338,81 @@ impl DistributedNativeBfs {
         self.collective_recv.one()
     }
     #[cfg(feature = "library-owner")]
+    fn commit_rank_library_batch(
+        &mut self,
+        source_states: *const u8,
+        source_hashes: *const c_void,
+        rows: u32,
+    ) -> Result<()> {
+        let stream = self.stream.0;
+        self.route_count.put(&[rows])?;
+        let library = self.library_owner.as_mut().ok_or("LIBRARY_OWNER_MISSING")?;
+        if library.rank.is_null() || !library.rank_mode {
+            return Err("LIBRARY_RANK_NOT_OPEN".into());
+        }
+        library.epoch = library.epoch.checked_add(1).ok_or("LIBRARY_EPOCH_OVERFLOW")?;
+        let epoch = library.epoch;
+        let mut candidates = CandidatesV1 {
+            keys: KeysV1 { words: [std::ptr::null(); 4], rows: 0, reserved: 0 },
+            source_indices: std::ptr::null(),
+        };
+        unsafe {
+            check(mgbfs_library_candidates_from_aos_v1(
+                source_hashes, rows, self.candidates, library.scratch.ptr,
+                library.scratch.bytes as u64, stream, &mut candidates,
+            ))?;
+            // The fixed-capacity rank ABI reads only valid_rows on device.
+            candidates.keys.rows = self.candidates;
+        }
+        let mut batch = RankDeviceBatchV1 {
+            high_words: std::ptr::null(), valid_rows: std::ptr::null(),
+            selected: std::ptr::null(), selected_count: std::ptr::null(),
+            source_indices: std::ptr::null(), accepted_counts: std::ptr::null(),
+            accepted_capacities: std::ptr::null(), shard_counts: std::ptr::null_mut(),
+            shard_offsets: std::ptr::null_mut(),
+        };
+        unsafe {
+            check(mgbfs_library_rank_compare_v1(
+                library.rank, epoch, candidates, self.route_count.ptr.cast(),
+                self.control.ptr.cast(), self.ring.ptr.cast(), &mut batch,
+            ))?;
+            check(mgbfs_owner_shard_counts(
+                batch.high_words, batch.valid_rows, batch.selected,
+                batch.selected_count, self.candidates, library.logical_owner,
+                self.cfg.world, self.cfg.shards, batch.shard_counts,
+                batch.shard_offsets, self.ring.ptr.cast(), self.control.ptr.cast(), stream,
+            ))?;
+            check(mgbfs_state_reserve_rank_batch(
+                self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
+                batch.shard_counts, batch.accepted_counts, batch.accepted_capacities,
+                self.cfg.shards, batch.shard_offsets, self.layer_count.ptr.cast(),
+                self.cfg.layer_capacity, 0, 0, stream,
+            ))?;
+            check(mgbfs_library_rank_commit_v1(
+                library.rank, epoch, self.control.ptr.cast(), self.ring.ptr.cast(),
+                self.extent.ptr.cast(),
+            ))?;
+            check(mgbfs_state_materialize_rank_batch(
+                source_states, batch.valid_rows, self.candidates, batch.source_indices,
+                batch.selected_count, self.candidates, self.stride as u32,
+                self.states.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(),
+                self.extent.ptr.cast(), stream,
+            ))?;
+        }
+        let snapshot = unsafe { library.control_transfer.read(
+            self.control.ptr.cast(), self.extent.ptr.cast(), self.ring.ptr.cast(),
+            std::ptr::null(),
+        )? };
+        if snapshot.control.error != 0 || snapshot.ring.fatal != 0 || snapshot.extent.ready != 1 {
+            return Err(format!("LIBRARY_RANK_BATCH_FATAL_{}_{}",
+                snapshot.control.error, snapshot.ring.fatal));
+        }
+        append_extent(&mut self.next, snapshot.extent)?;
+        library.rank_accepted = batch.accepted_counts;
+        check(unsafe { mgbfs_library_rank_complete_v1(library.rank, epoch) })?;
+        Ok(())
+    }
+    #[cfg(feature = "library-owner")]
     fn commit_library_batch(
         &mut self,
         source_states: *const u8,
@@ -1249,6 +1420,9 @@ impl DistributedNativeBfs {
         rows: u32,
         source_group: usize,
     ) -> Result<()> {
+        if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+            return self.commit_rank_library_batch(source_states, source_hashes, rows);
+        }
         let s = self.stream.0;
         self.route_count.put(&[rows])?;
         unsafe {
@@ -1902,13 +2076,20 @@ impl DistributedNativeBfs {
         #[cfg(feature = "library-owner")]
         if let Some(library) = self.library_owner.as_mut() {
             if library.closed {
-                for shard in 0..library.shards.len() {
-                    unsafe {
-                        library.shards[shard].reopen_window(
-                            history_view(&self.prev, library.plane_words, &library.previous[shard]),
-                            history_view(&self.curr, library.plane_words, &library.current[shard]),
-                            library.capacity,
-                        )?;
+                if library.rank_mode {
+                    library.rank = unsafe { create_rank_owner(
+                        library, &self.prev, &self.curr, self.cfg.shards,
+                        self.candidates, self.cfg.world, s,
+                    )? };
+                } else {
+                    for shard in 0..library.shards.len() {
+                        unsafe {
+                            library.shards[shard].reopen_window(
+                                history_view(&self.prev, library.plane_words, &library.previous[shard]),
+                                history_view(&self.curr, library.plane_words, &library.current[shard]),
+                                library.capacity,
+                            )?;
+                        }
                     }
                 }
                 library.closed = false;
@@ -2294,8 +2475,11 @@ impl DistributedNativeBfs {
                     &(0..self.cfg.layer_capacity),
                 )
             };
-            let count =
-                unsafe { finalize_shards(&mut library.shards, target, &mut library.previous, s)? };
+            let count = if library.rank_mode {
+                unsafe { finalize_rank_owner(library, target, s)? }
+            } else {
+                unsafe { finalize_shards(&mut library.shards, target, &mut library.previous, s)? }
+            };
             library.closed = true;
             std::mem::swap(&mut library.previous, &mut library.current);
             self.route_count.put(&[count])?;

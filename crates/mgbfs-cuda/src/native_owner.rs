@@ -70,6 +70,36 @@ mod calls {
             capacity: u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_reserve_rank_batch(
+            ring: *mut Ring,
+            control: *mut Control,
+            extent: *mut Extent,
+            shard_survivors: *const u32,
+            accepted_counts: *const u32,
+            accepted_capacities: *const u32,
+            shard_count: u32,
+            offsets: *mut u32,
+            layer_count: *mut u32,
+            layer_capacity: u32,
+            request_capacity: u32,
+            hash_first: u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_owner_shard_counts(
+            high_words: *const u32,
+            candidate_count: *const u32,
+            selected: *const u32,
+            selected_count: *const u32,
+            candidate_capacity: u32,
+            logical_owner: u32,
+            world: u32,
+            shards: u32,
+            shard_counts: *mut u32,
+            shard_offsets: *mut u32,
+            ring: *mut Ring,
+            control: *mut Control,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_state_retire_dense_prefix(
             ring: *mut Ring,
             extent: *mut Extent,
