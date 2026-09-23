@@ -588,3 +588,19 @@ rounds. Verify with a two-rank injected retirement-failure fixture and a
 bounded timeout before claiming fail-fast. The HASH_FIRST path already votes
 on its retirement fatal, but still reads the ring on CPU; neither path is
 device-driven end-to-end.
+
+The first rank-ordering fix (`b71c16b`) makes all DENSE ranks vote on a
+retirement error before owner commit, after the current P2P completion event.
+Local RED/GREEN helper test, CUDA-feature typecheck and CPU suite passed;
+private two-T4 full-BFS v2 passed its normal-path full-state/archive fixtures.
+The fixture does not inject the retirement FIFO failure, so the abnormal path
+remains unproven. This adds one blocking collective per DENSE round and is
+**not** the requested CPU-free owner→transport→retirement implementation.
+The next RED test (`1c29487`) asks CUDA to derive the NCCL vote word directly
+from sticky ring fatal. Private T4 v17 failed at the expected undefined
+symbol, then v18 at `8aacb24` passed 20/20 state-commit/archive-pack plain
+and four-sanitizer checks on two physical T4s. Rust now uses the device word
+for both DENSE and HASH_FIRST retirement votes; local CUDA-feature typecheck
+and the CPU suite pass. The full 2×T4 BFS v3 integration gate is running.
+This removes one ring-fatal D2H but the collective remains host-blocking and
+owner/transport count decisions remain CPU-driven.
