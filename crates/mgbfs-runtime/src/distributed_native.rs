@@ -2386,7 +2386,9 @@ impl DistributedNativeBfs {
                         return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
                     }
                 }
-                check(unsafe { cudaStreamSynchronize(s) })?;
+                if round != 1 || self.hash_first.is_some() {
+                    check(unsafe { cudaStreamSynchronize(s) })?;
+                }
                 let local_states = unsafe {
                     self.packed_states
                         .at(local_offset as usize * packet_stride)
