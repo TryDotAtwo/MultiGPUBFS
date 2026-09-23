@@ -324,6 +324,32 @@ fn macro_finalize_ack_requires_settled_history_and_free_reuse_slot() {
 }
 
 #[test]
+fn macro_completion_waits_for_recorded_work_without_poisoning_control() {
+    use mgbfs_runtime::admitted_buffers::MacroCompletion;
+    let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
+    d.enable_macro_history(1).unwrap();
+    d.macro_seed_ready().unwrap();
+    d.close_source().unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+    assert!(!d.macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(false)).unwrap());
+    assert!(d.macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(true)).unwrap());
+    d.finalized(true).unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Publish(_)))));
+    assert_eq!(d.macro_history_slot_depth(1).unwrap(), Some(1));
+    assert!(!d.macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(false)).unwrap());
+    assert!(d.macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(true)).unwrap());
+    assert_eq!(d.macro_hold_history_reader(1).unwrap(), 1);
+    assert!(!d.macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(false)).unwrap());
+    assert!(d.macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(true)).unwrap());
+    d.close_source().unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
+    d.macro_settled(2).unwrap();
+    d.finalized(true).unwrap();
+    assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Publish(_)))));
+    assert_eq!(d.macro_history_slot_depth(0).unwrap(), Some(2));
+}
+
+#[test]
 fn ticket_reservation_does_not_authorize_consumer_before_launch() {
     use mgbfs_runtime::{admitted_buffers::BufferLaunch, scatter_admission::TicketKey};
     let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();

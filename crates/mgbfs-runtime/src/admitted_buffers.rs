@@ -36,6 +36,12 @@ pub struct SourceHandle {
     bank: SourceBank,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MacroCompletion {
+    Settled(u32),
+    ReaderReleased(u32),
+    ArchiveCopied(u32),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BufferLaunch {
     pub key: TicketKey,
     pub source_offset: Option<u64>,
@@ -296,6 +302,32 @@ impl AdmittedBuffers {
                 return Err("MACRO_HISTORY_SETTLE_PHASE".into());
             }
             s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.settled(target_depth)
+        })
+    }
+    /// Poll a previously recorded CUDA completion event without blocking the
+    /// host. A not-ready result preserves all leases and control state. The
+    /// caller must bind `ready` to the event recorded *after* protected work.
+    pub fn macro_complete_if_ready(
+        &mut self,
+        completion: MacroCompletion,
+        ready: impl FnOnce() -> Result<bool>,
+    ) -> Result<bool> {
+        self.apply(|s| {
+            if !ready()? {
+                return Ok(false);
+            }
+            let history = s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?;
+            match completion {
+                MacroCompletion::Settled(target) => {
+                    if !s.finalizing || s.depth.checked_add(1) != Some(u64::from(target)) {
+                        return Err("MACRO_HISTORY_SETTLE_PHASE".into());
+                    }
+                    history.settled(target)?;
+                }
+                MacroCompletion::ReaderReleased(depth) => history.release_reader(depth)?,
+                MacroCompletion::ArchiveCopied(depth) => history.archive_copied(depth)?,
+            }
+            Ok(true)
         })
     }
     pub fn macro_history_slot_depth(&self, slot: usize) -> Result<Option<u32>> {

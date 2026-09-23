@@ -2,7 +2,7 @@
 use mgbfs_cuda::ffi::*;
 use mgbfs_cuda::native_owner::{cudaMemcpyAsync, cudaSetDevice};
 use mgbfs_runtime::{
-    admitted_buffers::{AdmittedBuffers, BufferEvent},
+    admitted_buffers::{AdmittedBuffers, BufferEvent, MacroCompletion},
     control_connection::ControlConnection,
     control_pump::ControlPump,
     control_wire::{Action, ControlFrame, Plane},
@@ -75,6 +75,7 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                 let mut owner_stream = std::ptr::null_mut();
                 assert_eq!(cudaStreamCreateWithFlags(&mut owner_stream, 1), 0);
                 let mut materialized = NativeEvent::new().unwrap();
+                let mut settled_ready = NativeEvent::new().unwrap();
                 let mut owner_storage = [std::ptr::null_mut(); 5];
                 for (ptr, bytes) in owner_storage.iter_mut().zip([64, 64, 64, 4, 16]) {
                     assert_eq!(cudaMalloc(ptr, bytes), 0);
@@ -426,7 +427,15 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                         history, history_counts.cast(), survivors, survivor_refs.cast(),
                                         survivor_count.cast(), settle_state.cast(), 4, owner_stream,
                                     ), 0);
-                                    assert_eq!(cudaStreamSynchronize(owner_stream), 0);
+                                    settled_ready.record((depth + 1) as u64, owner_stream).unwrap();
+                                    while !buffers.macro_complete_if_ready(
+                                        MacroCompletion::Settled((depth + 1) as u32),
+                                        || settled_ready.poll((depth + 1) as u64),
+                                    ).unwrap() {
+                                        assert!(Instant::now() < deadline);
+                                        std::thread::yield_now();
+                                    }
+                                    settled_ready.retire((depth + 1) as u64).unwrap();
                                     let mut settled = MacroSettleState::default();
                                     let mut survivor_rows = 99u32;
                                     assert_eq!(cudaMemcpy(
@@ -449,7 +458,17 @@ fn admitted_adapter_native_scatter_and_depth_rollover() {
                                 }
                                 // The caller reports settlement only after
                                 // the owner stream's completion event/result.
-                                buffers.macro_settled((depth + 1) as u32).unwrap();
+                                if depth != 2 {
+                                    settled_ready.record((depth + 1) as u64, owner_stream).unwrap();
+                                    while !buffers.macro_complete_if_ready(
+                                        MacroCompletion::Settled((depth + 1) as u32),
+                                        || settled_ready.poll((depth + 1) as u64),
+                                    ).unwrap() {
+                                        assert!(Instant::now() < deadline);
+                                        std::thread::yield_now();
+                                    }
+                                    settled_ready.retire((depth + 1) as u64).unwrap();
+                                }
                                 buffers.finalized(true).unwrap();
                             }
                             Some(BufferEvent::Publish(f)) => {
