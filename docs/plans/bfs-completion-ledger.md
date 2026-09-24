@@ -740,3 +740,22 @@ a new rank-consistent failure protocol, not deleting a local sync. The latter
 two votes must be considered together with device-side commit gating and
 identical collective order; the code audit alone does not prove they can be
 combined safely.
+
+At `dd679d5`, same-stream scalar control stores moved from host-to-device
+copy plus stream drain to a fixed CUDA store kernel. The two-T4 standalone
+fixture passed plain execution and all four Compute Sanitizer tools, and the
+full LSA DENSE layer/archive oracle passed. The five-repeat paired S10 screen
+at `d7c5984` measured HostSized/LSA search medians of 0.420060/0.367077 s
+with sampled peaks of 529/567 MiB per rank. This is a scoped control-store
+change, not a CPU-free pipeline; see `docs/validation/scalar-control-store-t4.md`.
+
+The attempted nonblocking post-owner device vote at `0ceb7c7` passed the
+no-fault and one-rank capacity fixtures but, after host-fault injection at
+`5b4bfe8`, hung until the external 300-second timeout on two P2P T4s.
+`6077bf8` restored the blocking vote. The corrected v33 gate at `db3e81c`
+passed the full DENSE LSA oracle/archive fixture plus one-rank capacity and
+host-owner-error tests, both terminating the two-rank group in about 1.3 s.
+The host vote remains necessary for this tested protocol. Device failures
+can still leave the fixed remaining parent rounds of the depth to execute;
+bounded fatal cancellation and the whole owner-to-retirement DAG remain open.
+See `docs/validation/postowner-device-vote-candidate.md`.
