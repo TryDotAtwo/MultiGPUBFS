@@ -146,6 +146,21 @@ def main():
                      "lsa-full-bfs", timeout=900)
         if "test result: ok. 1 passed; 0 failed" not in result:
             raise RuntimeError("BFS_TEST_RESULT")
+        binaries = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
+                    if path.is_file() and os.access(path, os.X_OK)]
+        if len(binaries) != 1:
+            raise RuntimeError("BFS_TEST_BINARY_INVENTORY")
+        report["plain_full_bfs"] = "PASS"
+        save()
+        sanitized = run(["compute-sanitizer", "--tool", "memcheck", "--error-exitcode", "99",
+                         str(binaries[0]),
+                         "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                         "--ignored", "--exact", "--nocapture", "--test-threads=1"],
+                        "lsa-full-bfs-memcheck", timeout=360)
+        if "test result: ok. 1 passed; 0 failed" not in sanitized or \
+                "ERROR SUMMARY: 0 errors" not in sanitized:
+            raise RuntimeError("BFS_MEMCHECK_RESULT")
+        report["full_bfs_memcheck"] = "PASS_UNFILTERED"
         report["status"] = "COMPLETE"
     except Exception as error:
         report["error"] = str(error)
