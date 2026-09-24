@@ -2202,10 +2202,21 @@ impl DistributedNativeBfs {
             }
         }
         self.next.clear();
+        // Frontier extents are fixed at this depth boundary. Agree once on
+        // the maximum physical-batch count, then every rank issues the same
+        // number of peer epochs; exhausted ranks send zero payloads. This
+        // removes the host-observed `more` collective after every batch.
+        let local_rounds = ParentCursor::round_count(&self.front, self.cfg.batch);
+        if self.all_max(u32::from(local_rounds.is_err()))? != 0 {
+            return Err(local_rounds
+                .err()
+                .unwrap_or_else(|| "REMOTE_PARENT_SCHEDULE_FATAL".into()));
+        }
+        let scheduled_rounds = self.all_max(local_rounds?)?;
         let mut cursor = ParentCursor::default();
         let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
-        loop {
+        for _ in 0..scheduled_rounds {
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
@@ -2636,10 +2647,6 @@ impl DistributedNativeBfs {
                 if self.all_max_ring_fatal()? != 0 {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
-            }
-            let more = u32::from(next_work.is_some());
-            if self.all_max(more)? == 0 {
-                break;
             }
             if trace_route {
                 batch_index = batch_index.checked_add(1).ok_or("TRACE_BATCH_OVERFLOW")?;

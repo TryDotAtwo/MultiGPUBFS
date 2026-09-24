@@ -19,6 +19,27 @@ pub struct ParentCursor {
     offset: u64,
 }
 impl ParentCursor {
+    /// Number of fixed peer epochs for a depth. Empty ranks still join one
+    /// zero-payload epoch; physical extents may not be merged into a batch.
+    pub fn round_count(extents: &[Extent], batch: u32) -> Result<u32> {
+        if batch == 0 {
+            return Err("PARENT_BATCH_ZERO".into());
+        }
+        let width = u64::from(batch);
+        let mut rounds = 0u64;
+        for extent in extents {
+            if extent.count == 0
+                || extent.begin.checked_add(extent.count).is_none()
+                || extent.sequence.checked_add(extent.count).is_none()
+            {
+                return Err("PARENT_EXTENT_RANGE".into());
+            }
+            let count = extent.count / width + u64::from(extent.count % width != 0);
+            rounds = rounds.checked_add(count).ok_or("PARENT_ROUND_COUNT")?;
+        }
+        u32::try_from(rounds.max(1)).map_err(|_| "PARENT_ROUND_COUNT".into())
+    }
+
     pub fn peek(&self, extents: &[Extent], batch: u32) -> Result<Option<ParentBatch>> {
         if batch == 0 {
             return Err("PARENT_BATCH_ZERO".into());

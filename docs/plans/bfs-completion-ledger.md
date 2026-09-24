@@ -676,3 +676,13 @@ Its aggregate, non-search-filtered trace contains 6,266 stream synchronizes,
 remaining host dependencies execute, but cannot by itself quantify their
 search critical-path cost or prove LSA overlap. See
 `docs/validation/cuco-rank-timeline-2xt4-v2.md`.
+
+A same-source paired S10 screen at `34b1c81` completed five unprofiled,
+archive-verified runs for each transport on the same physical two-T4 host.
+LSA reduced search median from 0.427086 to 0.383635 s (10.17%), but sampled
+full-device VRAM rose from 529 to 567 MiB/rank; archive-complete medians were
+3.829540 and 3.853357 s. Both variants had the same explicit aligned
+allocation plan, so the extra observed VRAM is outside that plan. This is a
+small-workload transport screen, not proof of end-to-end CPU independence,
+large-graph scaling or sanitizer cleanliness. See
+`docs/validation/lsa-paired-s10-2xt4.md`.
