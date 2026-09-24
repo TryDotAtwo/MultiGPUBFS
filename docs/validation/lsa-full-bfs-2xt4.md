@@ -29,14 +29,20 @@ different Kaggle host; this is a capability rejection, not an observed BFS
 regression. Version v3 added preflight and reported `UNSUPPORTED_HOST` before
 build: both `cudaDeviceCanAccessPeer` directions returned 0. Version v4
 repeated the same result on another host. The subsequent
-memory revision `8764bb7` also remains untested on an LSA-capable host.
+memory revision `8764bb7` and GPU-event reuse revision `d95ef21` were
+then tested together in private Kaggle v5 on a P2P-capable host. Both peer
+access directions returned 1. The same eight full-state/oracle/archive
+fixtures passed. The source for v5 was
+`d95ef218d321cd35b601c7db6440ec22038e966d`.
 Host synchronization for
-generation-buffer reuse, owner control, retirement and failure collectives
-remains; this is **not** a CPU-free end-to-end pipeline. The LSA receive slot
+owner control, retirement and failure collectives remains; this is **not** a
+CPU-free end-to-end pipeline. The LSA receive slot
 was additionally allocated alongside legacy receive buffers in v1. Revision
-`8764bb7` removes those buffers from the LSA allocation plan, but a physical
-VRAM comparison is still pending.
+`8764bb7` removes those buffers from the LSA allocation plan. The planner
+test confirms 1,280 aligned bytes saved for its 21-candidate fixture; a
+physical VRAM/performance comparison on larger graphs is still pending.
 
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build
-logs in the same directory.
+logs in the same directory; v2–v5 similarly under
+`test_results/kaggle_lsa_full_bfs_v*/`.

@@ -652,5 +652,10 @@ CUCO_RANK/DENSE exchange. The private two-T4 v1 full-state gate passed eight
 small-graph oracle/archive fixtures across owner maps and pre-dedup modes.
 See `docs/validation/lsa-full-bfs-2xt4.md`. This is an integration correctness
 result, not an end-to-end CPU-free, sanitizer-clean, memory-optimal or
-large-graph performance result. The next source revision removes the
-LSA-specific D2H route-count read; that revision still needs a physical gate.
+large-graph performance result. A subsequent revision removed the
+LSA-specific D2H route-count read.
+The later P2P-capable two-T4 v5 gate passed the same eight fixtures on
+`d95ef21`, which also removes duplicate legacy receive allocations in LSA
+mode and replaces the generation-buffer host wait with CUDA-event ordering.
+This is still plain correctness; full-path LSA sanitizers, large-graph VRAM
+and speed, and remaining owner/retirement/failure host dependencies are open.
