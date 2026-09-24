@@ -20,10 +20,30 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
-fn env_u32(key: &str, default: u32) -> u32 {
-    std::env::var(key)
-        .map(|x| x.parse().expect(key))
-        .unwrap_or(default)
+fn parse_u32_config(key: &str, value: Option<&str>, default: u32) -> Result<u32> {
+    match value {
+        Some(value) => value.parse().map_err(|_| format!("ENV_{key}")),
+        None => Ok(default),
+    }
+}
+fn env_u32(key: &str, default: u32) -> Result<u32> {
+    match std::env::var(key) {
+        Ok(value) => parse_u32_config(key, Some(&value), default),
+        Err(std::env::VarError::NotPresent) => Ok(default),
+        Err(_) => Err(format!("ENV_{key}")),
+    }
+}
+#[cfg(test)]
+mod env_tests {
+    use super::parse_u32_config;
+
+    #[test]
+    fn optional_u32_rejects_invalid_value_without_panicking() {
+        assert_eq!(parse_u32_config("MGBFS_SHARDS", None, 64).unwrap(), 64);
+        assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("8"), 64).unwrap(), 8);
+        assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("bad"), 64).unwrap_err(), "ENV_MGBFS_SHARDS");
+        assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("4294967296"), 64).unwrap_err(), "ENV_MGBFS_SHARDS");
+    }
 }
 fn profiler_window_start() -> Result<bool> {
     match std::env::var("MGBFS_PROFILE_SEARCH").as_deref() {
@@ -97,7 +117,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
-    if env_u32("MGBFS_MACRO_DEPTH", 1) > 1 {
+    if env_u32("MGBFS_MACRO_DEPTH", 1)? > 1 {
         return run_macro_pass(args, warmup_completed, is_measure);
     }
     let multiset = if args[1].starts_with("lrx") {
@@ -124,7 +144,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             .map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
         Err(_) => return Err("CAPACITY".into()),
     };
-    let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity);
+    let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity)?;
     let mode = capacity_mode()?;
     let capacity_plan = cluster_capacity_plan(mode, u64::from(declared_capacity), world)?;
     let future_plan = cluster_capacity_plan(mode, u64::from(declared_future), world)?;
@@ -175,8 +195,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             batch
                 .checked_mul(graph.generators.len() as u32)
                 .ok_or("CANDIDATE_OVERFLOW")?,
-        ),
-        env_u32("MGBFS_BMMA_TILE_LIMIT", 256),
+        )?,
+        env_u32("MGBFS_BMMA_TILE_LIMIT", 256)?,
     )?
     .with_hash_first_generation(&hash_first_generation)?
     .with_transport(&std::env::var("MGBFS_TRANSPORT_BACKEND")
@@ -197,12 +217,13 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let disk_bytes = if archive_enabled {
         ArchiveRingPlan::reference_extent_bytes(archive_width, expected_states, capacity)?
     } else { 0 };
-    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
+    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
+    let archive_slots = env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize;
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     selection.validate_archive_contract(archive_enabled,
         std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"))?;
-    let buckets = env_u32("MGBFS_BUCKETS", 256);
-    let shards = env_u32("MGBFS_SHARDS", 64);
+    let buckets = env_u32("MGBFS_BUCKETS", 256)?;
+    let shards = env_u32("MGBFS_SHARDS", 64)?;
     let (local_buckets, _) =
         crate::topology::reference_owner_geometry(world, rank, &rank_map, buckets, shards)?;
     let default_bucket_capacity =
@@ -218,8 +239,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         state_ring_capacity: future,
         buckets,
         shards,
-        job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4),
-        bucket_capacity: env_u32("MGBFS_BUCKET_CAPACITY", default_bucket_capacity),
+        job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4)?,
+        bucket_capacity: env_u32("MGBFS_BUCKET_CAPACITY", default_bucket_capacity)?,
         prededup: selection.prededup,
         generation_variant: if compact_states { 5 } else { 1 },
     };
@@ -248,7 +269,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
             .and_then(|extent| PinnedArchive::new(
                 extent, disk_bytes, archive_width, digest, archive_rows,
-                env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+                archive_slots,
             ))
             .map(Some)
     } else { Ok(None) };
@@ -484,7 +505,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
             .try_into().map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
         Err(_) => return Err("CAPACITY".into()),
     };
-    let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity);
+    let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity)?;
     let compact = match std::env::var("MGBFS_STATE_CODEC").as_deref() {
         Ok("permutation_u8") => true,
         Ok("matrix_u8") | Err(_) => false,
@@ -511,7 +532,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     let seed_hex = format!("{:032x}", u128::from_le_bytes(seed));
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
-    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
+    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
     let cfg = MacroNativeConfig {
         macro_depth,
         batch,
@@ -535,7 +556,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
             .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
         Some(PinnedArchive::new(
             extent, disk_bytes, layout.width, digest, archive_rows,
-            env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+            env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize,
         )?)
     } else {
         None
