@@ -3,6 +3,9 @@
 Status: active, 2026-09-23. This file separates accepted requirements from
 implemented paths and measured evidence. `ARCHITECTURE_NEED.md` remains the
 architecture contract; `library-first-bfs.md` is the library experiment log.
+The source-level owner/transport/retirement audit and connected change set are
+in `owner-transport-retirement-batch-audit.md`; it does not establish a measured
+bottleneck or completed asynchronous pipeline.
 
 ## Decisions recovered from the conversation
 
