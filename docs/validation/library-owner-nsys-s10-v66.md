@@ -10,7 +10,8 @@ comparison, nor a two-GPU timeline. The profiler range covers the timed BFS
 and archive submissions, not the later durable archive drain.
 
 The measured run reported `search_complete_seconds=0.411638465` and
-`durable_run_commit_seconds=11.339358252`. The explicit runtime allocation
+`durable_run_commit_seconds=11.339358252`; its preallocated pinned archive
+ring was 973,078,528 bytes for 256 slots. The explicit runtime allocation
 scope and sampled device consumption are distinct; do not substitute one
 for the other. Raw report, SQLite export, Nsight statistics, manifest and
 rank JSON are under

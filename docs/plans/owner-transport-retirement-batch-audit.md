@@ -29,6 +29,24 @@ the whole frontier has been submitted.
 | Archive | `distributed_native.rs:2183-2240,2845+`; `pinned_archive.rs` | D2H/pinned writer is bounded and asynchronous, but an archive error vote is made per parent batch before peer exchange. Must preserve bounded failure propagation. |
 | Finalize depth | `distributed_native.rs:2700-2820` | Extent/control readbacks and rank-owner export occur at semantic cut. They are not automatically unwanted hot-path waits. |
 
+The reusable `EpochCoordinator`/`ControlPump`/`AdmittedBuffers` modules are
+not called by `distributed_native.rs` or the CLI's BFS dispatch. Their CPU
+unit tests therefore cannot establish the production NCCL issue-order or
+retirement protocol. Production still uses the separate fixed
+`scheduled_rounds` loop (`distributed_native.rs:2244-2259`) and per-round
+owner vote (`:2680-2690`). Connecting these models, or replacing them with
+an equally explicit production protocol, is an integration requirement—not
+another isolated coordinator test.
+
+The v66 one-rank S10 measurement used 256 pinned archive slots and reported
+973,078,528 pinned bytes, 0.412 s to search completion and 11.339 s to the
+durable run commit. This is one profiled run, not a throughput benchmark; it
+does show that a fast GPU search can leave substantial archive work after
+search completion. The no-backpressure contract requires capacity analysis
+for the maximum producer-minus-consumer backlog, not a claim that 256 slots
+or disk transfer will always be invisible. The source enforces fatal slot
+exhaustion (`pinned_archive.rs::acquire`) and does not implement a spill.
+
 `Buffer::put` (`distributed_native.rs:265-278`) uses asynchronous H2D followed
 by an unconditional stream synchronize; `read` is blocking D2H. `put_u32`
 (`:280`) instead launches a device scalar store, so counting all scalar writes
@@ -72,6 +90,12 @@ correctness purpose (`device-driven-library-owner.md`).
    variants, and 4/8/16 shards under identical output contracts. A bypass must
    still produce deterministic owner-order input and exact layers. Accept only
    end-to-end time/VRAM wins, not isolated kernel improvements.
+7. **Size archive independently of GPU speed.** Preserve both search and
+   durable timers, measure archive drain and maximum outstanding slot count
+   at identical workloads with one/two ranks, and derive the required pinned
+   capacity from the observed production-consumption envelope. Do not reduce
+   slots merely because the final archive is small, or hide a capacity fatal
+   by waiting for a free slot.
 
 This is one protocol-level change set, with explicit checkpoints rather than
 one-line wait deletions. A rejected experiment must leave the current correct
