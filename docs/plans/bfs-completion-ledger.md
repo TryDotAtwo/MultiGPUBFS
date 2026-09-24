@@ -696,3 +696,9 @@ host-sized native/CUDF/CUCO DENSE/HASH_FIRST. This validates the scheduling
 change on small graphs but leaves per-batch archive/error votes, owner and
 retirement readbacks, sanitizer and large-frontier timing open. See
 `docs/validation/fixed-depth-rounds-2xt4.md`.
+The matching post-change S10 v2 screen also completed five paired runs per
+transport with 20 verified rank archives. Within that session, LSA/host-sized
+search medians were 0.381001/0.465085 s, durable medians
+3.711824/3.759861 s, and sampled peaks 567/529 MiB per rank. The v1/v2
+comparison crosses Kaggle sessions, so it does not isolate the fixed-round
+change's speed contribution. See `docs/validation/lsa-paired-s10-2xt4.md`.

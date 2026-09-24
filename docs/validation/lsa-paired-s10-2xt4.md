@@ -36,3 +36,29 @@ Raw evidence: `test_results/kaggle_lsa_paired_s10_v1/lsa-bfs-gate/summary.json`,
 ten `measure.json` and ten `screen-summary.json` files in their corresponding
 case directories. Large archives remained on Kaggle under `/tmp`; only the
 small summaries were downloaded locally.
+
+## Follow-up with fixed-depth peer rounds
+
+Notebook v2 repeated the same paired 5+5 screen using source `6c74077`,
+which moves the host-observed `more` collective from every parent batch to
+the depth boundary. Again all ten runs were `COMPLETE`, all 20 archives were
+`VERIFIED`, memory sampling completed in every run, and one 46-layer S10
+histogram totaling 3,628,800 states was shared by both transports.
+
+| Transport, two T4, v2 | Search median / MAD | Archive-complete median / MAD | Sampled peak MiB/rank |
+| --- | ---: | ---: | ---: |
+| Host-sized NCCL | 0.465085 / 0.021287 s | 3.759861 / 0.054100 s | 529, 529 |
+| NCCL LSA | 0.381001 / 0.012244 s | 3.711824 / 0.039128 s | 567, 567 |
+
+Within v2, LSA reduced search median by 18.08% (1.221× speedup); its
+archive-complete median was 1.28% lower. Sampled LSA VRAM still costs an
+extra 38 MiB/rank. The fixed-depth change is shared by both v2 transports,
+but v1 and v2 were on different Kaggle sessions. Their between-session
+timing differences cannot be attributed to that code change alone. Owner,
+archive-failure and retirement host dependencies remain, and this is still
+not a large-graph scaling or sanitizer result.
+
+Raw v2 summaries:
+`test_results/kaggle_lsa_paired_s10_v2/lsa-bfs-gate/summary.json` and
+the ten matching `measure.json`/`screen-summary.json` files. No large archive
+was downloaded to the local workspace.
