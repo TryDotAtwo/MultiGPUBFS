@@ -16,6 +16,16 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
+#[cfg(debug_assertions)]
+thread_local! {
+    static TEST_OWNER_HOST_FAULT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(debug_assertions)]
+pub fn inject_owner_host_error_once_for_test() {
+    TEST_OWNER_HOST_FAULT.with(|flag| flag.set(true));
+}
+
 #[cfg(feature = "library-owner")]
 struct LibraryOwnerStorage {
     control_transfer: ControlTransfer,
@@ -2631,6 +2641,12 @@ impl DistributedNativeBfs {
                         if rank_mode {
                             if !crate::route_count::rank_owner_group_active(world, round, group)? {
                                 return Ok(());
+                            }
+                            #[cfg(debug_assertions)]
+                            if group == 1 && round == 1 && scheduled_rounds > 1
+                                && TEST_OWNER_HOST_FAULT.with(|flag| flag.replace(false))
+                            {
+                                return Err("TEST_INJECTED_OWNER_HOST_ERROR".into());
                             }
                             let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
                             let (states, hashes, begin, rows, source_rows) = if group == 0 {

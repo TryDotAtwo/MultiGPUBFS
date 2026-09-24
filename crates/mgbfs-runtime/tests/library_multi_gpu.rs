@@ -288,6 +288,21 @@ fn cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle() {
 #[test]
 #[ignore = "requires two physical P2P GPUs; rank 0 exhausts owner capacity"]
 fn cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group() {
+    let errors = lsa_one_rank_failure(false);
+    assert!(errors[0].contains("LIBRARY_RANK_DEPTH_FATAL"), "rank0: {}", errors[0]);
+    assert!(!errors[1].is_empty(), "rank1 must also fail");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[ignore = "requires two physical P2P GPUs; rank 0 injects a host owner error"]
+fn cuco_rank_lsa_one_rank_host_owner_error_stops_group() {
+    let errors = lsa_one_rank_failure(true);
+    assert_eq!(errors[0], "TEST_INJECTED_OWNER_HOST_ERROR");
+    assert!(!errors[1].is_empty(), "rank1 must also fail");
+}
+
+fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
@@ -301,7 +316,7 @@ fn cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group() {
                         world: 2,
                         logical_owner_to_rank: vec![0, 1],
                         batch: 1,
-                        layer_capacity: if rank == 0 { 2 } else { 64 },
+                        layer_capacity: if !inject_host && rank == 0 { 2 } else { 64 },
                         state_ring_capacity: 64,
                         buckets: 8,
                         shards: 4,
@@ -316,21 +331,23 @@ fn cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group() {
                         &graph, [7; 16], id, cfg, None, 64 << 20, false,
                         mgbfs_core::config::ReferenceOwner::CucoRank,
                     ).unwrap();
+                    #[cfg(debug_assertions)]
+                    if inject_host && rank == 0 {
+                        mgbfs_runtime::distributed_native::inject_owner_host_error_once_for_test();
+                    }
                     for _ in 0..16 {
                         match bfs.advance() {
                             Err(error) => return error,
                             Ok(true) => {}
-                            Ok(false) => panic!("OWNER_CAPACITY_FAILURE_NOT_DETECTED"),
+                            Ok(false) => panic!("EXPECTED_OWNER_FAILURE_NOT_DETECTED"),
                         }
                     }
-                    panic!("OWNER_CAPACITY_FAILURE_NOT_REACHED")
+                    panic!("EXPECTED_OWNER_FAILURE_NOT_REACHED")
                 }).unwrap_or_else(|_| std::process::abort())
             })
         })
         .collect();
-    let errors: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
-    assert!(errors[0].contains("LIBRARY_RANK_DEPTH_FATAL"), "rank0: {}", errors[0]);
-    assert!(!errors[1].is_empty(), "rank1 must also fail");
+    workers.into_iter().map(|worker| worker.join().unwrap()).collect()
 }
 
 #[test]
