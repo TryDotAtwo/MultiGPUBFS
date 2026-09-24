@@ -113,6 +113,7 @@ dependencies = [
 name = "mgbfs-runtime"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mgbfs-core",
  "mgbfs-cuda",
  "serde_json",

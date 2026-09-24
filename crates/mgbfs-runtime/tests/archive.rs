@@ -27,6 +27,49 @@ fn archive_extent_plan_charges_rank_records_and_every_frame() {
     assert!(ArchiveRingPlan::extent_bytes(4, 3, 3, 0).is_err());
     assert!(ArchiveRingPlan::extent_bytes(4, u64::MAX, 1, 1).is_err());
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn fifo_open_reports_missing_consumer_within_its_deadline() {
+    use mgbfs_runtime::archive::create_archive_extent_with_timeout;
+    use std::{ffi::CString, os::unix::ffi::OsStrExt, time::{Duration, Instant}};
+    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!("mgbfs-archive-fifo-{}-{nonce}", std::process::id()));
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
+    let started = Instant::now();
+    let result = create_archive_extent_with_timeout(&path, true, Duration::from_millis(50));
+    assert_eq!(result.err().unwrap().kind(), std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    std::fs::remove_file(path).unwrap();
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn fifo_open_hands_a_blocking_stream_to_the_archive_consumer() {
+    use mgbfs_runtime::archive::create_archive_extent_with_timeout;
+    use std::{ffi::CString, io::Read, os::unix::ffi::OsStrExt, time::Duration};
+    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!("mgbfs-archive-reader-{}-{nonce}", std::process::id()));
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
+    let reader_path = path.clone();
+    let reader = std::thread::spawn(move || {
+        let mut file = std::fs::File::open(reader_path).unwrap();
+        let mut bytes = [0; 3];
+        file.read_exact(&mut bytes).unwrap();
+        bytes
+    });
+    let mut writer = create_archive_extent_with_timeout(&path, true, Duration::from_secs(2)).unwrap();
+    writer.reserve(3).unwrap();
+    assert_eq!(writer.write_at(0, b"abc").unwrap(), 3);
+    writer.sync().unwrap();
+    drop(writer);
+    assert_eq!(reader.join().unwrap(), *b"abc");
+    std::fs::remove_file(path).unwrap();
+}
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex},

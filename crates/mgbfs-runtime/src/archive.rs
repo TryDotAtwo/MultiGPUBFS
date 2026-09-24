@@ -183,19 +183,52 @@ pub fn create_archive_extent(
     path: &std::path::Path,
     stream: bool,
 ) -> std::io::Result<Box<dyn Extent + Send>> {
+    create_archive_extent_with_timeout(path, stream, std::time::Duration::from_secs(300))
+}
+#[cfg(target_os = "linux")]
+pub fn create_archive_extent_with_timeout(
+    path: &std::path::Path,
+    stream: bool,
+    timeout: std::time::Duration,
+) -> std::io::Result<Box<dyn Extent + Send>> {
     if !stream {
         return FileExtent::create_new(path)
             .map(|extent| Box::new(extent) as Box<dyn Extent + Send>);
     }
-    use std::os::unix::fs::FileTypeExt;
+    use std::os::{fd::AsRawFd, unix::fs::{FileTypeExt, OpenOptionsExt}};
     if !std::fs::metadata(path)?.file_type().is_fifo() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "stream archive target is not a FIFO",
         ));
     }
-    let writer = std::fs::OpenOptions::new().write(true).open(path)?;
-    Ok(Box::new(StreamExtent::new(writer)))
+    let deadline = std::time::Instant::now().checked_add(timeout).ok_or_else(||
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "FIFO_OPEN_DEADLINE"))?;
+    loop {
+        let result = std::fs::OpenOptions::new()
+            .write(true).custom_flags(libc::O_NONBLOCK).open(path);
+        match result {
+            Ok(writer) => {
+                // Nonblocking is only for admission. The disk worker retains
+                // ordinary write_all semantics after the reader is present.
+                let fd = writer.as_raw_fd();
+                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                return Ok(Box::new(StreamExtent::new(writer)));
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_TIMEOUT"));
+                }
+                std::thread::sleep(left.min(std::time::Duration::from_millis(10)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 /// Synchronous archive codec. The native scheduler must call this from its
 /// dedicated disk worker, never from a GPU progress thread.
