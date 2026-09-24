@@ -114,6 +114,16 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
 fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
     use mgbfs_cuda::{ffi::*, native_owner::*};
     use std::ffi::c_void;
+    extern "C" {
+        fn mgbfs_owner_global_fatal_gate(
+            comm: *mut c_void,
+            ring: *mut Ring,
+            owner: *mut Control,
+            send: *mut u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
+    }
 
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
@@ -138,9 +148,11 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                 let mut stream = std::ptr::null_mut();
                 assert_eq!(cudaStreamCreateWithFlags(&mut stream, 1), 0);
                 let mut ring_gpu: *mut c_void = std::ptr::null_mut();
+                let mut owner_gpu: *mut c_void = std::ptr::null_mut();
                 let mut send: *mut c_void = std::ptr::null_mut();
                 let mut receive: *mut c_void = std::ptr::null_mut();
                 assert_eq!(cudaMalloc(&mut ring_gpu, std::mem::size_of::<Ring>()), 0);
+                assert_eq!(cudaMalloc(&mut owner_gpu, std::mem::size_of::<Control>()), 0);
                 assert_eq!(cudaMalloc(&mut send, 4), 0);
                 assert_eq!(cudaMalloc(&mut receive, 4), 0);
                 let ring = Ring {
@@ -156,6 +168,8 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     cudaMemcpy(ring_gpu, (&ring as *const Ring).cast(), 64, 1),
                     0
                 );
+                let owner = Control::default();
+                assert_eq!(cudaMemcpy(owner_gpu, (&owner as *const Control).cast(), 64, 1), 0);
                 let extent = Extent {
                     sequence: 6,
                     begin: 6,
@@ -169,17 +183,13 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     mgbfs_state_retire_dense_prefix_value(ring_gpu.cast(), extent, 3, stream),
                     0
                 );
-                assert_eq!(
-                    mgbfs_state_ring_fatal_vote_word(ring_gpu.cast(), send.cast(), stream),
-                    0
-                );
-                assert_eq!(
-                    mgbfs_nccl_all_reduce_max_u32(comm, send.cast(), receive.cast(), stream),
-                    0
-                );
+                assert_eq!(mgbfs_owner_global_fatal_gate(
+                    comm, ring_gpu.cast(), owner_gpu.cast(), send.cast(), receive.cast(), stream
+                ), 0);
                 assert_eq!(cudaStreamSynchronize(stream), 0);
                 let mut group_fatal = 0u32;
                 let mut local = Ring::default();
+                let mut local_owner = Control::default();
                 assert_eq!(
                     cudaMemcpy((&mut group_fatal as *mut u32).cast(), receive, 4, 2),
                     0
@@ -188,12 +198,14 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     cudaMemcpy((&mut local as *mut Ring).cast(), ring_gpu, 64, 2),
                     0
                 );
+                assert_eq!(cudaMemcpy((&mut local_owner as *mut Control).cast(), owner_gpu, 64, 2), 0);
                 assert_eq!(cudaFree(receive), 0);
                 assert_eq!(cudaFree(send), 0);
                 assert_eq!(cudaFree(ring_gpu), 0);
+                assert_eq!(cudaFree(owner_gpu), 0);
                 assert_eq!(cudaStreamDestroy(stream), 0);
                 mgbfs_nccl_destroy(comm);
-                (group_fatal, local.fatal, local.head)
+                (group_fatal, local.fatal, local_owner.error, local.head)
             })
         })
         .collect();
@@ -201,7 +213,7 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect();
-    assert_eq!(results, [(1, 17, 6), (1, 0, 9)]);
+    assert_eq!(results, [(1, 17, 22, 6), (1, 22, 22, 9)]);
 }
 impl Extent for TestDisk {
     fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
