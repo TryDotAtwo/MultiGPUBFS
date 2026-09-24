@@ -30,6 +30,16 @@ impl Extent for SlowDisk {
 #[test]
 #[ignore = "requires two physical GPUs; injects one-rank archive slot exhaustion"]
 fn archive_slot_failure_votes_group_fatal_before_exchange() {
+    archive_slot_failure_fixture(mgbfs_core::config::ReferenceTransport::HostSizedNccl);
+}
+
+#[test]
+#[ignore = "requires two physical P2P GPUs and NCCL LSA; injects one-rank archive slot exhaustion"]
+fn archive_slot_failure_votes_group_fatal_before_lsa_exchange() {
+    archive_slot_failure_fixture(mgbfs_core::config::ReferenceTransport::Lsa);
+}
+
+fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTransport) {
     let graph = MatrixGroup::symmetric_permutation_matrices(4).unwrap();
     let mut id = [0u8; 128];
     assert_eq!(
@@ -52,19 +62,21 @@ fn archive_slot_failure_votes_group_fatal_before_exchange() {
                     job_buckets: 2,
                     bucket_capacity: 32,
                     prededup: false,
-                    transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
+                    transport,
                     generation_variant: 1,
                     untouched_vram_reserve: 1 << 30,
                 };
-                let mut bfs = DistributedNativeBfs::new_reference_with_owner(
-                    &graph,
-                    [7; 16],
-                    id,
-                    cfg,
-                    None,
-                    mgbfs_core::config::OwnerBackend::CubSortMerge,
-                    256,
-                )
+                let mut bfs = if transport == mgbfs_core::config::ReferenceTransport::Lsa {
+                    DistributedNativeBfs::new_library_reference_with_owner(
+                        &graph, [7; 16], id, cfg, None, 64 << 20, false,
+                        mgbfs_core::config::ReferenceOwner::CucoRank,
+                    )
+                } else {
+                    DistributedNativeBfs::new_reference_with_owner(
+                        &graph, [7; 16], id, cfg, None,
+                        mgbfs_core::config::OwnerBackend::CubSortMerge, 256,
+                    )
+                }
                 .unwrap();
                 let disk = Arc::new(Mutex::new(Vec::new()));
                 let mut archive = PinnedArchive::new(
@@ -95,7 +107,7 @@ fn archive_slot_failure_votes_group_fatal_before_exchange() {
         "{}",
         errors[0]
     );
-    assert_eq!(errors[1], "REMOTE_ARCHIVE_FATAL");
+    assert_eq!(errors[1], "REMOTE_ARCHIVE_FATAL", "{transport:?}");
 }
 
 #[test]
