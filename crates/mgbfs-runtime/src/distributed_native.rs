@@ -992,11 +992,11 @@ impl DistributedNativeBfs {
             owned_memory.total(),
             cfg.untouched_vram_reserve,
         )?;
+        let setup_send = Buffer::new(4, raw)?;
+        let setup_recv = Buffer::new(4, raw)?;
         let lsa_view = if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
             // Reserve the control words before the potentially large symmetric
             // allocation, so an OOM in prepare can still be voted by all ranks.
-            let setup_send = Buffer::new(4, raw)?;
-            let setup_recv = Buffer::new(4, raw)?;
             let prepared = check(unsafe { mgbfs_nccl_lsa_prepare(
                 comm.0, candidates, packet_stride as u32,
                 error.as_mut_ptr(), error.len(),
@@ -1023,6 +1023,7 @@ impl DistributedNativeBfs {
         } else {
             None
         };
+        let local_result = (|| -> Result<Self> {
         let contract = GemmHash::from_seed(width, seed)?;
         let limbs = contract.limbs();
         let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();
@@ -1216,7 +1217,9 @@ impl DistributedNativeBfs {
             archive_stream,
             archive_done,
             archived_depth: None,
-            comm,
+            // NCCL ownership transfers only after every rank accepts the
+            // complete local allocation/owner setup below.
+            comm: Comm(std::ptr::null_mut(), false),
             lsa_view,
             generate,
             hash,
@@ -1375,7 +1378,14 @@ impl DistributedNativeBfs {
             }
             result.library_owner = Some(library);
         }
-        result.all_max(0)?;
+        Ok(result)
+        })();
+        if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                              local_result.is_err())? {
+            return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
+        }
+        let mut result = local_result?;
+        result.comm = comm;
         result.comm.1 = false;
         Ok(result)
     }
