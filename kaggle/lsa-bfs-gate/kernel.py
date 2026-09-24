@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "b1d65a746c9d6b0659ee6bab3c012b21dcdc1e3a"
+SOURCE = "70a848e7363a8bcf3bf76738edc2219da779cc08"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "boundary_gate"
 
@@ -64,7 +64,7 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        if MODE != "device_fatal_gate" and any(
+        if MODE not in ("device_fatal_gate", "boundary_gate") and any(
                 row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
             report["status"] = "UNSUPPORTED_HOST"
             return
@@ -223,6 +223,10 @@ def main():
                 "boundary-cpu-tests", timeout=900)
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "boundary-cli-build", timeout=1800)
+            if any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
+                report["boundary_runs"] = {"linux_archive_and_protocol_cpu_tests": "PASS"}
+                report["status"] = "UNSUPPORTED_HOST_AFTER_CPU"
+                return
             cli = str(source / "target/release/mgbfs")
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
                        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
