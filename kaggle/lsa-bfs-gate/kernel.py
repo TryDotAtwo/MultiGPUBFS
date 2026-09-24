@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "022f0997016281b608162c50f6cad1ab1674fa6a"
+SOURCE = "b1d65a746c9d6b0659ee6bab3c012b21dcdc1e3a"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "boundary_gate"
 
@@ -219,7 +219,7 @@ def main():
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
         if MODE == "boundary_gate":
             run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
-                 "--test", "bootstrap", "--test", "group_commit"],
+                 "--test", "bootstrap", "--test", "group_commit", "--test", "archive"],
                 "boundary-cpu-tests", timeout=900)
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "boundary-cli-build", timeout=1800)
