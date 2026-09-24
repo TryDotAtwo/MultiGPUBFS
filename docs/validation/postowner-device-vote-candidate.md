@@ -39,13 +39,16 @@ T4s. Each fault test ended on both ranks in about 1.3 seconds. Raw test logs:
 blocking protocol for these fixtures; it does not verify every API error,
 large-frontier termination latency, or an asynchronous owner pipeline.
 
-The successful capacity test does **not** establish prompt termination. The
-host still runs the fixed `scheduled_rounds` loop after a device fatal and
-learns the sticky error at `FinalizeDepth`. After the group vote, later owner
-jobs cannot commit, but work already queued in the failing round may have
-committed and generation, route, exchange, and archive submission may continue.
-This violates the intended immediate/low-overhead fail-fast behavior on a
-large frontier. For scale, existing 8-rank data at batch 262,144 had a peak
+Under the rejected GPU-only candidate, the successful capacity test did
+**not** establish prompt termination: the host could continue the fixed
+`scheduled_rounds` loop after a device fatal and learn the sticky error only
+at `FinalizeDepth`. Later owner jobs could not commit, but generation, route,
+exchange and archive submission could continue. The restored blocking vote
+at `6077bf8` reads the group result after each owner batch and returns from
+that loop when nonzero; the v33 small-graph fault fixtures exercised this.
+Large-frontier failure latency is still unmeasured, and any future removal of
+that host readback needs a bounded cancellation protocol. For scale, existing
+8-rank data at batch 262,144 had a peak
 of 177 scheduled rounds on S13 (depth 54) and 1,261 on LRX15r4 (depth 68).
 An error in the first round could leave 176 or 1,260 rounds of the same depth
 to issue. These are structural upper bounds from different runs, **not**

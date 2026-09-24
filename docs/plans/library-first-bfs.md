@@ -1043,3 +1043,37 @@ Search remains about 48%/54% slower than native, so acceptance is still NOT
 met. This separate session is not a paired old/new cuco causal speedup test.
 Full VRAM is 50 ms sampling, not a guaranteed peak. No fresh sanitizers in
 v8; main v54 remains running. Evidence: `test_results/library-capacity-v8/`.
+
+### Shard calibration: 16 and 4
+
+Capacity v9 (16 shards) and v10 (4 shards) each completed PASS on f5b52c9.
+Each has 20 unprofiled samples and 30 VERIFIED rank archives, identical 46
+layer entries totaling 3,628,800 S10 states. Geometry applies to BOTH native
+013ed5c and cuco; 256 buckets, 96 MiB library pool/rank, five repetitions.
+
+| Shards | Backend | T4s | Search s | Durable s | Sampled MiB/rank |
+|---|---|---:|---:|---:|---|
+| 16 | cuco | 1 | 0.649228 | 4.712442 | 901 |
+| 16 | native | 1 | 1.055284 | 4.811729 | 835 |
+| 16 | cuco | 2 | 0.659897 | 3.785939 | 529,529 |
+| 16 | native | 2 | 0.852870 | 3.823809 | 457,457 |
+| 4 | cuco | 1 | 0.421478 | 4.771085 | 901 |
+| 4 | native | 1 | 1.029791 | 4.771606 | 835 |
+| 4 | cuco | 2 | 0.479693 | 3.818518 | 529,529 |
+| 4 | native | 2 | 0.897227 | 3.981189 | 457,457 |
+
+These are separate sessions, not paired shard-count causality tests. Within
+each session cuco wins search, but still uses more full VRAM. Archive-inclusive
+completion differs much less. No new sanitizers in v9/v10. Main v54 separately
+passed at 64 shards: inspected 20 full-BFS/Rust sanitizer logs, all four tools,
+zero errors (racecheck zero warnings); this does not certify 4/16-shard sanitizer
+coverage. Main v55 (8 shards) subsequently completed: its full 1/2-T4
+plain/four-sanitizer fixtures passed, with zero reported sanitizer errors and
+zero racecheck warnings. Its five-repeat S10 screen and per-rank archive
+verification are recorded in `docs/validation/library-owner-t4-v55.md`.
+Neither measured indexed-cuCO backend is device-driven: CPU count/control
+waits remain.
+
+Evidence: `test_results/library-owner-v54/`, `test_results/library-capacity-v9/`,
+`test_results/library-capacity-v10/`. Device-driven implementation contract is
+in `docs/plans/device-driven-library-owner.md`; that document is not code.

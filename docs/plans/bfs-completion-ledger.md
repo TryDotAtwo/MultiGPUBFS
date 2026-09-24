@@ -755,9 +755,11 @@ no-fault and one-rank capacity fixtures but, after host-fault injection at
 `6077bf8` restored the blocking vote. The corrected v33 gate at `db3e81c`
 passed the full DENSE LSA oracle/archive fixture plus one-rank capacity and
 host-owner-error tests, both terminating the two-rank group in about 1.3 s.
-The host vote remains necessary for this tested protocol. Device failures
-can still leave the fixed remaining parent rounds of the depth to execute;
-bounded fatal cancellation and the whole owner-to-retirement DAG remain open.
+The host vote remains necessary for this tested protocol and exits the
+current batch loop on a nonzero result. The rejected GPU-only candidate could
+leave the fixed remaining parent rounds of the depth to execute; bounded
+cancellation would be required before removing the blocking vote. The whole
+owner-to-retirement DAG remains open.
 See `docs/validation/postowner-device-vote-candidate.md`.
 
 At `3fffcbc`, HostSized NCCL peer-count publication moved from blocking
