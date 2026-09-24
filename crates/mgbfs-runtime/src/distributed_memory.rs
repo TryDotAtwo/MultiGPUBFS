@@ -154,6 +154,25 @@ pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> 
     Ok(result)
 }
 
+/// LSA owns the receive count/hash/state planes in its symmetric slot;
+/// the host-sized NCCL buffers must not be allocated a second time.
+pub fn library_shared_buffers_for_transport(
+    s: SharedBufferShape, lsa: bool,
+) -> Result<AllocationLedger> {
+    let base = library_shared_buffers(s)?;
+    if !lsa {
+        return Ok(base);
+    }
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in base.allocations {
+        if ["recv_states", "recv_hashes", "recv_count"].contains(&allocation.name.as_str()) {
+            continue;
+        }
+        result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
+    }
+    Ok(result)
+}
+
 /// Append real queried allocations without substituting architectural estimates.
 pub fn append_query(
     ledger: &mut AllocationLedger,

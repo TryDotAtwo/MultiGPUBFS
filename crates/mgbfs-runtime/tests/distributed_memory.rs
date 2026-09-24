@@ -21,6 +21,19 @@ fn lsa_slot_budget_matches_wire_layout_and_rejects_overflow() {
 }
 
 #[test]
+fn lsa_library_budget_does_not_reserve_unused_legacy_receive_banks() {
+    use mgbfs_runtime::distributed_memory::library_shared_buffers_for_transport;
+    let host = library_shared_buffers_for_transport(shape(), false).unwrap();
+    let lsa = library_shared_buffers_for_transport(shape(), true).unwrap();
+    for name in ["recv_states", "recv_hashes", "recv_count"] {
+        assert!(host.allocations.iter().any(|a| a.name == name), "{name}");
+        assert!(!lsa.allocations.iter().any(|a| a.name == name), "{name}");
+    }
+    // 21 rows x 16 bytes occupies two 256-byte allocations; count one.
+    assert_eq!(host.total() - lsa.total(), 512 + 512 + 256);
+}
+
+#[test]
 fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     use mgbfs_runtime::distributed_memory::library_shared_buffers;
     let mut s = shape();

@@ -496,9 +496,9 @@ pub struct DistributedNativeBfs {
     owner_window: Option<Buffer>,
     packed_states: Buffer,
     owner_counts: Buffer,
-    recv_states: Buffer,
-    recv_hashes: Buffer,
-    recv_count: Buffer,
+    recv_states: Option<Buffer>,
+    recv_hashes: Option<Buffer>,
+    recv_count: Option<Buffer>,
     identity_refs: Buffer,
     directory: Buffer,
     fatal: Buffer,
@@ -832,12 +832,7 @@ impl DistributedNativeBfs {
         } else {
             stride
         };
-        let shared_plan = if library_pool_bytes.is_some() {
-            crate::distributed_memory::library_shared_buffers
-        } else {
-            crate::distributed_memory::shared_buffers
-        };
-        let shared_memory = shared_plan(crate::distributed_memory::SharedBufferShape {
+        let shared_shape = crate::distributed_memory::SharedBufferShape {
             state_stride: stride as u64,
             packet_stride: packet_stride as u64,
             batch: cfg.batch.into(),
@@ -848,7 +843,15 @@ impl DistributedNativeBfs {
             bucket_capacity: cfg.bucket_capacity.into(),
             job_buckets: cfg.job_buckets.into(),
             archive_width: permutation_n.unwrap_or(1).into(),
-        })?;
+        };
+        let shared_memory = if library_pool_bytes.is_some() {
+            crate::distributed_memory::library_shared_buffers_for_transport(
+                shared_shape,
+                cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa,
+            )?
+        } else {
+            crate::distributed_memory::shared_buffers(shared_shape)?
+        };
         let mut owned_memory = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
         for a in &shared_memory.allocations {
             owned_memory.add(&format!("shared.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -1218,9 +1221,12 @@ impl DistributedNativeBfs {
             owner_window: if library_pool_bytes.is_some() { Some(b("owner_window")?) } else { None },
             packed_states: b("packed_states")?,
             owner_counts: b("owner_counts")?,
-            recv_states: b("recv_states")?,
-            recv_hashes: b("recv_hashes")?,
-            recv_count: b("recv_count")?,
+            recv_states: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                .then(|| b("recv_states")).transpose()?,
+            recv_hashes: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                .then(|| b("recv_hashes")).transpose()?,
+            recv_count: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                .then(|| b("recv_count")).transpose()?,
             identity_refs,
             directory,
             fatal,
@@ -2011,13 +2017,14 @@ impl DistributedNativeBfs {
                         self.collective_send.ptr,
                         4,
                         self.cfg.rank ^ round,
-                        self.recv_count.ptr,
+                        self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
                         4,
                         s,
                     )
                 })?;
                 check(unsafe { cudaStreamSynchronize(s) })?;
-                let received = self.recv_count.one::<u32>()?;
+                let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                    .one::<u32>()?;
                 if self.all_max(u32::from(received > h.capacity))? != 0 {
                     return Err("HASH_FIRST_REMOTE_REQUEST_CAPACITY".into());
                 }
@@ -2030,7 +2037,8 @@ impl DistributedNativeBfs {
                             capacity: h.capacity,
                             outgoing_count: count,
                             incoming_count: received,
-                            incoming_count_device: self.recv_count.ptr.cast(),
+                            incoming_count_device: self.recv_count.as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),
                             outgoing_requests: h.sorted_requests.ptr.cast(),
                             incoming_requests: h.received_requests.ptr.cast(),
                             outgoing_responses: h.outgoing_responses.ptr.cast(),
@@ -2411,13 +2419,14 @@ impl DistributedNativeBfs {
                             self.collective_send.ptr,
                             4,
                             exchange_peer,
-                            self.recv_count.ptr,
+                            self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
                             4,
                             communication,
                         )
                     })?;
                     check(unsafe { cudaStreamSynchronize(communication) })?;
-                    let received = self.recv_count.one::<u32>()?;
+                    let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                        .one::<u32>()?;
                     if received > self.candidates {
                         return Err("EXCHANGE_CAPACITY".into());
                     }
@@ -2427,7 +2436,7 @@ impl DistributedNativeBfs {
                             self.sorted_hashes.at(remote_offset as usize * 16),
                             u64::from(remote_rows) * 16,
                             exchange_peer,
-                            self.recv_hashes.ptr,
+                            self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
                             u64::from(received) * 16,
                             communication,
                         )
@@ -2439,7 +2448,7 @@ impl DistributedNativeBfs {
                                 .at(remote_offset as usize * packet_stride),
                             u64::from(remote_rows) * packet_stride as u64,
                             exchange_peer,
-                            self.recv_states.ptr,
+                            self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
                             u64::from(received) * packet_stride as u64,
                             communication,
                         )
@@ -2509,6 +2518,14 @@ impl DistributedNativeBfs {
                 let local_hashes: *const c_void = unsafe {
                     self.sorted_hashes.at(local_offset as usize * 16)
                 };
+                let (remote_states, remote_hashes, remote_count):
+                    (*const u8, *const c_void, *const u32) = if let Some(view) = lsa {
+                        (view.states, view.hashes, view.count)
+                    } else {
+                        (self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),
+                         self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                         self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast())
+                    };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
                 #[cfg(feature = "library-owner")]
@@ -2527,9 +2544,7 @@ impl DistributedNativeBfs {
                     ),
                     (
                         1,
-                        (lsa.map_or(self.recv_states.ptr as *const u8, |view| view.states),
-                         lsa.map_or(self.recv_hashes.ptr as *const c_void, |view| view.hashes),
-                         received),
+                        (remote_states, remote_hashes, received),
                     ),
                     |(group, (states, hashes, rows))| {
                         #[cfg(feature = "library-owner")]
@@ -2545,11 +2560,9 @@ impl DistributedNativeBfs {
                                  unsafe { window.at(4) } as *const u32,
                                  self.route_count.ptr as *const u32)
                             } else {
-                                (lsa.map_or(self.recv_states.ptr as *const u8, |view| view.states),
-                                 lsa.map_or(self.recv_hashes.ptr as *const c_void, |view| view.hashes),
+                                (remote_states, remote_hashes,
                                  unsafe { window.at(8) } as *const u32,
-                                 lsa.map_or(self.recv_count.ptr as *const u32, |view| view.count),
-                                 lsa.map_or(self.recv_count.ptr as *const u32, |view| view.count))
+                                 remote_count, remote_count)
                             };
                             return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows);
                         }
