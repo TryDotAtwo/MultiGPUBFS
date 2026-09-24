@@ -216,7 +216,7 @@ fn admit_device_group(
     let send = Buffer::new(4, stream)?;
     let recv = Buffer::new(4, stream)?;
     let vote = |value: u32| -> Result<u32> {
-        send.put(&[value])?;
+        send.put_u32(value)?;
         check(unsafe {
             mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream)
         })?;
@@ -239,7 +239,7 @@ fn admit_device_group(
 }
 fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
                       send: &Buffer, recv: &Buffer, failed: bool) -> Result<bool> {
-    send.put(&[u32::from(failed)])?;
+    send.put_u32(u32::from(failed))?;
     check(unsafe { mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream) })?;
     check(unsafe { cudaStreamSynchronize(stream) })?;
     Ok(recv.one::<u32>()? != 0)
@@ -266,6 +266,14 @@ impl Buffer {
             )
         })?;
         check(unsafe { cudaStreamSynchronize(self.stream) })
+    }
+    fn put_u32(&self, value: u32) -> Result<()> {
+        if self.bytes < std::mem::size_of::<u32>() {
+            return Err("UPLOAD_CAPACITY".into());
+        }
+        // The scalar is a launch argument, so no host slice needs to remain
+        // alive while the stream consumes it. Its GPU consumers stay ordered.
+        check(unsafe { mgbfs_device_store_u32(self.ptr.cast(), value, self.stream) })
     }
     fn read<T: Copy>(&self, x: &mut [T]) -> Result<()> {
         if std::mem::size_of_val(x) > self.bytes {
@@ -1126,7 +1134,7 @@ impl DistributedNativeBfs {
         let directory = b("directory")?;
         let fatal = b("fatal")?;
         let route_count = b("route_count")?;
-        route_count.put(&[current_count])?;
+        route_count.put_u32(current_count)?;
         check(unsafe {
             rank_directory(
                 cfg.world,
@@ -1407,7 +1415,7 @@ impl DistributedNativeBfs {
         Ok(sequence)
     }
     fn all_max(&self, value: u32) -> Result<u32> {
-        self.collective_send.put(&[value])?;
+        self.collective_send.put_u32(value)?;
         check(unsafe {
             mgbfs_nccl_all_reduce_max_u32(
                 self.comm.0,
@@ -1442,7 +1450,7 @@ impl DistributedNativeBfs {
         if host_failed {
             // A host API failure is already terminal. The upload may block on
             // this error path; the ordinary path remains device-produced.
-            self.collective_send.put(&[1u32])?;
+            self.collective_send.put_u32(1)?;
         } else {
             check(unsafe {
                 mgbfs_state_ring_fatal_vote_word(
@@ -1543,7 +1551,7 @@ impl DistributedNativeBfs {
             return Err("RANK_OWNER_REQUIRES_DEVICE_WINDOW".into());
         }
         let s = self.stream.0;
-        self.route_count.put(&[rows])?;
+        self.route_count.put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
@@ -1757,7 +1765,7 @@ impl DistributedNativeBfs {
             owner.selected.ptr,
         );
         let s = self.stream.0;
-        self.route_count.put(&[rows])?;
+        self.route_count.put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
@@ -1987,7 +1995,7 @@ impl DistributedNativeBfs {
         // for one peer at a time. Keep parents alive until all rounds finish.
         for group in usize::from(round > 1)..self.cfg.world.min(2) as usize {
             let count = h.pending_counts[group];
-            h.count.put(&[count])?;
+            h.count.put_u32(count)?;
             check(unsafe {
                 mgbfs_materialize_sort_origins(
                     h.materialize.0,
@@ -2031,10 +2039,10 @@ impl DistributedNativeBfs {
                 })?;
                 check(unsafe { cudaStreamSynchronize(s) })?;
                 let fatal = self.all_max(h.local_fatal.one::<u32>()?)?;
-                h.group_fatal.put(&[fatal])?;
+                h.group_fatal.put_u32(fatal)?;
                 h.outgoing_responses.ptr
             } else {
-                self.collective_send.put(&[count])?;
+                self.collective_send.put_u32(count)?;
                 check(unsafe {
                     mgbfs_nccl_send_recv(
                         self.comm.0,
@@ -2269,7 +2277,7 @@ impl DistributedNativeBfs {
                 }
             }
             if let Some(h) = self.hash_first.as_ref() {
-                h.parent_count.put(&[parents])?;
+                h.parent_count.put_u32(parents)?;
                 let (begin, physical) = parent
                     .map(|e| (e.sequence + extent_offset, e.begin + extent_offset))
                     .unwrap_or((0, 0));
@@ -2469,6 +2477,9 @@ impl DistributedNativeBfs {
                     // Pack/count publication has already completed on s. These
                     // immutable send ranges remain live until the remote wait and
                     // the batch's failure collective have completed.
+                    // This control is consumed on exchange_stream, while the
+                    // buffer's store stream is s. Keep the cross-stream drain
+                    // until a dedicated publication event replaces it.
                     self.collective_send.put(&[remote_rows])?;
                     check(unsafe {
                         mgbfs_nccl_send_recv(
@@ -2772,6 +2783,8 @@ impl DistributedNativeBfs {
             };
             library.closed = true;
             std::mem::swap(&mut library.previous, &mut library.current);
+            // Finalization reads this word through the synchronous host
+            // snapshot immediately below, outside the producer stream.
             self.route_count.put(&[count])?;
         }
         if self.fatal.one::<u32>()? != 0 {

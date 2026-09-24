@@ -375,6 +375,11 @@ pub mod ffi {
             owner_counts: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_device_store_u32(
+            destination: *mut u32,
+            value: u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_owner_window_from_counts(
             world: u32,
             packed_capacity: u32,

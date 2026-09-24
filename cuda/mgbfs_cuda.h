@@ -199,6 +199,8 @@ int mgbfs_exchange_pack_device_n(uint32_t world,uint32_t stride,uint32_t capacit
     const uint8_t* source_states,uint32_t source_count,const void* sorted_hashes,
     const uint64_t* sorted_refs,const uint32_t* count,uint8_t* packed_states,
     uint32_t* owner_counts,void* stream);
+/* Stream-ordered scalar control upload without a borrowed host buffer. */
+int mgbfs_device_store_u32(uint32_t* destination,uint32_t value,void* stream);
 /* Device-only route window for a logical owner. Counts must sum to the
  * route's device-resident total. On mismatch or overflow, rows is
  * UINT32_MAX; consumers must treat that as fatal, never as data. */

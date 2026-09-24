@@ -13,6 +13,12 @@ int main(){
   ck(cudaMalloc(&counts,36));ck(cudaMalloc(&refs,48));ck(cudaMalloc(&n,4));
   ck(cudaMalloc(&fatal,4));ck(cudaMalloc(&dir,4*sizeof(MgbfsOwnerRange)));
   ck(cudaMalloc(&window_begin,4));ck(cudaMalloc(&window_rows,4));
+  require(mgbfs_device_store_u32(nullptr,1,s)!=0);
+  require(!mgbfs_device_store_u32(n,0,s));
+  require(!mgbfs_device_store_u32(n,UINT32_MAX,s));
+  uint32_t stored=0;
+  ck(cudaMemcpyAsync(&stored,n,4,cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(stored==UINT32_MAX);
   std::array<uint32_t,24> input{};
   const uint32_t high[6]={0,0x1fffffff,0x40000000,0xa0000000,0xe0000000,0xffffffff};
   for(unsigned i=0;i<6;++i)input[4*i+3]=high[i];
