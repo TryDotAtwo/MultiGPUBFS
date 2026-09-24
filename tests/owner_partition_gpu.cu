@@ -113,6 +113,21 @@ int main(){
   uint32_t six=6;ck(cudaMemcpyAsync(n,&six,4,cudaMemcpyHostToDevice,s));ck(cudaMemsetAsync(fatal,0,4,s));
   require(!mgbfs_owner_bucket_directory_n(keys,n,6,4,0,8,dir,fatal,s));
   ck(cudaMemcpyAsync(&marker,fatal,4,cudaMemcpyDeviceToHost,s));ck(cudaStreamSynchronize(s));require(marker==32);
+  MgbfsStateRingControl* ring;MgbfsOwnerControl* owner_control;
+  ck(cudaMalloc(&ring,sizeof(*ring)));ck(cudaMalloc(&owner_control,sizeof(*owner_control)));
+  ck(cudaMemsetAsync(ring,0,sizeof(*ring),s));ck(cudaMemsetAsync(owner_control,0,sizeof(*owner_control),s));
+  ck(cudaMemsetAsync(fatal,0,4,s));
+  require(!mgbfs_owner_import_transport_fatal(fatal,ring,owner_control,s));
+  MgbfsStateRingControl ring_result{};MgbfsOwnerControl owner_result{};
+  ck(cudaMemcpyAsync(&ring_result,ring,sizeof(ring_result),cudaMemcpyDeviceToHost,s));
+  ck(cudaMemcpyAsync(&owner_result,owner_control,sizeof(owner_result),cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(!ring_result.fatal&&!owner_result.error);
+  uint32_t one=1;ck(cudaMemcpyAsync(fatal,&one,4,cudaMemcpyHostToDevice,s));
+  require(!mgbfs_owner_import_transport_fatal(fatal,ring,owner_control,s));
+  ck(cudaMemcpyAsync(&ring_result,ring,sizeof(ring_result),cudaMemcpyDeviceToHost,s));
+  ck(cudaMemcpyAsync(&owner_result,owner_control,sizeof(owner_result),cudaMemcpyDeviceToHost,s));
+  ck(cudaStreamSynchronize(s));require(ring_result.fatal==22&&owner_result.error==22);
+  ck(cudaFree(owner_control));ck(cudaFree(ring));
   for(void* p:{(void*)keys,(void*)states,(void*)packed,(void*)counts,(void*)refs,(void*)n,(void*)fatal,(void*)dir,(void*)window_begin,(void*)window_rows})ck(cudaFree(p));
   ck(cudaStreamDestroy(s));std::puts("OWNER_PARTITION_GPU_PASS");
 }
