@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "b1e260fce94b63f9b73c6b372b04753f9eda31cc"
+SOURCE = "8c9e022e09ccf30a3f5fe4ba7ff7a90d4642e6a0"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "device_fatal_gate"
 
