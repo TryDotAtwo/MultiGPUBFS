@@ -2323,19 +2323,28 @@ impl DistributedNativeBfs {
                 })?;
             }
             check(unsafe { cudaStreamSynchronize(s) })?;
-            let routed = self.route_count.one::<u32>()?;
-            let mut owner_counts = [0u32; 8];
-            self.owner_counts
-                .read(&mut owner_counts[..self.cfg.world as usize])?;
-            if crate::route_count::packed_count(
-                candidate_count,
-                &owner_counts[..self.cfg.world as usize],
-            )? != routed
-            {
-                return Err("EXCHANGE_COUNT_MISMATCH".into());
-            }
+            let host_ranges = if self.lsa_view.is_none() {
+                let routed = self.route_count.one::<u32>()?;
+                let mut owner_counts = [0u32; 8];
+                self.owner_counts.read(&mut owner_counts[..self.cfg.world as usize])?;
+                if crate::route_count::packed_count(
+                    candidate_count,
+                    &owner_counts[..self.cfg.world as usize],
+                )? != routed {
+                    return Err("EXCHANGE_COUNT_MISMATCH".into());
+                }
+                Some((routed, crate::route_count::packed_rank_ranges(
+                    self.candidates,
+                    &owner_counts[..self.cfg.world as usize],
+                    &self.cfg.logical_owner_to_rank[..self.cfg.world as usize],
+                )?))
+            } else {
+                // LSA consumes the device counts and checks their sum/capacity
+                // before copying. No D2H count is needed for this route.
+                None
+            };
             if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={routed}", self.cfg.rank, self.depth);
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={:?}", self.cfg.rank, self.depth, host_ranges.as_ref().map(|(rows, _)| rows));
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
             }
             if let Some(sequence) = generation {
@@ -2357,12 +2366,8 @@ impl DistributedNativeBfs {
                 }
             }
             let world = self.cfg.world;
-            let ranges = crate::route_count::packed_rank_ranges(
-                self.candidates,
-                &owner_counts[..world as usize],
-                &self.cfg.logical_owner_to_rank[..world as usize],
-            )?;
-            let (local_offset, local_rows) = ranges[self.cfg.rank as usize];
+            let (local_offset, local_rows) = host_ranges.as_ref()
+                .map_or((0, 0), |(_, ranges)| ranges[self.cfg.rank as usize]);
             // The same bounded receive slot serves every XOR peer round.
             // All ranks enter even when their parent batch or payload is empty.
             for round in 1..world.max(2) {
@@ -2374,7 +2379,8 @@ impl DistributedNativeBfs {
                 } else {
                     crate::route_count::exchange_peer(world, self.cfg.rank, round)?
                 };
-                let (remote_offset, remote_rows) = ranges[exchange_peer as usize];
+                let (remote_offset, remote_rows) = host_ranges.as_ref()
+                    .map_or((0, 0), |(_, ranges)| ranges[exchange_peer as usize]);
                 let lsa = self.lsa_view;
                 let received = if self.cfg.world == 1 {
                     0

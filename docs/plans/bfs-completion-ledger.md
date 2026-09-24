@@ -646,3 +646,11 @@ retirement fault passed all four Compute Sanitizer tools with zero reported
 errors/hazards. This validates only that scoped owner-count change; host-sized
 NCCL payloads, collective control and retirement remain. See
 `docs/validation/rank-device-window-2xt4.md`.
+
+At `76c3337`, explicit NCCL 2.29.7 LSA was wired into the actual two-rank
+CUCO_RANK/DENSE exchange. The private two-T4 v1 full-state gate passed eight
+small-graph oracle/archive fixtures across owner maps and pre-dedup modes.
+See `docs/validation/lsa-full-bfs-2xt4.md`. This is an integration correctness
+result, not an end-to-end CPU-free, sanitizer-clean, memory-optimal or
+large-graph performance result. The next source revision removes the
+LSA-specific D2H route-count read; that revision still needs a physical gate.
