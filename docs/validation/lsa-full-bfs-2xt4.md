@@ -42,6 +42,17 @@ was additionally allocated alongside legacy receive buffers in v1. Revision
 test confirms 1,280 aligned bytes saved for its 21-candidate fixture; a
 physical VRAM/performance comparison on larger graphs is still pending.
 
+An unfiltered full-BFS `memcheck` attempt in private notebook v6 used the
+same `d95ef21` source on another P2P-capable two-T4 host. The plain eight
+fixtures passed first. `memcheck` then timed out after 360 s during setup;
+the raw log repeatedly reports NCCL initialization
+`cudaErrorNoKernelImageForDevice` (209) and NCCL `ncclMemAlloc`/`cuMemCreate`
+`CUDA_ERROR_NOT_PERMITTED` (800). It did **not** reach a reported BFS test
+result or an error summary. This is an unresolved instrumentation/setup gate,
+not a sanitizer pass or proof of a runtime memory defect. Do not repeat the
+same command unchanged; the next attempt needs per-rank phase markers and a
+focused kernel filter or a different NCCL setup hypothesis.
+
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build
 logs in the same directory; v2–v5 similarly under

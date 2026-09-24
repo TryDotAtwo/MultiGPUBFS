@@ -159,6 +159,19 @@ fn cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle() {
 }
 
 #[test]
+#[ignore = "requires a two-GPU NCCL 2.29+ LSA-capable P2P host"]
+fn cuco_rank_lsa_single_fixture_for_sanitizer() {
+    fixture(
+        false,
+        false,
+        &[0, 1],
+        mgbfs_core::config::ReferenceOwner::CucoRank,
+        false,
+        mgbfs_core::config::ReferenceTransport::Lsa,
+    );
+}
+
+#[test]
 #[ignore = "requires eight physical CUDA devices; run explicitly on 8-GPU host"]
 fn library_eight_rank_layers_and_archives_match_oracle() {
     for backend in [
@@ -208,6 +221,9 @@ fn fixture(
                 // A failed rank must not leave its peer blocked in a collective.
                 // The test executable is an isolated rank group owned by the runner.
                 std::panic::catch_unwind(|| {
+                    if transport == mgbfs_core::config::ReferenceTransport::Lsa {
+                        eprintln!("MGBFS_LSA_GATE rank={rank} phase=before_constructor");
+                    }
                     let cfg = DistributedConfig {
                         rank,
                         world,
@@ -248,6 +264,9 @@ fn fixture(
                             )
                         }
                         .unwrap();
+                    if transport == mgbfs_core::config::ReferenceTransport::Lsa {
+                        eprintln!("MGBFS_LSA_GATE rank={rank} phase=after_constructor");
+                    }
                     let bytes = Arc::new(Mutex::new(Vec::new()));
                     let mut archive = PinnedArchive::new(
                         TestDisk(bytes.clone()),
@@ -261,6 +280,9 @@ fn fixture(
                     let mut layers = Vec::new();
                     loop {
                         layers.push(bfs.snapshot().unwrap());
+                        if transport == mgbfs_core::config::ReferenceTransport::Lsa {
+                            eprintln!("MGBFS_LSA_GATE rank={rank} phase=advance depth={}", bfs.depth());
+                        }
                         if !bfs.advance_archived(&mut archive).unwrap() {
                             break;
                         }
