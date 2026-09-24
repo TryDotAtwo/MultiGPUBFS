@@ -289,8 +289,18 @@ fn cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle() {
 #[ignore = "requires two physical P2P GPUs; rank 0 exhausts owner capacity"]
 fn cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group() {
     let errors = lsa_one_rank_failure(false);
-    assert!(errors[0].contains("LIBRARY_RANK_DEPTH_FATAL"), "rank0: {}", errors[0]);
-    assert!(!errors[1].is_empty(), "rank1 must also fail");
+    assert!(
+        errors[0].contains("LIBRARY_RANK_DEPTH_FATAL")
+            || errors[0].contains("GROUP_OWNER_OR_PRE_OWNER_FATAL"),
+        "rank0: {}",
+        errors[0]
+    );
+    assert!(
+        errors[1].contains("GROUP_OWNER_OR_PRE_OWNER_FATAL")
+            || errors[1].contains("LIBRARY_RANK_DEPTH_FATAL"),
+        "rank1: {}",
+        errors[1]
+    );
 }
 
 #[cfg(debug_assertions)]
