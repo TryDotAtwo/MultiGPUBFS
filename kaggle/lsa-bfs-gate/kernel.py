@@ -291,6 +291,33 @@ def main():
                     or (fault_output / "group-complete.json").exists()):
                 raise RuntimeError("ASYMMETRIC_ARCHIVE_ADMISSION_GATE")
             report["boundary_runs"]["one_rank_archive_admission_failure"] = "PASS_GROUP_FATAL"
+            env.update(MGBFS_BENCH_CAPACITY="6", MGBFS_ARCHIVE_ROWS="1")
+            small = work / "boundary-small-layer-capacity"
+            small.mkdir()
+            small_output = logs / "boundary-small-layer-capacity"
+            command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                       "--nproc-per-node=2", "--no-python", cli, "bench", "--reference",
+                       "s4", "7", str(small / "bootstrap"), str(small / "archive"),
+                       str(small_output)]
+            run(command, "boundary-small-layer-capacity", timeout=300)
+            if not (small_output / "group-complete.json").is_file():
+                raise RuntimeError("ARCHIVE_LAYER_CAPACITY_GROUP_MARKER")
+            layer_counts = None
+            for rank in range(2):
+                row = json.loads((small_output / f"rank-{rank}.json").read_text())
+                if (row["status"] != "COMPLETE" or row["rank_capacity_records"] != 6
+                        or row["disk_reserved_bytes"] != 6304):
+                    raise RuntimeError("ARCHIVE_LAYER_CAPACITY_METADATA")
+                if layer_counts is None:
+                    layer_counts = [0] * len(row["local_layer_sizes"])
+                if len(layer_counts) != len(row["local_layer_sizes"]):
+                    raise RuntimeError("ARCHIVE_LAYER_CAPACITY_DEPTHS")
+                layer_counts = [a + b for a, b in zip(layer_counts, row["local_layer_sizes"])]
+                run([cli, "verify", str(small / f"archive-rank-{rank}.mgbfsar1")],
+                    f"boundary-small-layer-capacity-verify-{rank}", timeout=300)
+            if layer_counts != [1, 3, 5, 6, 5, 3, 1]:
+                raise RuntimeError("ARCHIVE_LAYER_CAPACITY_ORACLE")
+            report["boundary_runs"]["archive_total_exceeds_layer_capacity"] = "PASS"
             oracle = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",
                           "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
