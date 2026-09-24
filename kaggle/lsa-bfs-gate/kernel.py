@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "ae3dce9433508faae6730132b43b072eea84dd78"
+SOURCE = "d8df7db1e31662072e3609407efd88fb5b22ccbd"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "lsa_leaf_initcheck_debug"
+MODE = "nccl_window_isolation"
 
 
 def main():
@@ -109,6 +109,40 @@ def main():
         env["LD_LIBRARY_PATH"] = ":".join([str(nccl / "lib"), str(sdk / "lib"),
                                             *libdirs, env.get("LD_LIBRARY_PATH", "")])
         env["MGBFS_CUDART_LIB_DIR"] = str(sdk / "lib")
+        if MODE == "nccl_window_isolation":
+            binary = work / "nccl-window-isolation"
+            run([str(sdk / "bin/nvcc"), "-std=c++17", "-arch=sm_75",
+                 "-I" + str(nccl / "include"), "-L" + str(nccl / "lib"),
+                 str(source / "experiments/nccl_window_isolation.cu"),
+                 "-Wl,-rpath," + str(nccl / "lib"), "-lnccl", "-lcudart",
+                 "-o", str(binary)], "window-isolation-build", timeout=600)
+            report["scope"] = ("independent NCCL ncclMemAlloc and "
+                               "ncclCommWindowRegister on two physical T4s; no BFS code")
+            report["window_runs"] = {}
+            for label, command in (
+                ("plain", [str(binary)]),
+                ("initcheck", ["compute-sanitizer", "--tool", "initcheck",
+                               "--report-api-errors", "no", "--error-exitcode", "97",
+                               str(binary)]),
+            ):
+                try:
+                    completed = subprocess.run(command, cwd=source, env=env,
+                                               capture_output=True, text=True,
+                                               timeout=180)
+                    output = completed.stdout + completed.stderr
+                    (logs / ("window-" + label + ".log")).write_text(output)
+                    report["window_runs"][label] = {
+                        "returncode": completed.returncode,
+                        "registered_ranks": output.count("stage=window_register result=PASS"),
+                        "zero_sanitizer_errors": "ERROR SUMMARY: 0 errors" in output,
+                    }
+                except subprocess.TimeoutExpired as error:
+                    (logs / ("window-" + label + ".log")).write_text(
+                        str(error.stdout) + str(error.stderr))
+                    report["window_runs"][label] = {"status": "TIMEOUT"}
+                save()
+            report["status"] = "DIAGNOSTIC_COMPLETE"
+            return
         env["CARGO_HOME"] = str(work / "cargo")
         env["RUSTUP_HOME"] = str(work / "rustup")
         installer = work / "rustup-init.sh"
