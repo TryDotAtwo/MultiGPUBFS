@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "2b2e930e8ff974caceabe6bd57b68fa8fe63cc77"
+SOURCE = "74bc500d46138e09185f8fed4aa0b7935503e88a"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "rounds_gate"
 
@@ -244,7 +244,7 @@ def main():
                          str(binaries[0]),
                          "cuco_rank_lsa_single_fixture_for_sanitizer",
                          "--ignored", "--exact", "--nocapture", "--test-threads=1"],
-                        "lsa-single-fixture-filtered-memcheck", timeout=300)
+                        "lsa-single-fixture-filtered-memcheck", timeout=120)
         if "test result: ok. 1 passed; 0 failed" not in sanitized or \
                 "ERROR SUMMARY: 0 errors" not in sanitized:
             raise RuntimeError("BFS_MEMCHECK_RESULT")
