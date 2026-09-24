@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "6c74077988114da59043181bd3e49c6b984fe5c5"
+SOURCE = "7db00ef7076847fd2c73602836c4ee01ce4ecd67"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "rounds_gate"
+MODE = "archive_fault_gate"
 
 
 def main():
@@ -180,6 +180,17 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE == "archive_fault_gate":
+            result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                          "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                          "archive_slot_failure_votes_group_fatal_before_exchange",
+                          "--", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
+                         "archive-fault-gate", timeout=180)
+            if "test result: ok. 1 passed; 0 failed" not in result:
+                raise RuntimeError("ARCHIVE_FAULT_TEST_RESULT")
+            report["archive_fault_gate"] = "PASS"
+            report["status"] = "COMPLETE"
+            return
         result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                       "--features", "cuda,library-owner", "--test", "library_multi_gpu",
                       "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
