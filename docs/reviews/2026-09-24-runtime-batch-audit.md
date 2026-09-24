@@ -38,13 +38,43 @@ profile, a correctness proof, or a claim that every defect has been found.
    Benchmark aggregation must reject missing/tampered group markers for new
    rank records. The group marker currently hashes rank summaries, not every
    archive byte; archive integrity must be checked independently.
+6. **Setup errors are only partly coordinated.** Archive admission is agreed
+   before `DistributedNativeBfs::new_*`, but constructor allocation and NCCL
+   setup can still fail asymmetrically. `env_u32` also panics on malformed
+   values before rendezvous. A peer can then spend its bootstrap/NCCL timeout
+   waiting rather than receive a precise group failure. Separate pre-NCCL
+   validation/allocation from collective communicator setup, agree on the
+   former, and add a two-rank asymmetric constructor-failure fixture.
+7. **Archive reservation is not derived from the rank capacity.**
+   `reference_bench.rs` reserves `expected_states * (archive_width + 16)
+   + 64 MiB` independently on every rank. That can over-reserve disk by up to
+   the world size under equal partitioning, yet can under-reserve when an
+   explicit rank capacity exceeds the graph-order estimate. Derive a checked
+   per-rank archive bound from the accepted-state capacity and archive-format
+   overhead, with separate file and stream preflight tests.
+8. **FIFO admission can block before the bounded agreement.**
+   `create_archive_extent()` uses a blocking write-only `OpenOptions::open` on
+   a FIFO. If its consumer never opens the read end, the rank never reaches
+   `ArchiveAdmission`, so the peer's 600-second timeout cannot make the stuck
+   rank exit. Use a deadline-bounded nonblocking FIFO-open protocol and test a
+   missing consumer. This is distinct from later FIFO write/flush backpressure.
+9. **The new boundary notebook's stated oracle gate is narrower than its
+   assertions.** In `boundary_gate` it checks total S4 rows (`24`), archive
+   structural verification, and marker hashes, but not per-depth state-set
+   equality. The separate `library_multi_gpu` ignored oracle test exercises
+   that stronger property; run it on the same pinned source before calling this
+   notebook a full-state correctness gate, or narrow the notebook scope label.
 
 ## Batch implementation plan
 
 - **Gate A: launch/commit correctness.** Fix the Linux compile error; retain
   boundary socket usability; run CPU protocol tests, two-T4 HostSized and LSA
   BFS with layer/archive comparison, asymmetric archive-admission fault, and
-  marker validation. Publish raw failure and success logs. Do not expand the
+  marker validation. Run the independent full-state oracle on the same pinned
+  source. Bound missing-consumer FIFO open and add asymmetric
+  constructor failure after the archive gate
+  before treating launch as fully fail-fast. Publish raw failure and success
+  logs. Do not expand the
   hot-path refactor until this gate is green.
 - **Gate B: one coherent hot-path transaction.** Replace host-derived owner
   decisions, route sizing, extent publication, and retirement with bounded
@@ -57,6 +87,9 @@ profile, a correctness proof, or a claim that every defect has been found.
   Sanitizer modes, then Nsight Systems timeline and repeated time/VRAM panels.
   Sweep shards and batch sizes only after correctness and memory ownership
   pass. Report search completion separately from archive/group commit.
+- **Capacity accounting before a larger archive run.** Correct the rank-local
+  archive bound and test both over-reservation and explicit-capacity overflow;
+  do not infer stream/HF persistence from local FIFO flush.
 
 The batch boundary is deliberate: individual wait removal is not a completion
 milestone. Gate B is complete only when the owner-to-transport-to-retirement

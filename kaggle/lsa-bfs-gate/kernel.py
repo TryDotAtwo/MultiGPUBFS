@@ -22,7 +22,7 @@ def main():
     report = {"source": SOURCE, "status": "INCOMPLETE", "scope":
               ("two physical T4; one-rank archive slot exhaustion before exchange"
                if MODE == "archive_fault_gate" else
-               "two physical T4; NCCL LSA; CUCO_RANK DENSE full layer sets and archives")}
+               "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
 
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
@@ -250,7 +250,7 @@ def main():
                 if (marker["status"] != "COMPLETE" or marker["world_size"] != 2
                         or marker["archive_commit_scope"] != "file_fsync"):
                     raise RuntimeError("GROUP_COMMIT_MARKER")
-                layer_total = 0
+                layers = None
                 for rank in range(2):
                     data = (output / f"rank-{rank}.json").read_bytes()
                     row = json.loads(data)
@@ -258,11 +258,15 @@ def main():
                             or row["archive_commit_scope"] != "file_fsync"
                             or list(hashlib.sha256(data).digest()) != marker["rank_sha256"][rank]):
                         raise RuntimeError("GROUP_RANK_RESULT")
-                    layer_total += sum(row["local_layer_sizes"])
+                    if layers is None:
+                        layers = [0] * len(row["local_layer_sizes"])
+                    if len(row["local_layer_sizes"]) != len(layers):
+                        raise RuntimeError("GROUP_LAYER_SHAPE")
+                    layers = [a + b for a, b in zip(layers, row["local_layer_sizes"])]
                     run([cli, "verify", str(root / f"archive-rank-{rank}.mgbfsar1")],
                         f"boundary-{name}-verify-{rank}", timeout=300)
-                if layer_total != 24:
-                    raise RuntimeError("GROUP_LAYER_COUNT")
+                if layers != [1, 3, 5, 6, 5, 3, 1]:
+                    raise RuntimeError("GROUP_LAYER_ORACLE")
                 report["boundary_runs"][name] = "PASS_GROUP_MARKER_AND_ARCHIVES"
                 save()
             env["MGBFS_TRANSPORT_BACKEND"] = "NCCL_LSA"
@@ -283,6 +287,14 @@ def main():
                     or (fault_output / "group-complete.json").exists()):
                 raise RuntimeError("ASYMMETRIC_ARCHIVE_ADMISSION_GATE")
             report["boundary_runs"]["one_rank_archive_admission_failure"] = "PASS_GROUP_FATAL"
+            oracle = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                          "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                          "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                          "--", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
+                         "boundary-full-state-oracle", timeout=900)
+            if "test result: ok. 1 passed; 0 failed" not in oracle:
+                raise RuntimeError("BOUNDARY_FULL_STATE_ORACLE")
+            report["boundary_runs"]["independent_full_state_oracle"] = "PASS"
             report["status"] = "COMPLETE"
             return
         if MODE in ("benchmark", "timeline", "timeline_backtrace", "timeline_analysis"):
