@@ -338,6 +338,9 @@ impl Drop for Plan {
 struct Stream(*mut c_void);
 impl Drop for Stream {
     fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
         unsafe {
             cudaStreamSynchronize(self.0);
             cudaStreamDestroy(self.0);
@@ -1206,7 +1209,9 @@ impl DistributedNativeBfs {
             current_count,
             prev_count: 0,
             failed: false,
-            stream,
+            // Keep the setup-vote stream alive outside the fallible local
+            // result. An error here must not destroy it before peers vote.
+            stream: Stream(std::ptr::null_mut()),
             generation_stream,
             generation_done,
             pack_done,
@@ -1385,6 +1390,7 @@ impl DistributedNativeBfs {
             return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
         }
         let mut result = local_result?;
+        result.stream = stream;
         result.comm = comm;
         result.comm.1 = false;
         Ok(result)
