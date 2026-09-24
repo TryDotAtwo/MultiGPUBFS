@@ -73,6 +73,8 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         '{RANK_OUT}']
     if nsys is not None:
         command = [str(nsys), 'profile', '--trace=cuda,nvtx,osrt',
+            *(['--capture-range=cudaProfilerApi', '--capture-range-end=stop']
+              if env.get('MGBFS_PROFILE_SEARCH') == '1' else []),
             '--sample=none', '--cpuctxsw=none', '--force-overwrite=false',
             '--output=' + str(output/'timeline'), *command]
     report = dict(status='INCOMPLETE', scope='single screening sample; not Pareto acceptance',
@@ -80,7 +82,9 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
                   configuration=env, archive_verification=[])
     report['profiled'] = nsys is not None
     if nsys is not None:
-        report['scope'] = 'diagnostic trace including startup/warmup/archive; not performance evidence'
+        report['scope'] = ('diagnostic timed-BFS CUDA profiler range; archive submissions included'
+                           if env.get('MGBFS_PROFILE_SEARCH') == '1' else
+                           'diagnostic trace including startup/warmup/archive; not performance evidence')
     # Do not serialize inherited credentials or unrelated environment settings.
     report['configuration'] = {k: v for k, v in env.items()
                                if k.startswith('MGBFS_') and k in {

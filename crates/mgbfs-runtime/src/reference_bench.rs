@@ -12,7 +12,7 @@ use mgbfs_core::{
     Result,
 };
 use mgbfs_cuda::{
-    ffi::mgbfs_nccl_unique_id,
+    ffi::{cudaProfilerStart, cudaProfilerStop, mgbfs_nccl_unique_id},
     native_owner::{cudaMemGetInfo, cudaSetDevice},
 };
 use sha2::{Digest, Sha256};
@@ -24,6 +24,28 @@ fn env_u32(key: &str, default: u32) -> u32 {
     std::env::var(key)
         .map(|x| x.parse().expect(key))
         .unwrap_or(default)
+}
+fn profiler_window_start() -> Result<bool> {
+    match std::env::var("MGBFS_PROFILE_SEARCH").as_deref() {
+        Err(std::env::VarError::NotPresent) | Ok("0") => Ok(false),
+        Ok("1") => {
+            let code = unsafe { cudaProfilerStart() };
+            if code != 0 {
+                return Err(format!("CUDA_PROFILER_START_{code}"));
+            }
+            Ok(true)
+        }
+        _ => Err("MGBFS_PROFILE_SEARCH_EXPECTED_0_OR_1".into()),
+    }
+}
+fn profiler_window_stop(active: bool) -> Result<()> {
+    if active {
+        let code = unsafe { cudaProfilerStop() };
+        if code != 0 {
+            return Err(format!("CUDA_PROFILER_STOP_{code}"));
+        }
+    }
+    Ok(())
 }
 fn required(key: &str) -> Result<u32> {
     std::env::var(key)
@@ -71,12 +93,12 @@ fn used() -> Result<usize> {
     }
     Ok(total - free)
 }
-fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
+fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
     if env_u32("MGBFS_MACRO_DEPTH", 1) > 1 {
-        return run_macro_pass(args, warmup_completed);
+        return run_macro_pass(args, warmup_completed, is_measure);
     }
     let multiset = if args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
@@ -290,6 +312,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
+    let profile_window = if is_measure { profiler_window_start()? } else { false };
     let start = Instant::now();
     let mut layers = Vec::new();
     let mut times = Vec::new();
@@ -319,6 +342,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         }
     }
     let search = start.elapsed().as_secs_f64();
+    profiler_window_stop(profile_window)?;
     if let Some(archive) = archive.take() {
         archive.finish()?;
     }
@@ -399,7 +423,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
 
 /// The existing weighted CUDA backend is single-rank. It remains separate
 /// from the unit-cost NCCL runtime until distributed weighted settlement exists.
-fn run_macro_pass(args: &[String], warmup_completed: bool) -> Result<()> {
+fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
     let rank = required("RANK")?;
     let world = required("WORLD_SIZE")?;
     let local = required("LOCAL_RANK")?;
@@ -492,6 +516,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool) -> Result<()> {
     let mut bfs = MacroNativeBfs::new(&graph, seed, cfg)?;
     let setup_seconds = setup_start.elapsed().as_secs_f64();
     let allocated = used()?;
+    let profile_window = if is_measure { profiler_window_start()? } else { false };
     let start = Instant::now();
     let mut layers = Vec::new();
     let mut times = Vec::new();
@@ -508,6 +533,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         }
     }
     let search = start.elapsed().as_secs_f64();
+    profiler_window_stop(profile_window)?;
     if let Some(archive) = archive.take() {
         archive.finish()?;
     }
@@ -557,13 +583,13 @@ pub fn run(args: Vec<String>) -> Result<()> {
     }
     run_phases(warmup, |phase| {
         if phase == Phase::Measure {
-            return run_pass(&args, warmup);
+            return run_pass(&args, warmup, true);
         }
         let mut warm_args = args.clone();
         for index in [3, 4, 5] {
             warm_args[index].push_str(".warmup");
         }
-        run_pass(&warm_args, false)?;
+        run_pass(&warm_args, false, false)?;
         // FileExtent uses create_new: this exact rank-local warmup archive
         // belongs to this completed pass. Keep its small timing JSON/logs.
         if std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1") {
