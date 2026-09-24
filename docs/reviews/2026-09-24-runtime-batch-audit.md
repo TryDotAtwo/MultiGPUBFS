@@ -49,9 +49,15 @@ profile, a correctness proof, or a claim that every defect has been found.
    `reference_bench.rs` reserves `expected_states * (archive_width + 16)
    + 64 MiB` independently on every rank. That can over-reserve disk by up to
    the world size under equal partitioning, yet can under-reserve when an
-   explicit rank capacity exceeds the graph-order estimate. Derive a checked
-   per-rank archive bound from the accepted-state capacity and archive-format
-   overhead, with separate file and stream preflight tests.
+   explicit rank capacity exceeds the graph-order estimate. It also omits
+   `Archive::frame()` overhead: 112 bytes per record batch, per layer, and
+   final commit, so a tiny `archive_rows` can exceed the fixed 64 MiB slack.
+   Derive a checked per-rank bound from accepted-state capacity plus an
+   explicit record-frame/layer-frame budget (or a conservative worst case),
+   with separate file and stream preflight tests. Exact format accounting is
+   `48 + N*(width+16) + 112*(record_frames+layer_frames+1)` bytes; `N` alone
+   does not determine the frame counts. Expose those budgets in config rather
+   than silently relying on the current 64 MiB constant.
 8. **FIFO admission can block before the bounded agreement.**
    `create_archive_extent()` uses a blocking write-only `OpenOptions::open` on
    a FIFO. If its consumer never opens the read end, the rank never reaches
@@ -94,3 +100,18 @@ profile, a correctness proof, or a claim that every defect has been found.
 The batch boundary is deliberate: individual wait removal is not a completion
 milestone. Gate B is complete only when the owner-to-transport-to-retirement
 DAG and its failure path work together on target hardware.
+
+## Performance hypotheses to measure, not assumed fixes
+
+- The LSA peer path launches `lsa_publish_count` and `lsa_copy_exact` per XOR
+  round, with a fixed 16 copy CTAs (`cuda/nccl_transport.cpp`). At larger
+  payloads or 8 ranks this may underfill the device or expose collective
+  launch latency. Sweep CTA count and payload shape only with a stage-resolved
+  timeline and unchanged correctness/fatal gates.
+- Even one rank still passes through route radix sort and pack. A specialized
+  one-rank path could avoid work, but must preserve the exact pre-dedup and
+  owner order. Compare an ablation before adding a second implementation.
+- Archive hash computation and D2H are asynchronous, but parent retirement
+  waits on archive completion. A slow consumer can exhaust pinned slots and
+  fail the run by contract. Measure archive slots, D2H throughput, and disk
+  worker occupancy alongside search time; do not call this hidden overlap.
