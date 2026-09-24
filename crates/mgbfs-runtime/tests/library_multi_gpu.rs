@@ -114,16 +114,6 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
 fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
     use mgbfs_cuda::{ffi::*, native_owner::*};
     use std::ffi::c_void;
-    extern "C" {
-        fn mgbfs_owner_global_fatal_gate(
-            comm: *mut c_void,
-            ring: *mut Ring,
-            owner: *mut Control,
-            send: *mut u32,
-            receive: *mut u32,
-            stream: *mut c_void,
-        ) -> i32;
-    }
 
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);

@@ -126,6 +126,14 @@ mod calls {
             word: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_owner_global_fatal_gate(
+            comm: *mut c_void,
+            ring: *mut Ring,
+            owner: *mut Control,
+            send: *mut u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_archive_pack_permutation_u8(
             n: u32,
             stride: u32,

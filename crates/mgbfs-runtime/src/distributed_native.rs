@@ -1438,6 +1438,27 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         self.collective_recv.one()
     }
+    fn all_max_ring_or_host_fatal(&self, host_failed: bool) -> Result<u32> {
+        if host_failed {
+            // A host API failure is already terminal. The upload may block on
+            // this error path; the ordinary path remains device-produced.
+            self.collective_send.put(&[1u32])?;
+        } else {
+            check(unsafe {
+                mgbfs_state_ring_fatal_vote_word(
+                    self.ring.ptr.cast(), self.collective_send.ptr.cast(), self.stream.0,
+                )
+            })?;
+        }
+        check(unsafe {
+            mgbfs_nccl_all_reduce_max_u32(
+                self.comm.0, self.collective_send.ptr.cast(),
+                self.collective_recv.ptr.cast(), self.stream.0,
+            )
+        })?;
+        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        self.collective_recv.one()
+    }
     #[cfg(feature = "library-owner")]
     fn commit_rank_library_batch(
         &mut self,
@@ -2172,6 +2193,7 @@ impl DistributedNativeBfs {
                 ))?;
             }
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
+            #[cfg(feature = "library-owner")]
             if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
                 check(cudaMemsetAsync(
                     self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr,
@@ -2415,6 +2437,10 @@ impl DistributedNativeBfs {
                 let (remote_offset, remote_rows) = host_ranges.as_ref()
                     .map_or((0, 0), |(_, ranges)| ranges[exchange_peer as usize]);
                 let lsa = self.lsa_view;
+                #[cfg(feature = "library-owner")]
+                let rank_mode = self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
+                #[cfg(not(feature = "library-owner"))]
+                let rank_mode = false;
                 let received = if self.cfg.world == 1 {
                     0
                 } else if lsa.is_some() {
@@ -2521,7 +2547,15 @@ impl DistributedNativeBfs {
                             view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
                         ) })?;
                     }
-                    if self.all_max_ring_fatal()? != 0 {
+                    if lsa.is_some() && rank_mode && self.hash_first.is_none() {
+                        // The common result poisons ring/control on-device before
+                        // any rank can commit this owner epoch. The post-owner
+                        // vote still reports the failure to both hosts.
+                        check(unsafe { mgbfs_owner_global_fatal_gate(
+                            self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                        ) })?;
+                    } else if self.all_max_ring_fatal()? != 0 {
                         return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
                     }
                 }
@@ -2556,8 +2590,6 @@ impl DistributedNativeBfs {
                     };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
-                #[cfg(feature = "library-owner")]
-                let rank_mode = self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
@@ -2610,11 +2642,18 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
-                vote_group_error(
-                    batch_error.map_or(Ok(()), Err),
-                    |failed| Ok(self.all_max(u32::from(failed))? != 0),
-                    "REMOTE_OWNER_BATCH_FATAL".into(),
-                )?;
+                if round == 1 && lsa.is_some() && rank_mode && self.hash_first.is_none() {
+                    if self.all_max_ring_or_host_fatal(batch_error.is_some())? != 0 {
+                        return Err(batch_error.unwrap_or_else(||
+                            "GROUP_OWNER_OR_PRE_OWNER_FATAL".into()));
+                    }
+                } else {
+                    vote_group_error(
+                        batch_error.map_or(Ok(()), Err),
+                        |failed| Ok(self.all_max(u32::from(failed))? != 0),
+                        "REMOTE_OWNER_BATCH_FATAL".into(),
+                    )?;
+                }
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
                 }
