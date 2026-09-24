@@ -153,3 +153,12 @@ Evidence: `docs/validation/lrx13-eight-h200.md`.
 Current ruling: keep native and cuCollections as selectable backends, do not
 silently switch at runtime, and do not replace the owner with a DB until a
 DB adapter passes the same fixed-memory, GPU-resident end-to-end gate.
+
+The first matched three-owner S10 DENSE screen on 2×T4 (Kaggle v63,
+`docs/validation/db-owner-s10-v63.md`) completed one archive-verified run
+each for CUB, CUCO_RANK and CUDF_RELATIONAL. All reached 3,628,800 states
+and 46 layers. CUDF_RELATIONAL took 1.920906 s search and 1134 MiB sampled
+total VRAM, versus CUCO_RANK's 0.491433 s and 1058 MiB and CUB's 0.871420 s
+and 914 MiB. A one-sample result is not a stable Pareto ruling; the
+five-repeat same-source screen is running. This does not settle other
+workloads, DB APIs or the CPU-free pipeline gate.

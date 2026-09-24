@@ -838,3 +838,18 @@ and nonzero status. Because the same report family coexists with successful
 leaf progress, it does not alone explain the v62 full-BFS depth-0 timeout.
 The full-app four-tool gate remains open; see
 `docs/validation/lsa-leaf-sanitizer-v44.md`.
+
+The next isolated leaf attempt, private Kaggle v47, passed plain,
+memcheck and racecheck on P2P-capable 2×T4 with NCCL API-error reporting
+disabled. Initcheck failed LSA activation on one rank and the old fixture's
+barrier hid that assertion as a timeout; synccheck was not run. The fixture
+now aborts on any rank-thread panic (`ae3dce9`), pending a deliberate
+bad-payload hardware test. This is not a full-BFS sanitizer pass. See
+`docs/validation/lsa-leaf-sanitizer-v47.md`.
+
+Private Kaggle library-owner v63 completed one S10 DENSE archive-verified
+run per CUB, CUCO_RANK and CUDF_RELATIONAL backend on 2×T4. All produced
+46 layers and 3,628,800 states. The single-sample search seconds were
+0.871420, 0.491433 and 1.920906 respectively; sampled total VRAM was
+914, 1058 and 1134 MiB. Five-repeat v64 is pending before a performance
+claim. See `docs/validation/db-owner-s10-v63.md`.
