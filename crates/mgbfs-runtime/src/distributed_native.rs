@@ -2458,6 +2458,9 @@ impl DistributedNativeBfs {
                         )
                     })?;
                     check(unsafe { cudaEventRecord(self.exchange_done.0, self.exchange_stream.0) })?;
+                    if trace_route {
+                        eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=lsa_exchange_queued", self.cfg.rank, self.depth);
+                    }
                     // The row count remains on device; no host-sized payload
                     // handshake or readback is needed for this peer round.
                     0
@@ -2547,6 +2550,9 @@ impl DistributedNativeBfs {
                             view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
                         ) })?;
                     }
+                    if trace_route {
+                        eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=retire_import_queued", self.cfg.rank, self.depth);
+                    }
                     if lsa.is_some() && rank_mode && self.hash_first.is_none() {
                         // The common result poisons ring/control on-device before
                         // any rank can commit this owner epoch. The post-owner
@@ -2555,6 +2561,9 @@ impl DistributedNativeBfs {
                             self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                             self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                         ) })?;
+                        if trace_route {
+                            eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=preowner_vote_queued", self.cfg.rank, self.depth);
+                        }
                     } else if self.all_max_ring_fatal()? != 0 {
                         return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
                     }
