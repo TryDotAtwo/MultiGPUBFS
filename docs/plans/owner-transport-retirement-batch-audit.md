@@ -38,6 +38,25 @@ owner vote (`:2680-2690`). Connecting these models, or replacing them with
 an equally explicit production protocol, is an integration requirement—not
 another isolated coordinator test.
 
+Further source audit of the current DENSE+LSA+CUCO_RANK dispatch:
+
+- The device-only pre-owner gate applies only at `round == 1`. At 4/8 ranks,
+  later peer rounds take `all_max_ring_fatal()` and the post-owner `all_max()`
+  path, both with host synchronization/readback. A successful two-rank LSA
+  timeline therefore cannot establish an asynchronous eight-rank pipeline.
+- `advance_inner()` makes an `all_max()` archive-error vote for every parent
+  batch whenever archive output is enabled, even for empty local batches.
+  This protects asymmetric archive failures; moving it requires the same
+  bounded failure protocol as the owner vote, not merely skipping the call.
+- CUCO_RANK's `compare()` runs `DeviceSelect::Flagged` over the preallocated
+  incoming capacity and launches surrounding kernels over that capacity.
+  Its valid count remains on device, but the fixed scan is a candidate
+  throughput cost at sparse tail layers. Measure valid/capacity ratio before
+  changing this contract; a dynamic host count would reintroduce the wait.
+- The ignored eight-rank full-state fixture uses HostSizedNccl with
+  CUCO_INDEXED or native owner, not LSA+CUCO_RANK. Existing eight-rank
+  evidence for other combinations must not be used as proof of this one.
+
 The v66 one-rank S10 measurement used 256 pinned archive slots and reported
 973,078,528 pinned bytes, 0.412 s to search completion and 11.339 s to the
 durable run commit. This is one profiled run, not a throughput benchmark; it
