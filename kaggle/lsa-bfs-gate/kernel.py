@@ -12,6 +12,7 @@ import tempfile
 
 SOURCE = "64c8085790aab47f103091b5f22e63bf3a862d13"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
+MODE = "gate"
 
 
 def main():
@@ -136,6 +137,44 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "benchmark":
+            report["scope"] = (
+                "paired two-T4 S10 CUCO_RANK DENSE; archive-verified; "
+                "five unprofiled repeats per transport")
+            report["benchmark_config"] = {
+                "group": "s10", "batch": 32768, "capacity_per_rank": 1_000_000,
+                "ring_per_rank": 1_000_000, "pool_bytes_per_rank": 96 << 20,
+                "shards_per_rank": 4, "buckets": 256, "archive_slots": 256,
+            }
+            save()
+            run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "cli-build", timeout=1800)
+            sys.path.insert(0, str(source / "scripts"))
+            from distributed_gpu_bench import stats
+            from library_gpu_screen import run_case
+            cli = str(source / "target/release/mgbfs")
+            panel = {"HOST_SIZED_NCCL": [], "NCCL_LSA": []}
+            expected_dispatch = {"HOST_SIZED_NCCL": "HostSizedNccl", "NCCL_LSA": "Lsa"}
+            for repeat in range(5):
+                order = list(panel) if repeat % 2 == 0 else list(reversed(panel))
+                for transport in order:
+                    label = f"s10-{transport.lower()}-r{repeat}"
+                    case_env = dict(env, MGBFS_TRANSPORT_BACKEND=transport,
+                                    MGBFS_SHARDS="4", MGBFS_BUCKETS="256",
+                                    MGBFS_ARCHIVE_SLOTS="256")
+                    result = run_case(cli, logs / label, work / label, "s10",
+                                      3_628_800, 2, 32768, 1_000_000, 1_000_000,
+                                      96 << 20, "DENSE", "ON", case_env,
+                                      owner="CUCO_RANK")
+                    if any(rank.get("transport_backend") != expected_dispatch[transport]
+                           for rank in result["measurement"]["rank_results"]):
+                        raise RuntimeError("TRANSPORT_DISPATCH_MISMATCH")
+                    panel[transport].append(result["measurement"])
+                    report["runs"] = {key: len(value) for key, value in panel.items()}
+                    save()
+            report["screen_statistics"] = {key: stats(value) for key, value in panel.items()}
+            report["status"] = "COMPLETE"
+            return
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
