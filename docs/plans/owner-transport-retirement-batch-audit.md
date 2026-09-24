@@ -56,6 +56,14 @@ Further source audit of the current DENSE+LSA+CUCO_RANK dispatch:
 - The ignored eight-rank full-state fixture uses HostSizedNccl with
   CUCO_INDEXED or native owner, not LSA+CUCO_RANK. Existing eight-rank
   evidence for other combinations must not be used as proof of this one.
+- CUCO_RANK destroys its hash sets at `FinalizeDepth` and recreates the rank
+  owner at the next depth (`distributed_native.rs::finalize_rank_owner`,
+  `advance_inner`). The constructor suballocates RMM device buffers from the
+  pre-reserved fixed pool and synchronizes its stream
+  (`cuco_rank_batch.cu::Impl`). This is outside parent-batch processing and
+  cannot be counted as a batch wait, but it is still per-depth setup cost and
+  not literal precreation of every device object before depth zero. Include
+  it in search timing and test pool high-water/capacity at the layer peak.
 
 The v66 one-rank S10 measurement used 256 pinned archive slots and reported
 973,078,528 pinned bytes, 0.412 s to search completion and 11.339 s to the
