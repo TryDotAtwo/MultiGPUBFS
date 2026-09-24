@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "7db00ef7076847fd2c73602836c4ee01ce4ecd67"
+SOURCE = "88f06107ffc2f0909cf37f3a235f3d67dd0253de"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "archive_fault_gate"
 
