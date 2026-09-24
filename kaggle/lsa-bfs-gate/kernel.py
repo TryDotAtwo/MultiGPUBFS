@@ -20,7 +20,9 @@ def main():
     logs = Path("/kaggle/working/lsa-bfs-gate")
     logs.mkdir(parents=True, exist_ok=True)
     report = {"source": SOURCE, "status": "INCOMPLETE", "scope":
-              "two physical T4; NCCL LSA; CUCO_RANK DENSE full layer sets and archives"}
+              ("two physical T4; one-rank archive slot exhaustion before exchange"
+               if MODE == "archive_fault_gate" else
+               "two physical T4; NCCL LSA; CUCO_RANK DENSE full layer sets and archives")}
 
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))

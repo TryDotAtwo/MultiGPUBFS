@@ -702,3 +702,17 @@ search medians were 0.381001/0.465085 s, durable medians
 3.711824/3.759861 s, and sampled peaks 567/529 MiB per rank. The v1/v2
 comparison crosses Kaggle sessions, so it does not isolate the fixed-round
 change's speed contribution. See `docs/validation/lsa-paired-s10-2xt4.md`.
+
+At `88f0610`, a scheduler-level asymmetric archive failure fixture uses a
+two-slot rank-0 pinned ring and a slow disk worker while rank 1 has ample
+slots. The private two-T4 Kaggle v12 gate completed: rank 0 returned
+`ARCHIVE_PIN_RING_FATAL`, rank 1 returned `REMOTE_ARCHIVE_FATAL`, and both
+worker threads exited (`test_results/kaggle_lsa_archive_fault_v12/lsa-bfs-gate/`).
+The first v11 attempt never reached the protocol because one slot violated
+`ArchiveRingPlan::new`'s minimum of two; it is not a failed protocol run.
+This validates the existing per-batch fatal vote for that injected path. It
+does **not** justify removing the blocking vote: `archive_range` can fail on
+the host before the next peer exchange, and NCCL documents that all active
+ranks must participate in communicator abort. A replacement needs an
+asymmetric-failure protocol with identical rank participation and an actual
+two-rank fault gate before any ordinary-path wait is removed.
