@@ -830,3 +830,11 @@ LSA/CUCO_RANK fixtures both passed, with local/remote fatal propagation and
 thread exit. This protects the existing blocking archive vote; it is not
 evidence that the vote can be removed. See
 `docs/validation/lsa-archive-fatal-v42.md`.
+
+An isolated two-rank LSA one-peer-exchange fixture at `48bc324` passed plain
+on P2P-capable 2×T4 in Kaggle v44. Under unfiltered memcheck the test itself
+passed and exited, but the sanitizer returned 26 NCCL API reports (209/800)
+and nonzero status. Because the same report family coexists with successful
+leaf progress, it does not alone explain the v62 full-BFS depth-0 timeout.
+The full-app four-tool gate remains open; see
+`docs/validation/lsa-leaf-sanitizer-v44.md`.
