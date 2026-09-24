@@ -796,3 +796,10 @@ allocation/free calls are zero. This establishes remaining hot-path host
 dependencies, not their individual critical-path cost. Stage/callsite
 attribution and full DAG overlap remain unverified; details are in
 `docs/validation/poststore-timeline-v36.md`.
+
+Kaggle library-owner v61 completed the four Compute Sanitizer tools on two
+physical T4s at `6dd41bb`. Default one-/two-GPU BFS suites reported zero
+failures and zero sanitizer errors/hazards; tiny two-process CLI archives
+verified. The default suite ignored LSA full-BFS and injected fault tests,
+so a four-tool LSA pipeline gate is still open. See
+`docs/validation/poststore-sanitizers-v61.md`.
