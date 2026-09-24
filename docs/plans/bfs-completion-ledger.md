@@ -823,3 +823,10 @@ after NCCL setup reported API errors and both ranks entered depth 0; no test
 result or sanitizer summary exists. The remaining tools did not run. See
 `docs/validation/lsa-s10-nsight-v41.md` and
 `docs/validation/lsa-sanitizer-v62.md`.
+
+At the same runtime source, private Kaggle v42 repeated the asymmetric
+archive-slot-exhaustion gate on P2P-capable 2×T4. Host-sized NCCL and
+LSA/CUCO_RANK fixtures both passed, with local/remote fatal propagation and
+thread exit. This protects the existing blocking archive vote; it is not
+evidence that the vote can be removed. See
+`docs/validation/lsa-archive-fatal-v42.md`.
