@@ -159,6 +159,7 @@ pub struct DistributedConfig {
     pub rank: u32,
     pub world: u32,
     pub logical_owner_to_rank: Vec<u32>,
+    pub transport: mgbfs_core::config::ReferenceTransport,
     pub batch: u32,
     pub layer_capacity: u32,
     pub state_ring_capacity: u32,
@@ -199,6 +200,13 @@ struct Buffer {
     bytes: usize,
     stream: *mut c_void,
 }
+#[derive(Clone, Copy)]
+struct LsaView {
+    count: *const u32,
+    fatal: *const u32,
+    hashes: *const c_void,
+    states: *const u8,
+}
 fn admit_device_group(
     comm: *mut c_void,
     stream: *mut c_void,
@@ -228,6 +236,13 @@ fn admit_device_group(
         ));
     }
     Ok(())
+}
+fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
+                      send: &Buffer, recv: &Buffer, failed: bool) -> Result<bool> {
+    send.put(&[u32::from(failed)])?;
+    check(unsafe { mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream) })?;
+    check(unsafe { cudaStreamSynchronize(stream) })?;
+    Ok(recv.one::<u32>()? != 0)
 }
 impl Buffer {
     fn new(bytes: usize, stream: *mut c_void) -> Result<Self> {
@@ -457,6 +472,7 @@ pub struct DistributedNativeBfs {
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
     comm: Comm,
+    lsa_view: Option<LsaView>,
     generate: Option<Plan>,
     hash: Option<Plan>,
     hash_first: Option<HashFirstStorage>,
@@ -725,6 +741,13 @@ impl DistributedNativeBfs {
         compact_start: Option<&[u8]>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
+        if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
+            && (cfg.world < 2
+                || !matches!(library_options, Some((_, ReferenceOwner::CucoRank)))
+                || materialization_capacity.is_some())
+        {
+            return Err("LSA_REQUIRES_DENSE_RANK_OWNER".into());
+        }
         if let Some(bytes) = library_pool_bytes {
             if !cfg!(feature = "library-owner")
                 || bytes == 0
@@ -895,6 +918,11 @@ impl DistributedNativeBfs {
                 &oq.report(candidates, cfg.job_buckets, cfg.bucket_capacity, backend)?,
             )?;
         }
+        if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
+            let slot = crate::distributed_memory::lsa_symmetric_slot_bytes(
+                candidates, packet_stride as u32)?;
+            owned_memory.add("transport.lsa_symmetric_slot", slot, 1, 256)?;
+        }
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
@@ -934,6 +962,37 @@ impl DistributedNativeBfs {
             owned_memory.total(),
             cfg.untouched_vram_reserve,
         )?;
+        let lsa_view = if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
+            // Reserve the control words before the potentially large symmetric
+            // allocation, so an OOM in prepare can still be voted by all ranks.
+            let setup_send = Buffer::new(4, raw)?;
+            let setup_recv = Buffer::new(4, raw)?;
+            let prepared = check(unsafe { mgbfs_nccl_lsa_prepare(
+                comm.0, candidates, packet_stride as u32,
+                error.as_mut_ptr(), error.len(),
+            ) });
+            if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                                  prepared.is_err())? {
+                return Err(format!("LSA_PREPARE_GROUP: {}",
+                    prepared.err().unwrap_or_else(|| "peer rejected LSA prepare".into())));
+            }
+            let activated = check(unsafe { mgbfs_nccl_lsa_activate(
+                comm.0, error.as_mut_ptr(), error.len(),
+            ) });
+            if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                                  activated.is_err())? {
+                return Err(format!("LSA_ACTIVATE_GROUP: {}",
+                    activated.err().unwrap_or_else(|| "peer rejected LSA activation".into())));
+            }
+            let (mut count, mut fatal, mut hashes, mut states) =
+                (std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null());
+            check(unsafe { mgbfs_nccl_lsa_view(
+                comm.0, &mut count, &mut fatal, &mut hashes, &mut states,
+            ) })?;
+            Some(LsaView { count, fatal, hashes, states: states.cast() })
+        } else {
+            None
+        };
         let contract = GemmHash::from_seed(width, seed)?;
         let limbs = contract.limbs();
         let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();
@@ -1127,6 +1186,7 @@ impl DistributedNativeBfs {
             archive_done,
             archived_depth: None,
             comm,
+            lsa_view,
             generate,
             hash,
             hash_first,
@@ -2315,7 +2375,23 @@ impl DistributedNativeBfs {
                     crate::route_count::exchange_peer(world, self.cfg.rank, round)?
                 };
                 let (remote_offset, remote_rows) = ranges[exchange_peer as usize];
+                let lsa = self.lsa_view;
                 let received = if self.cfg.world == 1 {
+                    0
+                } else if lsa.is_some() {
+                    let logical_owner = self.cfg.logical_owner_to_rank
+                        .iter().position(|&rank| rank == exchange_peer)
+                        .ok_or("OWNER_MAP")? as u32;
+                    check(unsafe {
+                        mgbfs_nccl_lsa_exchange(
+                            self.comm.0, self.sorted_hashes.ptr,
+                            self.packed_states.ptr, self.owner_counts.ptr.cast(),
+                            logical_owner, exchange_peer, self.exchange_stream.0,
+                        )
+                    })?;
+                    check(unsafe { cudaEventRecord(self.exchange_done.0, self.exchange_stream.0) })?;
+                    // The row count remains on device; no host-sized payload
+                    // handshake or readback is needed for this peer round.
                     0
                 } else {
                     let communication = self.exchange_stream.0;
@@ -2397,19 +2473,36 @@ impl DistributedNativeBfs {
                         // communicator, including zero-payload exchange.
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
                     }
+                    if let Some(view) = lsa {
+                        check(unsafe { mgbfs_owner_import_transport_fatal(
+                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
+                        ) })?;
+                    }
                     if self.all_max_ring_fatal()? != 0 {
                         return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
                     }
                 }
                 if round != 1 || self.hash_first.is_some() {
-                    check(unsafe { cudaStreamSynchronize(s) })?;
+                    if let Some(view) = lsa {
+                        check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
+                        check(unsafe { mgbfs_owner_import_transport_fatal(
+                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
+                        ) })?;
+                        if self.all_max_ring_fatal()? != 0 {
+                            return Err("GROUP_LSA_TRANSPORT_FATAL".into());
+                        }
+                    } else {
+                        check(unsafe { cudaStreamSynchronize(s) })?;
+                    }
                 }
-                let local_states = unsafe {
+                let local_states: *const u8 = unsafe {
                     self.packed_states
                         .at(local_offset as usize * packet_stride)
                         .cast()
                 };
-                let local_hashes = unsafe { self.sorted_hashes.at(local_offset as usize * 16) };
+                let local_hashes: *const c_void = unsafe {
+                    self.sorted_hashes.at(local_offset as usize * 16)
+                };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
                 #[cfg(feature = "library-owner")]
@@ -2428,7 +2521,9 @@ impl DistributedNativeBfs {
                     ),
                     (
                         1,
-                        (self.recv_states.ptr.cast(), self.recv_hashes.ptr, received),
+                        (lsa.map_or(self.recv_states.ptr as *const u8, |view| view.states),
+                         lsa.map_or(self.recv_hashes.ptr as *const c_void, |view| view.hashes),
+                         received),
                     ),
                     |(group, (states, hashes, rows))| {
                         #[cfg(feature = "library-owner")]
@@ -2438,13 +2533,17 @@ impl DistributedNativeBfs {
                             }
                             let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
                             let (states, hashes, begin, rows, source_rows) = if group == 0 {
-                                (self.packed_states.ptr.cast(), self.sorted_hashes.ptr,
-                                 window.ptr.cast(), unsafe { window.at(4) }.cast(),
-                                 self.route_count.ptr.cast())
+                                (self.packed_states.ptr as *const u8,
+                                 self.sorted_hashes.ptr as *const c_void,
+                                 window.ptr as *const u32,
+                                 unsafe { window.at(4) } as *const u32,
+                                 self.route_count.ptr as *const u32)
                             } else {
-                                (self.recv_states.ptr.cast(), self.recv_hashes.ptr,
-                                 unsafe { window.at(8) }.cast(), self.recv_count.ptr.cast(),
-                                 self.recv_count.ptr.cast())
+                                (lsa.map_or(self.recv_states.ptr as *const u8, |view| view.states),
+                                 lsa.map_or(self.recv_hashes.ptr as *const c_void, |view| view.hashes),
+                                 unsafe { window.at(8) } as *const u32,
+                                 lsa.map_or(self.recv_count.ptr as *const u32, |view| view.count),
+                                 lsa.map_or(self.recv_count.ptr as *const u32, |view| view.count))
                             };
                             return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows);
                         }

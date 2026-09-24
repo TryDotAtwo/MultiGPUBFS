@@ -157,6 +157,8 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         env_u32("MGBFS_BMMA_TILE_LIMIT", 256),
     )?
     .with_hash_first_generation(&hash_first_generation)?
+    .with_transport(&std::env::var("MGBFS_TRANSPORT_BACKEND")
+        .unwrap_or_else(|_| "HOST_SIZED_NCCL".into()))?
     .with_library_pool(
         std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
         cfg!(feature = "library-owner"),
@@ -189,6 +191,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         rank,
         world,
         logical_owner_to_rank: rank_map,
+        transport: selection.transport,
         batch,
         layer_capacity: capacity,
         state_ring_capacity: future,
@@ -210,6 +213,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
+        "transport": format!("{:?}", cfg.transport),
     });
     let bootstrap_digest: [u8; 32] =
         Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
@@ -360,6 +364,7 @@ fn run_pass(args: &[String], warmup_completed: bool) -> Result<()> {
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["hash_seed_hex"] = serde_json::json!(seed_hex);
+        value["transport_backend"] = serde_json::json!(format!("{:?}", cfg.transport));
         value["group"] = serde_json::json!(group);
         if let Some(word) = &multiset {
             value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");

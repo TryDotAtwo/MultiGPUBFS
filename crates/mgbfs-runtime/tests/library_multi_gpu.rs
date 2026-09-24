@@ -123,7 +123,8 @@ fn library_two_rank_layers_and_archives_match_oracle() {
         for symmetric in [false, true] {
             for hash_first in [false, true] {
                 for owners in [[0, 1], [1, 0]] {
-                    fixture(symmetric, hash_first, &owners, library_owner, true);
+                    fixture(symmetric, hash_first, &owners, library_owner, true,
+                        mgbfs_core::config::ReferenceTransport::HostSizedNccl);
                 }
             }
         }
@@ -136,7 +137,22 @@ fn cuco_rank_two_gpu_dense_layers_and_archives_match_oracle() {
         for owners in [[0, 1], [1, 0]] {
             for prededup in [false, true] {
                 fixture(symmetric, false, &owners,
-                    mgbfs_core::config::ReferenceOwner::CucoRank, prededup);
+                    mgbfs_core::config::ReferenceOwner::CucoRank, prededup,
+                    mgbfs_core::config::ReferenceTransport::HostSizedNccl);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a two-GPU NCCL 2.29+ LSA-capable P2P host"]
+fn cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle() {
+    for symmetric in [false, true] {
+        for owners in [[0, 1], [1, 0]] {
+            for prededup in [false, true] {
+                fixture(symmetric, false, &owners,
+                    mgbfs_core::config::ReferenceOwner::CucoRank, prededup,
+                    mgbfs_core::config::ReferenceTransport::Lsa);
             }
         }
     }
@@ -153,7 +169,8 @@ fn library_eight_rank_layers_and_archives_match_oracle() {
             for hash_first in [false, true] {
                 for owners in [[0, 1, 2, 3, 4, 5, 6, 7], [7, 3, 0, 6, 1, 5, 2, 4]] {
                     for symmetric in [false, true] {
-                        fixture(symmetric, hash_first, &owners, backend, prededup);
+                        fixture(symmetric, hash_first, &owners, backend, prededup,
+                            mgbfs_core::config::ReferenceTransport::HostSizedNccl);
                     }
                 }
             }
@@ -167,6 +184,7 @@ fn fixture(
     owners: &[u32],
     library_owner: mgbfs_core::config::ReferenceOwner,
     prededup: bool,
+    transport: mgbfs_core::config::ReferenceTransport,
 ) {
     let graph = if symmetric {
         MatrixGroup::symmetric_permutation_matrices(4).unwrap()
@@ -202,6 +220,7 @@ fn fixture(
                         job_buckets: 2,
                         bucket_capacity: 32,
                         prededup,
+                        transport,
                         generation_variant: 1,
                         untouched_vram_reserve: 1 << 30,
                     };

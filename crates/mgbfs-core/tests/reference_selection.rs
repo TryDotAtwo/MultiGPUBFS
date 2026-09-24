@@ -1,4 +1,14 @@
-use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection};
+use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection, ReferenceTransport};
+
+#[test]
+fn lsa_transport_is_explicit_and_only_valid_for_dense_rank_owner() {
+    let rank = ReferenceSelection::parse("DENSE", "CUCO_RANK", "ON", false, 64, 8).unwrap();
+    assert_eq!(rank.transport, ReferenceTransport::HostSizedNccl);
+    assert_eq!(rank.with_transport("NCCL_LSA").unwrap().transport, ReferenceTransport::Lsa);
+    let cub = ReferenceSelection::parse("DENSE", "CUB_SORT_MERGE", "ON", false, 64, 8).unwrap();
+    assert!(cub.with_transport("NCCL_LSA").is_err());
+    assert!(rank.with_transport("UNKNOWN").is_err());
+}
 
 #[test]
 fn cuco_reference_requires_fixed_pool_and_archive_without_native_substitution() {

@@ -25,6 +25,12 @@ pub enum ReferenceOwner {
     CucoRank,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceTransport {
+    HostSizedNccl,
+    Lsa,
+}
+
 /// Explicit selection for the current reference benchmark, not production
 /// RunConfig validation or a promise of Tensor Core HASH_FIRST generation.
 #[derive(Debug, Clone, Copy)]
@@ -36,8 +42,18 @@ pub struct ReferenceSelection {
     pub tile_limit: u32,
     pub tensor_generation: bool,
     pub library_pool_bytes: Option<u64>,
+    pub transport: ReferenceTransport,
 }
 impl ReferenceSelection {
+    pub fn with_transport(mut self, transport: &str) -> Result<Self> {
+        self.transport = match transport {
+            "HOST_SIZED_NCCL" => ReferenceTransport::HostSizedNccl,
+            "NCCL_LSA" if self.owner == ReferenceOwner::CucoRank =>
+                ReferenceTransport::Lsa,
+            _ => return Err("REFERENCE_TRANSPORT_BACKEND".into()),
+        };
+        Ok(self)
+    }
     pub fn validate_archive_contract(&self, enabled: bool, search_only: bool) -> Result<()> {
         if search_only {
             if enabled {
@@ -129,6 +145,7 @@ impl ReferenceSelection {
             tile_limit,
             tensor_generation: false,
             library_pool_bytes: None,
+            transport: ReferenceTransport::HostSizedNccl,
         })
     }
 }

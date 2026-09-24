@@ -80,6 +80,7 @@ fn run() -> Result<()> {
             rank,
             world,
             logical_owner_to_rank: rank_map.to_vec(),
+            transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
             batch: 7,
             layer_capacity: 64,
             state_ring_capacity: 128,
