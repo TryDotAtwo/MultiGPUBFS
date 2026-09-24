@@ -119,9 +119,11 @@ path available as a separate named backend, never as a runtime fallback.
 
 Current acceptance state: only parts of the DENSE CUCO_RANK and LSA path have
 physical T4 correctness/sanitizer evidence, and S10 library-owner speed/VRAM
-samples exist. A one-T4 S10 Nsight profile confirms significant aggregate
-host waits, radix sort and materialization work
-(`docs/validation/library-owner-nsys-s10-v66.md`); it does not isolate the
-two-rank critical path. The v52 initcheck leaf reproduces NCCL LSA activation
-failure before full BFS (`docs/validation/lsa-leaf-sanitizer-v47.md`). No full
-epoch overlap or CPU-free claim follows from this evidence.
+samples exist. One-T4 v66 and two-T4 v67 Nsight diagnostics confirm many
+aggregate host waits and transfers, with NCCL send/receive prominent on the
+two-rank HostSizedNccl path (`docs/validation/library-owner-nsys-s10-v66.md`,
+`docs/validation/library-owner-nsys-s10-v67.md`). They do not isolate the LSA
+critical path or prove a particular removal safe. The v52 initcheck leaf
+reproduces NCCL LSA activation failure before full BFS
+(`docs/validation/lsa-leaf-sanitizer-v47.md`). No full epoch overlap or
+CPU-free claim follows from this evidence.
