@@ -10,6 +10,36 @@ pub struct ArchiveRingPlan {
     pub descriptor_capacity: usize,
 }
 impl ArchiveRingPlan {
+    /// Physical/logical extent required for a bounded run. A record frame
+    /// contains at least one rank-local state; an empty local layer still has
+    /// one layer frame for every globally nonempty BFS depth.
+    pub fn extent_bytes(
+        width: usize,
+        rank_records: u64,
+        record_frames: u64,
+        layer_frames: u64,
+    ) -> Result<u64> {
+        if !(1..=33025).contains(&width)
+            || rank_records == 0
+            || record_frames == 0
+            || layer_frames == 0
+            || record_frames > rank_records
+        {
+            return Err("ARCHIVE_EXTENT_SHAPE".into());
+        }
+        let payload = rank_records
+            .checked_mul(width as u64 + 16)
+            .ok_or("ARCHIVE_EXTENT_OVERFLOW")?;
+        let frames = record_frames
+            .checked_add(layer_frames)
+            .and_then(|value| value.checked_add(1))
+            .and_then(|value| value.checked_mul(112))
+            .ok_or("ARCHIVE_EXTENT_OVERFLOW")?;
+        48u64
+            .checked_add(payload)
+            .and_then(|value| value.checked_add(frames))
+            .ok_or_else(|| "ARCHIVE_EXTENT_OVERFLOW".into())
+    }
     pub fn new(width: usize, rows: u32, slots: usize) -> Result<Self> {
         if !(1..=33025).contains(&width) || rows == 0 || slots < 2 {
             return Err("ARCHIVE_RING_SHAPE".into());

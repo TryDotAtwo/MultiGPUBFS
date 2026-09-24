@@ -13,6 +13,29 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_missing_group_marker_preserves_failed_measurement(self):
+        popen = subprocess.Popen
+        class Sampler:
+            def terminate(self): pass
+            def wait(self): return 0
+        def launch(command, **kwargs):
+            return Sampler() if command[0] == 'stdbuf' else popen(command, **kwargs)
+        worker = (
+            "import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); "
+            "(p/'rank-0.json').write_text(json.dumps(dict(rank=0,world_size=1,"
+            "status='COMPLETE',backend='fixture',local_layer_sizes=[1],"
+            "search_complete_seconds=1,durable_run_commit_seconds=2,"
+            "archive_commit_scope='file_fsync',bootstrap_digest=[7]*32)))")
+        with tempfile.TemporaryDirectory() as directory, patch(
+                'distributed_gpu_bench.subprocess.Popen', side_effect=launch):
+            root = Path(directory)
+            row = run_group([sys.executable, '-c', worker, '{RANK_OUT}'], root,
+                            'missing-marker', dict(os.environ, MGBFS_BENCH_WORLD_SIZE='1'),
+                            timeout=10)
+            self.assertEqual(row['status'], 'FAILED')
+            self.assertEqual(row['failure_code'], 'GROUP_COMMIT_MISSING')
+            self.assertEqual(json.loads((root/'missing-marker.json').read_text())['status'], 'FAILED')
+
     def test_group_marker_rejects_missing_or_tampered_rank_result(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

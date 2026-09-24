@@ -1,5 +1,5 @@
 use crate::{
-    archive::create_archive_extent,
+    archive::{create_archive_extent, ArchiveRingPlan},
     distributed_native::{DistributedConfig, DistributedNativeBfs},
     macro_native::{MacroNativeBfs, MacroNativeConfig},
     pinned_archive::PinnedArchive,
@@ -194,10 +194,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
-    let disk_bytes = if archive_enabled { expected_states
-        .checked_mul((archive_width + 16) as u64)
-        .and_then(|x| x.checked_add(64 << 20))
-        .ok_or("DISK")? } else { 0 };
+    let disk_bytes = if archive_enabled {
+        ArchiveRingPlan::extent_bytes(
+            archive_width,
+            u64::from(capacity),
+            u64::from(capacity),
+            capacity_plan.global_records,
+        )?
+    } else { 0 };
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch);
     let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     selection.validate_archive_contract(archive_enabled,
@@ -525,10 +529,8 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     let description = format!("macro-reference-v1;group={group};batch={batch};capacity={capacity};future={future};K={macro_depth};pre={prededup};generation={generation_variant};seed=0x{seed_hex};archive_width={};archive_enabled={archive_enabled}", layout.width);
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let disk_bytes = if archive_enabled {
-        graph.expected_max_unique_states
-            .checked_mul((layout.width + 16) as u64)
-            .and_then(|x| x.checked_add(64 << 20))
-            .ok_or("DISK")?
+        let max_records = graph.expected_max_unique_states.max(u64::from(capacity));
+        ArchiveRingPlan::extent_bytes(layout.width, max_records, max_records, max_records)?
     } else {
         0
     };

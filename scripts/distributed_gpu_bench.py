@@ -149,8 +149,9 @@ def run_group(command,out,label,env,timeout=7200,required_processes=()):
  if row['exit_code']==0 and row['status']=='INCOMPLETE':
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
   if any('bootstrap_digest' in rank for rank in ranks):
-   row['group_commit']=validate_group_commit(rank_out,world)
-  row.update(aggregate_rank_results(ranks,world=world))
+   try:row['group_commit']=validate_group_commit(rank_out,world)
+   except ValueError as error:row.update(status='FAILED',failure_code=str(error))
+  if row['status']=='INCOMPLETE':row.update(aggregate_rank_results(ranks,world=world))
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']
  row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text(),world=world);row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row
 

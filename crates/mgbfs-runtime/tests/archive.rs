@@ -17,6 +17,16 @@ fn archive_ring_plan_checks_all_storage_before_allocating_slots() {
         assert!(ArchiveRingPlan::new(width, rows, slots).is_err());
     }
 }
+#[test]
+fn archive_extent_plan_charges_rank_records_and_every_frame() {
+    use mgbfs_runtime::archive::ArchiveRingPlan;
+    // 48 header + three 20-byte state/hash rows + three record frames,
+    // four global layer frames (including empty local layers), one commit.
+    assert_eq!(ArchiveRingPlan::extent_bytes(4, 3, 3, 4).unwrap(), 1004);
+    assert!(ArchiveRingPlan::extent_bytes(4, 3, 0, 4).is_err());
+    assert!(ArchiveRingPlan::extent_bytes(4, 3, 3, 0).is_err());
+    assert!(ArchiveRingPlan::extent_bytes(4, u64::MAX, 1, 1).is_err());
+}
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex},
