@@ -125,7 +125,13 @@ Evidence: `docs/validation/lrx13-eight-h200.md`.
    them by stage or isolate the timed BFS interval
    (`docs/validation/cuco-rank-nsight-2xt4.md`). Remove or justify each
    dependency without changing NCCL issue order or fail-fast semantics, then
-   rerun the full-state 1/2-rank and four-sanitizer gates.
+   rerun the full-state 1/2-rank and four-sanitizer gates. A later scoped
+   two-T4 search trace at `c73b637` still recorded 1,462 host stream drains
+   and 1,740 synchronous copies for the LSA/cuCO-rank path; this is not a
+   callsite or critical-path attribution. See
+   `docs/validation/poststore-timeline-v36.md`. The v61 four-tool T4 pass
+   covered the default library BFS tests, not the ignored LSA-specific full
+   BFS/failure fixtures; see `docs/validation/poststore-sanitizers-v61.md`.
 2. Pair native/cuCollections/cuDF on identical S10/S11/S12, U4 workloads,
    batch, rank count, shard count and archive contract. Record five runs,
    search and durable medians/MAD, external VRAM peak, allocation ledger,

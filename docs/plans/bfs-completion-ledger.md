@@ -803,3 +803,10 @@ failures and zero sanitizer errors/hazards; tiny two-process CLI archives
 verified. The default suite ignored LSA full-BFS and injected fault tests,
 so a four-tool LSA pipeline gate is still open. See
 `docs/validation/poststore-sanitizers-v61.md`.
+
+Two scoped two-T4 callchain attempts (v38/v39) completed and reproduced the
+1,462/1,740 LSA sync/copy counts. The v39 release-debug build and Nsight
+symbol-resolution option still exported raw addresses, not source callsites;
+versioned memcpy records lacked callchains. No per-stage wait has been
+selected for deletion from this evidence. See
+`docs/validation/sync-callsite-v38-v39.md`.
