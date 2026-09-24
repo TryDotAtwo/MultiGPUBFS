@@ -518,10 +518,15 @@ fn one_rank_constructor_failure_after_nccl_stops_peer() {
                 &graph, [7; 16], id, cfg, None, 64 << 20, false,
                 mgbfs_core::config::ReferenceOwner::CucoRank,
             );
+            eprintln!("constructor fault fixture rank={rank} result={:?}", outcome.as_ref().err());
             if rank == 0 {
                 assert_eq!(unsafe { mgbfs_library_pool_destroy_v1(held_pool) }, 0);
             }
-            outcome.err().expect("both ranks must reject setup").to_string()
+            let failure = outcome.err().expect("both ranks must reject setup").to_string();
+            if rank == 0 {
+                assert_eq!(failure, "CUDA_STATUS_-1");
+            }
+            failure
         })
     }).collect();
     let failures: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();

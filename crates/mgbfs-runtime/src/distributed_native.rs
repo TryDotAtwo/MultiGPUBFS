@@ -359,10 +359,17 @@ impl Drop for Event {
         }
     }
 }
-struct Comm(*mut c_void);
+// A communicator created during setup must abort peers if a later local
+// allocation fails before the final constructor agreement.
+struct Comm(*mut c_void, bool);
 impl Drop for Comm {
     fn drop(&mut self) {
-        unsafe { mgbfs_nccl_destroy(self.0) }
+        unsafe {
+            if self.1 {
+                mgbfs_nccl_abort(self.0);
+            }
+            mgbfs_nccl_destroy(self.0);
+        }
     }
 }
 
@@ -978,7 +985,7 @@ impl DistributedNativeBfs {
                 .to_string_lossy()
                 .into_owned());
         }
-        let comm = Comm(comm);
+        let comm = Comm(comm, true);
         admit_device_group(
             comm.0,
             raw,
@@ -1185,7 +1192,7 @@ impl DistributedNativeBfs {
             descriptor_capacity: u64::from(cfg.state_ring_capacity),
             ..Ring::default()
         }])?;
-        let result = Self {
+        let mut result = Self {
             #[cfg(feature = "library-owner")]
             library_owner: None,
             cfg: cfg.clone(),
@@ -1271,8 +1278,6 @@ impl DistributedNativeBfs {
             shared_memory,
             owned_memory,
         };
-        #[cfg(feature = "library-owner")]
-        let mut result = result;
         #[cfg(feature = "library-owner")]
         if let Some(pool_bytes) = library_pool_bytes {
             let plane_words =
@@ -1371,6 +1376,7 @@ impl DistributedNativeBfs {
             result.library_owner = Some(library);
         }
         result.all_max(0)?;
+        result.comm.1 = false;
         Ok(result)
     }
     pub fn depth(&self) -> u32 {
