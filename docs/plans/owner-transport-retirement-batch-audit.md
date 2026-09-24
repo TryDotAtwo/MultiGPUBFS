@@ -156,3 +156,13 @@ NCCL-only v57 fixture reproduces registration failure under initcheck too
 (`docs/validation/lsa-leaf-sanitizer-v47.md`,
 `docs/validation/nccl-window-isolation-v57.md`). No full epoch overlap or
 CPU-free claim follows from this evidence.
+
+The subsequent two-T4 v58 LSA full-BFS Nsight diagnostic completed and
+verified both S10 archives. It recorded 1,462 host stream synchronizations
+and 1,740 synchronous CUDA copies across ranks inside the capture, but its
+callchain export contains unresolved ASLR addresses. See
+`docs/validation/lsa-nsys-s10-v58.md`. This confirms the pipeline still has
+substantial host synchronization; it does not establish which individual
+waits dominate the critical path. CUCO_RANK selection is a lower-priority
+hypothesis in this workload than LSA copy, materialization, route sort and
+control synchronization.

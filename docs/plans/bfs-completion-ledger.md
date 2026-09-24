@@ -875,6 +875,12 @@ HostSizedNccl path. Neither gives an LSA critical-path attribution or proves
 the runtime CPU-free. See `docs/validation/library-owner-nsys-s10-v66.md`
 and `docs/validation/library-owner-nsys-s10-v67.md`.
 
+The subsequent two-T4 v58 S10 LSA full-BFS diagnostic completed with both
+archives verified. The captured range contains 1,462 host stream waits and
+1,740 synchronous CUDA copies across both ranks. Callchain symbols were not
+resolved, so this is aggregate evidence of remaining host dependence, not
+per-callsite critical-path proof. See `docs/validation/lsa-nsys-s10-v58.md`.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under
