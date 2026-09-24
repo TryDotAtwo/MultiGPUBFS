@@ -114,7 +114,7 @@ def main():
             run([str(sdk / "bin/nvcc"), "-std=c++17", "-arch=sm_75",
                  "-I" + str(nccl / "include"), "-L" + str(nccl / "lib"),
                  str(source / "experiments/nccl_window_isolation.cu"),
-                 "-Wl,-rpath," + str(nccl / "lib"), "-lnccl", "-lcudart",
+                 "-lnccl", "-lcudart",
                  "-o", str(binary)], "window-isolation-build", timeout=600)
             report["scope"] = ("independent NCCL ncclMemAlloc and "
                                "ncclCommWindowRegister on two physical T4s; no BFS code")
