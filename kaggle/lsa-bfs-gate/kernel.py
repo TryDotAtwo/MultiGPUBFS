@@ -12,7 +12,7 @@ import tempfile
 
 SOURCE = "a5e28a2d18c9f2220c811e6c17a503532df0ec75"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "nccl_window_isolation"
+MODE = "timeline_backtrace"
 
 
 def main():
