@@ -102,12 +102,54 @@ correctness purpose (`device-driven-library-owner.md`).
    NCCL communicator abort is used for host/API failure. Retain the existing
    post-owner vote until multi-round asymmetric-failure fixtures prove the new
    protocol. Do not silently replace variable payload with maximum padding.
+
+   **NCCL prerequisite, confirmed at current source:** `nccl_transport.cpp`
+   creates a *blocking* communicator with `ncclCommInitRank`. The current
+   wrapper treats every result other than `ncclSuccess` as an error, so merely
+   setting `ncclConfig_t.blocking=0` would not be a compatible change:
+   `ncclInProgress` needs explicit progress/poll handling before later NCCL
+   calls or CUDA kernels on that stream. NVIDIA's NCCL 2.29.7 fault-tolerance
+   guide requires a nonblocking communicator and no concurrent NCCL call in
+   another thread when aborting. A TCP watcher that directly calls the current
+   `mgbfs_nccl_abort` from another thread is therefore not an acceptable
+   shortcut; it would also race on the wrapper's unsynchronized `Comm.value`.
+   Preserve the synchronous backend while an isolated two-rank asymmetric
+   abort fixture and then a full owner-fault fixture establish the replacement.
+   Source: https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2297/user-guide/docs/usage/communicators.html
+   The independent two-thread/two-T4 NCCL 2.29.7 v59 fixture successfully
+   aborted one unpaired all-reduce on both ranks. It is evidence for this
+   narrow prerequisite only, not for the production BFS or a cross-process
+   sideband. See `docs/validation/nccl-nonblocking-abort-v59.md`.
+   The proposed dispatcher has exactly one NCCL-calling thread per rank.
+   A sideband listener may only set an atomic cancellation request; it must
+   not call NCCL concurrently. The dispatcher stops issuing calls and aborts
+   its local communicator after it leaves the current NCCL API call. Other
+   ranks receive the same request and abort locally. This requires a bounded
+   nonblocking-NCCL integration, not just replacing `ncclCommInitRank`.
 4. **Connect device descriptors through owner, archive and retirement.**
    Owner publication is irreversible only after all capacity guards. Each
    source slot and extent has a tracked last consumer: transport, owner,
    materializer, archive D2H and parent generation. Reclaim only after these
    events/leases close. Keep CPU extent reads at `FinalizeDepth`, not at every
    owner batch. Preserve fail-fast pinned-slot exhaustion and disk errors.
+
+   **Buffer-reuse prerequisite:** with the blocking post-owner host wait gone,
+   the sole LSA receive slot on `exchange_stream` may be rewritten by the next
+   exchange while the prior remote owner job on `stream` still reads it.
+   Publish an owner-consumed event *after* remote compare/materialize, then
+   make the next exchange wait on that event before reusing the receive slot.
+   The existing `exchange_done` event only orders producer-to-owner readiness;
+   it does not protect owner-to-next-producer reuse. Test repeated asymmetric
+   batches and zero payload under sanitizer before removing the wait.
+   Keep a fixed number K of independent epoch slots, each with its own
+   receive/storage lease and owner-consumed event. The host may enqueue at
+   most K unfinished epochs; it must not queue the entire scheduled depth
+   before learning a fatal. A stream-ordered fatal reduction can copy a
+   four-byte sticky result into preallocated pinned control storage and
+   publish completion without blocking the submission thread; the dispatcher
+   or sideband thread then requests group cancellation. This is a proposed
+   protocol, not an implemented or measured path. K, callback/poll mechanics,
+   slot bytes and worst-case fatal tail require explicit tests and byte budget.
 5. **Apply the same protocol to HASH_FIRST.** Device-side request compaction,
    sorted OriginRef/StateRef exchange and dense response application must fit
    the epoch ABI; otherwise mark the profile explicitly synchronous. Do not

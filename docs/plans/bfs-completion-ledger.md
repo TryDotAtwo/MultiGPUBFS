@@ -890,3 +890,9 @@ registration failure does not require a BFS bug. Its cause within the
 NCCL/sanitizer/driver stack remains undetermined; no sanitizer gate is
 waived. See `docs/validation/lsa-leaf-sanitizer-v47.md` and
 `docs/validation/nccl-window-isolation-v57.md`.
+
+An independent two-T4 NCCL 2.29.7 nonblocking-abort fixture at Kaggle v59
+completed: one rank issued an unpaired all-reduce, both rank threads aborted
+their communicators and exited. This is not the BFS runtime and does not
+replace its blocking communicator or establish socket/capacity/archive
+failure handling. See `docs/validation/nccl-nonblocking-abort-v59.md`.
