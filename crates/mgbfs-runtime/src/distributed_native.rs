@@ -2484,13 +2484,12 @@ impl DistributedNativeBfs {
                     0
                 } else {
                     let communication = self.exchange_stream.0;
-                    // Pack/count publication has already completed on s. These
-                    // immutable send ranges remain live until the remote wait and
-                    // the batch's failure collective have completed.
-                    // This control is consumed on exchange_stream, while the
-                    // buffer's store stream is s. Keep the cross-stream drain
-                    // until a dedicated publication event replaces it.
-                    self.collective_send.put(&[remote_rows])?;
+                    // The count is a launch argument, not a borrowed host
+                    // slice. Publish it on the consuming stream so the NCCL
+                    // size exchange follows the store without a host drain.
+                    check(unsafe { mgbfs_device_store_u32(
+                        self.collective_send.ptr.cast(), remote_rows, communication,
+                    ) })?;
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
