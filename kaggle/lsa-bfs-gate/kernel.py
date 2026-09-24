@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "88f06107ffc2f0909cf37f3a235f3d67dd0253de"
+SOURCE = "57953cfa22d39e5f8d1d112ae6ac392f4ea92efb"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "archive_fault_gate"
 
@@ -183,14 +183,16 @@ def main():
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
         if MODE == "archive_fault_gate":
-            result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
-                          "--features", "cuda,library-owner", "--test", "library_multi_gpu",
-                          "archive_slot_failure_votes_group_fatal_before_exchange",
-                          "--", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
-                         "archive-fault-gate", timeout=180)
-            if "test result: ok. 1 passed; 0 failed" not in result:
-                raise RuntimeError("ARCHIVE_FAULT_TEST_RESULT")
-            report["archive_fault_gate"] = "PASS"
+            for name in ("archive_slot_failure_votes_group_fatal_before_exchange",
+                         "archive_slot_failure_votes_group_fatal_before_lsa_exchange"):
+                result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                              name, "--", "--ignored", "--exact", "--nocapture",
+                              "--test-threads=1"], name, timeout=180)
+                if "test result: ok. 1 passed; 0 failed" not in result:
+                    raise RuntimeError("ARCHIVE_FAULT_TEST_RESULT: " + name)
+                report[name] = "PASS"
+                save()
             report["status"] = "COMPLETE"
             return
         result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
