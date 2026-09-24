@@ -779,3 +779,11 @@ durable medians 4.008849/4.057025 s; sampled VRAM was 529/567 MiB per
 rank. All 20 rank archive logs reported VERIFIED. The older v27 session is
 not a causal baseline for the scalar-store edit. See the same validation
 record for MAD, samples and limits.
+
+The matched-source Nsight v36 diagnostic completed on two P2P T4s but covers
+startup, warmup, search and archive together. HostSized/LSA traces recorded
+4,090/3,046 `cudaStreamSynchronize` calls and 4,960/3,528 synchronous
+`cudaMemcpy` calls; LSA is still host-dependent. These aggregate counts do
+not give per-stage critical-path time. See
+`docs/validation/poststore-timeline-v36.md`; search-range instrumentation
+and a scoped timeline remain required.
