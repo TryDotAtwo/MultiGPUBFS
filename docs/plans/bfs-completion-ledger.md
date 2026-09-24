@@ -817,6 +817,9 @@ host stream drains and 1,740 synchronous copies during search; the summed
 durations across both rank processes were 492.282 and 107.014 ms. The
 `gpu_gaps` rule's 500 ms default threshold exceeds this run's 0.452 s search
 window and therefore does not establish an absence of short idle gaps. This
-still lacks source callsite and critical-path attribution; the ignored LSA
-four-tool sanitizer gate is running separately. See
-`docs/validation/lsa-s10-nsight-v41.md`.
+still lacks source callsite and critical-path attribution. The ignored LSA
+four-tool sanitizer gate v62 timed out under its first unfiltered memcheck
+after NCCL setup reported API errors and both ranks entered depth 0; no test
+result or sanitizer summary exists. The remaining tools did not run. See
+`docs/validation/lsa-s10-nsight-v41.md` and
+`docs/validation/lsa-sanitizer-v62.md`.
