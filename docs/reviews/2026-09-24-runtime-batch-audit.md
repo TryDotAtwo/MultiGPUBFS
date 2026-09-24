@@ -5,6 +5,53 @@ Scope: static inspection of `distributed_native.rs`, `reference_bench.rs`,
 path at `1035c38` plus the pending boundary-connection fix. This is not a GPU
 profile, a correctness proof, or a claim that every defect has been found.
 
+## Status after the pinned 2×T4 gate
+
+The numbered findings below record the original audit and are not all open.
+At source `70a848e`, Kaggle v70 passed Linux archive/bootstrap/group-commit
+tests, two-rank S4 runs with both HostSized and LSA transport, verified
+archives and group markers, asymmetric archive-admission failure, a separate
+full-state oracle, and the case where total archived states exceed one-layer
+capacity. Raw outputs and exact scope are in
+`docs/validation/archive-admission-t4-v69.md`. Thus findings 1, 2, 7, 8,
+and 9 have targeted fixes and gates. Findings 3–6 remain open or only partly
+addressed; this result does not establish an asynchronous hot path.
+
+### Consolidated next implementation batch (static re-audit at `f6ebbf4`)
+
+1. **Pre-NCCL constructor admission.** `reference_bench.rs:23,265–306` still
+   parses some environment values with `env_u32` panic semantics and constructs
+   the distributed runtime after ArchiveAdmission. GPU allocation or NCCL
+   initialization may fail on one rank while the other waits in a collective.
+   Split pure validation/resource preparation from communicator creation,
+   exchange one bounded admission decision, then enter identical NCCL issue
+   order. Gate with malformed config and asymmetric allocation failure on two
+   ranks. Do not classify v70's archive-admission test as this gate.
+2. **One owner→transport→retirement transaction.** `distributed_native.rs`
+   still has blocking `all_max` (`1427–1438`) and in-batch calls near
+   `2285`, `2597`, and `2688`; HostSized reads route/owner counts on CPU
+   (`2390–2405`); indexed library owner reads directories and loops over
+   shards (`1553–1630`); HASH_FIRST has additional readbacks; finalization
+   reads extent/count words (`2757–2821`). A coherent replacement needs
+   GPU-resident count/offset/capacity descriptors, stream-event lifetimes,
+   fixed peer issue order including empty payloads, and a bounded fatal
+   protocol. Merely deleting individual waits is unsafe. Validate each
+   backend separately; LSA + rank owner is only the closest candidate.
+3. **Measurement/durability contract.** `reference_bench.rs:347–395` sets
+   `durable_run_commit_seconds` after archive finish and ArchiveCommitted
+   agreement, *before* rank JSON sync and group marker publication.
+   Therefore it is archive-commit time, not durable group-run time. Preserve
+   the legacy field for existing parsers only with explicit scope, add a
+   separately named group-publication time, and test missing/tampered marker
+   handling in the aggregator. A FIFO flush is not remote HF durability.
+4. **Performance diagnosis after correctness.** Capture a real BFS Nsight
+   Systems timeline with host waits, D2H counts, NCCL stalls, archive worker,
+   and GPU idle spans; then test a single coherent hot-path patch against
+   the same workload. Do not use S4 or isolated owner kernels for a speed
+   claim. Keep per-depth time/VRAM and archive contract in both arms.
+
+These are grouped implementation gates, not four independent one-line fixes.
+
 ## Findings, ordered by implementation dependency
 
 1. **The new run-boundary gate did not build on Linux.** Kaggle two-T4 v62
