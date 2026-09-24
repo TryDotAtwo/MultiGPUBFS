@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "64c8085790aab47f103091b5f22e63bf3a862d13"
+SOURCE = "6c74077988114da59043181bd3e49c6b984fe5c5"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "gate"
+MODE = "rounds_gate"
 
 
 def main():
@@ -191,6 +191,19 @@ def main():
             raise RuntimeError("BFS_TEST_BINARY_INVENTORY")
         report["plain_full_bfs"] = "PASS"
         save()
+        if MODE == "rounds_gate":
+            for test_name in (
+                "library_two_rank_layers_and_archives_match_oracle",
+                "cuco_rank_two_gpu_dense_layers_and_archives_match_oracle",
+            ):
+                result = run([str(binaries[0]), test_name,
+                              "--exact", "--nocapture", "--test-threads=1"],
+                             test_name, timeout=1800)
+                if "test result: ok. 1 passed; 0 failed" not in result:
+                    raise RuntimeError("ROUND_SCHEDULE_TEST_RESULT: " + test_name)
+            report["host_sized_profile_gate"] = "PASS"
+            report["status"] = "COMPLETE"
+            return
         env["NCCL_DEBUG"] = "INFO"
         sanitized = run(["compute-sanitizer", "--tool", "memcheck",
                          "--target-processes", "application-only",
