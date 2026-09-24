@@ -686,3 +686,13 @@ allocation plan, so the extra observed VRAM is outside that plan. This is a
 small-workload transport screen, not proof of end-to-end CPU independence,
 large-graph scaling or sanitizer cleanliness. See
 `docs/validation/lsa-paired-s10-2xt4.md`.
+
+At `6c74077`, the parent cursor computes a fixed number of peer epochs from
+immutable frontier extents at each depth boundary. A rank with fewer parents
+keeps issuing zero-payload rounds; the per-batch host `all_max(more)` is gone.
+The P2P-capable two-T4 v10 gate passed three full-state/oracle/archive
+integration tests spanning LSA DENSE, host-sized CUCO_RANK DENSE and
+host-sized native/CUDF/CUCO DENSE/HASH_FIRST. This validates the scheduling
+change on small graphs but leaves per-batch archive/error votes, owner and
+retirement readbacks, sanitizer and large-frontier timing open. See
+`docs/validation/fixed-depth-rounds-2xt4.md`.
