@@ -142,10 +142,11 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE == "benchmark":
+        if MODE in ("benchmark", "timeline"):
             report["scope"] = (
                 "paired two-T4 S10 CUCO_RANK DENSE; archive-verified; "
-                "five unprofiled repeats per transport")
+                + ("five unprofiled repeats per transport" if MODE == "benchmark" else
+                   "one profiled diagnostic run per transport, including startup and archive"))
             report["benchmark_config"] = {
                 "group": "s10", "batch": 32768, "capacity_per_rank": 1_000_000,
                 "ring_per_rank": 1_000_000, "pool_bytes_per_rank": 96 << 20,
@@ -158,9 +159,27 @@ def main():
             from distributed_gpu_bench import stats
             from library_gpu_screen import run_case
             cli = str(source / "target/release/mgbfs")
+            nsys = None
+            if MODE == "timeline":
+                package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
+                package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
+                package = work / package_name
+                run(["curl", "--fail", "--location", "--max-time", "300",
+                     "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/"
+                     + package_name, "--output", str(package)], "nsys-download")
+                with package.open("rb") as downloaded:
+                    if hashlib.file_digest(downloaded, "sha256").hexdigest() != package_sha:
+                        raise RuntimeError("NSYS_DIGEST_MISMATCH")
+                nsys_root = work / "nsys"
+                run(["dpkg-deb", "--extract", str(package), str(nsys_root)], "nsys-extract")
+                candidates = list(nsys_root.glob("opt/nvidia/nsight-systems/*/target-linux-x64/nsys"))
+                if len(candidates) != 1:
+                    raise RuntimeError("NSYS_EXECUTABLE_INVENTORY")
+                nsys = str(candidates[0])
+                run([nsys, "--version"], "nsys-version")
             panel = {"HOST_SIZED_NCCL": [], "NCCL_LSA": []}
             expected_dispatch = {"HOST_SIZED_NCCL": "HostSizedNccl", "NCCL_LSA": "Lsa"}
-            for repeat in range(5):
+            for repeat in range(5 if nsys is None else 1):
                 order = list(panel) if repeat % 2 == 0 else list(reversed(panel))
                 for transport in order:
                     label = f"s10-{transport.lower()}-r{repeat}"
@@ -170,14 +189,22 @@ def main():
                     result = run_case(cli, logs / label, work / label, "s10",
                                       3_628_800, 2, 32768, 1_000_000, 1_000_000,
                                       96 << 20, "DENSE", "ON", case_env,
-                                      owner="CUCO_RANK")
+                                      owner="CUCO_RANK", nsys=nsys)
                     if any(rank.get("transport_backend") != expected_dispatch[transport]
                            for rank in result["measurement"]["rank_results"]):
                         raise RuntimeError("TRANSPORT_DISPATCH_MISMATCH")
                     panel[transport].append(result["measurement"])
+                    if nsys is not None:
+                        run([nsys, "stats", "--report",
+                             "cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,osrt_sum",
+                             "--format", "csv", result["trace"]],
+                            label + "-nsys-stats", timeout=600)
                     report["runs"] = {key: len(value) for key, value in panel.items()}
                     save()
-            report["screen_statistics"] = {key: stats(value) for key, value in panel.items()}
+            if nsys is None:
+                report["screen_statistics"] = {key: stats(value) for key, value in panel.items()}
+            else:
+                report["timeline_scope"] = "startup, warmup, BFS, archive; diagnostic only"
             report["status"] = "COMPLETE"
             return
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
