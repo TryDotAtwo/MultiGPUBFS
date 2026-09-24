@@ -2663,10 +2663,21 @@ impl DistributedNativeBfs {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
                 if round == 1 && lsa.is_some() && rank_mode && self.hash_first.is_none() {
-                    if self.all_max_ring_or_host_fatal(batch_error.is_some())? != 0 {
-                        return Err(batch_error.unwrap_or_else(||
-                            "GROUP_OWNER_OR_PRE_OWNER_FATAL".into()));
+                    if let Some(error) = batch_error {
+                        // A host API error cannot be encoded by the device
+                        // controls. Match the peer's next max-reduction epoch
+                        // before aborting the communicator.
+                        self.all_max_ring_or_host_fatal(true)?;
+                        return Err(error);
                     }
+                    // This vote is ordered after both owner groups. A device
+                    // capacity failure poisons every rank before the next
+                    // owner epoch, with no per-batch host readback. The
+                    // depth boundary reports the sticky fatal to the host.
+                    check(unsafe { mgbfs_owner_global_fatal_gate(
+                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                    ) })?;
                 } else {
                     vote_group_error(
                         batch_error.map_or(Ok(()), Err),
