@@ -27,10 +27,10 @@ call alone is not this boundary.
 | NCCL | GPU rank-to-rank transfers | Owner exchange | Keep integrated; it does not deduplicate. |
 | RMM | GPU memory resources/pools | Fixed-budget library allocation | Keep the project's physically reserved, non-growing pool; ordinary growable pool configuration is insufficient. |
 | cuCollections (`static_set`/device refs) | Fixed-size GPU hash table and device-side lookup/insert | Best ready-made primitive for owner membership | Retain `CUCO_INDEXED` and the newer `CUCO_RANK` rank-batch backend. The latter runs compare/reserve/commit/materialize on GPU, but route sizing, collective control and retirement still have host dependencies. S10 4-shard search wins in the older indexed comparison, with higher total VRAM; do not transfer that result to `CUCO_RANK`. |
-| libcudf | GPU tables, joins, relational transforms | Alternative owner join/dedup | Keep explicit experimental `CUDF_RELATIONAL`; currently no proof that per-batch table construction, control synchronization, and peak VRAM satisfy the acceptance gate. |
-| Taskflow / CUDA Graphs | Cached GPU task DAG / lower repeated launch overhead | Fixed-shape owner jobs and pipeline submission | Probe **after** device-count dependencies are removed; a graph cannot by itself eliminate a host count readback that determines the next launch. No integrated A/B result. |
+| libcudf | GPU tables, joins, relational transforms | Frozen-history membership probe, not an incremental owner by itself | Keep explicit experimental `CUDF_RELATIONAL`; `distinct_hash_join` and `filtered_join` can build once and probe many batches, but neither documented probe API inserts newly committed next-layer keys. Rebuild cost, same-batch dedup, control synchronization, and peak VRAM remain gates. |
+| Taskflow / CUDA Graphs | Cached GPU task DAG / lower repeated launch overhead | Fixed-shape owner jobs and pipeline submission | Conditional graph nodes can branch/loop on a device value, but their body is restricted to one device and allowed node types; this is not a multi-rank NCCL failure/ordering protocol. Probe **after** the device-count and collective-control protocol is defined. No integrated A/B result. |
 | Apache Arrow / Parquet | Portable columnar output and interchange | Durable catalog/HF artifacts, not owner | Keep archive format; CPU/Arrow and libcudf writer comparison remains open. An Arrow CUDA buffer alone does not make generic Arrow algorithms GPU-aware. |
-| KvikIO / cuFile | GPU-storage I/O, including registered reusable buffers | Optional archive consumer/producer path | Bounded experiment only. Existing D2H pinned ring is functional; GPUDirect availability, compatibility mode, disk geometry and end-to-end benefit must be measured. |
+| KvikIO / cuFile | GPU-storage I/O, including registered reusable buffers | Optional archive consumer/producer path | Bounded experiment only. `CompatMode::AUTO` may fall back to POSIX I/O and `OFF` errors if GDS is unavailable; neither mode alone proves overlap. Existing D2H pinned ring is functional; disk geometry, explicit ordering and end-to-end benefit must be measured. |
 | nvCOMP | GPU compression | Optional archive size/bandwidth trade | No end-to-end profile yet; cannot assume compression pays for its GPU cycles or memory. |
 | cuGraph / Gunrock / GraphBLAST | BFS over materialized adjacency/sparse graph | Mismatch for implicit Cayley successor generation at target graph sizes | Do not replace owner/runtime with an explicit edge list. A reduced small-graph oracle is possible, not a production replacement. |
 | Sirius | GPU-resident SQL/scan engine with internal pinned-table registration | Candidate full DB owner | Source-level GPU ingestion candidate exists; no bounded closed-loop GPU query, fail-fast reservation or speed proof. Not rejected, not accepted. |
@@ -47,11 +47,24 @@ function. These are API facts, not performance claims. Primary references:
 
 - https://github.com/NVIDIA/cuCollections#static_set
 - https://docs.nvidia.com/cudf/26.10/libcudf/developer_guide/DEVELOPER_GUIDE/
+- https://docs.nvidia.com/cudf/26.08/libcudf/api_docs/column_join/
 - https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html
 - https://taskflow.github.io/taskflow/GPUTasking.html
 - https://docs.nvidia.com/cugraph/26.08/api_docs/api/cugraph/cugraph.bfs/
 - https://arrow.apache.org/docs/cpp/api/cuda.html
 - https://docs.nvidia.com/kvikio/latest/cpp/index.html
+
+The libcudf distinction matters for the owner contract: a frozen right-side
+table can filter duplicates against older layers across many candidate
+batches, but accepted keys from the current layer must also become visible
+to later batches before `FinalizeDepth`. The documented join objects expose
+probe methods, not an incremental commit API. Rebuilding the right side per
+batch or pairing a join with another mutable set is a different memory/time
+contract and must be benchmarked as such; this is an API-based inference, not
+an executed rejection of libcudf. Likewise, CUDA conditional graph nodes
+evaluate their condition on-device, yet their body is single-device and
+limited to kernel/copy/memset/child/conditional nodes; a graph does not supply
+the cross-rank fatal and NCCL issue-order semantics by itself.
 
 The Sirius/HeavyDB API and implementation evidence is pinned by commit and
 file URL in `db-interface-audit.md`; do not replace it with a generic claim
@@ -117,7 +130,11 @@ Evidence: `docs/validation/lrx13-eight-h200.md`.
    batch, rank count, shard count and archive contract. Record five runs,
    search and durable medians/MAD, external VRAM peak, allocation ledger,
    routed bytes, host drains, build/dependency and adapter code size. Check
-   the accepted <=20% time regression and minimal peak-VRAM frontier.
+   the accepted <=20% time regression and minimal peak-VRAM frontier. For
+   libcudf, separately count one frozen-history index build per depth,
+   candidate probes, within-batch unique, and any rebuild or mutable-set
+   insertion needed to make accepted keys visible to the next batch. A
+   frozen-history anti-join alone is not a correct full owner comparison.
 3. For Sirius and HeavyDB separately, execute bounded GPU generate -> ingest
    -> query/dedup -> consume with fixed physical reserve, fatal exhaustion,
    stream/lifetime proof and no hidden CPU fallback. If the adapter cannot
