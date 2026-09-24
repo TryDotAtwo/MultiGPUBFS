@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "a5e28a2d18c9f2220c811e6c17a503532df0ec75"
+SOURCE = "f49deebe37e8f57a5c294785c3c6a92e9b45009b"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "timeline_backtrace"
+MODE = "nccl_abort_isolation"
 
 
 def main():
@@ -109,6 +109,37 @@ def main():
         env["LD_LIBRARY_PATH"] = ":".join([str(nccl / "lib"), str(sdk / "lib"),
                                             *libdirs, env.get("LD_LIBRARY_PATH", "")])
         env["MGBFS_CUDART_LIB_DIR"] = str(sdk / "lib")
+        if MODE == "nccl_abort_isolation":
+            binary = work / "nccl-nonblocking-abort-isolation"
+            run(["g++", "-std=c++17", "-pthread", "-x", "c++",
+                 "-I" + str(nccl / "include"), "-I" + str(sdk / "include"),
+                 str(source / "experiments/nccl_nonblocking_abort_isolation.cpp"),
+                 "-x", "none", str(nccl / "lib/libnccl.so.2"),
+                 "-L" + str(sdk / "lib"), "-lcudart",
+                 "-Wl,-rpath," + str(nccl / "lib"),
+                 "-o", str(binary)], "abort-isolation-build", timeout=600)
+            try:
+                completed = subprocess.run([str(binary)], cwd=source, env=env,
+                                           capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired as error:
+                (logs / "abort-isolation.log").write_text(
+                    str(error.stdout) + str(error.stderr))
+                report["scope"] = "independent NCCL nonblocking abort; no BFS code"
+                report["abort_isolation"] = {"status": "TIMEOUT"}
+                report["status"] = "DIAGNOSTIC_COMPLETE"
+                return
+            output = completed.stdout + completed.stderr
+            (logs / "abort-isolation.log").write_text(output)
+            report["scope"] = ("independent NCCL 2.29.7 nonblocking asymmetric "
+                               "abort on two physical T4s; no BFS code")
+            report["abort_isolation"] = {
+                "returncode": completed.returncode,
+                "passed_ranks": output.count("stage=abort result=PASS"),
+            }
+            if completed.returncode != 0 or report["abort_isolation"]["passed_ranks"] != 2:
+                raise RuntimeError("NCCL_NONBLOCKING_ABORT_GATE")
+            report["status"] = "COMPLETE"
+            return
         if MODE == "nccl_window_isolation":
             binary = work / "nccl-window-isolation"
             run(["g++", "-std=c++17", "-x", "c++",
