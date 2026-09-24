@@ -66,7 +66,16 @@ as a sanitizer pass. Next diagnostic selects `application-only` target
 processes (the sanitizer default is `all`) to test whether child-process
 tracking causes the shutdown hang.
 
+Version v8 tested that hypothesis on another P2P-capable two-T4 host with
+the same source and filter. Its plain eight-fixture test passed, but filtered
+`memcheck --target-processes application-only` again timed out at 300 s.
+This time both ranks constructed successfully and printed the first depth-0
+advance marker; no later depth or test result appeared. The change did not
+resolve the instrumentation hang. The v7/v8 difference is host/run dependent
+and does not establish either a device-memory error or a clean sanitizer
+result. No unchanged rerun is planned.
+
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build
-logs in the same directory; v2–v7 similarly under
+logs in the same directory; v2–v8 similarly under
 `test_results/kaggle_lsa_full_bfs_v*/`.
