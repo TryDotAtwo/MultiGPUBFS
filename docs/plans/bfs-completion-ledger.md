@@ -759,3 +759,13 @@ The host vote remains necessary for this tested protocol. Device failures
 can still leave the fixed remaining parent rounds of the depth to execute;
 bounded fatal cancellation and the whole owner-to-retirement DAG remain open.
 See `docs/validation/postowner-device-vote-candidate.md`.
+
+At `3fffcbc`, HostSized NCCL peer-count publication moved from blocking
+`Buffer::put` on the producer stream to a device scalar store on the consuming
+exchange stream. Two independent physical 2xT4 Kaggle gates (LSA v34 and
+library-owner v60) passed full-state layer/archive fixtures, 1/2-GPU library
+owner regression and tiny two-process CLI cases across DENSE/HASH_FIRST where
+supported. The full CPU suite also passed. This removes one host drain, not
+the received-count readback, payload-size decision or fatal votes. No new
+sanitizer, speed, VRAM or overlap claim is attached to this change; see
+`docs/validation/scalar-control-store-t4.md`.

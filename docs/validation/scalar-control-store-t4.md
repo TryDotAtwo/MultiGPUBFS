@@ -4,9 +4,9 @@ The `Buffer::put()` path copies a borrowed host slice and drains its CUDA
 stream before returning. Commit `dd679d5411c6335f79b37cf70c087c62c6056111`
 adds `mgbfs_device_store_u32` for scalar controls whose consumers are on the
 same stream. The value is a kernel launch argument, so there is no borrowed
-host-buffer lifetime. The legacy exchange count is consumed on another stream
-and deliberately retains the synchronous upload. Generic bulk uploads, host
-result reads, and the remaining fatal-vote waits are unchanged.
+host-buffer lifetime. At this first source revision, the legacy exchange
+count was consumed on another stream and deliberately retained the synchronous
+upload. Generic bulk uploads, host result reads, and fatal-vote waits remain.
 
 - Kaggle `trydotatwo/mgbfs-lsa-full-bfs-gate-t4` v26, source `dd679d5`,
   status `COMPLETE`: two peer-accessible T4s; CUCO_RANK DENSE LSA full layers
@@ -43,3 +43,34 @@ run variation. Raw v27 data, including all ten samples, is at
 The scalar store removes host drains at the named same-stream uploads, but
 this is **not** a CPU-free owner-to-retirement pipeline or a full-app sanitizer
 pass. Per-batch archive-error and post-owner fatal votes still return to CPU.
+
+Commit `3fffcbcb44167cfd17e627d51e47a129e0cbc145` also publishes the
+HostSized NCCL peer-count word through `mgbfs_device_store_u32` on the
+**consuming exchange stream**, immediately before that stream's size exchange.
+The producer pack is already drained for the HostSized path, and the count
+value is a kernel argument rather than a borrowed host slice. This removes
+the cross-stream `Buffer::put` drain at that peer-round boundary; it does not
+remove the host readback of the received count or the following payload-size
+decision. The reused collective word is ordered with later owner/fatal work
+through the existing exchange-completion event.
+
+Kaggle v34, exact source above, status `COMPLETE`, ran on two P2P-capable T4s.
+The complete LSA CUCO_RANK DENSE oracle/archive fixture passed, then the
+HostSized `library_two_rank_layers_and_archives_match_oracle` passed across
+native/CUB, cuDF and cuCollections indexed owners, DENSE/HASH_FIRST profiles,
+two rank maps and symmetric/asymmetric fixtures. The HostSized CUCO_RANK
+DENSE oracle/archive fixture passed as well. All three tests reported one
+passing test and zero failures. Raw summary/logs:
+`test_results/kaggle_host_count_store_v34/lsa-bfs-gate/`.
+The local CUDA-feature Rust type-check and the full CPU test suite passed at
+this source. V34 is plain full-state correctness, not a sanitizer, overlap,
+large-graph or speed result for the changed transport boundary.
+
+In parallel, Kaggle `trydotatwo/mgbfs-library-owner-t4` v60 built the same
+source on a separate two-T4 host and reported `PASS` with `full_bfs_gate=true`.
+Its plain 1/2-GPU library-owner fixtures and two-process torchrun CLI/archive
+cases for S4 and U4m2 completed across cuDF, indexed cuCollections and
+CUCO_RANK (the latter DENSE only). The gate explicitly requested no new
+sanitizer tools, and these tiny graphs are correctness checks, not a speed
+or VRAM comparison. Raw manifest and logs:
+`test_results/kaggle_host_count_store_library_v60/library-owner/`.
