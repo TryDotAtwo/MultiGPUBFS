@@ -726,3 +726,17 @@ a hang. Raw summaries/logs are under
 `test_results/kaggle_lsa_archive_fault_v15/lsa-bfs-gate/`. This extends the
 fault gate to both transport backends, not to every asymmetric CUDA/NCCL or
 disk-write failure and not to an asynchronous ordinary path.
+
+Static follow-up at `26f25f2`: the `CUCO_RANK` owner already runs compare,
+shard counting, reserve, commit, materialization and next-extent publication
+from device-held counts in `commit_rank_library_batch`; it reads the resulting
+extent list only in `FinalizeDepth`. Do not build another per-shard CPU extent
+replacement for this backend. On the LSA DENSE batch path, the remaining
+blocking host boundaries are instead the archive-fatal `all_max` before
+generation, the ring/transport-fatal `all_max_ring_fatal` after exchange, and
+the host-error `vote_group_error` after owner work. The first has now passed
+asymmetric failure injection on both transports, so removing its wait requires
+a new rank-consistent failure protocol, not deleting a local sync. The latter
+two votes must be considered together with device-side commit gating and
+identical collective order; the code audit alone does not prove they can be
+combined safely.
