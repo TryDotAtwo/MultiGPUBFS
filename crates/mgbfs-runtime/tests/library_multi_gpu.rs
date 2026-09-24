@@ -487,6 +487,47 @@ fn cuco_rank_lsa_one_rank_host_owner_error_stops_group() {
     assert!(!errors[1].is_empty(), "rank1 must also fail");
 }
 
+#[test]
+#[ignore = "requires two physical P2P GPUs; one rank rejects a nested RMM pool after NCCL init"]
+fn one_rank_constructor_failure_after_nccl_stops_peer() {
+    use mgbfs_cuda::{library_owner::mgbfs_library_pool_create_v1,
+                     library_owner::mgbfs_library_pool_destroy_v1,
+                     native_owner::cudaSetDevice};
+    let graph = MatrixGroup::unitriangular(3, 3).unwrap();
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let ready = Arc::new(Barrier::new(2));
+    let workers: Vec<_> = (0..2u32).map(|rank| {
+        let graph = graph.clone();
+        let ready = ready.clone();
+        std::thread::spawn(move || {
+            assert_eq!(unsafe { cudaSetDevice(rank as i32) }, 0);
+            let mut held_pool = std::ptr::null_mut();
+            if rank == 0 {
+                assert_eq!(unsafe { mgbfs_library_pool_create_v1(64 << 20, 1 << 30, &mut held_pool) }, 0);
+            }
+            ready.wait();
+            let cfg = DistributedConfig {
+                rank, world: 2, logical_owner_to_rank: vec![0, 1], batch: 1,
+                layer_capacity: 64, state_ring_capacity: 64, buckets: 8,
+                shards: 4, job_buckets: 2, bucket_capacity: 32, prededup: true,
+                transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            };
+            let outcome = DistributedNativeBfs::new_library_reference_with_owner(
+                &graph, [7; 16], id, cfg, None, 64 << 20, false,
+                mgbfs_core::config::ReferenceOwner::CucoRank,
+            );
+            if rank == 0 {
+                assert_eq!(unsafe { mgbfs_library_pool_destroy_v1(held_pool) }, 0);
+            }
+            outcome.err().expect("both ranks must reject setup").to_string()
+        })
+    }).collect();
+    let failures: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    assert!(!failures[0].is_empty() && !failures[1].is_empty());
+}
+
 fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut id = [0u8; 128];
