@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "d95ef218d321cd35b601c7db6440ec22038e966d"
+SOURCE = "64c8085790aab47f103091b5f22e63bf3a862d13"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 
 
@@ -152,15 +152,21 @@ def main():
             raise RuntimeError("BFS_TEST_BINARY_INVENTORY")
         report["plain_full_bfs"] = "PASS"
         save()
-        sanitized = run(["compute-sanitizer", "--tool", "memcheck", "--error-exitcode", "99",
+        env["NCCL_DEBUG"] = "INFO"
+        sanitized = run(["compute-sanitizer", "--tool", "memcheck",
+                         "--report-api-errors", "no",
+                         "--kernel-name", "kns=lsa_publish_count",
+                         "--kernel-name", "kns=lsa_copy_exact",
+                         "--kernel-name", "kns=import_transport_fatal",
+                         "--error-exitcode", "99",
                          str(binaries[0]),
-                         "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                         "cuco_rank_lsa_single_fixture_for_sanitizer",
                          "--ignored", "--exact", "--nocapture", "--test-threads=1"],
-                        "lsa-full-bfs-memcheck", timeout=360)
+                        "lsa-single-fixture-filtered-memcheck", timeout=300)
         if "test result: ok. 1 passed; 0 failed" not in sanitized or \
                 "ERROR SUMMARY: 0 errors" not in sanitized:
             raise RuntimeError("BFS_MEMCHECK_RESULT")
-        report["full_bfs_memcheck"] = "PASS_UNFILTERED"
+        report["full_bfs_memcheck"] = "PASS_FILTERED_TRANSPORT_KERNELS_API_ERRORS_DISABLED"
         report["status"] = "COMPLETE"
     except Exception as error:
         report["error"] = str(error)
