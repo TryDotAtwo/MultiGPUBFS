@@ -787,3 +787,12 @@ startup, warmup, search and archive together. HostSized/LSA traces recorded
 not give per-stage critical-path time. See
 `docs/validation/poststore-timeline-v36.md`; search-range instrumentation
 and a scoped timeline remain required.
+
+At `c73b637`, the measured pass gained an opt-in CUDA profiler capture range.
+Two-T4 Nsight v37 completed with startup/warmup/final archive drain excluded:
+HostSized/LSA still show 2,002/1,462 `cudaStreamSynchronize` and 2,460/1,740
+synchronous `cudaMemcpy` calls during captured search, while pinned
+allocation/free calls are zero. This establishes remaining hot-path host
+dependencies, not their individual critical-path cost. Stage/callsite
+attribution and full DAG overlap remain unverified; details are in
+`docs/validation/poststore-timeline-v36.md`.
