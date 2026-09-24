@@ -1,5 +1,6 @@
 """Exact-source, two-T4 CUCO_RANK/LSA full-state BFS correctness gate."""
 import hashlib
+import ctypes
 import importlib.util
 import json
 import os
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "76c333798ad599c5cb52c29d0afae5c3f7f35e47"
+SOURCE = "8764bb728efd84994ead997a7dcd24ed41af380e"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 
 
@@ -50,6 +51,17 @@ def main():
         report["gpus"] = gate.validate_gpus(run([
             "nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.free",
             "--format=csv,noheader,nounits"], "inventory"))
+        cudart = ctypes.CDLL("libcudart.so.12")
+        p2p = []
+        for source_gpu, target_gpu in ((0, 1), (1, 0)):
+            allowed = ctypes.c_int()
+            rc = cudart.cudaDeviceCanAccessPeer(ctypes.byref(allowed), source_gpu, target_gpu)
+            p2p.append({"source": source_gpu, "target": target_gpu,
+                        "cuda_status": rc, "allowed": allowed.value})
+        report["p2p"] = p2p
+        if any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
+            report["status"] = "UNSUPPORTED_HOST"
+            return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
         for component, version, digest in library.CUDA_COMPONENTS:
