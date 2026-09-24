@@ -37,5 +37,19 @@ Raw v50 summary and logs are in
 The NCCL-INFO initcheck diagnostic v51 selected a no-P2P T4 host and
 stopped at preflight. The same diagnostic was resubmitted as v52.
 
+Private Kaggle v52 completed on P2P-capable 2×T4 at `ae3dce9` with
+`NCCL_DEBUG=INFO`. The plain leaf passed. Under `initcheck`, one rank again
+failed during `ncclCommWindowRegister` (`window_register: unhandled cuda
+error`); the fixture exited with code 6 and `ERROR SUMMARY: 0 errors`.
+This independently reproduces v50's activation failure, but neither proves
+a Compute Sanitizer false positive nor identifies a BFS defect. The
+notebook status is `INCOMPLETE`; full-BFS and four-tool gates remain open.
+Raw v52 evidence is in
+`test_results/kaggle_lsa_leaf_initdebug_v52/lsa-bfs-gate/`.
+
+The slow `cuda_nvrtc` download seen while v52 was running was transient:
+the archive finished downloading and the notebook reached the leaf test.
+It was not the terminal failure.
+
 The leaf results do not close the full-BFS four-tool sanitizer gate. Raw
 evidence is under `test_results/kaggle_lsa_leaf_v47/lsa-bfs-gate/`.

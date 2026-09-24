@@ -1,10 +1,9 @@
 # Owner -> transport -> retirement: batch audit
 
-Status: static source audit of `e2d4eec` (2026-09-24). This is a change plan,
-not a claim of measured bottlenecks or a completed asynchronous runtime. The
-two private Kaggle runs launched for isolated LSA initcheck and one-GPU Nsight
-profiling were still running when this audit was written. Keep their evidence
-separate from source deductions.
+Status: static source audit of `e2d4eec` (2026-09-24), supplemented by the
+separate one-T4 v66 diagnostic profile and two-T4 v52 leaf test at `ae3dce9`.
+This is a change plan, not a completed asynchronous runtime. Keep source
+deductions separate from measured evidence.
 
 ## Contract to preserve
 
@@ -96,4 +95,9 @@ path available as a separate named backend, never as a runtime fallback.
 
 Current acceptance state: only parts of the DENSE CUCO_RANK and LSA path have
 physical T4 correctness/sanitizer evidence, and S10 library-owner speed/VRAM
-samples exist. No full epoch overlap or CPU-free claim follows from that.
+samples exist. A one-T4 S10 Nsight profile confirms significant aggregate
+host waits, radix sort and materialization work
+(`docs/validation/library-owner-nsys-s10-v66.md`); it does not isolate the
+two-rank critical path. The v52 initcheck leaf reproduces NCCL LSA activation
+failure before full BFS (`docs/validation/lsa-leaf-sanitizer-v47.md`). No full
+epoch overlap or CPU-free claim follows from this evidence.
