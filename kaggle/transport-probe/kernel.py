@@ -7,7 +7,7 @@ import subprocess
 import sys
 import urllib.request
 
-SOURCE = "ae22e29388f08ec426f0b70b867c34567a17ff7f"
+SOURCE = "d8a1424b12bf4f4747de98e63af28711ec882688"
 
 
 def command(*args, env=None, timeout=180):
@@ -148,13 +148,26 @@ static void cu(cudaError_t x,const char* where){
 static void ok(int x,const char* where){
   if(x)throw std::runtime_error(std::string(where)+" rc="+std::to_string(x));
 }
-static void worker(unsigned rank,const unsigned char* id,unsigned counts[2],std::string& error){
+static void worker(unsigned rank,const unsigned char* id,unsigned counts[2],bool reject,std::string& error){
  try {
   cu(cudaSetDevice(rank),"device");
   char why[256]{};void* comm{};
   ok(mgbfs_nccl_create(rank,2,rank,id,&comm,why,sizeof(why)),"create");
-  int init=mgbfs_nccl_lsa_init(comm,32,16,why,sizeof(why));
-  if(init)throw std::runtime_error("init rc="+std::to_string(init)+" "+why);
+  int prep=mgbfs_nccl_lsa_prepare(comm,reject&&rank==0?0:32,16,why,sizeof(why));
+  if(reject){
+   uint32_t local=prep!=0,global=0,*dl{},*dg{};
+   cu(cudaMalloc(&dl,4),"vote_send_alloc");cu(cudaMalloc(&dg,4),"vote_recv_alloc");
+   cu(cudaMemcpy(dl,&local,4,cudaMemcpyHostToDevice),"vote_upload");
+   ok(mgbfs_nccl_all_reduce_max_u32(comm,dl,dg,nullptr),"prepare_vote");
+   cu(cudaDeviceSynchronize(),"prepare_vote_sync");
+   cu(cudaMemcpy(&global,dg,4,cudaMemcpyDeviceToHost),"prepare_vote_read");
+   if(global!=1||(rank==0&&prep==0))throw std::runtime_error("PREPARE_FATAL_VOTE_MISMATCH");
+   std::printf("PRODUCTION_RANK_%u_PREPARE_REJECT_PASS\n",rank);
+   cudaFree(dg);cudaFree(dl);mgbfs_nccl_destroy(comm);return;
+  }
+  if(prep)throw std::runtime_error("prepare rc="+std::to_string(prep)+" "+why);
+  int init=mgbfs_nccl_lsa_activate(comm,why,sizeof(why));
+  if(init)throw std::runtime_error("activate rc="+std::to_string(init)+" "+why);
   uint32_t hc[2]={counts[0],counts[1]};
   uint32_t* dc{};uint4 *dh{},*ds{};
   cu(cudaMalloc(&dc,sizeof(hc)),"counts_alloc");
@@ -197,13 +210,14 @@ static void worker(unsigned rank,const unsigned char* id,unsigned counts[2],std:
  }catch(const std::exception& ex){error=ex.what();}
 }
 int main(int argc,char** argv){
- if(argc!=3)return 2;
+ if(argc!=3&&argc!=4)return 2;
  unsigned counts[2]={unsigned(std::strtoul(argv[1],nullptr,10)),
                      unsigned(std::strtoul(argv[2],nullptr,10))};
+ bool reject=argc==4&&std::strcmp(argv[3],"reject")==0;
  unsigned char id[128]{};if(mgbfs_nccl_unique_id(id))return 3;
  std::string errors[2];
- std::thread a(worker,0,id,counts,std::ref(errors[0]));
- std::thread b(worker,1,id,counts,std::ref(errors[1]));
+ std::thread a(worker,0,id,counts,reject,std::ref(errors[0]));
+ std::thread b(worker,1,id,counts,reject,std::ref(errors[1]));
  a.join();b.join();
  for(unsigned i=0;i<2;i++)if(!errors[i].empty())
   std::fprintf(stderr,"PRODUCTION_RANK_%u_ERROR_%s\n",i,errors[i].c_str());
@@ -283,6 +297,12 @@ def main():
                     str(harness), "/tmp/mgbfs-production-transport.o",
                     "-l:libnccl.so.2", "-o", "/tmp/mgbfs-production-exchange",
                     timeout=300)
+                if report["production_transport_link"]["code"] == 0:
+                    report["production_prepare_reject"] = command(
+                        "/tmp/mgbfs-production-exchange", "3", "1", "reject",
+                        env=dict(os.environ, LD_LIBRARY_PATH=str(libs[0].parent)
+                                 + ":" + os.environ.get("LD_LIBRARY_PATH", ""),
+                                 NCCL_CUMEM_ENABLE="1"), timeout=120)
             probe = Path("/tmp/mgbfs-nccl-device-compile.cu")
             probe.write_text("#include <nccl.h>\n#include <nccl_device.h>\n"
                              "__global__ void probe(ncclDevComm) {}\n", encoding="utf-8")

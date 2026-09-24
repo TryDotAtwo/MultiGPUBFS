@@ -96,3 +96,25 @@ kernels, but **not** an initcheck pass or a clean unfiltered sanitizer gate.
 Raw result: `test_results/kaggle_transport_probe_v18/`.
 
 Reference: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html
+
+## Phased LSA initialization (2026-09-24)
+
+The experimental C ABI at `d8a1424` splits local capability/allocation
+`prepare` from collective window/device-communicator `activate`. The caller
+must vote across ranks on every `prepare` result and enter `activate` only
+when all ranks succeeded. Private Kaggle notebook
+`trydotatwo/mgbfs-transport-feasibility-t4` v19 supplied the RED gate:
+its production harness failed compilation because the two ABI functions did
+not exist. V20 used exact source `d8a1424b12bf4f4747de98e63af28711ec882688`
+on a physical P2P-capable 2xT4 host with pinned NCCL 2.29.7. It compiled
+and linked the production transport; injected invalid capacity on rank 0
+returned a global prepare-failure vote on both ranks without entering
+activation. The exact exchange cases `(3,1)`, `(0,5)`, `(20,20)` and `(33,1)`
+passed after activation. Kernel-filtered `memcheck` reported zero errors.
+Kernel-filtered `initcheck` timed out at 600 seconds, so the LSA sanitizer
+gate remains incomplete. Raw output:
+`test_results/kaggle_transport_prepare_red_v19/` and
+`test_results/kaggle_transport_prepare_green_v20/`.
+
+This is still a leaf transport test. The BFS runtime does not yet select or
+use LSA, and the preparation vote must be wired before collective activation.
