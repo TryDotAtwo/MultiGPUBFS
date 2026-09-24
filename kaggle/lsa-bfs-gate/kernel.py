@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "db360452b972344af916d217a5e47d5975711aad"
+SOURCE = "1035c3827f7716b5a8b664ba2ace2e9bbff5f753"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "nccl_window_nonblocking"
+MODE = "boundary_gate"
 
 
 def main():
@@ -217,6 +217,74 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "boundary_gate":
+            run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                 "--test", "bootstrap", "--test", "group_commit"],
+                "boundary-cpu-tests", timeout=900)
+            run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "boundary-cli-build", timeout=1800)
+            cli = str(source / "target/release/mgbfs")
+            env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
+                       MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
+                       MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                       MGBFS_BUCKETS="8", MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2",
+                       MGBFS_BUCKET_CAPACITY="32", MGBFS_STATE_CODEC="matrix_u8",
+                       MGBFS_ARCHIVE_CODEC="matrix_u8", MGBFS_ARCHIVE_ROWS="3",
+                       MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
+                       MGBFS_PRE_DEDUP="ON", MGBFS_BENCH_SKIP_ARCHIVE="0",
+                       MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank",
+                       MGBFS_RANK_MAP="0,1")
+            report["boundary_runs"] = {}
+            for transport in ("HOST_SIZED_NCCL", "NCCL_LSA"):
+                env["MGBFS_TRANSPORT_BACKEND"] = transport
+                name = transport.lower()
+                root = work / ("boundary-" + name)
+                root.mkdir()
+                output = logs / ("boundary-" + name)
+                command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                           "--nproc-per-node=2", "--no-python", cli, "bench", "--reference",
+                           "s4", "7", str(root / "bootstrap"), str(root / "archive"),
+                           str(output)]
+                run(command, "boundary-" + name, timeout=300)
+                marker = json.loads((output / "group-complete.json").read_text())
+                if (marker["status"] != "COMPLETE" or marker["world_size"] != 2
+                        or marker["archive_commit_scope"] != "file_fsync"):
+                    raise RuntimeError("GROUP_COMMIT_MARKER")
+                layer_total = 0
+                for rank in range(2):
+                    data = (output / f"rank-{rank}.json").read_bytes()
+                    row = json.loads(data)
+                    if (row["status"] != "COMPLETE" or row["rank"] != rank
+                            or row["archive_commit_scope"] != "file_fsync"
+                            or list(hashlib.sha256(data).digest()) != marker["rank_sha256"][rank]):
+                        raise RuntimeError("GROUP_RANK_RESULT")
+                    layer_total += sum(row["local_layer_sizes"])
+                    run([cli, "verify", str(root / f"archive-rank-{rank}.mgbfsar1")],
+                        f"boundary-{name}-verify-{rank}", timeout=300)
+                if layer_total != 24:
+                    raise RuntimeError("GROUP_LAYER_COUNT")
+                report["boundary_runs"][name] = "PASS_GROUP_MARKER_AND_ARCHIVES"
+                save()
+            env["MGBFS_TRANSPORT_BACKEND"] = "NCCL_LSA"
+            fault = work / "boundary-archive-fault"
+            fault.mkdir()
+            (fault / "archive-rank-0.mgbfsar1").write_bytes(b"occupied")
+            fault_output = logs / "boundary-archive-fault-results"
+            command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                       "--nproc-per-node=2", "--no-python", cli, "bench", "--reference",
+                       "s4", "7", str(fault / "bootstrap"), str(fault / "archive"),
+                       str(fault_output)]
+            failed = subprocess.run(command, cwd=source, env=env, capture_output=True,
+                                    text=True, timeout=180)
+            output_text = failed.stdout + failed.stderr
+            (logs / "boundary-archive-fault.log").write_text(output_text)
+            if (failed.returncode == 0 or "ARCHIVE_EXTENT" not in output_text
+                    or "REMOTE_ARCHIVE_ADMISSION_FATAL" not in output_text
+                    or (fault_output / "group-complete.json").exists()):
+                raise RuntimeError("ASYMMETRIC_ARCHIVE_ADMISSION_GATE")
+            report["boundary_runs"]["one_rank_archive_admission_failure"] = "PASS_GROUP_FATAL"
+            report["status"] = "COMPLETE"
+            return
         if MODE in ("benchmark", "timeline", "timeline_backtrace", "timeline_analysis"):
             report["scope"] = (
                 "paired two-T4 S10 CUCO_RANK DENSE; archive-verified; "
