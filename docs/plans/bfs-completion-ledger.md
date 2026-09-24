@@ -896,3 +896,14 @@ completed: one rank issued an unpaired all-reduce, both rank threads aborted
 their communicators and exited. This is not the BFS runtime and does not
 replace its blocking communicator or establish socket/capacity/archive
 failure handling. See `docs/validation/nccl-nonblocking-abort-v59.md`.
+
+The private two-P2P-T4 NCCL-only v61 fixture also registered and deregistered
+the LSA symmetric window on both ranks using either blocking or nonblocking
+communicators. This clears a leaf compatibility question, not the production
+runtime protocol (`docs/validation/nccl-window-nonblocking-v61.md`). A
+launch-to-commit source audit at `cd83c90` additionally found that rank-local
+archive admission can fail after bootstrap but before communicator creation,
+and that local RunCommit/`COMPLETE` publication has no final rank-group
+agreement. These failure windows join the owner/transport/retirement work
+packet; neither has an injected two-process gate yet. See
+`docs/plans/owner-transport-retirement-batch-audit.md`.

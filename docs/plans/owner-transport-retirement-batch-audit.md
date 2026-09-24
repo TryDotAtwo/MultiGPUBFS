@@ -208,3 +208,55 @@ substantial host synchronization; it does not establish which individual
 waits dominate the critical path. CUCO_RANK selection is a lower-priority
 hypothesis in this workload than LSA copy, materialization, route sort and
 control synchronization.
+
+## Additional launch-to-commit audit (`cd83c90`, 2026-09-24)
+
+These are source findings, not injected-failure results. They extend the
+connected change set above; do not turn them into separate wait-removal patches.
+
+1. **Startup can diverge before the NCCL communicator exists.**
+   `reference_bench.rs::run_pass` calls `bootstrap`, then creates/reserves the
+   rank-local archive with `create_archive_extent` and `PinnedArchive::new`,
+   and only afterwards calls `DistributedNativeBfs::new*`. A local disk or
+   pinned-memory failure can therefore return before this rank enters
+   `ncclCommInitRank` while a peer is already inside it. The bootstrap TCP
+   sockets are held but not used for production failure signalling. Torchrun
+   may terminate peer processes externally; the BFS runtime itself has no
+   bounded rank-group startup-failure contract here. Extend the same
+   cancellation/control protocol to pre-communicator admission and inject a
+   one-rank archive-reserve/pinned-allocation failure in a real two-process
+   launch. This is a correctness/termination gate, not a throughput tweak.
+2. **Run completion is per-rank, not group-atomic.** After the BFS loop,
+   `run_pass` calls each rank's `archive.finish()` and writes its own
+   `rank-{rank}.json` with `status=COMPLETE`; there is no post-archive
+   cross-rank success vote or group RunCommit. One rank's late disk/sync error
+   can coexist with a peer's COMPLETE file. Downstream aggregation must not
+   treat one rank file as proof of a complete distributed archive. Add a
+   group completion marker only after every rank's local RunCommit verifies,
+   with an injected late worker/sync failure test.
+3. **Disk admission has a large deliberate replication cost.** `run_pass`
+   reserves `expected_states * (archive_width + 16) + 64 MiB` **per rank**,
+   although owner-sharded output generally distributes records. This is a
+   conservative all-to-one-rank bound, not a discovered arithmetic error;
+   with eight ranks it reserves roughly eight times the global payload and
+   can fail preflight despite enough aggregate disk for the graph. Keep the
+   conservative mode as the exact guarantee. A lower-reservation mode needs
+   an explicit per-rank record budget, fatal extent guard and workload-level
+   admission test; do not infer it from equal-global frontier capacity, which
+   bounds a window rather than cumulative archived records.
+4. **Nonblocking NCCL is now feasible only as a leaf prerequisite.** The
+   private two-P2P-T4 v61 isolation ran blocking and nonblocking communicator
+   creation through `ncclMemAlloc`, `ncclCommWindowRegister` and deregister:
+   both ranks registered in both modes, both processes returned zero. See
+   `docs/validation/nccl-window-nonblocking-v61.md`. The production wrapper
+   still creates a blocking communicator and treats `ncclInProgress` as an
+   error in collective and LSA calls. The result does not validate runtime
+   cancellation, capture, sanitizer or full BFS.
+
+Bundled implementation order: freeze the rank-wide admission/cancellation and
+completion protocol; implement nonblocking NCCL and bounded K-slot epoch
+ownership together; connect archive startup, in-loop host/API errors and late
+RunCommit to that protocol; then test asymmetric faults at all three times
+(before communicator, inside owner/transport, after search). Only then remove
+the protected post-owner host vote and profile the resulting real BFS. Keep the
+current synchronous backend as a named control, not an implicit fallback.
