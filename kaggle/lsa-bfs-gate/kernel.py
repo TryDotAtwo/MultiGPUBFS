@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "70a848e7363a8bcf3bf76738edc2219da779cc08"
+SOURCE = "ff314f68a579662a625e61a0ad0d08e7a48183e9"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "boundary_gate"
 
@@ -219,8 +219,11 @@ def main():
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
         if MODE == "boundary_gate":
             run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
-                 "--test", "bootstrap", "--test", "group_commit", "--test", "archive"],
-                "boundary-cpu-tests", timeout=900)
+                  "--test", "bootstrap", "--test", "group_commit", "--test", "archive"],
+                 "boundary-cpu-tests", timeout=900)
+            run(["cargo", "test", "--locked", "-p", "mgbfs-runtime", "--features", "cuda",
+                 "--lib", "optional_u32_rejects_invalid_value_without_panicking"],
+                "boundary-reference-config-test", timeout=900)
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "boundary-cli-build", timeout=1800)
             if any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
