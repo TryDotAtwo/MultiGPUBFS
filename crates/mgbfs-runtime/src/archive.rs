@@ -10,6 +10,20 @@ pub struct ArchiveRingPlan {
     pub descriptor_capacity: usize,
 }
 impl ArchiveRingPlan {
+    /// A layer capacity is not a bound on the sum of BFS layers. The reference
+    /// graph order bounds all archived states and nonempty global depths;
+    /// retain a larger explicitly declared layer capacity as a safe bound.
+    pub fn reference_extent_bytes(
+        width: usize,
+        expected_unique_states: u64,
+        layer_capacity: u32,
+    ) -> Result<u64> {
+        if expected_unique_states == 0 || layer_capacity == 0 {
+            return Err("ARCHIVE_EXTENT_SHAPE".into());
+        }
+        let records = expected_unique_states.max(u64::from(layer_capacity));
+        Self::extent_bytes(width, records, records, records)
+    }
     /// Physical/logical extent required for a bounded run. A record frame
     /// contains at least one rank-local state; an empty local layer still has
     /// one layer frame for every globally nonempty BFS depth.

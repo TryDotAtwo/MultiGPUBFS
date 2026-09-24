@@ -27,6 +27,13 @@ fn archive_extent_plan_charges_rank_records_and_every_frame() {
     assert!(ArchiveRingPlan::extent_bytes(4, 3, 3, 0).is_err());
     assert!(ArchiveRingPlan::extent_bytes(4, u64::MAX, 1, 1).is_err());
 }
+#[test]
+fn reference_archive_budget_covers_more_total_states_than_one_layer() {
+    use mgbfs_runtime::archive::ArchiveRingPlan;
+    // A 24-state graph may have a largest rank-local layer of only four.
+    // Its run archive still needs room for up to 24 accepted records.
+    assert_eq!(ArchiveRingPlan::reference_extent_bytes(4, 24, 4).unwrap(), 6016);
+}
 #[cfg(target_os = "linux")]
 #[test]
 fn fifo_open_reports_missing_consumer_within_its_deadline() {
