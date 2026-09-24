@@ -225,8 +225,12 @@ int mgbfs_nccl_poll(void* comm);
  * before depth zero. Exchange consumes device-resident owner counts and
  * submits no host count readback; a caller must keep source/receive slots
  * leased until the supplied stream's completion event. No fallback. */
-int mgbfs_nccl_lsa_init(void* comm,uint32_t candidate_capacity,uint32_t state_stride,
+/* Local-only prepare: capability check and symmetric allocation. Every rank
+ * must vote on its return code before any rank calls collective activate. */
+int mgbfs_nccl_lsa_prepare(void* comm,uint32_t candidate_capacity,uint32_t state_stride,
     char* error,size_t error_capacity);
+/* Collective registration. Call only after all ranks prepared successfully. */
+int mgbfs_nccl_lsa_activate(void* comm,char* error,size_t error_capacity);
 int mgbfs_nccl_lsa_exchange(void* comm,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
     uint32_t logical_owner,uint32_t peer,void* stream);

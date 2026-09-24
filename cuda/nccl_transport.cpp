@@ -157,10 +157,10 @@ void lsa_error(char* error,size_t capacity,const char* where,ncclResult_t code){
   if(error&&capacity)std::snprintf(error,capacity,"%s: %s",where,ncclGetErrorString(code));
 }
 }
-extern "C" int mgbfs_nccl_lsa_init(void* raw,uint32_t cap,uint32_t stride,
+extern "C" int mgbfs_nccl_lsa_prepare(void* raw,uint32_t cap,uint32_t stride,
     char* error,size_t error_capacity){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->value||p->device_ready||!cap||cap>INT_MAX||
+  if(!p||!p->value||p->symmetric||p->window_ready||p->device_ready||!cap||cap>INT_MAX||
      !stride||(stride&15u)||!p->world||p->world>8)return 1;
   int version=0;
   if(ncclGetVersion(&version)!=ncclSuccess||version<22900)return 2;
@@ -179,8 +179,16 @@ extern "C" int mgbfs_nccl_lsa_init(void* raw,uint32_t cap,uint32_t stride,
                       size_t(state_offset+state_bytes));
   if(result!=ncclSuccess){lsa_error(error,error_capacity,"mem_alloc",result);return 5;}
   if(cudaMemset(p->symmetric,0,lsa_control_bytes)!=cudaSuccess)return 6;
+  return 0;
+}
+extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capacity){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||!p->symmetric||p->window_ready||p->device_ready)return 1;
+  auto result=ncclSuccess;
+  const size_t slot_bytes=p->states_offset+
+      size_t(p->candidate_capacity)*p->state_stride;
   result=ncclCommWindowRegister(p->value,p->symmetric,
-      size_t(state_offset+state_bytes),&p->window,NCCL_WIN_COLL_SYMMETRIC);
+      slot_bytes,&p->window,NCCL_WIN_COLL_SYMMETRIC);
   if(result!=ncclSuccess){lsa_error(error,error_capacity,"window_register",result);return 7;}
   p->window_ready=true;
   ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
@@ -218,7 +226,8 @@ extern "C" int mgbfs_nccl_lsa_view(void* raw,const uint32_t** count,
   return 0;
 }
 #else
-extern "C" int mgbfs_nccl_lsa_init(void*,uint32_t,uint32_t,char*,size_t){return 7;}
+extern "C" int mgbfs_nccl_lsa_prepare(void*,uint32_t,uint32_t,char*,size_t){return 7;}
+extern "C" int mgbfs_nccl_lsa_activate(void*,char*,size_t){return 7;}
 extern "C" int mgbfs_nccl_lsa_exchange(void*,const void*,const void*,const uint32_t*,
     uint32_t,uint32_t,void*){return 7;}
 extern "C" int mgbfs_nccl_lsa_view(void*,const uint32_t**,const uint32_t**,

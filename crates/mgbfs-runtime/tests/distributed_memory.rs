@@ -12,6 +12,15 @@ fn packed_owner_count_storage_fits_all_eight_ranks() {
 }
 
 #[test]
+fn lsa_slot_budget_matches_wire_layout_and_rejects_overflow() {
+    use mgbfs_runtime::distributed_memory::lsa_symmetric_slot_bytes;
+    assert_eq!(lsa_symmetric_slot_bytes(21, 16).unwrap(), 928);
+    assert!(lsa_symmetric_slot_bytes(0, 16).is_err());
+    assert!(lsa_symmetric_slot_bytes(21, 15).is_err());
+    assert!(lsa_symmetric_slot_bytes(u32::MAX, u32::MAX - 15).is_err());
+}
+
+#[test]
 fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     use mgbfs_runtime::distributed_memory::library_shared_buffers;
     let mut s = shape();

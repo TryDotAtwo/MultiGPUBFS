@@ -32,6 +32,19 @@ pub fn device_admission(required: u64, reserve: u64, free: u64) -> Result<()> {
     Ok(())
 }
 
+/// Bytes requested from NCCL for one LSA receive slot: 256-byte control,
+/// Hash128 plane, and one fixed-stride state plane. NCCL allocator overhead
+/// remains outside this exact payload request.
+pub fn lsa_symmetric_slot_bytes(candidates: u32, packet_stride: u32) -> Result<u64> {
+    if candidates == 0 || candidates > i32::MAX as u32 || packet_stride == 0 || packet_stride % 16 != 0 {
+        return Err("LSA_SLOT_SHAPE".into());
+    }
+    u64::from(candidates)
+        .checked_mul(u64::from(packet_stride) + 16)
+        .and_then(|bytes| bytes.checked_add(256))
+        .ok_or_else(|| "LSA_SLOT_BYTES".into())
+}
+
 #[derive(Clone, Copy)]
 pub struct SharedBufferShape {
     pub state_stride: u64,
