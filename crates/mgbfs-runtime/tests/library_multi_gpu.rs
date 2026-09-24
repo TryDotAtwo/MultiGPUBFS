@@ -73,7 +73,7 @@ fn archive_slot_failure_votes_group_fatal_before_exchange() {
                     graph.start.len(),
                     [0; 32],
                     1,
-                    if rank == 0 { 1 } else { 128 },
+                    if rank == 0 { 2 } else { 128 },
                 )
                 .unwrap();
                 loop {
