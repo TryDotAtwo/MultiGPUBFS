@@ -6,7 +6,93 @@ use mgbfs_runtime::{
     distributed_native::{DistributedConfig, DistributedNativeBfs},
     pinned_archive::PinnedArchive,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
+
+// A single exact peer transfer isolates NCCL LSA instrumentation from BFS
+// routing, owner commit, archive and retirement. This catches a broken count,
+// hash or state handoff without depending on the layer scheduler.
+#[test]
+#[ignore = "requires two physical P2P GPUs and NCCL 2.29+ LSA"]
+fn lsa_one_exchange_matches_peer_payload() {
+    use mgbfs_cuda::ffi as gpu;
+    use std::ffi::c_void;
+
+    let mut id = [0u8; 128];
+    assert_eq!(unsafe { gpu::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    let drain = Arc::new(Barrier::new(2));
+    let workers: Vec<_> = (0..2u32)
+        .map(|rank| {
+            let drain = drain.clone();
+            std::thread::spawn(move || unsafe {
+                let mut error = [0i8; 256];
+                let mut comm = std::ptr::null_mut::<c_void>();
+                assert_eq!(gpu::mgbfs_nccl_create(
+                    rank, 2, rank, id.as_ptr().cast(), &mut comm,
+                    error.as_mut_ptr(), error.len(),
+                ), 0, "NCCL create: {:?}", error);
+                assert_eq!(gpu::mgbfs_nccl_lsa_prepare(
+                    comm, 1, 16, error.as_mut_ptr(), error.len(),
+                ), 0, "LSA prepare: {:?}", error);
+                assert_eq!(gpu::mgbfs_nccl_lsa_activate(
+                    comm, error.as_mut_ptr(), error.len(),
+                ), 0, "LSA activate: {:?}", error);
+
+                let mut hashes = std::ptr::null_mut::<c_void>();
+                let mut states = std::ptr::null_mut::<c_void>();
+                let mut counts = std::ptr::null_mut::<c_void>();
+                let mut stream = std::ptr::null_mut::<c_void>();
+                assert_eq!(gpu::cudaMalloc(&mut hashes, 16), 0);
+                assert_eq!(gpu::cudaMalloc(&mut states, 16), 0);
+                assert_eq!(gpu::cudaMalloc(&mut counts, 8), 0);
+                assert_eq!(gpu::cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                let hash = [0x11u8 + rank as u8; 16];
+                let state = [0x21u8 + rank as u8; 16];
+                let owner_counts = if rank == 0 { [0u32, 1] } else { [1u32, 0] };
+                assert_eq!(gpu::cudaMemcpy(hashes, hash.as_ptr().cast(), 16, 1), 0);
+                assert_eq!(gpu::cudaMemcpy(states, state.as_ptr().cast(), 16, 1), 0);
+                assert_eq!(gpu::cudaMemcpy(counts, owner_counts.as_ptr().cast(), 8, 1), 0);
+                assert_eq!(gpu::mgbfs_nccl_lsa_exchange(
+                    comm, hashes, states, counts.cast(), 1 - rank, 1 - rank, stream,
+                ), 0);
+                assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+
+                let mut received_count = std::ptr::null();
+                let mut fatal = std::ptr::null();
+                let mut received_hashes = std::ptr::null();
+                let mut received_states = std::ptr::null();
+                assert_eq!(gpu::mgbfs_nccl_lsa_view(
+                    comm, &mut received_count, &mut fatal,
+                    &mut received_hashes, &mut received_states,
+                ), 0);
+                let mut actual_count = 0u32;
+                let mut actual_fatal = 0u32;
+                let mut actual_hash = [0u8; 16];
+                let mut actual_state = [0u8; 16];
+                assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
+                    received_count.cast(), 4, 2), 0);
+                assert_eq!(gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(),
+                    fatal.cast(), 4, 2), 0);
+                assert_eq!(gpu::cudaMemcpy(actual_hash.as_mut_ptr().cast(),
+                    received_hashes, 16, 2), 0);
+                assert_eq!(gpu::cudaMemcpy(actual_state.as_mut_ptr().cast(),
+                    received_states, 16, 2), 0);
+                assert_eq!((actual_count, actual_fatal), (1, 0));
+                assert_eq!(actual_hash, [0x11u8 + (1 - rank) as u8; 16]);
+                assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 16]);
+
+                assert_eq!(gpu::cudaStreamDestroy(stream), 0);
+                assert_eq!(gpu::cudaFree(hashes), 0);
+                assert_eq!(gpu::cudaFree(states), 0);
+                assert_eq!(gpu::cudaFree(counts), 0);
+                drain.wait();
+                gpu::mgbfs_nccl_destroy(comm);
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
 
 struct TestDisk(Arc<Mutex<Vec<u8>>>);
 
