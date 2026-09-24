@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "f49deebe37e8f57a5c294785c3c6a92e9b45009b"
+SOURCE = "db360452b972344af916d217a5e47d5975711aad"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "nccl_abort_isolation"
+MODE = "nccl_window_nonblocking"
 
 
 def main():
@@ -140,9 +140,9 @@ def main():
                 raise RuntimeError("NCCL_NONBLOCKING_ABORT_GATE")
             report["status"] = "COMPLETE"
             return
-        if MODE == "nccl_window_isolation":
+        if MODE in ("nccl_window_isolation", "nccl_window_nonblocking"):
             binary = work / "nccl-window-isolation"
-            run(["g++", "-std=c++17", "-x", "c++",
+            run(["g++", "-std=c++17", "-pthread", "-x", "c++",
                  "-I" + str(nccl / "include"), "-I" + str(sdk / "include"),
                  str(source / "experiments/nccl_window_isolation.cu"),
                  "-x", "none", str(nccl / "lib/libnccl.so.2"),
@@ -152,12 +152,13 @@ def main():
             report["scope"] = ("independent NCCL ncclMemAlloc and "
                                "ncclCommWindowRegister on two physical T4s; no BFS code")
             report["window_runs"] = {}
-            for label, command in (
-                ("plain", [str(binary)]),
-                ("initcheck", ["compute-sanitizer", "--tool", "initcheck",
-                               "--report-api-errors", "no", "--error-exitcode", "97",
-                               str(binary)]),
-            ):
+            cases = (("blocking", [str(binary)]),
+                     ("nonblocking", [str(binary), "nonblocking"])) if MODE == "nccl_window_nonblocking" else (
+                     ("plain", [str(binary)]),
+                     ("initcheck", ["compute-sanitizer", "--tool", "initcheck",
+                                    "--report-api-errors", "no", "--error-exitcode", "97",
+                                    str(binary)]))
+            for label, command in cases:
                 try:
                     completed = subprocess.run(command, cwd=source, env=env,
                                                capture_output=True, text=True,
@@ -174,7 +175,10 @@ def main():
                         str(error.stdout) + str(error.stderr))
                     report["window_runs"][label] = {"status": "TIMEOUT"}
                 save()
-            report["status"] = "DIAGNOSTIC_COMPLETE"
+            report["status"] = ("COMPLETE" if MODE == "nccl_window_nonblocking" and
+                                all(row.get("returncode") == 0 and row.get("registered_ranks") == 2
+                                    for row in report["window_runs"].values()) else
+                                "DIAGNOSTIC_COMPLETE")
             return
         env["CARGO_HOME"] = str(work / "cargo")
         env["RUSTUP_HOME"] = str(work / "rustup")
