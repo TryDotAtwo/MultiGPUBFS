@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "74bc500d46138e09185f8fed4aa0b7935503e88a"
+SOURCE = "b93d2a2701b9ebfe64674178d979dc544f3eaad0"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "rounds_gate"
+MODE = "timeline_analysis"
 
 
 def main():
@@ -75,8 +75,10 @@ def main():
             archive = work / (name + ".tar.xz")
             url = ("https://developer.download.nvidia.com/compute/cuda/redist/"
                    f"{component}/linux-x86_64/{archive.name}")
-            run(["curl", "--fail", "--location", "--max-time", "180", url,
-                 "--output", str(archive)], component + "-download")
+            run(["curl", "--fail", "--location", "--silent", "--show-error",
+                 "--retry", "8", "--retry-all-errors", "--retry-delay", "5",
+                 "--continue-at", "-", "--connect-timeout", "30", "--max-time", "600",
+                 url, "--output", str(archive)], component + "-download", timeout=5400)
             with archive.open("rb") as package:
                 if hashlib.file_digest(package, "sha256").hexdigest() != digest:
                     raise RuntimeError("CUDA_SDK_CHECKSUM")
@@ -135,6 +137,8 @@ def main():
         native = work / "native-build"
         run(["cmake", "-S", str(source / "cuda"), "-B", str(native), "-G", "Ninja",
              "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
+             *(["-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"]
+               if MODE == "timeline_backtrace" else []),
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUTLASS_ROOT=" + str(cutlass), "-DMGBFS_NCCL_LSA=ON",
              "-DMGBFS_NCCL_ROOT=" + str(nccl)], "native-configure")
@@ -142,7 +146,7 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE in ("benchmark", "timeline"):
+        if MODE in ("benchmark", "timeline", "timeline_backtrace", "timeline_analysis"):
             report["scope"] = (
                 "paired two-T4 S10 CUCO_RANK DENSE; archive-verified; "
                 + ("five unprofiled repeats per transport" if MODE == "benchmark" else
@@ -153,6 +157,9 @@ def main():
                 "shards_per_rank": 4, "buckets": 256, "archive_slots": 256,
             }
             save()
+            if MODE == "timeline_backtrace":
+                env["CARGO_PROFILE_RELEASE_DEBUG"] = "1"
+                env["CARGO_PROFILE_RELEASE_STRIP"] = "none"
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "cli-build", timeout=1800)
             sys.path.insert(0, str(source / "scripts"))
@@ -160,7 +167,7 @@ def main():
             from library_gpu_screen import run_case
             cli = str(source / "target/release/mgbfs")
             nsys = None
-            if MODE == "timeline":
+            if MODE in ("timeline", "timeline_backtrace", "timeline_analysis"):
                 package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
                 package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
                 package = work / package_name
@@ -177,7 +184,8 @@ def main():
                     raise RuntimeError("NSYS_EXECUTABLE_INVENTORY")
                 nsys = str(candidates[0])
                 run([nsys, "--version"], "nsys-version")
-            panel = {"HOST_SIZED_NCCL": [], "NCCL_LSA": []}
+            panel = ({"NCCL_LSA": []} if MODE in ("timeline_backtrace", "timeline_analysis") else
+                     {"HOST_SIZED_NCCL": [], "NCCL_LSA": []})
             expected_dispatch = {"HOST_SIZED_NCCL": "HostSizedNccl", "NCCL_LSA": "Lsa"}
             for repeat in range(5 if nsys is None else 1):
                 order = list(panel) if repeat % 2 == 0 else list(reversed(panel))
@@ -186,6 +194,10 @@ def main():
                     case_env = dict(env, MGBFS_TRANSPORT_BACKEND=transport,
                                     MGBFS_SHARDS="4", MGBFS_BUCKETS="256",
                                     MGBFS_ARCHIVE_SLOTS="256")
+                    if nsys is not None:
+                        case_env["MGBFS_PROFILE_SEARCH"] = "1"
+                    if MODE == "timeline_backtrace":
+                        case_env["MGBFS_NSYS_CUDA_BACKTRACE"] = "sync,memory"
                     result = run_case(cli, logs / label, work / label, "s10",
                                       3_628_800, 2, 32768, 1_000_000, 1_000_000,
                                       96 << 20, "DENSE", "ON", case_env,
@@ -199,17 +211,49 @@ def main():
                              "cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,osrt_sum",
                              "--format", "csv", result["trace"]],
                             label + "-nsys-stats", timeout=600)
+                    if MODE == "timeline_analysis":
+                        run([nsys, "analyze", "--rule",
+                             "cuda_api_sync,gpu_gaps,gpu_time_util", result["trace"]],
+                            label + "-nsys-analysis", timeout=600)
+                    if MODE == "timeline_backtrace":
+                        database = logs / label / "timeline.sqlite"
+                        run([nsys, "export", "--type", "sqlite", "--force-overwrite=true",
+                             "--output", str(database), result["trace"]],
+                            label + "-nsys-export", timeout=600)
+                        run([sys.executable, str(source / "scripts/nsys_sync_callsites.py"),
+                             str(database), str(logs / label / "sync-callsites.json")],
+                            label + "-sync-callsites", timeout=600)
                     report["runs"] = {key: len(value) for key, value in panel.items()}
                     save()
             if nsys is None:
                 report["screen_statistics"] = {key: stats(value) for key, value in panel.items()}
             else:
-                report["timeline_scope"] = "startup, warmup, BFS, archive; diagnostic only"
+                report["timeline_scope"] = "timed BFS CUDA profiler range; archive submissions included"
+                if MODE == "timeline_backtrace":
+                    report["callsite_scope"] = "LSA CUDA sync/copy callchains; profiled diagnostic"
+                if MODE == "timeline_analysis":
+                    report["analysis_scope"] = "LSA sync API and GPU gap expert rules; profiled diagnostic"
             report["status"] = "COMPLETE"
             return
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE == "owner_capacity_gate":
+            for name in (
+                "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                "cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group",
+                "cuco_rank_lsa_one_rank_host_owner_error_stops_group",
+            ):
+                result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                              name, "--", "--ignored", "--exact", "--nocapture",
+                              "--test-threads=1"], name, timeout=300)
+                if "test result: ok. 1 passed; 0 failed" not in result:
+                    raise RuntimeError("OWNER_CAPACITY_GATE_RESULT: " + name)
+                report[name] = "PASS"
+                save()
+            report["status"] = "COMPLETE"
+            return
         if MODE == "device_fatal_gate":
             result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",
