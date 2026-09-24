@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import urllib.request
 
-SOURCE_COMMIT = "4bd474bb62060dba0e123afa2182d21bea84789a"
+SOURCE_COMMIT = "fb8b9f4669199d0b95c766f051b4ad6d1d7e4892"
 
 if __name__ == "__main__":
     os.environ.setdefault("PIP_DEFAULT_TIMEOUT", "180")

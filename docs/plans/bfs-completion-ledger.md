@@ -637,3 +637,12 @@ CUCO_RANK/CUB search medians 0.407692/0.840257 s and sampled device peaks
 529/457 MiB per rank. This establishes a smaller-pool S10 Pareto point,
 not full-state cross-backend equality for S10, larger-graph capacity or a
 CPU-free runtime. See `docs/validation/cuco-rank-paired-s10-2xt4.md`.
+
+At `fb8b9f4`, the CUCO_RANK owner now reads local/remote window counts from
+device words rather than uploading a host row count again. The physical 2xT4
+S10 one-sample gate completed with 3,628,800 states, matching CUB layer
+counts and verified archives. The full-state one/two-GPU fixtures and injected
+retirement fault passed all four Compute Sanitizer tools with zero reported
+errors/hazards. This validates only that scoped owner-count change; host-sized
+NCCL payloads, collective control and retirement remain. See
+`docs/validation/rank-device-window-2xt4.md`.
