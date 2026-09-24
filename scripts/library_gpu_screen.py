@@ -72,10 +72,14 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         group, str(batch), str(archive_root/'bootstrap'), str(archive_root/'archive'),
         '{RANK_OUT}']
     if nsys is not None:
+        backtrace = env.get('MGBFS_NSYS_CUDA_BACKTRACE')
+        if backtrace not in (None, 'sync'):
+            raise ValueError('SCREEN_NSYS_BACKTRACE')
         command = [str(nsys), 'profile', '--trace=cuda,nvtx,osrt',
             *(['--capture-range=cudaProfilerApi', '--capture-range-end=stop']
               if env.get('MGBFS_PROFILE_SEARCH') == '1' else []),
-            '--sample=none', '--cpuctxsw=none', '--force-overwrite=false',
+            *(['--sample=cpu', '--cudabacktrace=sync'] if backtrace else ['--sample=none']),
+            '--cpuctxsw=none', '--force-overwrite=false',
             '--output=' + str(output/'timeline'), *command]
     report = dict(status='INCOMPLETE', scope='single screening sample; not Pareto acceptance',
                   memory_scope='50ms nvidia-smi sampled full device consumption; not exact peak',
