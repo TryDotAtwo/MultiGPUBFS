@@ -4,6 +4,12 @@
 #include <array>
 #include <stdexcept>
 #include <cstdio>
+// This standalone fixture links exchange_pack.cu without the distributed
+// runtime. These unrelated group-vote entries must never be called here.
+extern "C" int mgbfs_state_ring_fatal_vote_word(
+    const MgbfsStateRingControl*,uint32_t*,void*) { return 1; }
+extern "C" int mgbfs_nccl_all_reduce_max_u32(
+    void*,const uint32_t*,uint32_t*,void*) { return 1; }
 static void ck(cudaError_t e){if(e!=cudaSuccess)throw std::runtime_error(cudaGetErrorString(e));}
 static void require(bool ok){if(!ok)throw std::runtime_error("OWNER_PARTITION_GPU");}
 int main(){
