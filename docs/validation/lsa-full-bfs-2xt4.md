@@ -53,7 +53,20 @@ not a sanitizer pass or proof of a runtime memory defect. Do not repeat the
 same command unchanged; the next attempt needs per-rank phase markers and a
 focused kernel filter or a different NCCL setup hypothesis.
 
+Version v7 used source `64c8085` on a P2P-capable two-T4 host. The plain
+eight-fixture test passed again. Under `memcheck` with only the LSA transport
+and fatal-import kernels selected, and CUDA API-error reporting disabled,
+the one-fixture BFS reached all depths and printed `1 passed; 0 failed`.
+Nevertheless the sanitizer command timed out after 300 s without its `ERROR
+SUMMARY` or exit code. Per-rank phase markers place both ranks after
+construction and through depth 6; the archive timing and test result are also
+in the raw log. This localizes the unresolved hang to process/sanitizer
+shutdown, not BFS setup or progression in that fixture. It does **not** count
+as a sanitizer pass. Next diagnostic selects `application-only` target
+processes (the sanitizer default is `all`) to test whether child-process
+tracking causes the shutdown hang.
+
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build
-logs in the same directory; v2–v5 similarly under
+logs in the same directory; v2–v7 similarly under
 `test_results/kaggle_lsa_full_bfs_v*/`.

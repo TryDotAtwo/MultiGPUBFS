@@ -154,6 +154,7 @@ def main():
         save()
         env["NCCL_DEBUG"] = "INFO"
         sanitized = run(["compute-sanitizer", "--tool", "memcheck",
+                         "--target-processes", "application-only",
                          "--report-api-errors", "no",
                          "--kernel-name", "kns=lsa_publish_count",
                          "--kernel-name", "kns=lsa_copy_exact",
@@ -166,7 +167,8 @@ def main():
         if "test result: ok. 1 passed; 0 failed" not in sanitized or \
                 "ERROR SUMMARY: 0 errors" not in sanitized:
             raise RuntimeError("BFS_MEMCHECK_RESULT")
-        report["full_bfs_memcheck"] = "PASS_FILTERED_TRANSPORT_KERNELS_API_ERRORS_DISABLED"
+        report["full_bfs_memcheck"] = (
+            "PASS_FILTERED_TRANSPORT_KERNELS_APPLICATION_ONLY_API_ERRORS_DISABLED")
         report["status"] = "COMPLETE"
     except Exception as error:
         report["error"] = str(error)
