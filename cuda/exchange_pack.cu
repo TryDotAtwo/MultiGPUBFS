@@ -242,3 +242,13 @@ extern "C" int mgbfs_owner_import_transport_fatal(
       transport_fatal,ring,owner);
   return cudaGetLastError()==cudaSuccess?0:2;
 }
+extern "C" int mgbfs_owner_global_fatal_gate(void* comm,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
+    uint32_t* send,uint32_t* receive,void* stream) {
+  if(!comm||!ring||!owner||!send||!receive)return 1;
+  int status=mgbfs_state_ring_fatal_vote_word(ring,send,stream);
+  if(status)return status;
+  status=mgbfs_nccl_all_reduce_max_u32(comm,send,receive,stream);
+  if(status)return status;
+  return mgbfs_owner_import_transport_fatal(receive,ring,owner,stream);
+}
