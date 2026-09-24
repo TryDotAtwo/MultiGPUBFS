@@ -867,3 +867,20 @@ timeout before BFS; v65 completed 15 archive-verified S10 DENSE runs on
 914/1058/1134 MiB. This is one configuration and leaves the pipeline and
 cross-graph gates open. See `docs/validation/db-owner-s10-v63.md` and
 `docs/validation/db-owner-s10-v65.md`.
+
+The later one-T4 v66 and two-T4 v67 S10 diagnostic Nsight captures completed
+with verified archives. They show substantial aggregate host waits/copies;
+v67 also shows NCCL send/receive and all-reduce activity on the
+HostSizedNccl path. Neither gives an LSA critical-path attribution or proves
+the runtime CPU-free. See `docs/validation/library-owner-nsys-s10-v66.md`
+and `docs/validation/library-owner-nsys-s10-v67.md`.
+
+Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
+under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
+then passed plain registration on both ranks but failed registration under
+initcheck (rank 1 reported an unspecified CUDA launch failure; its peer
+timed out). Because that fixture contains no BFS runtime code, the observed
+registration failure does not require a BFS bug. Its cause within the
+NCCL/sanitizer/driver stack remains undetermined; no sanitizer gate is
+waived. See `docs/validation/lsa-leaf-sanitizer-v47.md` and
+`docs/validation/nccl-window-isolation-v57.md`.

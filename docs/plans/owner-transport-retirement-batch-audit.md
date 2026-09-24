@@ -124,6 +124,8 @@ aggregate host waits and transfers, with NCCL send/receive prominent on the
 two-rank HostSizedNccl path (`docs/validation/library-owner-nsys-s10-v66.md`,
 `docs/validation/library-owner-nsys-s10-v67.md`). They do not isolate the LSA
 critical path or prove a particular removal safe. The v52 initcheck leaf
-reproduces NCCL LSA activation failure before full BFS
-(`docs/validation/lsa-leaf-sanitizer-v47.md`). No full epoch overlap or
+reproduces NCCL LSA activation failure before full BFS; the independent
+NCCL-only v57 fixture reproduces registration failure under initcheck too
+(`docs/validation/lsa-leaf-sanitizer-v47.md`,
+`docs/validation/nccl-window-isolation-v57.md`). No full epoch overlap or
 CPU-free claim follows from this evidence.

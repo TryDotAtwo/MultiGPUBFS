@@ -51,5 +51,13 @@ The slow `cuda_nvrtc` download seen while v52 was running was transient:
 the archive finished downloading and the notebook reached the leaf test.
 It was not the terminal failure.
 
+The independent two-T4 NCCL window fixture in Kaggle v57 reproduces a
+registration error under `initcheck` without loading MultiGPUBFS; plain
+registration passes on both ranks. See
+`docs/validation/nccl-window-isolation-v57.md`. This narrows the failure
+boundary to NCCL/Compute Sanitizer/driver interaction on the tested host,
+but does not classify it as a sanitizer false positive or waive the BFS
+four-tool gate.
+
 The leaf results do not close the full-BFS four-tool sanitizer gate. Raw
 evidence is under `test_results/kaggle_lsa_leaf_v47/lsa-bfs-gate/`.
