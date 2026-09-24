@@ -810,3 +810,13 @@ symbol-resolution option still exported raw addresses, not source callsites;
 versioned memcpy records lacked callchains. No per-stage wait has been
 selected for deletion from this evidence. See
 `docs/validation/sync-callsite-v38-v39.md`.
+
+The independent scoped Nsight v41 S10 run at runtime source `b93d2a2` again
+completed on P2P-capable 2×T4 with both archives verified. It observed 1,462
+host stream drains and 1,740 synchronous copies during search; the summed
+durations across both rank processes were 492.282 and 107.014 ms. The
+`gpu_gaps` rule's 500 ms default threshold exceeds this run's 0.452 s search
+window and therefore does not establish an absence of short idle gaps. This
+still lacks source callsite and critical-path attribution; the ignored LSA
+four-tool sanitizer gate is running separately. See
+`docs/validation/lsa-s10-nsight-v41.md`.
