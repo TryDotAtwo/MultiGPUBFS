@@ -23,11 +23,19 @@ BFS gate ran plain only.
 
 Version v1 still read route counts on the CPU after each pack even in LSA
 mode. The follow-up source change after this run removes that D2H route-count
-read for LSA, but requires its own physical gate. Host synchronization for
+read for LSA, but requires its own physical gate. The v2 gate at `67e8f70`
+built successfully, then stopped at `LSA_PREPARE_GROUP: CUDA_STATUS_4` on a
+different Kaggle host; this is a capability rejection, not an observed BFS
+regression. Version v3 added preflight and reported `UNSUPPORTED_HOST` before
+build: both `cudaDeviceCanAccessPeer` directions returned 0. Version v4
+repeated the same result on another host. The subsequent
+memory revision `8764bb7` also remains untested on an LSA-capable host.
+Host synchronization for
 generation-buffer reuse, owner control, retirement and failure collectives
 remains; this is **not** a CPU-free end-to-end pipeline. The LSA receive slot
-is additionally allocated alongside legacy receive buffers, so no VRAM
-improvement is claimed yet.
+was additionally allocated alongside legacy receive buffers in v1. Revision
+`8764bb7` removes those buffers from the LSA allocation plan, but a physical
+VRAM comparison is still pending.
 
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build

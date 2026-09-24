@@ -68,6 +68,19 @@ impl NativeEvent {
     pub fn retire(&mut self, generation: u64) -> Result<()> {
         self.generation.retire(generation)
     }
+    /// Retire without a host event query after the producer stream has been
+    /// made to wait for the last consumer's completion event. The caller must
+    /// have recorded that completion event after all reads of the protected
+    /// buffer, and must not let other consumers outlive it.
+    pub unsafe fn retire_after_device_barrier(
+        &mut self, generation: u64, producer_stream: *mut std::ffi::c_void,
+        consumer_done: *mut std::ffi::c_void,
+    ) -> Result<()> {
+        self.generation.retire_after_device_barrier(generation, || {
+            let status = mgbfs_cuda::ffi::cudaStreamWaitEvent(producer_stream, consumer_done, 0);
+            if status == 0 { Ok(()) } else { Err(format!("CUDA_REUSE_WAIT_{status}")) }
+        })
+    }
 }
 #[cfg(any(feature = "cuda", feature = "library-owner"))]
 impl Drop for NativeEvent {
@@ -82,6 +95,7 @@ pub struct EventGeneration {
     active: Option<u64>,
     retired: Option<u64>,
     ready: bool,
+    consumer_waited: bool,
     failed: bool,
 }
 impl EventGeneration {
@@ -92,7 +106,9 @@ impl EventGeneration {
             if s.active != Some(generation) {
                 return Err("EVENT_GENERATION".into());
             }
-            submit()
+            submit()?;
+            s.consumer_waited = true;
+            Ok(())
         })
     }
     fn apply<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
@@ -115,6 +131,7 @@ impl EventGeneration {
             submit()?;
             s.active = Some(generation);
             s.ready = false;
+            s.consumer_waited = false;
             Ok(())
         })
     }
@@ -140,6 +157,23 @@ impl EventGeneration {
             }
             s.retired = s.active.take();
             s.ready = false;
+            s.consumer_waited = false;
+            Ok(())
+        })
+    }
+    /// The caller submits a producer-stream wait on the completion of every
+    /// consumer before re-recording the event or overwriting its buffer.
+    pub fn retire_after_device_barrier(
+        &mut self, generation: u64, submit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        self.apply(|s| {
+            if s.active != Some(generation) || !s.consumer_waited {
+                return Err("EVENT_REUSE_BARRIER".into());
+            }
+            submit()?;
+            s.retired = s.active.take();
+            s.ready = false;
+            s.consumer_waited = false;
             Ok(())
         })
     }

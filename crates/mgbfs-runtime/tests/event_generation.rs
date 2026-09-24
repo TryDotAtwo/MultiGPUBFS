@@ -17,6 +17,31 @@ fn stream_dependency_can_be_enqueued_before_host_observes_completion() {
     assert!(event.poll(7, || Ok(true)).unwrap());
     event.retire(7).unwrap();
 }
+
+#[test]
+fn ordered_producer_wait_allows_reuse_without_host_query() {
+    let mut event = EventGeneration::default();
+    event.record(7, || Ok(())).unwrap();
+    event.wait(7, || Ok(())).unwrap();
+    let mut submitted = false;
+    event.retire_after_device_barrier(7, || {
+        submitted = true;
+        Ok(())
+    }).unwrap();
+    assert!(submitted);
+    event.record(8, || Ok(())).unwrap();
+    assert!(event.poll(7, || Ok(true)).is_err());
+}
+
+#[test]
+fn failed_device_reuse_barrier_poison_event_generation() {
+    let mut event = EventGeneration::default();
+    event.record(7, || Ok(())).unwrap();
+    event.wait(7, || Ok(())).unwrap();
+    assert_eq!(event.retire_after_device_barrier(7, || Err("WAIT_FAILED".into()))
+        .unwrap_err(), "WAIT_FAILED");
+    assert_eq!(event.record(8, || Ok(())).unwrap_err(), "EVENT_FAILED");
+}
 #[test]
 fn unrecorded_stale_and_retired_waits_never_submit_native_work() {
     for case in 0..3 {

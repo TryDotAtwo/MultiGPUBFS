@@ -464,6 +464,7 @@ pub struct DistributedNativeBfs {
     stream: Stream,
     generation_stream: Stream,
     generation_done: NativeEvent,
+    pack_done: Event,
     generation_sequence: u64,
     dense_lookahead: u64,
     exchange_stream: Stream,
@@ -933,6 +934,7 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_generation, 1) })?;
         let generation_stream = Stream(raw_generation);
         let generation_done = NativeEvent::new()?;
+        let pack_done = Event::new()?;
         let mut raw_exchange = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
         let exchange_stream = Stream(raw_exchange);
@@ -1181,6 +1183,7 @@ impl DistributedNativeBfs {
             stream,
             generation_stream,
             generation_done,
+            pack_done,
             generation_sequence: 0,
             dense_lookahead: 0,
             exchange_stream,
@@ -2330,7 +2333,11 @@ impl DistributedNativeBfs {
                     )
                 })?;
             }
-            check(unsafe { cudaStreamSynchronize(s) })?;
+            if self.lsa_view.is_some() {
+                check(unsafe { cudaEventRecord(self.pack_done.0, s) })?;
+            } else {
+                check(unsafe { cudaStreamSynchronize(s) })?;
+            }
             let host_ranges = if self.lsa_view.is_none() {
                 let routed = self.route_count.one::<u32>()?;
                 let mut owner_counts = [0u32; 8];
@@ -2356,14 +2363,21 @@ impl DistributedNativeBfs {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
             }
             if let Some(sequence) = generation {
-                // Pack's host-observed completion includes the generation wait
-                // and the last reads of children/child_hashes. Owner and NCCL
-                // read packed_states/sorted_hashes instead, so the next batch
-                // reuses the original producer storage without another arena.
-                if !self.generation_done.poll(sequence)? {
-                    return Err("GENERATION_PACK_ORDER".into());
+                // Reuse children/child_hashes only after pack has finished.
+                // LSA keeps this dependency entirely on GPU; legacy NCCL
+                // retains the host-observed completion path.
+                if self.lsa_view.is_some() {
+                    unsafe {
+                        self.generation_done.retire_after_device_barrier(
+                            sequence, self.generation_stream.0, self.pack_done.0,
+                        )?;
+                    }
+                } else {
+                    if !self.generation_done.poll(sequence)? {
+                        return Err("GENERATION_PACK_ORDER".into());
+                    }
+                    self.generation_done.retire(sequence)?;
                 }
-                self.generation_done.retire(sequence)?;
                 if let Some(next) = next_work {
                     let sequence = self.enqueue_dense_generation(next)?;
                     prefetched = Some((next, sequence));
@@ -2396,6 +2410,9 @@ impl DistributedNativeBfs {
                     let logical_owner = self.cfg.logical_owner_to_rank
                         .iter().position(|&rank| rank == exchange_peer)
                         .ok_or("OWNER_MAP")? as u32;
+                    check(unsafe { cudaStreamWaitEvent(
+                        self.exchange_stream.0, self.pack_done.0, 0,
+                    ) })?;
                     check(unsafe {
                         mgbfs_nccl_lsa_exchange(
                             self.comm.0, self.sorted_hashes.ptr,
