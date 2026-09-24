@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "8c9e022e09ccf30a3f5fe4ba7ff7a90d4642e6a0"
+SOURCE = "2b2e930e8ff974caceabe6bd57b68fa8fe63cc77"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "device_fatal_gate"
+MODE = "rounds_gate"
 
 
 def main():
