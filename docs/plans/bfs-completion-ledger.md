@@ -716,3 +716,13 @@ the host before the next peer exchange, and NCCL documents that all active
 ranks must participate in communicator abort. A replacement needs an
 asymmetric-failure protocol with identical rank participation and an actual
 two-rank fault gate before any ordinary-path wait is removed.
+At `57953cf`, the same scheduler-level fixture was extended to LSA with the
+`CUCO_RANK` owner. Kaggle v13 and v14 returned `UNSUPPORTED_HOST` before
+build because each selected two-T4 host reported P2P disabled; neither is a
+test failure. V15 selected a P2P-capable two-T4 host and completed both the
+host-sized native-owner and LSA/CUCO_RANK one-rank archive-slot-exhaustion
+tests. Both returned the expected local/remote fatal errors and exited without
+a hang. Raw summaries/logs are under
+`test_results/kaggle_lsa_archive_fault_v15/lsa-bfs-gate/`. This extends the
+fault gate to both transport backends, not to every asymmetric CUDA/NCCL or
+disk-write failure and not to an asynchronous ordinary path.
