@@ -28,3 +28,18 @@ will not close the full-BFS gate.
 
 Raw evidence: `test_results/kaggle_lsa_leaf_v44/lsa-bfs-gate/summary.json`,
 `lsa-leaf-plain.log`, `lsa-leaf-memcheck.log`.
+
+## Follow-up v45
+
+At the same source on another P2P-capable two-T4 host, plain passed again.
+With `--report-api-errors no`, the isolated exchange passed memcheck with
+`ERROR SUMMARY: 0 errors` and racecheck with
+`RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)`.
+The notebook classified racecheck as failed solely because it expected the
+memcheck-style summary string. Therefore initcheck and synccheck did not run
+in v45. The parser was corrected for the next run; v46 selected a non-P2P
+host and stopped before build. This is a **two-tool leaf result with narrowed
+API reporting**, not a full BFS sanitizer pass.
+
+Raw follow-up: `test_results/kaggle_lsa_leaf_v45/lsa-bfs-gate/summary.json`,
+`lsa-leaf-memcheck.log`, `lsa-leaf-racecheck.log`.

@@ -18,74 +18,135 @@ fn lsa_one_exchange_matches_peer_payload() {
     use std::ffi::c_void;
 
     let mut id = [0u8; 128];
-    assert_eq!(unsafe { gpu::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    assert_eq!(
+        unsafe { gpu::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
     let drain = Arc::new(Barrier::new(2));
     let workers: Vec<_> = (0..2u32)
         .map(|rank| {
             let drain = drain.clone();
-            std::thread::spawn(move || unsafe {
-                let mut error = [0i8; 256];
-                let mut comm = std::ptr::null_mut::<c_void>();
-                assert_eq!(gpu::mgbfs_nccl_create(
-                    rank, 2, rank, id.as_ptr().cast(), &mut comm,
-                    error.as_mut_ptr(), error.len(),
-                ), 0, "NCCL create: {:?}", error);
-                assert_eq!(gpu::mgbfs_nccl_lsa_prepare(
-                    comm, 1, 16, error.as_mut_ptr(), error.len(),
-                ), 0, "LSA prepare: {:?}", error);
-                assert_eq!(gpu::mgbfs_nccl_lsa_activate(
-                    comm, error.as_mut_ptr(), error.len(),
-                ), 0, "LSA activate: {:?}", error);
+            std::thread::spawn(move || {
+                // A failed assertion must terminate the whole two-rank fixture.
+                // Otherwise its peer can wait forever at drain/communicator teardown
+                // and turn the actual assertion into a misleading timeout.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                    let mut error = [0i8; 256];
+                    let mut comm = std::ptr::null_mut::<c_void>();
+                    assert_eq!(
+                        gpu::mgbfs_nccl_create(
+                            rank,
+                            2,
+                            rank,
+                            id.as_ptr().cast(),
+                            &mut comm,
+                            error.as_mut_ptr(),
+                            error.len(),
+                        ),
+                        0,
+                        "NCCL create: {:?}",
+                        error
+                    );
+                    assert_eq!(
+                        gpu::mgbfs_nccl_lsa_prepare(comm, 1, 16, error.as_mut_ptr(), error.len(),),
+                        0,
+                        "LSA prepare: {:?}",
+                        error
+                    );
+                    assert_eq!(
+                        gpu::mgbfs_nccl_lsa_activate(comm, error.as_mut_ptr(), error.len(),),
+                        0,
+                        "LSA activate: {:?}",
+                        error
+                    );
 
-                let mut hashes = std::ptr::null_mut::<c_void>();
-                let mut states = std::ptr::null_mut::<c_void>();
-                let mut counts = std::ptr::null_mut::<c_void>();
-                let mut stream = std::ptr::null_mut::<c_void>();
-                assert_eq!(gpu::cudaMalloc(&mut hashes, 16), 0);
-                assert_eq!(gpu::cudaMalloc(&mut states, 16), 0);
-                assert_eq!(gpu::cudaMalloc(&mut counts, 8), 0);
-                assert_eq!(gpu::cudaStreamCreateWithFlags(&mut stream, 1), 0);
-                let hash = [0x11u8 + rank as u8; 16];
-                let state = [0x21u8 + rank as u8; 16];
-                let owner_counts = if rank == 0 { [0u32, 1] } else { [1u32, 0] };
-                assert_eq!(gpu::cudaMemcpy(hashes, hash.as_ptr().cast(), 16, 1), 0);
-                assert_eq!(gpu::cudaMemcpy(states, state.as_ptr().cast(), 16, 1), 0);
-                assert_eq!(gpu::cudaMemcpy(counts, owner_counts.as_ptr().cast(), 8, 1), 0);
-                assert_eq!(gpu::mgbfs_nccl_lsa_exchange(
-                    comm, hashes, states, counts.cast(), 1 - rank, 1 - rank, stream,
-                ), 0);
-                assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                    let mut hashes = std::ptr::null_mut::<c_void>();
+                    let mut states = std::ptr::null_mut::<c_void>();
+                    let mut counts = std::ptr::null_mut::<c_void>();
+                    let mut stream = std::ptr::null_mut::<c_void>();
+                    assert_eq!(gpu::cudaMalloc(&mut hashes, 16), 0);
+                    assert_eq!(gpu::cudaMalloc(&mut states, 16), 0);
+                    assert_eq!(gpu::cudaMalloc(&mut counts, 8), 0);
+                    assert_eq!(gpu::cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                    let mut hash = [0x11u8 + rank as u8; 16];
+                    if rank == 0 && std::env::var_os("MGBFS_TEST_LSA_BAD_PAYLOAD").is_some() {
+                        hash[0] ^= 1;
+                    }
+                    let state = [0x21u8 + rank as u8; 16];
+                    let owner_counts = if rank == 0 { [0u32, 1] } else { [1u32, 0] };
+                    assert_eq!(gpu::cudaMemcpy(hashes, hash.as_ptr().cast(), 16, 1), 0);
+                    assert_eq!(gpu::cudaMemcpy(states, state.as_ptr().cast(), 16, 1), 0);
+                    assert_eq!(
+                        gpu::cudaMemcpy(counts, owner_counts.as_ptr().cast(), 8, 1),
+                        0
+                    );
+                    assert_eq!(
+                        gpu::mgbfs_nccl_lsa_exchange(
+                            comm,
+                            hashes,
+                            states,
+                            counts.cast(),
+                            1 - rank,
+                            1 - rank,
+                            stream,
+                        ),
+                        0
+                    );
+                    assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
 
-                let mut received_count = std::ptr::null();
-                let mut fatal = std::ptr::null();
-                let mut received_hashes = std::ptr::null();
-                let mut received_states = std::ptr::null();
-                assert_eq!(gpu::mgbfs_nccl_lsa_view(
-                    comm, &mut received_count, &mut fatal,
-                    &mut received_hashes, &mut received_states,
-                ), 0);
-                let mut actual_count = 0u32;
-                let mut actual_fatal = 0u32;
-                let mut actual_hash = [0u8; 16];
-                let mut actual_state = [0u8; 16];
-                assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
-                    received_count.cast(), 4, 2), 0);
-                assert_eq!(gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(),
-                    fatal.cast(), 4, 2), 0);
-                assert_eq!(gpu::cudaMemcpy(actual_hash.as_mut_ptr().cast(),
-                    received_hashes, 16, 2), 0);
-                assert_eq!(gpu::cudaMemcpy(actual_state.as_mut_ptr().cast(),
-                    received_states, 16, 2), 0);
-                assert_eq!((actual_count, actual_fatal), (1, 0));
-                assert_eq!(actual_hash, [0x11u8 + (1 - rank) as u8; 16]);
-                assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 16]);
+                    let mut received_count = std::ptr::null();
+                    let mut fatal = std::ptr::null();
+                    let mut received_hashes = std::ptr::null();
+                    let mut received_states = std::ptr::null();
+                    assert_eq!(
+                        gpu::mgbfs_nccl_lsa_view(
+                            comm,
+                            &mut received_count,
+                            &mut fatal,
+                            &mut received_hashes,
+                            &mut received_states,
+                        ),
+                        0
+                    );
+                    let mut actual_count = 0u32;
+                    let mut actual_fatal = 0u32;
+                    let mut actual_hash = [0u8; 16];
+                    let mut actual_state = [0u8; 16];
+                    assert_eq!(
+                        gpu::cudaMemcpy(
+                            (&mut actual_count as *mut u32).cast(),
+                            received_count.cast(),
+                            4,
+                            2
+                        ),
+                        0
+                    );
+                    assert_eq!(
+                        gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(), fatal.cast(), 4, 2),
+                        0
+                    );
+                    assert_eq!(
+                        gpu::cudaMemcpy(actual_hash.as_mut_ptr().cast(), received_hashes, 16, 2),
+                        0
+                    );
+                    assert_eq!(
+                        gpu::cudaMemcpy(actual_state.as_mut_ptr().cast(), received_states, 16, 2),
+                        0
+                    );
+                    assert_eq!((actual_count, actual_fatal), (1, 0));
+                    assert_eq!(actual_hash, [0x11u8 + (1 - rank) as u8; 16]);
+                    assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 16]);
 
-                assert_eq!(gpu::cudaStreamDestroy(stream), 0);
-                assert_eq!(gpu::cudaFree(hashes), 0);
-                assert_eq!(gpu::cudaFree(states), 0);
-                assert_eq!(gpu::cudaFree(counts), 0);
-                drain.wait();
-                gpu::mgbfs_nccl_destroy(comm);
+                    assert_eq!(gpu::cudaStreamDestroy(stream), 0);
+                    assert_eq!(gpu::cudaFree(hashes), 0);
+                    assert_eq!(gpu::cudaFree(states), 0);
+                    assert_eq!(gpu::cudaFree(counts), 0);
+                    drain.wait();
+                    gpu::mgbfs_nccl_destroy(comm);
+                }));
+                if result.is_err() {
+                    std::process::abort();
+                }
             })
         })
         .collect();
@@ -154,13 +215,24 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
                 };
                 let mut bfs = if transport == mgbfs_core::config::ReferenceTransport::Lsa {
                     DistributedNativeBfs::new_library_reference_with_owner(
-                        &graph, [7; 16], id, cfg, None, 64 << 20, false,
+                        &graph,
+                        [7; 16],
+                        id,
+                        cfg,
+                        None,
+                        64 << 20,
+                        false,
                         mgbfs_core::config::ReferenceOwner::CucoRank,
                     )
                 } else {
                     DistributedNativeBfs::new_reference_with_owner(
-                        &graph, [7; 16], id, cfg, None,
-                        mgbfs_core::config::OwnerBackend::CubSortMerge, 256,
+                        &graph,
+                        [7; 16],
+                        id,
+                        cfg,
+                        None,
+                        mgbfs_core::config::OwnerBackend::CubSortMerge,
+                        256,
                     )
                 }
                 .unwrap();
@@ -228,7 +300,10 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                 let mut send: *mut c_void = std::ptr::null_mut();
                 let mut receive: *mut c_void = std::ptr::null_mut();
                 assert_eq!(cudaMalloc(&mut ring_gpu, std::mem::size_of::<Ring>()), 0);
-                assert_eq!(cudaMalloc(&mut owner_gpu, std::mem::size_of::<Control>()), 0);
+                assert_eq!(
+                    cudaMalloc(&mut owner_gpu, std::mem::size_of::<Control>()),
+                    0
+                );
                 assert_eq!(cudaMalloc(&mut send, 4), 0);
                 assert_eq!(cudaMalloc(&mut receive, 4), 0);
                 let ring = Ring {
@@ -245,7 +320,10 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     0
                 );
                 let owner = Control::default();
-                assert_eq!(cudaMemcpy(owner_gpu, (&owner as *const Control).cast(), 64, 1), 0);
+                assert_eq!(
+                    cudaMemcpy(owner_gpu, (&owner as *const Control).cast(), 64, 1),
+                    0
+                );
                 let extent = Extent {
                     sequence: 6,
                     begin: 6,
@@ -259,9 +337,17 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     mgbfs_state_retire_dense_prefix_value(ring_gpu.cast(), extent, 3, stream),
                     0
                 );
-                assert_eq!(mgbfs_owner_global_fatal_gate(
-                    comm, ring_gpu.cast(), owner_gpu.cast(), send.cast(), receive.cast(), stream
-                ), 0);
+                assert_eq!(
+                    mgbfs_owner_global_fatal_gate(
+                        comm,
+                        ring_gpu.cast(),
+                        owner_gpu.cast(),
+                        send.cast(),
+                        receive.cast(),
+                        stream
+                    ),
+                    0
+                );
                 assert_eq!(cudaStreamSynchronize(stream), 0);
                 let mut group_fatal = 0u32;
                 let mut local = Ring::default();
@@ -274,7 +360,10 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     cudaMemcpy((&mut local as *mut Ring).cast(), ring_gpu, 64, 2),
                     0
                 );
-                assert_eq!(cudaMemcpy((&mut local_owner as *mut Control).cast(), owner_gpu, 64, 2), 0);
+                assert_eq!(
+                    cudaMemcpy((&mut local_owner as *mut Control).cast(), owner_gpu, 64, 2),
+                    0
+                );
                 assert_eq!(cudaFree(receive), 0);
                 assert_eq!(cudaFree(send), 0);
                 assert_eq!(cudaFree(ring_gpu), 0);
@@ -401,12 +490,16 @@ fn cuco_rank_lsa_one_rank_host_owner_error_stops_group() {
 fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut id = [0u8; 128];
-    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
-    let workers: Vec<_> = (0..2)
-        .map(|rank| {
-            let graph = graph.clone();
-            std::thread::spawn(move || {
-                std::panic::catch_unwind(|| {
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
+    let workers: Vec<_> =
+        (0..2)
+            .map(|rank| {
+                let graph = graph.clone();
+                std::thread::spawn(move || {
+                    std::panic::catch_unwind(|| {
                     let cfg = DistributedConfig {
                         rank,
                         world: 2,
@@ -440,10 +533,13 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                     }
                     panic!("EXPECTED_OWNER_FAILURE_NOT_REACHED")
                 }).unwrap_or_else(|_| std::process::abort())
+                })
             })
-        })
-        .collect();
-    workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+            .collect();
+    workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect()
 }
 
 #[test]
