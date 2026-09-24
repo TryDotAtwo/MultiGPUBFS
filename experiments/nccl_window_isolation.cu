@@ -1,5 +1,5 @@
 // Diagnostic only: isolate NCCL window registration from MultiGPUBFS.
-#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <nccl.h>
 
 #include <array>
