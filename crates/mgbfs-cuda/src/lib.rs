@@ -385,6 +385,12 @@ pub mod ffi {
             rows: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_owner_import_transport_fatal(
+            transport_fatal: *const u32,
+            ring: *mut crate::native_owner::Ring,
+            owner: *mut crate::native_owner::Control,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_unique_id(id128: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create(
             rank: u32,
@@ -403,6 +409,34 @@ pub mod ffi {
             receive: *mut c_void,
             receive_bytes: u64,
             stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_lsa_prepare(
+            comm: *mut c_void,
+            candidate_capacity: u32,
+            state_stride: u32,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_nccl_lsa_activate(
+            comm: *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
+        ) -> i32;
+        pub fn mgbfs_nccl_lsa_exchange(
+            comm: *mut c_void,
+            sorted_hashes: *const c_void,
+            packed_states: *const c_void,
+            owner_counts: *const u32,
+            logical_owner: u32,
+            peer: u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_lsa_view(
+            comm: *mut c_void,
+            count: *mut *const u32,
+            fatal: *mut *const u32,
+            hashes: *mut *const c_void,
+            states: *mut *const c_void,
         ) -> i32;
         pub fn mgbfs_nccl_all_gather_u32(
             comm: *mut c_void,

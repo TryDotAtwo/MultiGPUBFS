@@ -5,6 +5,13 @@
 #include <cstdint>
 #include <cstring>
 namespace {
+__global__ void import_transport_fatal(const uint32_t* transport_fatal,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner) {
+  if (blockIdx.x == 0 && threadIdx.x == 0 && *transport_fatal != 0) {
+    atomicCAS(&ring->fatal, 0u, 22u);
+    atomicCAS(&owner->error, 0u, 22u);
+  }
+}
 struct alignas(16) Key { uint32_t w[4]; };
 struct HeaderWords { uint32_t words[16]; };
 static_assert(sizeof(HeaderWords) == 64);
@@ -225,5 +232,13 @@ extern "C" int mgbfs_owner_window_from_counts(uint32_t world,
       logical_owner>=world||!owner_counts||!routed_count||!begin||!rows)return 1;
   owner_window_from_counts<<<1,1,0,static_cast<cudaStream_t>(raw_stream)>>>(
       world,packed_capacity,logical_owner,owner_counts,routed_count,begin,rows);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_import_transport_fatal(
+    const uint32_t* transport_fatal,MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner,void* raw_stream) {
+  if (!transport_fatal || !ring || !owner) return 1;
+  import_transport_fatal<<<1,1,0,static_cast<cudaStream_t>(raw_stream)>>>(
+      transport_fatal,ring,owner);
   return cudaGetLastError()==cudaSuccess?0:2;
 }

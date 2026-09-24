@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "regenerate.h"
+#include "state_commit.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -205,6 +206,10 @@ int mgbfs_owner_window_from_counts(uint32_t world,uint32_t packed_capacity,
     uint32_t logical_owner,const uint32_t* owner_counts,
     const uint32_t* routed_count,
     uint32_t* begin,uint32_t* rows,void* stream);
+/* Propagate an LSA transport fatal into the sticky owner/ring controls on GPU.
+ * Must be ordered after exchange on the same stream or by an event wait. */
+int mgbfs_owner_import_transport_fatal(const uint32_t* transport_fatal,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,void* stream);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
 int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,
