@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "ff314f68a579662a625e61a0ad0d08e7a48183e9"
+SOURCE = "85672f6ee1f567d24191f01c653df14edfe529f3"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "boundary_gate"
 
@@ -230,6 +230,11 @@ def main():
                 report["boundary_runs"] = {"linux_archive_and_protocol_cpu_tests": "PASS"}
                 report["status"] = "UNSUPPORTED_HOST_AFTER_CPU"
                 return
+            run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                 "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                 "one_rank_constructor_failure_after_nccl_stops_peer",
+                 "--", "--ignored", "--nocapture"],
+                "boundary-constructor-fault", timeout=75)
             cli = str(source / "target/release/mgbfs")
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
                        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
