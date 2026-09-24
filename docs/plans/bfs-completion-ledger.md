@@ -659,3 +659,11 @@ The later P2P-capable two-T4 v5 gate passed the same eight fixtures on
 mode and replaces the generation-buffer host wait with CUDA-event ordering.
 This is still plain correctness; full-path LSA sanitizers, large-graph VRAM
 and speed, and remaining owner/retirement/failure host dependencies are open.
+
+The independent two-T4 S10 Nsight Systems diagnostic at the same source
+captured a complete archive-verified `CUCO_RANK` run with host-sized NCCL.
+Its aggregate, non-search-filtered trace contains 6,266 stream synchronizes,
+5,632 D2H copies, and substantial NCCL kernel time. It confirms that the
+remaining host dependencies execute, but cannot by itself quantify their
+search critical-path cost or prove LSA overlap. See
+`docs/validation/cuco-rank-timeline-2xt4-v2.md`.
