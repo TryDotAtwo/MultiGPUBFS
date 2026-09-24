@@ -245,7 +245,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
     let id = control_group.nccl_id;
     let archive_setup = if archive_enabled {
-        let extent = create_archive_extent(Path::new(&archive_path), stream_archive)
+        create_archive_extent(Path::new(&archive_path), stream_archive)
             .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
             .and_then(|extent| PinnedArchive::new(
                 extent, disk_bytes, archive_width, digest, archive_rows,

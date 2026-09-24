@@ -4,14 +4,39 @@ import tempfile
 import json
 import os
 import subprocess
+import hashlib
 from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker, run_group
+from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker, run_group, validate_group_commit
 
 
 class RankMetrics(unittest.TestCase):
+    def test_group_marker_rejects_missing_or_tampered_rank_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            digest = [7] * 32
+            files = []
+            for rank in range(2):
+                path = root / f'rank-{rank}.json'
+                path.write_text(json.dumps(dict(status='COMPLETE', rank=rank,
+                    world_size=2, bootstrap_digest=digest,
+                    archive_commit_scope='file_fsync')))
+                files.append(path)
+            with self.assertRaisesRegex(ValueError, 'GROUP_COMMIT_MISSING'):
+                validate_group_commit(root, 2)
+            marker = dict(status='COMPLETE', schema='mgbfs-group-run-commit-v1',
+                          world_size=2, bootstrap_digest=digest,
+                          archive_commit_scope='file_fsync',
+                          rank_sha256=[list(hashlib.sha256(path.read_bytes()).digest())
+                                       for path in files])
+            (root / 'group-complete.json').write_text(json.dumps(marker))
+            self.assertEqual(validate_group_commit(root, 2)['archive_commit_scope'], 'file_fsync')
+            files[1].write_text(files[1].read_text() + ' ')
+            with self.assertRaisesRegex(ValueError, 'GROUP_COMMIT_DIGEST'):
+                validate_group_commit(root, 2)
+
     def test_failed_archive_consumer_stops_real_search_process(self):
         popen = subprocess.Popen
         class Sampler:

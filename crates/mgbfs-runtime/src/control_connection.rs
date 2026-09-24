@@ -33,6 +33,36 @@ impl ControlConnection {
         self.failed = true;
         let _ = self.stream.shutdown(Shutdown::Both);
     }
+    /// Run-boundary frames precede dispatcher ownership. Completing one must
+    /// not mark the connection as started: ControlPump still needs to reserve
+    /// its full bounded outbox before the first data-plane command.
+    pub(crate) fn enqueue_boundary(&mut self, frame: ControlFrame) -> Result<()> {
+        self.alive()?;
+        if self.started || frame.action != Action::Boundary || frame.rank != self.local {
+            return self.finish(Err("CONTROL_BOUNDARY_PHASE".into()));
+        }
+        self.finish(Self::direction(frame))?;
+        let result = self.writer.enqueue(frame);
+        self.finish(result)
+    }
+    pub(crate) fn poll_boundary_send(&mut self) -> Result<bool> {
+        self.alive()?;
+        if self.started { return self.finish(Err("CONTROL_BOUNDARY_PHASE".into())); }
+        let result = self.writer.poll(&mut self.stream);
+        self.finish(result)
+    }
+    pub(crate) fn poll_boundary_receive(&mut self) -> Result<Option<ControlFrame>> {
+        self.alive()?;
+        if self.started { return self.finish(Err("CONTROL_BOUNDARY_PHASE".into())); }
+        let result = self.reader.poll(&mut self.stream);
+        let frame = self.finish(result)?;
+        if let Some(frame) = frame {
+            if frame.action != Action::Boundary || frame.rank != self.peer {
+                return self.finish(Err("CONTROL_BOUNDARY_FRAME".into()));
+            }
+        }
+        Ok(frame)
+    }
     /// Wrap only a stream assigned by the bootstrap handshake. Rank checking
     /// detects protocol mismatch, not cryptographic peer authentication.
     pub fn new(stream: TcpStream, world: u32, local: u32, peer: u32) -> Result<Self> {

@@ -1,5 +1,5 @@
 """Two-T4 native NCCL versus immutable CayleyPy torchrun matrix BFS."""
-import argparse,gc,json,math,os,shutil,signal,statistics,subprocess,sys,time
+import argparse,gc,hashlib,json,math,os,shutil,signal,statistics,subprocess,sys,time
 from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 from process_scope import spawn_group, stop_group
@@ -59,6 +59,29 @@ def smi_peaks(text,world=2):
  values=[max(peaks[rank]) if peaks[rank] else None for rank in range(world)]
  # Sum of per-rank peaks, not necessarily a simultaneous device peak.
  return values,sum(values) if all(x is not None for x in values) else None
+
+def validate_group_commit(root,world):
+ root=Path(root)
+ try:marker=json.loads((root/'group-complete.json').read_text())
+ except (OSError,ValueError) as error:raise ValueError('GROUP_COMMIT_MISSING') from error
+ if (marker.get('schema')!='mgbfs-group-run-commit-v1'
+     or marker.get('status')!='COMPLETE' or marker.get('world_size')!=world
+     or marker.get('archive_commit_scope') not in ('file_fsync','fifo_flush','search_only')
+     or not isinstance(marker.get('bootstrap_digest'),list)
+     or len(marker['bootstrap_digest'])!=32
+     or not isinstance(marker.get('rank_sha256'),list)
+     or len(marker['rank_sha256'])!=world):raise ValueError('GROUP_COMMIT_FIELDS')
+ for rank in range(world):
+  try:data=(root/f'rank-{rank}.json').read_bytes();row=json.loads(data)
+  except (OSError,ValueError) as error:raise ValueError('GROUP_COMMIT_RANK') from error
+  if (row.get('status')!='COMPLETE' or row.get('rank')!=rank
+      or row.get('world_size')!=world
+      or row.get('bootstrap_digest')!=marker['bootstrap_digest']
+      or row.get('archive_commit_scope')!=marker['archive_commit_scope']):
+   raise ValueError('GROUP_COMMIT_RANK')
+  if list(hashlib.sha256(data).digest())!=marker['rank_sha256'][rank]:
+   raise ValueError('GROUP_COMMIT_DIGEST')
+ return marker
 
 def aggregate_rank_results(ranks,world=2):
  if world not in (1,2,4,8):raise ValueError('unsupported measurement world')
@@ -125,6 +148,8 @@ def run_group(command,out,label,env,timeout=7200,required_processes=()):
    finally:sampler.terminate();sampler.wait()
  if row['exit_code']==0 and row['status']=='INCOMPLETE':
   ranks=[json.loads(x.read_text()) for x in rank_out.glob('rank-*.json')]
+  if any('bootstrap_digest' in rank for rank in ranks):
+   row['group_commit']=validate_group_commit(rank_out,world)
   row.update(aggregate_rank_results(ranks,world=world))
  else:row['status']='FAILED' if row['status']=='INCOMPLETE' else row['status']
  row['smi_peak_mib_per_rank'],row['smi_peak_mib_total']=smi_peaks((out/(label+'-smi.csv')).read_text(),world=world);row['smi_memory_complete']=row['smi_peak_mib_total'] is not None;(out/(label+'.json')).write_text(json.dumps(row,indent=2));print(label,row['status'],row.get('search_complete_seconds'),flush=True);return row

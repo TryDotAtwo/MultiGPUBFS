@@ -155,6 +155,45 @@ fn boundary_agreement_preserves_phase_order_and_success() {
 }
 
 #[test]
+fn startup_boundary_leaves_control_connection_admissible_to_dispatcher() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use mgbfs_runtime::control_pump::ControlPump;
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-control-after-startup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(
+            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            || panic!("peer cannot create NCCL ID"),
+        ).unwrap();
+        assert!(!group.agree_boundary(
+            BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3)
+        ).unwrap());
+        ControlPump::new(2, 1, 2, std::mem::take(&mut group.peers)).unwrap();
+    });
+    let mut coordinator = rendezvous(
+        &path, 0, 2, record().identity, Duration::from_secs(3),
+        || Ok([23; 128]),
+    ).unwrap();
+    assert!(!coordinator.agree_boundary(
+        BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3)
+    ).unwrap());
+    ControlPump::new(2, 0, 2, std::mem::take(&mut coordinator.peers)).unwrap();
+    peer.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn incomplete_group_closes_previously_admitted_connections() {
     use mgbfs_runtime::bootstrap::BootstrapListener;
     use std::time::{Duration, Instant};

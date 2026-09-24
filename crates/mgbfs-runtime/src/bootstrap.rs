@@ -83,9 +83,9 @@ fn boundary_send(
     frame: crate::control_wire::ControlFrame,
     deadline: std::time::Instant,
 ) -> Result<()> {
-    conn.enqueue(frame)?;
+    conn.enqueue_boundary(frame)?;
     loop {
-        if conn.poll_send()? { return Ok(()); }
+        if conn.poll_boundary_send()? { return Ok(()); }
         if std::time::Instant::now() >= deadline { return Err("BOUNDARY_TIMEOUT".into()); }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -95,7 +95,7 @@ fn boundary_receive(
     deadline: std::time::Instant,
 ) -> Result<crate::control_wire::ControlFrame> {
     loop {
-        if let Some(frame) = conn.poll_receive()? { return Ok(frame); }
+        if let Some(frame) = conn.poll_boundary_receive()? { return Ok(frame); }
         if std::time::Instant::now() >= deadline { return Err("BOUNDARY_TIMEOUT".into()); }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
