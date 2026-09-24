@@ -92,7 +92,7 @@ fn fragmented_hello_is_accepted_without_consuming_following_ready() {
     hello[8] = 2;
     hello[12] = 2;
     hello[16] = 1;
-    hello[20] = 3;
+    hello[20] = 4;
     hello[24..56].fill(7);
     hello[56..72].fill(9);
     for part in hello.chunks(3) {

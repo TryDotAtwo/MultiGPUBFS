@@ -2,7 +2,7 @@
 use mgbfs_core::Result;
 use std::io::{Read, Write};
 pub const FRAME_BYTES: usize = 64;
-pub const CONTROL_SCHEMA: u16 = 3;
+pub const CONTROL_SCHEMA: u16 = 4;
 pub const NO_SLOT: u64 = u64::MAX;
 /// One fixed pending frame. Full capacity is an explicit error, never an
 /// allocation or overwrite. Caller supplies a nonblocking stream.
@@ -144,6 +144,7 @@ pub enum Action {
     TicketBytes = 11,
     Admitted = 12,
     Launch = 13,
+    Boundary = 14,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -216,6 +217,13 @@ impl ControlFrame {
             Action::Finalized => {
                 self.slot == NO_SLOT && self.plane == Plane::None && self.fatal_code == 0
             }
+            Action::Boundary => {
+                self.slot == NO_SLOT
+                    && self.plane == Plane::None
+                    && self.epoch == 0
+                    && matches!(self.depth, 1..=3)
+                    && self.fatal_code <= 1
+            }
             Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch => {
                 self.slot != NO_SLOT
                     && self.plane != Plane::None
@@ -274,6 +282,7 @@ impl ControlFrame {
             11 => Action::TicketBytes,
             12 => Action::Admitted,
             13 => Action::Launch,
+            14 => Action::Boundary,
             _ => return Err("CONTROL_ACTION".into()),
         };
         let plane = match u32::from_le_bytes(bytes[40..44].try_into().unwrap()) {

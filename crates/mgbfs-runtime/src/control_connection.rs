@@ -95,6 +95,7 @@ impl ControlConnection {
                     | Action::Fatal
                     | Action::TicketBytes
                     | Action::Launch
+                    | Action::Boundary
             )
         } else {
             matches!(
@@ -107,6 +108,7 @@ impl ControlConnection {
                     | Action::Fatal
                     | Action::OfferBytes
                     | Action::Admitted
+                    | Action::Boundary
             )
         };
         if allowed {

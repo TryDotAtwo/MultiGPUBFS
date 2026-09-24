@@ -242,20 +242,24 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             .into();
     // Keep control sockets alive throughout this reference run. Dispatching GPU
     // epochs on them is a separate integration step, not claimed here.
-    let _control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
-    let id = _control_group.nccl_id;
-    let mut archive = if archive_enabled {
+    let mut control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
+    let id = control_group.nccl_id;
+    let archive_setup = if archive_enabled {
         let extent = create_archive_extent(Path::new(&archive_path), stream_archive)
-            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
-        Some(PinnedArchive::new(
-        extent,
-        disk_bytes,
-        archive_width,
-        digest,
-        archive_rows,
-        env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
-        )?)
-    } else { None };
+            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
+            .and_then(|extent| PinnedArchive::new(
+                extent, disk_bytes, archive_width, digest, archive_rows,
+                env_u32("MGBFS_ARCHIVE_SLOTS", 64) as usize,
+            ))
+            .map(Some)
+    } else { Ok(None) };
+    if control_group.agree_boundary(
+        crate::bootstrap::BoundaryPhase::ArchiveAdmission,
+        archive_setup.is_err(), Duration::from_secs(600),
+    )? {
+        return Err(archive_setup.err().unwrap_or_else(|| "REMOTE_ARCHIVE_ADMISSION_FATAL".into()));
+    }
+    let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let setup = Instant::now();
     let mut bfs = if let Some(word) = &multiset {
@@ -343,10 +347,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
-    if let Some(archive) = archive.take() {
-        archive.finish()?;
+    let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
+    if control_group.agree_boundary(
+        crate::bootstrap::BoundaryPhase::ArchiveCommitted,
+        archive_commit.is_err(), Duration::from_secs(7200),
+    )? {
+        return Err(archive_commit.err().unwrap_or_else(|| "REMOTE_ARCHIVE_COMMIT_FATAL".into()));
     }
+    archive_commit?;
     let durable = start.elapsed().as_secs_f64();
+    let output = (|| -> Result<()> {
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
     let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
     // Keep the existing timing schema, but never label HASH_FIRST as DENSE.
@@ -374,7 +384,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         .sum();
     let record=format!("{},\"explicit_device_payload_bytes\":{owned_payload},\"explicit_device_aligned_bytes\":{},\"untouched_vram_reserve_bytes\":{},\"allocation_scope\":\"explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive\"}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?,bfs.owned_memory().total(),cfg.untouched_vram_reserve);
-    std::fs::write(Path::new(&args[5]).join(format!("rank-{rank}.json")), {
+    crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
         value["output_contract"] = serde_json::json!(if archive_enabled {
@@ -382,12 +392,23 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         } else {
             "search_only_layer_counts"
         });
-        if !archive_enabled {
+        if !archive_enabled || stream_archive {
             value["durable_run_commit_seconds"] = serde_json::Value::Null;
         }
+        if stream_archive && archive_enabled {
+            value["stream_handoff_seconds"] = serde_json::json!(durable);
+        }
+        value["archive_commit_scope"] = serde_json::json!(if !archive_enabled {
+            "search_only"
+        } else if stream_archive {
+            "fifo_flush"
+        } else {
+            "file_fsync"
+        });
         value["device_allocation_plan"] =
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["hash_seed_hex"] = serde_json::json!(seed_hex);
+        value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
         value["transport_backend"] = serde_json::json!(format!("{:?}", cfg.transport));
         value["group"] = serde_json::json!(group);
         if let Some(word) = &multiset {
@@ -416,8 +437,19 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             value["backend"] = serde_json::json!(label);
         }
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
-    })
-    .map_err(|e| e.to_string())?;
+    })?;
+    Ok(())
+    })();
+    if control_group.agree_boundary(
+        crate::bootstrap::BoundaryPhase::OutputWritten,
+        output.is_err(), Duration::from_secs(60),
+    )? {
+        return Err(output.err().unwrap_or_else(|| "REMOTE_OUTPUT_WRITE_FATAL".into()));
+    }
+    output?;
+    if rank == 0 {
+        crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)?;
+    }
     Ok(())
 }
 

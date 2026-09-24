@@ -83,6 +83,78 @@ fn file_rendezvous_shares_coordinator_nccl_id_and_control_connections() {
 }
 
 #[test]
+fn archive_admission_failure_reaches_both_ranks_before_nccl_setup() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-admission-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(
+            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            || panic!("peer cannot create NCCL ID"),
+        ).unwrap();
+        group.agree_boundary(BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3))
+    });
+    let mut coordinator = rendezvous(
+        &path, 0, 2, record().identity, Duration::from_secs(3),
+        || Ok([23; 128]),
+    ).unwrap();
+    assert!(coordinator.agree_boundary(
+        BoundaryPhase::ArchiveAdmission, true, Duration::from_secs(3)
+    ).unwrap());
+    assert!(peer.join().unwrap().unwrap());
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn boundary_agreement_preserves_phase_order_and_success() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-boundary-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(
+            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            || panic!("peer cannot create NCCL ID"),
+        ).unwrap();
+        for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
+            BoundaryPhase::OutputWritten] {
+            assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+        }
+    });
+    let mut coordinator = rendezvous(
+        &path, 0, 2, record().identity, Duration::from_secs(3),
+        || Ok([23; 128]),
+    ).unwrap();
+    for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
+        BoundaryPhase::OutputWritten] {
+        assert!(!coordinator.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+    }
+    peer.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn incomplete_group_closes_previously_admitted_connections() {
     use mgbfs_runtime::bootstrap::BootstrapListener;
     use std::time::{Duration, Instant};

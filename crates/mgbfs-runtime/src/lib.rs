@@ -20,6 +20,7 @@ pub mod epoch_coordinator;
 pub mod event_generation;
 pub mod exchange;
 pub mod failure;
+pub mod group_commit;
 #[cfg(feature = "cuda")]
 pub mod hash_first_exchange;
 pub mod jobs;
