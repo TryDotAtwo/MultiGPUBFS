@@ -771,3 +771,11 @@ supported. The full CPU suite also passed. This removes one host drain, not
 the received-count readback, payload-size decision or fatal votes. No new
 sanitizer, speed, VRAM or overlap claim is attached to this change; see
 `docs/validation/scalar-control-store-t4.md`.
+
+The subsequent same-source two-T4 S10 v35 screen completed five paired
+archive-verified runs per transport at `6dd41bb` (runtime unchanged from
+`3fffcbc`). HostSized/LSA search medians were 0.435774/0.390792 s and
+durable medians 4.008849/4.057025 s; sampled VRAM was 529/567 MiB per
+rank. All 20 rank archive logs reported VERIFIED. The older v27 session is
+not a causal baseline for the scalar-store edit. See the same validation
+record for MAD, samples and limits.

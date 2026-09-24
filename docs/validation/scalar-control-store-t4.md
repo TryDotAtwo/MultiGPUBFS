@@ -74,3 +74,20 @@ CUCO_RANK (the latter DENSE only). The gate explicitly requested no new
 sanitizer tools, and these tiny graphs are correctness checks, not a speed
 or VRAM comparison. Raw manifest and logs:
 `test_results/kaggle_host_count_store_library_v60/library-owner/`.
+
+Kaggle LSA notebook v35, source `6dd41bb1f669a7008e08ab2c2b0769ad64fe71b7`
+(same runtime code as `3fffcbc`), completed a fresh paired S10 screen on two
+P2P T4s: five unprofiled runs per transport, archive enabled and all 20
+per-rank archive verification logs reporting `VERIFIED`.
+
+| Transport | Search median s (MAD) | Durable median s (MAD) | Sampled MiB/rank |
+|---|---:|---:|---:|
+| HostSized NCCL | 0.435774 (0.007724) | 4.008849 (0.053205) | 529, 529 |
+| NCCL LSA | 0.390792 (0.012448) | 4.057025 (0.018930) | 567, 567 |
+
+LSA search median was 10.3% lower within v35, with 38 MiB more sampled VRAM
+per rank. This session does **not** isolate the HostSized count-store change:
+the earlier v27 run used another host/session, and both transports' medians
+shifted upward. No causal speedup from the new scalar store is claimed. Raw
+samples, 50 ms VRAM traces and archive logs are under
+`test_results/kaggle_poststore_benchmark_v35/lsa-bfs-gate/`.
