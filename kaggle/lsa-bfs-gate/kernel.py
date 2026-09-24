@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "57953cfa22d39e5f8d1d112ae6ac392f4ea92efb"
+SOURCE = "b1e260fce94b63f9b73c6b372b04753f9eda31cc"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "archive_fault_gate"
+MODE = "device_fatal_gate"
 
 
 def main():
@@ -182,6 +182,17 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE == "device_fatal_gate":
+            result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                          "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                          "retirement_fifo_fault_votes_group_fatal_on_two_devices",
+                          "--", "--exact", "--nocapture", "--test-threads=1"],
+                         "device-fatal-gate", timeout=180)
+            if "test result: ok. 1 passed; 0 failed" not in result:
+                raise RuntimeError("DEVICE_FATAL_GATE_RESULT")
+            report["device_fatal_gate"] = "PASS"
+            report["status"] = "COMPLETE"
+            return
         if MODE == "archive_fault_gate":
             for name in ("archive_slot_failure_votes_group_fatal_before_exchange",
                          "archive_slot_failure_votes_group_fatal_before_lsa_exchange"):
