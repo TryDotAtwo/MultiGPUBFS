@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "d8df7db1e31662072e3609407efd88fb5b22ccbd"
+SOURCE = "a5e28a2d18c9f2220c811e6c17a503532df0ec75"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "nccl_window_isolation"
 
@@ -111,10 +111,12 @@ def main():
         env["MGBFS_CUDART_LIB_DIR"] = str(sdk / "lib")
         if MODE == "nccl_window_isolation":
             binary = work / "nccl-window-isolation"
-            run([str(sdk / "bin/nvcc"), "-std=c++17", "-arch=sm_75",
-                 "-I" + str(nccl / "include"), "-L" + str(nccl / "lib"),
+            run(["g++", "-std=c++17", "-x", "c++",
+                 "-I" + str(nccl / "include"), "-I" + str(sdk / "include"),
                  str(source / "experiments/nccl_window_isolation.cu"),
-                 str(nccl / "lib/libnccl.so.2"), "-lcudart",
+                 "-x", "none", str(nccl / "lib/libnccl.so.2"),
+                 "-L" + str(sdk / "lib"), "-lcudart",
+                 "-Wl,-rpath," + str(nccl / "lib"),
                  "-o", str(binary)], "window-isolation-build", timeout=600)
             report["scope"] = ("independent NCCL ncclMemAlloc and "
                                "ncclCommWindowRegister on two physical T4s; no BFS code")
