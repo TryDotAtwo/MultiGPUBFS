@@ -659,6 +659,13 @@ The later P2P-capable two-T4 v5 gate passed the same eight fixtures on
 mode and replaces the generation-buffer host wait with CUDA-event ordering.
 This is still plain correctness; full-path LSA sanitizers, large-graph VRAM
 and speed, and remaining owner/retirement/failure host dependencies are open.
+The unfiltered LSA full-BFS `memcheck` in Kaggle v6 timed out during NCCL
+setup without a test result. V7 narrowed instrumentation to transport kernels
+and one fixture: both ranks traversed all depths and the test printed
+`1 passed`, but the sanitizer command timed out after the test result without
+an error summary. Neither run closes a sanitizer gate. V8 is testing
+`--target-processes application-only` against that post-test stall; details
+and raw log paths are in `docs/validation/lsa-full-bfs-2xt4.md`.
 
 The independent two-T4 S10 Nsight Systems diagnostic at the same source
 captured a complete archive-verified `CUCO_RANK` run with host-sized NCCL.
