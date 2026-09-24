@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "b93d2a2701b9ebfe64674178d979dc544f3eaad0"
+SOURCE = "ae3dce9433508faae6730132b43b072eea84dd78"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "timeline_analysis"
+MODE = "lsa_leaf_initcheck_debug"
 
 
 def main():
@@ -238,6 +238,79 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE in ("lsa_leaf_sanitizer", "lsa_leaf_harness_fault",
+                    "lsa_leaf_remaining_sanitizers", "lsa_leaf_initcheck_debug"):
+            name = "lsa_one_exchange_matches_peer_payload"
+            binary = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
+                      if path.is_file() and os.access(path, os.X_OK)]
+            if len(binary) != 1:
+                raise RuntimeError("LSA_LEAF_BINARY_INVENTORY")
+            command = [str(binary[0]), name, "--ignored", "--exact", "--nocapture",
+                       "--test-threads=1"]
+            plain = run(command, "lsa-leaf-plain", timeout=180)
+            if "test result: ok. 1 passed; 0 failed" not in plain:
+                raise RuntimeError("LSA_LEAF_PLAIN_RESULT")
+            report["plain_leaf"] = "PASS"
+            save()
+            if MODE == "lsa_leaf_harness_fault":
+                fault_env = dict(env, MGBFS_TEST_LSA_BAD_PAYLOAD="1")
+                try:
+                    failed = subprocess.run(command, cwd=source, env=fault_env,
+                                            capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired as error:
+                    report["fault_result"] = "TIMEOUT"
+                    raise RuntimeError("LSA_LEAF_FAULT_HUNG") from error
+                fault_output = failed.stdout + failed.stderr
+                (logs / "lsa-leaf-bad-payload.log").write_text(fault_output)
+                if failed.returncode == 0 or "assertion" not in fault_output:
+                    raise RuntimeError("LSA_LEAF_FAULT_NOT_DETECTED")
+                report["fault_result"] = "NONZERO_WITH_ASSERTION"
+                report["fault_returncode"] = failed.returncode
+                report["status"] = "COMPLETE"
+                return
+            if MODE in ("lsa_leaf_remaining_sanitizers", "lsa_leaf_initcheck_debug"):
+                report["leaf_tools"] = {}
+                tools = (("initcheck",) if MODE == "lsa_leaf_initcheck_debug"
+                         else ("initcheck", "synccheck"))
+                if MODE == "lsa_leaf_initcheck_debug":
+                    env["NCCL_DEBUG"] = "INFO"
+                for tool in tools:
+                    try:
+                        checked = subprocess.run(
+                            ["compute-sanitizer", "--tool", tool,
+                             "--report-api-errors", "no", "--error-exitcode", "97",
+                             *command], cwd=source, env=env, capture_output=True,
+                            text=True, timeout=300)
+                        output = checked.stdout + checked.stderr
+                        (logs / ("lsa-leaf-" + tool + ".log")).write_text(output)
+                        report["leaf_tools"][tool] = {
+                            "returncode": checked.returncode,
+                            "test_passed": "test result: ok. 1 passed; 0 failed" in output,
+                            "zero_errors": "ERROR SUMMARY: 0 errors" in output,
+                        }
+                    except subprocess.TimeoutExpired:
+                        report["leaf_tools"][tool] = {"status": "TIMEOUT"}
+                    save()
+                if not all(result.get("returncode") == 0 and
+                           result.get("test_passed") and result.get("zero_errors")
+                           for result in report["leaf_tools"].values()):
+                    raise RuntimeError("LSA_LEAF_REMAINING_SANITIZER_FAILURE")
+                report["status"] = "COMPLETE"
+                return
+            report["leaf_tools"] = {}
+            for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+                checked = run(["compute-sanitizer", "--tool", tool,
+                               "--report-api-errors", "no", "--error-exitcode", "97",
+                               *command], "lsa-leaf-" + tool, timeout=300)
+                clean_summary = ("RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)"
+                                 if tool == "racecheck" else "ERROR SUMMARY: 0 errors")
+                if ("test result: ok. 1 passed; 0 failed" not in checked
+                        or clean_summary not in checked):
+                    raise RuntimeError("LSA_LEAF_SANITIZER_RESULT: " + tool)
+                report["leaf_tools"][tool] = "PASS_API_ERROR_REPORTING_DISABLED"
+                save()
+            report["status"] = "COMPLETE"
+            return
         if MODE == "owner_capacity_gate":
             for name in (
                 "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",

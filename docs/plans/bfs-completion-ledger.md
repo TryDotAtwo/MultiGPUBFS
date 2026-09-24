@@ -843,13 +843,24 @@ The next isolated leaf attempt, private Kaggle v47, passed plain,
 memcheck and racecheck on P2P-capable 2×T4 with NCCL API-error reporting
 disabled. Initcheck failed LSA activation on one rank and the old fixture's
 barrier hid that assertion as a timeout; synccheck was not run. The fixture
-now aborts on any rank-thread panic (`ae3dce9`), pending a deliberate
-bad-payload hardware test. This is not a full-BFS sanitizer pass. See
+now aborts on any rank-thread panic (`ae3dce9`). Private Kaggle v48
+confirmed that an intentionally corrupted peer hash yields an assertion
+and SIGABRT rather than a timeout on 2×T4. The independent initcheck /
+synccheck v49 attempt selected a no-P2P host and stopped at preflight;
+v50 used P2P-capable 2×T4. Synccheck passed with zero errors; initcheck
+returned code 6 on NCCL window registration despite a zero-error sanitizer
+summary. Thus the four-tool leaf gate and the full-BFS sanitizer gate remain
+open. See
 `docs/validation/lsa-leaf-sanitizer-v47.md`.
 
 Private Kaggle library-owner v63 completed one S10 DENSE archive-verified
 run per CUB, CUCO_RANK and CUDF_RELATIONAL backend on 2×T4. All produced
 46 layers and 3,628,800 states. The single-sample search seconds were
 0.871420, 0.491433 and 1.920906 respectively; sampled total VRAM was
-914, 1058 and 1134 MiB. Five-repeat v64 is pending before a performance
-claim. See `docs/validation/db-owner-s10-v63.md`.
+914, 1058 and 1134 MiB. Five-repeat v64 failed on a CUDA SDK download
+timeout before BFS; v65 completed 15 archive-verified S10 DENSE runs on
+2×T4. Search medians for CUB/CUCO_RANK/CUDF_RELATIONAL were
+0.829891/0.376393/1.745511 s and sampled total VRAM was
+914/1058/1134 MiB. This is one configuration and leaves the pipeline and
+cross-graph gates open. See `docs/validation/db-owner-s10-v63.md` and
+`docs/validation/db-owner-s10-v65.md`.

@@ -28,6 +28,26 @@ but still drains at a batch boundary. Removing one completion wait did not remov
 these dependencies. The capture regression only proves no redundant completion
 wait, not asynchronous BFS.
 
+At current `6a693c2`, the regular per-batch path still calls
+`mgbfs_route_run` and `mgbfs_exchange_pack_device_n` even for `world=1`
+(`distributed_native.rs`, around the route/pack block). Selecting cuCO as
+owner does not bypass route radix sort, optional pre-dedup, or pack. The
+legacy indexed owner still calls `rank_directory`, reads it on the host and
+loops over shards inside `commit_library_batch`; it is a different path
+from the device-count `CUCO_RANK` transaction. These are static source
+observations, not an attribution of elapsed time. A one-GPU shortcut or
+fusion must retain exact owner ordering, local pre-dedup semantics and
+full-layer correctness before it can replace the existing route stage.
+
+An external single-RTX-3070-Laptop comparison on pinned source `5fea95c`
+reported faster exact S9/S10 search with `CUCO_RANK` than CUB, but a larger
+sampled full-device VRAM footprint with a 1 GiB fixed cuCO pool. Its
+GPUexplore LRX run measured reachability rather than exact BFS layers and
+is not an interchangeable speed baseline. The timings do not identify the
+cost of route sorting, copies, owner kernels or host waits individually;
+stage-resolved Nsight and controlled ablations remain necessary. This
+observation must not be transferred to newer HEAD or multi-GPU as a result.
+
 ## Selected direction: one rank-batch transaction
 
 Do not reproduce the CPU shard loop with device polling or a persistent spinlock.

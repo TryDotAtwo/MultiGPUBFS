@@ -15,7 +15,27 @@ other thread remained at the fixture's unconditional barrier, so the
 notebook's timeout is not evidence that the LSA transport or the BFS itself
 deadlocked. `synccheck` was not run. The fixture now aborts the process on
 any rank-thread panic in `ae3dce9`; a deliberate bad-payload failure gate
-is running as private Kaggle v48 to confirm fail-fast behavior.
+completed as private Kaggle v48 to confirm fail-fast behavior. At
+`ae3dce9` the plain peer exchange passed, then an intentionally corrupted
+rank-0 hash caused an assertion and process exit `-6` (SIGABRT), not a
+timeout. This validates the fixture's rank-failure path on 2×T4; it does
+not validate the BFS runtime's fault propagation. Raw evidence is under
+`test_results/kaggle_lsa_leaf_fault_v48/lsa-bfs-gate/`.
+
+Private Kaggle v49 selected two T4s without peer access and stopped at
+preflight (`UNSUPPORTED_HOST`), before either sanitizer. The same
+independent initcheck/synccheck configuration ran on P2P-capable 2×T4 in
+v50 at `ae3dce9`. Plain and synccheck both passed; synccheck reported
+`ERROR SUMMARY: 0 errors`. Initcheck returned code 6 after one rank's
+`ncclCommWindowRegister` failed with `window_register: unhandled cuda
+error`; the corrected fixture exited rather than hanging. Initcheck's own
+summary was `ERROR SUMMARY: 0 errors`, but its test did **not** pass, so
+this is not a green initcheck result and not a proven BFS memory defect.
+Raw v50 summary and logs are in
+`test_results/kaggle_lsa_leaf_remaining_v50/lsa-bfs-gate/`.
+
+The NCCL-INFO initcheck diagnostic v51 selected a no-P2P T4 host and
+stopped at preflight. The same diagnostic was resubmitted as v52.
 
 The leaf results do not close the full-BFS four-tool sanitizer gate. Raw
 evidence is under `test_results/kaggle_lsa_leaf_v47/lsa-bfs-gate/`.

@@ -9,25 +9,26 @@ import tempfile
 import hashlib
 import shutil
 
-SOURCE_COMMIT = "f5b52c9f240e89c5b8b30828919ef56c367fdad6"
+SOURCE_COMMIT = "ae3dce9433508faae6730132b43b072eea84dd78"
+LSA_SANITIZER_ONLY = False
 FULL_BFS_GATE = True
 CUDA_ARCHITECTURES = "75"  # Use "75;90" for T4 execution plus H200 compile gate.
 LOAD_SCREEN = True
-SCREEN_REPEATS = 5
-SCREEN_OWNERS = ("CUCO_INDEXED",)  # cuDF full correctness still runs below.
-SCREEN_WORLDS = (1, 2)
+SCREEN_REPEATS = 1  # Diagnostic Nsight trace; no speed claim.
+SCREEN_OWNERS = ("CUCO_RANK",)
+SCREEN_WORLDS = (1,)
 SCREEN_CAPACITY = 1_000_000  # Explicit per-rank capacity, not inferred at runtime.
 SCREEN_RING = 1_000_000
 SCREEN_POOL_BYTES = 96 << 20  # Explicit admission experiment, never grow/fallback.
 SCREEN_POOL_BYTES_BY_WORLD = {}  # Same 96 MiB/rank as 4/16-shard calibration.
 SCREEN_ARCHIVE_SLOTS = 256  # Same fixed pinned capacity for every timed backend.
-NATIVE_COMPARISON = True
+NATIVE_COMPARISON = False  # No profiler capture-range support in preserved native commit.
 CUCO_PREVIOUS_COMMIT = None  # Optional same-session library-only A/B.
-PROFILE_SCREEN = False  # Diagnostic timelines only; never enter speed statistics.
+PROFILE_SCREEN = True  # Diagnostic timelines only; never enter speed statistics.
 NATIVE_BASELINE_COMMIT = "013ed5c979f4225db273e0015fa9ed72fd230c90"
 CUCO_GATE = True
 # Recheck pool diagnostics, then compare against the immutable native baseline.
-SANITIZER_TOOLS = ("memcheck", "racecheck", "initcheck", "synccheck")
+SANITIZER_TOOLS = ()  # The four-tool suite is a separate, already recorded gate.
 PRIOR_SANITIZER_EVIDENCE = {"kernel_version": 50,
     "source_commit": "05efe4cff5f315e5dbdd2fb7c2435ec4d2638e96"}
 CUCO_COMMIT = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
@@ -92,6 +93,8 @@ def main():
     summary_path = logs / "summary.json"
     summary_path.write_text(json.dumps(manifest, indent=2))
     env = isolated_environment(os.environ)
+    if LSA_SANITIZER_ONLY:
+        env["NCCL_CUMEM_ENABLE"] = "1"
     def run(command, name, timeout=900, extra_env=None):
         return gate.run(command, cwd=source, env=env if extra_env is None else extra_env,
                         logs=logs, name=name, timeout=timeout)
@@ -103,8 +106,11 @@ def main():
             name = f"{component}-linux-x86_64-{version}-archive"
             archive = work / (name + ".tar.xz")
             url = f"https://developer.download.nvidia.com/compute/cuda/redist/{component}/linux-x86_64/{archive.name}"
-            run(["curl", "--fail", "--location", "--max-time", "180", url,
-                 "--output", str(archive)], component + "-download")
+            run(["curl", "--fail", "--location", "--silent", "--show-error",
+                 "--retry", "8", "--retry-all-errors", "--retry-delay", "5",
+                 "--continue-at", "-", "--connect-timeout", "30",
+                 "--max-time", "600", url, "--output", str(archive)],
+                component + "-download", timeout=5400)
             with archive.open("rb") as package:
                 actual_sha = hashlib.file_digest(package, "sha256").hexdigest()
             if actual_sha != sha256:
@@ -147,6 +153,15 @@ def main():
         lib_dirs = sorted({str(p.parent) for p in site.rglob("*.so*") if p.is_file()})
         env["LD_LIBRARY_PATH"] = ":".join([str(sdk / "lib"), str(sdk / "lib64")] + lib_dirs + [env.get("LD_LIBRARY_PATH", "")])
         env["PATH"] = str(venv / "bin") + ":" + env["PATH"]
+        nccl = None
+        if LSA_SANITIZER_ONLY:
+            nccl_target = work / "nccl"
+            run([sys.executable, "-m", "pip", "install", "--no-deps", "--target",
+                 str(nccl_target), "nvidia-nccl-cu12==2.29.7"], "nccl-install")
+            nccl = nccl_target / "nvidia/nccl"
+            if not (nccl / "include/nccl_device.h").is_file():
+                raise RuntimeError("PINNED_NCCL_DEVICE_HEADER")
+            env["LD_LIBRARY_PATH"] = str(nccl / "lib") + ":" + env["LD_LIBRARY_PATH"]
         build = work / "build"
         cuco_options = []
         if CUCO_GATE:
@@ -206,7 +221,9 @@ def main():
                  "-B", str(native_build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
                  "-DBUILD_TESTING=OFF", "-DCMAKE_CUDA_ARCHITECTURES=" + CUDA_ARCHITECTURES,
                  "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
-                 "-DCUTLASS_ROOT=" + str(cutlass)], "native-configure")
+                 "-DCUTLASS_ROOT=" + str(cutlass),
+                 *(["-DMGBFS_NCCL_LSA=ON", "-DMGBFS_NCCL_ROOT=" + str(nccl)]
+                   if LSA_SANITIZER_ONLY else [])], "native-configure")
             run([str(venv / "bin/cmake"), "--build", str(native_build),
                  "--target", "mgbfs_cuda", "-j2"], "native-build")
             env["MGBFS_CUDA_LIB_DIR"] = str(native_build)
@@ -229,6 +246,24 @@ def main():
                 raise RuntimeError("Full BFS test executable inventory mismatch")
             bfs_executable = matches["library_bfs_gpu"]
             multi_executable = matches["library_multi_gpu"]
+        if LSA_SANITIZER_ONLY:
+            device_env = dict(env, CUDA_VISIBLE_DEVICES=",".join(
+                gpu["uuid"] for gpu in gpus))
+            names = (
+                "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                "cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group",
+                "cuco_rank_lsa_one_rank_host_owner_error_stops_group",
+            )
+            for tool in SANITIZER_TOOLS:
+                for name in names:
+                    command = [multi_executable, name, "--ignored", "--exact",
+                               "--nocapture", "--test-threads=1"]
+                    run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "97",
+                         *command], "lsa-" + name + "-" + tool,
+                        timeout=1800, extra_env=device_env)
+            manifest["lsa_sanitizer_tests"] = list(names)
+            manifest["status"] = "PASS"
+            return
         executable = str(build / "cudf_owner_probe")
         for gpu in gpus:
             device_env = dict(env, CUDA_VISIBLE_DEVICES=gpu["uuid"])
@@ -294,7 +329,9 @@ def main():
                     ("u4m2", 64, "DENSE", "SCALAR")]
             for owner, group, expected_count, profile, generation in [
                     (owner, *scenario) for owner in ("CUDF_RELATIONAL", "CUCO_INDEXED")
-                    for scenario in scenarios]:
+                    for scenario in scenarios] + [
+                    ("CUCO_RANK", *scenario) for scenario in scenarios
+                    if scenario[2] == "DENSE"]:
                 label = owner.lower() + "-" + group + "-" + profile.lower()
                 run_root = work / ("cli-" + label)
                 run_root.mkdir()
@@ -319,7 +356,9 @@ def main():
                     if (result["status"] != "COMPLETE" or result["owner_backend"] != owner
                             or result["library_pool_reserved_bytes"] != (64 << 20)
                             or result["group"] != group or not result["backend"].startswith("library_")
-                            or not result["archive_enabled"] or not result["warmup_completed"]):
+                            or not result["archive_enabled"] or not result["warmup_completed"]
+                            or (owner == "CUCO_RANK" and result["backend"] !=
+                                "library_nccl_dense_cuco_rank_v1")):
                         raise RuntimeError("CLI library dispatch/archive contract mismatch")
                     total += sum(result["local_layer_sizes"])
                     run([cli, "verify", str(run_root / f"archive-rank-{rank}.mgbfsar1")],
@@ -341,9 +380,11 @@ def main():
                     package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
                     package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
                     package = work / package_name
-                    run(["curl", "--fail", "--location", "--max-time", "300",
+                    run(["curl", "--fail", "--location", "--silent", "--show-error",
+                         "--retry", "8", "--retry-all-errors", "--retry-delay", "5",
+                         "--continue-at", "-", "--connect-timeout", "30", "--max-time", "600",
                          "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/" + package_name,
-                         "--output", str(package)], "nsys-download")
+                         "--output", str(package)], "nsys-download", timeout=5400)
                     with package.open("rb") as downloaded:
                         digest = hashlib.file_digest(downloaded, "sha256").hexdigest()
                     if digest != package_sha:
@@ -419,6 +460,8 @@ def main():
                             selected_env = previous_env if owner == "CUCO_PREVIOUS" else device_env
                             case_env = dict(preserved_env if native else selected_env,
                                             MGBFS_ARCHIVE_SLOTS=str(SCREEN_ARCHIVE_SLOTS))
+                            if PROFILE_SCREEN:
+                                case_env["MGBFS_PROFILE_SEARCH"] = "1"
                             result = run_case(case_cli, logs / label, work / label,
                                 "s10", 3628800, world, 32768, SCREEN_CAPACITY, SCREEN_RING,
                                 0 if native else SCREEN_POOL_BYTES_BY_WORLD.get(world, SCREEN_POOL_BYTES), "DENSE", "ON",

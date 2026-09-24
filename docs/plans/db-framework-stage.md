@@ -160,5 +160,9 @@ each for CUB, CUCO_RANK and CUDF_RELATIONAL. All reached 3,628,800 states
 and 46 layers. CUDF_RELATIONAL took 1.920906 s search and 1134 MiB sampled
 total VRAM, versus CUCO_RANK's 0.491433 s and 1058 MiB and CUB's 0.871420 s
 and 914 MiB. A one-sample result is not a stable Pareto ruling; the
-five-repeat same-source screen is running. This does not settle other
+five-repeat same-source v65 screen completed: CUCO_RANK's search median
+was 0.376393 s, CUB's 0.829891 s, and CUDF_RELATIONAL's 1.745511 s;
+all 15 runs had verified rank archives and matching 46-layer S10 counts.
+See `docs/validation/db-owner-s10-v65.md` for MAD, durable time and VRAM.
+This does not settle other
 workloads, DB APIs or the CPU-free pipeline gate.
