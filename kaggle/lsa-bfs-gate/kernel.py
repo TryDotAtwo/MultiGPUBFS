@@ -44,6 +44,8 @@ def main():
     spec.loader.exec_module(library)
     env = library.isolated_environment(os.environ)
     env["NCCL_CUMEM_ENABLE"] = "1"
+    env["PIP_DEFAULT_TIMEOUT"] = "300"
+    env["PIP_RETRIES"] = "5"
 
     def run(command, name, cwd=source, timeout=900):
         return gate.run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)

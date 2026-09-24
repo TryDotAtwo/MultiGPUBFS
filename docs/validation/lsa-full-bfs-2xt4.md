@@ -75,6 +75,13 @@ resolve the instrumentation hang. The v7/v8 difference is host/run dependent
 and does not establish either a device-memory error or a clean sanitizer
 result. No unchanged rerun is planned.
 
+The first fixed-depth-round integration gate, v9 at source `6c74077`,
+reached a P2P-capable two-T4 host but stopped before any build or BFS:
+`pip` timed out while downloading the pinned 678 MB libcudf wheel at
+472.9 MB. This is a dependency-network failure, not an algorithm result.
+The next notebook version raises only the pip read timeout and retries;
+source and test selection remain unchanged.
+
 Raw evidence: `test_results/kaggle_lsa_full_bfs_v1/lsa-bfs-gate/summary.json`,
 `lsa-full-bfs.log`, `native-build.log`, `library-build.log` and pinned build
 logs in the same directory; v2–v8 similarly under
