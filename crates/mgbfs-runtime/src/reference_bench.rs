@@ -163,6 +163,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     // instead of leaving its peer in a stale-config bootstrap timeout.
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
     let prepared = (|| -> Result<PreparedPass> {
+    let warmup_requested = crate::reference_launch::bench_warmup_for_launch(
+        std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
+        std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
+    )?;
     crate::reference_launch::macro_depth_from_env(world)?;
     let multiset = if args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
@@ -248,7 +252,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let description = format!("{description};reference_selection={selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
-    let archive_enabled = std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1");
+    let archive_enabled = crate::reference_launch::bench_archive_for_launch(
+        std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").ok().as_deref(),
+        std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
+    )?;
     let disk_bytes = if archive_enabled {
         ArchiveRingPlan::reference_extent_bytes(archive_width, expected_states, capacity)?
     } else { 0 };
@@ -290,6 +297,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
+        "warmup_requested": warmup_requested,
         "transport": format!("{:?}", cfg.transport),
     });
     let bootstrap_digest: [u8; 32] =
@@ -474,17 +482,17 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
         value["output_contract"] = serde_json::json!(if archive_enabled {
-            "archive_and_layer_counts"
+            if is_measure { "archive_and_layer_counts" } else { "warmup_layer_counts" }
         } else {
             "search_only_layer_counts"
         });
-        if !archive_enabled || stream_archive {
+        if !archive_enabled || stream_archive || !is_measure {
             value["durable_run_commit_seconds"] = serde_json::Value::Null;
         }
         // Legacy consumers use durable_run_commit_seconds, but this timestamp
         // precedes rank-result fsync and group marker publication. State the
         // actual boundary explicitly without changing the old field's shape.
-        value["archive_file_commit_seconds"] = if archive_enabled && !stream_archive {
+        value["archive_file_commit_seconds"] = if archive_enabled && !stream_archive && is_measure {
             serde_json::json!(durable)
         } else {
             serde_json::Value::Null
@@ -492,7 +500,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if stream_archive && archive_enabled {
             value["stream_handoff_seconds"] = serde_json::json!(durable);
         }
-        value["archive_commit_scope"] = serde_json::json!(if !archive_enabled {
+        value["archive_commit_scope"] = serde_json::json!(if !is_measure {
+            "warmup_ephemeral"
+        } else if !archive_enabled {
             "search_only"
         } else if stream_archive {
             "fifo_flush"
@@ -532,6 +542,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         }
         serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
     })?;
+    if !is_measure && archive_enabled {
+        // Warmup has no durable archive contract. Release its file while the
+        // control group is alive so any local failure reaches every rank.
+        std::fs::remove_file(&archive_path)
+            .map_err(|e| format!("WARMUP_ARCHIVE_RELEASE: {e}"))?;
+    }
     Ok(())
     })();
     if control_group.agree_boundary(
@@ -541,7 +557,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err(output.err().unwrap_or_else(|| "REMOTE_OUTPUT_WRITE_FATAL".into()));
     }
     output?;
-    let publication = if rank == 0 {
+    let publication = if rank == 0 && is_measure {
         crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
     } else { Ok(()) };
     if control_group.agree_boundary(
@@ -704,30 +720,22 @@ pub fn run(args: Vec<String>) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
-    let warmup = match std::env::var("MGBFS_BENCH_WARMUP").as_deref() {
-        Ok("1") => true,
-        Ok("0") | Err(_) => false,
-        _ => return Err("BENCH_WARMUP_CONFIG".into()),
-    };
-    if warmup && std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1") {
-        return Err("BENCH_WARMUP_REQUIRES_FILE_ARCHIVE".into());
-    }
+    // Invalid local values still enter the same first rendezvous. The
+    // prepared configuration vote reports the error to every rank.
+    let warmup = crate::reference_launch::bench_warmup_for_launch(
+        std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
+        std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
+    ).unwrap_or(false);
     run_phases(warmup, |phase| {
-        if phase == Phase::Measure {
-            return run_pass(&args, warmup, true);
-        }
-        let mut warm_args = args.clone();
-        for index in [3, 4, 5] {
-            warm_args[index].push_str(".warmup");
-        }
-        run_pass(&warm_args, false, false)?;
-        // FileExtent uses create_new: this exact rank-local warmup archive
-        // belongs to this completed pass. Keep its small timing JSON/logs.
-        if std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").as_deref() != Ok("1") {
-            let rank = required("RANK")?;
-            std::fs::remove_file(format!("{}-rank-{rank}.mgbfsar1", warm_args[4]))
-                .map_err(|e| format!("WARMUP_ARCHIVE_RELEASE: {e}"))?;
-        }
-        Ok(())
+        let phase = if phase == Phase::Measure {
+            crate::reference_launch::BenchPhase::Measure
+        } else {
+            crate::reference_launch::BenchPhase::Warmup
+        };
+        let paths = crate::reference_launch::bench_phase_paths(
+            &args.iter().map(String::as_str).collect::<Vec<_>>(), warmup, phase,
+        )?;
+        run_pass(&paths, warmup && phase == crate::reference_launch::BenchPhase::Measure,
+            phase == crate::reference_launch::BenchPhase::Measure)
     })
 }

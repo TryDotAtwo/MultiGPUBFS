@@ -7,6 +7,7 @@ fn execute() -> Result<(), (i32, String)> {
             println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
         }
         Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only")) && args[1] == "--reference" => {
+            #[cfg(not(all(feature = "cuda", target_os = "linux")))]
             match std::env::var("MGBFS_MACRO_DEPTH").as_deref() {
                 Ok("1") | Err(std::env::VarError::NotPresent) => (),
                 Ok(value) if value.parse::<u32>().is_ok_and(|depth| depth > 1)
@@ -20,6 +21,7 @@ fn execute() -> Result<(), (i32, String)> {
                 std::env::set_var("MGBFS_ARCHIVE_STREAM", "0");
             } else {
               std::env::remove_var("MGBFS_SEARCH_ONLY");
+              #[cfg(not(all(feature = "cuda", target_os = "linux")))]
               match std::env::var("MGBFS_BENCH_SKIP_ARCHIVE") {
                 Err(std::env::VarError::NotPresent) => (),
                 Ok(value) if value == "0" => (),

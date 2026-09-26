@@ -952,3 +952,12 @@ and that local RunCommit/`COMPLETE` publication has no final rank-group
 agreement. These failure windows join the owner/transport/retirement work
 packet; neither has an injected two-process gate yet. See
 `docs/plans/owner-transport-retirement-batch-audit.md`.
+
+On 2026-09-26 the reference launcher admission was tightened locally: the
+first rendezvous path is now shared even if ranks disagree on warmup; warmup,
+stream-archive and archive-disable settings are checked inside the post-
+bootstrap configuration vote; and warmup archive removal participates in the
+output boundary before any group marker. CPU contract tests and Linux/CUDA
+cross-target typecheck passed. This is not yet a two-process target-GPU
+fault-injection result, and the broader owner/transport/retirement CPU
+round trips remain open.
