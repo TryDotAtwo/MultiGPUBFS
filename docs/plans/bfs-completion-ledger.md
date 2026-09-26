@@ -23,8 +23,9 @@ reference launch was changed to rendezvous by launch identity, then agree on
 all 256 config-digest bits and rank-local config/device-admission failure
 before archive admission or communicator creation. A two-rank CPU control
 test, the full available runtime CPU suite, and Linux/CUDA Rust typecheck
-passed. Private Kaggle v78 is queued for its actual two-P2P-T4 fault and
-normal-BFS gate; no GPU result for this change exists yet. The macro launch
+passed. Private Kaggle v78 passed its actual two-P2P-T4 configuration-fault
+and normal S4 BFS gates, including both transports and verified archives;
+see `docs/validation/lsa-full-bfs-gate-v78.md`. The macro launch
 does not use this path. Other pre-NCCL constructor failures, control-buffer
 allocation failures after NCCL init, and errors inside LSA activation remain
 open. Neither v77 nor the config change removes hot-path CPU readbacks or
