@@ -930,6 +930,14 @@ archives verified. The captured range contains 1,462 host stream waits and
 resolved, so this is aggregate evidence of remaining host dependence, not
 per-callsite critical-path proof. See `docs/validation/lsa-nsys-s10-v58.md`.
 
+Private Kaggle v81 repeated the S10 LSA callsite diagnostic on a P2P-capable
+two-T4 host at `8f6bcc2`. Both archives verified and the global layer counts
+sum to 3,628,800. The captured range again has 1,462 stream synchronizations
+and 1,740 synchronous copies; the versioned API rows still lack resolved
+symbols. The diagnostic neither locates the critical-path waits nor closes
+the owner→transport→retirement CPU-independence gate. See
+`docs/validation/lsa-callsite-v81.md`.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under
