@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "ed194012d8051c3f2f13f22a68be9efb170c6ee5"
+SOURCE = "5b04b2a190a56094f2858f3135bfbcc439a48e5d"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "boundary_gate"
+MODE = "warmup_admission_gate"
 
 
 def main():
@@ -22,6 +22,8 @@ def main():
     report = {"source": SOURCE, "status": "INCOMPLETE", "scope":
               ("two physical T4; one-rank archive slot exhaustion before exchange"
                if MODE == "archive_fault_gate" else
+               "two physical T4; warmup/CLI admission fault propagation and archive cleanup"
+               if MODE == "warmup_admission_gate" else
                "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
 
     def save():
@@ -217,6 +219,85 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "warmup_admission_gate":
+            run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "warmup-cli-build", timeout=1800)
+            cli = str(source / "target/release/mgbfs")
+            env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
+                       MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
+                       MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                       MGBFS_BUCKETS="8", MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2",
+                       MGBFS_BUCKET_CAPACITY="32", MGBFS_STATE_CODEC="matrix_u8",
+                       MGBFS_ARCHIVE_CODEC="matrix_u8", MGBFS_ARCHIVE_ROWS="3",
+                       MGBFS_ARCHIVE_SLOTS="128", MGBFS_PRE_DEDUP="ON",
+                       MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
+                       MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0,1",
+                       MGBFS_TRANSPORT_BACKEND="HOST_SIZED_NCCL")
+            report["warmup_runs"] = {}
+
+            def launch(name, wrapper=None, warmup="0", expected=None):
+                root = work / name
+                root.mkdir()
+                output = logs / name
+                argv = [cli, "bench", "--reference", "s4", "7",
+                        str(root / "bootstrap"), str(root / "archive"), str(output)]
+                command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                           "--nproc-per-node=2", "--no-python"]
+                if wrapper:
+                    command += ["/bin/bash", "-c", wrapper, "mgbfs-rank-launch"]
+                command += argv
+                case_env = dict(env, MGBFS_BENCH_WARMUP=warmup)
+                try:
+                    completed = subprocess.run(command, cwd=source, env=case_env,
+                                               capture_output=True, text=True, timeout=120)
+                except subprocess.TimeoutExpired as error:
+                    (logs / (name + ".log")).write_text(str(error.stdout) + str(error.stderr))
+                    raise RuntimeError("WARMUP_GATE_TIMEOUT: " + name) from error
+                output_text = completed.stdout + completed.stderr
+                (logs / (name + ".log")).write_text(output_text)
+                if expected is not None:
+                    if (completed.returncode == 0 or expected not in output_text
+                            or "REMOTE_CONFIGURATION_FATAL" not in output_text
+                            or (output / "group-complete.json").exists()):
+                        raise RuntimeError("WARMUP_GATE_FATAL: " + name)
+                    report["warmup_runs"][name] = "PASS_GROUP_FATAL"
+                    save()
+                    return
+                if completed.returncode != 0:
+                    raise RuntimeError("WARMUP_GATE_SUCCESS: " + name)
+                if not (output / "group-complete.json").is_file():
+                    raise RuntimeError("WARMUP_GATE_GROUP_MARKER")
+                if (logs / (name + ".warmup/group-complete.json")).exists():
+                    raise RuntimeError("WARMUP_GATE_FALSE_MARKER")
+                for rank in range(2):
+                    if (root / f"archive.warmup-rank-{rank}.mgbfsar1").exists():
+                        raise RuntimeError("WARMUP_GATE_ARCHIVE_NOT_RELEASED")
+                    row = json.loads((output / f"rank-{rank}.json").read_text())
+                    warm_row = json.loads((logs / (name + ".warmup") /
+                                           f"rank-{rank}.json").read_text())
+                    if (row["status"] != "COMPLETE" or not row["warmup_completed"]
+                            or warm_row["archive_commit_scope"] != "warmup_ephemeral"):
+                        raise RuntimeError("WARMUP_GATE_RANK_RESULT")
+                    run([cli, "verify", str(root / f"archive-rank-{rank}.mgbfsar1")],
+                        f"{name}-verify-{rank}", timeout=120)
+                report["warmup_runs"][name] = "PASS_MEASURED_GROUP_AND_ARCHIVES"
+                save()
+
+            launch("warmup-rank-mismatch",
+                   'if [ "$RANK" = 0 ]; then export MGBFS_BENCH_WARMUP=1; fi; exec "$@"',
+                   expected="REMOTE_CONFIGURATION_FATAL")
+            launch("warmup-invalid",
+                   'if [ "$RANK" = 0 ]; then export MGBFS_BENCH_WARMUP=bad; fi; exec "$@"',
+                   expected="BENCH_WARMUP_CONFIG")
+            launch("macro-invalid",
+                   'if [ "$RANK" = 0 ]; then export MGBFS_MACRO_DEPTH=2; fi; exec "$@"',
+                   expected="MACRO_MULTI_GPU_UNSUPPORTED")
+            launch("archive-invalid",
+                   'if [ "$RANK" = 0 ]; then export MGBFS_BENCH_SKIP_ARCHIVE=1; fi; exec "$@"',
+                   expected="CLI_BENCH_ARCHIVE_REQUIRED")
+            launch("warmup-normal", warmup="1")
+            report["status"] = "COMPLETE"
+            return
         if MODE == "boundary_gate":
             run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                   "--test", "bootstrap", "--test", "group_commit", "--test", "archive"],
