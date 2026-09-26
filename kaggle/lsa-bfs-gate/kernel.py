@@ -11,9 +11,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "fb5a3356036b4f3325a8b73af4bd76cde5d4ead7"
+SOURCE = "81158d1501b3fde249e38916af0dc392d527a135"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "timeline_backtrace"
+MODE = "rounds_gate"
 
 
 def main():
@@ -704,10 +704,14 @@ def main():
             for test_name in (
                 "library_two_rank_layers_and_archives_match_oracle",
                 "cuco_rank_two_gpu_dense_layers_and_archives_match_oracle",
+                "cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group",
+                "cuco_rank_lsa_one_rank_host_owner_error_stops_group",
             ):
+                is_fault = "one_rank" in test_name
                 result = run([str(binaries[0]), test_name,
+                              *(["--ignored"] if is_fault else []),
                               "--exact", "--nocapture", "--test-threads=1"],
-                             test_name, timeout=1800)
+                             test_name, timeout=180 if is_fault else 1800)
                 if "test result: ok. 1 passed; 0 failed" not in result:
                     raise RuntimeError("ROUND_SCHEDULE_TEST_RESULT: " + test_name)
             report["host_sized_profile_gate"] = "PASS"
