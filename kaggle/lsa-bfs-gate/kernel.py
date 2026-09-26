@@ -10,9 +10,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "5b04b2a190a56094f2858f3135bfbcc439a48e5d"
+SOURCE = "8f6bcc266d6fd5f0a18d8b420557a0010d8786bc"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "warmup_admission_gate"
+MODE = "timeline_backtrace"
 
 
 def main():
@@ -512,6 +512,8 @@ def main():
                         run([sys.executable, str(source / "scripts/nsys_sync_callsites.py"),
                              str(database), str(logs / label / "sync-callsites.json")],
                             label + "-sync-callsites", timeout=600)
+                        database.unlink()
+                        Path(result["trace"]).unlink()
                     report["runs"] = {key: len(value) for key, value in panel.items()}
                     save()
             if nsys is None:
