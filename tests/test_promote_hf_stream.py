@@ -62,6 +62,16 @@ class PromoteStream(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "STREAM_FILE_ROWS"):
                 combine_rank_commits([record], 1)
 
+    def test_staged_state_path_cannot_escape_rank_inventory(self):
+        for path in (
+            "pending/mgbfs-s3-run/states/../rank-00000-part-00000000.parquet",
+            "pending/mgbfs-s3-run/states/rank-00001-part-00000000.parquet",
+        ):
+            record = commit(0)
+            record["files"][0]["path"] = path
+            with self.assertRaisesRegex(ValueError, "STREAM_FILE"):
+                combine_rank_commits([record], 1)
+
     def test_eight_rank_publication_requires_complete_disjoint_inventory(self):
         records = [commit(r, (int(r == 0), r), branch=f'fixture-rank-{r}')
                    for r in reversed(range(8))]

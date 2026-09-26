@@ -75,7 +75,10 @@ def combine_rank_commits(commits, expected_world):
                 type(source.get("rows")) is not int
                 or source["rows"] <= 0
                 or not source_path.startswith(prefix)
-                or not source_path.endswith(".parquet")
+                or not re.fullmatch(
+                    rf"rank-{item['rank']:05d}-part-[0-9]{{8,}}\.parquet",
+                    source_path[len(prefix):],
+                )
                 or (branch, source_path) in source_paths
                 or not re.fullmatch(r"[0-9a-f]{64}", checksum)
                 or not isinstance(source.get("bytes"), int)

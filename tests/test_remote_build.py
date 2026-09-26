@@ -9,9 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 try:
     import remote_build
-    from remote_build import test_executable
+    from remote_build import test_executable as select_test_executable
 except ImportError:
-    test_executable = None
+    select_test_executable = None
 
 
 class RemoteBuildTests(unittest.TestCase):
@@ -53,17 +53,17 @@ class RemoteBuildTests(unittest.TestCase):
             self.assertEqual(list((root/'build/logs').iterdir()), [root/'build/logs/source-sha.log'])
 
     def test_only_matching_executable_from_successful_cargo_build(self):
-        self.assertIsNotNone(test_executable)
+        self.assertIsNotNone(select_test_executable)
         artifact = dict(reason='compiler-artifact', target=dict(name='library_multi_gpu', kind=['test']),
                         executable='/tmp/build/library_multi_gpu-abcd')
         done = dict(reason='build-finished', success=True)
-        self.assertEqual(test_executable('\n'.join(map(json.dumps, [artifact, done]))), artifact['executable'])
+        self.assertEqual(select_test_executable('\n'.join(map(json.dumps, [artifact, done]))), artifact['executable'])
         for records in [[artifact], [done], [artifact, dict(reason='build-finished', success=False)],
                         [dict(artifact, executable=None), done],
                         [dict(artifact, target=dict(name='other', kind=['test'])), done],
                         [artifact, dict(artifact, executable='/tmp/other'), done]]:
             with self.assertRaises(ValueError):
-                test_executable('\n'.join(map(json.dumps, records)))
+                select_test_executable('\n'.join(map(json.dumps, records)))
 
 
 if __name__ == '__main__':
