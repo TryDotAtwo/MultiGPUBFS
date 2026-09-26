@@ -218,11 +218,15 @@ impl ControlFrame {
                 self.slot == NO_SLOT && self.plane == Plane::None && self.fatal_code == 0
             }
             Action::Boundary => {
-                self.slot == NO_SLOT
-                    && self.plane == Plane::None
-                    && self.epoch == 0
-                    && matches!(self.depth, 1..=3)
+                self.plane == Plane::None
                     && self.fatal_code <= 1
+                    && if self.depth == 0 {
+                        self.epoch < 4
+                            || (self.epoch == 4 && self.slot == NO_SLOT)
+                    } else {
+                        self.slot == NO_SLOT && self.epoch == 0
+                            && matches!(self.depth, 1..=3)
+                    }
             }
             Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch => {
                 self.slot != NO_SLOT

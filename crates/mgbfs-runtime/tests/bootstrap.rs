@@ -117,6 +117,38 @@ fn archive_admission_failure_reaches_both_ranks_before_nccl_setup() {
 }
 
 #[test]
+fn configuration_agreement_rejects_asymmetric_error_and_digest_mismatch() {
+    use mgbfs_runtime::bootstrap::rendezvous;
+    use std::time::Duration;
+    for (left, right, left_failed, right_failed) in [
+        ([7; 32], [7; 32], true, false),
+        ([7; 32], [8; 32], false, false),
+    ] {
+        let root = std::env::temp_dir().join(format!(
+            "mgbfs-config-agreement-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("bootstrap");
+        let peer_path = path.clone();
+        let peer = std::thread::spawn(move || {
+            let mut group = rendezvous(&peer_path, 1, 2, record().identity,
+                Duration::from_secs(3), || panic!("peer cannot create NCCL ID")).unwrap();
+            group.agree_configuration(right, right_failed, Duration::from_secs(3))
+        });
+        let mut coordinator = rendezvous(&path, 0, 2, record().identity,
+            Duration::from_secs(3), || Ok([23; 128])).unwrap();
+        assert!(coordinator.agree_configuration(left, left_failed,
+            Duration::from_secs(3)).unwrap());
+        assert!(peer.join().unwrap().unwrap());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+}
+
+#[test]
 fn boundary_agreement_preserves_phase_order_and_success() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use std::time::Duration;

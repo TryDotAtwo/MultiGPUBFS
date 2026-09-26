@@ -530,7 +530,8 @@ fn one_rank_constructor_failure_after_nccl_stops_peer() {
         })
     }).collect();
     let failures: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
-    assert!(!failures[0].is_empty() && !failures[1].is_empty());
+    assert_eq!(failures[0], "CUDA_STATUS_-1");
+    assert_eq!(failures[1], "REMOTE_CONSTRUCTOR_FATAL");
 }
 
 fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {

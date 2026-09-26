@@ -8,6 +8,7 @@ pub struct BootstrapGroup {
     pub peers: Vec<Option<crate::control_connection::ControlConnection>>,
     rank: u32,
     next_boundary: u64,
+    configuration_agreed: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
@@ -17,6 +18,72 @@ pub enum BoundaryPhase {
     OutputWritten = 3,
 }
 impl BootstrapGroup {
+    /// Compare all 256 digest bits before any rank constructs CUDA/NCCL state.
+    /// An invalid local configuration still participates with a zero digest.
+    pub fn agree_configuration(
+        &mut self,
+        digest: [u8; 32],
+        local_failed: bool,
+        timeout: std::time::Duration,
+    ) -> Result<bool> {
+        use crate::control_wire::{Action, ControlFrame, Plane, NO_SLOT};
+        if self.configuration_agreed || self.next_boundary != 1 || timeout.is_zero() {
+            return Err("CONFIGURATION_ORDER".into());
+        }
+        let world = self.peers.len();
+        if world == 1 {
+            self.configuration_agreed = true;
+            return Ok(local_failed);
+        }
+        let deadline = std::time::Instant::now()
+            .checked_add(timeout).ok_or("CONFIGURATION_TIMEOUT")?;
+        let chunk = |rank: u32, index: usize, value: u64, failed: bool| ControlFrame {
+            action: Action::Boundary, rank, depth: 0, epoch: index as u64,
+            slot: value, plane: Plane::None, fatal_code: u32::from(failed),
+            source_rank: 0, destination_rank: 0, payload_bytes: 0,
+        };
+        let reply = |failed| ControlFrame {
+            action: Action::Boundary, rank: 0, depth: 0, epoch: 4,
+            slot: NO_SLOT, plane: Plane::None, fatal_code: u32::from(failed),
+            source_rank: 0, destination_rank: 0, payload_bytes: 0,
+        };
+        let failed = if self.rank == 0 {
+            let mut failed = local_failed;
+            for peer in 1..world {
+                let conn = self.peers[peer].as_mut().ok_or("CONFIGURATION_PEER")?;
+                for index in 0..4 {
+                    let received = boundary_receive(conn, deadline)?;
+                    if received.action != Action::Boundary || received.rank != peer as u32
+                        || received.depth != 0 || received.epoch != index as u64
+                    {
+                        return Err("CONFIGURATION_FRAME".into());
+                    }
+                    let expected = u64::from_le_bytes(
+                        digest[index * 8..index * 8 + 8].try_into().unwrap());
+                    failed |= received.slot != expected || received.fatal_code != 0;
+                }
+            }
+            for peer in 1..world {
+                boundary_send(self.peers[peer].as_mut().ok_or("CONFIGURATION_PEER")?,
+                    reply(failed), deadline)?;
+            }
+            failed
+        } else {
+            let conn = self.peers[0].as_mut().ok_or("CONFIGURATION_PEER")?;
+            for index in 0..4 {
+                let value = u64::from_le_bytes(
+                    digest[index * 8..index * 8 + 8].try_into().unwrap());
+                boundary_send(conn, chunk(self.rank, index, value, local_failed), deadline)?;
+            }
+            let received = boundary_receive(conn, deadline)?;
+            if received != reply(received.fatal_code != 0) {
+                return Err("CONFIGURATION_FRAME".into());
+            }
+            received.fatal_code != 0
+        };
+        self.configuration_agreed = true;
+        Ok(failed)
+    }
     /// Host-only agreement at run boundaries. All ranks must call in the same
     /// phase order, including a rank whose local operation failed.
     pub fn agree_boundary(
@@ -129,12 +196,14 @@ pub fn rendezvous(
                 peers: vec![None],
                 rank,
                 next_boundary: 1,
+                configuration_agreed: false,
             });
         }
         let mut listener = BootstrapListener::bind(world, identity, nccl_id)?;
         listener.record().publish(path)?;
         let peers = listener.accept_all(remaining()?)?;
-        return Ok(BootstrapGroup { nccl_id, peers, rank, next_boundary: 1 });
+        return Ok(BootstrapGroup { nccl_id, peers, rank, next_boundary: 1,
+            configuration_agreed: false });
     }
     loop {
         let left = remaining()?;
@@ -158,6 +227,7 @@ pub fn rendezvous(
         peers,
         rank,
         next_boundary: 1,
+        configuration_agreed: false,
     })
 }
 

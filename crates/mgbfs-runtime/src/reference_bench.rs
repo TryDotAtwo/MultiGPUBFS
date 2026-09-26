@@ -113,6 +113,38 @@ fn used() -> Result<usize> {
     }
     Ok(total - free)
 }
+struct PreparedPass {
+    multiset: Option<mgbfs_core::lrx_multiset::LrxMultiset>,
+    group: String,
+    graph: MatrixGroup,
+    n: usize,
+    batch: u32,
+    declared_capacity: u32,
+    declared_future: u32,
+    mode: CapacityMode,
+    global_capacity: u64,
+    global_future: u64,
+    capacity: u32,
+    future: u32,
+    compact_states: bool,
+    archive_width: usize,
+    profile: String,
+    owner: String,
+    pre: String,
+    seed: [u8; 16],
+    seed_hex: String,
+    hash_first_generation: String,
+    selection: ReferenceSelection,
+    digest: [u8; 32],
+    archive_path: String,
+    archive_enabled: bool,
+    disk_bytes: u64,
+    archive_rows: u32,
+    archive_slots: usize,
+    stream_archive: bool,
+    cfg: DistributedConfig,
+    bootstrap_digest: [u8; 32],
+}
 fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
@@ -120,6 +152,17 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     if env_u32("MGBFS_MACRO_DEPTH", 1)? > 1 {
         return run_macro_pass(args, warmup_completed, is_measure);
     }
+    let rank = required("RANK")?;
+    let local = required("LOCAL_RANK")?;
+    let world = required("WORLD_SIZE")?;
+    if !world.is_power_of_two() || world > 8 || rank != local {
+        return Err("TOPOLOGY".into());
+    }
+    // Rendezvous by launch identity first. Config digest is agreed over the
+    // connected control channel, so an invalid local config can report failure
+    // instead of leaving its peer in a stale-config bootstrap timeout.
+    let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
+    let prepared = (|| -> Result<PreparedPass> {
     let multiset = if args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
     } else { None };
@@ -129,15 +172,6 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let expected_states = multiset.as_ref().map_or(graph.expected_max_unique_states, |x| x.order());
     let n = graph.rows;
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
-    let rank = required("RANK")?;
-    let local = required("LOCAL_RANK")?;
-    let world = required("WORLD_SIZE")?;
-    if !world.is_power_of_two() || world > 8 || rank != local {
-        return Err("TOPOLOGY".into());
-    }
-    if unsafe { cudaSetDevice(local as i32) } != 0 {
-        return Err("CUDA_SET_DEVICE".into());
-    }
     let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
         Err(std::env::VarError::NotPresent) => u32::try_from(expected_states)
@@ -260,9 +294,40 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let bootstrap_digest: [u8; 32] =
         Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
             .into();
+    Ok(PreparedPass {
+        multiset, group, graph, n, batch, declared_capacity, declared_future,
+        mode, global_capacity: capacity_plan.global_records,
+        global_future: future_plan.global_records, capacity, future,
+        compact_states, archive_width, profile, owner, pre, seed, seed_hex,
+        hash_first_generation, selection, digest, archive_path, archive_enabled,
+        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
+        bootstrap_digest,
+    })
+    })();
+    let device_admission = if prepared.is_ok() {
+        let code = unsafe { cudaSetDevice(local as i32) };
+        if code == 0 { Ok(()) } else { Err("CUDA_SET_DEVICE".to_string()) }
+    } else {
+        Ok(())
+    };
+    let config_digest = prepared.as_ref().map_or([0; 32], |p| p.bootstrap_digest);
+    if control_group.agree_configuration(
+        config_digest, prepared.is_err() || device_admission.is_err(),
+        Duration::from_secs(60),
+    )? {
+        return Err(prepared.err().or_else(|| device_admission.err())
+            .unwrap_or_else(|| "REMOTE_CONFIGURATION_FATAL".into()));
+    }
+    let PreparedPass {
+        multiset, group, graph, n, batch, declared_capacity, declared_future,
+        mode, global_capacity, global_future, capacity, future, compact_states,
+        archive_width, profile, owner, pre, seed, seed_hex,
+        hash_first_generation, selection, digest, archive_path, archive_enabled,
+        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
+        bootstrap_digest,
+    } = prepared?;
     // Keep control sockets alive throughout this reference run. Dispatching GPU
     // epochs on them is a separate integration step, not claimed here.
-    let mut control_group = bootstrap(Path::new(&args[3]), rank, world, bootstrap_digest)?;
     let id = control_group.nccl_id;
     let archive_setup = if archive_enabled {
         create_archive_extent(Path::new(&archive_path), stream_archive)
@@ -378,7 +443,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let durable = start.elapsed().as_secs_f64();
     let output = (|| -> Result<()> {
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
-    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",capacity_plan.global_records,future_plan.global_records,used()?.max(allocated));
+    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{global_capacity},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{global_future},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));
     // Keep the existing timing schema, but never label HASH_FIRST as DENSE.
     let record = if selection.materialization_capacity.is_some() {
         record.replace(
@@ -415,6 +480,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if !archive_enabled || stream_archive {
             value["durable_run_commit_seconds"] = serde_json::Value::Null;
         }
+        // Legacy consumers use durable_run_commit_seconds, but this timestamp
+        // precedes rank-result fsync and group marker publication. State the
+        // actual boundary explicitly without changing the old field's shape.
+        value["archive_file_commit_seconds"] = if archive_enabled && !stream_archive {
+            serde_json::json!(durable)
+        } else {
+            serde_json::Value::Null
+        };
         if stream_archive && archive_enabled {
             value["stream_handoff_seconds"] = serde_json::json!(durable);
         }
