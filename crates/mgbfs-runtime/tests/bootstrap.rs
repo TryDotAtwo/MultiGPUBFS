@@ -122,6 +122,7 @@ fn configuration_agreement_rejects_asymmetric_error_and_digest_mismatch() {
     use std::time::Duration;
     for (left, right, left_failed, right_failed) in [
         ([7; 32], [7; 32], true, false),
+        ([7; 32], [7; 32], false, true),
         ([7; 32], [8; 32], false, false),
     ] {
         let root = std::env::temp_dir().join(format!(

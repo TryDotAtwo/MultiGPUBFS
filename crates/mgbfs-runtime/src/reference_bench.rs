@@ -149,20 +149,21 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
-    if env_u32("MGBFS_MACRO_DEPTH", 1)? > 1 {
-        return run_macro_pass(args, warmup_completed, is_measure);
-    }
     let rank = required("RANK")?;
     let local = required("LOCAL_RANK")?;
     let world = required("WORLD_SIZE")?;
     if !world.is_power_of_two() || world > 8 || rank != local {
         return Err("TOPOLOGY".into());
     }
+    if world == 1 && crate::reference_launch::macro_depth_from_env(world)? {
+        return run_macro_pass(args, warmup_completed, is_measure);
+    }
     // Rendezvous by launch identity first. Config digest is agreed over the
     // connected control channel, so an invalid local config can report failure
     // instead of leaving its peer in a stale-config bootstrap timeout.
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
     let prepared = (|| -> Result<PreparedPass> {
+    crate::reference_launch::macro_depth_from_env(world)?;
     let multiset = if args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
     } else { None };

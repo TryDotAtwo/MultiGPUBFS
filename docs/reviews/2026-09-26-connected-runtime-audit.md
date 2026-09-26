@@ -1,6 +1,7 @@
 # Connected runtime audit (2026-09-26)
 
-Source: `d3acc1f` plus the three unrelated dirty paths shown by `git status`.
+Source: originally `d3acc1f`; rechecked against `feea0d9` plus the scoped
+`reference_launch` working change. Three unrelated dirty paths were excluded.
 This is a static audit, not a new GPU test or performance measurement. It
 updates the older `2026-09-24-runtime-batch-audit.md` and
 `owner-transport-retirement-batch-audit.md`; those documents retain the raw
@@ -9,17 +10,19 @@ failure, not all startup failures.
 
 ## Connected findings
 
-1. **Startup has no common admission before NCCL.**
-   `reference_bench::run_pass` parses all rank-local environment and builds
-   the config before `bootstrap()`. `DistributedNativeBfs::new_profile`
+1. **Startup admission is partial, not end-to-end.**
+   The depth-one reference path now bootstraps by launch identity before
+   parsing the graph/config and votes on the config digest and
+   `cudaSetDevice` outcome. The scoped `reference_launch` change routes
+   unsupported multi-rank `MGBFS_MACRO_DEPTH` through this vote too.
+   `DistributedNativeBfs::new_profile`
    validates config, sets the CUDA device, queries memory and creates streams
    before `mgbfs_nccl_create`. A rank that returns in any of these stages can
-   leave a peer waiting in bootstrap or NCCL. The v77 group vote starts only
+   leave a peer waiting in NCCL. The v77 group vote starts only
    after communicator creation and LSA setup. The post-NCCL result must not
-   be described as a pre-NCCL admission guarantee. The existing launch
-   identity digest also depends on parsed config; a two-phase rendezvous is
-   needed to report an invalid or mismatched config without first requiring
-   both ranks to have parsed it successfully.
+   be described as a pre-NCCL resource-admission guarantee. The remaining
+   constructor boundary needs a sideband/abort contract, not another
+   config-only digest.
 
 2. **The post-NCCL admission controls can themselves fail asymmetrically.**
    `admit_device_group` allocates its two control buffers before its first
@@ -59,7 +62,15 @@ failure, not all startup failures.
    not a group-run durability timer. Existing consumers require preserving
    its schema with explicit scope; add a separate group-publication timer
    where the rank-0 marker is actually durable. A FIFO flush remains only a
-   handoff, not remote HF durability.
+    handoff, not remote HF durability.
+
+6. **Group completion is externally safe but not rank-symmetric.**
+   `run_pass` votes after every rank-result fsync, then rank zero alone writes
+   `group-complete.json`. If that final write fails, another rank may return
+   success, although the missing marker prevents an external consumer from
+   accepting the group. Add a final publication acknowledgement or report
+   rank-local and group outcomes separately. This is a reporting/termination
+   contract gap, not evidence of incorrect BFS states.
 
 ## One implementation batch, in dependency order
 
@@ -104,12 +115,13 @@ The depth-one reference launch now rendezvous by launch identity, performs
 rank-local config parsing and `cudaSetDevice`, and exchanges all 256 config
 digest bits plus a local-failure flag before archive admission or NCCL
 communicator creation. The two-rank CPU control test covers one-rank parse
-failure and unequal digests; the available runtime CPU suite passes. A
+failure on either rank and unequal digests; the available runtime CPU suite passes. A
 Linux/CUDA Rust `cargo check` passes without linking a CUDA library. This is
 not yet a physical GPU gate. The constructor's other pre-NCCL operations
-and LSA internal setup still need asymmetric fault coverage. Weighted/macro
-launch follows a separate path and is not covered by this change.
-The current post-NCCL constructor fixture uses two threads in one process
-and accepts any nonempty rank-1 error; tighten it to the expected remote
-fatal and add a separate two-process fault gate before claiming process-level
-termination.
+and LSA internal setup still need asymmetric fault coverage. The scoped
+`reference_launch` change rejects multi-rank macro requests during config
+agreement and preserves the supported single-rank macro path; it has only a
+CPU control test and Linux/CUDA typecheck, not a two-T4 run. The current
+post-NCCL constructor fixture uses two threads in one process and now asserts
+the exact remote-fatal code; a separate two-process fault gate is still needed
+before claiming process-level termination.

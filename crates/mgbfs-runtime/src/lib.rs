@@ -3,6 +3,7 @@ pub mod admitted_buffers;
 pub mod archive;
 pub mod benchmark;
 pub mod bootstrap;
+pub mod reference_launch;
 pub mod byte_admission;
 mod control_admission;
 pub mod control_connection;
