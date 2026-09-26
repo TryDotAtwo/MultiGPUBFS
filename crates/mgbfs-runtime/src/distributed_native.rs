@@ -2655,7 +2655,7 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
-                let batch_error = process_owner_pair(
+                let mut batch_error = process_owner_pair(
                     (
                         0,
                         (
@@ -2710,6 +2710,18 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
+                if lsa.is_some() && batch_error.is_none() {
+                    // Every rank waits for its own receive-slot consumer before
+                    // entering the next all-rank LSA barrier. A record failure
+                    // must participate in the existing group error vote.
+                    let recorded = self.owner_consumed.as_ref()
+                        .ok_or_else(|| "LSA_OWNER_EVENT_MISSING".to_string())
+                        .and_then(|event| check(unsafe { cudaEventRecord(event.0, s) }));
+                    match recorded {
+                        Ok(()) => lsa_owner_recorded = true,
+                        Err(error) => batch_error = Some(error),
+                    }
+                }
                 if round == 1 && lsa.is_some() && rank_mode && self.hash_first.is_none() {
                     if self.all_max_ring_or_host_fatal(batch_error.is_some())? != 0 {
                         return Err(batch_error.unwrap_or_else(||
@@ -2724,13 +2736,6 @@ impl DistributedNativeBfs {
                 }
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
-                }
-                if lsa.is_some() {
-                    check(unsafe { cudaEventRecord(
-                        self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0,
-                        s,
-                    ) })?;
-                    lsa_owner_recorded = true;
                 }
             }
             if self.hash_first.is_some() {
