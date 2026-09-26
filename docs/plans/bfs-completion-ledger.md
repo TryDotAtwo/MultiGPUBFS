@@ -955,6 +955,13 @@ synchronous copies remain aggregate evidence. See
 `docs/validation/lsa-callsite-v82.md`. The connected CPU-free path is still
 unimplemented.
 
+Private Kaggle v83 captured process mappings for both rank binaries while
+repeating the same full S10 diagnostic. The 1,462 stream waits now group
+into 14 executable-relative address patterns on each rank, but exact
+function/line attribution remains open because the same-build ELF was not
+exported. See `docs/validation/lsa-rank-maps-v83.md`. This profiling does
+not change the production pipeline or close the owner-slot/failure gate.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under
