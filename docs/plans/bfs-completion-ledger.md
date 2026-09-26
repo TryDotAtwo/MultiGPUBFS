@@ -1,6 +1,6 @@
 # MultiGPUBFS completion ledger
 
-Status: active, 2026-09-23. This file separates accepted requirements from
+Status: active, updated 2026-09-26. This file separates accepted requirements from
 implemented paths and measured evidence. `ARCHITECTURE_NEED.md` remains the
 architecture contract; `library-first-bfs.md` is the library experiment log.
 The source-level owner/transport/retirement audit and connected change set are
@@ -18,10 +18,17 @@ archive capacity and independent full-state oracle. v73/v75 had timed out;
 v76 exposed a CUDA-stream lifetime error before the v77 correction. Exact
 logs and limits are in `docs/validation/archive-admission-t4-v69.md`.
 
-This is a post-NCCL allocation failure gate only. Rank-local config failure
-before bootstrap, asymmetric failure before NCCL initialization, and errors
-inside NCCL LSA setup remain open. It does not remove hot-path CPU readbacks
-or per-round collectives.
+This is a post-NCCL allocation failure gate only. At `ed19401`, the depth-one
+reference launch was changed to rendezvous by launch identity, then agree on
+all 256 config-digest bits and rank-local config/device-admission failure
+before archive admission or communicator creation. A two-rank CPU control
+test, the full available runtime CPU suite, and Linux/CUDA Rust typecheck
+passed. Private Kaggle v78 is queued for its actual two-P2P-T4 fault and
+normal-BFS gate; no GPU result for this change exists yet. The macro launch
+does not use this path. Other pre-NCCL constructor failures, control-buffer
+allocation failures after NCCL init, and errors inside LSA activation remain
+open. Neither v77 nor the config change removes hot-path CPU readbacks or
+per-round collectives. See `docs/reviews/2026-09-26-connected-runtime-audit.md`.
 
 ## Decisions recovered from the conversation
 
