@@ -294,3 +294,25 @@ RunCommit to that protocol; then test asymmetric faults at all three times
 (before communicator, inside owner/transport, after search). Only then remove
 the protected post-owner host vote and profile the resulting real BFS. Keep the
 current synchronous backend as a named control, not an implicit fallback.
+
+## NCCL cancellation constraint checked against the 2.29.7 API (2026-09-27)
+
+NVIDIA's [communicator guide](https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2297/user-guide/docs/usage/communicators.html)
+requires a nonblocking communicator for safe fault-time abort and requires
+that no thread be inside another NCCL call on that communicator when abort
+is invoked. The [communicator API](https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2297/user-guide/docs/api/comms.html)
+also states that an `ncclInProgress` return must be followed by
+`ncclCommGetAsyncError` polling to success before another NCCL call or CUDA
+work on the affected stream. This is a *protocol requirement*, not a reason
+to start a background thread that calls `ncclCommAbort` concurrently.
+
+At current source, `cuda/nccl_transport.cpp::mgbfs_nccl_create` uses blocking
+`ncclCommInitRank`; collective/LSA wrappers accept only `ncclSuccess`, and
+`mgbfs_nccl_poll` conflates in-progress with terminal error. Thus changing
+only communicator creation would break otherwise healthy runs. The connected
+replacement must serialize every communicator operation and abort transition,
+distinguish `in-progress / success / fatal`, and give the sideband cancellation
+path a bounded way to stop an owner host/API error while peers are in NCCL.
+The acceptance fixture is two independent rank processes with a one-rank
+post-owner error, peer progress timeout and verified process cleanup; the
+existing in-process two-GPU v86 fixture does not prove this property.

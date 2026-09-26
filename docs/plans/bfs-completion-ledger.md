@@ -1007,3 +1007,19 @@ then passed four asymmetric configuration/fatal cases plus a normal warmup
 with verified measured archives. Warmup archive *removal* fault injection and
 the broader owner/transport/retirement CPU round trips remain open. See
 `docs/validation/warmup-admission-2xt4-v79.md`.
+
+The LSA receive-slot `owner_consumed` event was added and exercised on
+physical 2×T4 in private Kaggle v85/v86. The v85 S10 run completed 46 layers,
+3,628,800 states and verified both archives. The v86 two-GPU integration
+fixtures passed full-state/archives and asymmetric owner capacity/host-error
+propagation. These are one-process GPU-worker fixtures, not independent
+process cancellation tests. Source-resolved v85 profiling still found 90
+post-owner `all_max_ring_or_host_fatal` stream waits per rank; the event
+protects receive-slot lifetime but the connected CPU-free pipeline is **not**
+complete. `all_max()` also synchronizes a four-byte host upload before its
+NCCL result readback; replacing only that upload cannot remove the host
+dependency. The next change must address the post-owner result/fatal protocol
+and archive error path together, preserving NCCL issue order and bounded
+asymmetric failure termination. See
+`docs/validation/lsa-owner-consumed-v85-v86.md`. Kaggle validation now uses
+only one 2×T4 notebook at a time.
