@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "dd5e602df8d662698f1b28b8c27ece33ad9830e2"
+SOURCE = "fb5a3356036b4f3325a8b73af4bd76cde5d4ead7"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "timeline_backtrace"
 
