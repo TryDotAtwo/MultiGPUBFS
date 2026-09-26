@@ -958,6 +958,8 @@ first rendezvous path is now shared even if ranks disagree on warmup; warmup,
 stream-archive and archive-disable settings are checked inside the post-
 bootstrap configuration vote; and warmup archive removal participates in the
 output boundary before any group marker. CPU contract tests and Linux/CUDA
-cross-target typecheck passed. This is not yet a two-process target-GPU
-fault-injection result, and the broader owner/transport/retirement CPU
-round trips remain open.
+cross-target typecheck passed. The private Kaggle v79 two-T4 run at `5b04b2a`
+then passed four asymmetric configuration/fatal cases plus a normal warmup
+with verified measured archives. Warmup archive *removal* fault injection and
+the broader owner/transport/retirement CPU round trips remain open. See
+`docs/validation/warmup-admission-2xt4-v79.md`.
