@@ -267,6 +267,16 @@ class HubStagingSink:
         finally:
             writer.close()
             self.encode_seconds += time.perf_counter() - started
+        try:
+            footer = pq.read_metadata(pa.BufferReader(
+                pa.py_buffer(memoryview(self.slot_buffers[slot])[:size])))
+            if footer.num_rows != table.num_rows:
+                raise RuntimeError("PARQUET_FOOTER_ROWS_FATAL")
+        except Exception as error:
+            self.free_slots.append(slot)
+            if isinstance(error, RuntimeError) and str(error) == "PARQUET_FOOTER_ROWS_FATAL":
+                raise
+            raise RuntimeError(f"PARQUET_FOOTER_FATAL: {error}") from error
         remote_path = (
             f"pending/{self.branch}/states/"
             f"rank-{self.rank:05d}-part-{self.part:08d}.parquet"

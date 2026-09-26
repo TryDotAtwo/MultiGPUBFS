@@ -4,6 +4,7 @@ import struct
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -35,6 +36,40 @@ def complete_archive(width=4):
 
 
 class StreamArchive(unittest.TestCase):
+    def test_hub_rejects_parquet_footer_row_mismatch_before_upload(self):
+        class Api:
+            called = False
+
+            def preupload_lfs_files(self, **kwargs):
+                self.called = True
+                for operation in kwargs["additions"]:
+                    operation.path_or_fileobj = b""
+
+            def create_commit(self, **_kwargs):
+                pass
+
+            def upload_file(self, **_kwargs):
+                pass
+
+        with tempfile.TemporaryDirectory() as folder:
+            api = Api()
+            root = Path(folder) / "slots"
+            sink = HubStagingSink(root, 2, 2, "owner/results", "rank-0", api, 0, 32768)
+            real_write = pq.write_table
+
+            def truncated_writer(table, output, **kwargs):
+                return real_write(table.slice(0, 1), output, **kwargs)
+
+            try:
+                with patch.object(pq, "write_table", side_effect=truncated_writer):
+                    with self.assertRaisesRegex(RuntimeError, "PARQUET_FOOTER_ROWS_FATAL"):
+                        ArchiveStream("r1", "fixture", 0, sink).consume(
+                            io.BytesIO(complete_archive()))
+                self.assertFalse(api.called)
+                self.assertFalse((root / "rank-00000-stream-commit.json").exists())
+            finally:
+                sink.executor.shutdown(wait=True)
+
     def test_stream_metadata_stays_dictionary_encoded_until_writer(self):
         class Sink:
             table = None

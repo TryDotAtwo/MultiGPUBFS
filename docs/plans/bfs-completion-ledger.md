@@ -43,9 +43,12 @@ The HF stream publisher now has a scoped local change that carries per-file
 row counts from Parquet production through rank promotion, rejects incomplete
 inventories, pins staging branch revisions to SHA, checks remote size/LFS SHA,
 and verifies the resulting commit before returning success. The full local
-Python test suite passes (171 tests, 6 skipped). Live HF publication, actual
-remote Parquet footer row counts and legacy staged manifests without `rows`
-remain separate gates.
+Python test suite passed (171 tests, 6 skipped). A subsequent local change
+reads each newly encoded Parquet footer before upload and checks its row count
+against the source Arrow table; the existing pinned remote LFS SHA/size check
+then binds publication to those exact bytes. Its 172-test Python suite passes
+(6 skipped). An independent remote footer read, live publication with this
+version, and legacy staged manifests without `rows` remain separate gates.
 
 A scoped archive change retains `O_NONBLOCK` after FIFO admission and gives
 each FIFO write a bounded absolute deadline. The stalled-writer CPU test and
