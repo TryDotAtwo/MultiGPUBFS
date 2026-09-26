@@ -150,6 +150,28 @@ correctness purpose (`device-driven-library-owner.md`).
    or sideband thread then requests group cancellation. This is a proposed
    protocol, not an implemented or measured path. K, callback/poll mechanics,
    slot bytes and worst-case fatal tail require explicit tests and byte budget.
+
+   **Feasibility constraint:** K descriptor/control credits alone do not make
+   K payload receive slots. The present NCCL LSA window has one receive
+   payload slot; the next team exchange must be stream-ordered after the
+   receiver's last owner read (`owner_consumed`), with every rank participating
+   in that LSA rendezvous, even for zero rows. If K>1 is used for genuine
+   payload overlap, the symmetric window and memory plan need K distinct
+   payload ranges. A finite K necessarily stops admission when all K credits
+   are live. This is bounded GPU-work admission, distinct from prohibited
+   disk-writer backpressure; freeing credits at enqueue restores an unbounded
+   fatal tail.
+
+   A device logical fatal can poison semantic writes while ordered zero-row
+   rendezvous drain. A host/API/archive failure can mean a rank cannot issue
+   the next GPU operation at all; it closes admission and signals out-of-band
+   cancellation. Only the single NCCL-calling dispatcher may abort its own
+   communicator, after leaving any current NCCL API call. The sideband thread
+   only sets a cancellation flag. K bounds speculative epochs, not the time
+   to escape a hung LSA kernel: a separate supervisor/deadline is needed for
+   bounded process termination. No failed depth may receive successful
+   `FrontierPublish`/`RunCommit`, even if owner inserts happened locally before
+   another rank's failure arrived.
 5. **Apply the same protocol to HASH_FIRST.** Device-side request compaction,
    sorted OriginRef/StateRef exchange and dense response application must fit
    the epoch ABI; otherwise mark the profile explicitly synchronous. Do not
