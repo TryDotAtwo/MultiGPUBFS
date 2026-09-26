@@ -72,6 +72,34 @@ failure, not all startup failures.
    process and late filesystem-failure gates are still pending. This was a
    reporting/termination contract gap, not evidence of incorrect BFS states.
 
+7. **The actual CLI can still bypass configuration admission.**
+   `mgbfs-cli/src/main.rs` checks `MGBFS_MACRO_DEPTH` and the archive contract
+   before calling `reference_bench::run`; an asymmetric error can therefore
+   exit one process while its peer enters bootstrap. `reference_bench::run`
+   also reads `MGBFS_BENCH_WARMUP` before rendezvous. Different warmup values
+   select different bootstrap paths. The `reference_launch` fix covers only
+   the inner `run_pass` path. Move all rank-varying launch validation into a
+   common pre-NCCL admission, then test the real CLI with two processes.
+
+8. **A connected FIFO reader can stall the archive indefinitely.**
+   `archive.rs` removes `O_NONBLOCK` after opening the FIFO and `StreamExtent`
+   writes with blocking `write_all`. The open deadline does not bound writes
+   to a reader that connects but stops draining. `PinnedArchive::finish` joins
+   the worker, so the failure path needs a cancellable, bounded write/shutdown
+   contract. This is source evidence of a possible stall, not a measured one.
+
+9. **The HF promotion validator previously accepted incomplete inventories.**
+   `promote_hf_stream.py::combine_rank_commits` checked layer totals but
+   accepted missing or empty `files` even with positive state count. The
+   scoped follow-up writes per-file row counts, requires their sum to equal
+   each rank's state total, resolves staging branches to immutable Git SHA,
+   checks staged object size/LFS SHA, and reconciles the destination at the
+   returned commit OID. All local Python tests pass. This is not a live Hub
+   publication gate, and the remote Parquet footer row counts are not yet
+   independently read. Existing staged V1 manifests without `rows` require
+   regeneration or an explicitly verified legacy import; published datasets
+   are unchanged. The old gap alone did not prove corruption of any dataset.
+
 ## One implementation batch, in dependency order
 
 1. Freeze a versioned launch/epoch protocol: common rank identity before
@@ -97,6 +125,9 @@ failure, not all startup failures.
    pre-NCCL CUDA, LSA-setup, owner, archive and late-output failures;
    full-state/archives with empty and asymmetric traffic; four sanitizers;
    then a real BFS Nsight Systems timeline and repeated time/VRAM comparison.
+6. Gate the actual CLI before launch, and fix FIFO liveness and HF inventory
+   verification as end-to-end output contracts; isolated inner-runtime tests
+   are insufficient for these boundaries.
 
 ## Separate performance hypotheses after the protocol gate
 

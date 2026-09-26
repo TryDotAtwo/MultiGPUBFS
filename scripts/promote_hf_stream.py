@@ -62,11 +62,19 @@ def combine_rank_commits(commits, expected_world):
             raise ValueError("STREAM_BRANCH")
         branches.append(branch)
         prefix = f"pending/{branch}/states/"
-        for source in item.get("files", []):
+        rank_files = item.get("files")
+        if not isinstance(rank_files, list) or sum(
+            source.get("rows", -1) if isinstance(source, dict) else -1
+            for source in rank_files
+        ) != sum(counts):
+            raise ValueError("STREAM_FILE_ROWS")
+        for source in rank_files:
             source_path = str(source.get("path", ""))
             checksum = str(source.get("sha256", ""))
             if (
-                not source_path.startswith(prefix)
+                type(source.get("rows")) is not int
+                or source["rows"] <= 0
+                or not source_path.startswith(prefix)
                 or not source_path.endswith(".parquet")
                 or (branch, source_path) in source_paths
                 or not re.fullmatch(r"[0-9a-f]{64}", checksum)
@@ -212,8 +220,17 @@ def promote_verified(api, repo_id, commits, expected_world, reference=None):
     existing = reconcile_publication(api, repo_id, combined, revision=revision)
     if existing is not None:
         return combined, existing
+    _pin_sources(api, repo_id, combined)
     try:
-        return promote(api, repo_id, commits, expected_world, parent_commit=revision)
+        promoted, write_receipt = promote(api, repo_id, commits, expected_world,
+                                          parent_commit=revision, combined=combined)
+        write_revision = getattr(write_receipt, "oid", None)
+        if not write_revision:
+            raise ValueError("PUBLICATION_RECEIPT_MISSING")
+        verified = reconcile_publication(api, repo_id, promoted, revision=write_revision)
+        if verified is None:
+            raise ValueError("PUBLICATION_UNVERIFIED")
+        return promoted, verified
     except Exception:
         # A gateway failure can follow a successful server-side commit.
         # Read back once, never blindly repeat a write. Unavailable verification
@@ -224,14 +241,39 @@ def promote_verified(api, repo_id, commits, expected_world, reference=None):
         raise
 
 
+def _pin_sources(api, repo_id, combined):
+    for branch in set(combined.get("branches", [])):
+        revision = api.repo_info(repo_id=repo_id, repo_type="dataset", revision=branch).sha
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ValueError("STREAM_SOURCE_REVISION")
+        branch_files = [item for item in combined["files"]
+                        if item["source_revision"] == branch]
+        for offset in range(0, len(branch_files), 500):
+            batch = branch_files[offset:offset + 500]
+            actual = {item.path: item for item in api.get_paths_info(
+                repo_id=repo_id, repo_type="dataset", revision=revision,
+                paths=[item["source_path"] for item in batch])}
+            for item in batch:
+                source = actual.get(item["source_path"])
+                if source is None or source.size != item["bytes"] or source.lfs is None:
+                    raise ValueError("STREAM_SOURCE")
+                digest = (source.lfs.get("sha256") if isinstance(source.lfs, dict)
+                          else source.lfs.sha256)
+                if digest != item["sha256"]:
+                    raise ValueError("STREAM_SOURCE")
+                item["source_revision"] = revision
+
+
 def promote(api, repo_id, commits, expected_world, copy_cls=None, add_cls=None,
-            parent_commit=None):
+            parent_commit=None, combined=None):
     """Create one default-branch commit; no state object is visible before it."""
     if copy_cls is None or add_cls is None:
         from huggingface_hub import CommitOperationAdd, CommitOperationCopy
         copy_cls = CommitOperationCopy
         add_cls = CommitOperationAdd
-    combined = combine_rank_commits(commits, expected_world)
+    if combined is None:
+        combined = combine_rank_commits(commits, expected_world)
+        _pin_sources(api, repo_id, combined)
     operations = [
         copy_cls(
             src_path_in_repo=item["source_path"],

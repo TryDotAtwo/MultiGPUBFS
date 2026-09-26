@@ -38,6 +38,14 @@ group marker write: a rank-zero publication failure is then reported to all
 ranks. The two-rank CPU boundary test and full available runtime CPU suite
 pass; late filesystem failure in separate GPU processes remains unverified.
 
+The HF stream publisher now has a scoped local change that carries per-file
+row counts from Parquet production through rank promotion, rejects incomplete
+inventories, pins staging branch revisions to SHA, checks remote size/LFS SHA,
+and verifies the resulting commit before returning success. The full local
+Python test suite passes (171 tests, 6 skipped). Live HF publication, actual
+remote Parquet footer row counts and legacy staged manifests without `rows`
+remain separate gates.
+
 ## Decisions recovered from the conversation
 
 1. V1 is single-source exhaustive BFS of matrix Cayley graphs. LRX repeated-tail

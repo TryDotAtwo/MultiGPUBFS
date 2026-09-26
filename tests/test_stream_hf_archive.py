@@ -317,6 +317,7 @@ class StreamArchive(unittest.TestCase):
             api.release.set()
             manifest = sink.complete({"status": "COMPLETE"})
             self.assertEqual(len(manifest["files"]), 3)
+            self.assertEqual([part["rows"] for part in manifest["files"]], [3, 3, 1])
             self.assertEqual(manifest["peak_live_slots"], 2)
 
 

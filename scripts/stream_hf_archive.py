@@ -274,6 +274,7 @@ class HubStagingSink:
         self.files.append({
             "path": remote_path,
             "bytes": size,
+            "rows": table.num_rows,
             "sha256": hashlib.sha256(memoryview(self.slot_buffers[slot])[:size]).hexdigest(),
         })
         self.inflight[slot] = self.executor.submit(self._upload, slot, size, remote_path)

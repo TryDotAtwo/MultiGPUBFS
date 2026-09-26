@@ -31,11 +31,12 @@ class ReconcilePublication(unittest.TestCase):
 
     def test_write_is_guarded_by_the_revision_checked_for_absence(self):
         api = SimpleNamespace(repo_info=lambda **kw: SimpleNamespace(sha="checked-parent"))
+        receipt = SimpleNamespace(oid="verified")
         with patch.object(module, "combine_rank_commits", return_value={}), \
-             patch.object(module, "reconcile_publication", return_value=None) as check, \
-             patch.object(module, "promote", return_value=({}, "receipt")) as write:
+             patch.object(module, "reconcile_publication", side_effect=[None, receipt]) as check, \
+             patch.object(module, "promote", return_value=({}, SimpleNamespace(oid="written"))) as write:
             module.promote_verified(api, "owner/repo", [], 2)
-        self.assertEqual(check.call_args.kwargs["revision"], "checked-parent")
+        self.assertEqual(check.call_args_list[0].kwargs["revision"], "checked-parent")
         self.assertEqual(write.call_args.kwargs["parent_commit"], "checked-parent")
 
     def test_existing_verified_run_never_writes(self):
@@ -111,6 +112,17 @@ class ReconcilePublication(unittest.TestCase):
             result = module.promote_verified(api, "owner/repo", [], 2)
         self.assertEqual(result, (complete, receipt))
         self.assertEqual(write.call_count, 1)
+
+    def test_success_is_reported_only_after_remote_readback(self):
+        complete = {"run_id": "run", "files": [], "branches": []}
+        verified = SimpleNamespace(oid="verified")
+        with patch.object(module, "combine_rank_commits", return_value=complete), \
+             patch.object(module, "reconcile_publication", side_effect=[None, verified]) as readback, \
+             patch.object(module, "promote", return_value=(complete, SimpleNamespace(oid="write"))):
+            api = SimpleNamespace(repo_info=lambda **kw: SimpleNamespace(sha="before"))
+            result = module.promote_verified(api, "owner/repo", [], 2)
+        self.assertEqual(result, (complete, verified))
+        self.assertEqual(readback.call_args_list[1].kwargs["revision"], "write")
 
     def test_timeout_without_commit_preserves_failure(self):
         with patch.object(module, "combine_rank_commits", return_value={}), \
