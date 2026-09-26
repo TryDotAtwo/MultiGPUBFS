@@ -24,8 +24,8 @@ BATCH = 262_144
 ARCHIVE_ROWS = 262_144
 ARCHIVE_SLOTS = 256
 AUDIT_EXISTING_S13_FOOTERS = True
-AUDITOR_SOURCE = "9f53edc9313981d3197ad730cf780c9f2274fa0c"
-AUDITOR_SHA256 = "a35e5c26bc83340e62a133cd53cd1513cf5b57e1b0d4c51f91bd9d41c0c9e0e6"
+AUDITOR_SOURCE = "fc8efe0660f377931995654f9cd6c0b35e6b0d3e"
+AUDITOR_SHA256 = "9effff694bd4a5d6e20330f8e43a795956d10e3f39fd41aab53d41dbee767af9"
 AUDIT_REVISION = "d43c3aa640ef12935ff12f986e53d3e6fef6e92f"
 AUDIT_MANIFEST = "runs/s13-native-2xt4-20260905-152407.json"
 
@@ -41,6 +41,25 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="mgbfs-s11-hf-", dir="/tmp"))
     logs = Path("/kaggle/working/s11-hf-stream")
     logs.mkdir()
+    if AUDIT_EXISTING_S13_FOOTERS:
+        auditor = root / "audit_hf_parquet_footers.py"
+        urllib.request.urlretrieve(
+            f"https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/{AUDITOR_SOURCE}/"
+            "scripts/audit_hf_parquet_footers.py", auditor)
+        if hashlib.sha256(auditor.read_bytes()).hexdigest() != AUDITOR_SHA256:
+            raise RuntimeError("HF_AUDITOR_SOURCE_MISMATCH")
+        subprocess.run(
+            [sys.executable, str(auditor), "--repo-id", REPO_ID,
+             "--revision", AUDIT_REVISION, "--manifest", AUDIT_MANIFEST,
+             "--output", str(logs / "footer-summary.json"), "--workers", "1",
+             "--anonymous"],
+            check=True, timeout=7200,
+        )
+        result = json.loads((logs / "footer-summary.json").read_text(encoding="utf-8"))
+        if result["status"] != "VERIFIED_FOOTERS" or result["rows_total"] != CARDINALITY:
+            raise RuntimeError("HF_FOOTER_AUDIT_INCOMPLETE")
+        print("HF_FOOTER_AUDIT_COMPLETE", result["file_count"], result["rows_total"], flush=True)
+        return
     token = UserSecretsClient().get_secret("HF_TOKEN")
     if not token:
         raise RuntimeError("KAGGLE_SECRET_HF_TOKEN_EMPTY")
@@ -51,25 +70,6 @@ def main():
     if identity.get("name", "").lower() != "trydotatwo":
         raise RuntimeError("HF_ACCOUNT_MISMATCH")
     print("HF_AUTH_OK", flush=True)
-    if AUDIT_EXISTING_S13_FOOTERS:
-        auditor = root / "audit_hf_parquet_footers.py"
-        urllib.request.urlretrieve(
-            f"https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/{AUDITOR_SOURCE}/"
-            "scripts/audit_hf_parquet_footers.py", auditor)
-        if hashlib.sha256(auditor.read_bytes()).hexdigest() != AUDITOR_SHA256:
-            raise RuntimeError("HF_AUDITOR_SOURCE_MISMATCH")
-        env = dict(os.environ, HF_TOKEN=token)
-        subprocess.run(
-            [sys.executable, str(auditor), "--repo-id", REPO_ID,
-             "--revision", AUDIT_REVISION, "--manifest", AUDIT_MANIFEST,
-             "--output", str(logs / "footer-summary.json"), "--workers", "4"],
-            env=env, check=True, timeout=7200,
-        )
-        result = json.loads((logs / "footer-summary.json").read_text(encoding="utf-8"))
-        if result["status"] != "VERIFIED_FOOTERS" or result["rows_total"] != CARDINALITY:
-            raise RuntimeError("HF_FOOTER_AUDIT_INCOMPLETE")
-        print("HF_FOOTER_AUDIT_COMPLETE", result["file_count"], result["rows_total"], flush=True)
-        return
     helper = root / "gate.py"
     urllib.request.urlretrieve(
         "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/"
