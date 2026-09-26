@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "8f308ef284fb12d6d6fad2204028205076d12c43"
+SOURCE = "ed194012d8051c3f2f13f22a68be9efb170c6ee5"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "boundary_gate"
 
@@ -299,6 +299,24 @@ def main():
                     or (fault_output / "group-complete.json").exists()):
                 raise RuntimeError("ASYMMETRIC_ARCHIVE_ADMISSION_GATE")
             report["boundary_runs"]["one_rank_archive_admission_failure"] = "PASS_GROUP_FATAL"
+            config_fault = work / "boundary-config-fault"
+            config_fault.mkdir()
+            config_output = logs / "boundary-config-fault-results"
+            launcher = 'if [ "$RANK" = 0 ]; then export MGBFS_SHARDS=bad; fi; exec "$@"'
+            command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                       "--nproc-per-node=2", "--no-python", "/bin/bash", "-c", launcher,
+                       "mgbfs-rank-launch", cli, "bench", "--reference", "s4", "7",
+                       str(config_fault / "bootstrap"), str(config_fault / "archive"),
+                       str(config_output)]
+            failed = subprocess.run(command, cwd=source, env=env, capture_output=True,
+                                    text=True, timeout=90)
+            output_text = failed.stdout + failed.stderr
+            (logs / "boundary-config-fault.log").write_text(output_text)
+            if (failed.returncode == 0 or "ENV_MGBFS_SHARDS" not in output_text
+                    or "REMOTE_CONFIGURATION_FATAL" not in output_text
+                    or (config_output / "group-complete.json").exists()):
+                raise RuntimeError("ASYMMETRIC_CONFIGURATION_GATE")
+            report["boundary_runs"]["one_rank_invalid_configuration"] = "PASS_GROUP_FATAL"
             env.update(MGBFS_BENCH_CAPACITY="6", MGBFS_ARCHIVE_ROWS="1")
             small = work / "boundary-small-layer-capacity"
             small.mkdir()
