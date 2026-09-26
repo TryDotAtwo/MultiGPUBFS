@@ -46,6 +46,9 @@ pub fn bench_phase_paths(args: &[&str], warmup: bool, phase: BenchPhase) -> Resu
 pub fn macro_depth_for_launch(value: Option<&str>, world: u32) -> Result<bool> {
     let depth = value.unwrap_or("1").parse::<u32>()
         .map_err(|_| "ENV_MGBFS_MACRO_DEPTH")?;
+    if depth == 0 {
+        return Err("ENV_MGBFS_MACRO_DEPTH".into());
+    }
     if world > 1 && depth > 1 {
         return Err("MACRO_MULTI_GPU_UNSUPPORTED".into());
     }
