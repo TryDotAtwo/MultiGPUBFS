@@ -7,6 +7,22 @@ The source-level owner/transport/retirement audit and connected change set are
 in `owner-transport-retirement-batch-audit.md`; it does not establish a measured
 bottleneck or completed asynchronous pipeline.
 
+## 2026-09-26 constructor admission gate
+
+At source `8f308ef284fb12d6d6fad2204028205076d12c43`, the private Kaggle
+v77 two-P2P-T4 gate passed an asymmetric post-NCCL constructor fault: rank 0
+reported `CUDA_STATUS_-1` for an intentionally nested RMM pool, rank 1 reported
+`REMOTE_CONSTRUCTOR_FATAL`, and the fixture completed in 1.41 s. The same run
+passed HostSized and LSA S4 BFS, archive/group-marker checks, small-layer
+archive capacity and independent full-state oracle. v73/v75 had timed out;
+v76 exposed a CUDA-stream lifetime error before the v77 correction. Exact
+logs and limits are in `docs/validation/archive-admission-t4-v69.md`.
+
+This is a post-NCCL allocation failure gate only. Rank-local config failure
+before bootstrap, asymmetric failure before NCCL initialization, and errors
+inside NCCL LSA setup remain open. It does not remove hot-path CPU readbacks
+or per-round collectives.
+
 ## Decisions recovered from the conversation
 
 1. V1 is single-source exhaustive BFS of matrix Cayley graphs. LRX repeated-tail
