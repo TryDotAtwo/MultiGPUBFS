@@ -497,6 +497,7 @@ pub struct DistributedNativeBfs {
     dense_lookahead: u64,
     exchange_stream: Stream,
     exchange_done: Event,
+    owner_consumed: Option<Event>,
     archive_stream: Stream,
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
@@ -1219,6 +1220,8 @@ impl DistributedNativeBfs {
             dense_lookahead: 0,
             exchange_stream,
             exchange_done,
+            owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
+                .then(Event::new).transpose()?,
             archive_stream,
             archive_done,
             archived_depth: None,
@@ -2278,6 +2281,7 @@ impl DistributedNativeBfs {
         let mut cursor = ParentCursor::default();
         let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
+        let mut lsa_owner_recorded = false;
         for _ in 0..scheduled_rounds {
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
@@ -2490,6 +2494,13 @@ impl DistributedNativeBfs {
                     check(unsafe { cudaStreamWaitEvent(
                         self.exchange_stream.0, self.pack_done.0, 0,
                     ) })?;
+                    if lsa_owner_recorded {
+                        check(unsafe { cudaStreamWaitEvent(
+                            self.exchange_stream.0,
+                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0,
+                            0,
+                        ) })?;
+                    }
                     check(unsafe {
                         mgbfs_nccl_lsa_exchange(
                             self.comm.0, self.sorted_hashes.ptr,
@@ -2713,6 +2724,13 @@ impl DistributedNativeBfs {
                 }
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
+                }
+                if lsa.is_some() {
+                    check(unsafe { cudaEventRecord(
+                        self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0,
+                        s,
+                    ) })?;
+                    lsa_owner_recorded = true;
                 }
             }
             if self.hash_first.is_some() {
