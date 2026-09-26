@@ -50,6 +50,14 @@ then binds publication to those exact bytes. Its 172-test Python suite passes
 (6 skipped). An independent remote footer read, live publication with this
 version, and legacy staged manifests without `rows` remain separate gates.
 
+At `9f53edc`, an independent remote Parquet-footer auditor and local tests
+passed (176 Python tests, 6 skipped). Its anonymous S13 scan verified only
+5,601/6,228 footers before HTTP 429. The private Kaggle v28 token-backed run
+failed in Kaggle's Secrets service at `get_secret("HF_TOKEN")` with HTTP 400,
+before the auditor started; see `docs/validation/s13-hf-footer-kaggle-v28.md`.
+Remote footer completeness remains open. Only one 2xT4 Kaggle notebook may be
+active at a time under the current user instruction.
+
 A scoped archive change retains `O_NONBLOCK` after FIFO admission and gives
 each FIFO write a bounded absolute deadline. The stalled-writer CPU test and
 the available runtime suite pass; a real Linux FIFO test typechecks but still
