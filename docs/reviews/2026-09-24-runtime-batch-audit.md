@@ -21,11 +21,13 @@ addressed; this result does not establish an asynchronous hot path.
 
 1. **Pre-NCCL constructor admission.** The malformed-`u32` panic was removed
    at `ff314f6` and its Linux unit plus unchanged two-T4 S4 gate passed in
-   Kaggle v72. But `reference_bench.rs` still parses configuration before
-   bootstrap agreement and constructs the distributed runtime after
-   ArchiveAdmission. A rank-local parse error can make its peer wait for
-   bootstrap timeout; GPU allocation or NCCL initialization can fail on one
-   rank while the other waits in a collective.
+   Kaggle v72. At `8f308ef`, a separate post-NCCL local constructor fault
+   gets a group vote after local owner allocation; v77 verifies that both
+   ranks exit, and normal S4/archives/oracle still pass. But
+   `reference_bench.rs` still parses configuration before bootstrap agreement
+   and constructs the distributed runtime after ArchiveAdmission. A rank-local
+   parse error can make its peer wait for bootstrap timeout; errors before
+   `ncclCommInitRank` or during NCCL LSA setup still need coordinated coverage.
    Split pure validation/resource preparation from communicator creation,
    exchange one bounded admission decision, then enter identical NCCL issue
    order. Gate with malformed config and asymmetric allocation failure on two
