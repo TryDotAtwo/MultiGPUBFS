@@ -18,6 +18,18 @@ exhaustion, explicit CUDA streams, and no mandatory host-sized count/readback
 between successive batches. Generic SQL ingestion or a hash-set `contains`
 call alone is not this boundary.
 
+The owner pipeline has a useful MapReduce analogy: successor generation is
+`map`, hash-owner routing/sort is `shuffle`, and owner dedup/commit is
+`reduce`. This describes ownership, not an implementation plan for Hadoop:
+Hadoop's documented job contract normally stores input/output in a file
+system and schedules/re-executes tasks, whereas this runtime keeps a bounded
+GPU state window with stream-ordered lifetimes and a single-node NCCL issue
+order. GraphX Pregel describes bulk-synchronous graph messaging, not an
+implicit-generator GPU slot or failure protocol. Neither framework replaces
+the owner/transport implementation without an executable adapter. Sources:
+[Hadoop MapReduce tutorial](https://hadoop.apache.org/docs/current/hadoop-mapreduce-client/hadoop-mapreduce-client-core/MapReduceTutorial.html),
+[GraphX Pregel API](https://spark.apache.org/docs/latest/graphx-programming-guide.html#pregel-api).
+
 ## Components and decisions
 
 | Component | What it provides | Fit in this BFS | Decision / missing evidence |
