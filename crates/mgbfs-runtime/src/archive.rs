@@ -92,13 +92,18 @@ pub struct StreamExtent<W: Write> {
     writer: W,
     capacity: Option<u64>,
     cursor: u64,
+    stall_timeout: std::time::Duration,
 }
 impl<W: Write> StreamExtent<W> {
     pub fn new(writer: W) -> Self {
+        Self::with_stall_timeout(writer, std::time::Duration::from_secs(30))
+    }
+    pub fn with_stall_timeout(writer: W, stall_timeout: std::time::Duration) -> Self {
         Self {
             writer,
             capacity: None,
             cursor: 0,
+            stall_timeout,
         }
     }
 }
@@ -126,7 +131,25 @@ impl<W: Write> Extent for StreamExtent<W> {
                 "stream offset or capacity violation",
             ));
         }
-        self.writer.write_all(bytes)?;
+        let deadline = Instant::now().checked_add(self.stall_timeout).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream write deadline")
+        })?;
+        let mut written = 0;
+        while written < bytes.len() {
+            match self.writer.write(&bytes[written..]) {
+                Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(n) => written += n,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_STALLED"));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => return Err(error),
+            }
+        }
         self.cursor = end;
         Ok(bytes.len())
     }
@@ -209,7 +232,7 @@ pub fn create_archive_extent_with_timeout(
         return FileExtent::create_new(path)
             .map(|extent| Box::new(extent) as Box<dyn Extent + Send>);
     }
-    use std::os::{fd::AsRawFd, unix::fs::{FileTypeExt, OpenOptionsExt}};
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
     if !std::fs::metadata(path)?.file_type().is_fifo() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -222,16 +245,8 @@ pub fn create_archive_extent_with_timeout(
         let result = std::fs::OpenOptions::new()
             .write(true).custom_flags(libc::O_NONBLOCK).open(path);
         match result {
-            Ok(writer) => {
-                // Nonblocking is only for admission. The disk worker retains
-                // ordinary write_all semantics after the reader is present.
-                let fd = writer.as_raw_fd();
-                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-                if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                return Ok(Box::new(StreamExtent::new(writer)));
-            }
+            Ok(writer) => return Ok(Box::new(StreamExtent::with_stall_timeout(
+                writer, timeout.min(std::time::Duration::from_secs(30))))),
             Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
                 let left = deadline.saturating_duration_since(std::time::Instant::now());
                 if left.is_zero() {

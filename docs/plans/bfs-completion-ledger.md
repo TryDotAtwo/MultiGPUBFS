@@ -46,6 +46,12 @@ Python test suite passes (171 tests, 6 skipped). Live HF publication, actual
 remote Parquet footer row counts and legacy staged manifests without `rows`
 remain separate gates.
 
+A scoped archive change retains `O_NONBLOCK` after FIFO admission and gives
+each FIFO write a bounded absolute deadline. The stalled-writer CPU test and
+the available runtime suite pass; a real Linux FIFO test typechecks but still
+needs execution. This only bounds FIFO write stalls, not every archive worker
+wait or a full two-rank stream-archive run.
+
 ## Decisions recovered from the conversation
 
 1. V1 is single-source exhaustive BFS of matrix Cayley graphs. LRX repeated-tail

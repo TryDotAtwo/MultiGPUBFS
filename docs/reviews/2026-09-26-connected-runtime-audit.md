@@ -78,15 +78,23 @@ failure, not all startup failures.
    exit one process while its peer enters bootstrap. `reference_bench::run`
    also reads `MGBFS_BENCH_WARMUP` before rendezvous. Different warmup values
    select different bootstrap paths. The `reference_launch` fix covers only
-   the inner `run_pass` path. Move all rank-varying launch validation into a
-   common pre-NCCL admission, then test the real CLI with two processes.
+   the inner `run_pass` path. The first-pass bootstrap path must be identical
+   regardless of warmup choice; warmup/stream/archive/macro settings must be
+   voted before either rank chooses a divergent second pass. Warmup archive
+   cleanup currently happens after the first pass's group boundary; a local
+   cleanup failure must also be agreed before measurement begins. Move all
+   rank-varying launch validation into this common pre-NCCL admission, then
+   test the real CLI with two processes and asymmetric environment values.
 
-8. **A connected FIFO reader can stall the archive indefinitely.**
-   `archive.rs` removes `O_NONBLOCK` after opening the FIFO and `StreamExtent`
-   writes with blocking `write_all`. The open deadline does not bound writes
-   to a reader that connects but stops draining. `PinnedArchive::finish` joins
-   the worker, so the failure path needs a cancellable, bounded write/shutdown
-   contract. This is source evidence of a possible stall, not a measured one.
+8. **A connected FIFO reader previously could stall the archive indefinitely.**
+   `archive.rs` removed `O_NONBLOCK` after opening the FIFO and wrote with
+   blocking `write_all`. The scoped follow-up keeps the FIFO nonblocking and
+   bounds each write by an absolute deadline (at most 30 seconds for the
+   default entry point). A stalled reader now returns `TimedOut` and lets the
+   worker unwind instead of pinning `finish` forever. The generic stalled
+   writer CPU test passes; the real Linux FIFO test typechecks but has not
+   been executed on Linux. Other blocking points, including GPU event wait,
+   remain outside this specific liveness claim.
 
 9. **The HF promotion validator previously accepted incomplete inventories.**
    `promote_hf_stream.py::combine_rank_commits` checked layer totals but

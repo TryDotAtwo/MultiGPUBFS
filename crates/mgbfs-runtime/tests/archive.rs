@@ -1,6 +1,24 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 
 #[test]
+fn stream_writer_fails_when_reader_stops_draining() {
+    struct Stalled;
+    impl std::io::Write for Stalled {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut extent = StreamExtent::with_stall_timeout(
+        Stalled, std::time::Duration::from_millis(20));
+    extent.reserve(1).unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(extent.write_at(0, b"x").unwrap_err().kind(),
+        std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[test]
 fn archive_ring_plan_checks_all_storage_before_allocating_slots() {
     use mgbfs_runtime::archive::ArchiveRingPlan;
     let p = ArchiveRingPlan::new(11, 16384, 4).unwrap();
@@ -53,7 +71,7 @@ fn fifo_open_reports_missing_consumer_within_its_deadline() {
 }
 #[cfg(target_os = "linux")]
 #[test]
-fn fifo_open_hands_a_blocking_stream_to_the_archive_consumer() {
+fn fifo_open_streams_to_the_archive_consumer() {
     use mgbfs_runtime::archive::create_archive_extent_with_timeout;
     use std::{ffi::CString, io::Read, os::unix::ffi::OsStrExt, time::Duration};
     extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
@@ -75,6 +93,41 @@ fn fifo_open_hands_a_blocking_stream_to_the_archive_consumer() {
     writer.sync().unwrap();
     drop(writer);
     assert_eq!(reader.join().unwrap(), *b"abc");
+    std::fs::remove_file(path).unwrap();
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn connected_fifo_reader_that_never_drains_times_out() {
+    use mgbfs_runtime::archive::create_archive_extent_with_timeout;
+    use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc,
+              time::{Duration, Instant}};
+    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "mgbfs-archive-stalled-{}-{nonce}", std::process::id()));
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
+    let reader_path = path.clone();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let _file = std::fs::File::open(reader_path).unwrap();
+        ready_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+    });
+    let mut writer = create_archive_extent_with_timeout(&path, true,
+        Duration::from_millis(50)).unwrap();
+    ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let payload = vec![1u8; 8 * 1024 * 1024];
+    writer.reserve(payload.len() as u64).unwrap();
+    let started = Instant::now();
+    let error = writer.write_at(0, &payload).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    drop(writer);
+    release_tx.send(()).unwrap();
+    reader.join().unwrap();
     std::fs::remove_file(path).unwrap();
 }
 use std::{
