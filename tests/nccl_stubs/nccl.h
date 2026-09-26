@@ -4,6 +4,7 @@ using ncclComm_t = void*;
 using ncclResult_t = int;
 struct ncclUniqueId { char bytes[128]; };
 constexpr int ncclSuccess = 0, ncclUint8 = 1, ncclUint32 = 2, ncclMax = 3;
+constexpr int ncclInProgress = 7;
 inline const char* ncclGetErrorString(int) { return "injected NCCL error"; }
 extern int fail_stage, group_depth, send_calls, recv_calls, end_calls;
 extern int abort_calls, destroy_calls;

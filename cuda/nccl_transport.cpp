@@ -66,7 +66,7 @@ extern "C" int mgbfs_nccl_poll(void* raw){
   if(!p || !p->value) return 1;
   ncclResult_t state = ncclSuccess;
   if(ncclCommGetAsyncError(p->value, &state) != ncclSuccess) return 2;
-  return state == ncclSuccess ? 0 : 3;
+  return state == ncclSuccess ? 0 : (state == ncclInProgress ? 4 : 3);
 }
 extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,uint64_t recv_capacity,void* stream) {
   auto* p = static_cast<Comm*>(raw);

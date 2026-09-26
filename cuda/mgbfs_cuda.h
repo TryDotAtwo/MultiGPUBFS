@@ -230,8 +230,8 @@ void mgbfs_nccl_destroy(void* comm);
 /* Terminal, idempotent abort; wrapper remains owned until destroy. Not thread-safe:
  * serialize with all other communicator calls. Does not provide a watchdog. */
 int mgbfs_nccl_abort(void* comm);
-/* Health query for the blocking communicator created above, not transfer
- * completion. 0 healthy, 1 invalid/aborted, 2 query failure, 3 async failure. */
+/* Health query, not transfer completion. 0 healthy, 1 invalid/aborted,
+ * 2 query failure, 3 terminal async failure, 4 operation in progress. */
 int mgbfs_nccl_poll(void* comm);
 /* Optional NCCL 2.29+ LSA transport. All ranks initialize collectively
  * before depth zero. Exchange consumes device-resident owner counts and

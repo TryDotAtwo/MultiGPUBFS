@@ -12,8 +12,10 @@ int main() {
   assert(mgbfs_nccl_create(0, 2, 0, &id, &comm, nullptr, 0) == 0);
   char byte = 0;
   assert(mgbfs_nccl_poll(comm) == 0);
+  async_state = ncclInProgress;
+  assert(mgbfs_nccl_poll(comm) == 4); // In flight is not a terminal NCCL error.
   async_state = 9;
-  assert(mgbfs_nccl_poll(comm) != 0);
+  assert(mgbfs_nccl_poll(comm) == 3);
   async_state = 0;
   async_query_status = 8;
   assert(mgbfs_nccl_poll(comm) != 0);
