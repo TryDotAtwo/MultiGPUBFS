@@ -947,6 +947,14 @@ cross-target `cargo check` passed without linking. A subsequent real
 two-rank result must confirm the new serialized field; this is a
 result-integrity fix, not a GPU hot-path change.
 
+Private Kaggle v82 exercised that new rank-map field in a full two-T4 S10
+run at `868c118`: both ranks published `[0, 1]`, both archives verified,
+and the layer counts remained exact. An explicit Nsight debug-symbol path
+did not resolve the CUDA callchains; the 1,462 stream waits and 1,740
+synchronous copies remain aggregate evidence. See
+`docs/validation/lsa-callsite-v82.md`. The connected CPU-free path is still
+unimplemented.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under
