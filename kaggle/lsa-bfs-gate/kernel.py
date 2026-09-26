@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "868c118d180ee997d9eb13ff59a8086e1da8c58e"
+SOURCE = "dd5e602df8d662698f1b28b8c27ece33ad9830e2"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "timeline_backtrace"
 
@@ -535,6 +535,28 @@ def main():
                         run([sys.executable, str(source / "scripts/nsys_sync_callsites.py"),
                              str(database), str(logs / label / "sync-callsites.json")],
                             label + "-sync-callsites", timeout=600)
+                        addresses = logs / label / "rank-addresses.json"
+                        run([sys.executable, str(source / "scripts/nsys_rank_maps.py"),
+                             str(logs / label / "sync-callsites.json"), str(addresses),
+                             "--map", f"0:{logs / label / 'rank-0.maps'}",
+                             "--map", f"1:{logs / label / 'rank-1.maps'}"],
+                            label + "-rank-addresses", timeout=600)
+                        address_rows = json.loads(addresses.read_text())["rows"]
+                        offsets = sorted({frame["offset"] for row in address_rows
+                                          for frame in row["project_frames"]
+                                          if frame["module"] == cli},
+                                         key=lambda value: int(value, 16))
+                        symbols = run(["addr2line", "-f", "-C", "-e", cli, *offsets],
+                                      label + "-addr2line", timeout=600).splitlines()
+                        if len(symbols) != 2 * len(offsets):
+                            raise RuntimeError("NSYS_ADDR2LINE_SHAPE")
+                        resolved = {offset: {"function": symbols[2 * index],
+                                             "source": symbols[2 * index + 1]}
+                                    for index, offset in enumerate(offsets)}
+                        (logs / label / "rank-symbols.json").write_text(
+                            json.dumps({"source": SOURCE, "executable": cli,
+                                        "symbols": resolved}, indent=2))
+                        report["symbolized_offsets"] = len(resolved)
                         database.unlink()
                         Path(result["trace"]).unlink()
                     report["runs"] = {key: len(value) for key, value in panel.items()}
