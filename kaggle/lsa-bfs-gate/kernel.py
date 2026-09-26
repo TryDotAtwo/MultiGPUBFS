@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -455,6 +456,20 @@ def main():
             from distributed_gpu_bench import stats
             from library_gpu_screen import run_case
             cli = str(source / "target/release/mgbfs")
+            profiled_cli = cli
+            if MODE == "timeline_backtrace":
+                wrapper = work / "capture-rank-maps.sh"
+                wrapper.write_text(
+                    "#!/bin/bash\nset -eu\n"
+                    'if [[ -n "${RANK:-}" && -n "${MGBFS_DIAGNOSTIC_MAP_DIR:-}" ]]; then\n'
+                    '  mgbfs_target_pid=$$\n'
+                    '  ( sleep 0.25; cp "/proc/${mgbfs_target_pid}/maps" '
+                    '"${MGBFS_DIAGNOSTIC_MAP_DIR}/rank-${RANK}.maps" ) &\n'
+                    "fi\n"
+                    f"exec {shlex.quote(cli)} \"$@\"\n"
+                )
+                wrapper.chmod(0o755)
+                profiled_cli = str(wrapper)
             nsys = None
             if MODE in ("timeline", "timeline_backtrace", "timeline_analysis"):
                 package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
@@ -487,10 +502,11 @@ def main():
                         case_env["MGBFS_PROFILE_SEARCH"] = "1"
                     if MODE == "timeline_backtrace":
                         case_env["MGBFS_NSYS_CUDA_BACKTRACE"] = "sync,memory"
+                        case_env["MGBFS_DIAGNOSTIC_MAP_DIR"] = str(logs / label)
                         case_env["NSYS_CONFIG_DIRECTIVES"] = (
                             f'DbgFileSearchPath="{source / "target/release"}:{native}:{build}"'
                         )
-                    result = run_case(cli, logs / label, work / label, "s10",
+                    result = run_case(profiled_cli, logs / label, work / label, "s10",
                                       3_628_800, 2, 32768, 1_000_000, 1_000_000,
                                       96 << 20, "DENSE", "ON", case_env,
                                       owner="CUCO_RANK", nsys=nsys)
@@ -508,6 +524,10 @@ def main():
                              "cuda_api_sync,gpu_gaps,gpu_time_util", result["trace"]],
                             label + "-nsys-analysis", timeout=600)
                     if MODE == "timeline_backtrace":
+                        for rank in range(2):
+                            mapping = logs / label / f"rank-{rank}.maps"
+                            if not mapping.is_file() or str(source / "target/release/mgbfs") not in mapping.read_text():
+                                raise RuntimeError("NSYS_RANK_MAPS_MISSING")
                         database = logs / label / "timeline.sqlite"
                         run([nsys, "export", "--type", "sqlite", "--force-overwrite=true",
                              "--output", str(database), result["trace"]],
