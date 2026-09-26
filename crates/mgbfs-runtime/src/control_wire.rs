@@ -225,7 +225,7 @@ impl ControlFrame {
                             || (self.epoch == 4 && self.slot == NO_SLOT)
                     } else {
                         self.slot == NO_SLOT && self.epoch == 0
-                            && matches!(self.depth, 1..=3)
+                            && matches!(self.depth, 1..=4)
                     }
             }
             Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch => {

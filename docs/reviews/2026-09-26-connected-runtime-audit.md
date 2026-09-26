@@ -62,15 +62,15 @@ failure, not all startup failures.
    not a group-run durability timer. Existing consumers require preserving
    its schema with explicit scope; add a separate group-publication timer
    where the rank-0 marker is actually durable. A FIFO flush remains only a
-    handoff, not remote HF durability.
+   handoff, not remote HF durability.
 
-6. **Group completion is externally safe but not rank-symmetric.**
-   `run_pass` votes after every rank-result fsync, then rank zero alone writes
-   `group-complete.json`. If that final write fails, another rank may return
-   success, although the missing marker prevents an external consumer from
-   accepting the group. Add a final publication acknowledgement or report
-   rank-local and group outcomes separately. This is a reporting/termination
-   contract gap, not evidence of incorrect BFS states.
+6. **Group completion previously was not rank-symmetric.**
+   `run_pass` voted after every rank-result fsync, then rank zero alone wrote
+   `group-complete.json`. The scoped follow-up adds a `GroupPublished` boundary
+   after that write, so a rank-zero publication error reaches peers. A CPU
+   asymmetric-failure test and Linux/CUDA Rust typecheck pass; actual two-rank
+   process and late filesystem-failure gates are still pending. This was a
+   reporting/termination contract gap, not evidence of incorrect BFS states.
 
 ## One implementation batch, in dependency order
 

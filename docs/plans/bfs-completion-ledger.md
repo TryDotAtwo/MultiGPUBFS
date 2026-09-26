@@ -30,6 +30,14 @@ allocation failures after NCCL init, and errors inside LSA activation remain
 open. Neither v77 nor the config change removes hot-path CPU readbacks or
 per-round collectives. See `docs/reviews/2026-09-26-connected-runtime-audit.md`.
 
+At `a931f93`, multi-rank macro-depth parsing moved inside the configuration
+agreement, eliminating an earlier one-rank return before rendezvous. This has
+CPU tests and Linux/CUDA typecheck, not a physical two-T4 gate. A subsequent
+working change adds a fourth `GroupPublished` boundary after the rank-zero
+group marker write: a rank-zero publication failure is then reported to all
+ranks. The two-rank CPU boundary test and full available runtime CPU suite
+pass; late filesystem failure in separate GPU processes remains unverified.
+
 ## Decisions recovered from the conversation
 
 1. V1 is single-source exhaustive BFS of matrix Cayley graphs. LRX repeated-tail

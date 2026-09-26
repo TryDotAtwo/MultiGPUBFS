@@ -16,6 +16,7 @@ pub enum BoundaryPhase {
     ArchiveAdmission = 1,
     ArchiveCommitted = 2,
     OutputWritten = 3,
+    GroupPublished = 4,
 }
 impl BootstrapGroup {
     /// Compare all 256 digest bits before any rank constructs CUDA/NCCL state.

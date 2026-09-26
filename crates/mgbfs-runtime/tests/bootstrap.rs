@@ -188,6 +188,45 @@ fn boundary_agreement_preserves_phase_order_and_success() {
 }
 
 #[test]
+fn group_publication_failure_is_reported_to_both_ranks() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-publication-agreement-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
+            Duration::from_secs(3), || panic!("peer cannot create NCCL ID")).unwrap();
+        for phase in [BoundaryPhase::ArchiveAdmission,
+            BoundaryPhase::ArchiveCommitted, BoundaryPhase::OutputWritten] {
+            assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+        }
+        group.agree_boundary(BoundaryPhase::GroupPublished, false,
+            Duration::from_secs(3))
+    });
+    let mut group = rendezvous(&path, 0, 2, record().identity,
+        Duration::from_secs(3), || Ok([23; 128])).unwrap();
+    for phase in [BoundaryPhase::ArchiveAdmission,
+        BoundaryPhase::ArchiveCommitted, BoundaryPhase::OutputWritten] {
+        assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+    }
+    let publication = mgbfs_runtime::group_commit::write_group_commit(&root, 2, [7; 32]);
+    assert!(publication.is_err());
+    assert!(!root.join("group-complete.json").exists());
+    assert!(group.agree_boundary(BoundaryPhase::GroupPublished, publication.is_err(),
+        Duration::from_secs(3)).unwrap());
+    assert!(peer.join().unwrap().unwrap());
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn startup_boundary_leaves_control_connection_admissible_to_dispatcher() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use mgbfs_runtime::control_pump::ControlPump;

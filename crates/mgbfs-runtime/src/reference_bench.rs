@@ -541,9 +541,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err(output.err().unwrap_or_else(|| "REMOTE_OUTPUT_WRITE_FATAL".into()));
     }
     output?;
-    if rank == 0 {
-        crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)?;
+    let publication = if rank == 0 {
+        crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
+    } else { Ok(()) };
+    if control_group.agree_boundary(
+        crate::bootstrap::BoundaryPhase::GroupPublished,
+        publication.is_err(), Duration::from_secs(60),
+    )? {
+        return Err(publication.err().unwrap_or_else(|| "REMOTE_GROUP_PUBLICATION_FATAL".into()));
     }
+    publication?;
     Ok(())
 }
 
