@@ -962,6 +962,14 @@ function/line attribution remains open because the same-build ELF was not
 exported. See `docs/validation/lsa-rank-maps-v83.md`. This profiling does
 not change the production pipeline or close the owner-slot/failure gate.
 
+Private Kaggle v84 resolved the address-only callchains against the exact
+rank ELF before cleanup. `all_max_ring_or_host_fatal()` is the dominant
+observed host wait: 90 calls/rank and 165.97/192.97 ms CUDA API duration
+on ranks 0/1 in one profiled S10 run. See
+`docs/validation/lsa-resolved-callsites-v84.md`. This makes the connected
+owner-slot/failure replacement the first measured target, without implying
+that its aggregate API duration is directly recoverable search time.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under
