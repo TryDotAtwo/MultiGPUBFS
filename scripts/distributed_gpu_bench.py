@@ -103,13 +103,17 @@ def aggregate_rank_results(ranks,world=2):
    raise ValueError('invalid rank layer counts')
  search=[x['search_complete_seconds'] for x in ranks]
  durable=[x.get('durable_run_commit_seconds') for x in ranks]
+ archive_file=[x.get('archive_file_commit_seconds') for x in ranks]
  if any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in search):raise ValueError('invalid search timing')
  if all(x is None for x in durable):durable_max=None
  elif any(x is None or not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('incomplete durable timing')
  else:
   if any(d<s for s,d in zip(search,durable)):raise ValueError('rank durable precedes search')
   durable_max=max(durable)
- row=dict(status='COMPLETE',world_size=world,backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max)
+ if all(x is None for x in archive_file):archive_file_max=None
+ elif any(x is None or type(x) not in (int,float) or not math.isfinite(x) or x<s for x,s in zip(archive_file,search)):raise ValueError('incomplete archive file timing')
+ else:archive_file_max=max(archive_file)
+ row=dict(status='COMPLETE',world_size=world,backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max,archive_file_commit_seconds=archive_file_max)
  if 'local_layer_sizes' in ranks[0]:
   if any('local_layer_sizes' not in x or len(x['local_layer_sizes'])!=len(ranks[0]['local_layer_sizes']) for x in ranks):raise ValueError('rank depth mismatch')
   row['layer_sizes']=[sum(values) for values in zip(*(x['local_layer_sizes'] for x in ranks))]
@@ -166,12 +170,18 @@ def stats(rows):
   if any(type(x) not in (int,float) or not math.isfinite(x) or x<0 for x in measurements):raise ValueError('INVALID_MEASUREMENT')
  values=[x['search_complete_seconds'] for x in rows];median=statistics.median(values)
  durable=[x.get('durable_run_commit_seconds') for x in rows]
+ archive_file=[x.get('archive_file_commit_seconds') for x in rows]
  if all(x is None for x in durable):durable_median=durable_mad=None
  else:
   if any(type(x) not in (int,float) or not math.isfinite(x) or x<0 for x in durable):raise ValueError('INCOMPLETE_OR_INVALID_DURABLE_SAMPLES')
   durable_median=statistics.median(durable)
   durable_mad=statistics.median(abs(x-durable_median) for x in durable)
- return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,durable_median_seconds=durable_median,durable_mad_seconds=durable_mad,durable_samples_seconds=durable,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
+ if all(x is None for x in archive_file):archive_file_median=archive_file_mad=None
+ else:
+  if any(type(x) not in (int,float) or not math.isfinite(x) or x<0 for x in archive_file):raise ValueError('INCOMPLETE_ARCHIVE_FILE_SAMPLES')
+  archive_file_median=statistics.median(archive_file)
+  archive_file_mad=statistics.median(abs(x-archive_file_median) for x in archive_file)
+ return dict(median_seconds=median,mad_seconds=statistics.median(abs(x-median) for x in values),samples_seconds=values,durable_median_seconds=durable_median,durable_mad_seconds=durable_mad,durable_samples_seconds=durable,archive_file_commit_median_seconds=archive_file_median,archive_file_commit_mad_seconds=archive_file_mad,archive_file_commit_samples_seconds=archive_file,repeats=len(rows),peak_mib_per_rank=[max(x['smi_peak_mib_per_rank'][r] for x in rows) for r in range(world)],peak_mib_total=max(x['smi_peak_mib_total'] for x in rows))
 
 def suite(native,source,out,env):
  world=int(env.get('MGBFS_BENCH_WORLD_SIZE','2'))

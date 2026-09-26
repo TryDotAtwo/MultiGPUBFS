@@ -295,6 +295,16 @@ class RankMetrics(unittest.TestCase):
         self.assertEqual(result["search_complete_seconds"], 3)
         self.assertEqual(result["durable_run_commit_seconds"], 5)
 
+    def test_archive_file_commit_is_reported_separately_from_legacy_timer(self):
+        ranks = self.rows()
+        ranks[0]['archive_file_commit_seconds'] = 4
+        ranks[1]['archive_file_commit_seconds'] = 5
+        result = aggregate_rank_results(ranks)
+        self.assertEqual(result['archive_file_commit_seconds'], 5)
+        result.update(smi_peak_mib_per_rank=[100, 100], smi_peak_mib_total=200)
+        summary = stats([result])
+        self.assertEqual(summary['archive_file_commit_samples_seconds'], [5])
+
     def test_mixed_rank_configuration_is_rejected(self):
         for key in ('group', 'batch', 'frontier_profile', 'owner_backend',
                     'pre_dedup', 'capacity_mode', 'global_capacity_records',
