@@ -15,6 +15,15 @@ import pyarrow.parquet as pq
 PART = re.compile(r"^states/.+-rank-(\d{5})-part-(\d{8})\.parquet$")
 
 
+def resolve_token(*, anonymous):
+    if anonymous:
+        return False
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("HF_TOKEN_MISSING")
+    return token
+
+
 def audit_manifest(manifest, opener, *, workers=4, max_rows=1_000_000, progress=None):
     """Return footer-derived counts; raise unless every declared part agrees."""
     world = manifest["world_size"]
@@ -88,12 +97,12 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--max-rows", type=int, default=1_000_000)
+    parser.add_argument("--anonymous", action="store_true",
+                        help="Read a public dataset without using any HF credential")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         raise ValueError("FOOTER_REVISION_NOT_IMMUTABLE")
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise ValueError("HF_TOKEN_MISSING")
+    token = resolve_token(anonymous=args.anonymous)
     from huggingface_hub import HfFileSystem, hf_hub_download
 
     manifest_path = hf_hub_download(repo_id=args.repo_id, repo_type="dataset",

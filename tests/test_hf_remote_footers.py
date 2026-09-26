@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -11,6 +12,19 @@ sys.path.insert(0, str(ROOT))
 
 
 class RemoteFooterAudit(unittest.TestCase):
+    def test_explicit_anonymous_mode_never_uses_cached_environment_token(self):
+        from scripts import audit_hf_parquet_footers as audit
+
+        self.assertTrue(hasattr(audit, "resolve_token"), "anonymous auth selector missing")
+        resolve_token = audit.resolve_token
+
+        with patch.dict("os.environ", {"HF_TOKEN": "private-token"}):
+            self.assertIs(resolve_token(anonymous=True), False)
+            self.assertEqual(resolve_token(anonymous=False), "private-token")
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "HF_TOKEN_MISSING"):
+                resolve_token(anonymous=False)
+
     def test_real_parquet_footers_require_complete_rank_parts_and_matching_totals(self):
         try:
             from scripts.audit_hf_parquet_footers import audit_manifest
