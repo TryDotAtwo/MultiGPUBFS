@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "8f6bcc266d6fd5f0a18d8b420557a0010d8786bc"
+SOURCE = "868c118d180ee997d9eb13ff59a8086e1da8c58e"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "timeline_backtrace"
 
@@ -487,6 +487,9 @@ def main():
                         case_env["MGBFS_PROFILE_SEARCH"] = "1"
                     if MODE == "timeline_backtrace":
                         case_env["MGBFS_NSYS_CUDA_BACKTRACE"] = "sync,memory"
+                        case_env["NSYS_CONFIG_DIRECTIVES"] = (
+                            f'DbgFileSearchPath="{source / "target/release"}:{native}:{build}"'
+                        )
                     result = run_case(cli, logs / label, work / label, "s10",
                                       3_628_800, 2, 32768, 1_000_000, 1_000_000,
                                       96 << 20, "DENSE", "ON", case_env,
