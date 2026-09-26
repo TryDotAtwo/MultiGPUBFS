@@ -938,6 +938,15 @@ symbols. The diagnostic neither locates the critical-path waits nor closes
 the owner→transport→retirement CPU-independence gate. See
 `docs/validation/lsa-callsite-v81.md`.
 
+The rank-result aggregator now rejects mixed or partially present hash seed,
+bootstrap digest, and owner-rank map, and the distributed reference result
+publishes its owner-rank map. A RED fixture previously accepted all six
+mixed/missing cases; after the change the Python suite passed (173 tests,
+6 skipped), the host Rust suite passed, and Linux/CUDA+library-owner
+cross-target `cargo check` passed without linking. A subsequent real
+two-rank result must confirm the new serialized field; this is a
+result-integrity fix, not a GPU hot-path change.
+
 Private Kaggle LSA leaf v52 repeated the `ncclCommWindowRegister` failure
 under initcheck on P2P-capable 2×T4. The standalone NCCL-only v57 fixture
 then passed plain registration on both ranks but failed registration under

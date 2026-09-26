@@ -513,6 +513,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             crate::distributed_memory::allocation_report(bfs.owned_memory());
         value["hash_seed_hex"] = serde_json::json!(seed_hex);
         value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
+        value["logical_owner_to_rank"] = serde_json::json!(cfg.logical_owner_to_rank);
         value["transport_backend"] = serde_json::json!(format!("{:?}", cfg.transport));
         value["group"] = serde_json::json!(group);
         if let Some(word) = &multiset {

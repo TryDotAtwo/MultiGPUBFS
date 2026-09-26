@@ -94,7 +94,8 @@ def aggregate_rank_results(ranks,world=2):
              'capacity_mode','global_capacity_records','global_state_ring_records',
              'archive_enabled','archive_state_bytes','generation_variant',
              'hash_first_generation','warmup_completed','library_pool_reserved_bytes',
-             'graph_kind','start_state','expected_unique_states','generators'):
+             'graph_kind','start_state','expected_unique_states','generators',
+             'hash_seed_hex','bootstrap_digest','logical_owner_to_rank'):
   if any(key in x for x in ranks) and (any(key not in x for x in ranks) or any(x[key]!=ranks[0][key] for x in ranks)):
    raise ValueError('rank configuration mismatch: '+key)
  for result in ranks:

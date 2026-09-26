@@ -13,6 +13,26 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_rank_aggregation_rejects_conflicting_run_identity(self):
+        base = dict(status='COMPLETE', backend='native_test', world_size=2,
+                    local_layer_sizes=[1, 0], search_complete_seconds=1,
+                    durable_run_commit_seconds=2, hash_seed_hex='01' * 16,
+                    bootstrap_digest=[7] * 32, logical_owner_to_rank=[0, 1])
+        for field, other in (
+            ('hash_seed_hex', '02' * 16),
+            ('bootstrap_digest', [8] * 32),
+            ('logical_owner_to_rank', [1, 0]),
+        ):
+            ranks = [dict(base, rank=0), dict(base, rank=1)]
+            ranks[1][field] = other
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError, 'rank configuration mismatch: ' + field):
+                aggregate_rank_results(ranks)
+            del ranks[1][field]
+            with self.subTest(field=field, case='missing'), self.assertRaisesRegex(
+                    ValueError, 'rank configuration mismatch: ' + field):
+                aggregate_rank_results(ranks)
+
     def test_missing_group_marker_preserves_failed_measurement(self):
         popen = subprocess.Popen
         class Sampler:
