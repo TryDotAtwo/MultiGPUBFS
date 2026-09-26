@@ -170,6 +170,40 @@ This is one protocol-level change set, with explicit checkpoints rather than
 one-line wait deletions. A rejected experiment must leave the current correct
 path available as a separate named backend, never as a runtime fallback.
 
+## Implementation batch for the next runtime change
+
+Do not spend another hardware run on a standalone `cudaStreamSynchronize`
+deletion. The source-verified dependencies form one transaction:
+
+1. **Admission and cancellation:** agree on all rank-local settings and
+   pre-communicator allocation results before any rank enters NCCL. Use one
+   NCCL-calling dispatcher per rank with bounded cancellation; fault fixtures
+   must cover both ranks and both sides of communicator creation.
+2. **Epoch ownership:** reserve K receive/control slots before depth zero,
+   give each slot a generation and `owner_consumed` event, and let the next
+   LSA writer reuse it only after the prior owner/materializer is done. The
+   current `exchange_done` event proves arrival, not consumption. Preserve
+   zero-payload participation and the same peer-round order on every rank.
+3. **Device control and fatal tail:** keep counts, offsets, extents and ring
+   fatal on device for the healthy DENSE+LSA+CUCO_RANK path. A host/API/archive
+   failure must instead request bounded rank-wide cancellation; merely
+   enqueueing more GPU work or removing the post-owner vote is unsafe.
+4. **Retirement and publication:** retire parents only after generation,
+   transport and archive consumers release them; publish survivors only after
+   capacity checks and owner commit. Verify that late archive failure cannot
+   leave a peer's output marked group-complete.
+
+The batch's first physical acceptance test is repeated, unequal two-rank
+frontiers with empty peer epochs and injected one-rank owner/archive/API
+failures, checked for exact layers, bounded termination and receive-slot
+reuse under racecheck. Only after it passes should the post-owner host vote
+be removed and Nsight used to establish an actual end-to-end overlap gain.
+HASH_FIRST and >2-rank peer rounds are subsequent explicit gates, not implied
+by that first result. `Buffer::put` is not the priority: the resolved v84
+S10 trace attributes only 0.57 ms aggregate API duration to its 92 calls,
+whereas the 90-per-rank post-owner fatal vote accounts for much larger host
+wait duration. API duration is not equal to recoverable critical-path time.
+
 ## Required acceptance evidence
 
 - CPU model for epoch order, event/extent lifetimes and capacity-before-commit;
