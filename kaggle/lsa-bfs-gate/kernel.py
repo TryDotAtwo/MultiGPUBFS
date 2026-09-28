@@ -768,6 +768,41 @@ def main():
                 save()
             report["status"] = "COMPLETE"
             return
+        if MODE == "full_bfs_sanitizers":
+            report["scope"] = ("two physical P2P T4; complete S4 CUCO_RANK/LSA BFS "
+                               "including archive, one fixture per sanitizer tool")
+            binaries = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
+                        if path.is_file() and os.access(path, os.X_OK)]
+            if len(binaries) != 1:
+                raise RuntimeError("FULL_BFS_SANITIZER_BINARY_INVENTORY")
+            name = "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle"
+            command = [str(binaries[0]), name, "--ignored", "--exact", "--nocapture",
+                       "--test-threads=1"]
+            report["tools"] = {}
+            for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+                sanitizer = ["compute-sanitizer", "--tool", tool,
+                             "--report-api-errors", "no", "--error-exitcode", "97", *command]
+                try:
+                    completed = subprocess.run(sanitizer, cwd=source, env=env,
+                                               capture_output=True, text=True, timeout=600)
+                    output = completed.stdout + completed.stderr
+                    (logs / ("full-bfs-" + tool + ".log")).write_text(output)
+                    summary = ("RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)"
+                               if tool == "racecheck" else "ERROR SUMMARY: 0 errors")
+                    report["tools"][tool] = {
+                        "returncode": completed.returncode,
+                        "oracle_passed": "test result: ok. 1 passed; 0 failed" in output,
+                        "clean_summary": summary in output,
+                    }
+                except subprocess.TimeoutExpired:
+                    report["tools"][tool] = {"status": "TIMEOUT"}
+                save()
+            if not all(result.get("returncode") == 0 and result.get("oracle_passed")
+                       and result.get("clean_summary")
+                       for result in report["tools"].values()):
+                raise RuntimeError("FULL_BFS_SANITIZER_GATE_INCOMPLETE")
+            report["status"] = "COMPLETE"
+            return
         if MODE == "device_fatal_gate":
             result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",
