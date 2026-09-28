@@ -590,6 +590,41 @@ def main():
             report["host_fault"] = "PASS"
             report["status"] = "COMPLETE"
             return
+        if MODE == "process_host_fault_only":
+            run(["cargo", "build", "--locked", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "process-fault-cli-build", timeout=1800)
+            env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
+                       MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
+                       MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                       MGBFS_BUCKETS="8", MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2",
+                       MGBFS_BUCKET_CAPACITY="32", MGBFS_STATE_CODEC="matrix_u8",
+                       MGBFS_ARCHIVE_CODEC="matrix_u8", MGBFS_ARCHIVE_ROWS="3",
+                       MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
+                       MGBFS_PRE_DEDUP="ON", MGBFS_BENCH_SKIP_ARCHIVE="0",
+                       MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank",
+                       MGBFS_RANK_MAP="0,1", MGBFS_TRANSPORT_BACKEND="NCCL_LSA",
+                       MGBFS_TEST_OWNER_HOST_FAULT_RANK="0")
+            root = work / "process-host-fault"
+            root.mkdir()
+            output = logs / "process-host-fault"
+            command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                       "--nproc-per-node=2", "--no-python", str(source / "target/debug/mgbfs"),
+                       "bench", "--reference", "s4", "7", str(root / "bootstrap"),
+                       str(root / "archive"), str(output)]
+            with (logs / "process-host-fault.log").open("w") as stream:
+                try:
+                    completed = subprocess.run(command, cwd=source, env=env, stdout=stream,
+                                               stderr=subprocess.STDOUT, timeout=60)
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError("PROCESS_HOST_FAULT_TIMEOUT") from error
+            if completed.returncode == 0 or (output / "group-complete.json").exists():
+                raise RuntimeError("PROCESS_HOST_FAULT_FALSE_COMPLETE")
+            checked = (logs / "process-host-fault.log").read_text(errors="replace")
+            if "TEST_INJECTED_OWNER_HOST_ERROR" not in checked:
+                raise RuntimeError("PROCESS_HOST_FAULT_NOT_REACHED")
+            report["process_host_fault"] = "PASS_BOUNDED_NO_COMPLETE"
+            report["status"] = "COMPLETE"
+            return
         if MODE == "host_sized_only":
             report["scope"] = ("two physical T4; HostSizedNccl only; no LSA or P2P claim; "
                                "full-state oracle and archive fixtures")
