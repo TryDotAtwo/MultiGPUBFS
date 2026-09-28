@@ -452,7 +452,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
-    Ok((bfs, allocated, setup_seconds, search, layers, times))
+    Ok((bfs, allocated, setup_seconds, search, layers, times, start))
     })();
     if search_result.is_err() { sideband.report_failure(); }
     else { sideband.report_success(); }
@@ -460,7 +460,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     if remote_failed {
         return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
-    let (mut bfs, allocated, setup_seconds, search, layers, times) = search_result?;
+    let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveCommitted,
