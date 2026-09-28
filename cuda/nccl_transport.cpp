@@ -48,7 +48,11 @@ namespace {
 // The sideband thread may change the atomic observed by cancel_requested,
 // but never calls NCCL or touches Comm itself.
 int await_nccl(Comm* p, ncclResult_t submitted) {
-  if(submitted!=ncclSuccess && submitted!=ncclInProgress) return 6;
+  if(submitted!=ncclSuccess && submitted!=ncclInProgress) {
+    std::fprintf(stderr,"MGBFS_NCCL_SUBMIT_FATAL rank=%u code=%d detail=%s\n",
+        p->rank,int(submitted),ncclGetErrorString(submitted));
+    return 6;
+  }
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
   for(;;) {
     if(p->cancel_requested && p->cancel_requested(p->cancel_context)) {
@@ -58,9 +62,18 @@ int await_nccl(Comm* p, ncclResult_t submitted) {
       return 7;
     }
     ncclResult_t state=ncclSuccess;
-    if(!p->value || ncclCommGetAsyncError(p->value,&state)!=ncclSuccess) return 8;
+    const auto queried=p->value?ncclCommGetAsyncError(p->value,&state):ncclInvalidUsage;
+    if(queried!=ncclSuccess) {
+      std::fprintf(stderr,"MGBFS_NCCL_QUERY_FATAL rank=%u code=%d detail=%s\n",
+          p->rank,int(queried),ncclGetErrorString(queried));
+      return 8;
+    }
     if(state==ncclSuccess) return 0;
-    if(state!=ncclInProgress) return 9;
+    if(state!=ncclInProgress) {
+      std::fprintf(stderr,"MGBFS_NCCL_ASYNC_FATAL rank=%u code=%d detail=%s\n",
+          p->rank,int(state),ncclGetErrorString(state));
+      return 9;
+    }
     if(std::chrono::steady_clock::now()>=deadline) {
       const auto value=p->value;
       p->value=nullptr;

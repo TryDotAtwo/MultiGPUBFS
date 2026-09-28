@@ -4,6 +4,7 @@ using ncclComm_t = void*;
 using ncclResult_t = int;
 struct ncclUniqueId { char bytes[128]; };
 constexpr int ncclSuccess = 0, ncclUint8 = 1, ncclUint32 = 2, ncclMax = 3;
+constexpr int ncclInvalidUsage = 5;
 constexpr int ncclInProgress = 7;
 struct ncclConfig_t { int blocking = 1; };
 #define NCCL_CONFIG_INITIALIZER ncclConfig_t{}
