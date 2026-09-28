@@ -21,7 +21,9 @@ def main():
     logs = Path("/kaggle/working/lsa-bfs-gate")
     logs.mkdir(parents=True, exist_ok=True)
     report = {"source": SOURCE, "status": "INCOMPLETE", "scope":
-              ("two physical T4; one-rank archive slot exhaustion before exchange"
+              ("two physical T4; independent rank-process owner, archive-admission and archive-finish fault propagation"
+               if MODE == "process_faults_only" else
+               "two physical T4; one-rank archive slot exhaustion before exchange"
                if MODE == "archive_fault_gate" else
                "two physical T4; warmup/CLI admission fault propagation and archive cleanup"
                if MODE == "warmup_admission_gate" else

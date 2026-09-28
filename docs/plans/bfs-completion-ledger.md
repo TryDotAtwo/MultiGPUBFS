@@ -1150,3 +1150,15 @@ sets `batch=1` for that fixture. The corrected two-process test has not yet
 run, and the v13 result does not establish full-state correctness for this
 source. Raw evidence is under
 `test_results/kaggle_nonblocking_boundary_v13/lsa-bfs-gate/`.
+
+Private Kaggle v14 at `e2a702d` completed on two physical P2P-capable T4s.
+Three independent two-process torchrun fixtures injected an error on rank 0:
+owner processing during search, archive admission before NCCL communicator
+creation, and an archive-finish result after search. In each case both rank
+processes exited within the 60 s external timeout, the originating and peer
+errors appeared in the logs, and no `group-complete.json` was published.
+These are debug-only fault injections; the admission/finish cases prove the
+group-boundary protocol but are not physical pinned-allocation or disk-failure
+tests. The v14 notebook did not run a healthy full-state oracle, sanitizer,
+or performance measurement. See
+`test_results/kaggle_nonblocking_boundary_v14/lsa-bfs-gate/`.
