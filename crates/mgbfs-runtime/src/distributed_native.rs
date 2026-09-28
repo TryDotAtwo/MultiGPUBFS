@@ -1571,6 +1571,13 @@ impl DistributedNativeBfs {
         self.wait_comm_stream(self.stream.0)?;
         self.collective_recv.one()
     }
+    fn mark_host_fatal_on_device(&self, stream: *mut c_void) -> Result<()> {
+        check(unsafe { mgbfs_device_store_u32(self.fatal.ptr.cast(), 1, stream) })?;
+        check(unsafe { mgbfs_owner_import_transport_fatal(
+            self.fatal.ptr.cast(), self.ring.ptr.cast(),
+            self.control.ptr.cast(), stream,
+        ) })
+    }
     #[cfg(feature = "library-owner")]
     fn commit_rank_library_batch(
         &mut self,
@@ -2372,6 +2379,12 @@ impl DistributedNativeBfs {
             && self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
         #[cfg(not(feature = "library-owner"))]
         let device_epoch = false;
+        // The host-sized depth schedule above reuses collective_recv for a
+        // nonzero round count. LSA reads this word as its device group-fatal
+        // predicate before the first owner vote, so start each depth clean.
+        if device_epoch {
+            check(unsafe { cudaMemsetAsync(self.collective_recv.ptr, 0, 4, s) })?;
+        }
         let mut epoch_serial = 0usize;
         for _ in 0..scheduled_rounds {
             self.ensure_not_cancelled()?;
@@ -2406,7 +2419,15 @@ impl DistributedNativeBfs {
                 // Both ranks issue this epoch even when one has no parents.
                 // A local archive failure must not strand its peer in exchange.
                 if device_epoch {
-                    if let Some(error) = error { return Err(error); }
+                    if error.is_some() { self.mark_host_fatal_on_device(s)?; }
+                    check(unsafe { mgbfs_owner_global_fatal_gate(
+                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                    ) })?;
+                    if let Some(error) = error {
+                        self.wait_comm_stream(s)?;
+                        return Err(error);
+                    }
                 } else if self.all_max(u32::from(error.is_some()))? != 0 {
                     return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
                 }
@@ -2820,13 +2841,7 @@ impl DistributedNativeBfs {
                 }
                 if device_epoch {
                     if batch_error.is_some() {
-                        check(unsafe { mgbfs_device_store_u32(
-                            self.fatal.ptr.cast(), 1, s,
-                        ) })?;
-                        check(unsafe { mgbfs_owner_import_transport_fatal(
-                            self.fatal.ptr.cast(), self.ring.ptr.cast(),
-                            self.control.ptr.cast(), s,
-                        ) })?;
+                        self.mark_host_fatal_on_device(s)?;
                     }
                     // All ranks issue the post-owner vote, including an empty
                     // peer round. Its device result predicates the next LSA

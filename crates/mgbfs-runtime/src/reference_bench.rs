@@ -411,6 +411,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }};
     bfs.set_cancel_token(sideband.cancel_token())?;
     bfs.set_failure_token(sideband.failure_token());
+    #[cfg(debug_assertions)]
+    if let Ok(value) = std::env::var("MGBFS_TEST_OWNER_HOST_FAULT_RANK") {
+        let fault_rank: u32 = value.parse().map_err(|_| "TEST_OWNER_HOST_FAULT_RANK_INVALID")?;
+        if fault_rank >= cfg.world {
+            return Err("TEST_OWNER_HOST_FAULT_RANK_OUT_OF_RANGE".into());
+        }
+        if rank == fault_rank {
+            crate::distributed_native::inject_owner_host_error_once_for_test();
+        }
+    }
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
