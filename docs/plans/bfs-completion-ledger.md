@@ -1195,3 +1195,16 @@ it finished in 46.21 s rather than the earlier 120 s epoch timeout. This
 proves bounded handling for those fixture cases, not all possible CUDA/NCCL
 host errors or full application recovery. Raw logs are in
 `test_results/kaggle_nonblocking_boundary_v17/lsa-bfs-gate/`.
+
+Private Kaggle v18 at `e46fb3f` attempted all four Compute Sanitizer
+tools on the complete S4 CUCO_RANK/LSA BFS fixture on physical 2×T4.
+`memcheck`, `racecheck`, and `synccheck` each hit the harness's 600 s
+timeout; that harness captured output only after process exit, so their
+partial logs were lost. `initcheck` returned 6 before the oracle ran:
+NCCL reported an asynchronous unhandled CUDA error during construction,
+and the fixture panicked on `CUDA_STATUS_2`; its printed `ERROR SUMMARY:
+0 errors` is not a pass. No full-BFS sanitizer gate is closed by v18.
+The next harness revision writes logs during execution and terminates the
+whole launched process group on timeout, so failure stages can be examined
+without orphan contamination. Raw v18 report and initcheck log are in
+`test_results/kaggle_nonblocking_boundary_v18/lsa-bfs-gate/`.

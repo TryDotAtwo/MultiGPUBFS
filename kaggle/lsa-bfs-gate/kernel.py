@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -782,20 +783,37 @@ def main():
             for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
                 sanitizer = ["compute-sanitizer", "--tool", tool,
                              "--report-api-errors", "no", "--error-exitcode", "97", *command]
-                try:
-                    completed = subprocess.run(sanitizer, cwd=source, env=env,
-                                               capture_output=True, text=True, timeout=600)
-                    output = completed.stdout + completed.stderr
-                    (logs / ("full-bfs-" + tool + ".log")).write_text(output)
-                    summary = ("RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)"
-                               if tool == "racecheck" else "ERROR SUMMARY: 0 errors")
-                    report["tools"][tool] = {
-                        "returncode": completed.returncode,
-                        "oracle_passed": "test result: ok. 1 passed; 0 failed" in output,
-                        "clean_summary": summary in output,
-                    }
-                except subprocess.TimeoutExpired:
-                    report["tools"][tool] = {"status": "TIMEOUT"}
+                log = logs / ("full-bfs-" + tool + ".log")
+                with log.open("w") as stream:
+                    process = subprocess.Popen(sanitizer, cwd=source, env=env,
+                                               stdout=stream, stderr=subprocess.STDOUT,
+                                               start_new_session=True)
+                    try:
+                        code = process.wait(timeout=300)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            process.wait()
+                        code = None
+                output = log.read_text(errors="replace")
+                summary = ("RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)"
+                           if tool == "racecheck" else "ERROR SUMMARY: 0 errors")
+                report["tools"][tool] = {
+                    "status": "TIMEOUT" if code is None else "FINISHED",
+                    "returncode": code,
+                    "oracle_passed": "test result: ok. 1 passed; 0 failed" in output,
+                    "clean_summary": summary in output,
+                    "log_bytes": log.stat().st_size,
+                }
                 save()
             if not all(result.get("returncode") == 0 and result.get("oracle_passed")
                        and result.get("clean_summary")
