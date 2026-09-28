@@ -774,6 +774,10 @@ def main():
                                "including archive, " + ("memcheck diagnostic only"
                                if MODE == "full_bfs_memcheck_diagnostic"
                                else "one fixture per sanitizer tool"))
+            if MODE == "full_bfs_memcheck_diagnostic":
+                env["NCCL_DEBUG"] = "INFO"
+                env["MGBFS_TRACE_ROUTE"] = "1"
+                env["MGBFS_TRACE_ROUTE_NO_SYNC"] = "1"
             binaries = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
                         if path.is_file() and os.access(path, os.X_OK)]
             if len(binaries) != 1:
