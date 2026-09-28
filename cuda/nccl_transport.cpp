@@ -176,12 +176,17 @@ constexpr unsigned lsa_copy_ctas=16,lsa_copy_threads=256;
 // The symmetric slot has one writer for each field in each exchange round:
 // [recv_count, local_fatal, global_fatal] followed by dense hash/state planes.
 __global__ void lsa_publish_count(ncclDevComm dev,ncclWindow_t win,
-    const uint32_t* counts,uint32_t logical_owner,uint32_t peer,uint32_t cap){
+    const uint32_t* counts,const uint32_t* group_fatal,
+    uint32_t logical_owner,uint32_t peer,uint32_t cap){
+  auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
+  if(*group_fatal){
+    if(threadIdx.x==0){local[0]=0;local[1]=1;local[2]=1;}
+    return;
+  }
   ncclLsaBarrierSession<ncclCoopCta> barrier{
     ncclCoopCta(),dev,ncclTeamTagLsa(),0};
   barrier.sync(ncclCoopCta(),cuda::memory_order_acquire);
   if(threadIdx.x==0){
-    auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
     auto* remote=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,peer));
     uint64_t total=0;
     for(unsigned owner=0;owner<unsigned(dev.nRanks);++owner)total+=counts[owner];
@@ -196,8 +201,10 @@ __global__ void lsa_publish_count(ncclDevComm dev,ncclWindow_t win,
 }
 __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
     const uint4* hashes,const uint4* states,const uint32_t* counts,
+    const uint32_t* group_fatal,
     uint32_t logical_owner,uint32_t peer,uint32_t cap,uint32_t stride,
     size_t states_offset){
+  if(*group_fatal)return;
   ncclLsaBarrierSession<ncclCoopCta> barrier{
     ncclCoopCta(),dev,ncclTeamTagLsa(),blockIdx.x};
   barrier.sync(ncclCoopCta(),cuda::memory_order_acquire);
@@ -276,17 +283,17 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
 }
 extern "C" int mgbfs_nccl_lsa_exchange(void* raw,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
-    uint32_t logical_owner,uint32_t peer,void* raw_stream){
+    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* raw_stream){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->device_ready||!sorted_hashes||!packed_states||!owner_counts||
+  if(!p||!p->device_ready||!sorted_hashes||!packed_states||!owner_counts||!group_fatal||
      logical_owner>=p->world||peer>=p->world||peer==p->rank)return 1;
   auto stream=static_cast<cudaStream_t>(raw_stream);
   lsa_publish_count<<<1,32,0,stream>>>(p->device,p->window,owner_counts,
-      logical_owner,peer,p->candidate_capacity);
+      group_fatal,logical_owner,peer,p->candidate_capacity);
   if(cudaGetLastError()!=cudaSuccess)return 2;
   lsa_copy_exact<<<lsa_copy_ctas,lsa_copy_threads,0,stream>>>(
       p->device,p->window,static_cast<const uint4*>(sorted_hashes),
-      static_cast<const uint4*>(packed_states),owner_counts,
+      static_cast<const uint4*>(packed_states),owner_counts,group_fatal,
       logical_owner,peer,p->candidate_capacity,p->state_stride,p->states_offset);
   return cudaGetLastError()==cudaSuccess?0:3;
 }
@@ -304,7 +311,7 @@ extern "C" int mgbfs_nccl_lsa_view(void* raw,const uint32_t** count,
 extern "C" int mgbfs_nccl_lsa_prepare(void*,uint32_t,uint32_t,char*,size_t){return 7;}
 extern "C" int mgbfs_nccl_lsa_activate(void*,char*,size_t){return 7;}
 extern "C" int mgbfs_nccl_lsa_exchange(void*,const void*,const void*,const uint32_t*,
-    uint32_t,uint32_t,void*){return 7;}
+    const uint32_t*,uint32_t,uint32_t,void*){return 7;}
 extern "C" int mgbfs_nccl_lsa_view(void*,const uint32_t**,const uint32_t**,
     const void**,const void**){return 7;}
 #endif

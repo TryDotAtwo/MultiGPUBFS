@@ -63,11 +63,14 @@ fn lsa_one_exchange_matches_peer_payload() {
                     let mut hashes = std::ptr::null_mut::<c_void>();
                     let mut states = std::ptr::null_mut::<c_void>();
                     let mut counts = std::ptr::null_mut::<c_void>();
+                    let mut group_fatal = std::ptr::null_mut::<c_void>();
                     let mut stream = std::ptr::null_mut::<c_void>();
                     assert_eq!(gpu::cudaMalloc(&mut hashes, 16), 0);
                     assert_eq!(gpu::cudaMalloc(&mut states, 16), 0);
                     assert_eq!(gpu::cudaMalloc(&mut counts, 8), 0);
+                    assert_eq!(gpu::cudaMalloc(&mut group_fatal, 4), 0);
                     assert_eq!(gpu::cudaStreamCreateWithFlags(&mut stream, 1), 0);
+                    assert_eq!(gpu::cudaMemsetAsync(group_fatal, 0, 4, stream), 0);
                     let mut hash = [0x11u8 + rank as u8; 16];
                     if rank == 0 && std::env::var_os("MGBFS_TEST_LSA_BAD_PAYLOAD").is_some() {
                         hash[0] ^= 1;
@@ -86,6 +89,7 @@ fn lsa_one_exchange_matches_peer_payload() {
                             hashes,
                             states,
                             counts.cast(),
+                            group_fatal.cast(),
                             1 - rank,
                             1 - rank,
                             stream,
@@ -137,10 +141,31 @@ fn lsa_one_exchange_matches_peer_payload() {
                     assert_eq!(actual_hash, [0x11u8 + (1 - rank) as u8; 16]);
                     assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 16]);
 
+                    if rank == 1 {
+                        // A poisoned exchange must not enter a device-team
+                        // barrier when its peer has stopped issuing epochs.
+                        assert_eq!(gpu::mgbfs_device_store_u32(
+                            group_fatal.cast(), 1, stream,
+                        ), 0);
+                        assert_eq!(gpu::mgbfs_nccl_lsa_exchange(
+                            comm, hashes, states, counts.cast(), group_fatal.cast(),
+                            0, 0, stream,
+                        ), 0);
+                        assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                        assert_eq!(gpu::cudaMemcpy(
+                            (&mut actual_count as *mut u32).cast(), received_count.cast(), 4, 2,
+                        ), 0);
+                        assert_eq!(gpu::cudaMemcpy(
+                            (&mut actual_fatal as *mut u32).cast(), fatal.cast(), 4, 2,
+                        ), 0);
+                        assert_eq!((actual_count, actual_fatal), (0, 1));
+                    }
+
                     assert_eq!(gpu::cudaStreamDestroy(stream), 0);
                     assert_eq!(gpu::cudaFree(hashes), 0);
                     assert_eq!(gpu::cudaFree(states), 0);
                     assert_eq!(gpu::cudaFree(counts), 0);
+                    assert_eq!(gpu::cudaFree(group_fatal), 0);
                     drain.wait();
                     gpu::mgbfs_nccl_destroy(comm);
                 }));

@@ -437,6 +437,7 @@ pub mod ffi {
             sorted_hashes: *const c_void,
             packed_states: *const c_void,
             owner_counts: *const u32,
+            group_fatal: *const u32,
             logical_owner: u32,
             peer: u32,
             stream: *mut c_void,

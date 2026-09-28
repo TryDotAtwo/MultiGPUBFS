@@ -248,7 +248,7 @@ int mgbfs_nccl_lsa_prepare(void* comm,uint32_t candidate_capacity,uint32_t state
 int mgbfs_nccl_lsa_activate(void* comm,char* error,size_t error_capacity);
 int mgbfs_nccl_lsa_exchange(void* comm,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
-    uint32_t logical_owner,uint32_t peer,void* stream);
+    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* stream);
 int mgbfs_nccl_lsa_view(void* comm,const uint32_t** received_count,
     const uint32_t** fatal,const void** received_hashes,
     const void** received_states);

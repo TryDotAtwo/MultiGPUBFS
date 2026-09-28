@@ -2607,6 +2607,7 @@ impl DistributedNativeBfs {
                         mgbfs_nccl_lsa_exchange(
                             self.comm.0, self.sorted_hashes.ptr,
                             self.packed_states.ptr, self.owner_counts.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
                             logical_owner, exchange_peer, self.exchange_stream.0,
                         )
                     })?;
@@ -2817,7 +2818,25 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
-                if lsa.is_some() && batch_error.is_none() {
+                if device_epoch {
+                    if batch_error.is_some() {
+                        check(unsafe { mgbfs_device_store_u32(
+                            self.fatal.ptr.cast(), 1, s,
+                        ) })?;
+                        check(unsafe { mgbfs_owner_import_transport_fatal(
+                            self.fatal.ptr.cast(), self.ring.ptr.cast(),
+                            self.control.ptr.cast(), s,
+                        ) })?;
+                    }
+                    // All ranks issue the post-owner vote, including an empty
+                    // peer round. Its device result predicates the next LSA
+                    // rendezvous without returning a count to the host.
+                    check(unsafe { mgbfs_owner_global_fatal_gate(
+                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                    ) })?;
+                }
+                if lsa.is_some() && (batch_error.is_none() || device_epoch) {
                     // Every rank waits for its own receive-slot consumer before
                     // entering the next all-rank LSA barrier. A record failure
                     // must participate in the existing group error vote.
@@ -2830,7 +2849,12 @@ impl DistributedNativeBfs {
                     }
                 }
                 if device_epoch {
-                    if let Some(error) = batch_error { return Err(error); }
+                    if let Some(error) = batch_error {
+                        // Error path only: the group vote and receive-slot
+                        // publication must finish before this rank aborts.
+                        self.wait_comm_stream(s)?;
+                        return Err(error);
+                    }
                 } else {
                     vote_group_error(
                         batch_error.map_or(Ok(()), Err),
