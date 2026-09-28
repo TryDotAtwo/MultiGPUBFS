@@ -2,6 +2,102 @@
 use crate::control_handshake::RunIdentity;
 use mgbfs_core::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
+
+pub struct SearchSideband {
+    local: Arc<AtomicU8>,
+    cancelled: Arc<AtomicBool>,
+    worker: std::thread::JoinHandle<(Vec<Option<crate::control_connection::ControlConnection>>, Result<bool>)>,
+}
+impl SearchSideband {
+    pub fn report_success(&self) { let _ = self.local.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire); }
+    pub fn report_failure(&self) { self.local.store(2, Ordering::Release); }
+    pub fn cancel_requested(&self) -> bool { self.cancelled.load(Ordering::Acquire) }
+    pub fn cancel_token(&self) -> Arc<AtomicBool> { Arc::clone(&self.cancelled) }
+    pub fn finish(self, group: &mut BootstrapGroup) -> Result<bool> {
+        let (peers, result) = self.worker.join().map_err(|_| "SEARCH_SIDEBAND_PANIC")?;
+        group.peers = peers;
+        result
+    }
+}
+
+fn search_frame(rank: u32, failed: bool) -> crate::control_wire::ControlFrame {
+    use crate::control_wire::{Action, ControlFrame, Plane, NO_SLOT};
+    ControlFrame { action: Action::Boundary, rank, depth: 5, epoch: 0,
+        slot: NO_SLOT, plane: Plane::None, fatal_code: u32::from(failed),
+        source_rank: 0, destination_rank: 0, payload_bytes: 0 }
+}
+
+fn search_sideband_loop(
+    rank: u32,
+    peers: &mut [Option<crate::control_connection::ControlConnection>],
+    local: &AtomicU8,
+    cancelled: &AtomicBool,
+    timeout: std::time::Duration,
+) -> Result<bool> {
+    let deadline = std::time::Instant::now().checked_add(timeout)
+        .ok_or("SEARCH_SIDEBAND_TIMEOUT")?;
+    if peers.len() == 1 {
+        loop {
+            match local.load(Ordering::Acquire) {
+                1 => return Ok(false),
+                2 => {
+                    cancelled.store(true, Ordering::Release);
+                    return Ok(true);
+                }
+                _ if std::time::Instant::now() >= deadline => {
+                    cancelled.store(true, Ordering::Release);
+                    return Err("SEARCH_SIDEBAND_TIMEOUT".into());
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
+    }
+    let mut sent = false;
+    let mut ready = vec![false; peers.len()];
+    loop {
+        if std::time::Instant::now() >= deadline {
+            cancelled.store(true, Ordering::Release);
+            return Err("SEARCH_SIDEBAND_TIMEOUT".into());
+        }
+        let state = local.load(Ordering::Acquire);
+        if rank == 0 {
+            let mut failed = state == 2;
+            for peer in 1..peers.len() {
+                let conn = peers[peer].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
+                if let Some(frame) = conn.poll_boundary_receive()? {
+                    if frame != search_frame(peer as u32, frame.fatal_code != 0)
+                        || ready[peer] { return Err("SEARCH_SIDEBAND_FRAME".into()); }
+                    ready[peer] = true;
+                    failed |= frame.fatal_code != 0;
+                }
+            }
+            if failed || (state == 1 && ready[1..].iter().all(|&x| x)) {
+                if failed { cancelled.store(true, Ordering::Release); }
+                for peer in peers.iter_mut().skip(1) {
+                    boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
+                        search_frame(0, failed), deadline)?;
+                }
+                return Ok(failed);
+            }
+        } else {
+            let conn = peers[0].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
+            if state != 0 && !sent {
+                boundary_send(conn, search_frame(rank, state == 2), deadline)?;
+                sent = true;
+            }
+            if let Some(frame) = conn.poll_boundary_receive()? {
+                if frame != search_frame(0, frame.fatal_code != 0) {
+                    return Err("SEARCH_SIDEBAND_FRAME".into());
+                }
+                let failed = frame.fatal_code != 0;
+                if failed { cancelled.store(true, Ordering::Release); }
+                return Ok(failed);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
 
 pub struct BootstrapGroup {
     pub nccl_id: [u8; 128],
@@ -19,6 +115,25 @@ pub enum BoundaryPhase {
     GroupPublished = 4,
 }
 impl BootstrapGroup {
+    pub fn start_search_sideband(&mut self, timeout: std::time::Duration) -> Result<SearchSideband> {
+        if !self.configuration_agreed || self.next_boundary < 2
+            || self.peers.len() <= self.rank as usize || timeout.is_zero() {
+            return Err("SEARCH_SIDEBAND_ORDER".into());
+        }
+        let rank = self.rank;
+        let mut peers = std::mem::take(&mut self.peers);
+        let local = Arc::new(AtomicU8::new(0));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_local = Arc::clone(&local);
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = std::thread::spawn(move || {
+            let result = search_sideband_loop(rank, &mut peers,
+                &worker_local, &worker_cancelled, timeout);
+            if result.is_err() { worker_cancelled.store(true, Ordering::Release); }
+            (peers, result)
+        });
+        Ok(SearchSideband { local, cancelled, worker })
+    }
     /// Compare all 256 digest bits before any rank constructs CUDA/NCCL state.
     /// An invalid local configuration still participates with a zero digest.
     pub fn agree_configuration(

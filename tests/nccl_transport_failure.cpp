@@ -5,11 +5,16 @@
 int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls = 0;
 int abort_calls = 0, destroy_calls = 0;
 int async_state = 0, async_query_status = 0;
+int async_pending_queries = 0;
+int init_blocking = -1, init_calls = 0;
 int last_send_peer = -1, last_recv_peer = -1;
+int cancel_after = -1;
+int cancellation_probe(void*) { return cancel_after == 0 || (cancel_after > 0 && --cancel_after == 0); }
 int main() {
   void* comm = nullptr;
   ncclUniqueId id{};
   assert(mgbfs_nccl_create(0, 2, 0, &id, &comm, nullptr, 0) == 0);
+  assert(init_calls == 1 && init_blocking == 0);
   char byte = 0;
   assert(mgbfs_nccl_poll(comm) == 0);
   async_state = ncclInProgress;
@@ -30,6 +35,17 @@ int main() {
     assert(send_calls == (stage == 1 ? 0 : 1));
     assert(recv_calls == (stage == 1 || stage == 2 ? 0 : 1));
   }
+  async_state = ncclInProgress;
+  async_pending_queries = 3;
+  fail_stage = 0;
+  assert(mgbfs_nccl_send_recv(comm, &byte, 1, 1, &byte, 1, nullptr) == 0);
+  assert(async_pending_queries == 0);
+  assert(mgbfs_nccl_bind_cancel(comm, cancellation_probe, &cancel_after) == 0);
+  async_state = ncclInProgress;
+  async_pending_queries = 0;
+  cancel_after = 2;
+  assert(mgbfs_nccl_send_recv(comm, &byte, 1, 1, &byte, 1, nullptr) == 7);
+  assert(abort_calls == 1);
   assert(mgbfs_nccl_abort(comm) == 0);
   assert(abort_calls == 1);
   assert(mgbfs_nccl_abort(comm) == 0);
@@ -47,7 +63,10 @@ int main() {
   assert(mgbfs_nccl_abort(nullptr) != 0);
   fail_stage = 0;
   void* source = nullptr;
+  async_state = ncclInProgress;
+  async_pending_queries = 3;
   assert(mgbfs_nccl_create(2, 3, 2, &id, &source, nullptr, 0) == 0);
+  assert(async_pending_queries == 0 && init_calls == 2 && init_blocking == 0);
   const uint64_t sizes[] = {2, 0, 3};
   char payload[5] = {};
   send_calls = recv_calls = end_calls = 0;

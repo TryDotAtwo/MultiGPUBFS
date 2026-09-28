@@ -16,6 +16,12 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
+extern "C" fn nccl_cancel_probe(context: *mut c_void) -> i32 {
+    if context.is_null() { return 1; }
+    let flag = unsafe { &*context.cast::<std::sync::atomic::AtomicBool>() };
+    i32::from(flag.load(std::sync::atomic::Ordering::Acquire))
+}
+
 #[cfg(debug_assertions)]
 thread_local! {
     static TEST_OWNER_HOST_FAULT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -489,6 +495,7 @@ pub struct DistributedNativeBfs {
     current_count: u32,
     prev_count: u32,
     failed: bool,
+    cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     stream: Stream,
     generation_stream: Stream,
     generation_done: NativeEvent,
@@ -551,6 +558,18 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    pub fn set_cancel_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
+        check(unsafe { mgbfs_nccl_bind_cancel(self.comm.0, Some(nccl_cancel_probe),
+            std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
+        self.cancel_requested = Some(token);
+        Ok(())
+    }
+    fn ensure_not_cancelled(&self) -> Result<()> {
+        if self.cancel_requested.as_ref().is_some_and(|flag|
+            flag.load(std::sync::atomic::Ordering::Acquire)) {
+            Err("REMOTE_SEARCH_CANCELLED".into())
+        } else { Ok(()) }
+    }
     /// Explicit library owner policy. Pool reservation is fixed before depth 0;
     /// no fallback to the existing bounded owner is permitted.
     #[cfg(feature = "library-owner")]
@@ -1210,6 +1229,7 @@ impl DistributedNativeBfs {
             current_count,
             prev_count: 0,
             failed: false,
+            cancel_requested: None,
             // Keep the setup-vote stream alive outside the fallible local
             // result. An error here must not destroy it before peers vote.
             stream: Stream(std::ptr::null_mut()),
@@ -2209,6 +2229,7 @@ impl DistributedNativeBfs {
         &mut self,
         mut archive: Option<&mut crate::pinned_archive::PinnedArchive>,
     ) -> Result<bool> {
+        self.ensure_not_cancelled()?;
         // Diagnostic only: bracket the CUB route, pack, exchange and owner
         // phases without adding synchronizations to an ordinary run.
         let trace_route = std::env::var_os("MGBFS_TRACE_ROUTE").is_some();
@@ -2283,6 +2304,7 @@ impl DistributedNativeBfs {
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
         for _ in 0..scheduled_rounds {
+            self.ensure_not_cancelled()?;
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
@@ -2470,6 +2492,7 @@ impl DistributedNativeBfs {
             // The same bounded receive slot serves every XOR peer round.
             // All ranks enter even when their parent batch or payload is empty.
             for round in 1..world.max(2) {
+                self.ensure_not_cancelled()?;
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=exchange_begin", self.cfg.rank, self.depth);
                 }

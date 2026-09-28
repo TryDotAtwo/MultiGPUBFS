@@ -188,6 +188,83 @@ fn boundary_agreement_preserves_phase_order_and_success() {
 }
 
 #[test]
+fn search_sideband_reports_asymmetric_failure_and_preserves_healthy_boundary() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-search-sideband-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
+            Duration::from_secs(3), || panic!("peer cannot create ID")).unwrap();
+        assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
+        assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
+            Duration::from_secs(3)).unwrap());
+        let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+        sideband.report_success();
+        assert!(!sideband.finish(&mut group).unwrap());
+        assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
+            Duration::from_secs(3)).unwrap());
+        let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+        sideband.report_failure();
+        assert!(sideband.finish(&mut group).unwrap());
+    });
+    let mut group = rendezvous(&path, 0, 2, record().identity,
+        Duration::from_secs(3), || Ok([23; 128])).unwrap();
+    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
+    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
+        Duration::from_secs(3)).unwrap());
+    let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+    sideband.report_success();
+    assert!(!sideband.finish(&mut group).unwrap());
+    assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
+        Duration::from_secs(3)).unwrap());
+    let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+    let cancellation = sideband.cancel_token();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while !cancellation.load(std::sync::atomic::Ordering::Acquire) {
+        assert!(std::time::Instant::now() < deadline, "remote cancellation was not delivered");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(sideband.finish(&mut group).unwrap());
+    peer.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn single_rank_search_sideband_waits_for_local_outcome() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-search-one-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let mut group = rendezvous(&path, 0, 1, record().identity,
+        Duration::from_secs(3), || Ok([23; 128])).unwrap();
+    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
+    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
+        Duration::from_secs(3)).unwrap());
+    let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+    sideband.report_failure();
+    assert!(sideband.finish(&mut group).unwrap());
+    assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
+        Duration::from_secs(3)).unwrap());
+    let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+    sideband.report_success();
+    assert!(!sideband.finish(&mut group).unwrap());
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn group_publication_failure_is_reported_to_both_ranks() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use std::time::Duration;

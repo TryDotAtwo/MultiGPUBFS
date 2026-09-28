@@ -5,6 +5,8 @@
 #include <cstring>
 #include <memory>
 #include <climits>
+#include <chrono>
+#include <thread>
 #ifdef MGBFS_NCCL_LSA
 #include <nccl_device.h>
 #if NCCL_VERSION_CODE < 22900
@@ -14,6 +16,8 @@
 struct Comm {
   ncclComm_t value{};
   uint32_t rank{}, world{};
+  int (*cancel_requested)(void*){};
+  void* cancel_context{};
 #ifdef MGBFS_NCCL_LSA
   ncclDevComm device{};
   ncclWindow_t window{};
@@ -33,25 +37,66 @@ struct Comm {
     if(value)ncclCommDestroy(value);
   }
 };
+namespace {
+// Only the rank's NCCL-calling thread enters this function or aborts `value`.
+// The sideband thread may change the atomic observed by cancel_requested,
+// but never calls NCCL or touches Comm itself.
+int await_nccl(Comm* p, ncclResult_t submitted) {
+  if(submitted!=ncclSuccess && submitted!=ncclInProgress) return 6;
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
+  for(;;) {
+    if(p->cancel_requested && p->cancel_requested(p->cancel_context)) {
+      const auto value=p->value;
+      p->value=nullptr;
+      if(value) ncclCommAbort(value);
+      return 7;
+    }
+    ncclResult_t state=ncclSuccess;
+    if(!p->value || ncclCommGetAsyncError(p->value,&state)!=ncclSuccess) return 8;
+    if(state==ncclSuccess) return 0;
+    if(state!=ncclInProgress) return 9;
+    if(std::chrono::steady_clock::now()>=deadline) {
+      const auto value=p->value;
+      p->value=nullptr;
+      ncclCommAbort(value);
+      return 10;
+    }
+    std::this_thread::yield();
+  }
+}
+}
 extern "C" int mgbfs_nccl_unique_id(void* out){if(!out)return 1;static_assert(sizeof(ncclUniqueId)==128);return ncclGetUniqueId(static_cast<ncclUniqueId*>(out))==ncclSuccess?0:2;}
 extern "C" int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* raw_id,void** out,char* error,size_t error_capacity){
-  if(!out||!raw_id||!world||rank>=world)return 1;*out=nullptr;auto p=std::make_unique<Comm>();p->rank=rank;p->world=world;cudaError_t ce=cudaSetDevice(int(device));if(ce!=cudaSuccess){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",cudaGetErrorString(ce));return 2;}ncclUniqueId id;std::memcpy(&id,raw_id,sizeof(id));ncclResult_t e=ncclCommInitRank(&p->value,int(world),id,int(rank));if(e!=ncclSuccess){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",ncclGetErrorString(e));return 3;}*out=p.release();return 0;
+  if(!out||!raw_id||!world||rank>=world)return 1;*out=nullptr;auto p=std::make_unique<Comm>();p->rank=rank;p->world=world;cudaError_t ce=cudaSetDevice(int(device));if(ce!=cudaSuccess){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",cudaGetErrorString(ce));return 2;}ncclUniqueId id;std::memcpy(&id,raw_id,sizeof(id));ncclConfig_t config=NCCL_CONFIG_INITIALIZER;config.blocking=0;ncclResult_t e=ncclCommInitRankConfig(&p->value,int(world),id,int(rank),&config);int ready=await_nccl(p.get(),e);if(ready){if(error&&error_capacity)std::snprintf(error,error_capacity,"init: %s (phase %d)",ncclGetErrorString(e),ready);if(p->value){ncclCommAbort(p->value);p->value=nullptr;}return 3;}*out=p.release();return 0;
+}
+extern "C" int mgbfs_nccl_bind_cancel(void* raw,int (*probe)(void*),void* context){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||!probe||!context)return 1;
+  p->cancel_requested=probe;
+  p->cancel_context=context;
+  return 0;
 }
 extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* raw_stream){
   auto* p = static_cast<Comm*>(raw);
   if(!p || !p->value || (!send && send_bytes) || (!recv && recv_bytes)) return 1;
+  if(p->cancel_requested && p->cancel_requested(p->cancel_context)) return 7;
   auto s = static_cast<cudaStream_t>(raw_stream);
   if(ncclGroupStart() != ncclSuccess) return 2;
   int status = 0;
-  if(ncclSend(send,size_t(send_bytes),ncclUint8,int(peer),p->value,s) != ncclSuccess) status = 3;
-  else if(ncclRecv(recv,size_t(recv_bytes),ncclUint8,int(peer),p->value,s) != ncclSuccess) status = 4;
+  const auto sent=ncclSend(send,size_t(send_bytes),ncclUint8,int(peer),p->value,s);
+  if(sent!=ncclSuccess && sent!=ncclInProgress) status=3;
+  else {
+    const auto received=ncclRecv(recv,size_t(recv_bytes),ncclUint8,int(peer),p->value,s);
+    if(received!=ncclSuccess && received!=ncclInProgress) status=4;
+  }
   // Close every successfully opened group, including the immediate-error path.
   // Preserve the first operation error if group cleanup also reports failure.
   const auto end = ncclGroupEnd();
-  return status ? status : (end == ncclSuccess ? 0 : 5);
+  return status ? status : ((end==ncclSuccess||end==ncclInProgress)
+      ? await_nccl(p,end) : 5);
 }
-extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;return ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream))==ncclSuccess?0:2;}
-extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;return ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream))==ncclSuccess?0:2;}
+extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" void mgbfs_nccl_destroy(void* raw){delete static_cast<Comm*>(raw);}
 extern "C" int mgbfs_nccl_abort(void* raw){
   auto* p = static_cast<Comm*>(raw);
@@ -71,6 +116,7 @@ extern "C" int mgbfs_nccl_poll(void* raw){
 extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,uint64_t recv_capacity,void* stream) {
   auto* p = static_cast<Comm*>(raw);
   if(!p || !p->value || source >= p->world) return 1;
+  if(p->cancel_requested && p->cancel_requested(p->cancel_context)) return 7;
   if(p->rank == source) {
     if(!sizes) return 1;
     uint64_t total = 0;
@@ -87,15 +133,21 @@ extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uin
     uint64_t offset = 0;
     for(uint32_t rank=0; rank<p->world; ++rank) {
       const void* ptr = offset ? static_cast<const char*>(send)+offset : send;
-      if(rank != source && ncclSend(ptr,size_t(sizes[rank]),ncclUint8,int(rank),p->value,s) != ncclSuccess) {
+      const auto result=rank==source?ncclSuccess:
+          ncclSend(ptr,size_t(sizes[rank]),ncclUint8,int(rank),p->value,s);
+      if(result!=ncclSuccess && result!=ncclInProgress) {
         status = 3;
         break;
       }
       offset += sizes[rank];
     }
-  } else if(ncclRecv(recv,size_t(recv_bytes),ncclUint8,int(source),p->value,s) != ncclSuccess) status = 4;
+  } else {
+    const auto result=ncclRecv(recv,size_t(recv_bytes),ncclUint8,int(source),p->value,s);
+    if(result!=ncclSuccess && result!=ncclInProgress)status=4;
+  }
   const auto end = ncclGroupEnd();
-  return status ? status : (end == ncclSuccess ? 0 : 5);
+  return status ? status : ((end==ncclSuccess||end==ncclInProgress)
+      ? await_nccl(p,end) : 5);
 }
 
 #ifdef MGBFS_NCCL_LSA

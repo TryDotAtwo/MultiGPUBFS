@@ -406,6 +406,11 @@ pub mod ffi {
             error: *mut c_char,
             error_capacity: usize,
         ) -> i32;
+        pub fn mgbfs_nccl_bind_cancel(
+            comm: *mut c_void,
+            probe: Option<extern "C" fn(*mut c_void) -> i32>,
+            context: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_send_recv(
             comm: *mut c_void,
             send: *const c_void,

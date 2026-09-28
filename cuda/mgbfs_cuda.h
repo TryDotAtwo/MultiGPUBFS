@@ -223,6 +223,9 @@ int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* 
   uint8_t* permutations,void* ring,void* stream);
 int mgbfs_nccl_unique_id(void* id128);
 int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* id128,void** out,char* error,size_t error_capacity);
+/* Bind a probe owned by the rank's dispatcher; only that dispatcher calls
+ * NCCL/abort. The probe context must outlive the communicator. */
+int mgbfs_nccl_bind_cancel(void* comm,int (*probe)(void*),void* context);
 int mgbfs_nccl_send_recv(void* comm,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* stream);
 int mgbfs_nccl_all_gather_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
 int mgbfs_nccl_all_reduce_max_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);

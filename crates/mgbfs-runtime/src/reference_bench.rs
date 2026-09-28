@@ -355,6 +355,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
+    let sideband = control_group.start_search_sideband(Duration::from_secs(7200))?;
+    let search_result = (|| -> Result<_> {
     let setup = Instant::now();
     let mut bfs = if let Some(word) = &multiset {
         DistributedNativeBfs::new_lrx_multiset_reference(word, seed,
@@ -407,6 +409,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             }
         }
     }};
+    bfs.set_cancel_token(sideband.cancel_token())?;
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
@@ -415,6 +418,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let mut layers = Vec::new();
     let mut times = Vec::new();
     loop {
+        if sideband.cancel_requested() {
+            return Err("REMOTE_SEARCH_CANCELLED".into());
+        }
         let tick = Instant::now();
         let depth = bfs.depth();
         let count = bfs.frontier_len();
@@ -422,11 +428,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if trace {
             eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
         }
-        let alive = if let Some(archive) = archive.as_mut() {
-            bfs.advance_archived(archive)?
+        let advance = if let Some(archive) = archive.as_mut() {
+            bfs.advance_archived(archive)
         } else {
-            bfs.advance()?
+            bfs.advance()
         };
+        // Publish a local search failure before `bfs` is dropped and its
+        // communicator is aborted. Peers need the sideband cancellation even
+        // when their own GPU path has not yet observed the NCCL error.
+        if advance.is_err() { sideband.report_failure(); }
+        let alive = advance?;
         if trace && archive_enabled {
             eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
         }
@@ -441,6 +452,15 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
+    Ok((bfs, allocated, setup_seconds, search, layers, times))
+    })();
+    if search_result.is_err() { sideband.report_failure(); }
+    else { sideband.report_success(); }
+    let remote_failed = sideband.finish(&mut control_group)?;
+    if remote_failed {
+        return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
+    }
+    let (mut bfs, allocated, setup_seconds, search, layers, times) = search_result?;
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveCommitted,
