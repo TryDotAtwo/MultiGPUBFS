@@ -3,7 +3,7 @@
 #include <cassert>
 #include "../cuda/nccl_transport.cpp"
 int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls = 0;
-int abort_calls = 0, destroy_calls = 0;
+int abort_calls = 0, destroy_calls = 0, finalize_calls = 0;
 int async_state = 0, async_query_status = 0;
 int async_pending_queries = 0;
 int init_blocking = -1, init_calls = 0;
@@ -76,7 +76,11 @@ int main() {
   send_calls = end_calls = 0;
   assert(mgbfs_nccl_scatter(source, 2, payload, 4, sizes, nullptr, 0, 0, nullptr) != 0);
   assert(send_calls == 0 && end_calls == 0);
+  async_state = ncclInProgress;
+  async_pending_queries = 3;
   mgbfs_nccl_destroy(source);
+  assert(async_pending_queries == 0);
+  assert(finalize_calls == 1 && destroy_calls == 1);
   void* receiver = nullptr;
   assert(mgbfs_nccl_create(1, 3, 1, &id, &receiver, nullptr, 0) == 0);
   recv_calls = 0;

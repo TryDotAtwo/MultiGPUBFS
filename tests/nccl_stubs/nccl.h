@@ -9,7 +9,7 @@ struct ncclConfig_t { int blocking = 1; };
 #define NCCL_CONFIG_INITIALIZER ncclConfig_t{}
 inline const char* ncclGetErrorString(int) { return "injected NCCL error"; }
 extern int fail_stage, group_depth, send_calls, recv_calls, end_calls;
-extern int abort_calls, destroy_calls;
+extern int abort_calls, destroy_calls, finalize_calls;
 extern int async_state, async_query_status;
 extern int async_pending_queries;
 extern int init_blocking, init_calls;
@@ -29,6 +29,7 @@ inline int ncclCommInitRankConfig(ncclComm_t* p, int, ncclUniqueId, int,
   return async_state == ncclInProgress ? ncclInProgress : ncclSuccess;
 }
 inline int ncclCommDestroy(ncclComm_t) { ++destroy_calls; return 0; }
+inline int ncclCommFinalize(ncclComm_t) { ++finalize_calls; return 0; }
 inline int ncclCommAbort(ncclComm_t) { ++abort_calls; return 0; }
 inline int ncclGroupStart() { if (fail_stage == 1) return 1; ++group_depth; return 0; }
 inline int ncclSend(const void*, std::size_t, int, int peer, ncclComm_t, void*) { ++send_calls; last_send_peer = peer; return fail_stage == 2; }

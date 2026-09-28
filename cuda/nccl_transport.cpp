@@ -7,6 +7,8 @@
 #include <climits>
 #include <chrono>
 #include <thread>
+struct Comm;
+namespace { int await_nccl(Comm*,ncclResult_t); }
 #ifdef MGBFS_NCCL_LSA
 #include <nccl_device.h>
 #if NCCL_VERSION_CODE < 22900
@@ -34,7 +36,11 @@ struct Comm {
     if(value && window_ready)ncclCommWindowDeregister(value,window);
     if(symmetric)ncclMemFree(symmetric);
 #endif
-    if(value)ncclCommDestroy(value);
+    if(value){
+      const auto result=ncclCommFinalize(value);
+      if(await_nccl(this,result)==0 && value)ncclCommDestroy(value);
+      else if(value)ncclCommAbort(value);
+    }
   }
 };
 namespace {
@@ -241,12 +247,16 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
       size_t(p->candidate_capacity)*p->state_stride;
   result=ncclCommWindowRegister(p->value,p->symmetric,
       slot_bytes,&p->window,NCCL_WIN_COLL_SYMMETRIC);
-  if(result!=ncclSuccess){lsa_error(error,error_capacity,"window_register",result);return 7;}
+  if(const int ready=await_nccl(p,result);ready!=0){
+    lsa_error(error,error_capacity,"window_register",result);return 7;
+  }
   p->window_ready=true;
   ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
   reqs.lsaBarrierCount=lsa_copy_ctas;
   result=ncclDevCommCreate(p->value,&reqs,&p->device);
-  if(result!=ncclSuccess){lsa_error(error,error_capacity,"device_comm_create",result);return 8;}
+  if(const int ready=await_nccl(p,result);ready!=0){
+    lsa_error(error,error_capacity,"device_comm_create",result);return 8;
+  }
   p->device_ready=true;
   if(p->device.lsaSize!=int(p->world))return 9;
   return 0;
