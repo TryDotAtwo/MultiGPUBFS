@@ -1186,3 +1186,12 @@ The test is being changed to exercise that required sideband explicitly.
 The v16 result does **not** prove archive-slot failure propagation, and the
 retirement FIFO test was not reached. Logs are under
 `test_results/kaggle_nonblocking_boundary_v16/lsa-bfs-gate/`.
+
+Private Kaggle v17 at `62316e3` completed on two physical P2P-capable T4s.
+The CUCO_RANK/LSA owner-capacity, real pinned-archive-slot exhaustion,
+and device retirement-FIFO fatal fixtures all passed. The archive fixture
+now attaches the same cancellation sideband used by the production launcher;
+it finished in 46.21 s rather than the earlier 120 s epoch timeout. This
+proves bounded handling for those fixture cases, not all possible CUDA/NCCL
+host errors or full application recovery. Raw logs are in
+`test_results/kaggle_nonblocking_boundary_v17/lsa-bfs-gate/`.
