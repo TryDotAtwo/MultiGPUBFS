@@ -856,7 +856,7 @@ def main():
                                                stdout=stream, stderr=subprocess.STDOUT,
                                                start_new_session=True)
                     try:
-                        code = process.wait(timeout=300)
+                        code = process.wait(timeout=(120 if MODE == "full_bfs_memcheck_diagnostic" else 300))
                     except subprocess.TimeoutExpired:
                         try:
                             os.killpg(process.pid, signal.SIGTERM)
