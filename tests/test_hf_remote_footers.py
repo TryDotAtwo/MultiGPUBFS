@@ -41,7 +41,7 @@ class RemoteFooterAudit(unittest.TestCase):
                 pq.write_table(pa.table({"state": [b"x"] * rows,
                                          "rank": pa.array([rank] * rows, type=pa.uint32())}),
                                target)
-                files.append({"path": path})
+                files.append({"path": path, "rows": rows})
 
             manifest = {"world_size": 2, "total_unique_states": 6,
                         "layer_counts": [1, 3, 2], "files": files}
@@ -50,6 +50,26 @@ class RemoteFooterAudit(unittest.TestCase):
             self.assertEqual(result["file_count"], 4)
             self.assertEqual(result["rows_by_rank"], {"0": 3, "1": 3})
             self.assertEqual(result["rows_total"], 6)
+            self.assertTrue(result["per_file_rows_checked"])
+            legacy = dict(manifest, files=[{"path": item["path"]} for item in files])
+            self.assertFalse(audit_manifest(legacy, opener, workers=1,
+                                            max_rows=2)["per_file_rows_checked"])
+
+            # The aggregate stays six when two parts swap their row counts.
+            pq.write_table(pa.table({"state": [b"x"],
+                                     "rank": pa.array([0], type=pa.uint32())}),
+                           root / files[0]["path"])
+            pq.write_table(pa.table({"state": [b"x", b"x"],
+                                     "rank": pa.array([0, 0], type=pa.uint32())}),
+                           root / files[1]["path"])
+            with self.assertRaisesRegex(ValueError, "FOOTER_FILE_ROWS"):
+                audit_manifest(manifest, opener, workers=1, max_rows=2)
+            pq.write_table(pa.table({"state": [b"x", b"x"],
+                                     "rank": pa.array([0, 0], type=pa.uint32())}),
+                           root / files[0]["path"])
+            pq.write_table(pa.table({"state": [b"x"],
+                                     "rank": pa.array([0], type=pa.uint32())}),
+                           root / files[1]["path"])
 
             missing = dict(manifest, files=files[:3])
             with self.assertRaisesRegex(ValueError, "FOOTER_ROW_TOTAL"):

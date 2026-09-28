@@ -1,5 +1,7 @@
 import hashlib
+import json
 import sys
+import tempfile
 import unittest
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -12,6 +14,44 @@ from scripts import promote_hf_stream as module
 
 
 class ReconcilePublication(unittest.TestCase):
+    def test_legacy_manifest_without_file_rows_reconciles_without_write(self):
+        combined = {
+            "schema": "MGBFS_HF_STREAM_GLOBAL_V1", "status": "COMPLETE",
+            "run_id": "run", "group_id": "s3", "config_digest": "00" * 32,
+            "rank_archive_chains": ["11" * 32], "layer_counts": [1],
+            "files": [{"path": "states/a.parquet", "bytes": 123,
+                       "rows": 1, "sha256": "ab" * 32,
+                       "source_path": "pending/branch/states/a.parquet",
+                       "source_revision": "branch"}],
+        }
+        legacy = dict(combined, files=[{key: value for key, value in combined["files"][0].items()
+                                        if key != "rows"}])
+        payloads = module._metadata_payloads(legacy)
+        with tempfile.TemporaryDirectory() as directory:
+            layer = Path(directory) / "layer.parquet"
+            layer.write_bytes(payloads["layers/run.parquet"])
+
+            class Api:
+                def repo_info(self, **kwargs):
+                    return SimpleNamespace(sha="legacy")
+
+                def hf_hub_download(self, **kwargs):
+                    return str(layer)
+
+                def get_paths_info(self, **kwargs):
+                    records = {}
+                    for path, data in payloads.items():
+                        blob = f"blob {len(data)}\0".encode() + data
+                        records[path] = SimpleNamespace(path=path, size=len(data),
+                            blob_id=hashlib.sha1(blob).hexdigest(), lfs=None)
+                    records["states/a.parquet"] = SimpleNamespace(
+                        path="states/a.parquet", size=123, blob_id="pointer",
+                        lfs=SimpleNamespace(sha256="ab" * 32))
+                    return [records[path] for path in kwargs["paths"] if path in records]
+
+            receipt = module.reconcile_publication(Api(), "owner/repo", combined)
+            self.assertEqual(receipt.oid, "legacy")
+
     def test_layer_metadata_accepts_equivalent_parquet_encoding_not_wrong_counts(self):
         combined = {"run_id": "run", "group_id": "s3", "layer_counts": [1, 2],
                     "config_digest": "00", "rank_archive_chains": [], "files": []}

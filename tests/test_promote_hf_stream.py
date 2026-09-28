@@ -95,6 +95,7 @@ class PromoteStream(unittest.TestCase):
             "states/s3-run-rank-00000-part-00000000.parquet",
             "states/s3-run-rank-00001-part-00000000.parquet",
         ])
+        self.assertEqual([item["rows"] for item in combined["files"]], [1, 2])
 
     def test_rejects_missing_rank_config_mismatch_and_duplicate_destination(self):
         with self.assertRaisesRegex(ValueError, "RANK_SET"):

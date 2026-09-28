@@ -95,6 +95,7 @@ def combine_rank_commits(commits, expected_world):
                 "source_revision": branch,
                 "path": destination,
                 "bytes": source["bytes"],
+                "rows": source["rows"],
                 "sha256": checksum,
             })
     files.sort(key=lambda item: item["path"])
@@ -181,23 +182,39 @@ def reconcile_publication(api, repo_id, combined, revision=None):
         local = api.hf_hub_download(repo_id=repo_id, repo_type="dataset",
                                     revision=revision, filename=layer_path)
         payloads = _metadata_payloads(combined, layer_bytes=Path(local).read_bytes())
-    expected = {}
-    for path, payload in payloads.items():
-        blob = f"blob {len(payload)}\0".encode() + payload
-        expected[path] = (len(payload), hashlib.sha1(blob).hexdigest(),
-                          hashlib.sha256(payload).hexdigest())
+    payload_variants = [payloads]
+    if any("rows" in item for item in combined["files"]):
+        legacy = dict(combined, files=[
+            {key: value for key, value in item.items() if key != "rows"}
+            for item in combined["files"]
+        ])
+        payload_variants.append(_metadata_payloads(
+            legacy, layer_bytes=payloads[layer_path] if layer_path in payloads else None))
+    expected_variants = []
+    for variant in payload_variants:
+        expected = {}
+        for path, payload in variant.items():
+            blob = f"blob {len(payload)}\0".encode() + payload
+            expected[path] = (len(payload), hashlib.sha1(blob).hexdigest(),
+                              hashlib.sha256(payload).hexdigest())
+        expected_variants.append(expected)
     for item in combined["files"]:
-        expected[item["path"]] = (item["bytes"], None, item["sha256"])
-    paths = list(expected)
+        for expected in expected_variants:
+            expected[item["path"]] = (item["bytes"], None, item["sha256"])
+    paths = list(expected_variants[0])
+    actual = {}
     for offset in range(0, len(paths), 500):
         batch = paths[offset:offset + 500]
-        actual = {item.path: item for item in api.get_paths_info(
-            repo_id=repo_id, repo_type="dataset", revision=revision, paths=batch)}
-        for path in batch:
+        actual.update({item.path: item for item in api.get_paths_info(
+            repo_id=repo_id, repo_type="dataset", revision=revision, paths=batch)})
+    for expected in expected_variants:
+        valid_variant = True
+        for path in paths:
             item = actual.get(path)
             size, blob_sha, content_sha = expected[path]
             if item is None or item.size != size:
-                raise ValueError(f"PUBLICATION_CONFLICT {path}")
+                valid_variant = False
+                break
             lfs = item.lfs
             if lfs is not None:
                 digest = lfs.get("sha256") if isinstance(lfs, dict) else lfs.sha256
@@ -205,9 +222,12 @@ def reconcile_publication(api, repo_id, combined, revision=None):
             else:
                 valid = blob_sha is not None and item.blob_id == blob_sha
             if not valid:
-                raise ValueError(f"PUBLICATION_CONFLICT {path}")
-    return SimpleNamespace(oid=revision, commit_url=(
-        f"https://huggingface.co/datasets/{repo_id}/commit/{revision}"))
+                valid_variant = False
+                break
+        if valid_variant:
+            return SimpleNamespace(oid=revision, commit_url=(
+                f"https://huggingface.co/datasets/{repo_id}/commit/{revision}"))
+    raise ValueError("PUBLICATION_CONFLICT metadata_or_state")
 
 
 def promote_verified(api, repo_id, commits, expected_world, reference=None):

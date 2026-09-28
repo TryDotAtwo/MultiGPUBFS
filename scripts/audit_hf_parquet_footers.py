@@ -32,6 +32,10 @@ def audit_manifest(manifest, opener, *, workers=4, max_rows=1_000_000, progress=
         raise ValueError("FOOTER_AUDIT_CONFIG")
     if manifest.get("status", "COMPLETE") != "COMPLETE":
         raise ValueError("FOOTER_RUN_INCOMPLETE")
+    row_fields = ["rows" in item for item in files]
+    if any(row_fields) and not all(row_fields):
+        raise ValueError("FOOTER_FILE_ROWS_PARTIAL")
+    per_file_rows_checked = all(row_fields)
 
     def read_one(item):
         path = item["path"]
@@ -45,14 +49,20 @@ def audit_manifest(manifest, opener, *, workers=4, max_rows=1_000_000, progress=
             try:
                 with opener(path) as source:
                     footer = pq.read_metadata(source)
-                fields = tuple((field.name, str(field.type), field.nullable)
-                               for field in footer.schema.to_arrow_schema())
-                return rank, part, footer.num_rows, fields
             except Exception as error:
                 if attempt == 4:
                     raise
                 status = getattr(getattr(error, "response", None), "status_code", None)
                 time.sleep(20 * (attempt + 1) if status == 429 else 0.5 * (attempt + 1))
+            else:
+                break
+        if per_file_rows_checked and (
+            type(item["rows"]) is not int or footer.num_rows != item["rows"]
+        ):
+            raise ValueError("FOOTER_FILE_ROWS")
+        fields = tuple((field.name, str(field.type), field.nullable)
+                       for field in footer.schema.to_arrow_schema())
+        return rank, part, footer.num_rows, fields
 
     parts = defaultdict(set)
     rows_by_rank = defaultdict(int)
@@ -86,6 +96,7 @@ def audit_manifest(manifest, opener, *, workers=4, max_rows=1_000_000, progress=
         "rows_by_rank": {str(rank): rows_by_rank[rank] for rank in range(world)},
         "parts_by_rank": {str(rank): len(parts[rank]) for rank in range(world)},
         "schema_fields": [list(field) for field in expected_fields],
+        "per_file_rows_checked": per_file_rows_checked,
     }
 
 
