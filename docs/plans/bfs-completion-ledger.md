@@ -1138,3 +1138,15 @@ thread and two-process fault fixtures sequentially within one notebook;
 its push is currently rejected by Kaggle's account GPU-session quota, so
 that fixture has **not** run. Raw v12 logs are in
 `test_results/kaggle_nonblocking_boundary_v12/lsa-bfs-gate/`.
+
+Private Kaggle v13 at `cefb42c` confirmed the depth-start reset on two
+P2P-capable T4s: the LSA peer-payload fixture and the one-rank host-owner
+failure test both passed without a hang. The new independent-process fault
+fixture then reported a false `COMPLETE`, but its input used S4 with
+`batch=7`; the debug injection intentionally requires more than one
+scheduled batch and was never reached. This was a test-configuration miss,
+not evidence that the runtime ignored an injected failure. Commit `ae99680`
+sets `batch=1` for that fixture. The corrected two-process test has not yet
+run, and the v13 result does not establish full-state correctness for this
+source. Raw evidence is under
+`test_results/kaggle_nonblocking_boundary_v13/lsa-bfs-gate/`.
