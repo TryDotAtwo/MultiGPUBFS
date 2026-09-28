@@ -575,7 +575,6 @@ def main():
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
         if MODE == "host_fault_only":
-            env["MGBFS_TRACE_ROUTE"] = "1"
             name = "cuco_rank_lsa_one_rank_host_owner_error_stops_group"
             checked = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                            "--features", "cuda,library-owner", "--test", "library_multi_gpu",
