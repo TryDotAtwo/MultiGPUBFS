@@ -439,6 +439,65 @@ def main():
             report["boundary_runs"]["independent_full_state_oracle"] = "PASS"
             report["status"] = "COMPLETE"
             return
+        if MODE == "paired_cayleypy":
+            baseline_commit = "f0f2b8e5ee61173039ab9742f3a7756c9b6365e6"
+            baseline = work / "cayleypy-baseline"
+            gate.checkout("https://github.com/TryDotAtwo/cayleypy.git",
+                          baseline_commit, baseline, env, logs, "cayleypy")
+            run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
+                 "--features", "library-owner"], "paired-cli-build", timeout=1800)
+            sys.path.insert(0, str(source / "scripts"))
+            from distributed_gpu_bench import run_group, stats
+            from library_gpu_screen import run_case
+            report.update(scope="paired physical 2xT4 S10; native archive mandatory, CayleyPy no archive",
+                          baseline_commit=baseline_commit, rows=[])
+            save()
+            expected = None
+            samples = {"native": [], "cayleypy": []}
+            for repeat in range(5):
+                for backend in (("native", "cayleypy") if repeat % 2 == 0
+                                else ("cayleypy", "native")):
+                    label = f"paired-s10-{backend}-r{repeat}"
+                    if backend == "native":
+                        archive_root = work / label
+                        case_env = dict(env, MGBFS_TRANSPORT_BACKEND="NCCL_LSA",
+                                        MGBFS_SHARDS="4", MGBFS_BUCKETS="256",
+                                        MGBFS_ARCHIVE_SLOTS="256")
+                        result = run_case(str(source / "target/release/mgbfs"),
+                                          logs / label, archive_root, "s10", 3_628_800,
+                                          2, 32768, 1_000_000, 1_000_000, 96 << 20,
+                                          "DENSE", "ON", case_env, owner="CUCO_RANK")
+                        row = result["measurement"]
+                        for rank in range(2):
+                            (archive_root / f"archive-rank-{rank}.mgbfsar1").unlink()
+                    else:
+                        case_env = dict(env, PYTHONPATH=str(baseline),
+                                        CUDA_VISIBLE_DEVICES="0,1",
+                                        MGBFS_BENCH_WORLD_SIZE="2")
+                        command = [sys.executable, "-m", "torch.distributed.run",
+                                   "--standalone", "--nproc-per-node=2",
+                                   str(source / "scripts/distributed_gpu_bench.py"),
+                                   "baseline-worker", "10", "1048576", "{RANK_OUT}"]
+                        row = run_group(command, logs, label, case_env, timeout=1800)
+                    if row["status"] != "COMPLETE" or sum(row["layer_sizes"]) != 3_628_800:
+                        raise RuntimeError("PAIRED_BFS_INCOMPLETE: " + label)
+                    expected = expected or row["layer_sizes"]
+                    if row["layer_sizes"] != expected:
+                        raise RuntimeError("PAIRED_LAYER_MISMATCH: " + label)
+                    row["paired_backend"] = backend
+                    row["paired_repeat"] = repeat
+                    samples[backend].append(row)
+                    report["rows"].append({"label": label, "backend": backend,
+                                           "search_seconds": row["search_complete_seconds"],
+                                           "peak_mib_per_rank": row["smi_peak_mib_per_rank"],
+                                           "archive_contract": ("verified file_fsync"
+                                                                if backend == "native" else "none")})
+                    save()
+            report["layers"] = expected
+            report["native"] = stats(samples["native"])
+            report["cayleypy"] = stats(samples["cayleypy"])
+            report["status"] = "COMPLETE"
+            return
         if MODE in ("benchmark", "timeline", "timeline_backtrace", "timeline_analysis"):
             report["scope"] = (
                 "paired two-T4 S10 CUCO_RANK DENSE; archive-verified; "
