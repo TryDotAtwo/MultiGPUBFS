@@ -2405,6 +2405,9 @@ impl DistributedNativeBfs {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=batch_begin parents={parents} candidates={candidate_count}", self.cfg.rank, self.depth);
             }
             if let Some(a) = archive.as_deref_mut() {
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_begin", self.cfg.rank, self.depth);
+                }
                 let error = if let Some(extent) = parent {
                     self.archive_range(
                         a,
@@ -2416,6 +2419,9 @@ impl DistributedNativeBfs {
                 } else {
                     None
                 };
+                if trace_route {
+                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_enqueued error={}", self.cfg.rank, self.depth, error.is_some());
+                }
                 // Both ranks issue this epoch even when one has no parents.
                 // A local archive failure must not strand its peer in exchange.
                 if device_epoch {
@@ -2424,6 +2430,9 @@ impl DistributedNativeBfs {
                         self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                         self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                     ) })?;
+                    if trace_route {
+                        eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_vote_queued", self.cfg.rank, self.depth);
+                    }
                     if let Some(error) = error {
                         self.wait_comm_stream(s)?;
                         return Err(error);
@@ -2431,6 +2440,9 @@ impl DistributedNativeBfs {
                 } else if self.all_max(u32::from(error.is_some()))? != 0 {
                     return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
                 }
+            }
+            if trace_route {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin", self.cfg.rank, self.depth);
             }
             if let Some(h) = self.hash_first.as_ref() {
                 h.parent_count.put_u32(parents)?;
