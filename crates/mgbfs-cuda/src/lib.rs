@@ -578,6 +578,7 @@ pub mod ffi {
         pub fn cudaProfilerStop() -> i32;
         pub fn cudaStreamCreateWithFlags(stream: *mut *mut c_void, flags: u32) -> i32;
         pub fn cudaStreamSynchronize(stream: *mut c_void) -> i32;
+        pub fn cudaStreamQuery(stream: *mut c_void) -> i32;
         pub fn cudaStreamDestroy(stream: *mut c_void) -> i32;
         pub fn cudaEventCreateWithFlags(event: *mut *mut c_void, flags: u32) -> i32;
         pub fn cudaEventRecord(event: *mut c_void, stream: *mut c_void) -> i32;

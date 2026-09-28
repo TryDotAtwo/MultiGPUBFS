@@ -356,7 +356,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let sideband = control_group.start_search_sideband(Duration::from_secs(7200))?;
-    let search_result = (|| -> Result<_> {
+    let mut search_result = (|| -> Result<_> {
     let setup = Instant::now();
     let mut bfs = if let Some(word) = &multiset {
         DistributedNativeBfs::new_lrx_multiset_reference(word, seed,
@@ -456,8 +456,15 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     })();
     if search_result.is_err() { sideband.report_failure(); }
     else { sideband.report_success(); }
-    let remote_failed = sideband.finish(&mut control_group)?;
+    let remote_failed = match sideband.finish(&mut control_group) {
+        Ok(failed) => failed,
+        Err(error) => {
+            if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
+            return Err(error);
+        }
+    };
     if remote_failed {
+        if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
         return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
     let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;

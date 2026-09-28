@@ -495,7 +495,6 @@ pub struct DistributedNativeBfs {
     current_count: u32,
     prev_count: u32,
     failed: bool,
-    cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     stream: Stream,
     generation_stream: Stream,
     generation_done: NativeEvent,
@@ -509,6 +508,8 @@ pub struct DistributedNativeBfs {
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
     comm: Comm,
+    // Declared after Comm so the callback context outlives Comm::drop.
+    cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     lsa_view: Option<LsaView>,
     generate: Option<Plan>,
     hash: Option<Plan>,
@@ -558,6 +559,12 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    pub fn abort_group(&mut self) {
+        if !self.failed {
+            self.failed = true;
+            unsafe { mgbfs_nccl_abort(self.comm.0); }
+        }
+    }
     pub fn set_cancel_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
         check(unsafe { mgbfs_nccl_bind_cancel(self.comm.0, Some(nccl_cancel_probe),
             std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
@@ -569,6 +576,29 @@ impl DistributedNativeBfs {
             flag.load(std::sync::atomic::Ordering::Acquire)) {
             Err("REMOTE_SEARCH_CANCELLED".into())
         } else { Ok(()) }
+    }
+    // A stream containing NCCL or LSA work must not trap the dispatcher in
+    // cudaStreamSynchronize: only this dispatcher is allowed to abort its
+    // communicator after the TCP sideband requests cancellation.
+    fn wait_comm_stream(&self, stream: *mut c_void) -> Result<()> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            self.ensure_not_cancelled()?;
+            match unsafe { cudaStreamQuery(stream) } {
+                0 => return Ok(()),
+                600 => {
+                    match unsafe { mgbfs_nccl_poll(self.comm.0) } {
+                        0 | 4 => {},
+                        _ => return Err("NCCL_ASYNC_FAILURE".into()),
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err("NCCL_STREAM_TIMEOUT".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                code => return Err(format!("CUDA_STREAM_QUERY_{code}")),
+            }
+        }
     }
     /// Explicit library owner policy. Pool reservation is fixed before depth 0;
     /// no fallback to the existing bounded owner is permitted.
@@ -1479,7 +1509,7 @@ impl DistributedNativeBfs {
                 self.stream.0,
             )
         })?;
-        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        self.wait_comm_stream(self.stream.0)?;
         self.collective_recv.one()
     }
     fn all_max_ring_fatal(&self) -> Result<u32> {
@@ -1498,7 +1528,7 @@ impl DistributedNativeBfs {
                 self.stream.0,
             )
         })?;
-        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        self.wait_comm_stream(self.stream.0)?;
         self.collective_recv.one()
     }
     fn all_max_ring_or_host_fatal(&self, host_failed: bool) -> Result<u32> {
@@ -1519,7 +1549,7 @@ impl DistributedNativeBfs {
                 self.collective_recv.ptr.cast(), self.stream.0,
             )
         })?;
-        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
+        self.wait_comm_stream(self.stream.0)?;
         self.collective_recv.one()
     }
     #[cfg(feature = "library-owner")]
@@ -2557,7 +2587,7 @@ impl DistributedNativeBfs {
                             communication,
                         )
                     })?;
-                    check(unsafe { cudaStreamSynchronize(communication) })?;
+                    self.wait_comm_stream(communication)?;
                     let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
                         .one::<u32>()?;
                     if received > self.candidates {
