@@ -67,7 +67,7 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        if MODE not in ("device_fatal_gate", "boundary_gate") and any(
+        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only") and any(
                 row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
             report["status"] = "UNSUPPORTED_HOST"
             return
@@ -574,6 +574,21 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE == "host_sized_only":
+            report["scope"] = ("two physical T4; HostSizedNccl only; no LSA or P2P claim; "
+                               "full-state oracle and archive fixtures")
+            for name in ("library_two_rank_layers_and_archives_match_oracle",
+                         "cuco_rank_two_gpu_dense_layers_and_archives_match_oracle"):
+                checked = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                               "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                               name, "--", "--exact", "--nocapture", "--test-threads=1"],
+                              "host-sized-" + name, timeout=1800)
+                if "test result: ok. 1 passed; 0 failed" not in checked:
+                    raise RuntimeError("HOST_SIZED_ORACLE: " + name)
+                report[name] = "PASS"
+                save()
+            report["status"] = "COMPLETE"
+            return
         if MODE in ("lsa_leaf_sanitizer", "lsa_leaf_harness_fault",
                     "lsa_leaf_remaining_sanitizers", "lsa_leaf_initcheck_debug"):
             name = "lsa_one_exchange_matches_peer_payload"
