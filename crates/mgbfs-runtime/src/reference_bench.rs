@@ -20,6 +20,18 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
+#[cfg(debug_assertions)]
+fn test_fault_rank(name: &str, rank: u32, world: u32) -> Result<bool> {
+    match std::env::var(name) {
+        Ok(value) => {
+            let selected: u32 = value.parse().map_err(|_| format!("{name}_INVALID"))?;
+            if selected >= world { return Err(format!("{name}_OUT_OF_RANGE")); }
+            Ok(selected == rank)
+        }
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        Err(_) => Err(format!("{name}_INVALID")),
+    }
+}
 fn parse_u32_config(key: &str, value: Option<&str>, default: u32) -> Result<u32> {
     match value {
         Some(value) => value.parse().map_err(|_| format!("ENV_{key}")),
@@ -338,15 +350,21 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     // Keep control sockets alive throughout this reference run. Dispatching GPU
     // epochs on them is a separate integration step, not claimed here.
     let id = control_group.nccl_id;
-    let archive_setup = if archive_enabled {
-        create_archive_extent(Path::new(&archive_path), stream_archive)
-            .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
-            .and_then(|extent| PinnedArchive::new(
-                extent, disk_bytes, archive_width, digest, archive_rows,
-                archive_slots,
-            ))
-            .map(Some)
-    } else { Ok(None) };
+    let archive_setup = (|| -> Result<Option<PinnedArchive>> {
+        #[cfg(debug_assertions)]
+        if test_fault_rank("MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK", rank, world)? {
+            return Err("TEST_INJECTED_ARCHIVE_ADMISSION_ERROR".into());
+        }
+        if archive_enabled {
+            create_archive_extent(Path::new(&archive_path), stream_archive)
+                .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
+                .and_then(|extent| PinnedArchive::new(
+                    extent, disk_bytes, archive_width, digest, archive_rows,
+                    archive_slots,
+                ))
+                .map(Some)
+        } else { Ok(None) }
+    })();
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveAdmission,
         archive_setup.is_err(), Duration::from_secs(600),
@@ -412,14 +430,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     bfs.set_cancel_token(sideband.cancel_token())?;
     bfs.set_failure_token(sideband.failure_token());
     #[cfg(debug_assertions)]
-    if let Ok(value) = std::env::var("MGBFS_TEST_OWNER_HOST_FAULT_RANK") {
-        let fault_rank: u32 = value.parse().map_err(|_| "TEST_OWNER_HOST_FAULT_RANK_INVALID")?;
-        if fault_rank >= cfg.world {
-            return Err("TEST_OWNER_HOST_FAULT_RANK_OUT_OF_RANGE".into());
-        }
-        if rank == fault_rank {
-            crate::distributed_native::inject_owner_host_error_once_for_test();
-        }
+    if test_fault_rank("MGBFS_TEST_OWNER_HOST_FAULT_RANK", rank, world)? {
+        crate::distributed_native::inject_owner_host_error_once_for_test();
     }
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
@@ -480,6 +492,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
+    #[cfg(debug_assertions)]
+    let archive_commit = archive_commit.and_then(|()| {
+        if test_fault_rank("MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK", rank, world)? {
+            Err("TEST_INJECTED_ARCHIVE_FINISH_ERROR".into())
+        } else { Ok(()) }
+    });
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveCommitted,
         archive_commit.is_err(), Duration::from_secs(7200),
