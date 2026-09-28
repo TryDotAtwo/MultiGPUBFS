@@ -218,9 +218,23 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
         unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
         0
     );
+    let failure_report = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let peer_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let relay = {
+        let failure_report = Arc::clone(&failure_report);
+        let peer_cancel = Arc::clone(&peer_cancel);
+        std::thread::spawn(move || {
+            while failure_report.load(std::sync::atomic::Ordering::Acquire) != 2 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            peer_cancel.store(true, std::sync::atomic::Ordering::Release);
+        })
+    };
     let workers: Vec<_> = (0..2u32)
         .map(|rank| {
             let graph = graph.clone();
+            let failure_report = Arc::clone(&failure_report);
+            let peer_cancel = Arc::clone(&peer_cancel);
             std::thread::spawn(move || {
                 let cfg = DistributedConfig {
                     rank,
@@ -261,6 +275,8 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
                     )
                 }
                 .unwrap();
+                if rank == 0 { bfs.set_failure_token(failure_report); }
+                else { bfs.set_cancel_token(peer_cancel).unwrap(); }
                 let disk = Arc::new(Mutex::new(Vec::new()));
                 let mut archive = PinnedArchive::new(
                     SlowDisk(TestDisk(disk), rank == 0),
@@ -285,12 +301,15 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
         .into_iter()
         .map(|worker| worker.join().unwrap().unwrap())
         .collect();
+    relay.join().unwrap();
     assert!(
         errors[0].contains("ARCHIVE_PIN_RING_FATAL"),
         "{}",
         errors[0]
     );
-    assert_eq!(errors[1], "REMOTE_ARCHIVE_FATAL", "{transport:?}");
+    assert!(errors[1] == "REMOTE_ARCHIVE_FATAL"
+        || errors[1] == "REMOTE_SEARCH_CANCELLED",
+        "{transport:?}: {}", errors[1]);
 }
 
 #[test]

@@ -1174,3 +1174,15 @@ capacity archive check. This establishes the healthy S4 output contract
 for this source, not larger-graph correctness, all failure paths, or
 CPU-free overlap. Raw evidence is in
 `test_results/kaggle_nonblocking_boundary_v15/lsa-bfs-gate/`.
+
+Private Kaggle v16 at `e354997` passed the two-T4 one-rank CUCO_RANK
+owner-capacity fatal fixture. The next fixture, real archive pinned-slot
+exhaustion before LSA exchange, failed: the faulting rank returned
+`ARCHIVE_PIN_RING_FATAL`, but its peer waited for an outstanding epoch and
+returned `EPOCH_CREDIT_TIMEOUT` after 120 s rather than a prompt remote
+fatal. This particular low-level two-thread fixture had not attached the
+search cancellation sideband; the production two-process launcher does.
+The test is being changed to exercise that required sideband explicitly.
+The v16 result does **not** prove archive-slot failure propagation, and the
+retirement FIFO test was not reached. Logs are under
+`test_results/kaggle_nonblocking_boundary_v16/lsa-bfs-gate/`.
