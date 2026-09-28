@@ -747,6 +747,27 @@ def main():
                 save()
             report["status"] = "COMPLETE"
             return
+        if MODE == "production_fault_gate":
+            report["scope"] = ("two physical P2P T4; owner capacity, archive slot, "
+                               "and device retirement fatal propagation")
+            save()
+            for name in (
+                "cuco_rank_lsa_one_rank_owner_capacity_failure_stops_group",
+                "archive_slot_failure_votes_group_fatal_before_lsa_exchange",
+                "retirement_fifo_fault_votes_group_fatal_on_two_devices",
+            ):
+                command = ["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                           name, "--", "--exact", "--nocapture", "--test-threads=1"]
+                if name != "retirement_fifo_fault_votes_group_fatal_on_two_devices":
+                    command.insert(-3, "--ignored")
+                result = run(command, "production-" + name, timeout=180)
+                if "test result: ok. 1 passed; 0 failed" not in result:
+                    raise RuntimeError("PRODUCTION_FAULT_GATE_RESULT: " + name)
+                report[name] = "PASS"
+                save()
+            report["status"] = "COMPLETE"
+            return
         if MODE == "device_fatal_gate":
             result = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",

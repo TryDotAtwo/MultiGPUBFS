@@ -1162,3 +1162,15 @@ group-boundary protocol but are not physical pinned-allocation or disk-failure
 tests. The v14 notebook did not run a healthy full-state oracle, sanitizer,
 or performance measurement. See
 `test_results/kaggle_nonblocking_boundary_v14/lsa-bfs-gate/`.
+
+Private Kaggle v15 at `c093d35` completed a healthy two-rank S4 reference
+BFS on two physical P2P-capable T4s. Independent rank processes produced
+the exact global layer counts `[1, 3, 5, 6, 5, 3, 1]` under both
+`HOST_SIZED_NCCL` and `NCCL_LSA`; both rank archives passed committed
+checksum/count verification. A separate full-state CUCO_RANK/LSA GPU
+oracle fixture passed. The notebook also passed one-rank archive-admission
+and asymmetric invalid-config group-fatal cases, plus the small-layer-
+capacity archive check. This establishes the healthy S4 output contract
+for this source, not larger-graph correctness, all failure paths, or
+CPU-free overlap. Raw evidence is in
+`test_results/kaggle_nonblocking_boundary_v15/lsa-bfs-gate/`.
