@@ -1119,3 +1119,22 @@ and archive error path together, preserving NCCL issue order and bounded
 asymmetric failure termination. See
 `docs/validation/lsa-owner-consumed-v85-v86.md`. Kaggle validation now uses
 only one 2×T4 notebook at a time.
+
+On 2026-09-28, private Kaggle `mgbfs-nonblocking-boundary-t4` v12
+ran source `a85bc59` on a P2P-capable physical 2×T4 host. The isolated
+LSA peer-payload fixture passed. The asymmetric host-owner fault fixture
+terminated both rank threads in 1.65 s, removing the earlier observed
+`ncclCommAbort` hang, but failed its expected-error assertion: both ranks
+reported `LIBRARY_RANK_DEPTH_FATAL_22_22` at depth 0 instead of reaching
+the injected owner error. The cause was reuse of `collective_recv` after the
+host-sized depth-round-count collective; its nonzero count was interpreted
+as the initial LSA group-fatal predicate. Commit `bcad079` clears that word
+on the compute stream before the first packed/exchange event of each device
+epoch, adds an archive-failure device vote, and exposes a debug-only per-rank
+host-owner fault switch for independent process testing. Local CUDA-feature
+Rust typecheck passed; a new 2×T4 run and both process-level/error and
+full-state gates remain required. The `cefb42c` Kaggle script can run the
+thread and two-process fault fixtures sequentially within one notebook;
+its push is currently rejected by Kaggle's account GPU-session quota, so
+that fixture has **not** run. Raw v12 logs are in
+`test_results/kaggle_nonblocking_boundary_v12/lsa-bfs-gate/`.
