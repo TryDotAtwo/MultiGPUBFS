@@ -610,7 +610,7 @@ def main():
             output = logs / "process-host-fault"
             command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
                        "--nproc-per-node=2", "--no-python", str(source / "target/debug/mgbfs"),
-                       "bench", "--reference", "s4", "7", str(root / "bootstrap"),
+                       "bench", "--reference", "s4", "1", str(root / "bootstrap"),
                        str(root / "archive"), str(output)]
             with (logs / "process-host-fault.log").open("w") as stream:
                 try:
