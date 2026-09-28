@@ -1,11 +1,99 @@
 # MultiGPUBFS completion ledger
 
-Status: active, updated 2026-09-26. This file separates accepted requirements from
+Status: active, updated 2026-09-28. This file separates accepted requirements from
 implemented paths and measured evidence. `ARCHITECTURE_NEED.md` remains the
 architecture contract; `library-first-bfs.md` is the library experiment log.
 The source-level owner/transport/retirement audit and connected change set are
 in `owner-transport-retirement-batch-audit.md`; it does not establish a measured
 bottleneck or completed asynchronous pipeline.
+
+## 2026-09-28 owner/transport continuation
+
+`faead68` closes the local HF manifest/reconcile patch: new manifests retain
+per-file `rows`, while retry accepts an intact legacy manifest/verification
+pair without rewriting remote objects. The local Python suite passed (172
+tests, 6 skipped). Kaggle HF footer audit v29 ended in a 7200-second timeout
+after 5,448/6,228 objects; it did not produce a complete remote-footer proof.
+
+`66b1822` connected a two-rank TCP search sideband to the reference runtime,
+added a rank-local cancellation token, changed communicator initialization
+to nonblocking NCCL and polled `ncclInProgress` on transport calls. The local
+bootstrap suite passed 18/18; Windows Rust CUDA/library-owner typecheck passed
+from a safe temporary copy. The private Kaggle boundary v1 compiled the real
+CUDA/NCCL C++ library on two P2P-capable T4s and passed bootstrap CPU tests,
+but stopped on a Rust timer-scope error before GPU BFS. That error is fixed by
+`f17d286`; `7ef8b19` adds cancellable CUDA/NCCL stream polling and explicit
+communicator abort on remote search failure. `2632691` extends nonblocking
+progress handling to LSA activation and communicator finalization. No full
+two-rank GPU result for those later commits is accepted yet.
+
+The separate private sanitizer v1 reached two real T4s with P2P unavailable
+and reported `UNSUPPORTED_HOST` before GPU checks; this is not a sanitizer
+pass or BFS failure. A host-sized-only gate was added at `3fee878` so such
+hosts can still validate two-rank full-state/archive semantics without an
+LSA claim. Its v1 run stopped at the same pre-fix timer compile error.
+Host-sized-only v2 on `7ef8b19` completed on two physical T4s: both the
+Native/cuDF/cuCollections profile matrix and CUCO_RANK DENSE full-state/archive
+oracle tests passed. This validates those small HostSizedNccl fixtures, not
+LSA or a performance claim. Boundary v2 on `7ef8b19` compiled CUDA/NCCL and
+passed CPU tests but failed the constructor-fault fixture with
+`CUDA_STATUS_6` before its full BFS section. `2632691` addresses the likely
+nonblocking LSA registration/finalization transition; a physical replay is
+now available: private boundary v3 on `a6a2d43` completed on two P2P-capable
+T4s. It passed the asymmetric post-NCCL constructor fault, HostSized and LSA
+S4 group markers/archives, one-rank archive-admission and configuration
+failures, small-layer capacity, and the independent full-state oracle. This
+supports the corrected NCCL lifecycle for these bounded fixtures, not a
+no-readback timeline or large-graph performance claim. Logs are retained in
+`test_results/kaggle_nonblocking_boundary_v3/lsa-bfs-gate/`.
+The private LSA leaf sanitizer v2 on the same source passed plain exchange,
+memcheck and racecheck. Initcheck failed during NCCL device-communicator
+registration on both ranks (`ncclUnhandledCudaError`), while reporting
+`ERROR SUMMARY: 0 errors`; this known registration interaction is **not** an
+initcheck pass. Synccheck was not reached by that script and remains open.
+Sanitizer v3 on `a6a2d43` passed the LSA leaf `synccheck` with zero errors;
+`initcheck` still failed in NCCL registration with zero reported memory errors.
+The v4 Nsight diagnostic on `ef4657b` completed a verified two-T4 S10 archive
+run: 3.574 s search, 16.411 s durable file commit. The earlier `a6a2d43`
+diagnostic measured 5.600 s search and 15.725 s durable commit on another
+two-T4 allocation. These are single profiled runs, not paired A/B evidence.
+CUDA runtime timeline contains 550 stream synchronizations in both runs,
+consistent with six per rank per depth (46 depths), rather than growth with
+the 180 rank-batches. Runtime synchronous memcpy calls dropped from 1,740 to
+1,380: exactly two calls per rank-batch. This is strong evidence that the
+removed hot-path readbacks disappeared, but a call-stack/NVTX attribution of
+all remaining calls and overlap proof are still required.
+
+`ef4657b` removed the healthy DENSE+LSA+CUCO_RANK post-owner host vote and
+bounded two outstanding completion events. The v5 two-T4 gate passed LSA
+full-state and archive, HostSized profile checks, and the one-rank owner
+capacity failure. It timed out on the injected one-rank **host owner error**.
+This contradicts a complete failure-protocol claim. Root cause in the test
+path: `advance()` aborts NCCL before returning, while the search sideband was
+not told about the local failure until after `advance()` returned. The test
+also lacked a sideband/cancellation relay. `fa5ee1f` now publishes failure
+before abort, tests cancellation relay, and extends the device fatal gate to
+all peer rounds. Private Kaggle v6 ended before compilation because the package
+index did not supply locked `libkvikio-cu12==26.4.0`; v7 reached two physical
+T4s but both P2P directions were disabled (`UNSUPPORTED_HOST`), so it never
+entered LSA tests. v8 on a P2P-capable two-T4 host repeated the host-owner
+fault timeout after full-state/archive and capacity-failure gates passed. Thus
+pre-abort notification plus the test relay are insufficient; do not ascribe
+the hang to the earlier missing signal alone. `a9cebb2` adds stage markers
+and an isolated 45-second host-fault gate. Private Kaggle v9 passed on P2P
+two-T4 hardware in 1.58 s, with both ranks reporting bounded abort. However
+v9 enabled `MGBFS_TRACE_ROUTE`, whose CUDA synchronizations change scheduling;
+it does **not** refute the untraced v8 hang. `de85ba7` removes that trace for
+an otherwise identical isolated test. Kaggle rejected its first push because
+the account had reached the two batch-GPU-session limit, so no v10 result
+exists yet. Until an untraced fault gate passes, the fix is a candidate, not
+accepted correctness evidence.
+
+The latest user instruction allows **one** active Kaggle notebook at a time.
+Safe LSA receive-slot reuse beyond the existing single payload slot,
+HASH_FIRST integration, full-app sanitizer gates, production Nsight call
+attribution and paired A/B remain open. Do not call this an asynchronous
+end-to-end BFS yet.
 
 ## 2026-09-26 constructor admission gate
 
@@ -55,8 +143,8 @@ passed (176 Python tests, 6 skipped). Its anonymous S13 scan verified only
 5,601/6,228 footers before HTTP 429. The private Kaggle v28 token-backed run
 failed in Kaggle's Secrets service at `get_secret("HF_TOKEN")` with HTTP 400,
 before the auditor started; see `docs/validation/s13-hf-footer-kaggle-v28.md`.
-Remote footer completeness remains open. Only one 2xT4 Kaggle notebook may be
-active at a time under the current user instruction.
+Remote footer completeness remains open. The current user instruction permits
+only one Kaggle notebook at a time.
 
 A scoped archive change retains `O_NONBLOCK` after FIFO admission and gives
 each FIFO write a bounded absolute deadline. The stalled-writer CPU test and
