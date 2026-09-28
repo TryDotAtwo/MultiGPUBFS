@@ -769,9 +769,11 @@ def main():
                 save()
             report["status"] = "COMPLETE"
             return
-        if MODE == "full_bfs_sanitizers":
+        if MODE in ("full_bfs_sanitizers", "full_bfs_memcheck_diagnostic"):
             report["scope"] = ("two physical P2P T4; complete S4 CUCO_RANK/LSA BFS "
-                               "including archive, one fixture per sanitizer tool")
+                               "including archive, " + ("memcheck diagnostic only"
+                               if MODE == "full_bfs_memcheck_diagnostic"
+                               else "one fixture per sanitizer tool"))
             binaries = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
                         if path.is_file() and os.access(path, os.X_OK)]
             if len(binaries) != 1:
@@ -780,7 +782,9 @@ def main():
             command = [str(binaries[0]), name, "--ignored", "--exact", "--nocapture",
                        "--test-threads=1"]
             report["tools"] = {}
-            for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+            tools = (("memcheck",) if MODE == "full_bfs_memcheck_diagnostic"
+                     else ("memcheck", "racecheck", "initcheck", "synccheck"))
+            for tool in tools:
                 sanitizer = ["compute-sanitizer", "--tool", tool,
                              "--report-api-errors", "no", "--error-exitcode", "97", *command]
                 log = logs / ("full-bfs-" + tool + ".log")
