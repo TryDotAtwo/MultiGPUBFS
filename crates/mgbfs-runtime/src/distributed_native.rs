@@ -194,6 +194,32 @@ fn check(status: i32) -> Result<()> {
         Err(format!("CUDA_STATUS_{status}"))
     }
 }
+fn wait_nccl_stream(
+    comm: *mut c_void,
+    stream: *mut c_void,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if cancelled.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err("REMOTE_SEARCH_CANCELLED".into());
+        }
+        match unsafe { cudaStreamQuery(stream) } {
+            0 => return Ok(()),
+            600 => {
+                match unsafe { mgbfs_nccl_poll(comm) } {
+                    0 | 4 => {},
+                    _ => return Err("NCCL_ASYNC_FAILURE".into()),
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err("NCCL_STREAM_TIMEOUT".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            code => return Err(format!("CUDA_STREAM_QUERY_{code}")),
+        }
+    }
+}
 unsafe fn rank_directory(
     world: u32,
     keys: *const c_void,
@@ -236,7 +262,7 @@ fn admit_device_group(
         check(unsafe {
             mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream)
         })?;
-        check(unsafe { cudaStreamSynchronize(stream) })?;
+        wait_nccl_stream(comm, stream, None)?;
         recv.one()
     };
     vote(0)?; // Initialize the actual collective before querying free VRAM.
@@ -257,7 +283,7 @@ fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
                       send: &Buffer, recv: &Buffer, failed: bool) -> Result<bool> {
     send.put_u32(u32::from(failed))?;
     check(unsafe { mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream) })?;
-    check(unsafe { cudaStreamSynchronize(stream) })?;
+    wait_nccl_stream(comm, stream, None)?;
     Ok(recv.one::<u32>()? != 0)
 }
 impl Buffer {
@@ -504,6 +530,8 @@ pub struct DistributedNativeBfs {
     exchange_stream: Stream,
     exchange_done: Event,
     owner_consumed: Option<Event>,
+    epoch_completed: [Event; 2],
+    epoch_outstanding: std::collections::VecDeque<usize>,
     archive_stream: Stream,
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
@@ -581,22 +609,26 @@ impl DistributedNativeBfs {
     // cudaStreamSynchronize: only this dispatcher is allowed to abort its
     // communicator after the TCP sideband requests cancellation.
     fn wait_comm_stream(&self, stream: *mut c_void) -> Result<()> {
+        wait_nccl_stream(self.comm.0, stream, self.cancel_requested.as_deref())
+    }
+    fn wait_epoch_credit(&self, slot: usize) -> Result<()> {
+        let event = self.epoch_completed.get(slot).ok_or("EPOCH_CREDIT_SLOT")?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             self.ensure_not_cancelled()?;
-            match unsafe { cudaStreamQuery(stream) } {
+            match unsafe { mgbfs_cuda::ffi::cudaEventQuery(event.0) } {
                 0 => return Ok(()),
                 600 => {
                     match unsafe { mgbfs_nccl_poll(self.comm.0) } {
                         0 | 4 => {},
-                        _ => return Err("NCCL_ASYNC_FAILURE".into()),
+                        _ => return Err("EPOCH_NCCL_ASYNC_FAILURE".into()),
                     }
                     if std::time::Instant::now() >= deadline {
-                        return Err("NCCL_STREAM_TIMEOUT".into());
+                        return Err("EPOCH_CREDIT_TIMEOUT".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-                code => return Err(format!("CUDA_STREAM_QUERY_{code}")),
+                code => return Err(format!("EPOCH_EVENT_QUERY_{code}")),
             }
         }
     }
@@ -1017,6 +1049,7 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
         let exchange_stream = Stream(raw_exchange);
         let exchange_done = Event::new()?;
+        let epoch_completed = [Event::new()?, Event::new()?];
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
         let archive_stream = Stream(raw_archive);
@@ -1272,6 +1305,8 @@ impl DistributedNativeBfs {
             exchange_done,
             owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
                 .then(Event::new).transpose()?,
+            epoch_completed,
+            epoch_outstanding: std::collections::VecDeque::with_capacity(2),
             archive_stream,
             archive_done,
             archived_depth: None,
@@ -1526,27 +1561,6 @@ impl DistributedNativeBfs {
                 self.collective_send.ptr.cast(),
                 self.collective_recv.ptr.cast(),
                 self.stream.0,
-            )
-        })?;
-        self.wait_comm_stream(self.stream.0)?;
-        self.collective_recv.one()
-    }
-    fn all_max_ring_or_host_fatal(&self, host_failed: bool) -> Result<u32> {
-        if host_failed {
-            // A host API failure is already terminal. The upload may block on
-            // this error path; the ordinary path remains device-produced.
-            self.collective_send.put_u32(1)?;
-        } else {
-            check(unsafe {
-                mgbfs_state_ring_fatal_vote_word(
-                    self.ring.ptr.cast(), self.collective_send.ptr.cast(), self.stream.0,
-                )
-            })?;
-        }
-        check(unsafe {
-            mgbfs_nccl_all_reduce_max_u32(
-                self.comm.0, self.collective_send.ptr.cast(),
-                self.collective_recv.ptr.cast(), self.stream.0,
             )
         })?;
         self.wait_comm_stream(self.stream.0)?;
@@ -2333,8 +2347,19 @@ impl DistributedNativeBfs {
         let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
+        #[cfg(feature = "library-owner")]
+        let device_epoch = self.lsa_view.is_some() && self.hash_first.is_none()
+            && self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
+        #[cfg(not(feature = "library-owner"))]
+        let device_epoch = false;
+        let mut epoch_serial = 0usize;
         for _ in 0..scheduled_rounds {
             self.ensure_not_cancelled()?;
+            if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
+                let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
+                self.wait_epoch_credit(slot)?;
+                self.epoch_outstanding.pop_front();
+            }
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
@@ -2360,7 +2385,9 @@ impl DistributedNativeBfs {
                 };
                 // Both ranks issue this epoch even when one has no parents.
                 // A local archive failure must not strand its peer in exchange.
-                if self.all_max(u32::from(error.is_some()))? != 0 {
+                if device_epoch {
+                    if let Some(error) = error { return Err(error); }
+                } else if self.all_max(u32::from(error.is_some()))? != 0 {
                     return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
                 }
             }
@@ -2465,7 +2492,7 @@ impl DistributedNativeBfs {
             if self.lsa_view.is_some() {
                 check(unsafe { cudaEventRecord(self.pack_done.0, s) })?;
             } else {
-                check(unsafe { cudaStreamSynchronize(s) })?;
+                self.wait_comm_stream(s)?;
             }
             let host_ranges = if self.lsa_view.is_none() {
                 let routed = self.route_count.one::<u32>()?;
@@ -2684,7 +2711,7 @@ impl DistributedNativeBfs {
                             return Err("GROUP_LSA_TRANSPORT_FATAL".into());
                         }
                     } else {
-                        check(unsafe { cudaStreamSynchronize(s) })?;
+                        self.wait_comm_stream(s)?;
                     }
                 }
                 let local_states: *const u8 = unsafe {
@@ -2775,11 +2802,8 @@ impl DistributedNativeBfs {
                         Err(error) => batch_error = Some(error),
                     }
                 }
-                if round == 1 && lsa.is_some() && rank_mode && self.hash_first.is_none() {
-                    if self.all_max_ring_or_host_fatal(batch_error.is_some())? != 0 {
-                        return Err(batch_error.unwrap_or_else(||
-                            "GROUP_OWNER_OR_PRE_OWNER_FATAL".into()));
-                    }
+                if round == 1 && device_epoch {
+                    if let Some(error) = batch_error { return Err(error); }
                 } else {
                     vote_group_error(
                         batch_error.map_or(Ok(()), Err),
@@ -2790,6 +2814,12 @@ impl DistributedNativeBfs {
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
                 }
+            }
+            if device_epoch {
+                let slot = epoch_serial % self.epoch_completed.len();
+                check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
+                self.epoch_outstanding.push_back(slot);
+                epoch_serial = epoch_serial.checked_add(1).ok_or("EPOCH_SEQUENCE")?;
             }
             if self.hash_first.is_some() {
                 if let Some(parent_extent) = parent {
@@ -2823,6 +2853,11 @@ impl DistributedNativeBfs {
             if trace_route {
                 batch_index = batch_index.checked_add(1).ok_or("TRACE_BATCH_OVERFLOW")?;
             }
+        }
+        while device_epoch && !self.epoch_outstanding.is_empty() {
+            let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
+            self.wait_epoch_credit(slot)?;
+            self.epoch_outstanding.pop_front();
         }
         if let Some(a) = archive.as_deref_mut() {
             let error = a
