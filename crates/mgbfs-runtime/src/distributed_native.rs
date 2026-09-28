@@ -2296,6 +2296,7 @@ impl DistributedNativeBfs {
         // Diagnostic only: bracket the CUB route, pack, exchange and owner
         // phases without adding synchronizations to an ordinary run.
         let trace_route = std::env::var_os("MGBFS_TRACE_ROUTE").is_some();
+        let trace_sync = trace_route && std::env::var_os("MGBFS_TRACE_ROUTE_NO_SYNC").is_none();
         let mut batch_index = 0u64;
         if let Some(a) = archive.as_ref() {
             let error = if self.archived_depth == Some(self.depth) {
@@ -2457,8 +2458,10 @@ impl DistributedNativeBfs {
                 }
                 generation = Some(sequence);
             }
-            if trace_route {
+            if trace_sync {
                 check(unsafe { cudaStreamSynchronize(s) })?;
+            }
+            if trace_route {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end", self.cfg.rank, self.depth);
             }
             unsafe {
