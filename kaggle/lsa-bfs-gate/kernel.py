@@ -574,7 +574,7 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
-        if MODE == "host_fault_only":
+        if MODE in ("host_fault_only", "host_fault_and_process"):
             env["MGBFS_TRACE_ROUTE"] = "1"
             env["MGBFS_TRACE_ROUTE_NO_SYNC"] = "1"
             for name in ("lsa_one_exchange_matches_peer_payload",
@@ -588,9 +588,10 @@ def main():
                 report[name] = "PASS"
                 save()
             report["host_fault"] = "PASS"
-            report["status"] = "COMPLETE"
-            return
-        if MODE == "process_host_fault_only":
+            if MODE == "host_fault_only":
+                report["status"] = "COMPLETE"
+                return
+        if MODE in ("process_host_fault_only", "host_fault_and_process"):
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "process-fault-cli-build", timeout=1800)
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
