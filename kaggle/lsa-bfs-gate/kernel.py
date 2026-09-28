@@ -837,6 +837,7 @@ def main():
                 env["NCCL_DEBUG"] = "INFO"
                 env["MGBFS_TRACE_ROUTE"] = "1"
                 env["MGBFS_TRACE_ROUTE_NO_SYNC"] = "1"
+                env["MGBFS_TRACE_NCCL_GATE"] = "1"
             binaries = [path for path in (source / "target/debug/deps").glob("library_multi_gpu-*")
                         if path.is_file() and os.access(path, os.X_OK)]
             if len(binaries) != 1:

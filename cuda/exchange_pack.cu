@@ -3,6 +3,8 @@
 #include "dense_frame_layout.h"
 #include "owner_partition.h"
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 namespace {
 __global__ void device_store_u32(uint32_t* destination,uint32_t value) {
@@ -255,9 +257,15 @@ extern "C" int mgbfs_owner_global_fatal_gate(void* comm,
     MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     uint32_t* send,uint32_t* receive,void* stream) {
   if(!comm||!ring||!owner||!send||!receive)return 1;
+  static const bool trace=std::getenv("MGBFS_TRACE_NCCL_GATE")!=nullptr;
+  if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=ring_vote_begin\n",comm);
   int status=mgbfs_state_ring_fatal_vote_word(ring,send,stream);
   if(status)return status;
+  if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=allreduce_begin\n",comm);
   status=mgbfs_nccl_all_reduce_max_u32(comm,send,receive,stream);
+  if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=allreduce_end status=%d\n",comm,status);
   if(status)return status;
-  return mgbfs_owner_import_transport_fatal(receive,ring,owner,stream);
+  status=mgbfs_owner_import_transport_fatal(receive,ring,owner,stream);
+  if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=import_end status=%d\n",comm,status);
+  return status;
 }
