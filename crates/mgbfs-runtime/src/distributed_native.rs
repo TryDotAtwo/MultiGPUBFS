@@ -2258,10 +2258,16 @@ impl DistributedNativeBfs {
         let comm = self.comm.0;
         let failure_report = self.failure_report.as_deref();
         crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
+            if std::env::var_os("MGBFS_TRACE_ROUTE").is_some() {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} stage=abort_begin", self.cfg.rank);
+            }
             if let Some(token) = failure_report {
                 token.store(2, std::sync::atomic::Ordering::Release);
             }
             mgbfs_nccl_abort(comm);
+            if std::env::var_os("MGBFS_TRACE_ROUTE").is_some() {
+                eprintln!("MGBFS_ROUTE_TRACE rank={} stage=abort_end", self.cfg.rank);
+            }
         })
     }
     /// Archive each bounded parent slice before retiring its StateRing range.

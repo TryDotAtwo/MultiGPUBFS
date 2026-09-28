@@ -561,6 +561,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                 let peer_cancel = Arc::clone(&peer_cancel);
                 std::thread::spawn(move || {
                     std::panic::catch_unwind(|| {
+                    if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=before_constructor"); }
                     let cfg = DistributedConfig {
                         rank,
                         world: 2,
@@ -581,6 +582,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                         &graph, [7; 16], id, cfg, None, 64 << 20, false,
                         mgbfs_core::config::ReferenceOwner::CucoRank,
                     ).unwrap();
+                    if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=constructed"); }
                     if inject_host {
                         bfs.set_cancel_token(peer_cancel).unwrap();
                         if rank == 0 { bfs.set_failure_token(failure_report); }
@@ -590,8 +592,12 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                         mgbfs_runtime::distributed_native::inject_owner_host_error_once_for_test();
                     }
                     for _ in 0..16 {
+                        if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=before_advance"); }
                         match bfs.advance() {
-                            Err(error) => return error,
+                            Err(error) => {
+                                if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=advance_error error={error}"); }
+                                return error;
+                            }
                             Ok(true) => {}
                             Ok(false) => panic!("EXPECTED_OWNER_FAILURE_NOT_DETECTED"),
                         }

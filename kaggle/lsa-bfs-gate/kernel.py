@@ -574,6 +574,18 @@ def main():
         run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
              "--features", "cuda,library-owner", "--test", "library_multi_gpu",
              "--no-run"], "bfs-test-build", timeout=1800)
+        if MODE == "host_fault_only":
+            env["MGBFS_TRACE_ROUTE"] = "1"
+            name = "cuco_rank_lsa_one_rank_host_owner_error_stops_group"
+            checked = run(["cargo", "test", "--locked", "-p", "mgbfs-runtime",
+                           "--features", "cuda,library-owner", "--test", "library_multi_gpu",
+                           name, "--", "--ignored", "--exact", "--nocapture",
+                           "--test-threads=1"], name, timeout=45)
+            if "test result: ok. 1 passed; 0 failed" not in checked:
+                raise RuntimeError("HOST_FAULT_RESULT")
+            report["host_fault"] = "PASS"
+            report["status"] = "COMPLETE"
+            return
         if MODE == "host_sized_only":
             report["scope"] = ("two physical T4; HostSizedNccl only; no LSA or P2P claim; "
                                "full-state oracle and archive fixtures")
