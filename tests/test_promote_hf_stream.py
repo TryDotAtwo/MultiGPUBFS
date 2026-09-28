@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 import tempfile
@@ -8,7 +9,10 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.promote_hf_stream import combine_rank_commits, promote, promote_verified
+from scripts.promote_hf_stream import (
+    _metadata_payloads, combine_rank_commits, promote, promote_verified,
+    reconcile_publication,
+)
 
 
 def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
@@ -36,6 +40,55 @@ def commit(rank, counts=(1, 2), branch="mgbfs-s3-run"):
 
 
 class PromoteStream(unittest.TestCase):
+    def test_reconcile_accepts_legacy_manifest_without_file_rows(self):
+        combined = combine_rank_commits([commit(0)], expected_world=1)
+        legacy = dict(combined, files=[
+            {key: value for key, value in item.items() if key != "rows"}
+            for item in combined["files"]
+        ])
+        remote = _metadata_payloads(legacy)
+        state = combined["files"][0]
+        revision = "a" * 40
+
+        class Api:
+            def __init__(self, state_sha=None):
+                self.downloads = []
+                self.state_sha = state_sha or state["sha256"]
+
+            def get_paths_info(self, **kwargs):
+                assert kwargs["revision"] == revision
+                result = []
+                for path in kwargs["paths"]:
+                    if path == state["path"]:
+                        result.append(SimpleNamespace(
+                            path=path, size=state["bytes"],
+                            lfs=SimpleNamespace(sha256=self.state_sha)))
+                    elif path in remote:
+                        payload = remote[path]
+                        blob = f"blob {len(payload)}\0".encode() + payload
+                        result.append(SimpleNamespace(
+                            path=path, size=len(payload), lfs=None,
+                            blob_id=hashlib.sha1(blob).hexdigest()))
+                return result
+
+            def hf_hub_download(self, **kwargs):
+                assert kwargs["revision"] == revision
+                self.downloads.append(kwargs["filename"])
+                return str(layer_file)
+
+        with tempfile.TemporaryDirectory() as folder:
+            layer_file = Path(folder) / "layers.parquet"
+            layer_file.write_bytes(remote[f"layers/{combined['run_id']}.parquet"])
+            api = Api()
+            receipt = reconcile_publication(
+                api, "TryDotAtwo/results", combined, revision=revision)
+            self.assertEqual(receipt.oid, revision)
+            self.assertEqual(api.downloads, [f"layers/{combined['run_id']}.parquet"])
+            with self.assertRaisesRegex(ValueError, "PUBLICATION_CONFLICT"):
+                reconcile_publication(
+                    Api("ff" * 32), "TryDotAtwo/results", combined,
+                    revision=revision)
+
     def test_reference_rejects_wrong_layers_before_any_hub_access(self):
         class NoNetwork:
             def repo_info(self, **kwargs):
