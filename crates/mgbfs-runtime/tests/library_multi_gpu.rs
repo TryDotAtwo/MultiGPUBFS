@@ -541,10 +541,24 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
         unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
         0
     );
+    let failure_report = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let peer_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let relay = inject_host.then(|| {
+        let failure_report = Arc::clone(&failure_report);
+        let peer_cancel = Arc::clone(&peer_cancel);
+        std::thread::spawn(move || {
+            while failure_report.load(std::sync::atomic::Ordering::Acquire) != 2 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            peer_cancel.store(true, std::sync::atomic::Ordering::Release);
+        })
+    });
     let workers: Vec<_> =
         (0..2)
             .map(|rank| {
                 let graph = graph.clone();
+                let failure_report = Arc::clone(&failure_report);
+                let peer_cancel = Arc::clone(&peer_cancel);
                 std::thread::spawn(move || {
                     std::panic::catch_unwind(|| {
                     let cfg = DistributedConfig {
@@ -567,6 +581,10 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                         &graph, [7; 16], id, cfg, None, 64 << 20, false,
                         mgbfs_core::config::ReferenceOwner::CucoRank,
                     ).unwrap();
+                    if inject_host {
+                        bfs.set_cancel_token(peer_cancel).unwrap();
+                        if rank == 0 { bfs.set_failure_token(failure_report); }
+                    }
                     #[cfg(debug_assertions)]
                     if inject_host && rank == 0 {
                         mgbfs_runtime::distributed_native::inject_owner_host_error_once_for_test();
@@ -583,10 +601,12 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                 })
             })
             .collect();
-    workers
+    let errors: Vec<_> = workers
         .into_iter()
         .map(|worker| worker.join().unwrap())
-        .collect()
+        .collect();
+    if let Some(relay) = relay { relay.join().unwrap(); }
+    errors
 }
 
 #[test]

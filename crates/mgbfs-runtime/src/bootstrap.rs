@@ -14,6 +14,7 @@ impl SearchSideband {
     pub fn report_failure(&self) { self.local.store(2, Ordering::Release); }
     pub fn cancel_requested(&self) -> bool { self.cancelled.load(Ordering::Acquire) }
     pub fn cancel_token(&self) -> Arc<AtomicBool> { Arc::clone(&self.cancelled) }
+    pub fn failure_token(&self) -> Arc<AtomicU8> { Arc::clone(&self.local) }
     pub fn finish(self, group: &mut BootstrapGroup) -> Result<bool> {
         let (peers, result) = self.worker.join().map_err(|_| "SEARCH_SIDEBAND_PANIC")?;
         group.peers = peers;

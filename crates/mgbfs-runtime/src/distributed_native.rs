@@ -538,6 +538,7 @@ pub struct DistributedNativeBfs {
     comm: Comm,
     // Declared after Comm so the callback context outlives Comm::drop.
     cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     lsa_view: Option<LsaView>,
     generate: Option<Plan>,
     hash: Option<Plan>,
@@ -598,6 +599,9 @@ impl DistributedNativeBfs {
             std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
         self.cancel_requested = Some(token);
         Ok(())
+    }
+    pub fn set_failure_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicU8>) {
+        self.failure_report = Some(token);
     }
     fn ensure_not_cancelled(&self) -> Result<()> {
         if self.cancel_requested.as_ref().is_some_and(|flag|
@@ -1293,6 +1297,7 @@ impl DistributedNativeBfs {
             prev_count: 0,
             failed: false,
             cancel_requested: None,
+            failure_report: None,
             // Keep the setup-vote stream alive outside the fallible local
             // result. An error here must not destroy it before peers vote.
             stream: Stream(std::ptr::null_mut()),
@@ -2251,7 +2256,11 @@ impl DistributedNativeBfs {
         }
         let result = self.advance_inner(None);
         let comm = self.comm.0;
+        let failure_report = self.failure_report.as_deref();
         crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
+            if let Some(token) = failure_report {
+                token.store(2, std::sync::atomic::Ordering::Release);
+            }
             mgbfs_nccl_abort(comm);
         })
     }
@@ -2265,7 +2274,11 @@ impl DistributedNativeBfs {
         }
         let result = self.advance_inner(Some(archive));
         let comm = self.comm.0;
+        let failure_report = self.failure_report.as_deref();
         crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
+            if let Some(token) = failure_report {
+                token.store(2, std::sync::atomic::Ordering::Release);
+            }
             mgbfs_nccl_abort(comm);
         })
     }
@@ -2686,10 +2699,10 @@ impl DistributedNativeBfs {
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=retire_import_queued", self.cfg.rank, self.depth);
                     }
-                    if lsa.is_some() && rank_mode && self.hash_first.is_none() {
+                    if device_epoch {
                         // The common result poisons ring/control on-device before
-                        // any rank can commit this owner epoch. The post-owner
-                        // vote still reports the failure to both hosts.
+                        // any rank can commit this owner epoch. Host/API errors
+                        // use the cancellation sideband instead of a batch vote.
                         check(unsafe { mgbfs_owner_global_fatal_gate(
                             self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                             self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
@@ -2707,7 +2720,12 @@ impl DistributedNativeBfs {
                         check(unsafe { mgbfs_owner_import_transport_fatal(
                             view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
                         ) })?;
-                        if self.all_max_ring_fatal()? != 0 {
+                        if device_epoch {
+                            check(unsafe { mgbfs_owner_global_fatal_gate(
+                                self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                                self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                            ) })?;
+                        } else if self.all_max_ring_fatal()? != 0 {
                             return Err("GROUP_LSA_TRANSPORT_FATAL".into());
                         }
                     } else {
@@ -2802,7 +2820,7 @@ impl DistributedNativeBfs {
                         Err(error) => batch_error = Some(error),
                     }
                 }
-                if round == 1 && device_epoch {
+                if device_epoch {
                     if let Some(error) = batch_error { return Err(error); }
                 } else {
                     vote_group_error(

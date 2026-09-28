@@ -410,6 +410,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         }
     }};
     bfs.set_cancel_token(sideband.cancel_token())?;
+    bfs.set_failure_token(sideband.failure_token());
     let allocated = used()?;
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
