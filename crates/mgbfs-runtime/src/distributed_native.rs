@@ -1571,13 +1571,6 @@ impl DistributedNativeBfs {
         self.wait_comm_stream(self.stream.0)?;
         self.collective_recv.one()
     }
-    fn mark_host_fatal_on_device(&self, stream: *mut c_void) -> Result<()> {
-        check(unsafe { mgbfs_device_store_u32(self.fatal.ptr.cast(), 1, stream) })?;
-        check(unsafe { mgbfs_owner_import_transport_fatal(
-            self.fatal.ptr.cast(), self.ring.ptr.cast(),
-            self.control.ptr.cast(), stream,
-        ) })
-    }
     #[cfg(feature = "library-owner")]
     fn commit_rank_library_batch(
         &mut self,
@@ -2425,17 +2418,16 @@ impl DistributedNativeBfs {
                 // Both ranks issue this epoch even when one has no parents.
                 // A local archive failure must not strand its peer in exchange.
                 if device_epoch {
-                    if error.is_some() { self.mark_host_fatal_on_device(s)?; }
+                    // Host/API failure may prevent any further GPU submission.
+                    // Return to the sole dispatcher's notification + abort path
+                    // before issuing a collective or waiting for GPU progress.
+                    if let Some(error) = error { return Err(error); }
                     check(unsafe { mgbfs_owner_global_fatal_gate(
                         self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                         self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                     ) })?;
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_vote_queued", self.cfg.rank, self.depth);
-                    }
-                    if let Some(error) = error {
-                        self.wait_comm_stream(s)?;
-                        return Err(error);
                     }
                 } else if self.all_max(u32::from(error.is_some()))? != 0 {
                     return Err(error.unwrap_or_else(|| "REMOTE_ARCHIVE_FATAL".into()));
@@ -2852,9 +2844,10 @@ impl DistributedNativeBfs {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_end", self.cfg.rank, self.depth);
                 }
                 if device_epoch {
-                    if batch_error.is_some() {
-                        self.mark_host_fatal_on_device(s)?;
-                    }
+                    // A host/API error is not a device logical fatal: this rank
+                    // may be unable to issue the next collective. Outer advance
+                    // publishes cancellation before serialized communicator abort.
+                    if let Some(error) = batch_error { return Err(error); }
                     // All ranks issue the post-owner vote, including an empty
                     // peer round. Its device result predicates the next LSA
                     // rendezvous without returning a count to the host.
@@ -2877,9 +2870,8 @@ impl DistributedNativeBfs {
                 }
                 if device_epoch {
                     if let Some(error) = batch_error {
-                        // Error path only: the group vote and receive-slot
-                        // publication must finish before this rank aborts.
-                        self.wait_comm_stream(s)?;
+                        // Recording the last-reader event itself failed. Do not
+                        // wait for GPU progress before notifying and aborting.
                         return Err(error);
                     }
                 } else {
