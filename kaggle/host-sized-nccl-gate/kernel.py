@@ -871,7 +871,7 @@ def main():
                 root.mkdir()
                 output = logs / name
                 command = [sys.executable, "-m", "torch.distributed.run", "--standalone",
-                           "--nproc-per-node=2", "--no-python",
+                           "--nproc-per-node=2", "--monitor-interval=30", "--no-python",
                            str(source / "target/debug/mgbfs"), "bench", "--reference",
                            "s4", "1", str(root / "bootstrap"), str(root / "archive"),
                            str(output)]
@@ -894,6 +894,8 @@ def main():
                     raise RuntimeError("PROCESS_FAULT_CLEANUP_FAILED: " + fault_name)
                 if returncode == 99 or "PROCESS_SCOPE_FORCED_CLEANUP" in checked:
                     raise RuntimeError("PROCESS_FAULT_FORCED_CLEANUP: " + fault_name)
+                if "closing signal SIGTERM" in checked or "Signal 15 (SIGTERM)" in checked:
+                    raise RuntimeError("PROCESS_FAULT_LAUNCHER_KILLED_RANK: " + fault_name)
                 if expected_error not in checked:
                     raise RuntimeError("PROCESS_FAULT_NOT_REACHED: " + fault_name)
                 # The existing subreaper can terminate adopted descendants.

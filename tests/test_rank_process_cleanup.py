@@ -19,7 +19,8 @@ class RankProcessCleanup(unittest.TestCase):
             rank_pid=None
             try:
                 if parent_exits:
-                    run_command([sys.executable,'-c',parent],root/'log',dict(os.environ),5)
+                    with self.assertRaisesRegex(RuntimeError, 'exit=99'):
+                        run_command([sys.executable,'-c',parent],root/'log',dict(os.environ),5)
                 else:
                     with self.assertRaises(TimeoutError):
                         run_command([sys.executable,'-c',parent],root/'log',dict(os.environ),1)

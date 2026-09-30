@@ -2255,6 +2255,11 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(None);
+        if let Err(error) = &result {
+            // Publish the originating error before abort/Drop can block or a
+            // fail-fast launcher terminates this rank after its peer exits.
+            eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
+        }
         let comm = self.comm.0;
         let failure_report = self.failure_report.as_deref();
         crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
@@ -2279,6 +2284,9 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(Some(archive));
+        if let Err(error) = &result {
+            eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
+        }
         let comm = self.comm.0;
         let failure_report = self.failure_report.as_deref();
         crate::failure::abort_on_error(result, &mut self.failed, || unsafe {
@@ -3111,6 +3119,9 @@ impl DistributedNativeBfs {
             // this rank to return from a potentially blocked CUDA cleanup.
             // Keep the slot alive until the stream releases its pinned bytes.
             let comm = self.comm.0;
+            if let Err(error) = &copied {
+                eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
+            }
             crate::failure::report_and_abort_on_error(
                 copied, &mut self.failed, self.failure_report.as_deref(),
                 || unsafe { mgbfs_nccl_abort(comm); }, || unsafe {
