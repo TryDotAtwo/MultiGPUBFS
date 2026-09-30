@@ -12,9 +12,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "e8f8fa6ab909263fb8bd84fde8d1a908a1ad0e5d"
+SOURCE = "ab65ce106c767d8199911c85efb94ffc0c4383c6"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "process_faults_host_sized"
+MODE = "owner_capture_gate"
 LSA_ENABLED = MODE == "process_faults_only"
 
 
@@ -402,6 +402,34 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "owner_capture_gate":
+            import re
+            from eight_gpu_gate import run_command
+            run(["cmake", "--build", str(build), "--target", "cuco_owner_probe", "-j2"],
+                "owner-capture-build", timeout=1800)
+            binary = build / "cuco_owner_probe"
+            report.update(scope="single-device full production owner DAG capture; not LSA or full BFS",
+                          executable_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                          stages=[])
+            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+                command = [str(binary)]
+                if tool != "plain":
+                    command = [SANITIZER_PATH, "--tool", tool, "--error-exitcode", "97", *command]
+                started = time.monotonic()
+                text = run_command(command, logs / ("owner-capture-" + tool + ".log"), env, 180)
+                if text.count("RANK_FULL_OWNER_DAG_CAPTURE_PASS") != 1 or '\"status\":\"PASS\"' not in text:
+                    raise RuntimeError("OWNER_CAPTURE_ASSERTIONS_MISSING")
+                if tool != "plain":
+                    errors = re.findall(r"ERROR SUMMARY: (\d+) errors", text)
+                    races = re.findall(r"RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)", text)
+                    if any(int(n) for n in errors) or any(any(int(n) for n in row) for row in races):
+                        raise RuntimeError("OWNER_CAPTURE_SANITIZER_FINDINGS")
+                    if not errors and not (tool == "racecheck" and races):
+                        raise RuntimeError("OWNER_CAPTURE_SANITIZER_SUMMARY_MISSING")
+                report["stages"].append(dict(tool=tool, status="PASS", seconds=time.monotonic()-started))
+                save()
+            report["status"] = "PASS"
+            return
         if MODE == "warmup_admission_gate":
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "warmup-cli-build", timeout=1800)
