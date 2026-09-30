@@ -91,5 +91,15 @@ int main() {
   assert(recv_calls == 0 && end_calls == 0 && group_depth == 0);
   assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, payload, 5, 5, nullptr) == 0);
   assert(recv_calls == 1 && end_calls == 1 && group_depth == 0);
+  // Exercise the dispatcher's explicit fatal abort, not only cancellation
+  // encountered while polling an in-progress NCCL operation.
+  const int aborts_before = abort_calls;
+  const int destroys_before = destroy_calls;
+  assert(mgbfs_nccl_abort(receiver) == 0);
+  assert(abort_calls == aborts_before + 1);
+  assert(mgbfs_nccl_abort(receiver) == 0);
+  assert(abort_calls == aborts_before + 1);
+  assert(mgbfs_nccl_poll(receiver) != 0);
   mgbfs_nccl_destroy(receiver);
+  assert(destroy_calls == destroys_before);
 }
