@@ -31,6 +31,17 @@ points to `b91894bd5b190c874d98a017f93f5daa515b65d0`; the compare API reports
 diverged histories. Source analysis for this wheel must use the reported build
 commit, not assume equal source trees from equal version labels.
 
+Follow-up authoritative source-byte verification resolves the apparent `init.cc`
+discrepancy: actual build commit → tree
+`d61e2c86cfc507969000a963782b2e2231ff1475` → `src` tree
+`2cbc91316842b12bc6000778e74eb910a4ad57c6` → `init.cc` Git blob
+`b1d092d5e0f5068df67905ccc4ca9d28b6614a32`. Git API base64 bytes total 132,628;
+SHA-1 of `blob <byte-length>\0<bytes>` matches that blob ID. The release-tag
+commit's tree also resolves this file to the **same blob**, despite different
+overall histories. Its abort entry is line 2697. The browser's 2877-line raw
+view is inconsistent with these verified bytes and must not supply line anchors.
+This proves equality of this file only, not of the whole NCCL source trees.
+
 Raw evidence: `test_results/kaggle_nonblocking_boundary_v40/lsa-bfs-gate/`,
 including both `/proc` maps, diagnostic metadata and complete debugger output.
 NCCL stdout is buffered: interleaving with stderr markers does not establish
