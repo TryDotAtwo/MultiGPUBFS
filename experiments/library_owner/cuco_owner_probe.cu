@@ -157,6 +157,17 @@ int main() {
     rmm::device_buffer layer(sizeof(uint32_t),stream.view(),resource);
     rmm::device_buffer source_states(cap*16,stream.view(),resource);
     rmm::device_buffer next_states(16*16,stream.view(),resource);
+    // The full production owner DAG also converts the device-count AoS
+    // window and publishes the final extent before releasing its lease.
+    rmm::device_buffer aos_hashes(cap*16,stream.view(),resource);
+    rmm::device_buffer candidate_scratch(5*256,stream.view(),resource);
+    rmm::device_buffer window_begin(sizeof(uint32_t),stream.view(),resource);
+    rmm::device_buffer next_extent_count(sizeof(uint32_t),stream.view(),resource);
+    rmm::device_buffer next_extents(2*sizeof(MgbfsStateExtent),stream.view(),resource);
+    check(cudaMemsetAsync(window_begin.data(),0,sizeof(uint32_t),stream.value()));
+    check(cudaMemsetAsync(next_extent_count.data(),0,sizeof(uint32_t),stream.value()));
+    require(mgbfs_library_keys_to_aos_v1(batch.candidates().keys,aos_hashes.data(),
+        cap,stream.value())==0,"RANK_CAPTURE_AOS_UPLOAD");
     check(cudaMemsetAsync(next_states.data(),0,next_states.size(),stream.value()));
     auto upload_states=[&](std::initializer_list<uint8_t> labels){
       std::vector<uint8_t> host(cap*16);
@@ -181,8 +192,17 @@ int main() {
     require(mgbfs_library_rank_create_cuco_v1(previous.data(),current.data(),
         capacities.data(),2,cap,0,2,stream.value(),&rank_owner)==0&&rank_owner,
         "RANK_ABI_CREATE");
-    auto run_batch=[&](uint64_t epoch){
+    auto run_batch=[&](uint64_t epoch,bool full_dag=false){
       auto capacity_view=batch.candidates();capacity_view.keys.rows=cap;
+      if(full_dag){
+        require(mgbfs_library_candidates_from_aos_window_v1(aos_hashes.data(),
+            static_cast<uint32_t const*>(window_begin.data()),
+            static_cast<uint32_t const*>(valid.data()),cap,cap,
+            candidate_scratch.data(),candidate_scratch.size(),
+            static_cast<MgbfsStateRingControl*>(ring.data()),
+            static_cast<MgbfsOwnerControl*>(control.data()),stream.value(),
+            &capacity_view)==0,"RANK_CAPTURE_AOS_WINDOW");
+      }
       MgbfsLibraryRankDeviceBatchV1 d{};
       require(mgbfs_library_rank_compare_v1(rank_owner,epoch,capacity_view,
           static_cast<uint32_t const*>(valid.data()),
@@ -213,12 +233,25 @@ int main() {
           static_cast<MgbfsOwnerControl*>(control.data()),
           static_cast<MgbfsStateExtent*>(extent.data()),stream.value())==0,
           "RANK_ABI_MATERIALIZE");
+      if(full_dag){
+        require(mgbfs_state_publish_next_extent(
+            static_cast<MgbfsStateRingControl*>(ring.data()),
+            static_cast<MgbfsOwnerControl*>(control.data()),
+            static_cast<MgbfsStateExtent const*>(extent.data()),
+            static_cast<uint32_t*>(next_extent_count.data()),
+            static_cast<MgbfsStateExtent*>(next_extents.data()),2,stream.value())==0,
+            "RANK_CAPTURE_PUBLISH_EXTENT");
+        require(mgbfs_library_rank_seal_v1(rank_owner)!=0,
+            "RANK_ABI_SEAL_REJECTS_PENDING_READERS");
+        require(mgbfs_library_rank_complete_v1(rank_owner,epoch)==0,
+            "RANK_CAPTURE_COMPLETE_LEASE");
+      }
       return d;
     };
     cudaGraph_t graph=nullptr;cudaGraphExec_t executable=nullptr;
     stream.synchronize(); // fixture uploads, outside the captured owner DAG
     check(cudaStreamBeginCapture(stream.value(),cudaStreamCaptureModeGlobal));
-    auto d=run_batch(1);
+    auto d=run_batch(1,true);
     check(cudaStreamEndCapture(stream.value(),&graph));
     check(cudaGraphInstantiate(&executable,graph));
     check(cudaGraphLaunch(executable,stream.value()));
@@ -247,9 +280,15 @@ int main() {
         cudaMemcpyDeviceToHost));
     require(dense_states[0]==12&&dense_states[16]==15&&got_extent.ready==1,
         "RANK_ABI_FIRST_DENSE_STATES");
-    require(mgbfs_library_rank_seal_v1(rank_owner)!=0,
-        "RANK_ABI_SEAL_REJECTS_PENDING_READERS");
-    require(mgbfs_library_rank_complete_v1(rank_owner,1)==0,"RANK_ABI_COMPLETE_FIRST");
+    uint32_t published_count=0;std::array<MgbfsStateExtent,2> published{};
+    check(cudaMemcpy(&published_count,next_extent_count.data(),sizeof(published_count),
+        cudaMemcpyDeviceToHost));
+    check(cudaMemcpy(published.data(),next_extents.data(),sizeof(published),
+        cudaMemcpyDeviceToHost));
+    require(published_count==1&&published[0].begin==got_extent.begin&&
+        published[0].count==2&&published[0].ready==1,
+        "RANK_CAPTURE_FINAL_PUBLICATION");
+    std::cout<<"RANK_FULL_OWNER_DAG_CAPTURE_PASS\n";
     Key z{7,8,9,0x120};
     batch.upload({x,z,y},{0,1,2});
     upload_states({21,22,23});
