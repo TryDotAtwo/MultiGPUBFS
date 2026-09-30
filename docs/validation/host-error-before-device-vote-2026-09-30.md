@@ -28,3 +28,19 @@ reclamation. No memory lease is released early by this change.
 Prepared Kaggle source archive `4021009152c7...` predates this change. Rebuild
 and freeze a new source package before testing this runtime. HOST_SIZED_NCCL
 is an explicit synchronous control, not acceptance of the CPU-free LSA path.
+
+## D2H failure: abort this rank before cleanup waits
+
+Further source-confirmed dependency: archive_range published its failure token
+but ran cudaStreamSynchronize before returning to the outer communicator abort.
+The existing helper now explicitly sequences poison -> Release notification ->
+dispatcher-local NCCL abort -> cleanup, preserving the original error. The
+pinned Slot remains live through cleanup; no lease becomes reusable on abort.
+NCCL wrapper abort is idempotent, so the outer error handler remains unchanged.
+Only error-path behavior changes; the healthy path invokes neither callback.
+
+Regression RED: cleanup observed an un-aborted communicator. GREEN:
+failure_report5/5 including already-poisoned rank and healthy no-abort case.
+Linux CUDA/library-owner typecheck PASS. Hardware D2H/API injections and bounded
+CUDA/LSA cleanup remain OPEN; communicator abort is not evidence that GPU
+readers finished. Active v30 pins0303f37 and cannot verify this later change.

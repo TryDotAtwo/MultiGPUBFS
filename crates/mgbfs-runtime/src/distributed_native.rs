@@ -3110,8 +3110,10 @@ impl DistributedNativeBfs {
             // Publish cancellation before draining D2H: peers must not wait for
             // this rank to return from a potentially blocked CUDA cleanup.
             // Keep the slot alive until the stream releases its pinned bytes.
+            let comm = self.comm.0;
             crate::failure::report_and_abort_on_error(
-                copied, &mut self.failed, self.failure_report.as_deref(), || unsafe {
+                copied, &mut self.failed, self.failure_report.as_deref(),
+                || unsafe { mgbfs_nccl_abort(comm); }, || unsafe {
                     cudaStreamSynchronize(s);
                 },
             )?;
