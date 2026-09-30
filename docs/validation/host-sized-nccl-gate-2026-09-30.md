@@ -99,3 +99,22 @@ cleanup failure, preserves logs/elapsed/exit code and rejects group COMPLETE.
 This is a prepared acceptance harness, not physical fault evidence. Changing
 the mode requires a new submission only after v29 is terminal. Default remains
 the active HOST_SIZED_NCCL diagnostic; no live notebook was modified.
+
+## v29 terminal result and direct gate
+
+v29 CLI COMPLETE, diagnostic TIMEOUT at180.0145s. Source0303f37, two physical
+T4, P2P allowed0 in both directions. Debugger ran env/dash/readlink launcher
+inferiors but never the BFS application; readlink exited and the active inferior
+remained exited. Samples reported program not running. No oracle or sanitizer
+summary. This is debugger scheduling failure, not measured BFS deadlock.
+Full logs downloaded under test_results/kaggle_nonblocking_boundary_v29.
+
+Next default `full_bfs_direct_gate` runs the existing CUCO_RANK HostSized
+full-state/archive fixture directly: plain then all four full-BFS sanitizer
+tools, no debugger, kernel filters or suppressed API errors. Existing
+eight_gpu_gate.run_command supplies process_scope subreaping and strict
+validate_log checks actual one-fixture completion and clean summaries. Each
+stage has180s bound; failed plain skips tools; tool failures are individually
+retained, not relabelled PASS. This is a two-GPU in-process control gate, not
+independent-process LSA acceptance, capture/timeline or performance evidence.
+LSA remains OPEN/UNSUPPORTED_HOST; no random P2P retry.

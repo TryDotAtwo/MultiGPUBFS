@@ -14,7 +14,7 @@ import tempfile
 
 SOURCE = "0303f37c3b86119e286c9d311a00e624c35ecfc7"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "full_bfs_memcheck_diagnostic"
+MODE = "full_bfs_direct_gate"
 LSA_ENABLED = MODE == "process_faults_only"
 
 
@@ -1025,6 +1025,45 @@ def main():
                 report[name] = "PASS"
                 save()
             report["status"] = "COMPLETE"
+            return
+        if MODE == "full_bfs_direct_gate":
+            # Real target validation, not debugger/launcher scheduling. Reuse
+            # the existing strict oracle/sanitizer parser and rank subreaper.
+            sys.path.insert(0, str(source / "scripts"))
+            from eight_gpu_gate import run_command, validate_log
+            binaries = [p for p in (source / "target/debug/deps").glob("library_multi_gpu-*")
+                        if p.is_file() and os.access(p, os.X_OK)]
+            if len(binaries) != 1:
+                raise RuntimeError("BINARY_INVENTORY")
+            binary = binaries[0]
+            fixture = "cuco_rank_two_gpu_dense_layers_and_archives_match_oracle"
+            report.update(scope="two T4; HOST_SIZED_NCCL DENSE CUCO_RANK; direct full-state/archive oracle and four full-BFS sanitizers; in-process rank threads, not independent processes",
+                          binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                          stages=[])
+            env["NCCL_DEBUG"] = "INFO"
+            for tool in ("plain", "memcheck", "racecheck", "initcheck", "synccheck"):
+                command = [str(binary), fixture, "--exact", "--nocapture", "--test-threads=1"]
+                if tool != "plain":
+                    command = [SANITIZER_PATH, "--tool", tool, "--error-exitcode", "97", *command]
+                stage = {"tool": tool, "command": command, "status": "INCOMPLETE"}
+                report["stages"].append(stage)
+                started = time.monotonic()
+                save()
+                try:
+                    text = run_command(command, logs / ("direct-" + tool + ".log"), env, 180)
+                    validate_log(text, tool)
+                    stage["status"] = "PASS"
+                except TimeoutError as error:
+                    stage.update(status="TIMEOUT", error=str(error))
+                except Exception as error:
+                    stage.update(status="FAIL", error=str(error))
+                stage["elapsed_seconds"] = time.monotonic() - started
+                save()
+                if tool == "plain" and stage["status"] != "PASS":
+                    break
+            report["status"] = ("PASS" if len(report["stages"]) == 5 and
+                                all(stage["status"] == "PASS" for stage in report["stages"])
+                                else "VALIDATION_FAILED")
             return
         if MODE == "full_bfs_memcheck_diagnostic":
             report["scope"] = "HOST_SIZED_NCCL U3(3) then S4; one memcheck traced replay; DEBUGGER_PARENT_MI; LSA OFF"
