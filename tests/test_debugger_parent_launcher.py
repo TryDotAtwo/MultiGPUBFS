@@ -10,6 +10,14 @@ spec.loader.exec_module(gate)
 
 
 class DebuggerParentLauncherTests(unittest.TestCase):
+    def test_nccl_library_mapping_keeps_real_path_and_deduplicates_segments(self):
+        self.assertTrue(hasattr(gate, 'debugger_nccl_libraries'))
+        maps = ('1000-2000 r-xp 00000000 08:01 10 /tmp/a space/libnccl.so.2\n'
+                '2000-3000 r--p 00001000 08:01 10 /tmp/a space/libnccl.so.2\n'
+                '3000-4000 r-xp 00000000 08:01 20 /tmp/libcuda.so.1\n')
+        self.assertEqual(gate.debugger_nccl_libraries(maps),
+                         ['/tmp/a space/libnccl.so.2'])
+
     def test_script_target_uses_verified_elf_parent_without_changing_arguments(self):
         with tempfile.TemporaryDirectory() as root:
             script = Path(root) / "sanitizer"

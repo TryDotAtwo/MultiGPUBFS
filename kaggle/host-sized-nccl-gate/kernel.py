@@ -23,6 +23,14 @@ import base64,time
 DEBUGGER_PATH = "/usr/local/cuda/bin/cuda-gdb"
 SANITIZER_PATH = "/usr/local/cuda/bin/compute-sanitizer"
 
+def debugger_nccl_libraries(maps):
+    paths = set()
+    for line in maps.splitlines():
+        fields = line.split(None, 5)
+        if len(fields) == 6 and Path(fields[5]).name.startswith('libnccl.so'):
+            paths.add(fields[5])
+    return sorted(paths)
+
 def debugger_parent_argv(target, parent):
     def is_elf(path):
         with Path(path).open("rb") as stream:
@@ -118,7 +126,30 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
             drain(); elapsed=time.monotonic()-started
             for group,row in result['thread_groups'].items():
                 try:
-                    if Path(os.readlink(Path('/proc')/str(row['pid'])/'exe')).resolve()==binary.resolve(): row['application']=True; app_seen=True
+                    process_root = Path('/proc') / str(row['pid'])
+                    if Path(os.readlink(process_root/'exe')).resolve()==binary.resolve():
+                        row['application']=True; app_seen=True
+                        if 'nccl_libraries' not in row:
+                            maps = (process_root/'maps').read_text()
+                            libraries = debugger_nccl_libraries(maps)
+                            if libraries:
+                                (logs/('rank-maps-'+str(row['pid'])+'.txt')).write_text(maps)
+                                row['nccl_libraries'] = []
+                                for path in libraries:
+                                    identity = {'mapped_path': path}
+                                    try:
+                                        identity['sha256'] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                                        tool = shutil.which('readelf')
+                                        if tool:
+                                            notes = subprocess.run([tool,'-n',path], capture_output=True,
+                                                                   text=True, timeout=2)
+                                            match = re.search(r'Build ID:\s*(\S+)', notes.stdout)
+                                            identity['build_id'] = match.group(1) if match else None
+                                            identity['readelf_returncode'] = notes.returncode
+                                    except (OSError,subprocess.TimeoutExpired) as error:
+                                        identity['identity_error'] = str(error)
+                                    row['nccl_libraries'].append(identity)
+                                save()
                 except OSError: pass
             for point in sample_points:
                 if elapsed>=point and point not in sampled:
