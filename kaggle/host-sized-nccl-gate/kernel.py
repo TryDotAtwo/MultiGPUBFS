@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "c49f5b926d84f2fa1f8ab557a3b4622413e180b8"
+SOURCE = "c7488ca6d901afc1545edba4e25ea28f915f8206"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "owner_capture_then_lsa_faults"
 LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults")
@@ -887,6 +887,7 @@ def main():
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "process-fault-cli-build", timeout=1800)
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
+                       MGBFS_TRACE_FAILURE_TEARDOWN="1",
                        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
                        MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
                        MGBFS_BUCKETS="8", MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2",
