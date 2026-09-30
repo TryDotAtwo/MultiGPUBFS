@@ -20,7 +20,7 @@ LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults", "
 
 import base64,time
 
-DEBUGGER_PATH = "/usr/local/cuda/bin/cuda-gdb"
+DEBUGGER_PATH = "/usr/bin/gdb" if MODE == "lsa_abort_stack" else "/usr/local/cuda/bin/cuda-gdb"
 SANITIZER_PATH = "/usr/local/cuda/bin/compute-sanitizer"
 
 def debugger_nccl_libraries(maps):
@@ -247,7 +247,7 @@ def main():
                                 for name in names if name}}
     report["snapshot"] = identity
     (logs / "source-manifest.json").write_text(json.dumps(identity, indent=2))
-    if MODE in ("full_bfs_memcheck_diagnostic", "lsa_abort_stack"):
+    if MODE == "full_bfs_memcheck_diagnostic":
         try:
             diagnostic_preflight(logs)
         except Exception as error:
@@ -291,6 +291,20 @@ def main():
             report["status"] = "UNSUPPORTED_HOST"
             save()
             return
+        if MODE == "lsa_abort_stack":
+            # Host stacks only: CUDA-GDB enables driver debug-agent forks before
+            # torchrun launches ranks, diverting follow-fork-mode child away
+            # from the actual BFS. Do not attach or change ptrace policy.
+            if not Path(DEBUGGER_PATH).is_file():
+                run(["apt-get", "update"], "host-gdb-package-index", timeout=180)
+                run(["apt-get", "install", "-y", "gdb"], "host-gdb-install", timeout=180)
+            try:
+                diagnostic_preflight(logs)
+            except Exception as error:
+                report["status"] = "DIAGNOSTIC_UNAVAILABLE"
+                report["error"] = str(error)
+                save()
+                raise
         sdk = work / "cuda-12.9"
         sdk.mkdir()
         for component, version, digest in library.CUDA_COMPONENTS:
