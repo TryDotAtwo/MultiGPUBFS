@@ -67,3 +67,23 @@ Hardware result PENDING. This HOST_SIZED_NCCL configuration does not execute
 the LSA-specific changed error branches at a1712ad; it checks the same build's
 ordinary NCCL correctness/sanitizer control. LSA asymmetric-fault acceptance,
 CPU-free timeline, four sanitizer gates and paired A/B remain OPEN.
+
+## v28 terminal result: diagnostic launcher failure
+
+CLI COMPLETE is not a test pass. Downloaded summary/diagnostic bind the actual
+source to a1712ad and two physical T4, P2P allowed1 both directions. Native and
+Rust builds completed. Debugger rejected the compute-sanitizer launcher as
+`not in executable format`; `-exec-run` reported no executable specified.
+No application inferior started, no oracle or sanitizer summary: status
+DIAGNOSTIC_FAILURE, not a BFS correctness failure or healthy timeout.
+Logs: test_results/kaggle_nonblocking_boundary_v28/lsa-bfs-gate/.
+Kaggle output CLI printed a Windows charmap error after downloading the
+summary, diagnostic, source manifest and full logs; files were read directly.
+
+Prepared correction: preserve original sanitizer argv and use an ELF-verified
+`env` process as debugger parent if sanitizer is a script; normal launch only,
+no attach or security changes. Three behavioral launcher tests RED then GREEN.
+Next source pinned to 0303f37c3b86119e286c9d311a00e624c35ecfc7, including
+CancelGroup owner-pair early exit. Runner SHA256
+bd769e972e1227790ca08edc3a8e3d8199ada5fb89209d07c85a5144183f9347.
+Correction hardware execution remains NOT_RUN until an actual next submission.

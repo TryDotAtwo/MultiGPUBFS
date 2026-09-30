@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "a1712ad0b881ff1b7c819536d0f74d9ecdeac7fb"
+SOURCE = "0303f37c3b86119e286c9d311a00e624c35ecfc7"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "full_bfs_memcheck_diagnostic"
 
@@ -21,6 +21,18 @@ import base64,time
 
 DEBUGGER_PATH = "/usr/local/cuda/bin/cuda-gdb"
 SANITIZER_PATH = "/usr/local/cuda/bin/compute-sanitizer"
+
+def debugger_parent_argv(target, parent):
+    def is_elf(path):
+        with Path(path).open("rb") as stream:
+            return stream.read(4) == b"\x7fELF"
+    if is_elf(target[0]):
+        return list(target)
+    if parent is None or not is_elf(parent):
+        raise RuntimeError("DEBUGGER_PARENT_NOT_ELF")
+    # env execs the original launcher with unchanged argv; no shell parsing,
+    # attaching, security changes or alternative sanitizer implementation.
+    return [str(parent), *target]
 
 def diagnostic_preflight(logs):
     tools={"mode":"normal parent launch; no attach", "debugger_path":DEBUGGER_PATH,"sanitizer_path":SANITIZER_PATH}
@@ -41,7 +53,8 @@ def diagnostic_replay(binary,source,env,logs):
     import threading,queue,re
     env=dict(env,NCCL_DEBUG="INFO",MGBFS_TRACE_ROUTE="1",MGBFS_TRACE_ROUTE_NO_SYNC="1",MGBFS_TRACE_NCCL_GATE="1")
     target=[SANITIZER_PATH,"--tool","memcheck","--report-api-errors","no","--error-exitcode","97",str(binary),"cuco_rank_two_gpu_dense_layers_and_archives_match_oracle","--exact","--nocapture","--test-threads=1"]
-    command=[DEBUGGER_PATH,'-q','-n','--interpreter=mi2','--args',*target]
+    launched_target = debugger_parent_argv(target, shutil.which("env"))
+    command=[DEBUGGER_PATH,'-q','-n','--interpreter=mi2','--args',*launched_target]
     result={'status':'UNKNOWN','mode':'DEBUGGER_PARENT_MI_STACK_SAMPLED','command':command,'target_command':target,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'env':{k:v for k,v in env.items() if k.startswith('MGBFS_') or k.startswith('NCCL_')},'supervision_seconds':180,'stack_samples':[],'thread_groups':{},'untraced_replay':'NOT_RUN','diagnostic_changes':'MI async, child fork following, retained inferiors scheduled together; no attach or security change'}
     def save(): (logs/'diagnostic.json').write_text(json.dumps(result,indent=2))
     save()
