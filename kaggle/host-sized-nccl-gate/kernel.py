@@ -12,10 +12,10 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "ab65ce106c767d8199911c85efb94ffc0c4383c6"
+SOURCE = "248434da4173909255246ae1289c1be973af4fcb"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "owner_capture_gate"
-LSA_ENABLED = MODE == "process_faults_only"
+MODE = "owner_capture_then_lsa_faults"
+LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults")
 
 
 import base64,time
@@ -248,7 +248,8 @@ def main():
         report["p2p_policy"] = ("required for explicit LSA mode" if LSA_ENABLED else
                                 "inventory only; ordinary NCCL selects supported transport")
         save()
-        if LSA_ENABLED and any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
+        lsa_host_supported = all(row["cuda_status"] == 0 and row["allowed"] == 1 for row in p2p)
+        if LSA_ENABLED and not lsa_host_supported and MODE != "owner_capture_then_lsa_faults":
             report["status"] = "UNSUPPORTED_HOST"
             save()
             return
@@ -402,7 +403,7 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE == "owner_capture_gate":
+        if MODE in ("owner_capture_gate", "owner_capture_then_lsa_faults"):
             import re
             sys.path.insert(0, str(source / "scripts"))
             from eight_gpu_gate import run_command
@@ -429,8 +430,18 @@ def main():
                         raise RuntimeError("OWNER_CAPTURE_SANITIZER_SUMMARY_MISSING")
                 report["stages"].append(dict(tool=tool, status="PASS", seconds=time.monotonic()-started))
                 save()
-            report["status"] = "PASS"
-            return
+            report["owner_capture_status"] = "PASS"
+            if MODE == "owner_capture_gate":
+                report["status"] = "PASS"
+                return
+            # Independent declared gates; lack of P2P does not replace LSA
+            # with ordinary NCCL or change the runtime's configured backend.
+            if not lsa_host_supported:
+                report["lsa_fault_status"] = "UNSUPPORTED_HOST"
+                report["status"] = "COMPLETE_PARTIAL"
+                return
+            report["lsa_fault_status"] = "INCOMPLETE"
+            save()
         if MODE == "warmup_admission_gate":
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "warmup-cli-build", timeout=1800)
@@ -862,7 +873,7 @@ def main():
                 report["status"] = "COMPLETE"
                 return
         if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only",
-                    "process_faults_host_sized"):
+                    "process_faults_host_sized", "owner_capture_then_lsa_faults"):
             sys.path.insert(0, str(source / "scripts"))
             from process_scope import spawn_group, stop_group
             # Exercise real Linux orphan/session semantics before trusting the
@@ -885,7 +896,7 @@ def main():
                        MGBFS_TRANSPORT_BACKEND="NCCL_LSA" if LSA_ENABLED else "HOST_SIZED_NCCL")
             faults = [("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK",
                        "TEST_INJECTED_OWNER_HOST_ERROR")]
-            if MODE in ("process_faults_only", "process_faults_host_sized"):
+            if MODE in ("process_faults_only", "process_faults_host_sized", "owner_capture_then_lsa_faults"):
                 faults += [("archive-admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK",
                             "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR"),
                            ("archive-finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK",
@@ -942,6 +953,8 @@ def main():
                                 "supervisor": "existing process_scope subreaper"}
                 save()
             report["status"] = "COMPLETE"
+            if MODE == "owner_capture_then_lsa_faults":
+                report["lsa_fault_status"] = "SUPERVISED_NO_COMPLETE"
             return
         if MODE == "host_sized_only":
             report["scope"] = ("two physical T4; HostSizedNccl only; no LSA or P2P claim; "
