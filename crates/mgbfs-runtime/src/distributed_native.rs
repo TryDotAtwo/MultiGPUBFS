@@ -1,6 +1,6 @@
 //! Native 1/2/4/8-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::event_generation::NativeEvent;
-use crate::failure::{process_owner_pair, vote_group_error};
+use crate::failure::{process_owner_pair, vote_group_error, OwnerFailurePolicy};
 use crate::jobs::{split, JobSpan};
 #[cfg(feature = "library-owner")]
 use crate::library_native::{finalize_shards, ControlTransfer, LibraryShard};
@@ -2789,6 +2789,8 @@ impl DistributedNativeBfs {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
                 let mut batch_error = process_owner_pair(
+                    if device_epoch { OwnerFailurePolicy::CancelGroup }
+                    else { OwnerFailurePolicy::CollectiveVote },
                     (
                         0,
                         (

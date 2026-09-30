@@ -1,10 +1,25 @@
-use mgbfs_runtime::failure::{process_owner_pair, vote_group_error};
+use mgbfs_runtime::failure::{process_owner_pair, vote_group_error, OwnerFailurePolicy};
 use std::cell::RefCell;
 
 #[test]
+fn cancellable_owner_failure_never_submits_readiness_or_remote_work() {
+    let events = RefCell::new(Vec::new());
+    let result = process_owner_pair(
+        OwnerFailurePolicy::CancelGroup,
+        "local", "remote",
+        |value| { events.borrow_mut().push(value); Err(value) },
+        || { events.borrow_mut().push("ready"); Ok(()) },
+    );
+    assert_eq!(result, Err("local"));
+    assert_eq!(*events.borrow(), ["local"]);
+}
+
+#[test]
 fn local_work_does_not_wait_for_remote_but_remote_never_reads_before_ready() {
+    for policy in [OwnerFailurePolicy::CollectiveVote, OwnerFailurePolicy::CancelGroup] {
     let events = RefCell::new(Vec::new());
     process_owner_pair(
+        policy,
         "local",
         "remote",
         |value| {
@@ -18,12 +33,14 @@ fn local_work_does_not_wait_for_remote_but_remote_never_reads_before_ready() {
     )
     .unwrap();
     assert_eq!(*events.borrow(), ["local", "ready", "remote"]);
+    }
 }
 
 #[test]
 fn local_failure_still_establishes_dependency_and_preserves_first_error() {
     let events = RefCell::new(Vec::new());
     let result = process_owner_pair(
+        OwnerFailurePolicy::CollectiveVote,
         "local",
         "remote",
         |value| {
@@ -44,6 +61,7 @@ fn failed_readiness_does_not_expose_remote_payload() {
     for local_error in [false, true] {
         let events = RefCell::new(Vec::new());
         let result = process_owner_pair(
+            OwnerFailurePolicy::CollectiveVote,
             "local",
             "remote",
             |value| {

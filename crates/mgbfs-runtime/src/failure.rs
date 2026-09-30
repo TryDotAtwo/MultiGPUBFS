@@ -32,15 +32,28 @@ pub fn abort_on_error<T, E>(
     result
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnerFailurePolicy {
+    /// Legacy collective agreement needs both groups to reach the vote.
+    CollectiveVote,
+    /// The dispatcher reports failure out-of-band and aborts the communicator.
+    CancelGroup,
+}
+
 /// Process independent local input, then establish remote readiness before
-/// consuming remote input. A local error must not skip the readiness boundary.
+/// consuming remote input. Fatal cancellation may skip readiness, but never
+/// authorizes reuse of any source or receive lease.
 pub fn process_owner_pair<T, E>(
+    policy: OwnerFailurePolicy,
     local: T,
     remote: T,
     mut process: impl FnMut(T) -> Result<(), E>,
     ready: impl FnOnce() -> Result<(), E>,
 ) -> Result<(), E> {
     let first = process(local);
+    if policy == OwnerFailurePolicy::CancelGroup && first.is_err() {
+        return first;
+    }
     if let Err(error) = ready() {
         return first.and(Err(error));
     }
