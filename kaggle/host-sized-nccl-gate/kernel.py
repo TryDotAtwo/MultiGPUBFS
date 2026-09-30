@@ -15,6 +15,7 @@ import tempfile
 SOURCE = "0303f37c3b86119e286c9d311a00e624c35ecfc7"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "full_bfs_memcheck_diagnostic"
+LSA_ENABLED = MODE == "process_faults_only"
 
 
 import base64,time
@@ -208,13 +209,14 @@ def main():
                                 for name in names if name}}
     report["snapshot"] = identity
     (logs / "source-manifest.json").write_text(json.dumps(identity, indent=2))
-    try:
-        diagnostic_preflight(logs)
-    except Exception as error:
-        report["status"] = "DIAGNOSTIC_UNAVAILABLE"
-        report["error"] = str(error)
-        save()
-        raise
+    if MODE == "full_bfs_memcheck_diagnostic":
+        try:
+            diagnostic_preflight(logs)
+        except Exception as error:
+            report["status"] = "DIAGNOSTIC_UNAVAILABLE"
+            report["error"] = str(error)
+            save()
+            raise
     spec = importlib.util.spec_from_file_location("gate", source / "kaggle/native-primitives/kernel.py")
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
@@ -242,9 +244,14 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        report["selected_transport"] = "HOST_SIZED_NCCL"
-        report["p2p_policy"] = "inventory only; ordinary NCCL selects supported transport"
+        report["selected_transport"] = "NCCL_LSA" if LSA_ENABLED else "HOST_SIZED_NCCL"
+        report["p2p_policy"] = ("required for explicit LSA mode" if LSA_ENABLED else
+                                "inventory only; ordinary NCCL selects supported transport")
         save()
+        if LSA_ENABLED and any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
+            report["status"] = "UNSUPPORTED_HOST"
+            save()
+            return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
         for component, version, digest in library.CUDA_COMPONENTS:
@@ -388,7 +395,8 @@ def main():
              *(["-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"]
                if MODE in ("timeline_backtrace", "full_bfs_memcheck_diagnostic") else []),
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
-             "-DCUTLASS_ROOT=" + str(cutlass), "-DMGBFS_NCCL_LSA=OFF",
+             "-DCUTLASS_ROOT=" + str(cutlass),
+             "-DMGBFS_NCCL_LSA=" + ("ON" if LSA_ENABLED else "OFF"),
              "-DMGBFS_NCCL_ROOT=" + str(nccl)], "native-configure")
         run(["cmake", "--build", str(native), "--target", "mgbfs_cuda", "-j2"],
             "native-build", timeout=1800)
@@ -825,6 +833,8 @@ def main():
                 report["status"] = "COMPLETE"
                 return
         if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only"):
+            sys.path.insert(0, str(source / "scripts"))
+            from process_scope import spawn_group, stop_group
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "process-fault-cli-build", timeout=1800)
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
@@ -836,7 +846,8 @@ def main():
                        MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
                        MGBFS_PRE_DEDUP="ON", MGBFS_BENCH_SKIP_ARCHIVE="0",
                        MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank",
-                       MGBFS_RANK_MAP="0,1", MGBFS_TRANSPORT_BACKEND="NCCL_LSA")
+                       MGBFS_RANK_MAP="0,1",
+                       MGBFS_TRANSPORT_BACKEND="NCCL_LSA" if LSA_ENABLED else "HOST_SIZED_NCCL")
             faults = [("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK",
                        "TEST_INJECTED_OWNER_HOST_ERROR")]
             if MODE == "process_faults_only":
@@ -844,13 +855,18 @@ def main():
                             "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR"),
                            ("archive-finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK",
                             "TEST_INJECTED_ARCHIVE_FINISH_ERROR")]
-            for fault_name, env_key, expected_error in faults:
+            report["scope"] = ("two independent rank processes; DENSE CUCO_RANK; "
+                               + report["selected_transport"]
+                               + "; startup/owner/archive-finalize faults on each rank")
+            for fault_name, env_key, expected_error, fault_rank in (
+                (*fault, rank) for fault in faults for rank in (0, 1)
+            ):
                 for key in ("MGBFS_TEST_OWNER_HOST_FAULT_RANK",
                             "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK",
                             "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK"):
                     env.pop(key, None)
-                env[env_key] = "0"
-                name = "process-" + fault_name + "-fault"
+                env[env_key] = str(fault_rank)
+                name = f"process-{fault_name}-fault-rank-{fault_rank}"
                 root = work / name
                 root.mkdir()
                 output = logs / name
@@ -860,17 +876,28 @@ def main():
                            "s4", "1", str(root / "bootstrap"), str(root / "archive"),
                            str(output)]
                 with (logs / (name + ".log")).open("w") as stream:
+                    started = time.monotonic()
+                    process = spawn_group(command, cwd=source, env=env, stdout=stream,
+                                          stderr=subprocess.STDOUT)
                     try:
-                        completed = subprocess.run(command, cwd=source, env=env, stdout=stream,
-                                                   stderr=subprocess.STDOUT, timeout=60)
+                        returncode = process.wait(timeout=60)
                     except subprocess.TimeoutExpired as error:
+                        report[name] = {"status": "TIMEOUT", "fault_rank": fault_rank}
+                        save()
                         raise RuntimeError("PROCESS_FAULT_TIMEOUT: " + fault_name) from error
-                if completed.returncode == 0 or (output / "group-complete.json").exists():
+                    finally:
+                        stop_group(process)
+                if returncode == 0 or (output / "group-complete.json").exists():
                     raise RuntimeError("PROCESS_FAULT_FALSE_COMPLETE: " + fault_name)
                 checked = (logs / (name + ".log")).read_text(errors="replace")
+                if returncode == 98 or "PROCESS_SCOPE_CLEANUP_FAILED" in checked:
+                    raise RuntimeError("PROCESS_FAULT_CLEANUP_FAILED: " + fault_name)
                 if expected_error not in checked:
                     raise RuntimeError("PROCESS_FAULT_NOT_REACHED: " + fault_name)
-                report[name] = "PASS_BOUNDED_NO_COMPLETE"
+                report[name] = {"status": "PASS_BOUNDED_NO_COMPLETE",
+                                "fault_rank": fault_rank, "returncode": returncode,
+                                "elapsed_seconds": time.monotonic() - started,
+                                "supervisor": "existing process_scope subreaper"}
                 save()
             report["status"] = "COMPLETE"
             return

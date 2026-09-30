@@ -87,3 +87,15 @@ Next source pinned to 0303f37c3b86119e286c9d311a00e624c35ecfc7, including
 CancelGroup owner-pair early exit. Runner SHA256
 bd769e972e1227790ca08edc3a8e3d8199ada5fb89209d07c85a5144183f9347.
 Correction hardware execution remains NOT_RUN until an actual next submission.
+
+Corrected diagnostic actually submitted as v29; CLI RUNNING. Do not resubmit
+while live. It pins runtime0303f37 and uses the recorded ELF-parent correction.
+
+The same existing runner now has a prepared `process_faults_only` mode (not
+submitted): explicit LSA build ON and bidirectional-P2P preflight; three fault
+classes on both ranks, six independent-process cases. Existing process_scope
+subreaper supervises torchrun descendants on timeout or terminal launch, checks
+cleanup failure, preserves logs/elapsed/exit code and rejects group COMPLETE.
+This is a prepared acceptance harness, not physical fault evidence. Changing
+the mode requires a new submission only after v29 is terminal. Default remains
+the active HOST_SIZED_NCCL diagnostic; no live notebook was modified.
