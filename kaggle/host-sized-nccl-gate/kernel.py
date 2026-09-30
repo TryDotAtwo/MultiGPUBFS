@@ -12,9 +12,9 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "0303f37c3b86119e286c9d311a00e624c35ecfc7"
+SOURCE = "928c25e149fdff279f4c3dfa3d0f47fb77c64132"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "full_bfs_direct_gate"
+MODE = "process_faults_only"
 LSA_ENABLED = MODE == "process_faults_only"
 
 
@@ -894,9 +894,12 @@ def main():
                     raise RuntimeError("PROCESS_FAULT_CLEANUP_FAILED: " + fault_name)
                 if expected_error not in checked:
                     raise RuntimeError("PROCESS_FAULT_NOT_REACHED: " + fault_name)
-                report[name] = {"status": "PASS_BOUNDED_NO_COMPLETE",
+                # The existing subreaper can terminate adopted descendants.
+                # Launcher termination alone is not graceful rank termination.
+                report[name] = {"status": "SUPERVISED_NO_COMPLETE",
                                 "fault_rank": fault_rank, "returncode": returncode,
                                 "elapsed_seconds": time.monotonic() - started,
+                                "runtime_bounded_exit_proven": False,
                                 "supervisor": "existing process_scope subreaper"}
                 save()
             report["status"] = "COMPLETE"
