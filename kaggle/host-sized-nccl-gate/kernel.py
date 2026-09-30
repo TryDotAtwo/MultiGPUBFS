@@ -14,7 +14,7 @@ import tempfile
 
 SOURCE = "e8f8fa6ab909263fb8bd84fde8d1a908a1ad0e5d"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "process_faults_only"
+MODE = "process_faults_host_sized"
 LSA_ENABLED = MODE == "process_faults_only"
 
 
@@ -832,7 +832,8 @@ def main():
             if MODE == "host_fault_only":
                 report["status"] = "COMPLETE"
                 return
-        if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only"):
+        if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only",
+                    "process_faults_host_sized"):
             sys.path.insert(0, str(source / "scripts"))
             from process_scope import spawn_group, stop_group
             # Exercise real Linux orphan/session semantics before trusting the
@@ -855,7 +856,7 @@ def main():
                        MGBFS_TRANSPORT_BACKEND="NCCL_LSA" if LSA_ENABLED else "HOST_SIZED_NCCL")
             faults = [("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK",
                        "TEST_INJECTED_OWNER_HOST_ERROR")]
-            if MODE == "process_faults_only":
+            if MODE in ("process_faults_only", "process_faults_host_sized"):
                 faults += [("archive-admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK",
                             "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR"),
                            ("archive-finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK",
