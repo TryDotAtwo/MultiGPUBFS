@@ -38,6 +38,10 @@ def validate_inventory(text):
 
 
 def validate_log(text, tool):
+    if 'PROCESS_SCOPE_FORCED_CLEANUP' in text:
+        raise ValueError('PROCESS_SCOPE_FORCED_CLEANUP')
+    if 'PROCESS_SCOPE_CLEANUP_FAILED' in text:
+        raise ValueError('PROCESS_SCOPE_CLEANUP_FAILED')
     results = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;', text)
     if results != [('1', '0', '0')]:
         raise ValueError('ORACLE_DID_NOT_RUN_EXACTLY_ONCE')

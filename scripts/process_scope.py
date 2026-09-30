@@ -60,12 +60,23 @@ def supervise(command):
     finally:
         children_file = Path(f'/proc/self/task/{os.getpid()}/children')
         deadline = time.monotonic()+10
+        forced_cleanup = False
         while True:
+            # Reap already terminated descendants before considering a kill.
+            while True:
+                try:
+                    if os.waitpid(-1, os.WNOHANG)[0] == 0: break
+                except ChildProcessError:
+                    break
             children = [int(pid) for pid in children_file.read_text().split()]
             if not children:
                 break
             for pid in children:
-                try: os.kill(pid, signal.SIGKILL)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    if not forced_cleanup:
+                        print('PROCESS_SCOPE_FORCED_CLEANUP', file=sys.stderr, flush=True)
+                    forced_cleanup = True
                 except ProcessLookupError: pass
             while True:
                 try:
@@ -77,6 +88,8 @@ def supervise(command):
                 code = 98
                 break
             time.sleep(0.01)
+        if forced_cleanup and code != 98:
+            code = 99
     return code
 
 

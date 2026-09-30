@@ -892,6 +892,8 @@ def main():
                 checked = (logs / (name + ".log")).read_text(errors="replace")
                 if returncode == 98 or "PROCESS_SCOPE_CLEANUP_FAILED" in checked:
                     raise RuntimeError("PROCESS_FAULT_CLEANUP_FAILED: " + fault_name)
+                if returncode == 99 or "PROCESS_SCOPE_FORCED_CLEANUP" in checked:
+                    raise RuntimeError("PROCESS_FAULT_FORCED_CLEANUP: " + fault_name)
                 if expected_error not in checked:
                     raise RuntimeError("PROCESS_FAULT_NOT_REACHED: " + fault_name)
                 # The existing subreaper can terminate adopted descendants.

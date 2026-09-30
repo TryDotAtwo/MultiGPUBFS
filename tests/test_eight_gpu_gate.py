@@ -14,6 +14,15 @@ except ImportError:
 
 
 class EightGpuGateTests(unittest.TestCase):
+    def test_supervisor_killing_live_ranks_cannot_pass_oracle_gate(self):
+        text = ('test result: ok. 1 passed; 0 failed; 0 ignored;\n'
+                'PROCESS_SCOPE_FORCED_CLEANUP\n'
+                '========= ERROR SUMMARY: 0 errors')
+        for tool in ('plain', 'memcheck'):
+            with self.subTest(tool=tool):
+                with self.assertRaisesRegex(ValueError, 'PROCESS_SCOPE_FORCED_CLEANUP'):
+                    gate.validate_log(text, tool)
+
     def test_exactly_eight_distinct_h200_devices_required(self):
         self.assertIsNotNone(gate)
         rows = [f'{i}, NVIDIA H200, GPU-{i}, 143771, 140000' for i in range(8)]
