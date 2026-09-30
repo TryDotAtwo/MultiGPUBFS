@@ -23,6 +23,22 @@ import base64,time
 DEBUGGER_PATH = "/usr/bin/gdb" if MODE == "lsa_abort_stack" else "/usr/local/cuda/bin/cuda-gdb"
 SANITIZER_PATH = "/usr/local/cuda/bin/compute-sanitizer"
 
+def debugger_process_rank(environ):
+    values = [item[5:] for item in environ.split(b'\0') if item.startswith(b'RANK=')]
+    if len(values) != 1 or not values[0].isdigit():
+        return None
+    return int(values[0])
+
+def debugger_abort_origin(groups, transcript):
+    begin = transcript.rfind('MGBFS_FAILURE_TEARDOWN rank=0 stage=nccl_abort_begin')
+    end = transcript.rfind('MGBFS_FAILURE_TEARDOWN rank=0 stage=nccl_abort_end')
+    if begin < 0 or end > begin:
+        return None
+    candidates = [group for group, row in groups.items()
+                  if row.get('application') and row.get('rank') == 0
+                  and 'exit_code' not in row]
+    return candidates[0] if len(candidates) == 1 else None
+
 def debugger_nccl_libraries(maps):
     paths = set()
     for line in maps.splitlines():
@@ -59,7 +75,8 @@ def diagnostic_preflight(logs):
     if tools['status']!='READY': raise RuntimeError("DIAGNOSTIC_UNAVAILABLE: parent launch failed; no further ptrace attempts")
 
 def diagnostic_replay(binary,source,env,logs, *, target_command=None,
-                      sample_points=(90,140), supervision_seconds=180):
+                      sample_points=(90,140), supervision_seconds=180,
+                      sample_origin_abort=False):
     import threading,queue,re
     if target_command is None:
         env=dict(env,NCCL_DEBUG="INFO",MGBFS_TRACE_ROUTE="1",MGBFS_TRACE_ROUTE_NO_SYNC="1",MGBFS_TRACE_NCCL_GATE="1")
@@ -121,7 +138,7 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
         started=time.monotonic(); result['start_monotonic']=started
         running=await_result(send('-exec-run'))
         if running[0]!='running': raise RuntimeError('DEBUGGER_RUN_REJECTED: '+str(running))
-        sampled=set(); app_seen=False
+        sampled=set(); app_seen=False; origin_sampled=False
         while time.monotonic()-started<supervision_seconds and p.poll() is None:
             drain(); elapsed=time.monotonic()-started
             for group,row in result['thread_groups'].items():
@@ -129,6 +146,8 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
                     process_root = Path('/proc') / str(row['pid'])
                     if Path(os.readlink(process_root/'exe')).resolve()==binary.resolve():
                         row['application']=True; app_seen=True
+                        rank = debugger_process_rank((process_root/'environ').read_bytes())
+                        if rank is not None: row['rank'] = rank
                         if 'nccl_libraries' not in row:
                             maps = (process_root/'maps').read_text()
                             libraries = debugger_nccl_libraries(maps)
@@ -151,25 +170,51 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
                                     row['nccl_libraries'].append(identity)
                                 save()
                 except OSError: pass
-            for point in sample_points:
+            origin = debugger_abort_origin(result['thread_groups'], ''.join(text_lines)) if sample_origin_abort else None
+            points = list(sample_points)
+            if origin is not None and not origin_sampled:
+                points.append(elapsed)
+                origin_sampled = True
+            for point in points:
                 if elapsed>=point and point not in sampled:
                     sampled.add(point); rec={'scheduled_seconds':point,'actual_seconds':elapsed}; result['stack_samples'].append(rec)
                     apps=[(group,row) for group,row in result['thread_groups'].items() if row.get('application') and 'exit_code' not in row]
-                    rec['application_groups']=apps
+                    # Independent snapshots: later MI exit events must not
+                    # retroactively change the recorded sample membership.
+                    rec['application_groups']=json.loads(json.dumps(apps))
+                    if sample_origin_abort:
+                        rec['trigger']='origin_rank0_abort_begin'
+                        apps=[(group,row) for group,row in apps if group == origin]
+                    before=len(text_lines)
                     response=await_result(send('-exec-interrupt --all'),seconds=min(4,supervision_seconds-elapsed)); rec['interrupt_response']=response
                     if response[0]!='done': rec['status']='INTERRUPT_UNRESOLVED'
                     else:
                         stop_deadline=min(started+supervision_seconds,time.monotonic()+4)
-                        before=len(text_lines)
                         while time.monotonic()<stop_deadline:
                             drain()
                             if '*stopped' in ''.join(text_lines[before:]): break
                             time.sleep(.05)
+                        rec['stop_observed']='*stopped' in ''.join(text_lines[before:])
                         sample_active=[]
-                        if apps:
+                        if sample_origin_abort:
+                            # Cancellation may have completed while interrupt
+                            # was queued. Never attribute a later stack to it.
+                            current = debugger_abort_origin(result['thread_groups'], ''.join(text_lines))
+                            apps=[(group,row) for group,row in apps if group == current]
+                            if apps:
+                                process_root = Path('/proc') / str(apps[0][1]['pid'])
+                                try:
+                                    live = (Path(os.readlink(process_root/'exe')).resolve() == binary.resolve()
+                                            and debugger_process_rank((process_root/'environ').read_bytes()) == 0)
+                                except OSError: live = False
+                                if not live: apps=[]
+                        if apps and rec['stop_observed']:
+                            rec['selected_application']=json.loads(json.dumps(apps[0]))
                             rec['inferior_response']=await_result(send('-interpreter-exec console "inferior '+apps[0][0][1:]+'"'))
-                            rec['bt_response']=await_result(send('-interpreter-exec console "thread apply all bt"'))
-                            rec['status']='STACK_COLLECTED' if rec['bt_response'][0]=='done' and '#0' in ''.join(sample_active) else 'STACK_UNRESOLVED'
+                            if rec['inferior_response'][0]=='done':
+                                rec['bt_response']=await_result(send('-interpreter-exec console "thread apply all bt"'))
+                                rec['status']='STACK_COLLECTED' if rec['bt_response'][0]=='done' and '#0' in ''.join(sample_active) else 'STACK_UNRESOLVED'
+                            else: rec['status']='INFERIOR_SELECTION_UNRESOLVED'
                         else: rec['status']='APPLICATION_INFERIOR_UNRESOLVED'
                         (logs/('host-stack-'+str(point)+'.log')).write_text(''.join(sample_active)); sample_active=None
                     rec['resume_response']=await_result(send('-exec-continue --all'))
@@ -208,6 +253,9 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
     if result['status']=='FINISHED': result['status']='PASS' if apps and all(row.get('exit_code')=='0' for row in apps) and result['oracle_passed'] and result['clean_summary'] else 'FAIL'
     result['last_route_lines']=[line for line in text.splitlines() if 'mgbfs' in line.lower() or 'stage=' in line][-40:]
     result['host_stack_acceptance']='COLLECTED' if result['stack_samples'] and all(row.get('status')=='STACK_COLLECTED' for row in result['stack_samples']) else 'NOT_PROVEN'
+    if sample_origin_abort:
+        result['origin_abort_trigger_observed']=origin_sampled
+        result['abort_reproduction']='SAMPLED' if origin_sampled else 'NOT_REPRODUCED_OR_UNRESOLVED'
     save(); return result
 
 def main():
@@ -983,8 +1031,8 @@ def main():
                     # a fault termination gate: interruption changes scheduling.
                     report["diagnostic"] = diagnostic_replay(
                         source / "target/debug/mgbfs", source, env, logs,
-                        target_command=command, sample_points=(10,20),
-                        supervision_seconds=27)
+                        target_command=command, sample_points=(),
+                        supervision_seconds=27, sample_origin_abort=True)
                     report["status"] = "DIAGNOSTIC_ONLY"
                     save()
                     return

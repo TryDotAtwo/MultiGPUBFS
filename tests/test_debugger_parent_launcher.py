@@ -10,6 +10,31 @@ spec.loader.exec_module(gate)
 
 
 class DebuggerParentLauncherTests(unittest.TestCase):
+    def test_abort_sample_selects_proven_origin_not_first_application(self):
+        self.assertTrue(hasattr(gate, 'debugger_abort_origin'))
+        groups = {'i2': {'pid': 11, 'application': True, 'rank': 1},
+                  'i3': {'pid': 12, 'application': True, 'rank': 0}}
+        text = 'MGBFS_FAILURE_TEARDOWN rank=0 stage=nccl_abort_begin\n'
+        self.assertEqual(gate.debugger_abort_origin(groups, text), 'i3')
+        groups['i3']['exit_code'] = '01'
+        self.assertIsNone(gate.debugger_abort_origin(groups, text))
+
+    def test_completed_abort_or_unproven_rank_cannot_trigger_origin_sample(self):
+        self.assertTrue(hasattr(gate, 'debugger_abort_origin'))
+        text = ('MGBFS_FAILURE_TEARDOWN rank=0 stage=nccl_abort_begin\n'
+                'MGBFS_FAILURE_TEARDOWN rank=0 stage=nccl_abort_end code=0\n')
+        groups = {'i2': {'pid': 11, 'application': True, 'rank': 0}}
+        self.assertIsNone(gate.debugger_abort_origin(groups, text))
+        del groups['i2']['rank']
+        self.assertIsNone(gate.debugger_abort_origin(groups, text.splitlines()[0]))
+
+    def test_rank_parser_reads_only_rank_and_rejects_conflicting_identity(self):
+        self.assertTrue(hasattr(gate, 'debugger_process_rank'))
+        self.assertEqual(gate.debugger_process_rank(b'RANK=0\0LOCAL_RANK=0\0SECRET=x\0'), 0)
+        self.assertIsNone(gate.debugger_process_rank(b'LOCAL_RANK=0\0SECRET=x\0'))
+        self.assertIsNone(gate.debugger_process_rank(b'RANK=0\0RANK=1\0'))
+        self.assertIsNone(gate.debugger_process_rank(b'RANK=oops\0'))
+
     def test_nccl_library_mapping_keeps_real_path_and_deduplicates_segments(self):
         self.assertTrue(hasattr(gate, 'debugger_nccl_libraries'))
         maps = ('1000-2000 r-xp 00000000 08:01 10 /tmp/a space/libnccl.so.2\n'
