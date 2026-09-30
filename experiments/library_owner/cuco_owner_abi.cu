@@ -2,6 +2,8 @@
 #include "cuco_rank_batch.cuh"
 #include "owner_handle.hpp"
 #include <rmm/mr/per_device_resource.hpp>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 struct WorkspaceHandle {
@@ -179,7 +181,10 @@ extern "C" int mgbfs_library_rank_destroy_v1(void* handle){
   try {
     auto* h=static_cast<RankHandle*>(handle);
     h->check();
+    const bool trace=std::getenv("MGBFS_TRACE_FAILURE_TEARDOWN")!=nullptr;
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN device=%d stage=owner_drain_begin\n",h->device);
     mgbfs::cuco_owner_detail::check(cudaStreamSynchronize(h->stream.value()));
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN device=%d stage=owner_drain_end\n",h->device);
     delete h;
     return 0;
   } catch (...) {return -1;}

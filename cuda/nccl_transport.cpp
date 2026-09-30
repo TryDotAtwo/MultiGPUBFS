@@ -123,7 +123,10 @@ extern "C" int mgbfs_nccl_abort(void* raw){
   if(!p->value) return 0;
   const auto value = p->value;
   p->value = nullptr; // Terminal even if NCCL reports an abort error.
-  return ncclCommAbort(value) == ncclSuccess ? 0 : 2;
+  std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=nccl_abort_begin\n",p->rank);
+  const auto status=ncclCommAbort(value);
+  std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=nccl_abort_end code=%d\n",p->rank,int(status));
+  return status == ncclSuccess ? 0 : 2;
 }
 extern "C" int mgbfs_nccl_poll(void* raw){
   auto* p = static_cast<Comm*>(raw);

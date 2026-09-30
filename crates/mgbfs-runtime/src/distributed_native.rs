@@ -374,7 +374,10 @@ impl Drop for Stream {
             return;
         }
         unsafe {
+            let trace = std::env::var_os("MGBFS_TRACE_FAILURE_TEARDOWN").is_some();
+            if trace { eprintln!("MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_begin",self.0); }
             cudaStreamSynchronize(self.0);
+            if trace { eprintln!("MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_end",self.0); }
             cudaStreamDestroy(self.0);
         }
     }
