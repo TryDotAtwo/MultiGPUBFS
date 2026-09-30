@@ -281,13 +281,15 @@ int main() {
         cudaMemcpyDeviceToHost));
     require(dense_states[0]==12&&dense_states[16]==15&&got_extent.ready==1,
         "RANK_ABI_FIRST_DENSE_STATES");
-    uint32_t published_count=0;std::array<MgbfsStateExtent,2> published{};
+    uint32_t published_count=0;MgbfsStateExtent published{};
     check(cudaMemcpy(&published_count,next_extent_count.data(),sizeof(published_count),
         cudaMemcpyDeviceToHost));
-    check(cudaMemcpy(published.data(),next_extents.data(),sizeof(published),
+    require(published_count==1,"RANK_CAPTURE_DIRECTORY_COUNT");
+    // Only the published prefix is initialized. Do not read unused directory
+    // capacity into a host assertion buffer (initcheck catches that too).
+    check(cudaMemcpy(&published,next_extents.data(),sizeof(published),
         cudaMemcpyDeviceToHost));
-    require(published_count==1&&published[0].begin==got_extent.begin&&
-        published[0].count==2&&published[0].ready==1,
+    require(published.begin==got_extent.begin&&published.count==2&&published.ready==1,
         "RANK_CAPTURE_FINAL_PUBLICATION");
     std::cout<<"RANK_FULL_OWNER_DAG_CAPTURE_PASS\n";
     Key z{7,8,9,0x120};
