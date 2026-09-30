@@ -46,3 +46,17 @@ fn absent_sideband_still_poison_and_preserve_originating_error() {
     assert!(failed && cleaned);
 }
 
+#[test]
+fn previously_poisoned_rank_still_reports_and_runs_dispatcher_cleanup() {
+    let token = AtomicU8::new(0);
+    let mut failed = true;
+    let mut cleanup_calls = 0;
+    let result: Result<(), &str> = report_and_abort_on_error(
+        Err("OWNER_API"), &mut failed, Some(&token), || {
+            assert_eq!(token.load(Ordering::Acquire), 2);
+            cleanup_calls += 1;
+        });
+    assert_eq!(result, Err("OWNER_API"));
+    assert_eq!(cleanup_calls, 1);
+    assert!(failed);
+}
