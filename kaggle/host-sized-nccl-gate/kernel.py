@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "928c25e149fdff279f4c3dfa3d0f47fb77c64132"
+SOURCE = "e8f8fa6ab909263fb8bd84fde8d1a908a1ad0e5d"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "process_faults_only"
 LSA_ENABLED = MODE == "process_faults_only"
@@ -835,6 +835,11 @@ def main():
         if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only"):
             sys.path.insert(0, str(source / "scripts"))
             from process_scope import spawn_group, stop_group
+            # Exercise real Linux orphan/session semantics before trusting the
+            # same supervisor to classify GPU rank termination.
+            for pattern in ("test_process_scope_linux.py", "test_rank_process_cleanup.py"):
+                run([sys.executable, "-m", "unittest", "discover", "-s", "tests",
+                     "-p", pattern], "linux-" + pattern, timeout=60)
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "process-fault-cli-build", timeout=1800)
             env.update(MGBFS_OWNER_BACKEND="CUCO_RANK",
