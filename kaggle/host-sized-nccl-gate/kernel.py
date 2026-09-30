@@ -14,8 +14,8 @@ import tempfile
 
 SOURCE = "c7488ca6d901afc1545edba4e25ea28f915f8206"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "owner_capture_then_lsa_faults"
-LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults")
+MODE = "lsa_abort_stack"
+LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults", "lsa_abort_stack")
 
 
 import base64,time
@@ -50,13 +50,20 @@ def diagnostic_preflight(logs):
     (logs/"diagnostic-tools.json").write_text(json.dumps(tools,indent=2))
     if tools['status']!='READY': raise RuntimeError("DIAGNOSTIC_UNAVAILABLE: parent launch failed; no further ptrace attempts")
 
-def diagnostic_replay(binary,source,env,logs):
+def diagnostic_replay(binary,source,env,logs, *, target_command=None,
+                      sample_points=(90,140), supervision_seconds=180):
     import threading,queue,re
-    env=dict(env,NCCL_DEBUG="INFO",MGBFS_TRACE_ROUTE="1",MGBFS_TRACE_ROUTE_NO_SYNC="1",MGBFS_TRACE_NCCL_GATE="1")
-    target=[SANITIZER_PATH,"--tool","memcheck","--report-api-errors","no","--error-exitcode","97",str(binary),"cuco_rank_two_gpu_dense_layers_and_archives_match_oracle","--exact","--nocapture","--test-threads=1"]
+    if target_command is None:
+        env=dict(env,NCCL_DEBUG="INFO",MGBFS_TRACE_ROUTE="1",MGBFS_TRACE_ROUTE_NO_SYNC="1",MGBFS_TRACE_NCCL_GATE="1")
+        target=[SANITIZER_PATH,"--tool","memcheck","--report-api-errors","no","--error-exitcode","97",str(binary),"cuco_rank_two_gpu_dense_layers_and_archives_match_oracle","--exact","--nocapture","--test-threads=1"]
+    else:
+        env=dict(env,NCCL_DEBUG="INFO")
+        target=list(target_command)
     launched_target = debugger_parent_argv(target, shutil.which("env"))
     command=[DEBUGGER_PATH,'-q','-n','--interpreter=mi2','--args',*launched_target]
     result={'status':'UNKNOWN','mode':'DEBUGGER_PARENT_MI_STACK_SAMPLED','command':command,'target_command':target,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'env':{k:v for k,v in env.items() if k.startswith('MGBFS_') or k.startswith('NCCL_')},'supervision_seconds':180,'stack_samples':[],'thread_groups':{},'untraced_replay':'NOT_RUN','diagnostic_changes':'MI async, child fork following, retained inferiors scheduled together; no attach or security change'}
+    result['supervision_seconds'] = supervision_seconds
+    result['scope'] = 'Parent-debugger diagnostic only; not graceful termination or performance acceptance'
     def save(): (logs/'diagnostic.json').write_text(json.dumps(result,indent=2))
     save()
     p=subprocess.Popen(command,cwd=source,env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True)
@@ -107,28 +114,28 @@ def diagnostic_replay(binary,source,env,logs):
         running=await_result(send('-exec-run'))
         if running[0]!='running': raise RuntimeError('DEBUGGER_RUN_REJECTED: '+str(running))
         sampled=set(); app_seen=False
-        while time.monotonic()-started<180 and p.poll() is None:
+        while time.monotonic()-started<supervision_seconds and p.poll() is None:
             drain(); elapsed=time.monotonic()-started
             for group,row in result['thread_groups'].items():
                 try:
                     if Path(os.readlink(Path('/proc')/str(row['pid'])/'exe')).resolve()==binary.resolve(): row['application']=True; app_seen=True
                 except OSError: pass
-            for point in (90,140):
+            for point in sample_points:
                 if elapsed>=point and point not in sampled:
                     sampled.add(point); rec={'scheduled_seconds':point,'actual_seconds':elapsed}; result['stack_samples'].append(rec)
                     apps=[(group,row) for group,row in result['thread_groups'].items() if row.get('application') and 'exit_code' not in row]
                     rec['application_groups']=apps
-                    response=await_result(send('-exec-interrupt --all'),seconds=min(4,180-elapsed)); rec['interrupt_response']=response
+                    response=await_result(send('-exec-interrupt --all'),seconds=min(4,supervision_seconds-elapsed)); rec['interrupt_response']=response
                     if response[0]!='done': rec['status']='INTERRUPT_UNRESOLVED'
                     else:
-                        stop_deadline=min(started+180,time.monotonic()+4)
+                        stop_deadline=min(started+supervision_seconds,time.monotonic()+4)
                         before=len(text_lines)
                         while time.monotonic()<stop_deadline:
                             drain()
                             if '*stopped' in ''.join(text_lines[before:]): break
                             time.sleep(.05)
                         sample_active=[]
-                        if len(apps)==1:
+                        if apps:
                             rec['inferior_response']=await_result(send('-interpreter-exec console "inferior '+apps[0][0][1:]+'"'))
                             rec['bt_response']=await_result(send('-interpreter-exec console "thread apply all bt"'))
                             rec['status']='STACK_COLLECTED' if rec['bt_response'][0]=='done' and '#0' in ''.join(sample_active) else 'STACK_UNRESOLVED'
@@ -142,7 +149,7 @@ def diagnostic_replay(binary,source,env,logs):
             time.sleep(.1)
         drain()
         elapsed=time.monotonic()-started
-        if elapsed>=180 and any('exit_code' not in row for row in result['thread_groups'].values()): result['status']='TIMEOUT'
+        if elapsed>=supervision_seconds and any('exit_code' not in row for row in result['thread_groups'].values()): result['status']='TIMEOUT'
         else: result['status']='FINISHED'
         result['elapsed_seconds']=elapsed
     except Exception as error:
@@ -209,7 +216,7 @@ def main():
                                 for name in names if name}}
     report["snapshot"] = identity
     (logs / "source-manifest.json").write_text(json.dumps(identity, indent=2))
-    if MODE == "full_bfs_memcheck_diagnostic":
+    if MODE in ("full_bfs_memcheck_diagnostic", "lsa_abort_stack"):
         try:
             diagnostic_preflight(logs)
         except Exception as error:
@@ -876,7 +883,7 @@ def main():
                 report["status"] = "COMPLETE"
                 return
         if MODE in ("process_host_fault_only", "host_fault_and_process", "process_faults_only",
-                    "process_faults_host_sized", "owner_capture_then_lsa_faults"):
+                    "process_faults_host_sized", "owner_capture_then_lsa_faults", "lsa_abort_stack"):
             sys.path.insert(0, str(source / "scripts"))
             from process_scope import spawn_group, stop_group
             # Exercise real Linux orphan/session semantics before trusting the
@@ -925,6 +932,17 @@ def main():
                            str(source / "target/debug/mgbfs"), "bench", "--reference",
                            "s4", "1", str(root / "bootstrap"), str(root / "archive"),
                            str(output)]
+                if MODE == "lsa_abort_stack":
+                    # Reuse the parent-launch debugger protocol; no ptrace attach
+                    # or security-policy change. This diagnostic cannot count as
+                    # a fault termination gate: interruption changes scheduling.
+                    report["diagnostic"] = diagnostic_replay(
+                        source / "target/debug/mgbfs", source, env, logs,
+                        target_command=command, sample_points=(10,20),
+                        supervision_seconds=27)
+                    report["status"] = "DIAGNOSTIC_ONLY"
+                    save()
+                    return
                 with (logs / (name + ".log")).open("w") as stream:
                     started = time.monotonic()
                     process = spawn_group(command, cwd=source, env=env, stdout=stream,
