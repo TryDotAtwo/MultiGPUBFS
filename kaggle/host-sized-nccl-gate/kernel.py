@@ -404,6 +404,7 @@ def main():
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
         if MODE == "owner_capture_gate":
             import re
+            sys.path.insert(0, str(source / "scripts"))
             from eight_gpu_gate import run_command
             run(["cmake", "--build", str(build), "--target", "cuco_owner_probe", "-j2"],
                 "owner-capture-build", timeout=1800)
