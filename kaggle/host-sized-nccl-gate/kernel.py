@@ -259,8 +259,12 @@ def diagnostic_replay(binary,source,env,logs, *, target_command=None,
     save(); return result
 
 def main():
+    hardware = os.environ.get("MGBFS_DIAGNOSTIC_HARDWARE", "T4")
+    if hardware not in ("T4", "A4000"):
+        raise ValueError("Unsupported diagnostic hardware")
+    architecture = "75" if hardware == "T4" else "86"
     work = Path(tempfile.mkdtemp(prefix="mgbfs-lsa-bfs-", dir="/tmp"))
-    logs = Path("/kaggle/working/lsa-bfs-gate")
+    logs = Path(os.environ.get("MGBFS_DIAGNOSTIC_LOGS", "/kaggle/working/lsa-bfs-gate"))
     logs.mkdir(parents=True, exist_ok=True)
     report = {"source": SOURCE, "status": "INCOMPLETE", "scope":
               ("two physical T4; independent rank-process owner, archive-admission and archive-finish fault propagation"
@@ -272,6 +276,11 @@ def main():
                "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
 
     def save():
+        report["hardware_gate"] = hardware
+        report["t4_acceptance_eligible"] = hardware == "T4"
+        report["cuda_architecture"] = architecture
+        if hardware != "T4":
+            report["scope"] = report["scope"].replace("T4", hardware)
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
 
     save()
@@ -319,9 +328,13 @@ def main():
         return gate.run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
 
     try:
-        report["gpus"] = gate.validate_gpus(run([
+        inventory_spec = importlib.util.spec_from_file_location(
+            "hardware_inventory", Path(__file__).parents[1] / "native-primitives/kernel.py")
+        inventory_gate = importlib.util.module_from_spec(inventory_spec)
+        inventory_spec.loader.exec_module(inventory_gate)
+        report["gpus"] = inventory_gate.validate_gpus(run([
             "nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.free",
-            "--format=csv,noheader,nounits"], "inventory"))
+            "--format=csv,noheader,nounits"], "inventory"), hardware=hardware)
         cudart = ctypes.CDLL("libcudart.so.12")
         p2p = []
         for source_gpu, target_gpu in ((0, 1), (1, 0)):
@@ -478,7 +491,7 @@ def main():
                       cuco, env, logs, "cuco")
         build = work / "library-build"
         run(["cmake", "-S", str(source / "experiments/library_owner"), "-B", str(build),
-             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75",
+             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=" + architecture,
              "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUDAToolkit_ROOT=" + str(sdk),
              "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
@@ -495,7 +508,7 @@ def main():
              "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
              *(["-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"]
                if MODE in ("timeline_backtrace", "full_bfs_memcheck_diagnostic") else []),
-             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+             "-DCMAKE_CUDA_ARCHITECTURES=" + architecture, "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUTLASS_ROOT=" + str(cutlass),
              "-DMGBFS_NCCL_LSA=" + ("ON" if LSA_ENABLED else "OFF"),
              "-DMGBFS_NCCL_ROOT=" + str(nccl)], "native-configure")

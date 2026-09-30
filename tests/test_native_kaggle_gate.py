@@ -9,6 +9,16 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 class GateTests(unittest.TestCase):
+    def test_explicit_a4000_diagnostic_does_not_weaken_default_t4_gate(self):
+        inventory = '0, NVIDIA RTX A4000, GPU-a, 16376, 15000\n1, NVIDIA RTX A4000, GPU-b, 16376, 15000\n'
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory)
+        self.assertEqual(len(gate.validate_gpus(inventory, hardware='A4000')), 2)
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory, hardware='ANY')
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory.replace('GPU-b', 'GPU-a'), hardware='A4000')
+
     def test_concurrent_launch_preserves_all_eighty_device_test_tool_combinations(self):
         names = ("generate", "hash", "route", "owner", "pipeline", "materialize", "dense_device", "ping_pong")
         executables = {name: "exe/" + name for name in names}

@@ -36,7 +36,12 @@ def ping_pong_selection(tool):
         return ("full_u4_pipelined_sweep",), "variants-m2-m6-plus-small-feedback-slot-reuse-and-capacity-failure"
     raise ValueError("Unknown sanitizer")
 
-def validate_gpus(csv_text):
+def validate_gpus(csv_text, *, hardware="T4"):
+    # Explicit alternate hardware is diagnostic evidence, never the T4 gate.
+    names = {"T4": ("Tesla T4", "NVIDIA Tesla T4", "NVIDIA T4"),
+             "A4000": ("NVIDIA RTX A4000", "RTX A4000")}
+    if hardware not in names:
+        raise ValueError("Unsupported diagnostic hardware")
     rows = []
     for row in csv.reader(io.StringIO(csv_text)):
         if not row:
@@ -49,8 +54,8 @@ def validate_gpus(csv_text):
         raise ValueError("Gate requires exactly two physical GPUs")
     if len({r["uuid"] for r in rows}) != 2:
         raise ValueError("GPU UUIDs must differ")
-    if any(r["name"] not in ("Tesla T4", "NVIDIA Tesla T4", "NVIDIA T4") or r["free_mib"] < 1024 for r in rows):
-        raise ValueError("Gate requires two T4s with at least 1 GiB free each")
+    if any(r["name"] not in names[hardware] or r["free_mib"] < 1024 for r in rows):
+        raise ValueError(f"Gate requires two {hardware}s with at least 1 GiB free each")
     return sorted(rows, key=lambda r: r["index"])
 
 def validate_commit(commit):
