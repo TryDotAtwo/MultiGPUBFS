@@ -62,3 +62,20 @@ pub fn vote_group_error<E>(
         local
     }
 }
+
+/// Publish host/API failure before cleanup can block on a live GPU reader.
+/// The cleanup still owns all memory leases; notification never authorizes reuse.
+/// The rank dispatcher alone performs NCCL abort, outside any active NCCL call.
+pub fn report_and_abort_on_error<T, E>(
+    result: Result<T, E>,
+    failed: &mut bool,
+    report: Option<&std::sync::atomic::AtomicU8>,
+    cleanup: impl FnOnce(),
+) -> Result<T, E> {
+    abort_on_error(result, failed, || {
+        if let Some(report) = report {
+            report.store(2, std::sync::atomic::Ordering::Release);
+        }
+        cleanup();
+    })
+}

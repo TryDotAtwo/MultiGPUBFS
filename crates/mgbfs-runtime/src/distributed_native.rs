@@ -3113,13 +3113,14 @@ impl DistributedNativeBfs {
                 ))?;
                 check(cudaEventRecord(slot.ready, s))
             })();
-            if let Err(e) = copied {
-                unsafe {
+            // Publish cancellation before draining D2H: peers must not wait for
+            // this rank to return from a potentially blocked CUDA cleanup.
+            // Keep the slot alive until the stream releases its pinned bytes.
+            crate::failure::report_and_abort_on_error(
+                copied, &mut self.failed, self.failure_report.as_deref(), || unsafe {
                     cudaStreamSynchronize(s);
-                }
-                self.failed = true;
-                return Err(e);
-            }
+                },
+            )?;
             archive.submit(slot, u64::from(self.depth), n)?;
             offset += u64::from(n);
         }
