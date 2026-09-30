@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "248434da4173909255246ae1289c1be973af4fcb"
+SOURCE = "c49f5b926d84f2fa1f8ab557a3b4622413e180b8"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "owner_capture_then_lsa_faults"
 LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults")
@@ -418,6 +418,9 @@ def main():
                 if tool != "plain":
                     command = [SANITIZER_PATH, "--tool", tool, "--error-exitcode", "97", *command]
                 started = time.monotonic()
+                stage = dict(tool=tool, status="RUNNING", command=command)
+                report["stages"].append(stage)
+                save()
                 text = run_command(command, logs / ("owner-capture-" + tool + ".log"), env, 180)
                 if text.count("RANK_FULL_OWNER_DAG_CAPTURE_PASS") != 1 or '\"status\":\"PASS\"' not in text:
                     raise RuntimeError("OWNER_CAPTURE_ASSERTIONS_MISSING")
@@ -428,7 +431,7 @@ def main():
                         raise RuntimeError("OWNER_CAPTURE_SANITIZER_FINDINGS")
                     if not errors and not (tool == "racecheck" and races):
                         raise RuntimeError("OWNER_CAPTURE_SANITIZER_SUMMARY_MISSING")
-                report["stages"].append(dict(tool=tool, status="PASS", seconds=time.monotonic()-started))
+                stage.update(status="PASS", seconds=time.monotonic()-started)
                 save()
             report["owner_capture_status"] = "PASS"
             if MODE == "owner_capture_gate":
@@ -1203,6 +1206,9 @@ def main():
         report["status"] = "COMPLETE"
     except Exception as error:
         report["error"] = str(error)
+        for stage in report.get("stages", []):
+            if stage.get("status") == "RUNNING":
+                stage.update(status="FAIL", error=str(error))
         raise
     finally:
         save()
