@@ -2,7 +2,9 @@
 
 Existing experiments/library_owner/cuco_owner_probe.cu now captures the
 device-count AoS bridge, rank compare, shard counts, reservation, owner
-commit, state materialization, next-extent publication and lease completion.
+commit, state materialization and next-extent publication.
+Host-only lease completion occurs after graph launch and stream drain; it is
+not represented as a captured GPU node or asynchronous lease proof.
 All extra scratch, AoS and directory storage is allocated and initialized
 before capture. CUB/cuCO/runtime production functions are used directly.
 

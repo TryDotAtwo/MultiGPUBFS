@@ -158,7 +158,8 @@ int main() {
     rmm::device_buffer source_states(cap*16,stream.view(),resource);
     rmm::device_buffer next_states(16*16,stream.view(),resource);
     // The full production owner DAG also converts the device-count AoS
-    // window and publishes the final extent before releasing its lease.
+    // window and publishes the final extent. Host lease completion follows
+    // actual graph execution; it is not a captured GPU node.
     rmm::device_buffer aos_hashes(cap*16,stream.view(),resource);
     rmm::device_buffer candidate_scratch(5*256,stream.view(),resource);
     rmm::device_buffer window_begin(sizeof(uint32_t),stream.view(),resource);
@@ -243,8 +244,6 @@ int main() {
             "RANK_CAPTURE_PUBLISH_EXTENT");
         require(mgbfs_library_rank_seal_v1(rank_owner)!=0,
             "RANK_ABI_SEAL_REJECTS_PENDING_READERS");
-        require(mgbfs_library_rank_complete_v1(rank_owner,epoch)==0,
-            "RANK_CAPTURE_COMPLETE_LEASE");
       }
       return d;
     };
@@ -256,6 +255,8 @@ int main() {
     check(cudaGraphInstantiate(&executable,graph));
     check(cudaGraphLaunch(executable,stream.value()));
     stream.synchronize();
+    require(mgbfs_library_rank_complete_v1(rank_owner,1)==0,
+        "RANK_COMPLETE_AFTER_CAPTURE_READERS");
     check(cudaGraphExecDestroy(executable));check(cudaGraphDestroy(graph));
     uint32_t got_layer=0;std::array<uint32_t,2> got_counts{};
     MgbfsOwnerControl got_control{};MgbfsStateExtent got_extent{};
