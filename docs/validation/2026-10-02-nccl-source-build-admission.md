@@ -73,3 +73,26 @@ SHA256 of actual tested binaries:
 - stock libnccl.so.2.29.7: a7b0971d91e22e28a8dcb2a4b0901778e367d4a50b6d53a1d970656a5ef5a49d
 - libmgbfs_cuda.so: 5ab7a5ec3d0c2634f73584b79e791c1b84063a61738787103231d6f7ae3a03de
 - mgbfs: 438a1a92a66a26b8304a0675537101d4a53fa81136bf59760f35f97d55a8f747
+
+## Candidate result: four local tools PASS
+
+The NVTX=1 candidate host rebuild completed and `ldd -r` showed no unresolved
+symbols. Actual candidate NCCL SHA256:
+`dc42ed2f993d31908ca248cc9994bc0b46d3e124ecb4a509d7dd14f145a18856`.
+Actual runtime resolution selected /linux-build/nccl-archguard-build/lib.
+Same CLI binary, native library, S4 config and GPU as stock above.
+
+All four unfiltered tools exited 0: memcheck/initcheck/synccheck report zero
+errors; racecheck reports zero hazards, errors and warnings. Each run launched
+seven captured owner DAGs. Each independent archive passed the canonical CPU
+oracle at every depth, 24 unique states, [1,3,5,6,5,3,1]. Raw logs and archives
+are under `test_results/local_lsa_20261001/archguard-sm86-nvtx1-<tool>/`.
+No sanitizer API reporting was disabled or errors suppressed.
+
+Stock versus candidate isolates a local minimum-architecture probe fix:
+stock memcheck 12 errors versus candidate zero, with both full-state oracles
+passing. Generated normal/symmetric tables retain all stock tokens except
+added metadata, respectively 40 and 50 aligned entries. Comparison initially
+failed byte equality because of one extra blank line; token comparison passed.
+This does NOT establish two-rank T4 registration correctness, full mode
+coverage, protocol races, production-default admission or performance benefit.
