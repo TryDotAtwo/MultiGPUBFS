@@ -438,7 +438,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         let count = bfs.frontier_len();
         layers.push(count);
         if trace {
-            eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
+            let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?.as_secs_f64();
+            eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count} unix={unix:.6}");
         }
         let advance = if let Some(archive) = archive.as_mut() {
             bfs.advance_archived(archive)
@@ -456,7 +458,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         let elapsed = tick.elapsed().as_secs_f64();
         times.push(elapsed);
         if trace {
-            eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive}",bfs.frontier_len());
+            let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?.as_secs_f64();
+            eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive} unix={unix:.6}",bfs.frontier_len());
         }
         if !alive {
             break;

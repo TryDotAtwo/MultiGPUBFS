@@ -8,6 +8,7 @@ import json
 import math
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 GB = 1_000_000_000
@@ -75,7 +76,7 @@ class TailArchive:
             raise ValueError("noncontiguous depth or invalid count")
         if seconds < 0 or not math.isfinite(seconds):
             raise ValueError("invalid layer duration")
-        if not vram_peak_bytes or any(type(v) is not int or v < 0 for v in vram_peak_bytes.values()):
+        if not vram_peak_bytes or any(v is not None and (type(v) is not int or v < 0) for v in vram_peak_bytes.values()):
             raise ValueError("observed peak required for each GPU")
         path = self.tail / f"layer-{depth:06d}.bin"
         temp = path.with_suffix(".tmp")
@@ -114,7 +115,7 @@ class TailArchive:
         COMPLETE keeps whole layers; INCOMPLETE may take the suffix of the
         oldest selected layer. Payload files are immutable for this generation.
         """
-        generation = self.root / f"snapshot-{len(self.manifest['layers']):06d}-{'complete' if complete else 'incomplete'}"
+        generation = self.root / f"snapshot-{len(self.manifest['layers']):06d}-{uuid.uuid4().hex}"
         # Repeated calls (e.g. final stop reason) reuse verified immutable files.
         generation.mkdir(exist_ok=True)
         selected, remaining = [], self.incomplete_bytes // self.width * self.width
