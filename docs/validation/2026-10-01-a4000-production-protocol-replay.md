@@ -67,3 +67,20 @@ Evidence: test_results/vast-a4000-startup-initcheck-20261001.tar.gz contains
 the reduced fixture logs, phase diagnostics, rejected initialization
 candidate and DENSE regression. HASH_FIRST regression remains on the
 bounded rental pending artifact collection.
+
+## Constructor notification replay
+
+c23d797 publishes the existing sideband failure flag before communicator
+cleanup on a constructor error. A destructor-order CPU test and a successful
+constructor test both pass. Debug replay injects a failure immediately after
+communicator creation, independently on either rank.
+
+DENSE and HASH_FIRST each pass thirteen independent-process cases, including
+the two new constructor errors, plus the additional U/S oracle and capacity
+checks. Constructor failures terminate both processes in about 1.96 seconds,
+without forced cleanup or COMPLETE. This proves the injected boundary, not
+every later resource destructor or cancellation halfway through a stalled vote.
+
+Both suites are saved locally in
+test_results/vast-a4000-constructor-notification-20261001.tar.gz.
+T4 and the strict memcheck/initcheck gates remain open.
