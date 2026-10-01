@@ -94,6 +94,12 @@ def verify_process_archives(case, frame_reader=None, n=4):
 
 
 def main():
+    # The notebook supervisor must be able to cancel the replay while its
+    # independent rank sessions are alive. Unwind through the existing
+    # per-case finally, which kills and reaps every started rank.
+    def terminate_replay(signum, frame):
+        raise SystemExit(128 + signum)
+    signal.signal(signal.SIGTERM, terminate_replay)
     parser = argparse.ArgumentParser()
     parser.add_argument("work", type=Path)
     parser.add_argument("output", type=Path)

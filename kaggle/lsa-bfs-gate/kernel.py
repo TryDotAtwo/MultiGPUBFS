@@ -17,6 +17,24 @@ CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "rounds_gate"
 
 
+def run_protocol_replay(command, cwd, env, log, timeout=1800):
+    """Bound the entire replay tree, not only its Python parent."""
+    process = subprocess.Popen(command, cwd=cwd, env=env, stdout=log,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        return {"returncode": process.wait(timeout=timeout), "timed_out": False}
+    except subprocess.TimeoutExpired:
+        # Each rank has its own session. Killing the replay parent alone would
+        # orphan ranks; ask its normal SIGTERM handler to retire those first.
+        process.terminate()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+        return {"returncode": process.returncode, "timed_out": True}
+
+
 def main():
     work = Path(tempfile.mkdtemp(prefix="mgbfs-lsa-bfs-", dir="/tmp"))
     logs = Path("/kaggle/working/lsa-bfs-gate")
@@ -240,15 +258,16 @@ def main():
                 gate_env = dict(env)
                 gate_env.update(overrides)
                 with (logs / (name + "-replay.log")).open("w") as log:
-                    result = subprocess.run(
+                    result = run_protocol_replay(
                         [str(venv / "bin/python"), str(replay), str(work),
                          str(logs / name), *arguments], cwd=source, env=gate_env,
-                        stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+                        log=log)
                 report["protocol_gates"].append(
-                    {"name": name, "returncode": result.returncode})
+                    {"name": name, **result})
                 save()
             report["status"] = ("PROTOCOL_GATES_PASS" if all(
-                item["returncode"] == 0 for item in report["protocol_gates"])
+                item["returncode"] == 0 and not item["timed_out"]
+                for item in report["protocol_gates"])
                 else "PROTOCOL_GATES_FAILED")
             return
         if MODE == "warmup_admission_gate":
