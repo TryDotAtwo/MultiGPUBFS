@@ -29,3 +29,12 @@ class InstrumentationCommandTest(unittest.TestCase):
         self.assertTrue(hasattr(replay, 'instrument_rank_command'))
         with self.assertRaises(ValueError):
             replay.instrument_rank_command('/bin/mgbfs', [], 'not-a-tool', Path('/tmp/x'))
+
+    def test_missing_or_dirty_sanitizer_summary_cannot_pass(self):
+        self.assertTrue(hasattr(replay, 'instrumentation_clean'))
+        self.assertFalse(replay.instrumentation_clean('', 'memcheck'))
+        self.assertFalse(replay.instrumentation_clean(
+            'ERROR SUMMARY: 0 errors\nERROR SUMMARY: 1 errors', 'memcheck'))
+        self.assertFalse(replay.instrumentation_clean(
+            'RACECHECK SUMMARY: 0 hazards displayed (0 errors, 1 warnings)', 'racecheck'))
+        self.assertTrue(replay.instrumentation_clean('ERROR SUMMARY: 0 errors', 'synccheck'))

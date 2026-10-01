@@ -29,6 +29,14 @@ def instrument_rank_command(binary, arguments, tool, report_prefix):
     raise ValueError('UNKNOWN_PROCESS_INSTRUMENTATION')
 
 
+def instrumentation_clean(text, tool):
+    if tool == 'racecheck':
+        rows = re.findall(r'RACECHECK SUMMARY: (\d+) hazards displayed \((\d+) errors, (\d+) warnings\)', text)
+        return bool(rows) and not any(int(n) for row in rows for n in row)
+    rows = re.findall(r'ERROR SUMMARY: (\d+) errors', text)
+    return bool(rows) and not any(int(n) for n in rows)
+
+
 def s4_reference_layers():
     """Independent full-state oracle: row permutations, no GPU hash/dedup code."""
     frontier = {(0, 1, 2, 3)}
@@ -176,6 +184,11 @@ def main():
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
                              for rank in (0, 1))
+            if args.instrument_processes and args.instrument_processes != 'nsys':
+                row['instrumentation_clean'] = all(instrumentation_clean(
+                    (case / f'rank-{rank}.log').read_text(errors='replace'),
+                    args.instrument_processes) for rank in (0, 1))
+                row['pass'] &= row['instrumentation_clean']
             expected = {"owner": "TEST_INJECTED_OWNER_HOST_ERROR",
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
                         "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}
