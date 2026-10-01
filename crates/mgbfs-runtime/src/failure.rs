@@ -8,13 +8,18 @@ impl ConstructorFailureReport {
         Self { report, armed: true }
     }
     pub(crate) fn disarm(&mut self) { self.armed = false; }
+    /// Notify before propagating an error when a later-declared resource
+    /// would otherwise be destroyed before this guard.
+    pub(crate) fn publish(&self) {
+        if let Some(report) = &self.report {
+            report.store(2, std::sync::atomic::Ordering::Release);
+        }
+    }
 }
 impl Drop for ConstructorFailureReport {
     fn drop(&mut self) {
         if self.armed {
-            if let Some(report) = &self.report {
-                report.store(2, std::sync::atomic::Ordering::Release);
-            }
+            self.publish();
         }
     }
 }
@@ -45,6 +50,20 @@ mod constructor_report_tests {
             notification.disarm();
         }
         assert_eq!(report.load(Ordering::Acquire), 0);
+    }
+    #[test]
+    fn explicit_notification_precedes_later_resource_cleanup() {
+        struct Cleanup(Arc<AtomicU8>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) { assert_eq!(self.0.load(Ordering::Acquire), 2); }
+        }
+        let report = Arc::new(AtomicU8::new(0));
+        let failed = || -> Result<(), ()> {
+            let notification = ConstructorFailureReport::new(Some(report.clone()));
+            let _later_resource = Cleanup(report.clone());
+            Err(()).map_err(|error| { notification.publish(); error })
+        };
+        assert!(failed().is_err());
     }
 }
 

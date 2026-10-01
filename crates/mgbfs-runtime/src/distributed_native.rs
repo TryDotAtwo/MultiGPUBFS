@@ -1690,14 +1690,25 @@ impl DistributedNativeBfs {
         Ok(result)
         })();
         if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                              local_result.is_err(), startup_cancel.as_deref())? {
+                              local_result.is_err(), startup_cancel.as_deref())
+            .map_err(|error| { startup_report.publish(); error })? {
+            startup_report.publish();
             return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
         }
         let mut result = local_result?;
         result.stream = stream;
         result.comm = comm;
         result.comm.1 = false;
-        if let Some(token) = startup_cancel { result.set_cancel_token(token)?; }
+        #[cfg(debug_assertions)]
+        if std::env::var("MGBFS_TEST_CONSTRUCTOR_LATE_FAULT_RANK")
+            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(result.cfg.rank) {
+            startup_report.publish();
+            return Err("TEST_INJECTED_CONSTRUCTOR_LATE_ERROR".into());
+        }
+        if let Some(token) = startup_cancel {
+            result.set_cancel_token(token)
+                .map_err(|error| { startup_report.publish(); error })?;
+        }
         startup_report.disarm();
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_OWNER_CAPACITY_RANK")

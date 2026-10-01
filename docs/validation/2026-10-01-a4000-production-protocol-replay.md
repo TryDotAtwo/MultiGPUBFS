@@ -84,3 +84,18 @@ every later resource destructor or cancellation halfway through a stalled vote.
 Both suites are saved locally in
 test_results/vast-a4000-constructor-notification-20261001.tar.gz.
 T4 and the strict memcheck/initcheck gates remain open.
+
+Late constructor follow-up: explicitly publish failure before propagating
+an error from the final setup vote or cancellation-token installation.
+At these sites a later-declared runtime can drop before the outer guard.
+An additional debug injection fails after communicator ownership transfers
+to the runtime, exercising real runtime cleanup on either rank.
+
+DENSE and HASH_FIRST each pass all fifteen independent-process cases,
+with full S4 states/depths matching the CPU oracle and additional threaded
+U/S oracle/capacity checks passing. Late constructor errors terminate both
+processes in 1.61-1.66 seconds without forced cleanup or COMPLETE.
+Three CPU notification-order tests pass; supervisor tests: four pass,
+one platform skip. Evidence is saved in
+test_results/vast-a4000-constructor-late-20261001.tar.gz.
+This does not close every intermediate allocation/destructor failure.
