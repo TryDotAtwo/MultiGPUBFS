@@ -463,10 +463,14 @@ impl Plan {
     ) -> Result<Self> {
         let mut p = std::ptr::null_mut();
         let mut e = [0i8; 512];
-        if create(&mut p, e.as_mut_ptr()) != 0 {
-            return Err(unsafe { CStr::from_ptr(e.as_ptr()) }
+        let status = create(&mut p, e.as_mut_ptr());
+        if status != 0 {
+            let message = unsafe { CStr::from_ptr(e.as_ptr()) }
                 .to_string_lossy()
-                .into_owned());
+                .into_owned();
+            return Err(if message.is_empty() {
+                format!("NATIVE_PLAN_CREATE_FAILED status={status}")
+            } else { message });
         }
         Ok(Self(p, drop))
     }
@@ -474,6 +478,23 @@ impl Plan {
 impl Drop for Plan {
     fn drop(&mut self) {
         unsafe { self.1(self.0) }
+    }
+}
+#[cfg(test)]
+mod plan_error_tests {
+    use super::*;
+
+    #[test]
+    fn constructor_preserves_numeric_failure_without_vendor_message() {
+        unsafe extern "C" fn unused_destroy(_: *mut c_void) {
+            panic!("failed constructor must not create a live plan");
+        }
+        let error = match Plan::new(unused_destroy, |_, _| 3) {
+            Ok(_) => panic!("failed native constructor was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.contains('3'), "native status was lost: {error:?}");
+        assert!(!error.is_empty());
     }
 }
 struct Stream(*mut c_void);
