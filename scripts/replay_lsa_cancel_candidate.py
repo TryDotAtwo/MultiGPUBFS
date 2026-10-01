@@ -159,6 +159,7 @@ def main():
     report['reference_size'] = args.reference_size
     report['batch'] = args.batch
     report['profile'] = args.profile
+    report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
               ("admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
@@ -213,6 +214,11 @@ def main():
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
                              for rank in (0, 1))
+            if report['owner_dag_capture_requested'] and name == 'healthy':
+                row['owner_dag_capture_launches'] = [
+                    (case / f'rank-{rank}.log').read_text(errors='replace')
+                    .count('MGBFS_OWNER_DAG_CAPTURE launched') for rank in (0, 1)]
+                row['pass'] &= all(row['owner_dag_capture_launches'])
             if args.instrument_processes and args.instrument_processes != 'nsys':
                 row['instrumentation_clean'] = all(instrumentation_clean(
                     (case / f'rank-{rank}.log').read_text(errors='replace'),

@@ -16,6 +16,54 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
+#[cfg(all(feature = "library-owner", debug_assertions))]
+extern "C" {
+    fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
+    fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
+    fn cudaGraphInstantiateWithFlags(exec: *mut *mut c_void, graph: *mut c_void, flags: u64) -> i32;
+    fn cudaGraphLaunch(exec: *mut c_void, stream: *mut c_void) -> i32;
+    fn cudaGraphExecDestroy(exec: *mut c_void) -> i32;
+    fn cudaGraphDestroy(graph: *mut c_void) -> i32;
+}
+
+// Acceptance probe of the actual rank-owner method, not a drained leaf stub.
+// Opt-in debug builds only; production never allocates a graph per batch.
+#[cfg(all(feature = "library-owner", debug_assertions))]
+struct OwnerCaptureProbe {
+    stream: *mut c_void,
+    capturing: bool,
+    graph: *mut c_void,
+    executable: *mut c_void,
+}
+#[cfg(all(feature = "library-owner", debug_assertions))]
+impl OwnerCaptureProbe {
+    fn begin(stream: *mut c_void) -> Result<Option<Self>> {
+        if std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_none() { return Ok(None); }
+        check(unsafe { cudaStreamBeginCapture(stream, 1) })?;
+        Ok(Some(Self { stream, capturing: true,
+            graph: std::ptr::null_mut(), executable: std::ptr::null_mut() }))
+    }
+    fn launch(mut self) -> Result<()> {
+        let status = unsafe { cudaStreamEndCapture(self.stream, &mut self.graph) };
+        self.capturing = false;
+        check(status)?;
+        check(unsafe { cudaGraphInstantiateWithFlags(&mut self.executable, self.graph, 0) })?;
+        check(unsafe { cudaGraphLaunch(self.executable, self.stream) })?;
+        eprintln!("MGBFS_OWNER_DAG_CAPTURE launched");
+        Ok(())
+    }
+}
+#[cfg(all(feature = "library-owner", debug_assertions))]
+impl Drop for OwnerCaptureProbe {
+    fn drop(&mut self) {
+        unsafe {
+            if self.capturing { cudaStreamEndCapture(self.stream, &mut self.graph); }
+            if !self.executable.is_null() { cudaGraphExecDestroy(self.executable); }
+            if !self.graph.is_null() { cudaGraphDestroy(self.graph); }
+        }
+    }
+}
+
 // Thread-local NVTX push/pop ownership survives early returns and panics.
 // Diagnostic ranges never add CUDA waits or device reads.
 struct TraceRange(bool);
@@ -1755,6 +1803,8 @@ impl DistributedNativeBfs {
         }
         library.epoch = library.epoch.checked_add(1).ok_or("LIBRARY_EPOCH_OVERFLOW")?;
         let epoch = library.epoch;
+        #[cfg(debug_assertions)]
+        let capture = OwnerCaptureProbe::begin(stream)?;
         let mut candidates = CandidatesV1 {
             keys: KeysV1 { words: [std::ptr::null(); 4], rows: 0, reserved: 0 },
             source_indices: std::ptr::null(),
@@ -1826,6 +1876,8 @@ impl DistributedNativeBfs {
         }
         library.rank_accepted = batch.accepted_counts;
         check(unsafe { mgbfs_library_rank_complete_v1(library.rank, epoch) })?;
+        #[cfg(debug_assertions)]
+        if let Some(capture) = capture { capture.launch()?; }
         Ok(())
     }
     #[cfg(feature = "library-owner")]
