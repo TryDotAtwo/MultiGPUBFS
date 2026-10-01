@@ -81,6 +81,25 @@ def main():
     def run(command, name, cwd=source, timeout=900):
         return gate.run(command, cwd=cwd, env=env, logs=logs, name=name, timeout=timeout)
 
+    def prepare_nsys():
+        package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
+        package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
+        package = work / package_name
+        run(["curl", "--fail", "--location", "--max-time", "300",
+             "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/"
+             + package_name, "--output", str(package)], "nsys-download")
+        with package.open("rb") as downloaded:
+            if hashlib.file_digest(downloaded, "sha256").hexdigest() != package_sha:
+                raise RuntimeError("NSYS_DIGEST_MISMATCH")
+        nsys_root = work / "nsys"
+        run(["dpkg-deb", "--extract", str(package), str(nsys_root)], "nsys-extract")
+        candidates = list(nsys_root.glob("opt/nvidia/nsight-systems/*/target-linux-x64/nsys"))
+        if len(candidates) != 1:
+            raise RuntimeError("NSYS_EXECUTABLE_INVENTORY")
+        nsys = str(candidates[0])
+        run([nsys, "--version"], "nsys-version")
+        return nsys
+
     try:
         report["gpus"] = gate.validate_gpus(run([
             "nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.free",
@@ -344,6 +363,37 @@ def main():
                         report["native_full_bfs_sanitizers"].append({"backend": backend,
                             "profile": profile, "tool": tool, **result})
                         save()
+            report["native_full_bfs_timelines"] = []
+            if all(row["returncode"] == 0 and not row["timed_out"]
+                   for row in report["native_process_gates"]):
+                nsys = prepare_nsys()
+                trace_env = dict(env)
+                trace_env.pop('MGBFS_TEST_OWNER_DAG_CAPTURE', None)
+                trace_env['PATH'] = str(Path(nsys).parent) + ':' + trace_env['PATH']
+                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                    for profile in ("DENSE", "HASH_FIRST"):
+                        label = "native-s8-timeline-" + backend + "-" + profile
+                        with (logs / (label + ".log")).open("w") as output:
+                            result = run_protocol_replay([str(venv / "bin/python"),
+                                str(source / "scripts/replay_lsa_cancel_candidate.py"), str(work), str(logs / label),
+                                "--owner-backend", backend, "--profile", profile, "--healthy-only",
+                                "--reference-size", "8", "--batch", "128", "--instrument-processes", "nsys"],
+                                cwd=source, env=trace_env, log=output)
+                        row = {"backend": backend, "profile": profile, **result, "rank_reports": []}
+                        report["native_full_bfs_timelines"].append(row)
+                        save()
+                        if result['returncode'] == 0 and not result['timed_out']:
+                            for rank in (0, 1):
+                                prefix = logs / label / 'healthy-None' / f'rank-{rank}'
+                                database = prefix.with_suffix('.sqlite')
+                                run([nsys, 'export', '--type', 'sqlite', '--force-overwrite=true',
+                                     '-o', str(database), str(prefix.with_suffix('.nsys-rep'))],
+                                    label + f'-rank{rank}-export', timeout=600)
+                                analysis = prefix.with_suffix('.analysis.json')
+                                run([str(venv / 'bin/python'), str(source / 'scripts/nsys_sync_callsites.py'),
+                                     str(database), str(analysis)], label + f'-rank{rank}-analysis')
+                                row['rank_reports'].append(str(analysis.relative_to(logs)))
+                                save()
             report["status"] = ("NATIVE_PROCESS_AND_SANITIZER_GATES_PASS" if all(
                 row["returncode"] == 0 and not row["timed_out"] for row in
                 report["native_process_gates"] + report["native_full_bfs_sanitizers"])
@@ -689,22 +739,7 @@ def main():
                 profiled_cli = str(wrapper)
             nsys = None
             if MODE in ("timeline", "timeline_backtrace", "timeline_analysis"):
-                package_name = "nsight-systems-2025.3.2_2025.3.2.474-1_amd64.deb"
-                package_sha = "c7cfe27e2250eb91e1a67e7feb5f2c490c7f598e3b3a3d047aff000bc49f9d6b"
-                package = work / package_name
-                run(["curl", "--fail", "--location", "--max-time", "300",
-                     "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/"
-                     + package_name, "--output", str(package)], "nsys-download")
-                with package.open("rb") as downloaded:
-                    if hashlib.file_digest(downloaded, "sha256").hexdigest() != package_sha:
-                        raise RuntimeError("NSYS_DIGEST_MISMATCH")
-                nsys_root = work / "nsys"
-                run(["dpkg-deb", "--extract", str(package), str(nsys_root)], "nsys-extract")
-                candidates = list(nsys_root.glob("opt/nvidia/nsight-systems/*/target-linux-x64/nsys"))
-                if len(candidates) != 1:
-                    raise RuntimeError("NSYS_EXECUTABLE_INVENTORY")
-                nsys = str(candidates[0])
-                run([nsys, "--version"], "nsys-version")
+                nsys = prepare_nsys()
             panel = ({"NCCL_LSA": []} if MODE in ("timeline_backtrace", "timeline_analysis") else
                      {"HOST_SIZED_NCCL": [], "NCCL_LSA": []})
             expected_dispatch = {"HOST_SIZED_NCCL": "HostSizedNccl", "NCCL_LSA": "Lsa"}
