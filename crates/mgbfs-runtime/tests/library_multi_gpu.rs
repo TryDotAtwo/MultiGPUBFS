@@ -48,7 +48,7 @@ fn lsa_one_exchange_matches_peer_payload() {
                         error
                     );
                     assert_eq!(
-                        gpu::mgbfs_nccl_lsa_prepare(comm, 1, 16, error.as_mut_ptr(), error.len(),),
+                        gpu::mgbfs_nccl_lsa_prepare(comm, 3, 64, error.as_mut_ptr(), error.len(),),
                         0,
                         "LSA prepare: {:?}",
                         error
@@ -65,8 +65,8 @@ fn lsa_one_exchange_matches_peer_payload() {
                     let mut counts = std::ptr::null_mut::<c_void>();
                     let mut group_fatal = std::ptr::null_mut::<c_void>();
                     let mut stream = std::ptr::null_mut::<c_void>();
-                    assert_eq!(gpu::cudaMalloc(&mut hashes, 16), 0);
-                    assert_eq!(gpu::cudaMalloc(&mut states, 16), 0);
+                    assert_eq!(gpu::cudaMalloc(&mut hashes, 48), 0);
+                    assert_eq!(gpu::cudaMalloc(&mut states, 192), 0);
                     assert_eq!(gpu::cudaMalloc(&mut counts, 8), 0);
                     assert_eq!(gpu::cudaMalloc(&mut group_fatal, 4), 0);
                     assert_eq!(gpu::cudaStreamCreateWithFlags(&mut stream, 1), 0);
@@ -75,10 +75,10 @@ fn lsa_one_exchange_matches_peer_payload() {
                     if rank == 0 && std::env::var_os("MGBFS_TEST_LSA_BAD_PAYLOAD").is_some() {
                         hash[0] ^= 1;
                     }
-                    let state = [0x21u8 + rank as u8; 16];
+                    let state = [0x21u8 + rank as u8; 64];
                     let owner_counts = if rank == 0 { [0u32, 1] } else { [1u32, 0] };
                     assert_eq!(gpu::cudaMemcpy(hashes, hash.as_ptr().cast(), 16, 1), 0);
-                    assert_eq!(gpu::cudaMemcpy(states, state.as_ptr().cast(), 16, 1), 0);
+                    assert_eq!(gpu::cudaMemcpy(states, state.as_ptr().cast(), 64, 1), 0);
                     assert_eq!(
                         gpu::cudaMemcpy(counts, owner_counts.as_ptr().cast(), 8, 1),
                         0
@@ -115,7 +115,7 @@ fn lsa_one_exchange_matches_peer_payload() {
                     let mut actual_count = 0u32;
                     let mut actual_fatal = 0u32;
                     let mut actual_hash = [0u8; 16];
-                    let mut actual_state = [0u8; 16];
+                    let mut actual_state = [0u8; 64];
                     assert_eq!(
                         gpu::cudaMemcpy(
                             (&mut actual_count as *mut u32).cast(),
@@ -134,12 +134,84 @@ fn lsa_one_exchange_matches_peer_payload() {
                         0
                     );
                     assert_eq!(
-                        gpu::cudaMemcpy(actual_state.as_mut_ptr().cast(), received_states, 16, 2),
+                        gpu::cudaMemcpy(actual_state.as_mut_ptr().cast(), received_states, 64, 2),
                         0
                     );
                     assert_eq!((actual_count, actual_fatal), (1, 0));
                     assert_eq!(actual_hash, [0x11u8 + (1 - rank) as u8; 16]);
-                    assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 16]);
+                    assert_eq!(actual_state, [0x21u8 + (1 - rank) as u8; 64]);
+
+                    let exchange = gpu::mgbfs_nccl_lsa_exchange_rows;
+                    // Counts are literal, asymmetrical and include empty epochs.
+                    // The last test sends full-width responses after compact
+                    // origins through the same preallocated receive slot.
+                    for (width, counts_by_rank) in [
+                        (16usize, [[1u32, 2], [0, 1]]),
+                        (32, [[0, 0], [2, 1]]),
+                        (16, [[0, 0], [0, 0]]),
+                        (64, [[1, 1], [1, 2]]),
+                    ] {
+                        let input: Vec<u8> = (0..192).map(|i|
+                            0x30 + rank as u8 * 4 + (i / width) as u8).collect();
+                        let counts_here = counts_by_rank[rank as usize];
+                        assert_eq!(gpu::cudaMemcpy(states, input.as_ptr().cast(), 192, 1), 0);
+                        assert_eq!(gpu::cudaMemcpy(counts, counts_here.as_ptr().cast(), 8, 1), 0);
+                        assert_eq!(gpu::cudaMemsetAsync(received_states as *mut c_void,
+                            0xcd, 192, stream), 0);
+                        assert_eq!(gpu::cudaMemsetAsync(received_hashes as *mut c_void,
+                            0xef, 48, stream), 0);
+                        assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                        drain.wait(); // both consumers have closed the prior slot lease
+                        assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
+                            group_fatal.cast(), 1-rank, 1-rank, width as u32, stream), 0);
+                        assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                        let peer_counts = counts_by_rank[(1-rank) as usize];
+                        let rows = peer_counts[rank as usize] as usize;
+                        let begin = if rank == 0 { 0 } else { peer_counts[0] as usize };
+                        let mut payload = [0u8; 192];
+                        let mut untouched_hashes = [0u8; 48];
+                        assert_eq!(gpu::cudaMemcpy(payload.as_mut_ptr().cast(),
+                            received_states, 192, 2), 0);
+                        assert_eq!(gpu::cudaMemcpy(untouched_hashes.as_mut_ptr().cast(),
+                            received_hashes, 48, 2), 0);
+                        assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
+                            received_count.cast(), 4, 2), 0);
+                        assert_eq!(actual_count as usize, rows);
+                        for row in 0..rows {
+                            assert_eq!(&payload[row*width..(row+1)*width],
+                                vec![0x30 + (1-rank) as u8*4 + (begin+row) as u8; width]);
+                        }
+                        assert!(payload[rows*width..].iter().all(|&b| b == 0xcd),
+                            "exchange wrote padding beyond exact payload");
+                        assert_eq!(untouched_hashes, [0xef; 48], "hash-free exchange wrote hashes");
+                        drain.wait();
+                    }
+                    for width in [0u32, 15, 80] {
+                        assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
+                            group_fatal.cast(), 1-rank, 1-rank, width, stream), 1);
+                    }
+                    // Both outgoing partitions individually fit, but their
+                    // sum exceeds the allocated source slot: fail before any
+                    // peer payload access, keep the receive tail untouched.
+                    let overflow = [2u32, 2];
+                    assert_eq!(gpu::cudaMemcpy(counts, overflow.as_ptr().cast(), 8, 1), 0);
+                    assert_eq!(gpu::cudaMemsetAsync(received_states as *mut c_void,
+                        0xab, 192, stream), 0);
+                    assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                    drain.wait();
+                    assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
+                        group_fatal.cast(), 1-rank, 1-rank, 16, stream), 0);
+                    assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
+                    assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
+                        received_count.cast(), 4, 2), 0);
+                    assert_eq!(gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(),
+                        fatal.cast(), 4, 2), 0);
+                    assert_eq!((actual_count, actual_fatal), (0, 1));
+                    let mut rejected_payload = [0u8; 192];
+                    assert_eq!(gpu::cudaMemcpy(rejected_payload.as_mut_ptr().cast(),
+                        received_states, 192, 2), 0);
+                    assert_eq!(rejected_payload, [0xab; 192]);
+                    drain.wait();
 
                     if rank == 1 {
                         // A poisoned exchange must not enter a device-team

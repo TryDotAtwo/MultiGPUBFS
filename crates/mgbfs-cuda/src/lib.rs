@@ -456,6 +456,17 @@ pub mod ffi {
             peer: u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_nccl_lsa_exchange_rows(
+            comm: *mut c_void,
+            sorted_hashes: *const c_void,
+            packed_rows: *const c_void,
+            owner_counts: *const u32,
+            group_fatal: *const u32,
+            logical_owner: u32,
+            peer: u32,
+            row_stride: u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_lsa_view(
             comm: *mut c_void,
             count: *mut *const u32,

@@ -361,7 +361,7 @@ __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
     auto* dest_states=reinterpret_cast<uint4*>(remote+states_offset);
     const uint64_t t=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;
     const uint64_t step=uint64_t(gridDim.x)*blockDim.x;
-    for(uint64_t i=t;i<rows;i+=step)dest_hashes[i]=hashes[begin+i];
+    if(hashes)for(uint64_t i=t;i<rows;i+=step)dest_hashes[i]=hashes[begin+i];
     const uint64_t words=uint64_t(rows)*(stride/16);
     for(uint64_t i=t;i<words;i+=step)
       dest_states[i]=states[begin*(stride/16)+i];
@@ -424,12 +424,14 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
   if(p->device.lsaSize!=int(p->world))return 9;
   return 0;
 }
-extern "C" int mgbfs_nccl_lsa_exchange(void* raw,const void* sorted_hashes,
+extern "C" int mgbfs_nccl_lsa_exchange_rows(void* raw,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
-    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* raw_stream){
+    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,
+    uint32_t row_stride,void* raw_stream){
   auto* p=static_cast<Comm*>(raw);
   if(!p||!p->value||p->terminal_started||!p->device_ready||!p->terminal_device||
-     !sorted_hashes||!packed_states||!owner_counts||!group_fatal||
+     !packed_states||!owner_counts||!group_fatal||!row_stride||
+     (row_stride&15u)||row_stride>p->state_stride||
      logical_owner>=p->world||peer>=p->world||peer==p->rank)return 1;
   if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
   p->lsa_used=true;
@@ -440,8 +442,16 @@ extern "C" int mgbfs_nccl_lsa_exchange(void* raw,const void* sorted_hashes,
   lsa_copy_exact<<<lsa_copy_ctas,lsa_copy_threads,0,stream>>>(
       p->device,p->window,static_cast<const uint4*>(sorted_hashes),
       static_cast<const uint4*>(packed_states),owner_counts,group_fatal,
-      logical_owner,peer,p->candidate_capacity,p->state_stride,p->states_offset,p->terminal_device);
+      logical_owner,peer,p->candidate_capacity,row_stride,p->states_offset,p->terminal_device);
   return cudaGetLastError()==cudaSuccess?0:3;
+}
+extern "C" int mgbfs_nccl_lsa_exchange(void* raw,const void* sorted_hashes,
+    const void* packed_states,const uint32_t* owner_counts,
+    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* raw_stream){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!sorted_hashes)return 1;
+  return mgbfs_nccl_lsa_exchange_rows(raw,sorted_hashes,packed_states,owner_counts,
+      group_fatal,logical_owner,peer,p->state_stride,raw_stream);
 }
 extern "C" int mgbfs_nccl_lsa_view(void* raw,const uint32_t** count,
     const uint32_t** fatal,const void** hashes,const void** states){
@@ -458,6 +468,8 @@ extern "C" int mgbfs_nccl_lsa_prepare(void*,uint32_t,uint32_t,char*,size_t){retu
 extern "C" int mgbfs_nccl_lsa_activate(void*,char*,size_t){return 7;}
 extern "C" int mgbfs_nccl_lsa_exchange(void*,const void*,const void*,const uint32_t*,
     const uint32_t*,uint32_t,uint32_t,void*){return 7;}
+extern "C" int mgbfs_nccl_lsa_exchange_rows(void*,const void*,const void*,const uint32_t*,
+    const uint32_t*,uint32_t,uint32_t,uint32_t,void*){return 7;}
 extern "C" int mgbfs_nccl_lsa_view(void*,const uint32_t**,const uint32_t**,
     const void**,const void**){return 7;}
 #endif

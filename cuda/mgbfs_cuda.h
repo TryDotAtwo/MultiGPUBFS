@@ -258,6 +258,17 @@ int mgbfs_nccl_lsa_activate(void* comm,char* error,size_t error_capacity);
 int mgbfs_nccl_lsa_exchange(void* comm,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
     const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* stream);
+/* Same preallocated window and cancellation/epoch protocol, exact compact rows.
+ * row_stride is a nonzero multiple of 16, <= the prepare-time state_stride.
+ * Source and receive records are densely packed at row_stride (not padded to
+ * the maximum); all ranks agree on row_stride and hash presence per epoch.
+ * Null sorted_hashes leaves the hash plane untouched (OriginRef / response
+ * exchange). The caller protects every last reader before reusing this single
+ * receive slot. This API does not add a slot or close a materialization lease. */
+int mgbfs_nccl_lsa_exchange_rows(void* comm,const void* sorted_hashes,
+    const void* packed_rows,const uint32_t* owner_counts,
+    const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,
+    uint32_t row_stride,void* stream);
 int mgbfs_nccl_lsa_view(void* comm,const uint32_t** received_count,
     const uint32_t** fatal,const void** received_hashes,
     const void** received_states);
