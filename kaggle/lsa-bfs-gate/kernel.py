@@ -250,6 +250,7 @@ def main():
                  "-o", str(binary)], "window-isolation-build", timeout=600)
             if MODE == 'nccl_window_processes':
                 report['scope'] = 'two independent T4 rank processes; reduced NCCL window probe, not full BFS acceptance'
+                report['t4_acceptance_eligible'] = False
                 report['window_runs'] = {}
                 probe_env = dict(env, NCCL_DEBUG='INFO')
                 for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
