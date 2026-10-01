@@ -1627,6 +1627,13 @@ impl DistributedNativeBfs {
         result.comm = comm;
         result.comm.1 = false;
         if let Some(token) = startup_cancel { result.set_cancel_token(token)?; }
+        #[cfg(debug_assertions)]
+        if std::env::var("MGBFS_TEST_OWNER_CAPACITY_RANK")
+            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(result.cfg.rank) {
+            // Test the real device reservation limit after common bootstrap
+            // and preallocation. No environment lookup in the batch hot path.
+            result.cfg.layer_capacity = result.cfg.layer_capacity.min(2);
+        }
         Ok(result)
     }
     pub fn depth(&self) -> u32 {

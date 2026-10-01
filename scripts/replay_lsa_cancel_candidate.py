@@ -102,6 +102,8 @@ def main():
     parser.add_argument('--instrument-processes', choices=(
         'memcheck', 'racecheck', 'initcheck', 'synccheck', 'nsys'))
     parser.add_argument('--healthy-only', action='store_true')
+    parser.add_argument('--capacity-faults', action='store_true',
+                        help='also exhaust actual owner capacity on either independent rank')
     parser.add_argument('--reference-size', type=int, choices=range(2, 9), default=4)
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
@@ -163,6 +165,8 @@ def main():
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
     cases = [("healthy", None, None)] + [(name, key, rank)
         for name, key in faults for rank in (0, 1)]
+    if args.capacity_faults:
+        cases += [('capacity', 'MGBFS_TEST_OWNER_CAPACITY_RANK', rank) for rank in (0, 1)]
     if args.healthy_only:
         cases = cases[:1]
     report['process_instrumentation'] = args.instrument_processes
@@ -170,6 +174,7 @@ def main():
         case = output / f"{name}-{fault_rank}"
         case.mkdir()
         case_env = dict(env)
+        case_env.pop('MGBFS_TEST_OWNER_CAPACITY_RANK', None)
         for _, fault in faults:
             case_env.pop(fault, None)
         if key:
@@ -218,7 +223,12 @@ def main():
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
                         "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}
             if key:
-                row["fault_reached"] = expected[name] in text
+                if name == 'capacity':
+                    row['fault_reached'] = any(marker in text for marker in (
+                        'LIBRARY_RANK_DEPTH_FATAL', 'GROUP_OWNER_OR_PRE_OWNER_FATAL'))
+                    row['capacity_profile'] = args.profile
+                else:
+                    row["fault_reached"] = expected[name] in text
                 row["pass"] &= row["fault_reached"]
             report["cases"].append(row)
             save()
