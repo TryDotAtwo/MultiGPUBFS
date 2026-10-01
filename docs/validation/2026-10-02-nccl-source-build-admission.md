@@ -172,3 +172,79 @@ teardown have additional waits and are not falsely declared absent.
 Artifacts: test_results/local_lsa_20261001/archguard-s8-<profile>-nvtx-timeline/.
 This establishes bounded one-rank timeline evidence only. EventQuery remains;
 no maximum-overlap, two-rank transport or performance acceptance is claimed.
+
+## Larger local four-tool completion
+
+Remaining S8 DENSE/HASH_FIRST OFF initcheck, synccheck and racecheck all
+completed with exit 0; unfiltered summaries are zero errors/hazards/warnings.
+All six archives independently match 40320 canonical CPU states at 29 depths.
+Together with their earlier memchecks this covers all four tools on both
+larger local profiles. No capture or TRACE_ROUTE was enabled in these six.
+Raw artifacts: test_results/local_lsa_20261001/archguard-s8-<profile>-<tool>/.
+Expanded T4 configuration adds CUCO_RANK to the same profile/equivalence/fault/
+sanitizer/timeline loops (8896665), wrapper pin published in 08fcb8a.
+Fresh complete Python suite: 202 tests, eight skipped, exit 0.
+
+## Local pinned CUCO admission and four-tool gate
+
+CUDA 12.8.93 cannot compile pinned RAPIDS 26.04 headers because
+cudaDevAttrHostNumaMemoryPoolsSupported is absent. No vendor-header edits or
+library downgrades were made. The existing four CUDA_COMPONENTS archives from
+kaggle/library-owner/kernel.py were downloaded and SHA-256 verified.
+CUDA 12.9.86 built the library in a separate build directory.
+Pinned cuCollections: 532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4.
+Library-enabled debug CLI SHA-256:
+fce68988462b73837c93b92aa0467c62b0b52ada3b116a8ab00b61de6841b411.
+Library owner SHA-256:
+b5689f1ff55ee52e9430de4b43f3c1768ed3fadf2205c5da232159f86369eec7.
+ldd -r resolves separate CUDA 12.9, pinned RAPIDS and the experimental
+minimum-arch NCCL candidate without unresolved symbols. Previous native-only
+executables and libraries were not replaced.
+
+Actual one-rank CUCO_RANK + DENSE + LSA, pre-dedup OFF, S4 batch 7 completed
+with seven owner-DAG capture launches. Its archive independently matches all
+24 canonical CPU states and layer sizes [1,3,5,6,5,3,1]. Artifacts:
+test_results/local_lsa_20261001/cuco129-s4-DENSE-OFF/.
+
+All eight additional runs, DENSE/HASH_FIRST OFF times memcheck/initcheck/
+synccheck/racecheck, completed with exit 0 and zero errors/hazards/warnings.
+No kernel filters, CUDA API error suppression or reporting waivers were used.
+Each archive independently matches all 24 canonical states at all seven depths.
+Artifacts: test_results/local_lsa_20261001/cuco129-s4-<profile>-<tool>/.
+This is local RTX 3070 Laptop evidence, not two-rank T4 acceptance, a fix for
+T4 NCCL registration initcheck, an ideal-overlap claim or an A/B speed result.
+
+## Larger CUCO full BFS gate and timelines
+
+S8 CUCO_RANK OFF DENSE/HASH_FIRST each completed all four unfiltered tools,
+exit 0 and zero errors/hazards/warnings. All eight archives independently
+match 40320 canonical CPU states at the 29 reference depths. Artifacts:
+test_results/local_lsa_20261001/cuco129-s8-<profile>-<tool>/.
+
+Separate complete Nsight runs use native NVTX library, no owner-DAG capture,
+no TRACE_ROUTE, trace=cuda,nvtx,osrt, sample=none, cpuctxsw=none. Both archives
+match the same full-state oracle. Each trace has 61 mgbfs.batch ranges.
+Attribution contains API start/end within same-thread batch ranges and excludes
+nested same-thread mgbfs.archive_d2h, as in the native comparison above.
+
+| Batch-exclusive API/copy | CUCO DENSE | CUCO HASH_FIRST |
+| --- | ---: | ---: |
+| host synchronize | 0 | 0 |
+| synchronous memcpy | 0 | 0 |
+| H2D/D2H copies | 0 | 0 |
+| cudaEventQuery | 28 | 22 |
+| cudaEventRecord | 244 | 244 |
+| cudaStreamWaitEvent | 183 | 244 |
+| kernel launches | 3110 | 5367 |
+| async copies, all D2D | 122 | 244 |
+| D2D bytes | 2903040 | 2910848 |
+| async memset | 957 | 2177 |
+
+Whole recorded GPU activity (not batch-exclusive, occupancy or critical path):
+DENSE span 475616685 ns, busy 25153490 ns, multi-stream 1272124 ns,
+compute/copy overlap 414644 ns. HASH_FIRST span 558475845 ns, busy 46145260 ns,
+multi-stream 1010806 ns, compute/copy overlap 262641 ns. Whole trace includes
+setup/archive/finalization; no ideal pipeline utilization is claimed.
+Raw full-bfs.nsys-rep/SQLite and oracle archives are in
+test_results/local_lsa_20261001/cuco129-s8-<profile>-timeline/.
+This remains one-rank local evidence, not two-rank T4 or paired A/B acceptance.
