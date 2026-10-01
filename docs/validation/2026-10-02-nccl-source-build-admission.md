@@ -276,3 +276,21 @@ warnings. All eight canonical archives independently match 40320 states at
 Artifacts: test_results/local_lsa_20261001/cuco129-s8-<profile>-ON-<tool>/.
 No speed claim is based on instrumented timings. Two-rank ordering, asymmetric
 failures, T4 registration and remote paired A/B remain separate open gates.
+
+## sm75 compilation and T4 admission recheck
+
+The sole private native-rank-owner T4 gate was COMPLETE before a fresh push;
+Kaggle again rejected admission with Maximum weekly GPU quota of 30.00 hours
+reached. CLI exit 0 does not establish a new worker or kernel version.
+
+Separate CUDA 12.9.86 sm75 builds of current native LSA and pinned CUCO owner
+both completed exit 0 (session 71947), existing sm86 builds preserved.
+Native SHA-256: 72ef1d190454beb2c32e24ed25f60cde4aa3806404c869b350f729b43c4a1d20.
+CUCO SHA-256: 06fe8a7dab8ab8fadaa9ca5e79f9b0b353eae23b117cda7c544b7369a67e2938.
+cuobjdump confirms sm_75 cubins in both libraries. CMake warns unused
+CUDAToolkit_ROOT for the native target; actual compiler is explicitly pinned
+/linux-build/cuda-12.9/bin/nvcc. The linked experimental NCCL library in this
+local compile environment remains its sm86 build: these are compile artifacts,
+not a complete deployable T4 dependency set or hardware acceptance.
+Build paths: /linux-build/lsa-cuda-sm75-129 and library-owner-sm75-129 in the
+existing isolated Docker volume. No new rental or second notebook was started.
