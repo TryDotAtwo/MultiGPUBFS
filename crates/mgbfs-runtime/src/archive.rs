@@ -9,6 +9,77 @@ pub struct ArchiveRingPlan {
     pub pinned_bytes: usize,
     pub descriptor_capacity: usize,
 }
+
+#[cfg(any(test, feature = "cuda"))]
+/// Retain the rejected message's readers until the rank-wide failure notifier
+/// has run. Formatting/returning TrySendError first can drop a pinned slot and
+/// enter CUDA cleanup before peers have received cancellation.
+pub(crate) fn send_archive_message<T>(
+    sender: Option<&std::sync::mpsc::SyncSender<T>>,
+    message: T,
+    on_failure: impl FnOnce(&str),
+) -> Result<()> {
+    let Some(sender) = sender else {
+        on_failure("ARCHIVE_CLOSED");
+        return Err("ARCHIVE_CLOSED".into());
+    };
+    match sender.try_send(message) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let reason = format!("ARCHIVE_DESCRIPTOR_RING_FATAL: {error}");
+            on_failure(&reason);
+            Err(reason)
+        }
+    }
+}
+
+#[cfg(test)]
+mod submission_failure_tests {
+    use std::sync::{Arc, Mutex, mpsc};
+    struct ReaderLease(Arc<Mutex<Vec<&'static str>>>);
+    impl Drop for ReaderLease {
+        fn drop(&mut self) { self.0.lock().unwrap().push("reader_cleanup"); }
+    }
+    #[test]
+    fn full_descriptor_ring_reports_before_reader_cleanup() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (tx, _rx) = mpsc::sync_channel(0);
+        let error = super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
+            order.lock().unwrap().push("group_failure");
+        }).unwrap_err();
+        assert!(error.starts_with("ARCHIVE_DESCRIPTOR_RING_FATAL:"));
+        assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
+    }
+    #[test]
+    fn disconnected_worker_reports_before_reader_cleanup() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::sync_channel(1);
+        drop(rx);
+        assert!(super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
+            order.lock().unwrap().push("group_failure");
+        }).is_err());
+        assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
+    }
+    #[test]
+    fn closed_archive_reports_before_reader_cleanup() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        assert_eq!(super::send_archive_message(None, ReaderLease(order.clone()), |_| {
+            order.lock().unwrap().push("group_failure");
+        }).unwrap_err(), "ARCHIVE_CLOSED");
+        assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
+    }
+    #[test]
+    fn healthy_submission_keeps_reader_lease_and_does_not_report() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::sync_channel(1);
+        super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
+            panic!("healthy submission must not cancel the rank group");
+        }).unwrap();
+        assert!(order.lock().unwrap().is_empty());
+        drop(rx.recv().unwrap());
+        assert_eq!(*order.lock().unwrap(), ["reader_cleanup"]);
+    }
+}
 impl ArchiveRingPlan {
     /// A layer capacity is not a bound on the sum of BFS layers. The reference
     /// graph order bounds all archived states and nonempty global depths;
