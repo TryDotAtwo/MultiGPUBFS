@@ -57,6 +57,72 @@ mod env_tests {
         assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("4294967296"), 64).unwrap_err(), "ENV_MGBFS_SHARDS");
     }
 }
+#[cfg(debug_assertions)]
+fn archive_fault_extent(
+    extent: Box<dyn crate::archive::Extent + Send>,
+    write_fault: bool, sync_fault: bool,
+) -> Box<dyn crate::archive::Extent + Send> {
+    // Test-only disk boundary: real reservation/header writes still happen.
+    // Fail records in the worker, not an artificial producer-side check.
+    struct FaultExtent {
+        inner: Box<dyn crate::archive::Extent + Send>,
+        write_fault: bool,
+        sync_fault: bool,
+    }
+    impl crate::archive::Extent for FaultExtent {
+        fn reserve(&mut self, bytes: u64) -> std::io::Result<()> {
+            self.inner.reserve(bytes)
+        }
+        fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.write_fault && offset >= 48 {
+                return Err(std::io::Error::other("TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR"));
+            }
+            self.inner.write_at(offset, bytes)
+        }
+        fn sync(&mut self) -> std::io::Result<()> {
+            if self.sync_fault {
+                return Err(std::io::Error::other("TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR"));
+            }
+            self.inner.sync()
+        }
+    }
+    if write_fault || sync_fault {
+        Box::new(FaultExtent { inner: extent, write_fault, sync_fault })
+    } else { extent }
+}
+#[cfg(all(test, debug_assertions, target_os = "linux"))]
+mod archive_fault_tests {
+    use super::archive_fault_extent;
+    use crate::archive::{Archive, FileExtent};
+
+    fn exercise(write_fault: bool, sync_fault: bool) -> (bool, bool) {
+        let path = std::env::temp_dir().join(format!("mgbfs-archive-fault-{}-{}",
+            std::process::id(), std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let extent = FileExtent::create_new(&path).unwrap();
+        let mut archive = Archive::new_run_durable(
+            archive_fault_extent(Box::new(extent), write_fault, sync_fault),
+            4096, 4, [0; 32]).unwrap();
+        let write_ok = archive.records(0, &[0; 4], &[[0; 4]]).is_ok();
+        if write_ok { archive.layer_commit(0, 1).unwrap(); }
+        let finish_ok = archive.run_commit().is_ok();
+        drop(archive);
+        std::fs::remove_file(path).unwrap();
+        (write_ok, finish_ok)
+    }
+    #[test]
+    fn disk_write_fault_preserves_admission_but_rejects_records_and_commit() {
+        assert_eq!(exercise(true, false), (false, false));
+    }
+    #[test]
+    fn disk_sync_fault_preserves_records_but_rejects_durable_commit() {
+        assert_eq!(exercise(false, true), (true, false));
+    }
+    #[test]
+    fn healthy_disk_extent_commits() {
+        assert_eq!(exercise(false, false), (true, true));
+    }
+}
 fn profiler_window_start() -> Result<bool> {
     match std::env::var("MGBFS_PROFILE_SEARCH").as_deref() {
         Err(std::env::VarError::NotPresent) | Ok("0") => Ok(false),
@@ -359,12 +425,20 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             return Err("TEST_INJECTED_ARCHIVE_ADMISSION_ERROR".into());
         }
         if archive_enabled {
+            #[cfg(debug_assertions)]
+            let write_fault = test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK", rank, world)?;
+            #[cfg(debug_assertions)]
+            let sync_fault = test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK", rank, world)?;
             create_archive_extent(Path::new(&archive_path), stream_archive)
                 .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
-                .and_then(|extent| PinnedArchive::new_with_failure_report(
+                .and_then(|extent| {
+                    #[cfg(debug_assertions)]
+                    let extent = archive_fault_extent(extent, write_fault, sync_fault);
+                    PinnedArchive::new_with_failure_report(
                     extent, disk_bytes, archive_width, digest, archive_rows,
                     archive_slots, Some(search_failure.clone()),
-                ))
+                    )
+                })
                 .map(Some)
         } else { Ok(None) }
     })();
