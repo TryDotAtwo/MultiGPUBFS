@@ -1,0 +1,23 @@
+{
+  "kind": "synthetic SSD stress, not GPU/BFS result",
+  "program_commit": "6b3f750d19405ec572a039183c3b0edd0d54ed9a",
+  "bytes_written": 13000000000,
+  "complete_snapshot_bytes": 10400000000,
+  "retained_depths": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "complete_checksums_verified": 4,
+  "incomplete_snapshot_bytes": 1000000000,
+  "write_seconds": [
+    21.812999999994645,
+    51.84299999999348,
+    46.17200000000594,
+    99.5789999999979,
+    8.562999999994645
+  ],
+  "incomplete_checksum_verified": true,
+  "script_was_uncommitted_at_execution": true
+}

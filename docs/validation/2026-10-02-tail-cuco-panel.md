@@ -68,8 +68,10 @@ path length limits, so verification downloaded remote bytes directly over HTTPS.
 
 Local upload receipts/readback records are in ignored test_results/publish-*/.
 Tail/sweep Python tests: 13 passed. Finite n,m sweep is implemented and tested
-on CPU; a complete GPU grid remains unexecuted. Physical 10 GB retention and
-the (15,4) archive on/off comparison remain open.
+on CPU; a complete GPU grid remains unexecuted. Physical SSD retention has
+since passed a synthetic 13 GB write / 10.4 GB complete tail / 1 GB incomplete
+tail stress with checksum readback (see physical-tail-stress.json). A real GPU
+archive of that size and the (15,4) archive on/off comparison remain open.
 
 Evidence: ignored local test_results/tail-vast-20261002/evidence.tgz, SHA-256
 deec51debc98fb308628845780ce592d6fe2af3c6ce793362309ea991c7c3314.

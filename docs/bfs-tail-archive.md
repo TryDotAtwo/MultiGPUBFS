@@ -46,8 +46,10 @@ Remaining integration gates:
 
 - Cancellation still needs a dedicated run; native capacity failure retained
   completed layers 0..3 in the isolated two-GPU validation.
-- Large (>=10 GB) physical archive stress remains untested; scaled retention
-  thresholds and complete small real GPU archives are validated separately.
+- Physical SSD stress wrote 13 decimal GB, retained four full layers totaling
+  10.4 GB, evicted the oldest layer and verified retained SHA-256 by readback.
+  The INCOMPLETE suffix was exactly 1 GB and its checksum also matched.
+  This synthetic payload check is not a >=10 GB real BFS/GPU result.
 - Compare archive on/off on (15,4), with identical configuration and hardware.
 
 Validation: `python -m unittest discover -s tests -p 'test_*tail*.py'`.
@@ -66,6 +68,11 @@ identical configuration resumes pending pairs without overwriting earlier
 runs. The alphabet must fit four bits and the native orbit count must fit u64;
 unsupported pairs are explicitly recorded, never claimed as completed.
 The grid driver has CPU tests; a complete GPU grid has not yet been executed.
+
+Storage stress: `python scripts/stress_tail_archive.py <fresh-directory>`;
+requires at least 18 decimal GB free. Recorded physical validation is in
+`docs/validation/2026-10-02-physical-tail-stress.json`. Payloads are explicitly
+synthetic, not claimed as reachable graph layers or search-completion proof.
 
 For an existing Windows DPAPI-encrypted token, the saved-run publisher accepts
 `--token-dpapi <path>`; the credential requires the original Windows account.
