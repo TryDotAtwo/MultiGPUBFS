@@ -41,3 +41,29 @@ HASH_FIRST S8 timeline also passes the full 40320-state oracle, with 178
 batches/rank, zero non-archive D2H, host Synchronize or synchronous memcpy
 inside those ranges. Evidence: test_results/vast-a4000-hash-first-s8-timeline-20261001.tar.gz.
 T4, memcheck/initcheck, remaining backends and full objective stay open.
+
+## Startup follow-up
+
+NCCL_DEBUG phase logs place the initcheck error inside window registration,
+with dev_runtime.cc reporting CUDA launch failure. The existing independent
+NCCL-only fixture also reproduces registration failure with two separate
+rank processes: plain exits 0/0 in 1.61 seconds, initcheck exits 7/7 in
+35.54 seconds, without supervisor timeout. This narrows the failure but
+does not prove a universal NCCL or sanitizer defect.
+
+Initializing the entire symmetric window before registration does not
+repair full BFS initcheck (both ranks still exit 1). That candidate was
+removed from both source trees; no persistent extra payload writes added.
+
+25f1db1 passes the existing startup cancellation token into admission,
+LSA setup and final constructor-vote waits, which previously passed None.
+DENSE and HASH_FIRST each pass all eleven process cases and the additional
+U/S oracle/capacity checks after this change. These regression tests do
+not isolate cancellation halfway through a stalled constructor vote;
+that specific injection and constructor error notification before cleanup
+remain to be verified.
+
+Evidence: test_results/vast-a4000-startup-initcheck-20261001.tar.gz contains
+the reduced fixture logs, phase diagnostics, rejected initialization
+candidate and DENSE regression. HASH_FIRST regression remains on the
+bounded rental pending artifact collection.
