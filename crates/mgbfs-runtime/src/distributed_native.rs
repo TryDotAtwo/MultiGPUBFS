@@ -3640,7 +3640,17 @@ impl DistributedNativeBfs {
                     cudaStreamSynchronize(s);
                 },
             )?;
-            archive.submit(slot, u64::from(self.depth), n)?;
+            let rank = self.cfg.rank;
+            let failed = &mut self.failed;
+            let failure_report = self.failure_report.as_deref();
+            archive.submit_notifying(slot, u64::from(self.depth), n, |error| {
+                eprintln!("MGBFS_RUNTIME_FATAL rank={rank} error={error}");
+                *failed = true;
+                if let Some(report) = failure_report {
+                    report.store(2, std::sync::atomic::Ordering::Release);
+                }
+                unsafe { mgbfs_nccl_abort(comm); }
+            })?;
             offset += u64::from(n);
         }
         check(unsafe { cudaEventRecord(self.archive_done[extent_index].0, s) })?;

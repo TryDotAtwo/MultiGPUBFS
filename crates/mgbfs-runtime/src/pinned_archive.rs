@@ -144,17 +144,23 @@ impl PinnedArchive {
             .map_err(|e| format!("ARCHIVE_PIN_RING_FATAL: {e}"))
     }
     pub(crate) fn submit(&self, slot: Slot, depth: u64, rows: u32) -> Result<()> {
+        self.submit_notifying(slot, depth, rows, |_| {})
+    }
+    /// Rejected slots still own live D2H readers. Publish/abort the rank group
+    /// before dropping them; the notification does not permit buffer reuse.
+    pub(crate) fn submit_notifying(
+        &self, slot: Slot, depth: u64, rows: u32, on_failure: impl FnOnce(&str),
+    ) -> Result<()> {
         if rows == 0 || rows > self.rows || rows as usize * (self.width + 16) > slot.bytes {
+            on_failure("ARCHIVE_SLOT_SHAPE");
             return Err("ARCHIVE_SLOT_SHAPE".into());
         }
-        self.send(Message::Records(slot, depth, rows))
+        crate::archive::send_archive_message(
+            self.tx.as_ref(), Message::Records(slot, depth, rows), on_failure,
+        )
     }
     fn send(&self, message: Message) -> Result<()> {
-        self.tx
-            .as_ref()
-            .ok_or("ARCHIVE_CLOSED")?
-            .try_send(message)
-            .map_err(|e| format!("ARCHIVE_DESCRIPTOR_RING_FATAL: {e}"))
+        crate::archive::send_archive_message(self.tx.as_ref(), message, |_| {})
     }
     pub(crate) fn layer(&self, depth: u64, count: u64) -> Result<()> {
         self.send(Message::Layer(depth, count))
