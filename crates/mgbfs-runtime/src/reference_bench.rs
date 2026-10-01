@@ -629,6 +629,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
 /// The existing weighted CUDA backend is single-rank. It remains separate
 /// from the unit-cost NCCL runtime until distributed weighted settlement exists.
 fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
+    crate::reference_launch::bench_warmup_for_launch(
+        std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
+        std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
+    )?;
     let rank = required("RANK")?;
     let world = required("WORLD_SIZE")?;
     let local = required("LOCAL_RANK")?;
@@ -737,9 +741,14 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
-    if let Some(archive) = archive.take() {
-        archive.finish()?;
-    }
+    let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
+    #[cfg(debug_assertions)]
+    let archive_commit = archive_commit.and_then(|()| {
+        if test_fault_rank("MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK", rank, world)? {
+            Err("TEST_INJECTED_ARCHIVE_FINISH_ERROR".into())
+        } else { Ok(()) }
+    });
+    archive_commit?;
     let durable = start.elapsed().as_secs_f64();
     std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
     let record = serde_json::json!({
@@ -749,9 +758,10 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
         "owner_backend": "CUB_SORT_MERGE", "pre_dedup": if prededup { "ON" } else { "OFF" },
         "hash_seed_hex": seed_hex, "generation_variant": generation_variant,
         "archive_enabled": archive_enabled, "archive_state_bytes": layout.width,
-        "output_contract": if archive_enabled { "archive_and_layer_counts" } else { "search_only_layer_counts" },
+        "output_contract": if !is_measure { "warmup_layer_counts" }
+            else if archive_enabled { "archive_and_layer_counts" } else { "search_only_layer_counts" },
         "search_complete_seconds": search,
-        "durable_run_commit_seconds": if archive_enabled { Some(durable) } else { None },
+        "durable_run_commit_seconds": if is_measure && archive_enabled { Some(durable) } else { None },
         "setup_seconds": setup_seconds, "local_layer_sizes": layers,
         "per_depth_seconds": times, "declared_capacity_records": capacity,
         "future_capacity_per_depth": future,
@@ -761,11 +771,21 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
         "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
         "pinned_bytes": pinned, "disk_reserved_bytes": disk_bytes,
         "warmup_completed": warmup_completed,
+        "bootstrap_digest": digest,
+        "archive_commit_scope": if !is_measure { "warmup_ephemeral" }
+            else if !archive_enabled { "search_only" }
+            else if stream_archive { "fifo_flush" } else { "file_fsync" },
     });
-    std::fs::write(
-        Path::new(&args[5]).join("rank-0.json"),
-        serde_json::to_vec(&record).map_err(|e| e.to_string())?,
-    ).map_err(|e| e.to_string())?;
+    let output = Path::new(&args[5]);
+    crate::group_commit::write_rank_result(output, 0,
+        &serde_json::to_vec(&record).map_err(|e| e.to_string())?)?;
+    if !is_measure && archive_enabled {
+        std::fs::remove_file(&archive_path)
+            .map_err(|error| format!("WARMUP_ARCHIVE_RELEASE: {error}"))?;
+    }
+    if is_measure {
+        crate::group_commit::write_group_commit(output, 1, digest)?;
+    }
     Ok(())
 }
 /// Shared reference benchmark entry point. Argument zero is the launcher name;
