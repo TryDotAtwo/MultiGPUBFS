@@ -118,7 +118,13 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        for component, version, digest in library.CUDA_COMPONENTS:
+        profiling_enabled = MODE in ('native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        components = list(library.CUDA_COMPONENTS)
+        if profiling_enabled:
+            # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
+            components.append(('cuda_nvtx', '12.9.79',
+                '819bc39192955e6ba2067de39b85f30e157de462945e54b12bfdeda429d793fb'))
+        for component, version, digest in components:
             name = f"{component}-linux-x86_64-{version}-archive"
             archive = work / (name + ".tar.xz")
             url = ("https://developer.download.nvidia.com/compute/cuda/redist/"
@@ -266,7 +272,9 @@ def main():
                if MODE == "timeline_backtrace" else []),
              "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUTLASS_ROOT=" + str(cutlass), "-DMGBFS_NCCL_LSA=ON",
-             "-DMGBFS_NCCL_ROOT=" + str(nccl)], "native-configure")
+             "-DMGBFS_NCCL_ROOT=" + str(nccl),
+             *(['-DMGBFS_NVTX=ON', '-DMGBFS_NVTX_INCLUDE_DIR=' + str(sdk / 'include')]
+               if profiling_enabled else [])], "native-configure")
         run(["cmake", "--build", str(native), "--target", "mgbfs_cuda", "-j2"],
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
