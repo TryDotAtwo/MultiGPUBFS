@@ -96,3 +96,79 @@ added metadata, respectively 40 and 50 aligned entries. Comparison initially
 failed byte equality because of one extra blank line; token comparison passed.
 This does NOT establish two-rank T4 registration correctness, full mode
 coverage, protocol races, production-default admission or performance benefit.
+
+## Profile and failure follow-up
+
+CUB DENSE/HASH_FIRST with pre-dedup ON/OFF each passed unfiltered memcheck
+and the full-state S4 archive oracle. Prefixes:
+`test_results/local_lsa_20261001/archguard-CUB_SORT_MERGE-<profile>-<pre>/`.
+BMMA sm86 was rejected by the explicit sm75-only hardware policy, status 3;
+zero sanitizer errors in that failed application are NOT a passing gate.
+
+Runtime constructor message fallback fixed in 38479e5 after a RED test
+observed the empty string. Seven CUDA runtime unit tests, full Windows CPU
+workspace and all eleven Linux CUDA CLI tests passed. Rebuilt CLI actual
+sm86 BMMA refusal now reports NATIVE_PLAN_CREATE_FAILED status=3 (exit 1).
+
+Fresh CLI with candidate NCCL, one rank: injected startup, actual owner
+capacity exhaustion, archive admission and archive finish each exited 1
+within the 60-second outer limit, with no group-complete.json. Logs:
+`test_results/local_lsa_20261001/archguard-single-injected-<fault>/`.
+Owner-host fixture is unreachable on this single-rank schedule: it completed
+normally, so no owner-host failure coverage is claimed. First startup attempt
+also completed normally due to a mistyped environment name without FAULT;
+both raw attempts are retained, not counted as fault passes.
+
+Existing private T4 wrapper pins 6e22335540d99f3de2dfd0c0683fad5c52ef1450,
+explicit minimum_arch_guard, published in 8702d26. Candidate is built at the
+same dependency root used by independent-process replay; original wheel is
+preserved separately. Local Python suite: 202 tests, eight skips, exit 0.
+Kaggle push was rejected with Maximum weekly GPU quota of 30.00 hours reached.
+No new worker was admitted. All two-rank candidate gates remain open.
+
+## Larger local full-state gate
+
+Fresh CLI following constructor status fix: S8, batch 1024, capacity 40320,
+future 80640, CUB with candidate NCCL, both DENSE and HASH_FIRST, pre-dedup OFF.
+Both unfiltered memcheck runs exited 0 with zero errors. Each checksummed
+archive independently matched every CPU layer set: 40320 unique states,
+29 layers. Artifacts: `test_results/local_lsa_20261001/archguard-s8-<profile>-OFF/`.
+
+Initial full-BFS timeline attempt failed with PROFILE_NVTX_NOT_BUILT before
+search. Its trace is NOT a BFS timeline or an overlap result. Separate native
+NVTX build was started under /linux-build/lsa-cuda-nvtx, preserving the tested
+non-NVTX library. Trace ranges alone do not enable diagnostic TRACE_ROUTE waits.
+
+## Full local S8 timelines
+
+NVTX include root initially shadowed installed NCCL headers and compilation
+failed on missing doca_gpunetio_device.h. Isolated nvtx3 headers resolved it;
+the separate profiling native build completed. Nsight Systems 2025.6.3,
+trace=cuda,nvtx,osrt, sample=none, cpuctxsw=none; debug capture and TRACE_ROUTE
+were unset. DENSE attempt requested CUDA backtraces but profiler warned that
+they were not collected with sampling disabled. No callchain claim is made.
+
+Both actual full BFS runs exited 0, exported SQLite, and each archived all
+40320 states at the CPU oracle's 29 layers. Each trace contains 61 mgbfs.batch
+ranges. SQL attributed CUDA APIs whose start/end and globalTid fall within a
+batch, excluding nested mgbfs.archive_d2h ranges on that same thread.
+
+| Batch-exclusive API/copy | DENSE | HASH_FIRST |
+| --- | ---: | ---: |
+| host synchronize | 0 | 0 |
+| synchronous memcpy | 0 | 0 |
+| H2D/D2H copies | 0 | 0 |
+| cudaEventQuery | 29 | 126 |
+| cudaEventRecord | 244 | 244 |
+| cudaStreamWaitEvent | 183 | 244 |
+| kernel launches | 3842 | 6099 |
+| async copies, all D2D | 122 | 244 |
+| D2D bytes | 2903040 | 2910848 |
+| async memset | 774 | 1994 |
+
+CopyKind 8 was checked against trace ENUM_CUDA_MEMCPY_OPER (Device-to-Device),
+using CUDA runtime/memcpy correlationId joins. Startup/FinalizeDepth/archive/
+teardown have additional waits and are not falsely declared absent.
+Artifacts: test_results/local_lsa_20261001/archguard-s8-<profile>-nvtx-timeline/.
+This establishes bounded one-rank timeline evidence only. EventQuery remains;
+no maximum-overlap, two-rank transport or performance acceptance is claimed.
