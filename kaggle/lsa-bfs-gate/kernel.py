@@ -331,8 +331,23 @@ def main():
                         report["native_process_gates"].append({"backend": backend, "profile": profile,
                             "prededup": prededup, "rank_map": rank_map, **result})
                         save()
-            report["status"] = ("NATIVE_PROCESS_GATES_PASS" if all(row["returncode"] == 0 and not row["timed_out"]
-                for row in report["native_process_gates"]) else "NATIVE_PROCESS_GATES_FAILED")
+            report["native_full_bfs_sanitizers"] = []
+            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for profile in ("DENSE", "HASH_FIRST"):
+                    for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+                        label = "native-full-" + backend + "-" + profile + "-" + tool
+                        with (logs / (label + ".log")).open("w") as output:
+                            result = run_protocol_replay([str(venv / "bin/python"),
+                                str(source / "scripts/replay_lsa_cancel_candidate.py"), str(work), str(logs / label),
+                                "--owner-backend", backend, "--profile", profile, "--healthy-only",
+                                "--instrument-processes", tool], cwd=source, env=env, log=output)
+                        report["native_full_bfs_sanitizers"].append({"backend": backend,
+                            "profile": profile, "tool": tool, **result})
+                        save()
+            report["status"] = ("NATIVE_PROCESS_AND_SANITIZER_GATES_PASS" if all(
+                row["returncode"] == 0 and not row["timed_out"] for row in
+                report["native_process_gates"] + report["native_full_bfs_sanitizers"])
+                else "NATIVE_PROCESS_OR_SANITIZER_GATES_FAILED")
             return
         if MODE == "device_protocol_replay":
             # Reuse the production process replay; keep failed gates visible
