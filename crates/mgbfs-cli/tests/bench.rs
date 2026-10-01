@@ -52,8 +52,13 @@ fn bench_reaches_native_launcher_or_reports_missing_build_without_fallback() {
 #[test]
 fn public_bench_cannot_disable_the_archive_output_contract() {
     for value in ["1", "invalid"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_mgbfs"))
-            .args([
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "mgbfs-cli-archive-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mgbfs"));
+        command.args([
                 "bench",
                 "--reference",
                 "s3",
@@ -62,10 +67,21 @@ fn public_bench_cannot_disable_the_archive_output_contract() {
                 "archive",
                 "results",
             ])
-            .env("MGBFS_BENCH_SKIP_ARCHIVE", value)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(2));
+            .current_dir(&directory)
+            .env_remove("MGBFS_MACRO_DEPTH")
+            .env("MGBFS_BENCH_WARMUP", "0")
+            .env("MGBFS_BENCH_SKIP_ARCHIVE", value);
+        let native = cfg!(all(feature = "cuda", target_os = "linux"));
+        if native {
+            // Native admission must happen collectively, not as a local CLI
+            // rejection before a peer enters bootstrap. A single-rank group
+            // tests that admission without requiring a second GPU.
+            command.env("RANK", "0").env("LOCAL_RANK", "0").env("WORLD_SIZE", "1")
+                .env("TORCHELASTIC_RUN_ID", format!("cli-archive-{nonce}"));
+        }
+        let output = command.output().unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(output.status.code(), Some(if native { 1 } else { 2 }));
         let result: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(result["error"], "CLI_BENCH_ARCHIVE_REQUIRED");
     }
@@ -93,15 +109,23 @@ fn explicit_search_only_reaches_launcher_without_weakening_default() {
 
 #[test]
 fn macro_depth_must_not_be_silently_ignored_by_reference_bench() {
-    for value in ["0", "2", "10", "invalid"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_mgbfs"))
+    let native = cfg!(all(feature = "cuda", target_os = "linux"));
+    // Positive depths are supported by the native single-rank macro runtime;
+    // unavailable-build validation must not be imposed on that runtime.
+    let values: &[&str] = if native { &["0", "invalid"] } else { &["0", "2", "10", "invalid"] };
+    for value in values {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mgbfs"));
+        command
             .args(["bench", "--reference", "s3", "16", "bootstrap", "archive", "results"])
-            .env("MGBFS_MACRO_DEPTH", value)
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(2));
+            .env("MGBFS_MACRO_DEPTH", value);
+        if native {
+            command.env("RANK", "0").env("LOCAL_RANK", "0").env("WORLD_SIZE", "1");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(if native { 1 } else { 2 }));
         let result: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-        assert_eq!(result["error"], "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE");
+        assert_eq!(result["error"], if native { "ENV_MGBFS_MACRO_DEPTH" }
+            else { "CLI_BENCH_MACRO_DEPTH_UNAVAILABLE" });
     }
 }
 

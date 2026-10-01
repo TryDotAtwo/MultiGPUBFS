@@ -16,7 +16,7 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
-#[cfg(all(feature = "library-owner", debug_assertions))]
+#[cfg(debug_assertions)]
 extern "C" {
     fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
     fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
@@ -28,14 +28,14 @@ extern "C" {
 
 // Acceptance probe of the actual rank-owner method, not a drained leaf stub.
 // Opt-in debug builds only; production never allocates a graph per batch.
-#[cfg(all(feature = "library-owner", debug_assertions))]
+#[cfg(debug_assertions)]
 struct OwnerCaptureProbe {
     stream: *mut c_void,
     capturing: bool,
     graph: *mut c_void,
     executable: *mut c_void,
 }
-#[cfg(all(feature = "library-owner", debug_assertions))]
+#[cfg(debug_assertions)]
 impl OwnerCaptureProbe {
     fn begin(stream: *mut c_void) -> Result<Option<Self>> {
         if std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_none() { return Ok(None); }
@@ -53,7 +53,7 @@ impl OwnerCaptureProbe {
         Ok(())
     }
 }
-#[cfg(all(feature = "library-owner", debug_assertions))]
+#[cfg(debug_assertions)]
 impl Drop for OwnerCaptureProbe {
     fn drop(&mut self) {
         unsafe {
@@ -728,7 +728,7 @@ impl DistributedNativeBfs {
     ) -> Result<()> {
         let owner = self.owner.as_ref().ok_or("NATIVE_OWNER_MISSING")?;
         let rank = self.native_rank.as_ref().ok_or("NATIVE_RANK_MISSING")?;
-        #[cfg(all(feature = "library-owner", debug_assertions))]
+        #[cfg(debug_assertions)]
         let capture = OwnerCaptureProbe::begin(self.stream.0)?;
         let logical_owner = self.cfg.logical_owner_to_rank.iter()
             .position(|&r| r == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
@@ -777,7 +777,7 @@ impl DistributedNativeBfs {
                     self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(), 2, s))?;
             }
         }
-        #[cfg(all(feature = "library-owner", debug_assertions))]
+        #[cfg(debug_assertions)]
         if let Some(capture) = capture { capture.launch()?; }
         Ok(())
     }
