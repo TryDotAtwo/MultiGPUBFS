@@ -404,8 +404,9 @@ def main():
             replay = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(replay)
             report["native_single_gpu_runs"] = []
+            rank_backends = ("CUCO_RANK", "CUB_SORT_MERGE", "BMMA_BUCKET")
             for gpu in (0, 1):
-                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for backend in rank_backends:
                     for profile in ("DENSE", "HASH_FIRST"):
                         for prededup in ("ON", "OFF"):
                             label = f"native-gpu{gpu}-{backend}-{profile}-{prededup}"
@@ -419,6 +420,8 @@ def main():
                                 MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0", MGBFS_BENCH_SKIP_ARCHIVE="0",
                                 MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0",
                                 MGBFS_TRANSPORT_BACKEND="NCCL_LSA", MGBFS_TEST_OWNER_DAG_CAPTURE="1")
+                            if backend == "CUCO_RANK":
+                                case_env["MGBFS_LIBRARY_POOL_BYTES"] = str(64 << 20)
                             with (case / "rank-0.log").open("w") as output:
                                 result = subprocess.run([str(source / "target/debug/mgbfs"), "bench", "--reference", "s4", "7",
                                     str(case / "bootstrap"), str(case / "archive"), str(case / "result")],
@@ -442,7 +445,7 @@ def main():
                 report["status"] = "NATIVE_SINGLE_GPU_PASS_MULTI_GPU_UNSUPPORTED"
                 return
             report["native_process_gates"] = []
-            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+            for backend in rank_backends:
                 for profile in ("DENSE", "HASH_FIRST"):
                     label = "native-process-" + backend + "-" + profile
                     with (logs / (label + ".log")).open("w") as output:
@@ -465,7 +468,7 @@ def main():
                         save()
             report["native_full_bfs_sanitizers"] = []
             sanitizer_env = dict(env, NCCL_DEBUG='INFO')
-            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+            for backend in rank_backends:
                 for profile in ("DENSE", "HASH_FIRST"):
                     for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
                         label = "native-full-" + backend + "-" + profile + "-" + tool
@@ -484,7 +487,7 @@ def main():
                 trace_env = dict(env)
                 trace_env.pop('MGBFS_TEST_OWNER_DAG_CAPTURE', None)
                 trace_env['PATH'] = str(Path(nsys).parent) + ':' + trace_env['PATH']
-                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for backend in rank_backends:
                     for profile in ("DENSE", "HASH_FIRST"):
                         label = "native-s8-timeline-" + backend + "-" + profile
                         with (logs / (label + ".log")).open("w") as output:
