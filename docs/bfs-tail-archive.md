@@ -44,7 +44,8 @@ metrics are not part of the tail manifest.
 Remaining integration gates:
 
 - Complete live HF upload/receipt validation with a scoped write credential.
-- Exercise native capacity/cancellation failure and retain completed layers.
+- Cancellation still needs a dedicated run; native capacity failure retained
+  completed layers 0..3 in the isolated two-GPU validation.
 - Large (>=10 GB) physical archive stress remains untested; scaled retention
   thresholds and complete small real GPU archives are validated separately.
 - Compare archive on/off on (15,4), with identical configuration and hardware.
@@ -53,3 +54,15 @@ Validation: `python -m unittest discover -s tests -p 'test_*tail*.py'`.
 GPU full-word oracle: `lrx_multiset_two_rank_cuco_full_state_oracle`.
 Archived full-word oracle: `python scripts/verify_tail_oracle.py <saved-root>`.
 Matched benchmark: `scripts/tail_remote_panel.py` (isolated rental paths).
+
+Finite grid driver: `scripts/sweep_tail_bfs.py`, where `m` maps to native `r`.
+Pass explicit `--n-min`, `--n-max`, optional `--m-min`/`--m-max`, a positive
+`--deadline-seconds`, and the same config/source/runtime-env arguments as the
+single-run driver. `--plan-only` prints the grid without launching GPUs.
+Each pair gets its own run directory and HF run ID. `sweep.json` records
+COMPLETE/INCOMPLETE, last completed layer and reason per attempted pair,
+unsupported pairs, and the remaining unstarted pairs. Restarting with the
+identical configuration resumes pending pairs without overwriting earlier
+runs. The alphabet must fit four bits and the native orbit count must fit u64;
+unsupported pairs are explicitly recorded, never claimed as completed.
+The grid driver has CPU tests; a complete GPU grid has not yet been executed.
