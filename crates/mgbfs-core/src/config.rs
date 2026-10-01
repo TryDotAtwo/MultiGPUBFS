@@ -49,7 +49,7 @@ impl ReferenceSelection {
         self.transport = match transport {
             "HOST_SIZED_NCCL" if !(self.owner == ReferenceOwner::CucoRank
                 && self.profile == FrontierProfile::HashFirst) => ReferenceTransport::HostSizedNccl,
-            "NCCL_LSA" if self.owner == ReferenceOwner::CucoRank =>
+            "NCCL_LSA" if matches!(self.owner, ReferenceOwner::CucoRank | ReferenceOwner::Native(_)) =>
                 ReferenceTransport::Lsa,
             _ => return Err("REFERENCE_TRANSPORT_BACKEND".into()),
         };

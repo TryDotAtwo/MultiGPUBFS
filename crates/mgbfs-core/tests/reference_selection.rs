@@ -1,12 +1,20 @@
 use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection, ReferenceTransport};
 
 #[test]
-fn lsa_transport_is_explicit_and_only_valid_for_dense_rank_owner() {
+fn lsa_transport_accepts_device_count_native_and_rank_owners_only() {
     let rank = ReferenceSelection::parse("DENSE", "CUCO_RANK", "ON", false, 64, 8).unwrap();
     assert_eq!(rank.transport, ReferenceTransport::HostSizedNccl);
     assert_eq!(rank.with_transport("NCCL_LSA").unwrap().transport, ReferenceTransport::Lsa);
-    let cub = ReferenceSelection::parse("DENSE", "CUB_SORT_MERGE", "ON", false, 64, 8).unwrap();
-    assert!(cub.with_transport("NCCL_LSA").is_err());
+    for profile in ["DENSE", "HASH_FIRST"] {
+        for owner in ["CUB_SORT_MERGE", "BMMA_BUCKET"] {
+            let native = ReferenceSelection::parse(profile, owner, "ON", false, 64, 8).unwrap();
+            assert_eq!(native.with_transport("NCCL_LSA").unwrap().transport, ReferenceTransport::Lsa);
+        }
+        for owner in ["CUCO_INDEXED", "CUDF_RELATIONAL"] {
+            let library = ReferenceSelection::parse(profile, owner, "ON", false, 64, 8).unwrap();
+            assert!(library.with_transport("NCCL_LSA").is_err());
+        }
+    }
     assert!(rank.with_transport("UNKNOWN").is_err());
 }
 

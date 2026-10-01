@@ -156,7 +156,7 @@ def main():
             cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT,
             timeout=600, check=True)
     env.update(MGBFS_OWNER_BACKEND=args.owner_backend, MGBFS_TRACE_FAILURE_TEARDOWN="1",
-        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE=args.profile,
+        MGBFS_PROFILE=args.profile,
         MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8",
         MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
         MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
@@ -164,6 +164,10 @@ def main():
         MGBFS_PRE_DEDUP=args.pre_dedup, MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
         MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0,1",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
+    if args.owner_backend == "CUCO_RANK":
+        env['MGBFS_LIBRARY_POOL_BYTES'] = str(64 << 20)
+    else:
+        env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
     if args.reference_size != 4:
         # Capacity is deliberately conservative for this bounded full-state
         # oracle, not a prediction of unknown production frontiers.
