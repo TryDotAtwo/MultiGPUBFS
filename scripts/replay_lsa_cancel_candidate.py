@@ -155,7 +155,8 @@ def main():
                    MGBFS_ARCHIVE_ROWS='512', MGBFS_ARCHIVE_SLOTS='128')
     report['reference_size'] = args.reference_size
     report['batch'] = args.batch
-    faults = [("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
+    faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
+              ("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
               ("admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
     cases = [("healthy", None, None)] + [(name, key, rank)
@@ -210,7 +211,8 @@ def main():
                     (case / f'rank-{rank}.log').read_text(errors='replace'),
                     args.instrument_processes) for rank in (0, 1))
                 row['pass'] &= row['instrumentation_clean']
-            expected = {"owner": "TEST_INJECTED_OWNER_HOST_ERROR",
+            expected = {"startup": "TEST_INJECTED_NCCL_STARTUP_ERROR",
+                        "owner": "TEST_INJECTED_OWNER_HOST_ERROR",
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
                         "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}
             if key:

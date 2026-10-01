@@ -18,6 +18,8 @@ int retirement_probe(void* context,int publish) {
   else ++fixture.queries;
   return fixture.queries>=3;
 }
+extern "C" int mgbfs_nccl_create_with_cancel(uint32_t,uint32_t,uint32_t,
+    const void*,void**,char*,size_t,int (*)(void*),void*) __attribute__((weak));
 int main() {
   void* comm = nullptr;
   ncclUniqueId id{};
@@ -113,4 +115,20 @@ int main() {
   assert(mgbfs_nccl_poll(receiver) != 0);
   mgbfs_nccl_destroy(receiver);
   assert(destroy_calls == destroys_before);
+  // Cancellation must be installed before an in-progress initialization,
+  // not only after a communicator has been returned to Rust.
+  assert(mgbfs_nccl_create_with_cancel != nullptr);
+  void* startup = nullptr;
+  async_state = ncclInProgress;
+  async_pending_queries = 0;
+  cancel_after = 2;
+  const int startup_aborts = abort_calls;
+  assert(mgbfs_nccl_create_with_cancel(0,2,0,&id,&startup,nullptr,0,
+      cancellation_probe,&cancel_after) != 0);
+  assert(startup == nullptr && abort_calls == startup_aborts + 1);
+  cancel_after = 0;
+  const int calls_before = init_calls;
+  assert(mgbfs_nccl_create_with_cancel(0,2,0,&id,&startup,nullptr,0,
+      cancellation_probe,&cancel_after) == 7);
+  assert(startup == nullptr && init_calls == calls_before);
 }

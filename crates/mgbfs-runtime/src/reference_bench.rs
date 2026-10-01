@@ -375,15 +375,20 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
     let sideband = control_group.start_search_sideband(Duration::from_secs(7200))?;
     let mut search_result = (|| -> Result<_> {
+    #[cfg(debug_assertions)]
+    if test_fault_rank("MGBFS_TEST_NCCL_STARTUP_FAULT_RANK", rank, world)? {
+        return Err("TEST_INJECTED_NCCL_STARTUP_ERROR".into());
+    }
     let setup = Instant::now();
     let mut bfs = if let Some(word) = &multiset {
-        DistributedNativeBfs::new_lrx_multiset_reference(word, seed,
-            id, cfg.clone(), selection.owner, selection.library_pool_bytes)?
+        DistributedNativeBfs::new_lrx_multiset_reference_and_cancel(word, seed,
+            id, cfg.clone(), selection.owner, selection.library_pool_bytes,
+            Some(sideband.cancel_token()))?
     } else { match selection.owner {
         ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
             #[cfg(feature = "library-owner")]
             {
-                DistributedNativeBfs::new_library_reference_with_owner(
+                DistributedNativeBfs::new_library_reference_with_owner_and_cancel(
                     &graph,
                     seed,
                     id,
@@ -394,6 +399,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
                         .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?,
                     selection.tensor_generation,
                     selection.owner,
+                    Some(sideband.cancel_token()),
                 )?
             }
             #[cfg(not(feature = "library-owner"))]
@@ -402,29 +408,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             }
         }
         ReferenceOwner::Native(owner) => {
-            if selection.tensor_generation {
-                DistributedNativeBfs::new_hash_first_tc_with_owner(
-                    &graph,
-                    seed,
-                    id,
-                    cfg.clone(),
-                    selection
-                        .materialization_capacity
-                        .ok_or("REFERENCE_HASH_FIRST_CAPACITY")?,
-                    owner,
-                    selection.tile_limit,
-                )?
-            } else {
-                DistributedNativeBfs::new_reference_with_owner(
-                    &graph,
-                    seed,
-                    id,
-                    cfg.clone(),
-                    selection.materialization_capacity,
-                    owner,
-                    selection.tile_limit,
-                )?
-            }
+            DistributedNativeBfs::new_reference_with_owner_and_cancel(
+                &graph, seed, id, cfg.clone(), selection.materialization_capacity,
+                owner, selection.tile_limit, selection.tensor_generation,
+                Some(sideband.cancel_token()))?
         }
     }};
     bfs.set_cancel_token(sideband.cancel_token())?;

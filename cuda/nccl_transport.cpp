@@ -153,7 +153,37 @@ int terminal_abort(Comm* p) {
 }
 extern "C" int mgbfs_nccl_unique_id(void* out){if(!out)return 1;static_assert(sizeof(ncclUniqueId)==128);return ncclGetUniqueId(static_cast<ncclUniqueId*>(out))==ncclSuccess?0:2;}
 extern "C" int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* raw_id,void** out,char* error,size_t error_capacity){
-  if(!out||!raw_id||!world||rank>=world)return 1;*out=nullptr;auto p=std::make_unique<Comm>();p->rank=rank;p->world=world;cudaError_t ce=cudaSetDevice(int(device));if(ce!=cudaSuccess){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",cudaGetErrorString(ce));return 2;}ncclUniqueId id;std::memcpy(&id,raw_id,sizeof(id));ncclConfig_t config=NCCL_CONFIG_INITIALIZER;config.blocking=0;ncclResult_t e=ncclCommInitRankConfig(&p->value,int(world),id,int(rank),&config);int ready=await_nccl(p.get(),e);if(ready){if(error&&error_capacity)std::snprintf(error,error_capacity,"init: %s (phase %d)",ncclGetErrorString(e),ready);if(p->value){ncclCommAbort(p->value);p->value=nullptr;}return 3;}*out=p.release();return 0;
+  return mgbfs_nccl_create_with_cancel(rank,world,device,raw_id,out,error,
+      error_capacity,nullptr,nullptr);
+}
+extern "C" int mgbfs_nccl_create_with_cancel(uint32_t rank,uint32_t world,
+    uint32_t device,const void* raw_id,void** out,char* error,size_t error_capacity,
+    int (*probe)(void*),void* context){
+  if(!out)return 1;
+  *out=nullptr;
+  if(!raw_id||!world||rank>=world||bool(probe)!=bool(context))return 1;
+  auto p=std::make_unique<Comm>();
+  p->rank=rank;p->world=world;
+  p->cancel_requested=probe;p->cancel_context=context;
+  if(probe&&probe(context))return 7;
+  cudaError_t ce=cudaSetDevice(int(device));
+  if(ce!=cudaSuccess){
+    if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",cudaGetErrorString(ce));
+    return 2;
+  }
+  ncclUniqueId id;std::memcpy(&id,raw_id,sizeof(id));
+  ncclConfig_t config=NCCL_CONFIG_INITIALIZER;config.blocking=0;
+  ncclResult_t e=ncclCommInitRankConfig(&p->value,int(world),id,int(rank),&config);
+  const int ready=await_nccl(p.get(),e);
+  if(ready){
+    if(error&&error_capacity)std::snprintf(error,error_capacity,
+        "init: %s (phase %d)",ncclGetErrorString(e),ready);
+    // await_nccl may already have aborted on cancellation. Never reuse its
+    // invalid handle or delegate abort to the sideband thread.
+    if(p->value){ncclCommAbort(p->value);p->value=nullptr;}
+    return 3;
+  }
+  *out=p.release();return 0;
 }
 extern "C" int mgbfs_nccl_bind_cancel(void* raw,int (*probe)(void*),void* context){
   auto* p=static_cast<Comm*>(raw);

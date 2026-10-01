@@ -223,6 +223,11 @@ int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* 
   uint8_t* permutations,void* ring,void* stream);
 int mgbfs_nccl_unique_id(void* id128);
 int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* id128,void** out,char* error,size_t error_capacity);
+/* Callback context must outlive initialization and the returned communicator.
+ * Called only by the NCCL owner thread; callback must not call NCCL. */
+int mgbfs_nccl_create_with_cancel(uint32_t rank,uint32_t world,uint32_t device,
+    const void* id128,void** out,char* error,size_t error_capacity,
+    int (*probe)(void*),void* context);
 /* Bind a probe owned by the rank's dispatcher; only that dispatcher calls
  * NCCL/abort. The probe context must outlive the communicator. */
 int mgbfs_nccl_bind_cancel(void* comm,int (*probe)(void*),void* context);
