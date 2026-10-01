@@ -25,7 +25,20 @@ of both backends/profiles/pre-dedup choices and actual owner-DAG capture.
 Two-process fault/oracle suites run only after a verified P2P preflight.
 Missing P2P is explicitly multi-GPU UNSUPPORTED, never a passing acceptance.
 
-Kaggle v6 launched from source 42ba753c4212edda36626affd2a2c00f9dbf1b41.
-The platform renamed the existing notebook after its title changed:
-trydotatwo/mgbfs-native-rank-owner-t4 is RUNNING; the old slug is 404.
-This is one notebook, not a duplicated run. No hardware result is claimed yet.
+Kaggle v6 (42ba753) and v7 (81257b6) both ended ERROR before BFS. Both
+verified real 2xT4 P2P in both directions and all eight unfiltered native
+leaf sanitizer gates (CUB/BMMA x four tools). This is leaf evidence only.
+v6 failed configuration selection (REFERENCE_TRANSPORT_BACKEND); 81257b6
+fixed that and its regression test was observed RED then GREEN. v7 then
+failed the separate runtime constructor guard (LSA_REQUIRES_DENSE_RANK_OWNER).
+9bcafdd fixes that guard for the integrated native device-count path,
+including world=1 for the single-GPU reference gate; Rust feature check passes.
+Raw v7 evidence: test_results/kaggle_native_rank_v7_20261001/lsa-bfs-gate/.
+The CLI output downloader reported a Windows charmap error after downloading
+the summary and rank log; those two files were inspected, not inferred from
+download exit status. Full native BFS, faults and performance remain unproven.
+
+One existing notebook trydotatwo/mgbfs-native-rank-owner-t4 v8 is launched
+with immutable source 9bcafdd07f347225cedd2a6f5034a03f04f2b2f8. The old
+slug was renamed by Kaggle; it is not a second notebook. v8 adds reverse
+rank maps, both pre-dedup settings and full two-process sanitizer runs.
