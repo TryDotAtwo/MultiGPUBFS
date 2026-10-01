@@ -56,7 +56,7 @@ def native_failure(line):
     return None
 
 
-def run(config, source, root, runtime_env):
+def run(config, source, root, runtime_env, *, publisher_api=None):
     if os.name != 'posix':
         raise ValueError('Linux required')
     n, r, world = config['n'], config['r'], config.get('world', 2)
@@ -99,9 +99,12 @@ def run(config, source, root, runtime_env):
     archive.manifest['layer_time_scope'] = 'maximum rank whole-layer duration at existing advance boundary'
     publisher = None
     if config.get('repo_id'):
-        from huggingface_hub import get_token
         from tail_upload import Publisher
-        publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], get_token())
+        token=None
+        if publisher_api is None:
+            from huggingface_hub import get_token
+            token=get_token()
+        publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], token, api=publisher_api)
     messages, stopped = queue.Queue(), threading.Event()
     begins, ends, samples, native_errors, lock = {}, {}, [], [], threading.Lock()
     readers, threads, pending, receipts = [], [], {}, {}

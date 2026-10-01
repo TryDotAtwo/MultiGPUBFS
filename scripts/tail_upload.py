@@ -10,11 +10,13 @@ from pathlib import Path
 
 
 class Publisher:
-    def __init__(self, root, repo_id, run_id, token, max_pending_bytes=25_000_000_000):
-        from huggingface_hub import HfApi
-        if not token:
-            raise ValueError('HF write token required')
-        self.api = HfApi(token=token)
+    def __init__(self, root, repo_id, run_id, token=None, max_pending_bytes=25_000_000_000, *, api=None):
+        if api is None:
+            from huggingface_hub import HfApi
+            if not token:
+                raise ValueError('HF write token required')
+            api = HfApi(token=token)
+        self.api = api
         self.repo_id, self.prefix = repo_id, 'tail-runs/' + run_id
         self.root = Path(root)
         self.root.mkdir(exist_ok=False)
