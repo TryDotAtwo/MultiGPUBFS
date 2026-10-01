@@ -47,3 +47,29 @@ reader plus canonical CPU oracle passed all 24 unique states, with layer sizes
 `verify_process_archives(case, n=4, world=1)` from the existing replay script.
 This is correctness evidence for one rank only; memcheck remains FAILED.
 Candidate comparison is still pending its live full CUDA build.
+
+## Stock NVTX=1 initcheck
+
+Same one-rank S4/config, unfiltered initcheck: exit 0, ERROR SUMMARY: 0 errors.
+Seven capture launch markers and durable archive are present. Independent
+full-state oracle again passed 24 states with the same seven layer sets.
+Raw artifacts: `test_results/local_lsa_20261001/stock-source-sm86-nvtx1-initcheck/`.
+This does not close the previous two-rank T4 registration initcheck failure.
+
+## Remaining stock local tools
+
+Unfiltered synccheck and racecheck both exited 0. Synccheck reported zero
+errors; racecheck reported zero hazards, errors and warnings. Each produced
+seven capture launch markers. Each separate archive passed the full-state
+CPU oracle, 24 unique states and the same seven layers.
+Artifacts use the same prefix with `-synccheck` and `-racecheck` suffixes.
+No filtering or suppression was used. Overall four-tool acceptance still
+fails because memcheck failed; this is one rank, not T4 group acceptance.
+
+Hardware: RTX 3070 Laptop GPU, 8192 MiB, driver 572.70.
+Compute Sanitizer 2025.1.0.0 build 35583870; CUDA build 12.8.93.
+SHA256 of actual tested binaries:
+
+- stock libnccl.so.2.29.7: a7b0971d91e22e28a8dcb2a4b0901778e367d4a50b6d53a1d970656a5ef5a49d
+- libmgbfs_cuda.so: 5ab7a5ec3d0c2634f73584b79e791c1b84063a61738787103231d6f7ae3a03de
+- mgbfs: 438a1a92a66a26b8304a0675537101d4a53fa81136bf59760f35f97d55a8f747
