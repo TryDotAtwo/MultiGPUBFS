@@ -500,6 +500,7 @@ struct HashFirstDevice {
     extents: Buffer,
     controls: Buffer,
     exchange_counts: Buffer,
+    generation_control: Buffer,
 }
 fn append_extent(extents: &mut Vec<Extent>, mut extent: Extent) -> Result<()> {
     if extent.count == 0 {
@@ -574,7 +575,8 @@ impl HashFirstStorage {
             device: if ledger.allocations.iter().any(|a| a.name == "device_counts") {
                 Some(HashFirstDevice { counts: b("device_counts")?,
                     extents: b("device_extents")?, controls: b("device_controls")?,
-                    exchange_counts: b("device_exchange_counts")? })
+                    exchange_counts: b("device_exchange_counts")?,
+                    generation_control: b("device_generation_control")? })
             } else { None },
             ledger,
         })
@@ -1119,6 +1121,7 @@ impl DistributedNativeBfs {
                 l.add("device_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
                 l.add("device_controls", 2, std::mem::size_of::<Control>() as u64, 256)?;
                 l.add("device_exchange_counts", cfg.world.into(), 4, 256)?;
+                l.add("device_generation_control", 2, 4, 256)?;
             }
             for a in &l.allocations {
                 owned_memory.add(&format!("hash_first.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -1659,7 +1662,7 @@ impl DistributedNativeBfs {
     pub fn dense_lookahead_batches(&self) -> u64 {
         self.dense_lookahead
     }
-    fn enqueue_dense_generation(&mut self, batch: ParentBatch) -> Result<u64> {
+    fn enqueue_frontier_generation(&mut self, batch: ParentBatch) -> Result<u64> {
         let sequence = self
             .generation_sequence
             .checked_add(1)
@@ -1668,6 +1671,21 @@ impl DistributedNativeBfs {
         // The frontier range is still live in StateRing. Only the *previous*
         // parent batch may retire while these read-only operations are running.
         unsafe {
+            if let Some(h) = self.hash_first.as_ref() {
+                let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
+                check(mgbfs_device_store_u32(h.parent_count.ptr.cast(), batch.count, s))?;
+                let generate = if self.hash_first_tensor_generation {
+                    mgbfs_generate_hash_only_tc
+                } else { mgbfs_generate_hash_only };
+                check(generate(h.n, self.moves, h.modulus, self.stride as u32,
+                    self.cfg.batch, self.candidates, self.cfg.rank, batch.sequence,
+                    self.states.at(batch.begin as usize * self.stride).cast(),
+                    h.generators.ptr.cast(), h.coefficients.ptr.cast(), h.offsets.ptr.cast(),
+                    h.parent_count.ptr.cast(), self.child_hashes.ptr.cast(), self.children.ptr.cast(),
+                    // Producer count must not overwrite the current owner's
+                    // routed-count before its selected origins are committed.
+                    d.generation_control.at(4).cast(), d.generation_control.ptr.cast(), s))?;
+            } else {
             check(mgbfs_generate_run(
                 self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
                 self.states.at(batch.begin as usize * self.stride).cast(),
@@ -1682,6 +1700,7 @@ impl DistributedNativeBfs {
                 batch.count * self.moves,
                 s,
             ))?;
+            }
             self.generation_done.record(sequence, s)?;
         }
         self.generation_sequence = sequence;
@@ -2702,7 +2721,25 @@ impl DistributedNativeBfs {
             if trace_route {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin", self.cfg.rank, self.depth);
             }
-            if let Some(h) = self.hash_first.as_ref() {
+            if self.hash_first.as_ref().is_some_and(|h| h.device.is_some()) && work.is_some() {
+                let batch = work.ok_or("GENERATION_BATCH_MISSING")?;
+                let sequence = match prefetched.take() {
+                    Some((expected, sequence)) if expected == batch => sequence,
+                    Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
+                    None => self.enqueue_frontier_generation(batch)?,
+                };
+                unsafe { self.generation_done.wait(sequence, s)?; }
+                generation = Some(sequence);
+                let fatal = self.hash_first.as_ref().and_then(|h| h.device.as_ref())
+                    .ok_or("HASH_FIRST_DEVICE_STORAGE")?.generation_control.ptr.cast();
+                check(unsafe { mgbfs_owner_import_transport_fatal(
+                    fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
+                ) })?;
+                check(unsafe { mgbfs_owner_lsa_fatal_gate(
+                    self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                    self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                ) })?;
+            } else if let Some(h) = self.hash_first.as_ref() {
                 h.parent_count.put_u32(parents)?;
                 let (begin, physical) = parent
                     .map(|e| (e.sequence + extent_offset, e.begin + extent_offset))
@@ -2752,7 +2789,7 @@ impl DistributedNativeBfs {
                 let sequence = match prefetched.take() {
                     Some((expected, sequence)) if expected == batch => sequence,
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
-                    None => self.enqueue_dense_generation(batch)?,
+                    None => self.enqueue_frontier_generation(batch)?,
                 };
                 unsafe {
                     self.generation_done.wait(sequence, s)?;
@@ -2858,7 +2895,7 @@ impl DistributedNativeBfs {
                     self.generation_done.retire(sequence)?;
                 }
                 if let Some(next) = next_work {
-                    let sequence = self.enqueue_dense_generation(next)?;
+                    let sequence = self.enqueue_frontier_generation(next)?;
                     prefetched = Some((next, sequence));
                     self.dense_lookahead = self
                         .dense_lookahead
