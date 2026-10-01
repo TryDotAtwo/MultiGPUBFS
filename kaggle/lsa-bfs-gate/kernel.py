@@ -434,6 +434,7 @@ def main():
                             "prededup": prededup, "rank_map": rank_map, **result})
                         save()
             report["native_full_bfs_sanitizers"] = []
+            sanitizer_env = dict(env, NCCL_DEBUG='INFO')
             for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
                 for profile in ("DENSE", "HASH_FIRST"):
                     for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
@@ -442,7 +443,7 @@ def main():
                             result = run_protocol_replay([str(venv / "bin/python"),
                                 str(source / "scripts/replay_lsa_cancel_candidate.py"), str(work), str(logs / label),
                                 "--owner-backend", backend, "--profile", profile, "--healthy-only",
-                                "--instrument-processes", tool], cwd=source, env=env, log=output)
+                                "--instrument-processes", tool], cwd=source, env=sanitizer_env, log=output)
                         report["native_full_bfs_sanitizers"].append({"backend": backend,
                             "profile": profile, "tool": tool, **result})
                         save()

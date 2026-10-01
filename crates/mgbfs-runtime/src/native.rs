@@ -1,6 +1,7 @@
 //! Native single-rank DENSE executor. States never leave GPU except explicit
 //! snapshots/archive callbacks. Host dispatch consumes only bucket metadata.
 use crate::jobs::{split, JobSpan};
+use crate::failure::check_native_status as check;
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
@@ -13,13 +14,6 @@ pub struct NativeConfig {
     pub job_buckets: u32,
     pub bucket_capacity: u32,
     pub prededup: bool,
-}
-fn check(x: i32) -> Result<()> {
-    if x == 0 {
-        Ok(())
-    } else {
-        Err(format!("CUDA_STATUS_{x}"))
-    }
 }
 struct Buffer {
     p: *mut c_void,

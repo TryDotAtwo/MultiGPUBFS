@@ -1,6 +1,6 @@
 //! Native 1/2/4/8-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::event_generation::NativeEvent;
-use crate::failure::{process_owner_pair, vote_group_error, OwnerFailurePolicy};
+use crate::failure::{check_native_status as check, process_owner_pair, vote_group_error, OwnerFailurePolicy};
 use crate::jobs::{split, JobSpan};
 #[cfg(feature = "library-owner")]
 use crate::library_native::{finalize_shards, ControlTransfer, LibraryShard};
@@ -257,13 +257,6 @@ pub struct DistributedConfig {
     pub prededup: bool,
     pub generation_variant: u32,
     pub untouched_vram_reserve: u64,
-}
-fn check(status: i32) -> Result<()> {
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(format!("CUDA_STATUS_{status}"))
-    }
 }
 fn wait_nccl_stream(
     comm: *mut c_void,

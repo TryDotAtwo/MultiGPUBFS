@@ -1,3 +1,46 @@
+// Preserve the historical error code string; attach origin only to the
+// diagnostic reporter. These statuses also include native C ABI codes.
+#[cfg(any(test, feature = "cuda"))]
+#[track_caller]
+pub(crate) fn check_native_status_with_report(
+    status: i32,
+    report: impl FnOnce(i32, &'static std::panic::Location<'static>),
+) -> mgbfs_core::Result<()> {
+    if status == 0 { return Ok(()); }
+    report(status, std::panic::Location::caller());
+    Err(format!("CUDA_STATUS_{status}"))
+}
+
+#[cfg(feature = "cuda")]
+#[track_caller]
+pub(crate) fn check_native_status(status: i32) -> mgbfs_core::Result<()> {
+    check_native_status_with_report(status, |status, origin| {
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr().lock(),
+            "MGBFS_NATIVE_STATUS status={status} file={} line={}", origin.file(), origin.line());
+    })
+}
+
+#[cfg(test)]
+mod native_status_tests {
+    #[test]
+    fn failed_status_reports_origin_without_changing_error_code() {
+        let mut reports = Vec::new();
+        let expected_line = line!() + 1;
+        let result = super::check_native_status_with_report(-1, |status, origin| {
+            reports.push((status, origin.file(), origin.line()));
+        });
+        assert_eq!(result.unwrap_err(), "CUDA_STATUS_-1");
+        assert_eq!(reports, vec![(-1, file!(), expected_line)]);
+    }
+    #[test]
+    fn healthy_status_does_not_invoke_reporter() {
+        assert!(super::check_native_status_with_report(0, |_, _| {
+            panic!("healthy path must not report or format a failure")
+        }).is_ok());
+    }
+}
+
 /// Publish constructor failure before an earlier-declared communicator drops.
 pub(crate) struct ConstructorFailureReport {
     report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
