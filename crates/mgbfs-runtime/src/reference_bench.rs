@@ -383,7 +383,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let mut bfs = if let Some(word) = &multiset {
         DistributedNativeBfs::new_lrx_multiset_reference_and_cancel(word, seed,
             id, cfg.clone(), selection.owner, selection.library_pool_bytes,
-            Some(sideband.cancel_token()))?
+            Some(sideband.cancel_token()), Some(sideband.failure_token()))?
     } else { match selection.owner {
         ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
             #[cfg(feature = "library-owner")]
@@ -400,6 +400,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
                     selection.tensor_generation,
                     selection.owner,
                     Some(sideband.cancel_token()),
+                    Some(sideband.failure_token()),
                 )?
             }
             #[cfg(not(feature = "library-owner"))]
@@ -411,7 +412,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             DistributedNativeBfs::new_reference_with_owner_and_cancel(
                 &graph, seed, id, cfg.clone(), selection.materialization_capacity,
                 owner, selection.tile_limit, selection.tensor_generation,
-                Some(sideband.cancel_token()))?
+                Some(sideband.cancel_token()), Some(sideband.failure_token()))?
         }
     }};
     bfs.set_cancel_token(sideband.cancel_token())?;

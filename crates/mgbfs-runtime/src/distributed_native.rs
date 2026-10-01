@@ -839,7 +839,7 @@ impl DistributedNativeBfs {
         library_owner: ReferenceOwner,
     ) -> Result<Self> {
         Self::new_library_reference_with_owner_and_cancel(graph, seed, id, cfg,
-            materialization_capacity, pool_bytes, tensor_generation, library_owner, None)
+            materialization_capacity, pool_bytes, tensor_generation, library_owner, None, None)
     }
     #[cfg(feature = "library-owner")]
     pub fn new_library_reference_with_owner_and_cancel(
@@ -847,6 +847,7 @@ impl DistributedNativeBfs {
         cfg: DistributedConfig, materialization_capacity: Option<u32>,
         pool_bytes: u64, tensor_generation: bool, library_owner: ReferenceOwner,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         if matches!(library_owner, ReferenceOwner::Native(_)) {
             return Err("REFERENCE_LIBRARY_OWNER".into());
@@ -870,6 +871,7 @@ impl DistributedNativeBfs {
             Some((pool_bytes, library_owner)),
             None,
             startup_cancel,
+            startup_failure,
         )
     }
     /// The 29 shared Buffer allocations, excluding library/profile/transport
@@ -905,6 +907,7 @@ impl DistributedNativeBfs {
             None,
             None,
             None,
+            None,
         )
     }
     /// Explicit scalar CUDA HASH_FIRST reference; never silently uses DENSE.
@@ -927,6 +930,7 @@ impl DistributedNativeBfs {
             None,
             None,
             None,
+            None,
         )
     }
     /// Explicit fixed owner policy; HASH_FIRST is selected by a nonzero
@@ -941,13 +945,14 @@ impl DistributedNativeBfs {
         tile_limit: u32,
     ) -> Result<Self> {
         Self::new_reference_with_owner_and_cancel(graph, seed, id, cfg,
-            materialization_capacity, owner, tile_limit, false, None)
+            materialization_capacity, owner, tile_limit, false, None, None)
     }
     pub fn new_reference_with_owner_and_cancel(
         graph: &MatrixGroup, seed: [u8; 16], id: [u8; 128],
         cfg: DistributedConfig, materialization_capacity: Option<u32>,
         owner: OwnerBackend, tile_limit: u32, tensor_generation: bool,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         if tensor_generation && materialization_capacity.is_none() {
             return Err("REFERENCE_HASH_FIRST_GENERATION".into());
@@ -964,6 +969,7 @@ impl DistributedNativeBfs {
             None,
             None,
             startup_cancel,
+            startup_failure,
         )
     }
     /// Explicit experimental Tensor Core generation; hash projection still
@@ -989,6 +995,7 @@ impl DistributedNativeBfs {
             None,
             None,
             None,
+            None,
         )
     }
     /// Explicit DENSE position-action graph with a repeated-symbol start.
@@ -1002,13 +1009,14 @@ impl DistributedNativeBfs {
         pool_bytes: Option<u64>,
     ) -> Result<Self> {
         Self::new_lrx_multiset_reference_and_cancel(word_graph, seed, id, cfg,
-            owner, pool_bytes, None)
+            owner, pool_bytes, None, None)
     }
     pub fn new_lrx_multiset_reference_and_cancel(
         word_graph: &mgbfs_core::lrx_multiset::LrxMultiset,
         seed: [u8; 16], id: [u8; 128], cfg: DistributedConfig,
         owner: ReferenceOwner, pool_bytes: Option<u64>,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         if cfg.generation_variant != 5 {
             return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
@@ -1022,7 +1030,7 @@ impl DistributedNativeBfs {
         };
         let graph = word_graph.position_group()?;
         Self::new_profile(&graph, seed, id, cfg, None, native, 256, false,
-            library, Some(word_graph.start()), startup_cancel)
+            library, Some(word_graph.start()), startup_cancel, startup_failure)
     }
     fn new_profile(
         graph: &MatrixGroup,
@@ -1036,6 +1044,7 @@ impl DistributedNativeBfs {
         library_options: Option<(u64, ReferenceOwner)>,
         compact_start: Option<&[u8]>,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
@@ -1267,6 +1276,14 @@ impl DistributedNativeBfs {
                 .into_owned());
         }
         let comm = Comm(comm, true);
+        // Declared after Comm: on a constructor error the sideband learns
+        // failure before communicator cleanup can wait for a peer.
+        let mut startup_report = crate::failure::ConstructorFailureReport::new(startup_failure);
+        #[cfg(debug_assertions)]
+        if std::env::var("MGBFS_TEST_CONSTRUCTOR_FAULT_RANK")
+            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(cfg.rank) {
+            return Err("TEST_INJECTED_CONSTRUCTOR_ERROR".into());
+        }
         admit_device_group(
             comm.0,
             raw,
@@ -1681,6 +1698,7 @@ impl DistributedNativeBfs {
         result.comm = comm;
         result.comm.1 = false;
         if let Some(token) = startup_cancel { result.set_cancel_token(token)?; }
+        startup_report.disarm();
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_OWNER_CAPACITY_RANK")
             .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(result.cfg.rank) {

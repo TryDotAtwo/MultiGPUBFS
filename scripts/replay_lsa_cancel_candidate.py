@@ -175,6 +175,7 @@ def main():
     report['profile'] = args.profile
     report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
+              ("constructor", "MGBFS_TEST_CONSTRUCTOR_FAULT_RANK"),
               ("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
               ("admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
@@ -239,6 +240,7 @@ def main():
                     args.instrument_processes) for rank in (0, 1))
                 row['pass'] &= row['instrumentation_clean']
             expected = {"startup": "TEST_INJECTED_NCCL_STARTUP_ERROR",
+                        "constructor": "TEST_INJECTED_CONSTRUCTOR_ERROR",
                         "owner": "TEST_INJECTED_OWNER_HOST_ERROR",
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
                         "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}

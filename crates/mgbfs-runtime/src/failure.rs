@@ -1,3 +1,53 @@
+/// Publish constructor failure before an earlier-declared communicator drops.
+pub(crate) struct ConstructorFailureReport {
+    report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
+    armed: bool,
+}
+impl ConstructorFailureReport {
+    pub(crate) fn new(report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>) -> Self {
+        Self { report, armed: true }
+    }
+    pub(crate) fn disarm(&mut self) { self.armed = false; }
+}
+impl Drop for ConstructorFailureReport {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(report) = &self.report {
+                report.store(2, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod constructor_report_tests {
+    use super::ConstructorFailureReport;
+    use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
+    #[test]
+    fn constructor_error_is_reported_before_communicator_cleanup() {
+        struct Cleanup(Arc<AtomicU8>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) { assert_eq!(self.0.load(Ordering::Acquire), 2); }
+        }
+        let report = Arc::new(AtomicU8::new(0));
+        let failed = || -> Result<(), ()> {
+            let _communicator = Cleanup(report.clone());
+            let _notification = ConstructorFailureReport::new(Some(report.clone()));
+            Err(())
+        };
+        assert!(failed().is_err());
+    }
+    #[test]
+    fn successful_constructor_does_not_publish_failure() {
+        let report = Arc::new(AtomicU8::new(0));
+        {
+            let mut notification = ConstructorFailureReport::new(Some(report.clone()));
+            notification.disarm();
+        }
+        assert_eq!(report.load(Ordering::Acquire), 0);
+    }
+}
+
 /// Attempt every rank-safe operation and preserve the first local failure.
 ///
 /// Distributed callers can then enter the same failure collective even when
