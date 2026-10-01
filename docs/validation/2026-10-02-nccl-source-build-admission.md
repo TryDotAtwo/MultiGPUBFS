@@ -248,3 +248,21 @@ setup/archive/finalization; no ideal pipeline utilization is claimed.
 Raw full-bfs.nsys-rep/SQLite and oracle archives are in
 test_results/local_lsa_20261001/cuco129-s8-<profile>-timeline/.
 This remains one-rank local evidence, not two-rank T4 or paired A/B acceptance.
+
+## CUCO local failure-path validation
+
+The same library-enabled CLI and pinned dependencies ran DENSE/HASH_FIRST
+OFF S4 batch 7 with each of six debug fault hooks: NCCL startup, early
+constructor, late constructor, real owner reservation capacity, archive
+admission, archive finish. All 12 runs returned exit 1 under a 60-second outer
+timeout (none returned 124); each expected fault marker was checked and no
+result/group-complete.json exists. Capacity reaches actual sticky device
+fatal LIBRARY_RANK_DEPTH_FATAL_16_16; teardown records revoke in-progress 7,
+ready 0 and abort 0. Startup/admission/finish preserve their original errors.
+Raw logs and exit codes:
+test_results/local_lsa_20261001/cuco129-fault-<profile>-<fault-env>/.
+The post-owner host hook is intentionally not counted: its scheduled
+multi-rank condition is unreachable at world=1. None of these runs proves
+asymmetric cancellation, receive-slot reuse or termination on two T4 ranks.
+Kaggle status rechecked: trydotatwo/mgbfs-native-rank-owner-t4 COMPLETE;
+no new worker was launched and the prior quota rejection is not a gate pass.
