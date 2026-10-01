@@ -360,6 +360,7 @@ fn admit_device_group(
     stream: *mut c_void,
     required: u64,
     reserve: u64,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     let send = Buffer::new(4, stream)?;
     let recv = Buffer::new(4, stream)?;
@@ -368,7 +369,7 @@ fn admit_device_group(
         check(unsafe {
             mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream)
         })?;
-        wait_nccl_stream(comm, stream, None)?;
+        wait_nccl_stream(comm, stream, cancelled)?;
         recv.one()
     };
     vote(0)?; // Initialize the actual collective before querying free VRAM.
@@ -386,10 +387,11 @@ fn admit_device_group(
     Ok(())
 }
 fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
-                      send: &Buffer, recv: &Buffer, failed: bool) -> Result<bool> {
+                      send: &Buffer, recv: &Buffer, failed: bool,
+                      cancelled: Option<&std::sync::atomic::AtomicBool>) -> Result<bool> {
     send.put_u32(u32::from(failed))?;
     check(unsafe { mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream) })?;
-    wait_nccl_stream(comm, stream, None)?;
+    wait_nccl_stream(comm, stream, cancelled)?;
     Ok(recv.one::<u32>()? != 0)
 }
 impl Buffer {
@@ -1270,6 +1272,7 @@ impl DistributedNativeBfs {
             raw,
             owned_memory.total(),
             cfg.untouched_vram_reserve,
+            startup_cancel.as_deref(),
         )?;
         let setup_send = Buffer::new(4, raw)?;
         let setup_recv = Buffer::new(4, raw)?;
@@ -1281,7 +1284,7 @@ impl DistributedNativeBfs {
                 error.as_mut_ptr(), error.len(),
             ) });
             if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                  prepared.is_err())? {
+                                  prepared.is_err(), startup_cancel.as_deref())? {
                 return Err(format!("LSA_PREPARE_GROUP: {}",
                     prepared.err().unwrap_or_else(|| "peer rejected LSA prepare".into())));
             }
@@ -1289,7 +1292,7 @@ impl DistributedNativeBfs {
                 comm.0, error.as_mut_ptr(), error.len(),
             ) });
             if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                  activated.is_err())? {
+                                  activated.is_err(), startup_cancel.as_deref())? {
                 return Err(format!("LSA_ACTIVATE_GROUP: {}",
                     activated.err().unwrap_or_else(|| "peer rejected LSA activation".into())));
             }
@@ -1670,7 +1673,7 @@ impl DistributedNativeBfs {
         Ok(result)
         })();
         if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                              local_result.is_err())? {
+                              local_result.is_err(), startup_cancel.as_deref())? {
             return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
         }
         let mut result = local_result?;
