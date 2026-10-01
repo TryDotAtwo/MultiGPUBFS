@@ -184,7 +184,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
     } else { None };
     let (group, graph) = if let Some(word) = &multiset {
-        (word.label(), word.position_group()?)
+        (word.label(), word.position_action()?)
     } else { MatrixGroup::from_reference_label(&args[1])? };
     let expected_states = multiset.as_ref().map_or(graph.expected_max_unique_states, |x| x.order());
     let n = graph.rows;

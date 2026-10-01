@@ -52,3 +52,19 @@ fn reference_label_and_generator_matrices_preserve_the_word_action() {
         assert!(LrxMultiset::from_label(bad).is_err());
     }
 }
+
+#[test]
+fn wide_word_orbit_does_not_require_full_symmetric_order() {
+    let graph = LrxMultiset::new(32, 31).unwrap();
+    assert_eq!(graph.order(), 32);
+    assert!(graph.position_group().is_err()); // Full S_32 genuinely exceeds u64.
+    let action = graph.position_action().unwrap();
+    action.validate().unwrap();
+    assert_eq!(action.expected_max_unique_states, 32);
+    for generator in 0..3 {
+        let product: Vec<u8> = action.generators[generator].chunks(32)
+            .map(|row| row.iter().zip(graph.start()).map(|(&a,&b)| a*b).sum()).collect();
+        assert_eq!(product, graph.successor(graph.start(), generator).unwrap());
+    }
+    assert_eq!(graph.exact_layers(32).unwrap().iter().map(Vec::len).sum::<usize>(), 32);
+}

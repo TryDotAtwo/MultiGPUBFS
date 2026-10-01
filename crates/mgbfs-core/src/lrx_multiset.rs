@@ -20,6 +20,11 @@ impl LrxMultiset {
     pub fn position_group(&self) -> Result<crate::matrix::MatrixGroup> {
         crate::matrix::MatrixGroup::symmetric_permutation_matrices(self.start.len())
     }
+    /// Runtime generator metadata, used only with this word's start override.
+    /// The state bound is the word orbit; no full S_n order is computed.
+    pub fn position_action(&self) -> Result<crate::matrix::MatrixGroup> {
+        crate::matrix::MatrixGroup::permutation_position_action(self.start.len(), self.order)
+    }
     pub fn new(n: usize, repeated: usize) -> Result<Self> {
         if !(2..=255).contains(&n) || repeated == 0 || repeated > n {
             return Err("LRX_MULTISET_SHAPE".into());

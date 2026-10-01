@@ -1117,7 +1117,7 @@ impl DistributedNativeBfs {
                 (OwnerBackend::CubSortMerge, Some((bytes, owner))),
             _ => return Err("LRX_MULTISET_OWNER_CONFIG".into()),
         };
-        let graph = word_graph.position_group()?;
+        let graph = word_graph.position_action()?;
         Self::new_profile(&graph, seed, id, cfg, None, native, 256, false,
             library, Some(word_graph.start()), startup_cancel, startup_failure)
     }

@@ -174,6 +174,14 @@ impl MatrixGroup {
                 .checked_mul(factor as u64)
                 .ok_or("SYMMETRIC_ORDER_OVERFLOW")
         })?;
+        Self::permutation_position_action(n, expected_max_unique_states)
+    }
+    /// Internal generator description for a specified position-action orbit.
+    /// Its bound belongs to the active word orbit, not the full symmetric group.
+    pub(crate) fn permutation_position_action(n: usize, expected_max_unique_states: u64) -> Result<Self> {
+        if n < 2 || n.checked_mul(n).unwrap_or(usize::MAX) > 33025 {
+            return Err("SYMMETRIC_DEGREE".into());
+        }
         let cycle: Vec<_> = (0..n).map(|i| (i + 1) % n).collect();
         let inverse_cycle: Vec<_> = (0..n).map(|i| (i + n - 1) % n).collect();
         let mut transposition: Vec<_> = (0..n).collect();
