@@ -28,6 +28,7 @@ AUDITOR_SOURCE = "fc8efe0660f377931995654f9cd6c0b35e6b0d3e"
 AUDITOR_SHA256 = "9effff694bd4a5d6e20330f8e43a795956d10e3f39fd41aab53d41dbee767af9"
 AUDIT_REVISION = "d43c3aa640ef12935ff12f986e53d3e6fef6e92f"
 AUDIT_MANIFEST = "runs/s13-native-2xt4-20260905-152407.json"
+AUDIT_WORKERS = 4
 
 
 def load(path, name):
@@ -51,7 +52,7 @@ def main():
         subprocess.run(
             [sys.executable, str(auditor), "--repo-id", REPO_ID,
              "--revision", AUDIT_REVISION, "--manifest", AUDIT_MANIFEST,
-             "--output", str(logs / "footer-summary.json"), "--workers", "1",
+             "--output", str(logs / "footer-summary.json"), "--workers", str(AUDIT_WORKERS),
              "--anonymous"],
             check=True, timeout=7200,
         )
