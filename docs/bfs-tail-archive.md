@@ -3,9 +3,11 @@
 Branch: `codex/bfs-tail-archive`. The active BFS checkout is not modified.
 
 `scripts/bfs_tail_archive.py` implements SSD retention and publication ordering.
-It is not yet wired into the CUDA/NCCL producer. It accepts already packed
-bytes from all owners, after the global completion vote. Do not feed candidate
-states, a partially completed rank, or an unverified future frontier.
+`scripts/run_tail_bfs.py` wires it to the existing CUDA/NCCL archive FIFO and
+the existing global layer completion boundary. `tail_wire.py` validates the
+native archive chain, removes routing hashes and packs words on CPU. A layer
+is admitted only after every rank has both a checked archive layer commit
+and the existing completed-advance marker. Candidate states are not admitted.
 
 Packing uses little-endian words: symbol i occupies bits 4*i; padding is zero.
 Width is 8 bytes for n<=16 and 16 for 17<=n<=32, provided symbols fit [0,15].
@@ -25,20 +27,29 @@ VRAM peaks must come from a separate monitor whose interval is recorded; they
 are sampled peaks rather than guaranteed physical maxima. No batch-level CUDA
 synchronization is introduced by this module.
 
-`publish_snapshot` accepts a synchronous acknowledged upload callback; invoke it
-in a background worker using the existing HF credentials. It checks checksums,
-uploads payload files, then publishes the manifest. The integration must pin or
-copy a snapshot generation before enqueueing and retain it until upload receipt;
-otherwise the next snapshot can delete the worker's input. Publication paths
-must include a unique run prefix. Remote obsolete files may remain but must not
-be referenced by the current manifest. No HF upload has been performed here.
+`tail_upload.Publisher` is one background worker with a 25 GB pending-byte
+limit. It pins files with hard links immediately when enqueued, verifies
+checksums, uploads payloads, and publishes the manifest last. Failed uploads
+retain pinned inputs and propagate an error. Run paths are
+`tail-runs/<run_id>/...`; use a fresh run_id. Remote obsolete files may remain
+but are not referenced by the latest manifest. Live HF publication remains
+unverified because no local write credential was available.
+
+The separate nvidia-smi monitor requests samples every 50 ms. The manifest
+uses host receipt timestamps and the earliest rank BEGIN/latest rank END
+window. A short layer with no observation records a null peak explicitly;
+it does not invent an exact physical maximum. Raw CUDA kernel/duplicate/path
+metrics are not part of the tail manifest.
 
 Remaining integration gates:
 
-- Wire globally completed packed state chunks without retaining extra VRAM.
-- Add independent per-GPU VRAM sampling and carry the samples to layer records.
-- Add bounded background uploads with generation pinning and failure reporting.
-- Exercise cancellation and disk/upload failures without upgrading INCOMPLETE.
+- Complete live HF upload/receipt validation with a scoped write credential.
+- Exercise native capacity/cancellation failure and retain completed layers.
+- Large (>=10 GB) physical archive stress remains untested; scaled retention
+  thresholds and complete small real GPU archives are validated separately.
 - Compare archive on/off on (15,4), with identical configuration and hardware.
 
-Validation: `python -m unittest discover -s tests -p test_bfs_tail_archive.py`.
+Validation: `python -m unittest discover -s tests -p 'test_*tail*.py'`.
+GPU full-word oracle: `lrx_multiset_two_rank_cuco_full_state_oracle`.
+Archived full-word oracle: `python scripts/verify_tail_oracle.py <saved-root>`.
+Matched benchmark: `scripts/tail_remote_panel.py` (isolated rental paths).

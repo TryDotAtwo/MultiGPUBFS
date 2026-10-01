@@ -35,6 +35,12 @@ def atomic_json(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temp, path)
+    if os.name == 'posix':
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 class TailArchive:
@@ -94,6 +100,12 @@ class TailArchive:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temp, path)
+            if os.name == 'posix':
+                directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
