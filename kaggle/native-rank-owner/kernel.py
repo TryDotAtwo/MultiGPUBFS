@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 
-SOURCE = "aa97205007b62b7247d73cc226efef839dc196ec"
+SOURCE = "2b2b62054a301f9c6829db208bd6d196e2dab80c"
 repo = Path("/tmp/mgbfs-native-rank-owner-source")
 subprocess.run(["git", "clone", "-q", "https://github.com/TryDotAtwo/MultiGPUBFS.git", str(repo)], check=True)
 subprocess.run(["git", "-C", str(repo), "checkout", "--detach", SOURCE], check=True)
@@ -13,5 +13,5 @@ spec = importlib.util.spec_from_file_location("gate", repo / "kaggle/lsa-bfs-gat
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 gate.SOURCE = actual
-gate.MODE = "native_rank_gate"
+gate.MODE = "nccl_window_processes"
 gate.main()
