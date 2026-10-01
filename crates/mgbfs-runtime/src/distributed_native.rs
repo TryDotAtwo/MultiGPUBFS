@@ -1121,10 +1121,10 @@ impl DistributedNativeBfs {
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
-            && (cfg.world < 2
-                || !matches!(library_options, Some((_, ReferenceOwner::CucoRank))))
+            && (cfg.world == 0
+                || matches!(library_options, Some((_, owner)) if owner != ReferenceOwner::CucoRank))
         {
-            return Err("LSA_REQUIRES_DENSE_RANK_OWNER".into());
+            return Err("LSA_REQUIRES_DEVICE_COUNT_RANK_OWNER".into());
         }
         if let Some(bytes) = library_pool_bytes {
             if !cfg!(feature = "library-owner")
