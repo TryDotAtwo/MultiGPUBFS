@@ -99,3 +99,11 @@ Three CPU notification-order tests pass; supervisor tests: four pass,
 one platform skip. Evidence is saved in
 test_results/vast-a4000-constructor-late-20261001.tar.gz.
 This does not close every intermediate allocation/destructor failure.
+
+The same process replay now exposes --pre-dedup ON/OFF and records the
+choice in its summary. With OFF, DENSE and HASH_FIRST both pass full S8:
+40320 canonical states at every one of 29 depths match the CPU oracle.
+Batch 128, LSA/CUCO_RANK, two independent A4000 processes, archive enabled.
+Each profile also passes the thirteen non-capacity process cases.
+Evidence: test_results/vast-a4000-s8-no-prededup-20261001.tar.gz.
+This is correctness evidence, not paired timing/VRAM or T4 acceptance.

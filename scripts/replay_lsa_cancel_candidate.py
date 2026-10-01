@@ -117,6 +117,7 @@ def main():
     parser.add_argument('--reference-size', type=int, choices=range(2, 9), default=4)
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
+    parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
     args = parser.parse_args()
     if args.batch < 1:
         parser.error('--batch must be positive')
@@ -158,7 +159,7 @@ def main():
         MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
         MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
         MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
-        MGBFS_PRE_DEDUP="ON", MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
+        MGBFS_PRE_DEDUP=args.pre_dedup, MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
         MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0,1",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
     if args.reference_size != 4:
@@ -173,6 +174,7 @@ def main():
     report['reference_size'] = args.reference_size
     report['batch'] = args.batch
     report['profile'] = args.profile
+    report['pre_dedup'] = args.pre_dedup
     report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("constructor", "MGBFS_TEST_CONSTRUCTOR_FAULT_RANK"),
