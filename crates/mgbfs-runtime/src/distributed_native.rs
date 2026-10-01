@@ -1113,6 +1113,8 @@ impl DistributedNativeBfs {
                 (OwnerBackend::CubSortMerge, None),
             (ReferenceOwner::CucoIndexed, Some(bytes)) =>
                 (OwnerBackend::CubSortMerge, Some((bytes, owner))),
+            (ReferenceOwner::CucoRank, Some(bytes)) =>
+                (OwnerBackend::CubSortMerge, Some((bytes, owner))),
             _ => return Err("LRX_MULTISET_OWNER_CONFIG".into()),
         };
         let graph = word_graph.position_group()?;

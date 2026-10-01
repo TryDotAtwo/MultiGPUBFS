@@ -5,9 +5,21 @@ use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs}
 #[test]
 #[ignore = "requires eight physical GPUs; compares full words, not only counts"]
 fn lrx_multiset_one_two_eight_rank_full_state_oracle() {
-    for world in [1u32, 2, 8] {
+    multiset_oracle(&[1, 2, 8], false);
+}
+
+#[test]
+#[ignore = "requires two physical GPUs; compares full words for both cuco backends"]
+fn lrx_multiset_two_rank_cuco_full_state_oracle() {
+    multiset_oracle(&[2], true);
+}
+
+fn multiset_oracle(worlds: &[u32], include_rank: bool) {
+    for &world in worlds {
         for n in [5, 7] {
-            for owner in [ReferenceOwner::Native(OwnerBackend::CubSortMerge), ReferenceOwner::CucoIndexed] {
+            let mut owners = vec![ReferenceOwner::Native(OwnerBackend::CubSortMerge), ReferenceOwner::CucoIndexed];
+            if include_rank { owners.push(ReferenceOwner::CucoRank); }
+            for owner in owners {
                 for prededup in [false, true] {
                     let mut expected = LrxMultiset::new(n,4).unwrap().exact_layers(256).unwrap();
                     let mut id = [0u8;128];
@@ -23,7 +35,7 @@ fn lrx_multiset_one_two_eight_rank_full_state_oracle() {
                                 bucket_capacity: 256, prededup, generation_variant: 5,
                                 untouched_vram_reserve: 1<<30,
                             };
-                            let pool = (owner == ReferenceOwner::CucoIndexed).then_some(64<<20);
+                            let pool = matches!(owner, ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank).then_some(64<<20);
                             let mut bfs = DistributedNativeBfs::new_lrx_multiset_reference(
                                 &graph,[7;16],id,cfg,owner,pool).unwrap();
                             let mut layers = Vec::new();
