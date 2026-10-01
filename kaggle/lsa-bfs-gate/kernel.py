@@ -123,6 +123,12 @@ def main():
              "--only-binary=:all:", "--no-cache-dir", "--require-hashes", "-r",
              str(source / "experiments/library_owner/requirements-linux-x86_64.lock")],
             "dependencies", timeout=1200)
+        if MODE == "device_protocol_replay":
+            # The full-state oracle reuses the archive reader in the Parquet
+            # exporter; its module-level schemas require Arrow at import time.
+            run([sys.executable, "-m", "pip", "--python", python, "install",
+                 "--only-binary=:all:", "--no-deps", "pyarrow==19.0.1"],
+                "archive-verifier-dependency", timeout=300)
         site = subprocess.check_output([python, "-c", "import site; print(site.getsitepackages()[0])"],
                                        text=True, env=env).strip()
         site = Path(site)
