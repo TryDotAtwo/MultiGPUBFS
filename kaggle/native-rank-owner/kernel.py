@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 
-SOURCE = "d018a6d7d2dc65747cfc72b4b9a7adfc2e70c86c"
+SOURCE = "6e22335540d99f3de2dfd0c0683fad5c52ef1450"
 repo = Path("/tmp/mgbfs-native-rank-owner-source")
 subprocess.run(["git", "clone", "-q", "https://github.com/TryDotAtwo/MultiGPUBFS.git", str(repo)], check=True)
 subprocess.run(["git", "-C", str(repo), "checkout", "--detach", SOURCE], check=True)
@@ -14,4 +14,5 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 gate.SOURCE = actual
 gate.MODE = "native_rank_gate"
+gate.NCCL_VARIANT = "minimum_arch_guard"
 gate.main()
