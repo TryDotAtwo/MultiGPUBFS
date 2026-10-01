@@ -249,10 +249,12 @@ def main():
                         if MODE == 'nccl_window_processes' else ['g++', '-std=c++17', '-pthread', '-x', 'c++'])
             linker = (['-Xlinker=-rpath,' + str(nccl / 'lib')] if MODE == 'nccl_window_processes'
                       else ['-x', 'none', '-Wl,-rpath,' + str(nccl / 'lib')])
+            nccl_link = (['-Xlinker=' + str(nccl / 'lib/libnccl.so.2')]
+                         if MODE == 'nccl_window_processes' else [str(nccl / 'lib/libnccl.so.2')])
             run([*compiler,
                  "-I" + str(nccl / "include"), "-I" + str(sdk / "include"),
                  str(source / "experiments/nccl_window_isolation.cu"),
-                 *linker, str(nccl / "lib/libnccl.so.2"),
+                 *linker, *nccl_link,
                  "-L" + str(sdk / "lib"), "-lcudart",
                  "-o", str(binary)], "window-isolation-build", timeout=600)
             if MODE == 'nccl_window_processes':
