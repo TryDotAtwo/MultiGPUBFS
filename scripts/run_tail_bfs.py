@@ -43,6 +43,19 @@ def chunks(paths):
                 yield chunk
 
 
+def native_failure(line):
+    match=re.search(r'MGBFS_(?:RUNTIME|ARCHIVE_WORKER)_FATAL (?:rank|device)=\d+ error=(.*)',line)
+    if match:
+        return match[1].strip()[:1024]
+    try:
+        record=json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(record,dict) and record.get('status')=='ERROR' and isinstance(record.get('error'),str):
+        return record['error'][:1024]
+    return None
+
+
 def run(config, source, root, runtime_env):
     if os.name != 'posix':
         raise ValueError('Linux required')
@@ -122,9 +135,9 @@ def run(config, source, root, runtime_env):
         with (root/'native.log').open('w', buffering=1) as log:
             for line in process.stdout:
                 log.write(line)
-                fatal = re.search(r'MGBFS_RUNTIME_FATAL rank=\d+ error=([^\s]+)', line)
+                fatal = native_failure(line)
                 if fatal:
-                    native_errors.append(fatal[1])
+                    native_errors.append(fatal)
                 match = re.search(r'MGBFS_DEPTH_(BEGIN|END) rank=(\d+) depth=(\d+) (.*)', line)
                 if match:
                     fields = dict(re.findall(r'(\w+)=([^\s]+)', match[4]))
