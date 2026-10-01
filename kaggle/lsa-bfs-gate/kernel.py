@@ -317,11 +317,14 @@ def main():
                                 raise RuntimeError("NATIVE_SINGLE_GPU_FAILED: " + label)
                             if "MGBFS_OWNER_DAG_CAPTURE launched" not in (case / "rank-0.log").read_text():
                                 raise RuntimeError("NATIVE_OWNER_CAPTURE_NOT_REACHED: " + label)
-                            oracle = json.loads(run([python, "-c",
+                            oracle_path = case / 'full-state-oracle.json'
+                            run([python, "-c",
                                 "import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);"
                                 "from replay_lsa_cancel_candidate import verify_process_archives;"
-                                "print(json.dumps(verify_process_archives(Path(sys.argv[2]),n=4,world=1)))",
-                                str(source / "scripts"), str(case)], label + "-oracle"))
+                                "result=verify_process_archives(Path(sys.argv[2]),n=4,world=1);"
+                                "Path(sys.argv[3]).write_text(json.dumps(result));print(json.dumps(result))",
+                                str(source / "scripts"), str(case), str(oracle_path)], label + "-oracle")
+                            oracle = json.loads(oracle_path.read_text())
                             report["native_single_gpu_runs"].append({"gpu": gpu, "backend": backend,
                                 "profile": profile, "prededup": prededup, "oracle": oracle})
                             save()
