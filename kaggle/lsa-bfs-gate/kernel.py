@@ -19,7 +19,7 @@ MODE = "rounds_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 
 
-def run_window_process_pair(command, cwd, env, output, timeout=120):
+def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
     scripts = str(Path(__file__).resolve().parents[2] / 'scripts')
     if scripts not in sys.path:
@@ -53,8 +53,11 @@ def run_window_process_pair(command, cwd, env, output, timeout=120):
     codes = [process.returncode for process in processes]
     registered = [text.count(f'rank={rank} mode=nonblocking stage=window_register result=PASS')
                   for rank, text in enumerate(texts)]
+    reached = ([text.count(f'rank={rank} stage={required_stage} result=PASS')
+                for rank, text in enumerate(texts)] if required_stage else [1, 1])
     return dict(returncodes=codes, timed_out=timed_out, registered_ranks=registered,
-                **{'pass': not timed_out and codes == [0, 0] and registered == [1, 1]})
+                required_stage=required_stage, reached_stage=reached,
+                **{'pass': not timed_out and codes == [0, 0] and registered == [1, 1] and reached == [1, 1]})
 
 
 def run_protocol_replay(command, cwd, env, log, timeout=1800):
@@ -241,32 +244,39 @@ def main():
             return
         if MODE in ("nccl_window_isolation", "nccl_window_nonblocking", "nccl_window_processes"):
             binary = work / "nccl-window-isolation"
-            run(["g++", "-std=c++17", "-pthread", "-x", "c++",
+            compiler = ([str(sdk / 'bin/nvcc'), '-std=c++17', '-arch=sm_75', '-lineinfo',
+                         '-DMGBFS_WINDOW_DEVICE_PROBE=1', '-Xcompiler=-pthread']
+                        if MODE == 'nccl_window_processes' else ['g++', '-std=c++17', '-pthread', '-x', 'c++'])
+            linker = (['-Xlinker=-rpath,' + str(nccl / 'lib')] if MODE == 'nccl_window_processes'
+                      else ['-x', 'none', '-Wl,-rpath,' + str(nccl / 'lib')])
+            run([*compiler,
                  "-I" + str(nccl / "include"), "-I" + str(sdk / "include"),
                  str(source / "experiments/nccl_window_isolation.cu"),
-                 "-x", "none", str(nccl / "lib/libnccl.so.2"),
+                 *linker, str(nccl / "lib/libnccl.so.2"),
                  "-L" + str(sdk / "lib"), "-lcudart",
-                 "-Wl,-rpath," + str(nccl / "lib"),
                  "-o", str(binary)], "window-isolation-build", timeout=600)
             if MODE == 'nccl_window_processes':
                 report['scope'] = 'two independent T4 rank processes; reduced NCCL window probe, not full BFS acceptance'
                 report['t4_acceptance_eligible'] = False
                 report['window_runs'] = {}
                 probe_env = dict(env, NCCL_DEBUG='INFO')
-                for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
-                    command = [str(binary), 'nonblocking']
-                    if tool != 'plain':
-                        command = ['compute-sanitizer', '--tool', tool, '--error-exitcode', '97', *command]
-                    row = run_window_process_pair(command, source, probe_env, logs / ('window-process-' + tool))
-                    row['command'] = command
-                    if tool != 'plain':
-                        from replay_lsa_cancel_candidate import instrumentation_clean
-                        row['instrumentation_clean'] = all(instrumentation_clean(
-                            (logs / ('window-process-' + tool) / f'rank-{rank}.log').read_text(errors='replace'), tool)
-                            for rank in (0, 1))
-                        row['pass'] &= row['instrumentation_clean']
-                    report['window_runs'][tool] = row
-                    save()
+                for stage, argument in (('window', 'nonblocking'), ('device_comm_create', 'device_comm')):
+                    for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
+                        label = stage + '-' + tool
+                        command = [str(binary), argument]
+                        if tool != 'plain':
+                            command = ['compute-sanitizer', '--tool', tool, '--error-exitcode', '97', *command]
+                        row = run_window_process_pair(command, source, probe_env, logs / ('window-process-' + label),
+                            required_stage=stage if stage != 'window' else None)
+                        row['command'] = command
+                        if tool != 'plain':
+                            from replay_lsa_cancel_candidate import instrumentation_clean
+                            row['instrumentation_clean'] = all(instrumentation_clean(
+                                (logs / ('window-process-' + label) / f'rank-{rank}.log').read_text(errors='replace'), tool)
+                                for rank in (0, 1))
+                            row['pass'] &= row['instrumentation_clean']
+                        report['window_runs'][label] = row
+                        save()
                 report['status'] = 'DIAGNOSTIC_COMPLETE'
                 return
             report["scope"] = ("independent NCCL ncclMemAlloc and "

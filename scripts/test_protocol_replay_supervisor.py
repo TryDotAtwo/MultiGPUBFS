@@ -36,6 +36,17 @@ class SupervisorTests(unittest.TestCase):
             self.assertFalse(row['pass'])
             self.assertTrue(all(code is not None for code in row['returncodes']))
 
+    def test_device_communicator_probe_must_reach_requested_stage_on_both_ranks(self):
+        code = "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' mode=nonblocking stage=window_register result=PASS')"
+        with tempfile.TemporaryDirectory() as directory:
+            missing = gate.run_window_process_pair([sys.executable, '-c', code], '.',
+                dict(os.environ), Path(directory) / 'missing', required_stage='device_comm_create')
+            self.assertFalse(missing['pass'])
+            complete = gate.run_window_process_pair([sys.executable, '-c', code +
+                "; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' stage=device_comm_create result=PASS')"], '.',
+                dict(os.environ), Path(directory) / 'complete', required_stage='device_comm_create')
+            self.assertTrue(complete['pass'])
+
     def run_case(self, waits, returncode):
         process = Mock(returncode=returncode)
         process.wait.side_effect = waits

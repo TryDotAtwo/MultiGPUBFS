@@ -25,7 +25,8 @@ __global__ void sample_window(ncclDevComm dev,ncclWindow_t window,int rank) {
 #endif
 
 int main(int argc, char** argv) {
-  const bool nonblocking = argc == 2 && std::strcmp(argv[1], "nonblocking") == 0;
+  const bool device_comm = argc == 2 && std::strcmp(argv[1], "device_comm") == 0;
+  const bool nonblocking = device_comm || (argc == 2 && std::strcmp(argv[1], "nonblocking") == 0);
   const bool device_probe = argc == 2 && std::strcmp(argv[1], "read_write") == 0;
   if (argc > 2 || (argc == 2 && !nonblocking && !device_probe)) return 1;
   const char* rank_text=std::getenv("MGBFS_WINDOW_RANK");
@@ -38,7 +39,7 @@ int main(int argc, char** argv) {
     process_rank=rank_text[0]-'0';
   }
 #ifndef MGBFS_WINDOW_DEVICE_PROBE
-  if(device_probe)return 1;
+  if(device_probe||device_comm)return 1;
 #else
   std::atomic<int> arrived[2]{};
   std::atomic<bool> finished[2]{};
@@ -157,6 +158,21 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "rank=%d mode=%s stage=window_register result=PASS\n",
                    rank, nonblocking ? "nonblocking" : "blocking");
 #ifdef MGBFS_WINDOW_DEVICE_PROBE
+      if(device_comm) {
+        ncclDevComm dev{};
+        ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+        reqs.lsaBarrierCount=16; // Same requirement as the production LSA path.
+        std::fprintf(stderr,"rank=%d stage=device_comm_create_begin\n",rank);
+        nccl=progress(ncclDevCommCreate(comm,&reqs,&dev));
+        if(nccl!=ncclSuccess||dev.lsaSize!=2) {
+          std::fprintf(stderr,"rank=%d stage=device_comm_create nccl=%d lsa_size=%d last=%s\n",
+              rank,int(nccl),dev.lsaSize,ncclGetLastError(comm));
+          results[rank]=12;ncclCommAbort(comm);return;
+        }
+        std::fprintf(stderr,"rank=%d stage=device_comm_create result=PASS\n",rank);
+        nccl=progress(ncclDevCommDestroy(comm,&dev));
+        if(nccl!=ncclSuccess){results[rank]=13;ncclCommAbort(comm);return;}
+      }
       if(device_probe) {
         ncclDevComm dev{};
         ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
