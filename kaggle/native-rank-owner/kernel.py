@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 
-SOURCE = "546643f16f34d05e993fe344412513e0320c85f1"
+SOURCE = "3d7297e7fa8065ea2b61c5a300cb6a5066f8d1e8"
 repo = Path("/tmp/mgbfs-native-rank-owner-source")
 subprocess.run(["git", "clone", "-q", "https://github.com/TryDotAtwo/MultiGPUBFS.git", str(repo)], check=True)
 subprocess.run(["git", "-C", str(repo), "checkout", "--detach", SOURCE], check=True)
