@@ -144,12 +144,17 @@ fn search_only_explicitly_allows_library_without_archive() {
 }
 
 #[test]
-fn rank_owner_is_explicit_dense_only_and_requires_fixed_pool() {
+fn rank_owner_requires_fixed_pool_and_hash_first_requires_lsa() {
     let selected = ReferenceSelection::parse("DENSE", "CUCO_RANK", "ON", false, 64, 8)
         .expect("rank owner must be selectable without aliasing CUCO_INDEXED");
     assert_eq!(selected.owner, ReferenceOwner::CucoRank);
     assert!(selected.with_library_pool(None, true).is_err());
     assert!(selected.with_library_pool(Some("67108864"), false).is_err());
     assert!(selected.with_library_pool(Some("67108864"), true).is_ok());
-    assert!(ReferenceSelection::parse("HASH_FIRST", "CUCO_RANK", "ON", false, 64, 8).is_err());
+    let hash_first = ReferenceSelection::parse("HASH_FIRST", "CUCO_RANK", "ON", false, 64, 8)
+        .unwrap();
+    assert_eq!(hash_first.materialization_capacity, Some(64));
+    assert_eq!(hash_first.with_transport("NCCL_LSA").unwrap().transport,
+        mgbfs_core::config::ReferenceTransport::Lsa);
+    assert!(hash_first.with_transport("HOST_SIZED_NCCL").is_err());
 }

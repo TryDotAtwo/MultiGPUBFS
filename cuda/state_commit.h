@@ -111,6 +111,18 @@ int mgbfs_state_build_requests(const MgbfsRegenerateOrigin* origins,uint32_t can
     uint32_t selected_capacity,MgbfsRegenerateOrigin* requests,uint64_t* target_refs,
     uint32_t* request_count,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent,void* stream);
+/* Rank-owner variant: source_indices are absolute source-packet rows and both
+ * counts remain on GPU. Validate all indices and committed extent before any
+ * origin/target write. Single committed extent; no host-sized append offset. */
+int mgbfs_state_build_rank_requests(const MgbfsRegenerateOrigin* origins,
+    const uint32_t* source_rows,uint32_t source_capacity,const uint32_t* source_indices,
+    const uint32_t* selected_count,uint32_t request_capacity,
+    MgbfsRegenerateOrigin* requests,uint64_t* targets,uint32_t* request_count,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,MgbfsStateExtent* extent,
+    void* stream);
+/* Fail before response application when the peer returned a different count. */
+int mgbfs_state_validate_response_count(const uint32_t* expected,const uint32_t* received,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,void* stream);
 /* Apply all responses for one committed extent. Reuses MaterializePlan CUB
  * scratch to sort absolute target refs; every target must occur exactly once.
  * Any missing/duplicate/foreign ref or group fatal poisons owner/ring with 18

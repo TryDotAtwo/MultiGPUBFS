@@ -323,6 +323,17 @@ mod calls {
             extent: *mut Extent,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_state_build_rank_requests(
+            origins: *const crate::ffi::RegenerateOrigin, source_rows: *const u32,
+            source_capacity: u32, source_indices: *const u32,
+            selected_count: *const u32, request_capacity: u32,
+            requests: *mut crate::ffi::RegenerateOrigin, targets: *mut u64,
+            request_count: *mut u32, ring: *mut Ring, owner: *mut Control,
+            extent: *mut Extent, stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_state_validate_response_count(expected: *const u32,
+            received: *const u32, ring: *mut Ring, owner: *mut Control,
+            stream: *mut c_void) -> i32;
         /// Sort and validate complete target coverage before dense publication.
         pub fn mgbfs_state_apply_responses(
             plan: *mut c_void,

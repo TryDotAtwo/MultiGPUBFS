@@ -47,7 +47,8 @@ pub struct ReferenceSelection {
 impl ReferenceSelection {
     pub fn with_transport(mut self, transport: &str) -> Result<Self> {
         self.transport = match transport {
-            "HOST_SIZED_NCCL" => ReferenceTransport::HostSizedNccl,
+            "HOST_SIZED_NCCL" if !(self.owner == ReferenceOwner::CucoRank
+                && self.profile == FrontierProfile::HashFirst) => ReferenceTransport::HostSizedNccl,
             "NCCL_LSA" if self.owner == ReferenceOwner::CucoRank =>
                 ReferenceTransport::Lsa,
             _ => return Err("REFERENCE_TRANSPORT_BACKEND".into()),
@@ -118,7 +119,7 @@ impl ReferenceSelection {
             "BMMA_BUCKET" => ReferenceOwner::Native(OwnerBackend::BmmaBucket),
             "CUDF_RELATIONAL" => ReferenceOwner::CudfRelational,
             "CUCO_INDEXED" => ReferenceOwner::CucoIndexed,
-            "CUCO_RANK" if profile == FrontierProfile::Dense => ReferenceOwner::CucoRank,
+            "CUCO_RANK" => ReferenceOwner::CucoRank,
             _ => return Err("REFERENCE_OWNER_BACKEND".into()),
         };
         let prededup = match pre {

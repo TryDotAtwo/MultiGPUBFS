@@ -104,6 +104,7 @@ def main():
     parser.add_argument('--healthy-only', action='store_true')
     parser.add_argument('--reference-size', type=int, choices=range(2, 9), default=4)
     parser.add_argument('--batch', type=int, default=1)
+    parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     args = parser.parse_args()
     if args.batch < 1:
         parser.error('--batch must be positive')
@@ -136,7 +137,7 @@ def main():
             cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT,
             timeout=600, check=True)
     env.update(MGBFS_OWNER_BACKEND="CUCO_RANK", MGBFS_TRACE_FAILURE_TEARDOWN="1",
-        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE="DENSE",
+        MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE=args.profile,
         MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8",
         MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
         MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
@@ -155,6 +156,7 @@ def main():
                    MGBFS_ARCHIVE_ROWS='512', MGBFS_ARCHIVE_SLOTS='128')
     report['reference_size'] = args.reference_size
     report['batch'] = args.batch
+    report['profile'] = args.profile
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
               ("admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
@@ -233,7 +235,9 @@ def main():
         with (output / "full-state-oracle.log").open("w") as log:
             checked = subprocess.run([str(work / "cargo/bin/cargo"), "test", "--locked",
                 "-p", "mgbfs-runtime", "--features", "cuda,library-owner", "--test",
-                "library_multi_gpu", "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle",
+                "library_multi_gpu", ("cuco_rank_lsa_hash_first_layers_and_archives_match_oracle"
+                    if args.profile == 'HASH_FIRST' else
+                    "cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle"),
                 "--", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
                 cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=300)
         report["oracle_returncode"] = checked.returncode
@@ -249,6 +253,7 @@ def main():
                 "--", "--ignored", "--exact", "--nocapture", "--test-threads=1"],
                 cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=45)
         report["capacity_fault_returncode"] = checked.returncode
+        report["capacity_fault_profile"] = "DENSE"
         save()
         if checked.returncode:
             raise RuntimeError("CAPACITY_FAULT_FAILED")

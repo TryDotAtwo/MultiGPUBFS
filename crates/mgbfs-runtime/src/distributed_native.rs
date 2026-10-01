@@ -272,6 +272,41 @@ struct LsaView {
     hashes: *const c_void,
     states: *const u8,
 }
+// Failure-only sideband subscription. Never reads GPU data or calls CUDA/NCCL.
+// Keep it before Comm in field drop order: joining closes the host writer lease
+// before CUDA frees the borrowed mapped word. The worker owns its token Arc.
+struct CancelMirror {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl CancelMirror {
+    unsafe fn new(token: std::sync::Arc<std::sync::atomic::AtomicBool>, word: *mut u32) -> Result<Self> {
+        if word.is_null() || word as usize % std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0 {
+            return Err("LSA_CANCEL_WORD_ALIGNMENT".into());
+        }
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let address = word as usize;
+        let worker = std::thread::Builder::new().name("mgbfs-cancel-mirror".into())
+            .spawn(move || {
+                while !worker_stop.load(std::sync::atomic::Ordering::Acquire) {
+                    if token.load(std::sync::atomic::Ordering::Acquire) {
+                        let signal = &*(address as *const std::sync::atomic::AtomicU32);
+                        signal.store(1, std::sync::atomic::Ordering::Release);
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }).map_err(|e| format!("LSA_CANCEL_MIRROR_THREAD: {e}"))?;
+        Ok(Self { stop, worker: Some(worker) })
+    }
+}
+impl Drop for CancelMirror {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+    }
+}
 fn admit_device_group(
     comm: *mut c_void,
     stream: *mut c_void,
@@ -458,6 +493,13 @@ struct HashFirstStorage {
     materialize: Plan,
     pending_counts: [u32; 2],
     pending_extents: [Vec<Extent>; 2],
+    device: Option<HashFirstDevice>,
+}
+struct HashFirstDevice {
+    counts: Buffer,
+    extents: Buffer,
+    controls: Buffer,
+    exchange_counts: Buffer,
 }
 fn append_extent(extents: &mut Vec<Extent>, mut extent: Extent) -> Result<()> {
     if extent.count == 0 {
@@ -529,6 +571,11 @@ impl HashFirstStorage {
             })?,
             pending_counts: [0; 2],
             pending_extents: [Vec::with_capacity(2), Vec::with_capacity(2)],
+            device: if ledger.allocations.iter().any(|a| a.name == "device_counts") {
+                Some(HashFirstDevice { counts: b("device_counts")?,
+                    extents: b("device_extents")?, controls: b("device_controls")?,
+                    exchange_counts: b("device_exchange_counts")? })
+            } else { None },
             ledger,
         })
     }
@@ -561,6 +608,7 @@ pub struct DistributedNativeBfs {
     archive_stream: Stream,
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
+    cancel_mirror: Option<CancelMirror>,
     comm: Comm,
     // Declared after Comm so the callback context outlives Comm::drop.
     cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -627,9 +675,15 @@ impl DistributedNativeBfs {
         }
     }
     pub fn set_cancel_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
+        self.cancel_mirror = None;
         check(unsafe { mgbfs_nccl_bind_cancel(self.comm.0, Some(nccl_cancel_probe),
             std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
-        self.cancel_requested = Some(token);
+        self.cancel_requested = Some(token.clone());
+        if self.lsa_view.is_some() {
+            let mut word = std::ptr::null_mut();
+            check(unsafe { mgbfs_nccl_lsa_cancel_word(self.comm.0, &mut word) })?;
+            self.cancel_mirror = Some(unsafe { CancelMirror::new(token.clone(), word)? });
+        }
         Ok(())
     }
     pub fn set_failure_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicU8>) {
@@ -745,7 +799,8 @@ impl DistributedNativeBfs {
         if matches!(library_owner, ReferenceOwner::Native(_)) {
             return Err("REFERENCE_LIBRARY_OWNER".into());
         }
-        if matches!(library_owner, ReferenceOwner::CucoRank) && materialization_capacity.is_some() {
+        if matches!(library_owner, ReferenceOwner::CucoRank) && materialization_capacity.is_some()
+            && cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa {
             return Err("REFERENCE_CUCO_RANK_DENSE_ONLY".into());
         }
         if tensor_generation && materialization_capacity.is_none() {
@@ -933,8 +988,7 @@ impl DistributedNativeBfs {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world < 2
-                || !matches!(library_options, Some((_, ReferenceOwner::CucoRank)))
-                || materialization_capacity.is_some())
+                || !matches!(library_options, Some((_, ReferenceOwner::CucoRank))))
         {
             return Err("LSA_REQUIRES_DENSE_RANK_OWNER".into());
         }
@@ -1053,13 +1107,19 @@ impl DistributedNativeBfs {
             check(unsafe {
                 mgbfs_materialize_query(stride as u32, capacity, cfg.layer_capacity, &mut q)
             })?;
-            let l = mgbfs_core::memory::hash_first_reference_ledger(
+            let mut l = mgbfs_core::memory::hash_first_reference_ledger(
                 width as u64,
                 moves.into(),
                 capacity.into(),
                 stride as u64,
                 [q.keys, q.sorted, q.indices, q.order, q.scratch],
             )?;
+            if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
+                l.add("device_counts", 2, 4, 256)?;
+                l.add("device_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
+                l.add("device_controls", 2, std::mem::size_of::<Control>() as u64, 256)?;
+                l.add("device_exchange_counts", cfg.world.into(), 4, 256)?;
+            }
             for a in &l.allocations {
                 owned_memory.add(&format!("hash_first.{}", a.name), a.payload_bytes, 1, 256)?;
             }
@@ -1113,7 +1173,7 @@ impl DistributedNativeBfs {
         }
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
             let slot = crate::distributed_memory::lsa_symmetric_slot_bytes(
-                candidates, packet_stride as u32)?;
+                candidates, stride as u32)?;
             owned_memory.add("transport.lsa_symmetric_slot", slot, 1, 256)?;
         }
         let mut raw = std::ptr::null_mut();
@@ -1166,7 +1226,7 @@ impl DistributedNativeBfs {
             // Reserve the control words before the potentially large symmetric
             // allocation, so an OOM in prepare can still be voted by all ranks.
             let prepared = check(unsafe { mgbfs_nccl_lsa_prepare(
-                comm.0, candidates, packet_stride as u32,
+                comm.0, candidates, stride as u32,
                 error.as_mut_ptr(), error.len(),
             ) });
             if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
@@ -1375,6 +1435,7 @@ impl DistributedNativeBfs {
             prev_count: 0,
             failed: false,
             cancel_requested: startup_cancel.clone(),
+            cancel_mirror: None,
             failure_report: None,
             retirement: None,
             // Keep the setup-vote stream alive outside the fallible local
@@ -1565,6 +1626,7 @@ impl DistributedNativeBfs {
         result.stream = stream;
         result.comm = comm;
         result.comm.1 = false;
+        if let Some(token) = startup_cancel { result.set_cancel_token(token)?; }
         Ok(result)
     }
     pub fn depth(&self) -> u32 {
@@ -1658,6 +1720,7 @@ impl DistributedNativeBfs {
         begin: *const u32,
         rows: *const u32,
         source_rows: *const u32,
+        source_group: usize,
     ) -> Result<()> {
         let stream = self.stream.0;
         let library = self.library_owner.as_mut().ok_or("LIBRARY_OWNER_MISSING")?;
@@ -1699,24 +1762,41 @@ impl DistributedNativeBfs {
                 self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
                 batch.shard_counts, batch.accepted_counts, batch.accepted_capacities,
                 self.cfg.shards, batch.shard_offsets, self.layer_count.ptr.cast(),
-                self.cfg.layer_capacity, 0, 0, stream,
+                self.cfg.layer_capacity,
+                self.hash_first.as_ref().map_or(0, |h| h.capacity),
+                u32::from(self.hash_first.is_some()), stream,
             ))?;
             check(mgbfs_library_rank_commit_v1(
                 library.rank, epoch, self.control.ptr.cast(), self.ring.ptr.cast(),
                 self.extent.ptr.cast(),
             ))?;
-            check(mgbfs_state_materialize_rank_batch(
+            if let Some(h) = self.hash_first.as_ref() {
+                let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
+                check(mgbfs_state_build_rank_requests(
+                    source_states.cast(), source_rows, self.candidates,
+                    batch.source_indices, batch.selected_count, h.capacity,
+                    h.requests[source_group].ptr.cast(), h.targets[source_group].ptr.cast(),
+                    d.counts.at(source_group * 4).cast(),
+                    self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(), stream,
+                ))?;
+                check(cudaMemcpyAsync(d.extents.at(source_group * std::mem::size_of::<Extent>()),
+                    self.extent.ptr, std::mem::size_of::<Extent>(), 3, stream))?;
+                check(cudaMemcpyAsync(d.controls.at(source_group * std::mem::size_of::<Control>()),
+                    self.control.ptr, std::mem::size_of::<Control>(), 3, stream))?;
+            } else {
+              check(mgbfs_state_materialize_rank_batch(
                 source_states, source_rows, self.candidates, batch.source_indices,
                 batch.selected_count, self.candidates, self.stride as u32,
                 self.states.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(),
                 self.extent.ptr.cast(), stream,
-            ))?;
-            check(mgbfs_state_publish_next_extent(
+              ))?;
+              check(mgbfs_state_publish_next_extent(
                 self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
                 self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
                 self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(),
                 2, stream,
-            ))?;
+              ))?;
+            }
         }
         library.rank_accepted = batch.accepted_counts;
         check(unsafe { mgbfs_library_rank_complete_v1(library.rank, epoch) })?;
@@ -2152,6 +2232,9 @@ impl DistributedNativeBfs {
         parents: u32,
         round: u32,
     ) -> Result<()> {
+        if self.hash_first.as_ref().is_some_and(|h| h.device.is_some()) {
+            return self.materialize_hash_first_device(parent, offset, parents, round);
+        }
         use crate::hash_first_exchange::{enqueue_round_trip, ExchangeBuffers, MatrixSource};
         let s = self.stream.0;
         let h = self.hash_first.as_ref().ok_or("HASH_FIRST_STORAGE")?;
@@ -2329,6 +2412,90 @@ impl DistributedNativeBfs {
         }
         Ok(())
     }
+    /// Same bounded epoch protocol as DENSE; request counts, committed extents
+    /// and response publication stay device resident until FinalizeDepth.
+    fn materialize_hash_first_device(&mut self, parent: Option<Extent>, offset: u64,
+        parents: u32, round: u32) -> Result<()> {
+        let h = self.hash_first.as_ref().ok_or("HASH_FIRST_STORAGE")?;
+        let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
+        let view = self.lsa_view.ok_or("HASH_FIRST_LSA_STORAGE")?;
+        let s = self.stream.0;
+        let (begin, physical) = parent.map(|e| (e.sequence + offset, e.begin + offset))
+            .unwrap_or((0, 0));
+        let peer = self.cfg.rank ^ round;
+        let logical_peer = self.cfg.logical_owner_to_rank.iter()
+            .position(|&rank| rank == peer).ok_or("OWNER_MAP")?;
+        let gate = || -> Result<()> { check(unsafe { mgbfs_owner_lsa_fatal_gate(
+            self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+            self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+        ) }) };
+        let import = |word| -> Result<()> { check(unsafe { mgbfs_owner_import_transport_fatal(
+            word, self.ring.ptr.cast(), self.control.ptr.cast(), s,
+        ) }) };
+        let peer_counts = |count: *const u32| -> Result<()> {
+            unsafe {
+                check(cudaMemsetAsync(d.exchange_counts.ptr, 0, self.cfg.world as usize * 4, s))?;
+                check(cudaMemcpyAsync(d.exchange_counts.at(logical_peer * 4), count.cast(), 4, 3, s))
+            }
+        };
+        for group in usize::from(round > 1)..2 {
+            let count = unsafe { d.counts.at(group * 4).cast::<u32>() };
+            let extent = unsafe { d.extents.at(group * std::mem::size_of::<Extent>()).cast::<Extent>() };
+            let control = unsafe { d.controls.at(group * std::mem::size_of::<Control>()).cast::<Control>() };
+            unsafe {
+                check(mgbfs_materialize_sort_origins(h.materialize.0,
+                    if group == 0 { self.cfg.rank } else { peer },
+                    h.requests[group].ptr.cast(), h.targets[group].ptr.cast(), count,
+                    h.sorted_requests.ptr.cast(), h.sorted_targets.ptr.cast(),
+                    h.local_fatal.ptr.cast(), s))?;
+            }
+            import(h.local_fatal.ptr.cast())?;
+            gate()?;
+            let origins = if group == 0 { h.sorted_requests.ptr.cast() } else {
+                peer_counts(count)?;
+                check(unsafe { mgbfs_nccl_lsa_exchange_rows(self.comm.0, std::ptr::null(),
+                    h.sorted_requests.ptr, d.exchange_counts.ptr.cast(),
+                    self.collective_recv.ptr.cast(), logical_peer as u32, peer, 16, s) })?;
+                import(view.fatal)?;
+                gate()?;
+                view.states.cast()
+            };
+            let regenerate_count = if group == 0 { count as *const u32 } else { view.count };
+            unsafe {
+                check(mgbfs_regenerate_selected(h.n, self.moves, h.modulus,
+                    self.stride as u32, h.capacity, self.cfg.rank, begin, parents,
+                    self.states.at(physical as usize * self.stride).cast(),
+                    h.generators.ptr.cast(), origins, regenerate_count,
+                    h.outgoing_responses.ptr.cast(), h.local_fatal.ptr.cast(), s))?;
+            }
+            import(h.local_fatal.ptr.cast())?;
+            gate()?;
+            let responses = if group == 0 { h.outgoing_responses.ptr as *const u8 } else {
+                // Snapshot the request count into the disjoint preallocated
+                // count array before the response exchange overwrites the view.
+                peer_counts(view.count)?;
+                check(unsafe { mgbfs_nccl_lsa_exchange_rows(self.comm.0, std::ptr::null(),
+                    h.outgoing_responses.ptr, d.exchange_counts.ptr.cast(),
+                    self.collective_recv.ptr.cast(), logical_peer as u32, peer,
+                    self.stride as u32, s) })?;
+                import(view.fatal)?;
+                check(unsafe { mgbfs_state_validate_response_count(count, view.count,
+                    self.ring.ptr.cast(), self.control.ptr.cast(), s) })?;
+                gate()?;
+                view.states
+            };
+            unsafe {
+                check(mgbfs_state_apply_responses(h.materialize.0, responses,
+                    h.sorted_targets.ptr.cast(), count, self.collective_recv.ptr.cast(),
+                    self.states.ptr.cast(), self.ring.ptr.cast(), control, extent, s))?;
+                check(mgbfs_state_publish_next_extent(self.ring.ptr.cast(), control, extent,
+                    self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
+                    self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(), 2, s))?;
+            }
+            gate()?;
+        }
+        Ok(())
+    }
     pub fn advance(&mut self) -> Result<bool> {
         if self.failed {
             return Err("DISTRIBUTED_FAILED".into());
@@ -2459,7 +2626,7 @@ impl DistributedNativeBfs {
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
         #[cfg(feature = "library-owner")]
-        let device_epoch = self.lsa_view.is_some() && self.hash_first.is_none()
+        let device_epoch = self.lsa_view.is_some()
             && self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
         #[cfg(not(feature = "library-owner"))]
         let device_epoch = false;
@@ -2514,7 +2681,7 @@ impl DistributedNativeBfs {
                     // Return to the sole dispatcher's notification + abort path
                     // before issuing a collective or waiting for GPU progress.
                     if let Some(error) = error { return Err(error); }
-                    check(unsafe { mgbfs_owner_global_fatal_gate(
+                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
                         self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                         self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                     ) })?;
@@ -2559,9 +2726,19 @@ impl DistributedNativeBfs {
                         h.local_fatal.ptr.cast(),
                         s,
                     ))?;
-                    check(cudaStreamSynchronize(s))?;
+                    if !device_epoch {
+                        check(cudaStreamSynchronize(s))?;
+                    }
                 }
-                if self.all_max(h.local_fatal.one::<u32>()?)? != 0 {
+                if device_epoch {
+                    check(unsafe { mgbfs_owner_import_transport_fatal(
+                        h.local_fatal.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(), s,
+                    ) })?;
+                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
+                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                    ) })?;
+                } else if self.all_max(h.local_fatal.one::<u32>()?)? != 0 {
                     return Err("HASH_FIRST_GENERATION_FATAL".into());
                 }
             } else if let Some(batch) = work {
@@ -2721,11 +2898,12 @@ impl DistributedNativeBfs {
                         ) })?;
                     }
                     check(unsafe {
-                        mgbfs_nccl_lsa_exchange(
+                        mgbfs_nccl_lsa_exchange_rows(
                             self.comm.0, self.sorted_hashes.ptr,
                             self.packed_states.ptr, self.owner_counts.ptr.cast(),
                             self.collective_recv.ptr.cast(),
-                            logical_owner, exchange_peer, self.exchange_stream.0,
+                            logical_owner, exchange_peer, packet_stride as u32,
+                            self.exchange_stream.0,
                         )
                     })?;
                     check(unsafe { cudaEventRecord(self.exchange_done.0, self.exchange_stream.0) })?;
@@ -2830,7 +3008,7 @@ impl DistributedNativeBfs {
                         // The common result poisons ring/control on-device before
                         // any rank can commit this owner epoch. Host/API errors
                         // use the cancellation sideband instead of a batch vote.
-                        check(unsafe { mgbfs_owner_global_fatal_gate(
+                        check(unsafe { mgbfs_owner_lsa_fatal_gate(
                             self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                             self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                         ) })?;
@@ -2848,7 +3026,7 @@ impl DistributedNativeBfs {
                             view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
                         ) })?;
                         if device_epoch {
-                            check(unsafe { mgbfs_owner_global_fatal_gate(
+                            check(unsafe { mgbfs_owner_lsa_fatal_gate(
                                 self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                                 self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                             ) })?;
@@ -2919,7 +3097,7 @@ impl DistributedNativeBfs {
                                  unsafe { window.at(8) } as *const u32,
                                  remote_count, remote_count)
                             };
-                            return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows);
+                            return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows, group);
                         }
                         self.commit_owner_batch(states, hashes, rows, group)
                     },
@@ -2945,12 +3123,12 @@ impl DistributedNativeBfs {
                     // All ranks issue the post-owner vote, including an empty
                     // peer round. Its device result predicates the next LSA
                     // rendezvous without returning a count to the host.
-                    check(unsafe { mgbfs_owner_global_fatal_gate(
+                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
                         self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
                         self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
                     ) })?;
                 }
-                if lsa.is_some() && (batch_error.is_none() || device_epoch) {
+                if lsa.is_some() && self.hash_first.is_none() && (batch_error.is_none() || device_epoch) {
                     // Every rank waits for its own receive-slot consumer before
                     // entering the next all-rank LSA barrier. A record failure
                     // must participate in the existing group error vote.
@@ -2977,13 +3155,13 @@ impl DistributedNativeBfs {
                 }
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
+                    if lsa.is_some() {
+                        check(unsafe { cudaEventRecord(
+                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0, s,
+                        ) })?;
+                        lsa_owner_recorded = true;
+                    }
                 }
-            }
-            if device_epoch {
-                let slot = epoch_serial % self.epoch_completed.len();
-                check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
-                self.epoch_outstanding.push_back(slot);
-                epoch_serial = epoch_serial.checked_add(1).ok_or("EPOCH_SEQUENCE")?;
             }
             if self.hash_first.is_some() {
                 if let Some(parent_extent) = parent {
@@ -3010,9 +3188,20 @@ impl DistributedNativeBfs {
                         )
                     })?;
                 }
-                if self.all_max_ring_fatal()? != 0 {
+                if device_epoch {
+                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
+                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
+                    ) })?;
+                } else if self.all_max_ring_fatal()? != 0 {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
+            }
+            if device_epoch {
+                let slot = epoch_serial % self.epoch_completed.len();
+                check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
+                self.epoch_outstanding.push_back(slot);
+                epoch_serial = epoch_serial.checked_add(1).ok_or("EPOCH_SEQUENCE")?;
             }
             if trace_route {
                 batch_index = batch_index.checked_add(1).ok_or("TRACE_BATCH_OVERFLOW")?;

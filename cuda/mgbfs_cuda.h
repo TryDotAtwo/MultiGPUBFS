@@ -212,10 +212,14 @@ int mgbfs_owner_window_from_counts(uint32_t world,uint32_t packed_capacity,
  * Must be ordered after exchange on the same stream or by an event wait. */
 int mgbfs_owner_import_transport_fatal(const uint32_t* transport_fatal,
     MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,void* stream);
-/* Pre-owner admission: stream-ordered local sticky fatal -> NCCL max ->
+/* Legacy pre-owner admission: stream-ordered local sticky fatal -> NCCL max ->
  * imported group fatal. Returns after enqueue, not after GPU completion.
  * Every rank must issue this call in the same communicator epoch. */
 int mgbfs_owner_global_fatal_gate(void* comm,MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner,uint32_t* send,uint32_t* receive,void* stream);
+/* Explicit LSA control-plane OR; same sticky guards, no internal NCCL kernel
+ * and no fallback to the legacy gate. Ordered with all LSA payload epochs. */
+int mgbfs_owner_lsa_fatal_gate(void* comm,MgbfsStateRingControl* ring,
     MgbfsOwnerControl* owner,uint32_t* send,uint32_t* receive,void* stream);
 int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_states,uint32_t source_count,
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
@@ -272,6 +276,15 @@ int mgbfs_nccl_lsa_exchange_rows(void* comm,const void* sorted_hashes,
 int mgbfs_nccl_lsa_view(void* comm,const uint32_t** received_count,
     const uint32_t** fatal,const void** received_hashes,
     const void** received_states);
+/* Borrowed mapped host word for failure-only notification. A sideband observer
+ * may atomically store 1 without a CUDA/NCCL call, even while the dispatcher is
+ * inside a host API. Stop/join that observer before communicator destruction.
+ * Never clear this monotone word; publishing it does not release GPU leases. */
+int mgbfs_nccl_lsa_cancel_word(void* comm,uint32_t** word);
+/* Device-resident boolean OR in the existing symmetric control plane. All ranks
+ * enter the same epoch order, including empty ranks; leased with payload work.
+ * No host readback or NCCL internal collective kernel. LSA-only, no fallback. */
+int mgbfs_nccl_lsa_fatal_vote(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
 /* Single-source scatter, same source and matching byte counts on every rank.
  * sizes is a host array [world] on source; send holds dense rank-ordered ranges.
  * Source's own range stays a view (no copy). Receivers provide prevalidated

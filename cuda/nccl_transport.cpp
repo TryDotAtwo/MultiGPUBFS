@@ -8,6 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <cstdlib>
 struct Comm;
 namespace { int await_nccl(Comm*,ncclResult_t); }
 namespace { int terminal_abort(Comm*); }
@@ -99,9 +100,12 @@ int terminal_abort(Comm* p) {
 #ifdef MGBFS_NCCL_LSA
   if(p->terminal_host)p->terminal_host->store(1,std::memory_order_release);
   if(p->lsa_used && !p->readers_retired) {
+    const bool trace=std::getenv("MGBFS_TRACE_FAILURE_TEARDOWN")!=nullptr;
     // Revoke cancels NCCL's internal operations without freeing registered
     // memory. Our external LSA rendezvous observes its own sticky terminal.
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=revoke_begin\n",p->rank);
     auto status=ncclCommRevoke(p->value,0);
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=revoke_submitted code=%d\n",p->rank,int(status));
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
     while(status==ncclInProgress) {
       if(ncclCommGetAsyncError(p->value,&status)!=ncclSuccess ||
@@ -111,11 +115,14 @@ int terminal_abort(Comm* p) {
       }
       std::this_thread::yield();
     }
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=revoke_ready code=%d\n",p->rank,int(status));
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=external_readers_drain_begin\n",p->rank);
     if(status!=ncclSuccess || cudaDeviceSynchronize()!=cudaSuccess ||
        !p->retirement_probe) {
       if(p->retirement_probe)p->retirement_probe(p->retirement_context,-1);
       p->retirement_failed=true;return 12;
     }
+    if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=external_readers_drain_end\n",p->rank);
     int acknowledged=p->retirement_probe(p->retirement_context,1);
     while(acknowledged==0 && std::chrono::steady_clock::now()<deadline) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -368,6 +375,24 @@ __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
   }
   lsa_rendezvous(dev,win,terminal);
 }
+// Same device epoch order as payload, including empty ranks. No NCCL internal
+// kernel can remain unmatched between a rank-local host failure and a later
+// HASH_FIRST rendezvous. CTA0 publishes/reduces; all CTA counters participate.
+__global__ void lsa_fatal_vote(ncclDevComm dev,ncclWindow_t win,
+    const uint32_t* send,uint32_t* receive,const uint32_t* terminal){
+  auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
+  if(blockIdx.x==0&&threadIdx.x==0)local[4]=*send;
+  if(!lsa_rendezvous(dev,win,terminal))return;
+  if(blockIdx.x==0&&threadIdx.x==0){
+    uint32_t bad=0;
+    for(unsigned rank=0;rank<unsigned(dev.nRanks);++rank){
+      auto* peer=static_cast<const uint32_t*>(ncclGetLsaPointer(win,0,rank));
+      bad|=peer[4]!=0;
+    }
+    *receive=bad;
+  }
+  lsa_rendezvous(dev,win,terminal);
+}
 void lsa_error(char* error,size_t capacity,const char* where,ncclResult_t code){
   if(error&&capacity)std::snprintf(error,capacity,"%s: %s",where,ncclGetErrorString(code));
 }
@@ -463,6 +488,23 @@ extern "C" int mgbfs_nccl_lsa_view(void* raw,const uint32_t** count,
   *states=p->symmetric+p->states_offset;
   return 0;
 }
+extern "C" int mgbfs_nccl_lsa_cancel_word(void* raw,uint32_t** word){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!word||!p->device_ready||!p->terminal_host)return 1;
+  *word=reinterpret_cast<uint32_t*>(p->terminal_host);
+  return 0;
+}
+extern "C" int mgbfs_nccl_lsa_fatal_vote(void* raw,const uint32_t* send,
+    uint32_t* receive,void* raw_stream){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started||!p->device_ready||!p->terminal_device||
+     !send||!receive)return 1;
+  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  p->lsa_used=true;
+  lsa_fatal_vote<<<lsa_copy_ctas,lsa_copy_threads,0,static_cast<cudaStream_t>(raw_stream)>>>(
+      p->device,p->window,send,receive,p->terminal_device);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
 #else
 extern "C" int mgbfs_nccl_lsa_prepare(void*,uint32_t,uint32_t,char*,size_t){return 7;}
 extern "C" int mgbfs_nccl_lsa_activate(void*,char*,size_t){return 7;}
@@ -472,4 +514,6 @@ extern "C" int mgbfs_nccl_lsa_exchange_rows(void*,const void*,const void*,const 
     const uint32_t*,uint32_t,uint32_t,uint32_t,void*){return 7;}
 extern "C" int mgbfs_nccl_lsa_view(void*,const uint32_t**,const uint32_t**,
     const void**,const void**){return 7;}
+extern "C" int mgbfs_nccl_lsa_cancel_word(void*,uint32_t**){return 7;}
+extern "C" int mgbfs_nccl_lsa_fatal_vote(void*,const uint32_t*,uint32_t*,void*){return 7;}
 #endif

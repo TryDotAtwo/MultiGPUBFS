@@ -474,6 +474,11 @@ pub mod ffi {
             hashes: *mut *const c_void,
             states: *mut *const c_void,
         ) -> i32;
+        pub fn mgbfs_nccl_lsa_cancel_word(comm: *mut c_void, word: *mut *mut u32) -> i32;
+        pub fn mgbfs_owner_lsa_fatal_gate(comm: *mut c_void,
+            ring: *mut crate::native_owner::Ring,
+            owner: *mut crate::native_owner::Control,
+            send: *mut u32, receive: *mut u32, stream: *mut c_void) -> i32;
         pub fn mgbfs_nccl_all_gather_u32(
             comm: *mut c_void,
             send: *const u32,

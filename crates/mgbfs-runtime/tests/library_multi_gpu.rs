@@ -767,6 +767,20 @@ fn cuco_rank_lsa_single_fixture_for_sanitizer() {
 }
 
 #[test]
+#[ignore = "requires two physical NCCL 2.29+ LSA P2P GPUs"]
+fn cuco_rank_lsa_hash_first_layers_and_archives_match_oracle() {
+    for symmetric in [false, true] {
+        for owners in [[0, 1], [1, 0]] {
+            for prededup in [false, true] {
+                fixture(symmetric, true, &owners,
+                    mgbfs_core::config::ReferenceOwner::CucoRank,
+                    prededup, mgbfs_core::config::ReferenceTransport::Lsa);
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "requires eight physical CUDA devices; run explicitly on 8-GPU host"]
 fn library_eight_rank_layers_and_archives_match_oracle() {
     for backend in [
