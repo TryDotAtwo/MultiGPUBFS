@@ -24,3 +24,8 @@ Kaggle provisioner has a native_rank_gate for separate single-GPU T4 runs
 of both backends/profiles/pre-dedup choices and actual owner-DAG capture.
 Two-process fault/oracle suites run only after a verified P2P preflight.
 Missing P2P is explicitly multi-GPU UNSUPPORTED, never a passing acceptance.
+
+Kaggle v6 launched from source 42ba753c4212edda36626affd2a2c00f9dbf1b41.
+The platform renamed the existing notebook after its title changed:
+trydotatwo/mgbfs-native-rank-owner-t4 is RUNNING; the old slug is 404.
+This is one notebook, not a duplicated run. No hardware result is claimed yet.
