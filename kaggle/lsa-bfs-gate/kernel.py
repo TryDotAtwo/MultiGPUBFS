@@ -15,6 +15,7 @@ import tempfile
 SOURCE = "81158d1501b3fde249e38916af0dc392d527a135"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "rounds_gate"
+HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 
 
 def run_protocol_replay(command, cwd, env, log, timeout=1800):
@@ -47,6 +48,10 @@ def main():
                "two physical T4; warmup/CLI admission fault propagation and archive cleanup"
                if MODE == "warmup_admission_gate" else
                "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
+    report["hardware_target"] = HARDWARE
+    report["t4_acceptance_eligible"] = HARDWARE == "T4"
+    if HARDWARE != "T4":
+        report["scope"] = "explicit " + HARDWARE + " hardware diagnostic; not T4 acceptance"
 
     def save():
         (logs / "summary.json").write_text(json.dumps(report, indent=2))
@@ -79,7 +84,7 @@ def main():
     try:
         report["gpus"] = gate.validate_gpus(run([
             "nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.free",
-            "--format=csv,noheader,nounits"], "inventory"))
+            "--format=csv,noheader,nounits"], "inventory"), hardware=HARDWARE)
         cudart = ctypes.CDLL("libcudart.so.12")
         p2p = []
         for source_gpu, target_gpu in ((0, 1), (1, 0)):
