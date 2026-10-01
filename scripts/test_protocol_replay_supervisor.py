@@ -15,6 +15,27 @@ spec.loader.exec_module(gate)
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_window_pair_requires_both_rank_registration_markers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = [sys.executable, '-c',
+                "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' mode=nonblocking stage=window_register result=PASS')"]
+            row = gate.run_window_process_pair(command, '.', dict(os.environ), Path(directory), timeout=5)
+            self.assertEqual(row['returncodes'], [0, 0])
+            self.assertEqual(row['registered_ranks'], [1, 1])
+            self.assertFalse(row['timed_out'])
+            self.assertTrue(row['pass'])
+            missing = gate.run_window_process_pair([sys.executable, '-c', 'pass'], '.',
+                dict(os.environ), Path(directory) / 'missing', timeout=5)
+            self.assertFalse(missing['pass'])
+
+    def test_window_pair_timeout_is_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = gate.run_window_process_pair([sys.executable, '-c',
+                'import time; time.sleep(30)'], '.', dict(os.environ), Path(directory), timeout=0.2)
+            self.assertTrue(row['timed_out'])
+            self.assertFalse(row['pass'])
+            self.assertTrue(all(code is not None for code in row['returncodes']))
+
     def run_case(self, waits, returncode):
         process = Mock(returncode=returncode)
         process.wait.side_effect = waits

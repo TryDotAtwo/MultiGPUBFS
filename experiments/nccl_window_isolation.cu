@@ -97,6 +97,7 @@ int main(int argc, char** argv) {
       ncclComm_t comm{};
       ncclConfig_t config = NCCL_CONFIG_INITIALIZER;
       config.blocking = 0;
+      std::fprintf(stderr, "rank=%d stage=init_begin\n", rank);
       auto nccl = (nonblocking || device_probe)
                       ? ncclCommInitRankConfig(&comm, 2, id, rank, &config)
                       : ncclCommInitRank(&comm, 2, id, rank);
@@ -120,7 +121,9 @@ int main(int argc, char** argv) {
         results[rank] = 4;
         return;
       }
+      std::fprintf(stderr, "rank=%d stage=init_complete\n", rank);
       void* memory{};
+      std::fprintf(stderr, "rank=%d stage=alloc_begin\n", rank);
       nccl = ncclMemAlloc(&memory, 4096);
       if (nccl != ncclSuccess) {
         std::fprintf(stderr, "rank=%d stage=alloc nccl=%s\n", rank,
@@ -139,6 +142,7 @@ int main(int argc, char** argv) {
         return;
       }
       ncclWindow_t window{};
+      std::fprintf(stderr, "rank=%d stage=window_register_begin\n", rank);
       nccl = ncclCommWindowRegister(comm, memory, 4096, &window,
                                     NCCL_WIN_COLL_SYMMETRIC);
       nccl = progress(nccl);
@@ -190,6 +194,7 @@ int main(int argc, char** argv) {
       }
       ncclMemFree(memory);
       ncclCommDestroy(comm);
+      std::fprintf(stderr, "rank=%d stage=teardown_complete\n", rank);
     });
   }
   for (auto& rank : ranks) if(rank.joinable())rank.join();
