@@ -7,16 +7,48 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
+#ifdef MGBFS_WINDOW_DEVICE_PROBE
+#include <cuda_runtime.h>
+#include <nccl_device.h>
+#include <atomic>
+__global__ void sample_window(ncclDevComm dev,ncclWindow_t window,int rank) {
+  if(threadIdx.x || blockIdx.x)return;
+  auto* own=static_cast<volatile uint32_t*>(ncclGetLsaPointer(window,0,dev.lsaRank));
+  auto* peer=static_cast<volatile uint32_t*>(ncclGetLsaPointer(window,0,1-rank));
+  own[1]=peer[0];
+  peer[2]=100+rank;
+  __threadfence_system();
+}
+#endif
 
 int main(int argc, char** argv) {
   const bool nonblocking = argc == 2 && std::strcmp(argv[1], "nonblocking") == 0;
-  if (argc > 2 || (argc == 2 && !nonblocking)) return 1;
+  const bool device_probe = argc == 2 && std::strcmp(argv[1], "read_write") == 0;
+  if (argc > 2 || (argc == 2 && !nonblocking && !device_probe)) return 1;
+#ifndef MGBFS_WINDOW_DEVICE_PROBE
+  if(device_probe)return 1;
+#else
+  std::atomic<int> arrived[2]{};
+  std::atomic<bool> finished[2]{};
+  auto rendezvous=[&](int rank,int phase) {
+    arrived[rank].store(phase,std::memory_order_release);
+    const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+    while(arrived[1-rank].load(std::memory_order_acquire)<phase) {
+      if(finished[1-rank].load(std::memory_order_acquire)||std::chrono::steady_clock::now()>end)return false;
+      std::this_thread::yield();
+    }
+    return true;
+  };
+#endif
   ncclUniqueId id{};
   if (ncclGetUniqueId(&id) != ncclSuccess) return 2;
   std::array<int, 2> results{};
   std::array<std::thread, 2> ranks;
   for (int rank = 0; rank < 2; ++rank) {
     ranks[rank] = std::thread([&, rank] {
+#ifdef MGBFS_WINDOW_DEVICE_PROBE
+      struct Exit {std::atomic<bool>& bit;~Exit(){bit.store(true,std::memory_order_release);}} exit{finished[rank]};
+#endif
       auto cuda = cudaSetDevice(rank);
       if (cuda != cudaSuccess) {
         std::fprintf(stderr, "rank=%d stage=set_device cuda=%s\n", rank,
@@ -27,11 +59,11 @@ int main(int argc, char** argv) {
       ncclComm_t comm{};
       ncclConfig_t config = NCCL_CONFIG_INITIALIZER;
       config.blocking = 0;
-      auto nccl = nonblocking
+      auto nccl = (nonblocking || device_probe)
                       ? ncclCommInitRankConfig(&comm, 2, id, rank, &config)
                       : ncclCommInitRank(&comm, 2, id, rank);
       auto progress = [&](ncclResult_t result) {
-        if (result != ncclInProgress) return result;
+        if (result != ncclInProgress && result != ncclSuccess) return result;
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::seconds(30);
         while (std::chrono::steady_clock::now() < deadline) {
@@ -82,6 +114,33 @@ int main(int argc, char** argv) {
       }
       std::fprintf(stderr, "rank=%d mode=%s stage=window_register result=PASS\n",
                    rank, nonblocking ? "nonblocking" : "blocking");
+#ifdef MGBFS_WINDOW_DEVICE_PROBE
+      if(device_probe) {
+        ncclDevComm dev{};
+        ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+        reqs.lsaBarrierCount=1;
+        nccl=progress(ncclDevCommCreate(comm,&reqs,&dev));
+        uint32_t initial=11+rank;
+        cuda=cudaMemcpy(memory,&initial,4,cudaMemcpyHostToDevice);
+        std::fprintf(stderr,"rank=%d stage=device_prepare nccl=%d cuda=%d lsa_size=%d\n",
+            rank,int(nccl),int(cuda),dev.lsaSize);
+        if(nccl!=ncclSuccess||cuda!=cudaSuccess
+            ||!rendezvous(rank,1)){results[rank]=9;ncclCommAbort(comm);return;}
+        sample_window<<<1,32>>>(dev,window,rank);
+        cuda=cudaDeviceSynchronize();
+        std::fprintf(stderr,"rank=%d stage=sample_complete cuda=%d\n",rank,int(cuda));
+        if(cuda!=cudaSuccess||!rendezvous(rank,2)) {
+          results[rank]=10;ncclCommAbort(comm);return;
+        }
+        uint32_t observed[3]{};
+        cuda=cudaMemcpy(observed,memory,sizeof(observed),cudaMemcpyDeviceToHost);
+        std::fprintf(stderr,"rank=%d stage=read_write cuda=%d local=%u peer_read=%u peer_write=%u\n",
+            rank,int(cuda),observed[0],observed[1],observed[2]);
+        if(cuda!=cudaSuccess||observed[0]!=uint32_t(11+rank)||
+            observed[1]!=uint32_t(12-rank)||observed[2]!=uint32_t(101-rank))results[rank]=11;
+        ncclDevCommDestroy(comm,&dev);
+      }
+#endif
       nccl = progress(ncclCommWindowDeregister(comm, window));
       if (nccl != ncclSuccess) {
         std::fprintf(stderr, "rank=%d stage=window_deregister nccl=%s\n", rank,

@@ -15,6 +15,19 @@ import re
 import signal
 
 
+def instrument_rank_command(binary, arguments, tool, report_prefix):
+    target = [str(binary), *arguments]
+    if tool is None:
+        return target
+    if tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
+        return ['/usr/local/cuda/bin/compute-sanitizer', '--tool', tool,
+                '--error-exitcode', '97', *target]
+    if tool == 'nsys':
+        return ['nsys', 'profile', '--trace=cuda,nvtx,osrt', '--sample=none',
+                '--cpuctxsw=none', '-o', str(report_prefix), *target]
+    raise ValueError('UNKNOWN_PROCESS_INSTRUMENTATION')
+
+
 def s4_reference_layers():
     """Independent full-state oracle: row permutations, no GPU hash/dedup code."""
     frontier = {(0, 1, 2, 3)}
@@ -71,6 +84,9 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--oracle", action="store_true")
     parser.add_argument("--sanitizers", action="store_true")
+    parser.add_argument('--instrument-processes', choices=(
+        'memcheck', 'racecheck', 'initcheck', 'synccheck', 'nsys'))
+    parser.add_argument('--healthy-only', action='store_true')
     args = parser.parse_args()
     work, output = args.work.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -114,6 +130,9 @@ def main():
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
     cases = [("healthy", None, None)] + [(name, key, rank)
         for name, key in faults for rank in (0, 1)]
+    if args.healthy_only:
+        cases = cases[:1]
+    report['process_instrumentation'] = args.instrument_processes
     for name, key, fault_rank in cases:
         case = output / f"{name}-{fault_rank}"
         case.mkdir()
@@ -130,11 +149,14 @@ def main():
                 stream = (case / f"rank-{rank}.log").open("w")
                 streams.append(stream)
                 rank_env = dict(case_env, RANK=str(rank), LOCAL_RANK=str(rank), WORLD_SIZE="2")
-                processes.append(subprocess.Popen([str(source / "target/debug/mgbfs"),
+                command = instrument_rank_command(source / 'target/debug/mgbfs', [
                     "bench", "--reference", "s4", "1", str(case / "bootstrap"),
-                    str(case / "archive"), str(case / "result")], cwd=source,
-                    env=rank_env, stdout=stream, stderr=subprocess.STDOUT))
-            deadline = started + 45
+                    str(case / "archive"), str(case / "result")],
+                    args.instrument_processes, case / f'rank-{rank}')
+                processes.append(subprocess.Popen(command, cwd=source,
+                    env=rank_env, stdout=stream, stderr=subprocess.STDOUT,
+                    start_new_session=True))
+            deadline = started + (120 if args.instrument_processes else 45)
             while any(p.poll() is None for p in processes) and time.monotonic() < deadline:
                 time.sleep(.05)
             forced = any(p.poll() is None for p in processes)
@@ -164,7 +186,7 @@ def main():
         finally:
             for process in processes:
                 if process.poll() is None:
-                    process.kill()
+                    os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=10)
             for stream in streams:
                 stream.close()
