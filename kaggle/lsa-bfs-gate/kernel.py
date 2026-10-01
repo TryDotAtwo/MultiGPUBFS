@@ -17,6 +17,7 @@ SOURCE = "81158d1501b3fde249e38916af0dc392d527a135"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "rounds_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
+NCCL_VARIANT = "wheel"  # Explicit experimental opt-in: minimum_arch_guard.
 
 
 def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None):
@@ -205,6 +206,35 @@ def main():
         run([sys.executable, "-m", "pip", "install", "--no-deps", "--target",
              str(nccl_target), "nvidia-nccl-cu12==2.29.7"], "nccl-install")
         nccl = nccl_target / "nvidia/nccl"
+        if NCCL_VARIANT == "minimum_arch_guard":
+            upstream = "b91894bd5b190c874d98a017f93f5daa515b65d0"
+            patch_file = source / "patches/nccl-2.29.7-minimum-arch.patch"
+            patch_digest = hashlib.sha256(patch_file.read_bytes()).hexdigest()
+            if patch_digest != "1af3a5df99c2b3b9a4f66ca4c33cf66e513e208f73480e58b4183c8f0e05b26b":
+                raise RuntimeError("NCCL_PATCH_DIGEST_MISMATCH")
+            vendor = work / "nccl-source"
+            run(["git", "clone", "--depth=1", "--branch", "v2.29.7-1",
+                 "https://github.com/NVIDIA/nccl.git", str(vendor)], "nccl-source")
+            vendor_commit = subprocess.check_output(
+                ["git", "-C", str(vendor), "rev-parse", "HEAD"], text=True).strip()
+            if vendor_commit != upstream:
+                raise RuntimeError("NCCL_SOURCE_COMMIT_MISMATCH")
+            run(["git", "apply", "--check", str(patch_file)], "nccl-patch-check", cwd=vendor)
+            run(["git", "apply", str(patch_file)], "nccl-patch", cwd=vendor)
+            # Existing independent-process replay resolves this exact root.
+            # Preserve the wheel separately instead of accidentally replaying it.
+            shutil.move(str(nccl_target), str(work / "nccl-wheel"))
+            nccl = nccl_target / "nvidia/nccl"
+            run(["make", "-j2", "src.build", "NVTX=1", "CUDA_HOME=" + str(sdk),
+                 "NVCC_GENCODE=-gencode=arch=compute_75,code=sm_75",
+                 "BUILDDIR=" + str(nccl)], "nccl-build", cwd=vendor, timeout=5400)
+            report["nccl_dependency"] = dict(variant=NCCL_VARIANT,
+                upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm75",
+                nvtx=1, experimental=True,
+                library_sha256=hashlib.sha256((nccl / "lib/libnccl.so.2.29.7").read_bytes()).hexdigest())
+            save()
+        elif NCCL_VARIANT != "wheel":
+            raise RuntimeError("UNKNOWN_NCCL_VARIANT")
         if not (nccl / "include/nccl_device.h").is_file():
             raise RuntimeError("PINNED_NCCL_DEVICE_HEADER")
         env["PATH"] = str(venv / "bin") + ":" + env["PATH"]
