@@ -67,7 +67,9 @@ def run(config, source, root, runtime_env):
     root.mkdir(parents=True, exist_ok=False)
     source = source.resolve()
     commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
-    cli = source/'target/release/mgbfs'
+    cli = (source/config.get('binary_path','target/release/mgbfs')).resolve()
+    if not cli.is_relative_to(source):
+        raise ValueError('binary must belong to the source checkout')
     binary_sha = hashlib.sha256(cli.read_bytes()).hexdigest()
     env = dict(os.environ, **runtime_env)
     env.update(config.get('env', {}))
