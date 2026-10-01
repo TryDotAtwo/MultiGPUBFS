@@ -51,6 +51,9 @@ pub mod ffi {
         pub fatal: u32,
     }
     extern "C" {
+        pub fn mgbfs_trace_ranges_available() -> i32;
+        pub fn mgbfs_trace_range_push(label: *const c_char);
+        pub fn mgbfs_trace_range_pop();
         /// Scalar CUDA reference: emit only hashes and origins (no child state).
         /// Device coefficients are row-major [n*n,4] canonical F_p residues.
         /// Caller validates canonical inputs and retains all buffers until stream

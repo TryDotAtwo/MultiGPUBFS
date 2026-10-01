@@ -16,6 +16,21 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
+// Thread-local NVTX push/pop ownership survives early returns and panics.
+// Diagnostic ranges never add CUDA waits or device reads.
+struct TraceRange(bool);
+impl TraceRange {
+    fn new(enabled: bool, label: &'static [u8]) -> Self {
+        if enabled { unsafe { mgbfs_trace_range_push(label.as_ptr().cast()) }; }
+        Self(enabled)
+    }
+}
+impl Drop for TraceRange {
+    fn drop(&mut self) {
+        if self.0 { unsafe { mgbfs_trace_range_pop() }; }
+    }
+}
+
 extern "C" fn nccl_cancel_probe(context: *mut c_void) -> i32 {
     if context.is_null() { return 1; }
     let flag = unsafe { &*context.cast::<std::sync::atomic::AtomicBool>() };
@@ -2329,6 +2344,10 @@ impl DistributedNativeBfs {
         // phases without adding synchronizations to an ordinary run.
         let trace_route = std::env::var_os("MGBFS_TRACE_ROUTE").is_some();
         let trace_sync = trace_route && std::env::var_os("MGBFS_TRACE_ROUTE_NO_SYNC").is_none();
+        let trace_ranges = std::env::var_os("MGBFS_TRACE_RANGES").is_some();
+        if trace_ranges && unsafe { mgbfs_trace_ranges_available() } == 0 {
+            return Err("PROFILE_NVTX_NOT_BUILT".into());
+        }
         let mut batch_index = 0u64;
         if let Some(a) = archive.as_ref() {
             let error = if self.archived_depth == Some(self.depth) {
@@ -2412,6 +2431,7 @@ impl DistributedNativeBfs {
         }
         let mut epoch_serial = 0usize;
         for _ in 0..scheduled_rounds {
+            let _batch_range = TraceRange::new(trace_ranges, b"mgbfs.batch\0");
             self.ensure_not_cancelled()?;
             if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
                 let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
@@ -2958,6 +2978,7 @@ impl DistributedNativeBfs {
                 batch_index = batch_index.checked_add(1).ok_or("TRACE_BATCH_OVERFLOW")?;
             }
         }
+        let _finalize_range = TraceRange::new(trace_ranges, b"mgbfs.FinalizeDepth\0");
         while device_epoch && !self.epoch_outstanding.is_empty() {
             let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
             self.wait_epoch_credit(slot)?;

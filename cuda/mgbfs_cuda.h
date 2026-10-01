@@ -285,6 +285,10 @@ void mgbfs_materialize_destroy(void* plan);
 int mgbfs_materialize_sort_origins(void* plan,uint32_t source_rank,
     const MgbfsRegenerateOrigin* origins,const uint64_t* targets,const uint32_t* count,
     MgbfsRegenerateOrigin* sorted_origins,uint64_t* sorted_targets,uint32_t* fatal,void* stream);
+/* Explicit diagnostic ranges; no CUDA operations, allocations or waits. */
+int mgbfs_trace_ranges_available(void);
+void mgbfs_trace_range_push(const char* label);
+void mgbfs_trace_range_pop(void);
 #ifdef __cplusplus
 }
 #endif
