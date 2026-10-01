@@ -32,8 +32,9 @@ limit. It pins files with hard links immediately when enqueued, verifies
 checksums, uploads payloads, and publishes the manifest last. Failed uploads
 retain pinned inputs and propagate an error. Run paths are
 `tail-runs/<run_id>/...`; use a fresh run_id. Remote obsolete files may remain
-but are not referenced by the latest manifest. Live HF publication remains
-unverified because no local write credential was available.
+but are not referenced by the latest manifest. Live HF publication was validated
+on 2026-10-02 for COMPLETE (9,4) and an INCOMPLETE capacity failure; see the
+validation report for remote manifests and checksum readback evidence.
 
 The separate nvidia-smi monitor requests samples every 50 ms. The manifest
 uses host receipt timestamps and the earliest rank BEGIN/latest rank END
@@ -43,7 +44,6 @@ metrics are not part of the tail manifest.
 
 Remaining integration gates:
 
-- Complete live HF upload/receipt validation with a scoped write credential.
 - Cancellation still needs a dedicated run; native capacity failure retained
   completed layers 0..3 in the isolated two-GPU validation.
 - Large (>=10 GB) physical archive stress remains untested; scaled retention
@@ -66,3 +66,9 @@ identical configuration resumes pending pairs without overwriting earlier
 runs. The alphabet must fit four bits and the native orbit count must fit u64;
 unsupported pairs are explicitly recorded, never claimed as completed.
 The grid driver has CPU tests; a complete GPU grid has not yet been executed.
+
+For an existing Windows DPAPI-encrypted token, the saved-run publisher accepts
+`--token-dpapi <path>`; the credential requires the original Windows account.
+Keep this file outside Git. Linux GPU runs use the standard HF_TOKEN secret
+environment or HF login cache. On this Windows host, set HF_HUB_DISABLE_XET=1
+before invoking the publisher to bypass a local Xet cache access failure.

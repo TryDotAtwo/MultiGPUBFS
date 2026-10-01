@@ -52,10 +52,24 @@ Real deliberately undersized CUCO_RANK run preserves INCOMPLETE, depths 0..3,
 data is excluded. Upload failure and snapshot pinning are tested with a fake
 API. Full Python suite: 212 tests, 8 skipped. No new sanitizer pass is claimed.
 
-Live HF publication is blocked by missing local write credentials; the connected
-HF MCP has read-repos only. Publisher code uploads payloads before manifests,
-retains failed pinned inputs, and is independently usable on the saved local
-tail. No public HF commit or successful live upload is claimed.
+Live HF publication subsequently succeeded using an existing user credential
+stored locally with Windows DPAPI, outside Git. The connected HF MCP still has
+read-repos only. Publisher uploads payloads before manifests and retains failed
+pinned inputs. Xet upload initially failed with local access denied; ordinary
+LFS upload succeeded with HF_HUB_DISABLE_XET=1. SDK cache readback hit Windows
+path length limits, so verification downloaded remote bytes directly over HTTPS.
+
+- [COMPLETE (9,4), CUCO_RANK](https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/main/tail-runs/20261002-tail-n9-r4-cuco-rank-verified-v2/manifest.json):
+  26 files, 15,120 states, 120,960 bytes; remote manifest equality, file sizes
+  and SHA-256 verified after upload. Also independently replayed locally.
+- [INCOMPLETE capacity failure](https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/main/tail-runs/20261002-tail-capacity-incomplete-v2/manifest.json):
+  four completed layers 0..3, 21 states, 168 bytes; unfinished layer excluded.
+  Remote manifest equality, all four file sizes and SHA-256 verified.
+
+Local upload receipts/readback records are in ignored test_results/publish-*/.
+Tail/sweep Python tests: 13 passed. Finite n,m sweep is implemented and tested
+on CPU; a complete GPU grid remains unexecuted. Physical 10 GB retention and
+the (15,4) archive on/off comparison remain open.
 
 Evidence: ignored local test_results/tail-vast-20261002/evidence.tgz, SHA-256
 deec51debc98fb308628845780ce592d6fe2af3c6ce793362309ea991c7c3314.
