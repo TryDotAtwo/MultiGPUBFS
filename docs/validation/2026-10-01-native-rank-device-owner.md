@@ -42,3 +42,16 @@ One existing notebook trydotatwo/mgbfs-native-rank-owner-t4 v8 is launched
 with immutable source 9bcafdd07f347225cedd2a6f5034a03f04f2b2f8. The old
 slug was renamed by Kaggle; it is not a second notebook. v8 adds reverse
 rank maps, both pre-dedup settings and full two-process sanitizer runs.
+
+v8 follow-up: the first native single-rank DENSE+CUB+ON search completed on
+physical T4 GPU0, with owner DAG capture and group-complete.json. The checksum
+archive full-state oracle passes (24 unique states; layers [1,3,5,6,5,3,1]).
+The downloaded archive was reverified locally with verify_process_archives,
+n=4/world=1, independently of the notebook's oracle log. v8 then failed in
+the harness JSON parser because Python sitecustomize emitted a warning before
+valid JSON. 546643f replaces stdout parsing with a dedicated oracle artifact;
+the runtime was not changed for this harness defect. v9 runs immutable source
+546643f16f34d05e993fe344412513e0320c85f1, one notebook only. It includes
+full native process equivalence/fault/sanitizer gates and S8 Nsight captures.
+This single completed S4 run does not close two-rank, BMMA, HASH_FIRST,
+full-BFS sanitizer, production timeline, other graph or performance gates.
