@@ -93,7 +93,7 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only") and any(
+        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only", "native_rank_gate") and any(
                 row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
             report["status"] = "UNSUPPORTED_HOST"
             return
@@ -123,7 +123,7 @@ def main():
              "--only-binary=:all:", "--no-cache-dir", "--require-hashes", "-r",
              str(source / "experiments/library_owner/requirements-linux-x86_64.lock")],
             "dependencies", timeout=1200)
-        if MODE == "device_protocol_replay":
+        if MODE in ("device_protocol_replay", "native_rank_gate"):
             # The full-state oracle reuses the archive reader in the Parquet
             # exporter; its module-level schemas require Arrow at import time.
             run([sys.executable, "-m", "pip", "--python", python, "install",
@@ -252,6 +252,77 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "native_rank_gate":
+            report["scope"] = "native rank owner: separate single-GPU T4 processes; two-rank checks only on verified P2P"
+            report["t4_acceptance_eligible"] = False
+            report["native_leaf_gates"] = []
+            for backend, defines in (("CUB_SORT_MERGE", []), ("BMMA_BUCKET", ["-DMGBFS_TEST_BMMA=1"])):
+                binary = work / ("native-rank-leaf-" + backend.lower())
+                run([str(sdk / "bin/nvcc"), "-std=c++17", "-lineinfo", "-arch=sm_75",
+                     "-I" + str(source / "cuda"), *defines, str(source / "tests/bounded_owner.cu"),
+                     str(source / "cuda/bounded_owner.cu"), str(source / "cuda/bounded_owner_query.cpp"),
+                     "-o", str(binary)], "native-rank-leaf-build-" + backend)
+                for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
+                    text = run(["compute-sanitizer", "--tool", tool, "--error-exitcode", "97", str(binary)],
+                               "native-rank-leaf-" + backend + "-" + tool, timeout=300)
+                    if "BOUNDED_OWNER_PASS" not in text:
+                        raise RuntimeError("NATIVE_RANK_LEAF_RESULT")
+                    report["native_leaf_gates"].append({"backend": backend, "tool": tool, "status": "PASS"})
+                    save()
+            run(["cargo", "build", "--locked", "-p", "mgbfs-cli", "--features", "cuda,library-owner"],
+                "native-rank-cli-build", timeout=1800)
+            spec = importlib.util.spec_from_file_location("native_replay", source / "scripts/replay_lsa_cancel_candidate.py")
+            replay = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(replay)
+            report["native_single_gpu_runs"] = []
+            for gpu in (0, 1):
+                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                    for profile in ("DENSE", "HASH_FIRST"):
+                        for prededup in ("ON", "OFF"):
+                            label = f"native-gpu{gpu}-{backend}-{profile}-{prededup}"
+                            case = logs / label
+                            case.mkdir()
+                            case_env = dict(env, CUDA_VISIBLE_DEVICES=str(gpu), RANK="0", LOCAL_RANK="0", WORLD_SIZE="1",
+                                TORCHELASTIC_RUN_ID=label, MGBFS_OWNER_BACKEND=backend, MGBFS_PROFILE=profile,
+                                MGBFS_PRE_DEDUP=prededup, MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128",
+                                MGBFS_BUCKETS="8", MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
+                                MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8", MGBFS_ARCHIVE_ROWS="3",
+                                MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0", MGBFS_BENCH_SKIP_ARCHIVE="0",
+                                MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0",
+                                MGBFS_TRANSPORT_BACKEND="NCCL_LSA", MGBFS_TEST_OWNER_DAG_CAPTURE="1")
+                            with (case / "rank-0.log").open("w") as output:
+                                result = subprocess.run([str(source / "target/debug/mgbfs"), "bench", "--reference", "s4", "7",
+                                    str(case / "bootstrap"), str(case / "archive"), str(case / "result")],
+                                    cwd=source, env=case_env, stdout=output, stderr=subprocess.STDOUT, timeout=120)
+                            if result.returncode != 0 or not (case / "result/group-complete.json").exists():
+                                raise RuntimeError("NATIVE_SINGLE_GPU_FAILED: " + label)
+                            if "MGBFS_OWNER_DAG_CAPTURE launched" not in (case / "rank-0.log").read_text():
+                                raise RuntimeError("NATIVE_OWNER_CAPTURE_NOT_REACHED: " + label)
+                            oracle = json.loads(run([python, "-c",
+                                "import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);"
+                                "from replay_lsa_cancel_candidate import verify_process_archives;"
+                                "print(json.dumps(verify_process_archives(Path(sys.argv[2]),n=4,world=1)))",
+                                str(source / "scripts"), str(case)], label + "-oracle"))
+                            report["native_single_gpu_runs"].append({"gpu": gpu, "backend": backend,
+                                "profile": profile, "prededup": prededup, "oracle": oracle})
+                            save()
+            if any(row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
+                report["status"] = "NATIVE_SINGLE_GPU_PASS_MULTI_GPU_UNSUPPORTED"
+                return
+            report["native_process_gates"] = []
+            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for profile in ("DENSE", "HASH_FIRST"):
+                    label = "native-process-" + backend + "-" + profile
+                    with (logs / (label + ".log")).open("w") as output:
+                        result = run_protocol_replay([str(venv / "bin/python"),
+                            str(source / "scripts/replay_lsa_cancel_candidate.py"), str(work), str(logs / label),
+                            "--owner-backend", backend, "--profile", profile, "--capacity-faults"],
+                            cwd=source, env=env, log=output)
+                    report["native_process_gates"].append({"backend": backend, "profile": profile, **result})
+                    save()
+            report["status"] = ("NATIVE_PROCESS_GATES_PASS" if all(row["returncode"] == 0 and not row["timed_out"]
+                for row in report["native_process_gates"]) else "NATIVE_PROCESS_GATES_FAILED")
+            return
         if MODE == "device_protocol_replay":
             # Reuse the production process replay; keep failed gates visible
             # while collecting independent results from the remaining gates.

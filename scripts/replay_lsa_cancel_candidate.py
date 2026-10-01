@@ -60,7 +60,7 @@ def s_reference_layers(n):
     return layers
 
 
-def verify_process_archives(case, frame_reader=None, n=4):
+def verify_process_archives(case, frame_reader=None, n=4, world=2):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -68,7 +68,7 @@ def verify_process_archives(case, frame_reader=None, n=4):
     expected = s_reference_layers(n)
     actual = [set() for _ in expected]
     visited, digest = set(), None
-    for rank in (0, 1):
+    for rank in range(world):
         local = [0] * len(expected)
         for depth, width, count, payload, config in frame_reader(
                 case / f'archive-rank-{rank}.mgbfsar1'):
@@ -90,7 +90,7 @@ def verify_process_archives(case, frame_reader=None, n=4):
     if actual != expected:
         raise ValueError('PROCESS_ORACLE_LAYER')
     return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)),
-                scope='two independent rank-process archives; full canonical states at every depth')
+                scope=f'{world} independent rank-process archives; full canonical states at every depth')
 
 
 def install_termination_handler():
@@ -118,6 +118,8 @@ def main():
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
+    parser.add_argument('--owner-backend', choices=('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'),
+                        default='CUCO_RANK')
     args = parser.parse_args()
     if args.batch < 1:
         parser.error('--batch must be positive')
@@ -153,7 +155,7 @@ def main():
             "-p", "mgbfs-cli", "--features", "cuda,library-owner"],
             cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT,
             timeout=600, check=True)
-    env.update(MGBFS_OWNER_BACKEND="CUCO_RANK", MGBFS_TRACE_FAILURE_TEARDOWN="1",
+    env.update(MGBFS_OWNER_BACKEND=args.owner_backend, MGBFS_TRACE_FAILURE_TEARDOWN="1",
         MGBFS_LIBRARY_POOL_BYTES=str(64 << 20), MGBFS_PROFILE=args.profile,
         MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8",
         MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
@@ -175,6 +177,7 @@ def main():
     report['batch'] = args.batch
     report['profile'] = args.profile
     report['pre_dedup'] = args.pre_dedup
+    report['owner_backend'] = args.owner_backend
     report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("constructor", "MGBFS_TEST_CONSTRUCTOR_FAULT_RANK"),

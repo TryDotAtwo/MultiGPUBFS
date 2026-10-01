@@ -163,6 +163,26 @@ mod calls {
             out: *mut *mut c_void,
         ) -> i32;
         pub fn mgbfs_bounded_owner_destroy(plan: *mut c_void);
+        pub fn mgbfs_bounded_owner_rank_compare(
+            plan: *mut c_void, jobs: *mut BucketJob, buckets: u32,
+            input: *const c_void, begin: *const u32, rows: *const u32,
+            source_rows: *const u32, prev: *const c_void, prev_ranges: *const Range,
+            pn: u64, curr: *const c_void, curr_ranges: *const Range, cn: u64,
+            accepted: *const c_void, lengths: *const u32, logical_owner: u32,
+            world: u32, per_shard: u32, generation: u32, counts: *mut Counts,
+            control: *mut Control, ring: *mut Ring, stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_bounded_owner_rank_metadata(
+            counts: *const Counts, lengths: *const u32, buckets: u32, shards: u32,
+            k: u32, live: *mut u32, old: *mut u32, caps: *mut u32,
+            offsets: *mut u32, control: *const Control, stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_bounded_owner_rank_commit(
+            plan: *mut c_void, jobs: *const BucketJob, buckets: u32,
+            input: *const c_void, accepted: *mut c_void, lengths: *mut u32,
+            counts: *const Counts, control: *mut Control, grant: *const u32,
+            selected: *mut u32, stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_bounded_owner_compare(
             plan: *mut c_void,
             jobs: *const BucketJob,

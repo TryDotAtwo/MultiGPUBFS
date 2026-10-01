@@ -1,5 +1,6 @@
 #pragma once
 #include "owner_job.h"
+typedef struct MgbfsStateRingControl MgbfsStateRingControl;
 #include <stddef.h>
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,29 @@ int mgbfs_bounded_owner_create(uint32_t i, uint32_t j, uint32_t k, void** plan);
 int mgbfs_bounded_owner_create_backend(uint32_t i, uint32_t j, uint32_t k,
     uint32_t backend, uint32_t refinement_capacity, uint32_t tile_limit, void** plan);
 void mgbfs_bounded_owner_destroy(void* plan);
+/* Device-count rank window. jobs/counts have buckets elements; plan scratch
+ * remains bounded by its original job_count (not buckets). Empty buckets are
+ * valid. selected indices address the original input frame, including begin.
+ * All metadata decisions and capacity failures remain device resident. */
+int mgbfs_bounded_owner_rank_compare(void* plan, MgbfsBucketJob* jobs,
+    uint32_t buckets, const void* input, const uint32_t* begin,
+    const uint32_t* rows, const uint32_t* source_rows,
+    const void* prev, const MgbfsOwnerRange* prev_ranges, uint64_t prev_count,
+    const void* curr, const MgbfsOwnerRange* curr_ranges, uint64_t curr_count,
+    const void* accepted, const uint32_t* accepted_counts,
+    uint32_t logical_owner, uint32_t world, uint32_t buckets_per_shard,
+    uint32_t generation, MgbfsOwnerCounts* counts, MgbfsOwnerControl* control,
+    MgbfsStateRingControl* ring, void* stream);
+int mgbfs_bounded_owner_rank_metadata(const MgbfsOwnerCounts* counts,
+    const uint32_t* accepted_counts, uint32_t buckets, uint32_t shards,
+    uint32_t bucket_capacity, uint32_t* shard_counts,
+    uint32_t* shard_accepted, uint32_t* shard_capacities,
+    uint32_t* shard_offsets, const MgbfsOwnerControl* control, void* stream);
+int mgbfs_bounded_owner_rank_commit(void* plan, const MgbfsBucketJob* jobs,
+    uint32_t buckets, const void* input, void* accepted,
+    uint32_t* accepted_counts, const MgbfsOwnerCounts* counts,
+    MgbfsOwnerControl* control, const uint32_t* granted_rows,
+    uint32_t* survivor_indices, void* stream);
 int mgbfs_bounded_owner_compare(void* plan, const MgbfsBucketJob* jobs,
     uint32_t job_count, uint32_t rows, const void* incoming,
     const void* prev, uint64_t prev_count, const void* curr, uint64_t curr_count,

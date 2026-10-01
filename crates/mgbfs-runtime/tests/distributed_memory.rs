@@ -12,6 +12,39 @@ fn packed_owner_count_storage_fits_all_eight_ranks() {
 }
 
 #[test]
+fn native_rank_metadata_covers_all_buckets_without_duplicate_receive_storage() {
+    use mgbfs_runtime::distributed_memory::native_rank_shared_buffers;
+    let s = shape();
+    let ledger = native_rank_shared_buffers(s, 2).unwrap();
+    let bytes = |name: &str| ledger.allocations.iter().find(|a| a.name == name).unwrap().payload_bytes;
+    assert_eq!(bytes("counts"), s.buckets * std::mem::size_of::<mgbfs_cuda::native_owner::Counts>() as u64);
+    assert_eq!(bytes("rank_prev_directory"), s.buckets * 16);
+    assert_eq!(bytes("rank_curr_directory"), s.buckets * 16);
+    assert_eq!(bytes("rank_shard_offsets"), 3 * 4);
+    assert_eq!(bytes("owner_window"), 3 * 4);
+    assert_eq!(bytes("next_extents"), 2 * 64);
+    for name in ["recv_hashes", "recv_states", "recv_count"] {
+        assert!(!ledger.allocations.iter().any(|a| a.name == name));
+    }
+    // The existing leaf query, not the bucket count, still sizes merged scratch.
+    assert_eq!(bytes("accepted"), s.buckets*s.bucket_capacity*16);
+}
+
+#[test]
+fn native_rank_aggregate_capacity_and_shards_are_checked_before_allocation() {
+    use mgbfs_runtime::distributed_memory::native_rank_shared_buffers;
+    assert!(native_rank_shared_buffers(shape(), 0).is_err());
+    assert!(native_rank_shared_buffers(shape(), 3).is_err());
+    let mut s = shape();
+    s.bucket_capacity = u32::MAX as u64;
+    assert!(native_rank_shared_buffers(s, 2).is_err());
+    // Capacity counters are per shard, not a fictitious global u32 arena.
+    // Byte planning only: this does not allocate the large shape on a GPU.
+    s.bucket_capacity = (u32::MAX as u64)/4;
+    assert!(native_rank_shared_buffers(s, 2).is_ok());
+}
+
+#[test]
 fn lsa_slot_budget_matches_wire_layout_and_rejects_overflow() {
     use mgbfs_runtime::distributed_memory::lsa_symmetric_slot_bytes;
     assert_eq!(lsa_symmetric_slot_bytes(21, 16).unwrap(), 928);

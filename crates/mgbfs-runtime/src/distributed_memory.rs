@@ -154,6 +154,36 @@ pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> 
     Ok(result)
 }
 
+/// Native LSA rank transaction. Keep merged scratch at job_buckets*K;
+/// only metadata scales with the number of buckets. No duplicate receive slot.
+pub fn native_rank_shared_buffers(s: SharedBufferShape, shards: u32) -> Result<AllocationLedger> {
+    if shards == 0 || s.buckets % u64::from(shards) != 0 ||
+        (s.buckets/u64::from(shards)).checked_mul(s.bucket_capacity)
+            .map_or(true, |n| n > u32::MAX as u64) {
+        return Err("NATIVE_RANK_SHAPE".into());
+    }
+    let base = shared_buffers(s)?;
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in base.allocations {
+        if ["counts", "recv_states", "recv_hashes", "recv_count"].contains(&allocation.name.as_str()) {
+            continue;
+        }
+        result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
+    }
+    result.add("counts", s.buckets, std::mem::size_of::<Counts>() as u64, 256)?;
+    result.add("owner_window", 3, 4, 256)?;
+    result.add("next_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
+    result.add("next_extent_count", 1, 4, 256)?;
+    for name in ["rank_prev_directory", "rank_curr_directory"] {
+        result.add(name, s.buckets, std::mem::size_of::<Range>() as u64, 256)?;
+    }
+    for name in ["rank_shard_counts", "rank_shard_accepted", "rank_shard_capacities"] {
+        result.add(name, u64::from(shards), 4, 256)?;
+    }
+    result.add("rank_shard_offsets", u64::from(shards)+1, 4, 256)?;
+    Ok(result)
+}
+
 /// LSA owns the receive count/hash/state planes in its symmetric slot;
 /// the host-sized NCCL buffers must not be allocated a second time.
 pub fn library_shared_buffers_for_transport(

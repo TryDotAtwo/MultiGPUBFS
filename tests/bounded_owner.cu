@@ -1,4 +1,5 @@
 #include "bounded_owner.h"
+#include "state_commit.h"
 #include <cuda_runtime.h>
 #include <vector>
 #include <stdexcept>
@@ -159,6 +160,64 @@ static void sweep(unsigned seed,unsigned mode) {
   }
   mgbfs_bounded_owner_destroy(plan);
 }
+static void rank_device_window() {
+  void* plan=nullptr;require(create_owner(16,2,8,&plan)==0,"rank create");
+  Device<Key> in(16),prev(1),curr(1),accepted(32);
+  Device<uint32_t> lens(4),begin(1),rows(1),source_rows(1),grant(1),selected(16);
+  Device<uint32_t> live(2),old(2),caps(2),offsets(3);
+  Device<MgbfsOwnerRange> pd(4),cd(4);
+  Device<MgbfsBucketJob> jobs(4);Device<MgbfsOwnerCounts> counts(4);
+  Device<MgbfsOwnerControl> control(1);Device<MgbfsStateRingControl> ring(1);
+  const auto key=[](unsigned id,unsigned bucket){return Key{{id,0,0,0x80000000u+(bucket<<29)}};};
+  in.put({{{99,0,0,0x10000000u}},key(1,0),key(1,0),key(2,0),key(3,1),key(4,3),key(5,3)});
+  prev.put({key(2,0)});curr.put({key(3,1)});
+  pd.put({{0,1},{1,0},{1,0},{1,0}});cd.put({{0,0},{0,1},{1,0},{1,0}});
+  auto initial=std::vector<Key>(32);initial[24]=key(4,3);accepted.put(initial);
+  lens.put({0,0,0,1});begin.put({1});rows.put({6});source_rows.put({7});
+  auto compare=[&]{require(mgbfs_bounded_owner_rank_compare(plan,jobs.p,4,in.p,
+      begin.p,rows.p,source_rows.p,prev.p,pd.p,1,curr.p,cd.p,1,accepted.p,
+      lens.p,1,2,2,9,counts.p,control.p,ring.p,nullptr)==0,"rank compare enqueue");};
+  auto commit=[&]{require(mgbfs_bounded_owner_rank_commit(plan,jobs.p,4,in.p,
+      accepted.p,lens.p,counts.p,control.p,grant.p,selected.p,nullptr)==0,"rank commit enqueue");};
+  compare();
+  require(mgbfs_bounded_owner_rank_metadata(counts.p,lens.p,4,2,8,
+      live.p,old.p,caps.p,offsets.p,control.p,nullptr)==0,"rank metadata enqueue");
+  ck(cudaDeviceSynchronize());auto c=control.get()[0];
+  require(!c.error&&c.stage==1&&c.survivors==2,"rank compare result");
+  require(live.get()==std::vector<uint32_t>({1,1}),"rank shard counts");
+  require(old.get()==std::vector<uint32_t>({0,1}),"rank shard accepted");
+  require(caps.get()==std::vector<uint32_t>({16,16}),"rank shard capacities");
+  require(lens.get()==std::vector<uint32_t>({0,0,0,1}),"rank compare unchanged");
+  grant.put({0});commit();ck(cudaDeviceSynchronize());
+  require(control.get()[0].error==4,"rank insufficient grant");
+  require(lens.get()==std::vector<uint32_t>({0,0,0,1}),"rank grant unchanged");
+  compare();grant.put({2});commit();ck(cudaDeviceSynchronize());
+  c=control.get()[0];require(!c.error&&c.stage==2,"rank commit result");
+  require(lens.get()==std::vector<uint32_t>({1,0,0,2}),"rank published lengths");
+  auto chosen=selected.get();require(chosen[0]==1&&chosen[1]==6,"rank absolute selected indices");
+  auto hashes=accepted.get();require(same(hashes[0],key(1,0))&&
+      same(hashes[24],key(4,3))&&same(hashes[25],key(5,3)),"rank merged keys");
+  begin.put({0});rows.put({0});source_rows.put({0});grant.put({0});
+  compare();commit();ck(cudaDeviceSynchronize());c=control.get()[0];
+  require(!c.error&&c.stage==2&&c.survivors==0,"rank empty participation");
+  begin.put({8});source_rows.put({7});compare();commit();ck(cudaDeviceSynchronize());
+  require(control.get()[0].error==1,"rank bad window rejected");
+  require(lens.get()==std::vector<uint32_t>({1,0,0,2}),"rank bad window unchanged");
+  auto poisoned=MgbfsStateRingControl{};poisoned.fatal=99;ring.put({poisoned});
+  compare();commit();ck(cudaDeviceSynchronize());
+  require(control.get()[0].error==99,"rank sticky fatal retained");
+  ring.put({MgbfsStateRingControl{}});
+  pd.put({{0,0},{0,0},{0,0},{0,0}});cd.put({{0,0},{0,0},{0,0},{0,0}});
+  initial.assign(32,Key{});for(unsigned i=0;i<8;++i)initial[i]=key(i+1,0);
+  accepted.put(initial);lens.put({8,0,0,0});in.put({key(9,0)});
+  begin.put({0});rows.put({1});source_rows.put({1});grant.put({1});
+  compare();commit();ck(cudaDeviceSynchronize());
+  require(control.get()[0].error==2,"rank bucket capacity rejected before commit");
+  require(lens.get()==std::vector<uint32_t>({8,0,0,0}),"rank capacity unchanged");
+  hashes=accepted.get();for(unsigned i=0;i<8;++i)
+    require(same(hashes[i],key(i+1,0)),"rank capacity preserves hashes");
+  mgbfs_bounded_owner_destroy(plan);
+}
 int main(int argc,char** argv) { try {
   if(argc>1){char* end=nullptr;auto value=std::strtoul(argv[1],&end,10);
     require(end&&!*end&&value>=1&&value<=256,"test tile limit");test_tile_limit=unsigned(value);}
@@ -193,5 +252,6 @@ int main(int argc,char** argv) { try {
   for(unsigned mode=1;mode<=4;++mode)sweep(99,mode);
   compact_layout();
   macro_history_layout();
+  rank_device_window();
   std::puts("BOUNDED_OWNER_PASS");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

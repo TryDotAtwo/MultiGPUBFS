@@ -455,6 +455,14 @@ struct BoundedOwnerStorage {
     counts: Buffer,
     selected: Buffer,
 }
+struct NativeRankStorage {
+    previous: Buffer,
+    current: Buffer,
+    survivors: Buffer,
+    accepted: Buffer,
+    capacities: Buffer,
+    offsets: Buffer,
+}
 impl Plan {
     fn new(
         drop: unsafe extern "C" fn(*mut c_void),
@@ -686,8 +694,8 @@ pub struct DistributedNativeBfs {
     sorted_hashes: Buffer,
     sorted_refs: Buffer,
     route_count: Buffer,
-    #[cfg(feature = "library-owner")]
     owner_window: Option<Buffer>,
+    native_rank: Option<NativeRankStorage>,
     packed_states: Buffer,
     owner_counts: Buffer,
     recv_states: Option<Buffer>,
@@ -715,6 +723,71 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    fn rank_owner_mode(&self) -> bool {
+        if self.native_rank.is_some() { return true; }
+        #[cfg(feature = "library-owner")]
+        if self.library_owner.as_ref().is_some_and(|owner| owner.rank_mode) { return true; }
+        false
+    }
+    fn commit_rank_native_batch(
+        &mut self, states: *const u8, hashes: *const c_void,
+        begin: *const u32, rows: *const u32, source_rows: *const u32, group: usize,
+    ) -> Result<()> {
+        let owner = self.owner.as_ref().ok_or("NATIVE_OWNER_MISSING")?;
+        let rank = self.native_rank.as_ref().ok_or("NATIVE_RANK_MISSING")?;
+        #[cfg(all(feature = "library-owner", debug_assertions))]
+        let capture = OwnerCaptureProbe::begin(self.stream.0)?;
+        let logical_owner = self.cfg.logical_owner_to_rank.iter()
+            .position(|&r| r == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
+        let s = self.stream.0;
+        let extent = self.extent.ptr.cast::<Extent>();
+        let selected_count = unsafe { self.control.at(8).cast::<u32>() };
+        unsafe {
+            check(mgbfs_bounded_owner_rank_compare(owner.plan.0, self.jobs_gpu.ptr.cast(),
+                self.cfg.buckets, hashes, begin, rows, source_rows,
+                self.prev.ptr, rank.previous.ptr.cast(), self.prev_count.into(),
+                self.curr.ptr, rank.current.ptr.cast(), self.current_count.into(),
+                owner.accepted.ptr, owner.lengths.ptr.cast(), logical_owner,
+                self.cfg.world, self.cfg.buckets/self.cfg.shards, self.depth,
+                owner.counts.ptr.cast(), self.control.ptr.cast(), self.ring.ptr.cast(), s))?;
+            check(mgbfs_bounded_owner_rank_metadata(owner.counts.ptr.cast(),
+                owner.lengths.ptr.cast(), self.cfg.buckets, self.cfg.shards,
+                self.cfg.bucket_capacity, rank.survivors.ptr.cast(), rank.accepted.ptr.cast(),
+                rank.capacities.ptr.cast(), rank.offsets.ptr.cast(), self.control.ptr.cast(), s))?;
+            check(mgbfs_state_reserve_rank_batch(self.ring.ptr.cast(), self.control.ptr.cast(),
+                extent, rank.survivors.ptr.cast(), rank.accepted.ptr.cast(),
+                rank.capacities.ptr.cast(), self.cfg.shards, rank.offsets.ptr.cast(),
+                self.layer_count.ptr.cast(), self.cfg.layer_capacity,
+                self.hash_first.as_ref().map_or(0, |h| h.capacity),
+                u32::from(self.hash_first.is_some()), s))?;
+            check(mgbfs_bounded_owner_rank_commit(owner.plan.0, self.jobs_gpu.ptr.cast(),
+                self.cfg.buckets, hashes, owner.accepted.ptr, owner.lengths.ptr.cast(),
+                owner.counts.ptr.cast(), self.control.ptr.cast(),
+                std::ptr::addr_of!((*extent).granted_rows), owner.selected.ptr.cast(), s))?;
+            if let Some(h) = self.hash_first.as_ref() {
+                let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
+                check(mgbfs_state_build_rank_requests(states.cast(), source_rows,
+                    self.candidates, owner.selected.ptr.cast(), selected_count, h.capacity,
+                    h.requests[group].ptr.cast(), h.targets[group].ptr.cast(),
+                    d.counts.at(group*4).cast(), self.ring.ptr.cast(), self.control.ptr.cast(), extent, s))?;
+                check(cudaMemcpyAsync(d.extents.at(group*std::mem::size_of::<Extent>()),
+                    extent.cast(), std::mem::size_of::<Extent>(), 3, s))?;
+                check(cudaMemcpyAsync(d.controls.at(group*std::mem::size_of::<Control>()),
+                    self.control.ptr, std::mem::size_of::<Control>(), 3, s))?;
+            } else {
+                check(mgbfs_state_materialize_rank_batch(states, source_rows,
+                    self.candidates, owner.selected.ptr.cast(), selected_count,
+                    self.candidates, self.stride as u32, self.states.ptr.cast(),
+                    self.ring.ptr.cast(), self.control.ptr.cast(), extent, s))?;
+                check(mgbfs_state_publish_next_extent(self.ring.ptr.cast(), self.control.ptr.cast(),
+                    extent, self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
+                    self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(), 2, s))?;
+            }
+        }
+        #[cfg(all(feature = "library-owner", debug_assertions))]
+        if let Some(capture) = capture { capture.launch()?; }
+        Ok(())
+    }
     /// Requested host-pinned payload; CUDA's page/registration overhead is not
     /// part of this byte-exact payload and is measured separately.
     pub fn transport_control_pinned_payload_bytes(&self) -> u64 {
@@ -1149,11 +1222,15 @@ impl DistributedNativeBfs {
             job_buckets: cfg.job_buckets.into(),
             archive_width: permutation_n.unwrap_or(1).into(),
         };
+        let native_rank_mode = library_pool_bytes.is_none()
+            && cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa;
         let shared_memory = if library_pool_bytes.is_some() {
             crate::distributed_memory::library_shared_buffers_for_transport(
                 shared_shape,
                 cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa,
             )?
+        } else if native_rank_mode {
+            crate::distributed_memory::native_rank_shared_buffers(shared_shape, cfg.shards)?
         } else {
             crate::distributed_memory::shared_buffers(shared_shape)?
         };
@@ -1422,7 +1499,7 @@ impl DistributedNativeBfs {
                 raw,
             )
         };
-        let (next_extents, next_extent_count) = if library_pool_bytes.is_some() {
+        let (next_extents, next_extent_count) = if library_pool_bytes.is_some() || native_rank_mode {
             (Some(b("next_extents")?), Some(b("next_extent_count")?))
         } else {
             (None, None)
@@ -1557,8 +1634,12 @@ impl DistributedNativeBfs {
             sorted_hashes: b("sorted_hashes")?,
             sorted_refs: b("sorted_refs")?,
             route_count,
-            #[cfg(feature = "library-owner")]
-            owner_window: if library_pool_bytes.is_some() { Some(b("owner_window")?) } else { None },
+            owner_window: if library_pool_bytes.is_some() || native_rank_mode { Some(b("owner_window")?) } else { None },
+            native_rank: if native_rank_mode { Some(NativeRankStorage {
+                previous: b("rank_prev_directory")?, current: b("rank_curr_directory")?,
+                survivors: b("rank_shard_counts")?, accepted: b("rank_shard_accepted")?,
+                capacities: b("rank_shard_capacities")?, offsets: b("rank_shard_offsets")?,
+            }) } else { None },
             packed_states: b("packed_states")?,
             owner_counts: b("owner_counts")?,
             recv_states: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
@@ -2679,6 +2760,11 @@ impl DistributedNativeBfs {
             }
         }
         let s = self.stream.0;
+        if let Some(rank) = self.native_rank.as_ref() {
+            // Depth-boundary upload only; no batch depends on a directory readback.
+            rank.previous.put(&self.prev_dir)?;
+            rank.current.put(&self.curr_dir)?;
+        }
         unsafe {
             if let Some(owner) = self.owner.as_ref() {
                 check(cudaMemsetAsync(
@@ -2689,8 +2775,7 @@ impl DistributedNativeBfs {
                 ))?;
             }
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
-            #[cfg(feature = "library-owner")]
-            if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+            if self.rank_owner_mode() {
                 check(cudaMemsetAsync(
                     self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr,
                     0, 4, s,
@@ -2735,11 +2820,7 @@ impl DistributedNativeBfs {
         let mut prefetched: Option<(ParentBatch, u64)> = None;
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
-        #[cfg(feature = "library-owner")]
-        let device_epoch = self.lsa_view.is_some()
-            && self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
-        #[cfg(not(feature = "library-owner"))]
-        let device_epoch = false;
+        let device_epoch = self.lsa_view.is_some() && self.rank_owner_mode();
         // The host-sized depth schedule above reuses collective_recv for a
         // nonzero round count. LSA reads this word as its device group-fatal
         // predicate before the first owner vote, so start each depth clean.
@@ -2922,12 +3003,13 @@ impl DistributedNativeBfs {
                     s,
                 )
             })?;
-            #[cfg(feature = "library-owner")]
-            if let Some(library) = self.library_owner.as_ref().filter(|library| library.rank_mode) {
+            if self.rank_owner_mode() {
                 let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
+                let logical_owner = self.cfg.logical_owner_to_rank.iter()
+                    .position(|&rank| rank == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
                 check(unsafe {
                     mgbfs_owner_window_from_counts(
-                        self.cfg.world, self.candidates, library.logical_owner,
+                        self.cfg.world, self.candidates, logical_owner,
                         self.owner_counts.ptr.cast(), self.route_count.ptr.cast(),
                         window.ptr.cast(), window.at(4).cast(), s,
                     )
@@ -3005,10 +3087,7 @@ impl DistributedNativeBfs {
                 let (remote_offset, remote_rows) = host_ranges.as_ref()
                     .map_or((0, 0), |(_, ranges)| ranges[exchange_peer as usize]);
                 let lsa = self.lsa_view;
-                #[cfg(feature = "library-owner")]
-                let rank_mode = self.library_owner.as_ref().is_some_and(|library| library.rank_mode);
-                #[cfg(not(feature = "library-owner"))]
-                let rank_mode = false;
+                let rank_mode = self.rank_owner_mode();
                 let received = if self.cfg.world == 1 {
                     0
                 } else if lsa.is_some() {
@@ -3202,7 +3281,6 @@ impl DistributedNativeBfs {
                         (remote_states, remote_hashes, received),
                     ),
                     |(group, (states, hashes, rows))| {
-                        #[cfg(feature = "library-owner")]
                         if rank_mode {
                             if !crate::route_count::rank_owner_group_active(world, round, group)? {
                                 return Ok(());
@@ -3225,7 +3303,13 @@ impl DistributedNativeBfs {
                                  unsafe { window.at(8) } as *const u32,
                                  remote_count, remote_count)
                             };
+                            if self.native_rank.is_some() {
+                                return self.commit_rank_native_batch(states, hashes, begin, rows, source_rows, group);
+                            }
+                            #[cfg(feature = "library-owner")]
                             return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows, group);
+                            #[cfg(not(feature = "library-owner"))]
+                            return Err("RANK_OWNER_BACKEND_MISSING".into());
                         }
                         self.commit_owner_batch(states, hashes, rows, group)
                     },
@@ -3367,8 +3451,7 @@ impl DistributedNativeBfs {
                 check(cudaStreamSynchronize(s))?;
             }
         }
-        #[cfg(feature = "library-owner")]
-        if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+        if self.rank_owner_mode() {
             let ready = (|| -> Result<Vec<Extent>> {
                 check(unsafe { cudaStreamSynchronize(s) })?;
                 let control = self.control.one::<Control>()?;
