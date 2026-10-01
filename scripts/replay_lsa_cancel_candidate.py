@@ -124,6 +124,10 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     source = work / "source"
     env = dict(os.environ)
+    if args.instrument_processes == 'nsys':
+        # Batch/archive attribution must be present in a full runtime trace.
+        # This enables ranges only, never TRACE_ROUTE's diagnostic host waits.
+        env['MGBFS_TRACE_RANGES'] = '1'
     site = next((work / "venv/lib").glob("python*/site-packages"))
     libdirs = sorted({str(p.parent) for p in site.rglob("*.so*") if p.is_file()})
     env.update(CARGO_HOME=str(work / "cargo"), RUSTUP_HOME=str(work / "rustup"),

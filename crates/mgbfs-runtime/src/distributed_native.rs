@@ -3433,6 +3433,8 @@ impl DistributedNativeBfs {
         extent_index: usize,
     ) -> Result<()> {
         let compact_permutation = self.permutation_n == u32::try_from(archive.width).ok();
+        let _archive_range = TraceRange::new(
+            std::env::var_os("MGBFS_TRACE_RANGES").is_some(), b"mgbfs.archive_d2h\0");
         let s = self.archive_stream.0;
         let mut offset = 0u64;
         while offset < count {
