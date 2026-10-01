@@ -266,3 +266,13 @@ multi-rank condition is unreachable at world=1. None of these runs proves
 asymmetric cancellation, receive-slot reuse or termination on two T4 ranks.
 Kaggle status rechecked: trydotatwo/mgbfs-native-rank-owner-t4 COMPLETE;
 no new worker was launched and the prior quota rejection is not a gate pass.
+
+## CUCO pre-dedup ON full-state gate
+
+Session 88584 completed exit 0. S8 DENSE/HASH_FIRST pre-dedup ON each passes
+memcheck, initcheck, synccheck and racecheck unfiltered, zero errors/hazards/
+warnings. All eight canonical archives independently match 40320 states at
+29 CPU oracle depths; thus the checked layer sets match the OFF cases too.
+Artifacts: test_results/local_lsa_20261001/cuco129-s8-<profile>-ON-<tool>/.
+No speed claim is based on instrumented timings. Two-rank ordering, asymmetric
+failures, T4 registration and remote paired A/B remain separate open gates.
