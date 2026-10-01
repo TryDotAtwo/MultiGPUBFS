@@ -1,0 +1,81 @@
+diff --git a/src/device/generate.py b/src/device/generate.py
+index 5113c52..77fad8f 100755
+--- a/src/device/generate.py
++++ b/src/device/generate.py
+@@ -297,6 +297,12 @@ with open(os.path.join(gensrc, "host_table.cc"), "w") as f:
+   out("};\n")
+   out("\n")
+ 
++  out("int ncclDevKernelMinimumArch[] = {\n")
++  for kfn in kernel_funcs:
++    _, arch = required_cuda(*kfn)
++    out("  %d,\n" % arch)
++  out("};\n\n")
++
+   # Maps primary id to kernel function pointer.
+   out("extern void* const ncclDevKernelForFunc[] = {\n")
+   index = 0
+diff --git a/src/device/symmetric/generate.py b/src/device/symmetric/generate.py
+index e9b1da8..d03cc19 100755
+--- a/src/device/symmetric/generate.py
++++ b/src/device/symmetric/generate.py
+@@ -270,6 +270,13 @@ with open(os.path.join(gensrc, "sym_kernels_host.cc"), "w") as f:
+   emitln(f, '')
+ 
+   emitln(f, 'int ncclSymkKernelMaxDynamicSmem[%d];' % len(kernel_list))
++
++  emitln(f, 'int ncclSymkKernelMinimumArch[] = {')
++  for k in kernel_list:
++    _, arch, specific_sms = required_cuda(k)
++    minimum = arch if arch is not None else min(10 * int(sm.rstrip('af')) for sm in specific_sms)
++    emitln(f, '  %d,' % minimum)
++  emitln(f, '};')
+   emitln(f, '')
+ 
+   emitln(f, 'int ncclSymkGetKernelIndex(ncclSymkKernelId id, int red, ncclDataType_t ty) {')
+diff --git a/src/enqueue.cc b/src/enqueue.cc
+index e4736f0..fc07e60 100644
+--- a/src/enqueue.cc
++++ b/src/enqueue.cc
+@@ -44,6 +44,7 @@ ncclResult_t ncclInitKernelsForDevice(int cudaArch, int maxSharedMem, size_t* ma
+     int kcount = sym==0 ? ncclDevKernelCount : ncclSymkKernelCount;
+     void** kptrs = sym==0 ? ncclDevKernelList : ncclSymkKernelList;
+     int* krequires = sym==0 ? ncclDevKernelRequirements : ncclSymkKernelRequirements;
++    int* kminarch = sym==0 ? ncclDevKernelMinimumArch : ncclSymkKernelMinimumArch;
+     for (int k=0; k < kcount; k++) {
+       if (kptrs[k] != nullptr && driverVersion < krequires[k]) {
+         INFO(NCCL_INIT, "Skipping %skernel %d which requires driver %d",
+@@ -53,6 +54,9 @@ ncclResult_t ncclInitKernelsForDevice(int cudaArch, int maxSharedMem, size_t* ma
+       void* fn = kptrs[k];
+       cudaFuncAttributes attr = {0};
+       if (fn == nullptr) continue;
++      // Preserve kernel selection: avoid only probes that cannot succeed.
++      // Family-specific kernels still require the existing attribute check.
++      if (cudaArch < kminarch[k]) continue;
+ 
+       if (!CUDASUCCESS(cudaFuncGetAttributes(&attr, fn))) continue; // Silently ignore failures
+ 
+diff --git a/src/include/device.h b/src/include/device.h
+index e55d009..3a08bca 100644
+--- a/src/include/device.h
++++ b/src/include/device.h
+@@ -553,6 +553,7 @@ __host__ __device__ constexpr int ncclShmemDynamicSize(int cudaArch = NCCL_CUDA_
+ extern int const ncclDevKernelCount;
+ extern void* ncclDevKernelList[/*ncclDevKernelCount*/];
+ extern int ncclDevKernelRequirements[/*ncclDevKernelCount*/];
++extern int ncclDevKernelMinimumArch[/*ncclDevKernelCount*/];
+ 
+ // Table of most specialized kernel function to run given func index.
+ extern int const ncclDevFuncRowToId[];
+diff --git a/src/include/sym_kernels.h b/src/include/sym_kernels.h
+index 690b3b0..d2b04f7 100644
+--- a/src/include/sym_kernels.h
++++ b/src/include/sym_kernels.h
+@@ -126,6 +126,7 @@ ncclResult_t ncclSymkMakeDevWork(struct ncclComm* comm, struct ncclTaskColl* tas
+ extern int const ncclSymkKernelCount;
+ extern void* ncclSymkKernelList[/*ncclSymkKernelCount*/];
+ extern int ncclSymkKernelRequirements[/*ncclSymkKernelCount*/];
++extern int ncclSymkKernelMinimumArch[/*ncclSymkKernelCount*/];
+ extern int ncclSymkKernelMaxDynamicSmem[/*ncclSymkKernelCount*/]; // initialized by ncclInitKernelsForDevice()
+ int ncclSymkGetKernelIndex(ncclSymkKernelId kernelId, int/*ncclDevRedOp_t*/ red, ncclDataType_t ty);
+ const char* ncclSymkKernelIdToString(int kernelId);
