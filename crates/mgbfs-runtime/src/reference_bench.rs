@@ -429,6 +429,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }};
     bfs.set_cancel_token(sideband.cancel_token())?;
     bfs.set_failure_token(sideband.failure_token());
+    bfs.set_retirement_token(sideband.retirement_token())?;
     #[cfg(debug_assertions)]
     if test_fault_rank("MGBFS_TEST_OWNER_HOST_FAULT_RANK", rank, world)? {
         crate::distributed_native::inject_owner_host_error_once_for_test();
@@ -477,9 +478,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     profiler_window_stop(profile_window)?;
     Ok((bfs, allocated, setup_seconds, search, layers, times, start))
     })();
-    if search_result.is_err() { sideband.report_failure(); }
+    if search_result.is_err() {
+        sideband.report_failure();
+        // The failed closure no longer owns a BFS: its abort/drop has returned.
+        // Constructor errors can also arrive here before a transport reader exists.
+        sideband.report_retired();
+    }
     else { sideband.report_success(); }
-    let remote_failed = match sideband.finish(&mut control_group) {
+    let remote_failed = match sideband.finish_with_cleanup(&mut control_group, || {
+        if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
+    }) {
         Ok(failed) => failed,
         Err(error) => {
             if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
@@ -542,6 +550,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         } else {
             "search_only_layer_counts"
         });
+        value["transport_control_pinned_payload_bytes"] =
+            serde_json::json!(bfs.transport_control_pinned_payload_bytes());
+        value["pinned_bytes_scope"] = serde_json::json!("archive_only");
         if !archive_enabled || stream_archive || !is_measure {
             value["durable_run_commit_seconds"] = serde_json::Value::Null;
         }

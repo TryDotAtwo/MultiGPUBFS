@@ -10,6 +10,14 @@ int init_blocking = -1, init_calls = 0;
 int last_send_peer = -1, last_recv_peer = -1;
 int cancel_after = -1;
 int cancellation_probe(void*) { return cancel_after == 0 || (cancel_after > 0 && --cancel_after == 0); }
+struct RetirementFixture { int published=0, queries=0; };
+int retirement_probe(void* context,int publish) {
+  auto& fixture=*static_cast<RetirementFixture*>(context);
+  assert(publish>=0);
+  if(publish)++fixture.published;
+  else ++fixture.queries;
+  return fixture.queries>=3;
+}
 int main() {
   void* comm = nullptr;
   ncclUniqueId id{};
@@ -95,7 +103,10 @@ int main() {
   // encountered while polling an in-progress NCCL operation.
   const int aborts_before = abort_calls;
   const int destroys_before = destroy_calls;
+  RetirementFixture retirement;
+  assert(mgbfs_nccl_bind_retirement(receiver,retirement_probe,&retirement)==0);
   assert(mgbfs_nccl_abort(receiver) == 0);
+  assert(retirement.published==1 && retirement.queries==3);
   assert(abort_calls == aborts_before + 1);
   assert(mgbfs_nccl_abort(receiver) == 0);
   assert(abort_calls == aborts_before + 1);

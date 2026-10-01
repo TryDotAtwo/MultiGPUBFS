@@ -7,7 +7,16 @@ use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
 pub struct SearchSideband {
     local: Arc<AtomicU8>,
     cancelled: Arc<AtomicBool>,
+    retirement: Arc<SearchRetirement>,
     worker: std::thread::JoinHandle<(Vec<Option<crate::control_connection::ControlConnection>>, Result<bool>)>,
+}
+/// Error-only acknowledgements. A local bit means all CUDA readers in this
+/// process have retired, not merely that a host failure was reported.
+#[derive(Default)]
+pub struct SearchRetirement {
+    pub local: AtomicBool,
+    pub group: AtomicBool,
+    pub failed: AtomicBool,
 }
 impl SearchSideband {
     pub fn report_success(&self) { let _ = self.local.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire); }
@@ -15,6 +24,23 @@ impl SearchSideband {
     pub fn cancel_requested(&self) -> bool { self.cancelled.load(Ordering::Acquire) }
     pub fn cancel_token(&self) -> Arc<AtomicBool> { Arc::clone(&self.cancelled) }
     pub fn failure_token(&self) -> Arc<AtomicU8> { Arc::clone(&self.local) }
+    pub fn retirement_token(&self) -> Arc<SearchRetirement> { Arc::clone(&self.retirement) }
+    pub fn report_retired(&self) {
+        if !self.retirement.failed.load(Ordering::Acquire) {
+            self.retirement.local.store(true, Ordering::Release);
+        }
+    }
+    pub fn finish_with_cleanup(self, group: &mut BootstrapGroup,
+        cleanup: impl FnOnce()) -> Result<bool> {
+        let mut cleanup = Some(cleanup);
+        while !self.worker.is_finished() {
+            if self.cancel_requested() {
+                if let Some(cleanup) = cleanup.take() { cleanup(); }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        self.finish(group)
+    }
     pub fn finish(self, group: &mut BootstrapGroup) -> Result<bool> {
         let (peers, result) = self.worker.join().map_err(|_| "SEARCH_SIDEBAND_PANIC")?;
         group.peers = peers;
@@ -28,30 +54,98 @@ fn search_frame(rank: u32, failed: bool) -> crate::control_wire::ControlFrame {
         slot: NO_SLOT, plane: Plane::None, fatal_code: u32::from(failed),
         source_rank: 0, destination_rank: 0, payload_bytes: 0 }
 }
+fn retirement_frame(rank: u32, epoch: u64) -> crate::control_wire::ControlFrame {
+    let mut frame = search_frame(rank, true);
+    frame.depth = 5 + epoch;
+    frame
+}
+
+fn search_retirement_loop(rank: u32,
+    peers: &mut [Option<crate::control_connection::ControlConnection>],
+    retirement: &SearchRetirement, initial: &mut [bool],
+    deadline: std::time::Instant) -> Result<()> {
+    let mut acknowledged = vec![false; peers.len()];
+    let mut sent = false;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("SEARCH_RETIREMENT_TIMEOUT".into());
+        }
+        if retirement.failed.load(Ordering::Acquire) {
+            return Err("SEARCH_RETIREMENT_LOCAL_FATAL".into());
+        }
+        if rank == 0 {
+            for peer in 1..peers.len() {
+                let conn = peers[peer].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
+                if let Some(frame) = conn.poll_boundary_receive()? {
+                    if frame == retirement_frame(peer as u32, 1) && !acknowledged[peer] {
+                        acknowledged[peer] = true;
+                    } else if frame == search_frame(peer as u32, frame.fatal_code != 0)
+                        && !initial[peer] && !acknowledged[peer] {
+                        // A success/failure notification already queued before
+                        // cancellation is not a reader-retirement ACK.
+                        initial[peer] = true;
+                    } else { return Err("SEARCH_RETIREMENT_FRAME".into()); }
+                }
+            }
+            if retirement.local.load(Ordering::Acquire)
+                && acknowledged[1..].iter().all(|&x| x) {
+                for peer in peers.iter_mut().skip(1) {
+                    boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
+                        retirement_frame(0, 2), deadline)?;
+                }
+                retirement.group.store(true, Ordering::Release);
+                return Ok(());
+            }
+        } else {
+            let conn = peers[0].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
+            if !sent && retirement.local.load(Ordering::Acquire) {
+                boundary_send(conn, retirement_frame(rank, 1), deadline)?;
+                sent = true;
+            }
+            if let Some(frame) = conn.poll_boundary_receive()? {
+                if !sent || frame != retirement_frame(0, 2) {
+                    return Err("SEARCH_RETIREMENT_FRAME".into());
+                }
+                retirement.group.store(true, Ordering::Release);
+                return Ok(());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
 
 fn search_sideband_loop(
     rank: u32,
     peers: &mut [Option<crate::control_connection::ControlConnection>],
     local: &AtomicU8,
     cancelled: &AtomicBool,
+    retirement: &SearchRetirement,
     timeout: std::time::Duration,
 ) -> Result<bool> {
     let deadline = std::time::Instant::now().checked_add(timeout)
         .ok_or("SEARCH_SIDEBAND_TIMEOUT")?;
     if peers.len() == 1 {
         loop {
+            if std::time::Instant::now() >= deadline || retirement.failed.load(Ordering::Acquire) {
+                cancelled.store(true, Ordering::Release);
+                return Err("SEARCH_RETIREMENT_TIMEOUT".into());
+            }
             match local.load(Ordering::Acquire) {
                 1 => return Ok(false),
                 2 => {
                     cancelled.store(true, Ordering::Release);
-                    return Ok(true);
+                    if retirement.local.load(Ordering::Acquire) {
+                        retirement.group.store(true, Ordering::Release);
+                        return Ok(true);
+                    }
                 }
                 _ if std::time::Instant::now() >= deadline => {
                     cancelled.store(true, Ordering::Release);
                     return Err("SEARCH_SIDEBAND_TIMEOUT".into());
                 }
-                _ => std::thread::sleep(std::time::Duration::from_millis(1)),
+                _ => {},
             }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     let mut sent = false;
@@ -79,6 +173,9 @@ fn search_sideband_loop(
                     boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
                         search_frame(0, failed), deadline)?;
                 }
+                if failed {
+                    search_retirement_loop(rank, peers, retirement, &mut ready, deadline)?;
+                }
                 return Ok(failed);
             }
         } else {
@@ -93,6 +190,9 @@ fn search_sideband_loop(
                 }
                 let failed = frame.fatal_code != 0;
                 if failed { cancelled.store(true, Ordering::Release); }
+                if failed {
+                    search_retirement_loop(rank, peers, retirement, &mut ready, deadline)?;
+                }
                 return Ok(failed);
             }
         }
@@ -125,15 +225,20 @@ impl BootstrapGroup {
         let mut peers = std::mem::take(&mut self.peers);
         let local = Arc::new(AtomicU8::new(0));
         let cancelled = Arc::new(AtomicBool::new(false));
+        let retirement = Arc::new(SearchRetirement::default());
         let worker_local = Arc::clone(&local);
         let worker_cancelled = Arc::clone(&cancelled);
+        let worker_retirement = Arc::clone(&retirement);
         let worker = std::thread::spawn(move || {
             let result = search_sideband_loop(rank, &mut peers,
-                &worker_local, &worker_cancelled, timeout);
-            if result.is_err() { worker_cancelled.store(true, Ordering::Release); }
+                &worker_local, &worker_cancelled, &worker_retirement, timeout);
+            if result.is_err() {
+                worker_cancelled.store(true, Ordering::Release);
+                worker_retirement.failed.store(true, Ordering::Release);
+            }
             (peers, result)
         });
-        Ok(SearchSideband { local, cancelled, worker })
+        Ok(SearchSideband { local, cancelled, retirement, worker })
     }
     /// Compare all 256 digest bits before any rank constructs CUDA/NCCL state.
     /// An invalid local configuration still participates with a zero digest.

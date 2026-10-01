@@ -21,6 +21,14 @@ extern "C" fn nccl_cancel_probe(context: *mut c_void) -> i32 {
     let flag = unsafe { &*context.cast::<std::sync::atomic::AtomicBool>() };
     i32::from(flag.load(std::sync::atomic::Ordering::Acquire))
 }
+extern "C" fn nccl_retirement_probe(context: *mut c_void, publish: i32) -> i32 {
+    if context.is_null() { return -1; }
+    let state = unsafe { &*context.cast::<crate::bootstrap::SearchRetirement>() };
+    if publish < 0 { state.failed.store(true, std::sync::atomic::Ordering::Release); }
+    if publish > 0 { state.local.store(true, std::sync::atomic::Ordering::Release); }
+    if state.failed.load(std::sync::atomic::Ordering::Acquire) { -1 }
+    else { i32::from(state.group.load(std::sync::atomic::Ordering::Acquire)) }
+}
 
 #[cfg(debug_assertions)]
 thread_local! {
@@ -542,6 +550,7 @@ pub struct DistributedNativeBfs {
     // Declared after Comm so the callback context outlives Comm::drop.
     cancel_requested: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
+    retirement: Option<std::sync::Arc<crate::bootstrap::SearchRetirement>>,
     lsa_view: Option<LsaView>,
     generate: Option<Plan>,
     hash: Option<Plan>,
@@ -591,6 +600,11 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    /// Requested host-pinned payload; CUDA's page/registration overhead is not
+    /// part of this byte-exact payload and is measured separately.
+    pub fn transport_control_pinned_payload_bytes(&self) -> u64 {
+        if self.lsa_view.is_some() { 4 } else { 0 }
+    }
     pub fn abort_group(&mut self) {
         if !self.failed {
             self.failed = true;
@@ -605,6 +619,12 @@ impl DistributedNativeBfs {
     }
     pub fn set_failure_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicU8>) {
         self.failure_report = Some(token);
+    }
+    pub fn set_retirement_token(&mut self, token: std::sync::Arc<crate::bootstrap::SearchRetirement>) -> Result<()> {
+        check(unsafe { mgbfs_nccl_bind_retirement(self.comm.0, Some(nccl_retirement_probe),
+            std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
+        self.retirement = Some(token);
+        Ok(())
     }
     fn ensure_not_cancelled(&self) -> Result<()> {
         if self.cancel_requested.as_ref().is_some_and(|flag|
@@ -1301,6 +1321,7 @@ impl DistributedNativeBfs {
             failed: false,
             cancel_requested: None,
             failure_report: None,
+            retirement: None,
             // Keep the setup-vote stream alive outside the fallible local
             // result. An error here must not destroy it before peers vote.
             stream: Stream(std::ptr::null_mut()),

@@ -212,6 +212,7 @@ fn search_sideband_reports_asymmetric_failure_and_preserves_healthy_boundary() {
             Duration::from_secs(3)).unwrap());
         let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
         sideband.report_failure();
+        sideband.report_retired();
         assert!(sideband.finish(&mut group).unwrap());
     });
     let mut group = rendezvous(&path, 0, 2, record().identity,
@@ -231,6 +232,7 @@ fn search_sideband_reports_asymmetric_failure_and_preserves_healthy_boundary() {
         assert!(std::time::Instant::now() < deadline, "remote cancellation was not delivered");
         std::thread::sleep(Duration::from_millis(1));
     }
+    sideband.report_retired();
     assert!(sideband.finish(&mut group).unwrap());
     peer.join().unwrap();
     std::fs::remove_file(path).unwrap();
@@ -255,12 +257,64 @@ fn single_rank_search_sideband_waits_for_local_outcome() {
         Duration::from_secs(3)).unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     sideband.report_failure();
+    sideband.report_retired();
     assert!(sideband.finish(&mut group).unwrap());
     assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
         Duration::from_secs(3)).unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     sideband.report_success();
     assert!(!sideband.finish(&mut group).unwrap());
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn failure_notification_does_not_authorize_window_release_before_all_readers_retire() {
+    use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    let root = std::env::temp_dir().join(format!("mgbfs-retirement-{}-{}",
+        std::process::id(), std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("bootstrap");
+    let peer_path = path.clone();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let peer = std::thread::spawn(move || {
+        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
+            Duration::from_secs(3), || panic!("peer cannot create ID")).unwrap();
+        assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
+        assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
+            Duration::from_secs(3)).unwrap());
+        let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+        let retirement = sideband.retirement_token();
+        sideband.report_failure();
+        sideband.report_retired();
+        ready_tx.send(retirement).unwrap();
+        assert!(sideband.finish(&mut group).unwrap());
+    });
+    let mut group = rendezvous(&path, 0, 2, record().identity,
+        Duration::from_secs(3), || Ok([23; 128])).unwrap();
+    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
+    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
+        Duration::from_secs(3)).unwrap());
+    let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
+    let remote = ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !sideband.cancel_requested() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Rank 1 has no readers; rank 0 deliberately retains its receive lease.
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(!remote.group.load(Ordering::Acquire));
+    assert!(!sideband.retirement_token().group.load(Ordering::Acquire));
+    let local = sideband.retirement_token();
+    assert!(sideband.finish_with_cleanup(&mut group, || {
+        local.local.store(true, Ordering::Release);
+    }).unwrap());
+    peer.join().unwrap();
+    assert!(remote.group.load(Ordering::Acquire));
+    std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();
 }
 

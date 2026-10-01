@@ -12,10 +12,12 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = "c7488ca6d901afc1545edba4e25ea28f915f8206"
+SOURCE = os.environ.get("MGBFS_GATE_SOURCE", "c7488ca6d901afc1545edba4e25ea28f915f8206")
+if len(SOURCE) != 40 or any(c not in "0123456789abcdef" for c in SOURCE):
+    raise ValueError("SOURCE_REQUIRES_FULL_COMMIT_ID")
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "lsa_abort_stack"
-LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults", "lsa_abort_stack")
+MODE = os.environ.get("MGBFS_GATE_MODE", "lsa_abort_stack")
+LSA_ENABLED = MODE in ("process_faults_only", "owner_capture_then_lsa_faults", "lsa_abort_stack", "provision_only")
 
 
 import base64,time
@@ -516,6 +518,12 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "provision_only":
+            report["status"] = "PROVISIONED_NOT_VALIDATED"
+            report["scope"] = "pinned source and dependencies built; no BFS acceptance claim"
+            report["work"] = str(work)
+            save()
+            return
         if MODE in ("owner_capture_gate", "owner_capture_then_lsa_faults"):
             import re
             sys.path.insert(0, str(source / "scripts"))

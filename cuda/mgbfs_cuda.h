@@ -226,6 +226,10 @@ int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* i
 /* Bind a probe owned by the rank's dispatcher; only that dispatcher calls
  * NCCL/abort. The probe context must outlive the communicator. */
 int mgbfs_nccl_bind_cancel(void* comm,int (*probe)(void*),void* context);
+/* Error-only reader retirement: action 1 publishes local quiescence; action 0
+ * polls group acknowledgement. Return 1 only after ALL ranks retired readers,
+ * 0 pending, -1 protocol failure. Context outlives communicator. */
+int mgbfs_nccl_bind_retirement(void* comm,int (*probe)(void*,int),void* context);
 int mgbfs_nccl_send_recv(void* comm,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* stream);
 int mgbfs_nccl_all_gather_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
 int mgbfs_nccl_all_reduce_max_u32(void* comm,const uint32_t* send,uint32_t* receive,void* stream);

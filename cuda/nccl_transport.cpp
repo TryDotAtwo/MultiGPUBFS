@@ -7,10 +7,13 @@
 #include <climits>
 #include <chrono>
 #include <thread>
+#include <atomic>
 struct Comm;
 namespace { int await_nccl(Comm*,ncclResult_t); }
+namespace { int terminal_abort(Comm*); }
 #ifdef MGBFS_NCCL_LSA
 #include <nccl_device.h>
+#include <cuda/atomic>
 #if NCCL_VERSION_CODE < 22900
 #error "MGBFS_NCCL_LSA requires NCCL 2.29 or newer"
 #endif
@@ -20,6 +23,9 @@ struct Comm {
   uint32_t rank{}, world{};
   int (*cancel_requested)(void*){};
   void* cancel_context{};
+  int (*retirement_probe)(void*,int){};
+  void* retirement_context{};
+  bool terminal_started{};
 #ifdef MGBFS_NCCL_LSA
   ncclDevComm device{};
   ncclWindow_t window{};
@@ -27,14 +33,21 @@ struct Comm {
   uint32_t candidate_capacity{}, state_stride{};
   size_t states_offset{};
   bool window_ready{},device_ready{};
+  std::atomic<uint32_t>* terminal_host{};
+  uint32_t* terminal_device{};
+  bool lsa_used{}, readers_retired{}, retirement_failed{};
 #endif
   ~Comm(){
 #ifdef MGBFS_NCCL_LSA
     // Normal teardown requires the caller to drain all LSA stream consumers.
     // After ncclCommAbort the process is terminal; avoid using an invalid comm.
+    // An unsuccessful terminal handshake does not authorize unmapping a peer's
+    // window. The process supervisor must terminate the rank group instead.
+    if(retirement_failed)return;
     if(value && device_ready)ncclDevCommDestroy(value,&device);
     if(value && window_ready)ncclCommWindowDeregister(value,window);
     if(symmetric)ncclMemFree(symmetric);
+    if(terminal_host)cudaFreeHost(terminal_host);
 #endif
     if(value){
       const auto result=ncclCommFinalize(value);
@@ -56,9 +69,7 @@ int await_nccl(Comm* p, ncclResult_t submitted) {
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
   for(;;) {
     if(p->cancel_requested && p->cancel_requested(p->cancel_context)) {
-      const auto value=p->value;
-      p->value=nullptr;
-      if(value) ncclCommAbort(value);
+      terminal_abort(p);
       return 7;
     }
     ncclResult_t state=ncclSuccess;
@@ -75,13 +86,69 @@ int await_nccl(Comm* p, ncclResult_t submitted) {
       return 9;
     }
     if(std::chrono::steady_clock::now()>=deadline) {
-      const auto value=p->value;
-      p->value=nullptr;
-      ncclCommAbort(value);
+      terminal_abort(p);
       return 10;
     }
     std::this_thread::yield();
   }
+}
+int terminal_abort(Comm* p) {
+  if(!p || !p->value)return p?0:1;
+  if(p->terminal_started)return 13;
+  p->terminal_started=true;
+#ifdef MGBFS_NCCL_LSA
+  if(p->terminal_host)p->terminal_host->store(1,std::memory_order_release);
+  if(p->lsa_used && !p->readers_retired) {
+    // Revoke cancels NCCL's internal operations without freeing registered
+    // memory. Our external LSA rendezvous observes its own sticky terminal.
+    auto status=ncclCommRevoke(p->value,0);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
+    while(status==ncclInProgress) {
+      if(ncclCommGetAsyncError(p->value,&status)!=ncclSuccess ||
+         std::chrono::steady_clock::now()>=deadline) {
+        if(p->retirement_probe)p->retirement_probe(p->retirement_context,-1);
+        p->retirement_failed=true;return 11;
+      }
+      std::this_thread::yield();
+    }
+    if(status!=ncclSuccess || cudaDeviceSynchronize()!=cudaSuccess ||
+       !p->retirement_probe) {
+      if(p->retirement_probe)p->retirement_probe(p->retirement_context,-1);
+      p->retirement_failed=true;return 12;
+    }
+    int acknowledged=p->retirement_probe(p->retirement_context,1);
+    while(acknowledged==0 && std::chrono::steady_clock::now()<deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      acknowledged=p->retirement_probe(p->retirement_context,0);
+    }
+    if(acknowledged!=1) {
+      p->retirement_probe(p->retirement_context,-1);
+      p->retirement_failed=true;return 13;
+    }
+    p->readers_retired=true;
+  }
+#endif
+  const auto value=p->value;
+  p->value=nullptr;
+  const auto status=ncclCommAbort(value);
+  // Non-LSA errors still participate in the same sideband completion. Here
+  // NCCL abort has no external LSA reader whose window could be unmapped.
+  if(p->retirement_probe) {
+#ifdef MGBFS_NCCL_LSA
+    if(p->readers_retired)return status==ncclSuccess?0:2;
+#endif
+    if(status!=ncclSuccess || cudaDeviceSynchronize()!=cudaSuccess) {
+      p->retirement_probe(p->retirement_context,-1);return 14;
+    }
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(120);
+    int ready=p->retirement_probe(p->retirement_context,1);
+    while(ready==0 && std::chrono::steady_clock::now()<deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      ready=p->retirement_probe(p->retirement_context,0);
+    }
+    if(ready!=1) {p->retirement_probe(p->retirement_context,-1);return 13;}
+  }
+  return status==ncclSuccess?0:2;
 }
 }
 extern "C" int mgbfs_nccl_unique_id(void* out){if(!out)return 1;static_assert(sizeof(ncclUniqueId)==128);return ncclGetUniqueId(static_cast<ncclUniqueId*>(out))==ncclSuccess?0:2;}
@@ -93,6 +160,12 @@ extern "C" int mgbfs_nccl_bind_cancel(void* raw,int (*probe)(void*),void* contex
   if(!p||!p->value||!probe||!context)return 1;
   p->cancel_requested=probe;
   p->cancel_context=context;
+  return 0;
+}
+extern "C" int mgbfs_nccl_bind_retirement(void* raw,int (*probe)(void*,int),void* context){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||!probe||!context)return 1;
+  p->retirement_probe=probe;p->retirement_context=context;
   return 0;
 }
 extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* raw_stream){
@@ -121,16 +194,14 @@ extern "C" int mgbfs_nccl_abort(void* raw){
   auto* p = static_cast<Comm*>(raw);
   if(!p) return 1;
   if(!p->value) return 0;
-  const auto value = p->value;
-  p->value = nullptr; // Terminal even if NCCL reports an abort error.
   std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=nccl_abort_begin\n",p->rank);
-  const auto status=ncclCommAbort(value);
+  const auto status=terminal_abort(p);
   std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=nccl_abort_end code=%d\n",p->rank,int(status));
-  return status == ncclSuccess ? 0 : 2;
+  return status;
 }
 extern "C" int mgbfs_nccl_poll(void* raw){
   auto* p = static_cast<Comm*>(raw);
-  if(!p || !p->value) return 1;
+  if(!p || !p->value || p->terminal_started) return 1;
   ncclResult_t state = ncclSuccess;
   if(ncclCommGetAsyncError(p->value, &state) != ncclSuccess) return 2;
   return state == ncclSuccess ? 0 : (state == ncclInProgress ? 4 : 3);
@@ -176,19 +247,54 @@ extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uin
 namespace {
 constexpr size_t lsa_control_bytes=256;
 constexpr unsigned lsa_copy_ctas=16,lsa_copy_threads=256;
+static_assert(64+lsa_copy_ctas*sizeof(unsigned long long)<=lsa_control_bytes);
+// One counter per CTA in each rank's existing symmetric control plane. There
+// is one writer, serialized by the exchange stream. Payload remains exact-sized.
+// External ncclDevComm has no public abort flag: never use the SDK's uncancellable
+// barrier or modify its private fields for cancellation.
+__device__ bool lsa_rendezvous(ncclDevComm dev,ncclWindow_t win,
+    const uint32_t* terminal) {
+  __shared__ unsigned long long expected;
+  __shared__ int finished;
+  __syncthreads();
+  if(threadIdx.x==0) {
+    auto* counters=reinterpret_cast<unsigned long long*>(
+        static_cast<unsigned char*>(ncclGetLsaPointer(win,0,dev.lsaRank))+64);
+    cuda::atomic_ref<unsigned long long,cuda::thread_scope_system> own(counters[blockIdx.x]);
+    expected=own.load(cuda::memory_order_relaxed)+1;
+    finished=expected==0?0:1;
+    if(!finished) {
+      auto* control=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
+      cuda::atomic_ref<uint32_t,cuda::thread_scope_system> fatal(control[2]);
+      fatal.store(1,cuda::memory_order_release);
+    }
+    if(finished)own.store(expected,cuda::memory_order_release);
+    for(unsigned rank=0;finished && rank<unsigned(dev.nRanks);++rank) {
+      auto* peer=reinterpret_cast<unsigned long long*>(
+          static_cast<unsigned char*>(ncclGetLsaPointer(win,0,rank))+64);
+      cuda::atomic_ref<unsigned long long,cuda::thread_scope_system> arrived(peer[blockIdx.x]);
+      cuda::atomic_ref<const uint32_t,cuda::thread_scope_system> stopped(*terminal);
+      while(arrived.load(cuda::memory_order_acquire)<expected) {
+        if(stopped.load(cuda::memory_order_acquire)) {finished=0;break;}
+        __nanosleep(128);
+      }
+      if(stopped.load(cuda::memory_order_acquire))finished=0;
+    }
+  }
+  __syncthreads();
+  return finished!=0;
+}
 // The symmetric slot has one writer for each field in each exchange round:
 // [recv_count, local_fatal, global_fatal] followed by dense hash/state planes.
 __global__ void lsa_publish_count(ncclDevComm dev,ncclWindow_t win,
     const uint32_t* counts,const uint32_t* group_fatal,
-    uint32_t logical_owner,uint32_t peer,uint32_t cap){
+    uint32_t logical_owner,uint32_t peer,uint32_t cap,const uint32_t* terminal){
   auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
   if(*group_fatal){
     if(threadIdx.x==0){local[0]=0;local[1]=1;local[2]=1;}
     return;
   }
-  ncclLsaBarrierSession<ncclCoopCta> barrier{
-    ncclCoopCta(),dev,ncclTeamTagLsa(),0};
-  barrier.sync(ncclCoopCta(),cuda::memory_order_acquire);
+  if(!lsa_rendezvous(dev,win,terminal))return;
   if(threadIdx.x==0){
     auto* remote=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,peer));
     uint64_t total=0;
@@ -200,17 +306,15 @@ __global__ void lsa_publish_count(ncclDevComm dev,ncclWindow_t win,
     local[1]=bad;
     remote[0]=bad?0:counts[logical_owner];
   }
-  barrier.sync(ncclCoopCta(),cuda::memory_order_release);
+  lsa_rendezvous(dev,win,terminal);
 }
 __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
     const uint4* hashes,const uint4* states,const uint32_t* counts,
     const uint32_t* group_fatal,
     uint32_t logical_owner,uint32_t peer,uint32_t cap,uint32_t stride,
-    size_t states_offset){
+    size_t states_offset,const uint32_t* terminal){
   if(*group_fatal)return;
-  ncclLsaBarrierSession<ncclCoopCta> barrier{
-    ncclCoopCta(),dev,ncclTeamTagLsa(),blockIdx.x};
-  barrier.sync(ncclCoopCta(),cuda::memory_order_acquire);
+  if(!lsa_rendezvous(dev,win,terminal))return;
   auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
   bool bad=false;
   for(unsigned rank=0;rank<unsigned(dev.nRanks);++rank){
@@ -232,7 +336,7 @@ __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
     for(uint64_t i=t;i<words;i+=step)
       dest_states[i]=states[begin*(stride/16)+i];
   }
-  barrier.sync(ncclCoopCta(),cuda::memory_order_release);
+  lsa_rendezvous(dev,win,terminal);
 }
 void lsa_error(char* error,size_t capacity,const char* where,ncclResult_t code){
   if(error&&capacity)std::snprintf(error,capacity,"%s: %s",where,ncclGetErrorString(code));
@@ -256,6 +360,12 @@ extern "C" int mgbfs_nccl_lsa_prepare(void* raw,uint32_t cap,uint32_t stride,
   p->states_offset=size_t(state_offset);
   p->candidate_capacity=cap;
   p->state_stride=stride;
+  static_assert(sizeof(std::atomic<uint32_t>)==sizeof(uint32_t));
+  static_assert(std::atomic<uint32_t>::is_always_lock_free);
+  void* terminal=nullptr;
+  if(cudaHostAlloc(&terminal,sizeof(uint32_t),cudaHostAllocMapped)!=cudaSuccess)return 6;
+  p->terminal_host=new(terminal)std::atomic<uint32_t>(0);
+  if(cudaHostGetDevicePointer(reinterpret_cast<void**>(&p->terminal_device),terminal,0)!=cudaSuccess)return 6;
   result=ncclMemAlloc(reinterpret_cast<void**>(&p->symmetric),
                       size_t(state_offset+state_bytes));
   if(result!=ncclSuccess){lsa_error(error,error_capacity,"mem_alloc",result);return 5;}
@@ -288,16 +398,19 @@ extern "C" int mgbfs_nccl_lsa_exchange(void* raw,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
     const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,void* raw_stream){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->device_ready||!sorted_hashes||!packed_states||!owner_counts||!group_fatal||
+  if(!p||!p->value||p->terminal_started||!p->device_ready||!p->terminal_device||
+     !sorted_hashes||!packed_states||!owner_counts||!group_fatal||
      logical_owner>=p->world||peer>=p->world||peer==p->rank)return 1;
+  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  p->lsa_used=true;
   auto stream=static_cast<cudaStream_t>(raw_stream);
   lsa_publish_count<<<1,32,0,stream>>>(p->device,p->window,owner_counts,
-      group_fatal,logical_owner,peer,p->candidate_capacity);
+      group_fatal,logical_owner,peer,p->candidate_capacity,p->terminal_device);
   if(cudaGetLastError()!=cudaSuccess)return 2;
   lsa_copy_exact<<<lsa_copy_ctas,lsa_copy_threads,0,stream>>>(
       p->device,p->window,static_cast<const uint4*>(sorted_hashes),
       static_cast<const uint4*>(packed_states),owner_counts,group_fatal,
-      logical_owner,peer,p->candidate_capacity,p->state_stride,p->states_offset);
+      logical_owner,peer,p->candidate_capacity,p->state_stride,p->states_offset,p->terminal_device);
   return cudaGetLastError()==cudaSuccess?0:3;
 }
 extern "C" int mgbfs_nccl_lsa_view(void* raw,const uint32_t** count,

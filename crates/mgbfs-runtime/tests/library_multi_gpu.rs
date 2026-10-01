@@ -587,6 +587,25 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
     );
     let failure_report = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let peer_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let retirements: Vec<_> = (0..2).map(|_| Arc::new(
+        mgbfs_runtime::bootstrap::SearchRetirement::default())).collect();
+    // This fixture uses threads, not the production TCP sideband. Acknowledge
+    // only after BOTH production abort callbacks reported their CUDA drains.
+    let retirement_relay = {
+        let states = retirements.clone();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while !states.iter().all(|s| s.local.load(std::sync::atomic::Ordering::Acquire)) {
+                if std::time::Instant::now() >= deadline || states.iter().any(|s|
+                    s.failed.load(std::sync::atomic::Ordering::Acquire)) {
+                    for state in &states { state.failed.store(true, std::sync::atomic::Ordering::Release); }
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            for state in &states { state.group.store(true, std::sync::atomic::Ordering::Release); }
+        })
+    };
     let relay = inject_host.then(|| {
         let failure_report = Arc::clone(&failure_report);
         let peer_cancel = Arc::clone(&peer_cancel);
@@ -603,6 +622,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                 let graph = graph.clone();
                 let failure_report = Arc::clone(&failure_report);
                 let peer_cancel = Arc::clone(&peer_cancel);
+                let retirement = Arc::clone(&retirements[rank as usize]);
                 std::thread::spawn(move || {
                     std::panic::catch_unwind(|| {
                     if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=before_constructor"); }
@@ -626,6 +646,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                         &graph, [7; 16], id, cfg, None, 64 << 20, false,
                         mgbfs_core::config::ReferenceOwner::CucoRank,
                     ).unwrap();
+                    bfs.set_retirement_token(retirement).unwrap();
                     if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=constructed"); }
                     if inject_host {
                         bfs.set_cancel_token(peer_cancel).unwrap();
@@ -656,6 +677,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
         .map(|worker| worker.join().unwrap())
         .collect();
     if let Some(relay) = relay { relay.join().unwrap(); }
+    retirement_relay.join().unwrap();
     errors
 }
 
