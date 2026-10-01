@@ -223,6 +223,34 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == "device_protocol_replay":
+            # Reuse the production process replay; keep failed gates visible
+            # while collecting independent results from the remaining gates.
+            report["protocol_gates"] = []
+            replay = source / "scripts/replay_lsa_cancel_candidate.py"
+            suites = [
+                ("dense", ["--profile", "DENSE", "--oracle", "--capacity-faults"], {}),
+                ("hash-first", ["--profile", "HASH_FIRST", "--oracle", "--capacity-faults"], {}),
+                ("owner-capture", ["--profile", "HASH_FIRST", "--healthy-only"],
+                 {"MGBFS_TEST_OWNER_DAG_CAPTURE": "1"}),
+            ]
+            suites += [(tool, ["--healthy-only", "--instrument-processes", tool], {})
+                       for tool in ("memcheck", "racecheck", "initcheck", "synccheck")]
+            for name, arguments, overrides in suites:
+                gate_env = dict(env)
+                gate_env.update(overrides)
+                with (logs / (name + "-replay.log")).open("w") as log:
+                    result = subprocess.run(
+                        [str(venv / "bin/python"), str(replay), str(work),
+                         str(logs / name), *arguments], cwd=source, env=gate_env,
+                        stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+                report["protocol_gates"].append(
+                    {"name": name, "returncode": result.returncode})
+                save()
+            report["status"] = ("PROTOCOL_GATES_PASS" if all(
+                item["returncode"] == 0 for item in report["protocol_gates"])
+                else "PROTOCOL_GATES_FAILED")
+            return
         if MODE == "warmup_admission_gate":
             run(["cargo", "build", "--locked", "--release", "-p", "mgbfs-cli",
                  "--features", "library-owner"], "warmup-cli-build", timeout=1800)
