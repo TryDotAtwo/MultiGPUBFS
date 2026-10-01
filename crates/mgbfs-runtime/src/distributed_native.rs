@@ -1369,7 +1369,7 @@ impl DistributedNativeBfs {
         let comm = Comm(comm, true);
         // Declared after Comm: on a constructor error the sideband learns
         // failure before communicator cleanup can wait for a peer.
-        let mut startup_report = crate::failure::ConstructorFailureReport::new(startup_failure);
+        let mut startup_report = crate::failure::FailureReportGuard::new(startup_failure);
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_CONSTRUCTOR_FAULT_RANK")
             .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(cfg.rank) {

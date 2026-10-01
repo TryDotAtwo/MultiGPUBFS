@@ -350,6 +350,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     // Keep control sockets alive throughout this reference run. Dispatching GPU
     // epochs on them is a separate integration step, not claimed here.
     let id = control_group.nccl_id;
+    // Allocated before archive admission; both the disk worker and existing
+    // search sideband observe this one sticky failure signal.
+    let search_failure = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
     let archive_setup = (|| -> Result<Option<PinnedArchive>> {
         #[cfg(debug_assertions)]
         if test_fault_rank("MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK", rank, world)? {
@@ -358,22 +361,24 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if archive_enabled {
             create_archive_extent(Path::new(&archive_path), stream_archive)
                 .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
-                .and_then(|extent| PinnedArchive::new(
+                .and_then(|extent| PinnedArchive::new_with_failure_report(
                     extent, disk_bytes, archive_width, digest, archive_rows,
-                    archive_slots,
+                    archive_slots, Some(search_failure.clone()),
                 ))
                 .map(Some)
         } else { Ok(None) }
     })();
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveAdmission,
-        archive_setup.is_err(), Duration::from_secs(600),
+        archive_setup.is_err() || search_failure.load(std::sync::atomic::Ordering::Acquire) == 2,
+        Duration::from_secs(600),
     )? {
         return Err(archive_setup.err().unwrap_or_else(|| "REMOTE_ARCHIVE_ADMISSION_FATAL".into()));
     }
     let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
-    let sideband = control_group.start_search_sideband(Duration::from_secs(7200))?;
+    let sideband = control_group.start_search_sideband_with_report(
+        Duration::from_secs(7200), search_failure)?;
     let mut search_result = (|| -> Result<_> {
     #[cfg(debug_assertions)]
     if test_fault_rank("MGBFS_TEST_NCCL_STARTUP_FAULT_RANK", rank, world)? {

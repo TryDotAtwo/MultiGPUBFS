@@ -217,13 +217,18 @@ pub enum BoundaryPhase {
 }
 impl BootstrapGroup {
     pub fn start_search_sideband(&mut self, timeout: std::time::Duration) -> Result<SearchSideband> {
+        self.start_search_sideband_with_report(timeout, Arc::new(AtomicU8::new(0)))
+    }
+    pub fn start_search_sideband_with_report(
+        &mut self, timeout: std::time::Duration, report: Arc<AtomicU8>,
+    ) -> Result<SearchSideband> {
         if !self.configuration_agreed || self.next_boundary < 2
             || self.peers.len() <= self.rank as usize || timeout.is_zero() {
             return Err("SEARCH_SIDEBAND_ORDER".into());
         }
         let rank = self.rank;
         let mut peers = std::mem::take(&mut self.peers);
-        let local = Arc::new(AtomicU8::new(0));
+        let local = report;
         let cancelled = Arc::new(AtomicBool::new(false));
         let retirement = Arc::new(SearchRetirement::default());
         let worker_local = Arc::clone(&local);

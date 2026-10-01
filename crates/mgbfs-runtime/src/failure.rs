@@ -41,12 +41,15 @@ mod native_status_tests {
     }
 }
 
-/// Publish constructor failure before an earlier-declared communicator drops.
-pub(crate) struct ConstructorFailureReport {
+/// Publish failure before owned resources drop. Explicitly publish before
+/// propagating an error if a later-declared live reader would drop first.
+#[cfg(any(test, feature = "cuda"))]
+pub(crate) struct FailureReportGuard {
     report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     armed: bool,
 }
-impl ConstructorFailureReport {
+#[cfg(any(test, feature = "cuda"))]
+impl FailureReportGuard {
     pub(crate) fn new(report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>) -> Self {
         Self { report, armed: true }
     }
@@ -59,7 +62,8 @@ impl ConstructorFailureReport {
         }
     }
 }
-impl Drop for ConstructorFailureReport {
+#[cfg(any(test, feature = "cuda"))]
+impl Drop for FailureReportGuard {
     fn drop(&mut self) {
         if self.armed {
             self.publish();
@@ -69,7 +73,7 @@ impl Drop for ConstructorFailureReport {
 
 #[cfg(test)]
 mod constructor_report_tests {
-    use super::ConstructorFailureReport;
+    use super::FailureReportGuard;
     use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
     #[test]
     fn constructor_error_is_reported_before_communicator_cleanup() {
@@ -80,7 +84,7 @@ mod constructor_report_tests {
         let report = Arc::new(AtomicU8::new(0));
         let failed = || -> Result<(), ()> {
             let _communicator = Cleanup(report.clone());
-            let _notification = ConstructorFailureReport::new(Some(report.clone()));
+            let _notification = FailureReportGuard::new(Some(report.clone()));
             Err(())
         };
         assert!(failed().is_err());
@@ -89,7 +93,7 @@ mod constructor_report_tests {
     fn successful_constructor_does_not_publish_failure() {
         let report = Arc::new(AtomicU8::new(0));
         {
-            let mut notification = ConstructorFailureReport::new(Some(report.clone()));
+            let mut notification = FailureReportGuard::new(Some(report.clone()));
             notification.disarm();
         }
         assert_eq!(report.load(Ordering::Acquire), 0);
@@ -102,7 +106,7 @@ mod constructor_report_tests {
         }
         let report = Arc::new(AtomicU8::new(0));
         let failed = || -> Result<(), ()> {
-            let notification = ConstructorFailureReport::new(Some(report.clone()));
+            let notification = FailureReportGuard::new(Some(report.clone()));
             let _later_resource = Cleanup(report.clone());
             Err(()).map_err(|error| { notification.publish(); error })
         };
