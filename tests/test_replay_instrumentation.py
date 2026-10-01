@@ -20,6 +20,11 @@ class InstrumentationCommandTest(unittest.TestCase):
     def test_plain_process_has_no_instrumentation(self):
         self.assertEqual(self.command(None), ['/bin/mgbfs', 'bench', '--reference'])
 
+    def test_nsys_collects_copy_and_wait_callchains(self):
+        command = self.command('nsys')
+        self.assertIn('--sample=process-tree', command)
+        self.assertIn('--cudabacktrace=memory:0,sync:0,other:0', command)
+
     def test_unknown_instrumentation_rejected(self):
         self.assertTrue(hasattr(replay, 'instrument_rank_command'))
         with self.assertRaises(ValueError):
