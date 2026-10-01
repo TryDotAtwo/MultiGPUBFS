@@ -285,6 +285,9 @@ int mgbfs_nccl_lsa_cancel_word(void* comm,uint32_t** word);
  * enter the same epoch order, including empty ranks; leased with payload work.
  * No host readback or NCCL internal collective kernel. LSA-only, no fallback. */
 int mgbfs_nccl_lsa_fatal_vote(void* comm,const uint32_t* send,uint32_t* receive,void* stream);
+/* Fused sticky owner/ring vote, using the same LSA rendezvous order. */
+int mgbfs_nccl_lsa_owner_fatal_vote(void* comm,MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner,uint32_t* receive,void* stream);
 /* Single-source scatter, same source and matching byte counts on every rank.
  * sizes is a host array [world] on source; send holds dense rank-ordered ranges.
  * Source's own range stays a view (no copy). Receivers provide prevalidated

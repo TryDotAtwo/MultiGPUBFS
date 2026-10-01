@@ -379,9 +379,10 @@ __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
 // kernel can remain unmatched between a rank-local host failure and a later
 // HASH_FIRST rendezvous. CTA0 publishes/reduces; all CTA counters participate.
 __global__ void lsa_fatal_vote(ncclDevComm dev,ncclWindow_t win,
-    const uint32_t* send,uint32_t* receive,const uint32_t* terminal){
+    const uint32_t* send,uint32_t* receive,const uint32_t* terminal,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
   auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
-  if(blockIdx.x==0&&threadIdx.x==0)local[4]=*send;
+  if(blockIdx.x==0&&threadIdx.x==0)local[4]=ring?(ring->fatal!=0||owner->error!=0):*send;
   if(!lsa_rendezvous(dev,win,terminal))return;
   if(blockIdx.x==0&&threadIdx.x==0){
     uint32_t bad=0;
@@ -390,6 +391,10 @@ __global__ void lsa_fatal_vote(ncclDevComm dev,ncclWindow_t win,
       bad|=peer[4]!=0;
     }
     *receive=bad;
+    if(ring&&bad){
+      atomicCAS(&ring->fatal,0u,22u);
+      atomicCAS(&owner->error,0u,22u);
+    }
   }
   lsa_rendezvous(dev,win,terminal);
 }
@@ -502,7 +507,18 @@ extern "C" int mgbfs_nccl_lsa_fatal_vote(void* raw,const uint32_t* send,
   if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
   p->lsa_used=true;
   lsa_fatal_vote<<<lsa_copy_ctas,lsa_copy_threads,0,static_cast<cudaStream_t>(raw_stream)>>>(
-      p->device,p->window,send,receive,p->terminal_device);
+      p->device,p->window,send,receive,p->terminal_device,nullptr,nullptr);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_nccl_lsa_owner_fatal_vote(void* raw,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,uint32_t* receive,void* raw_stream){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started||!p->device_ready||!p->terminal_device||
+     !ring||!owner||!receive)return 1;
+  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  p->lsa_used=true;
+  lsa_fatal_vote<<<lsa_copy_ctas,lsa_copy_threads,0,static_cast<cudaStream_t>(raw_stream)>>>(
+      p->device,p->window,nullptr,receive,p->terminal_device,ring,owner);
   return cudaGetLastError()==cudaSuccess?0:2;
 }
 #else
@@ -516,4 +532,5 @@ extern "C" int mgbfs_nccl_lsa_view(void*,const uint32_t**,const uint32_t**,
     const void**,const void**){return 7;}
 extern "C" int mgbfs_nccl_lsa_cancel_word(void*,uint32_t**){return 7;}
 extern "C" int mgbfs_nccl_lsa_fatal_vote(void*,const uint32_t*,uint32_t*,void*){return 7;}
+extern "C" int mgbfs_nccl_lsa_owner_fatal_vote(void*,MgbfsStateRingControl*,MgbfsOwnerControl*,uint32_t*,void*){return 7;}
 #endif
