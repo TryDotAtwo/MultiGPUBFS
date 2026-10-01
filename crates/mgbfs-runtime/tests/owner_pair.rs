@@ -104,3 +104,21 @@ fn local_retirement_failure_still_enters_group_vote_before_owner_work() {
     assert_eq!(result, Err("remote_retirement"));
     assert_eq!(*events.borrow(), ["vote_failed", "vote_clear"]);
 }
+
+#[test]
+fn failed_failure_vote_does_not_mask_original_local_failure() {
+    let events = RefCell::new(Vec::new());
+    let result = vote_group_error(Err("local_activation"), |failed| {
+        events.borrow_mut().push(failed);
+        Err("vote_cuda_failure")
+    }, "remote_activation");
+    assert_eq!(result, Err("local_activation"));
+    assert_eq!(*events.borrow(), [true]);
+
+    let result = vote_group_error(Ok::<(), &str>(()), |failed| {
+        events.borrow_mut().push(failed);
+        Err("vote_cuda_failure")
+    }, "remote_activation");
+    assert_eq!(result, Err("vote_cuda_failure"));
+    assert_eq!(*events.borrow(), [true, false]);
+}

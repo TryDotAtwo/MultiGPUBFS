@@ -1370,19 +1370,21 @@ impl DistributedNativeBfs {
                 comm.0, candidates, stride as u32,
                 error.as_mut_ptr(), error.len(),
             ) });
-            if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                  prepared.is_err(), startup_cancel.as_deref())? {
-                return Err(format!("LSA_PREPARE_GROUP: {}",
-                    prepared.err().unwrap_or_else(|| "peer rejected LSA prepare".into())));
-            }
+            vote_group_error(
+                prepared.map_err(|error| format!("LSA_PREPARE_GROUP: {error}")),
+                |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                                           failed, startup_cancel.as_deref()),
+                "LSA_PREPARE_GROUP: peer rejected LSA prepare".into(),
+            ).map_err(|error| { startup_report.publish(); error })?;
             let activated = check(unsafe { mgbfs_nccl_lsa_activate(
                 comm.0, error.as_mut_ptr(), error.len(),
             ) });
-            if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                  activated.is_err(), startup_cancel.as_deref())? {
-                return Err(format!("LSA_ACTIVATE_GROUP: {}",
-                    activated.err().unwrap_or_else(|| "peer rejected LSA activation".into())));
-            }
+            vote_group_error(
+                activated.map_err(|error| format!("LSA_ACTIVATE_GROUP: {error}")),
+                |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                                           failed, startup_cancel.as_deref()),
+                "LSA_ACTIVATE_GROUP: peer rejected LSA activation".into(),
+            ).map_err(|error| { startup_report.publish(); error })?;
             let (mut count, mut fatal, mut hashes, mut states) =
                 (std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null());
             check(unsafe { mgbfs_nccl_lsa_view(
@@ -1763,9 +1765,16 @@ impl DistributedNativeBfs {
         }
         Ok(result)
         })();
-        if setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                              local_result.is_err(), startup_cancel.as_deref())
-            .map_err(|error| { startup_report.publish(); error })? {
+        let group_failed = match setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
+                              local_result.is_err(), startup_cancel.as_deref()) {
+            Ok(failed) => failed,
+            Err(error) => {
+                // Notify peers before dropping any resources held by local_result.
+                startup_report.publish();
+                return Err(local_result.err().unwrap_or(error));
+            }
+        };
+        if group_failed {
             startup_report.publish();
             return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
         }
