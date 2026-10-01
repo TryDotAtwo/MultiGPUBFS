@@ -440,7 +440,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if trace {
             let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| e.to_string())?.as_secs_f64();
-            eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count} unix={unix:.6}");
+            std::io::Write::write_all(&mut std::io::stderr(),
+                format!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count} unix={unix:.6}\n").as_bytes())
+                .map_err(|e| e.to_string())?;
         }
         let advance = if let Some(archive) = archive.as_mut() {
             bfs.advance_archived(archive)
@@ -460,7 +462,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if trace {
             let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| e.to_string())?.as_secs_f64();
-            eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive} unix={unix:.6}",bfs.frontier_len());
+            std::io::Write::write_all(&mut std::io::stderr(),
+                format!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive} unix={unix:.6}\n",bfs.frontier_len()).as_bytes())
+                .map_err(|e| e.to_string())?;
         }
         if !alive {
             break;
