@@ -199,6 +199,8 @@ def main():
               ("constructor_late", "MGBFS_TEST_CONSTRUCTOR_LATE_FAULT_RANK"),
               ("owner", "MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
               ("admission", "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
+              ("worker_write", "MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK"),
+              ("worker_sync", "MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK"),
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
     cases = [("healthy", None, None)] + [(name, key, rank)
         for name, key in faults for rank in (0, 1)]
@@ -265,6 +267,8 @@ def main():
                         "constructor_late": "TEST_INJECTED_CONSTRUCTOR_LATE_ERROR",
                         "owner": "TEST_INJECTED_OWNER_HOST_ERROR",
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
+                        "worker_write": "TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR",
+                        "worker_sync": "TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR",
                         "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}
             if key:
                 if name == 'capacity':
