@@ -1,0 +1,23 @@
+{
+  "base_commit": "8702d26f8d56d7a0dbd89eafdc5a331b7fe450b1",
+  "selection_scope": "latest local published BFS; measured LRX15r4 profile as archive integration baseline",
+  "graph": "lrx15r4",
+  "profile": "DENSE",
+  "owner_backend": "CUCO_INDEXED",
+  "state_codec": "permutation_u8",
+  "pre_dedup": "ON",
+  "performance_evidence": {
+    "source_commit": "a7d267b496e971f2493d7760c9126347d97af6cc",
+    "hardware": "8 H200 NV18",
+    "seconds": 90.093109197,
+    "states": 54486432000,
+    "layers": 93,
+    "archive_enabled": false,
+    "warmup_completed": false,
+    "verification_scope": "ORBIT_TOTAL_AND_CONFIG_ONLY",
+    "reference": "docs/validation/lrx-multiset-status.md"
+  },
+  "current_base_performance_verified": false,
+  "tail_archive_performance_verified": false,
+  "universal_fastest_claim": false
+}

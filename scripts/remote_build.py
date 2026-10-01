@@ -63,6 +63,7 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--timeout-seconds', type=int, required=True)
     parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90'), default='90')
     args = parser.parse_args()
     if (sys.platform != 'linux' or sys.version_info < (3, 10) or
             not re.fullmatch('[0-9a-f]{40}', args.commit) or
@@ -83,7 +84,7 @@ def main():
            if not k.startswith('MGBFS_') and k not in ('HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN',
                'PYTHONHOME', 'PYTHONPATH', 'CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')}
     report = dict(status='INCOMPLETE', source=str(source), source_commit=args.commit,
-                  cuda_architectures='90', scope='compile only; no hardware correctness')
+                  cuda_architectures=args.cuda_architecture, scope='compile only; no hardware correctness')
 
     def run(command, name):
         print('BUILD_STAGE ' + name, flush=True)
@@ -155,7 +156,7 @@ def main():
         checkout('https://github.com/NVIDIA/cutlass.git', primitives.CUTLASS_COMMIT, cutlass, 'cutlass')
         library, native = work/'library-build', work/'native-build'
         cmake = venv/'bin/cmake'
-        common = ['-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_CUDA_ARCHITECTURES=90',
+        common = ['-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_CUDA_ARCHITECTURES='+args.cuda_architecture,
                   '-DCMAKE_CUDA_COMPILER='+str(sdk/'bin/nvcc')]
         run([cmake, '-S', source/'experiments/library_owner', '-B', library, *common,
              '-DCUDAToolkit_ROOT='+str(sdk), '-DCMAKE_PREFIX_PATH='+';'.join(prefixes),
