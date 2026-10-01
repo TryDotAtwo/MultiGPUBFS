@@ -2,6 +2,9 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import os
+import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -45,6 +48,43 @@ class SupervisorTests(unittest.TestCase):
         self.assertTrue(result['timed_out'])
         process.terminate.assert_called_once()
         kill.assert_called_once_with(process.pid, 9)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'real process cleanup requires Linux')
+    def test_linux_two_rank_sessions_are_reaped(self):
+        # Exercises the production signal handler and supervisor with actual
+        # independent OS sessions, not CUDA/NCCL or the BFS executable.
+        code = '''
+import os, signal, subprocess, sys, time
+from pathlib import Path
+from replay_lsa_cancel_candidate import install_termination_handler
+install_termination_handler()
+children = []
+try:
+    for rank in range(2):
+        children.append(subprocess.Popen(
+            [sys.executable, '-c', 'import time; time.sleep(60)'],
+            start_new_session=True))
+    Path(sys.argv[1]).write_text(','.join(str(p.pid) for p in children))
+    time.sleep(60)
+finally:
+    for p in children:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL)
+        p.wait(timeout=5)
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            pidfile = Path(directory) / 'rank-pids'
+            environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent))
+            result = gate.run_protocol_replay(
+                [sys.executable, '-c', code, str(pidfile)], '.', environment,
+                subprocess.DEVNULL, timeout=2)
+            self.assertTrue(result['timed_out'])
+            self.assertEqual(result['returncode'], 143)
+            pids = [int(pid) for pid in pidfile.read_text().split(',')]
+            self.assertEqual(len(pids), 2)
+            for pid in pids:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
 
 
 if __name__ == '__main__':
