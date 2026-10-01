@@ -20,9 +20,11 @@ Command: cargo test --locked --offline -p mgbfs-runtime --features cuda --test m
 
 Fresh ordinary Windows workspace suite: cargo test --locked, exit 0. Linux CUDA tests are cfg-gated out of that command; their execution is evidenced separately above. Existing dead-code warnings remain in the CPU build.
 
-Follow-up on the same local GPU: all four publication tests passed under each unfiltered Compute Sanitizer tool (memcheck, racecheck, initcheck, synccheck), with error exit code 97 enabled and zero reported errors/hazards. The original six macro_native tests also passed memcheck; the remaining tools were still running when this note was added.
+Follow-up on the same local GPU: all four publication tests passed under each unfiltered Compute Sanitizer tool (memcheck, racecheck, initcheck, synccheck), with error exit code 97 enabled and zero reported errors/hazards. The original six macro_native tests subsequently passed all four tools. Racecheck completed in 497.18 seconds without errors or warnings; this is instrumentation time, not a BFS speed measurement.
 
 An additional real-GPU oracle test now covers compact permutation generation (variant 5), S4/S5 with a nonidentity start, K=1/2/3 and pre-dedup OFF/ON. Every full layer set matches independently generated CPU layers encoded into the same compact representation. The new test passed; this is correctness evidence, not a speed comparison.
+
+The seven-test binary including compact permutation coverage passed initcheck and synccheck (zero errors). The added compact test also passed a separate unfiltered memcheck; its separate racecheck is still pending. Test compilation replaced the executable between the original racecheck and subsequent tools, so no single seven-test four-tool invocation is claimed.
 
 ## Remaining gates
 
