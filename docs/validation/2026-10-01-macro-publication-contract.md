@@ -24,7 +24,7 @@ Follow-up on the same local GPU: all four publication tests passed under each un
 
 An additional real-GPU oracle test now covers compact permutation generation (variant 5), S4/S5 with a nonidentity start, K=1/2/3 and pre-dedup OFF/ON. Every full layer set matches independently generated CPU layers encoded into the same compact representation. The new test passed; this is correctness evidence, not a speed comparison.
 
-The seven-test binary including compact permutation coverage passed initcheck and synccheck (zero errors). The added compact test also passed a separate unfiltered memcheck; its separate racecheck is still pending. Test compilation replaced the executable between the original racecheck and subsequent tools, so no single seven-test four-tool invocation is claimed.
+The seven-test binary including compact permutation coverage passed initcheck and synccheck (zero errors). The added compact test also passed separate unfiltered memcheck and racecheck; racecheck completed in 327.71 seconds, zero errors/warnings, process exit 0. Thus all seven tests are covered by all four tools across these invocations. Test compilation replaced the executable between the original racecheck and subsequent tools, so no single seven-test four-tool invocation is claimed.
 
 ## Remaining gates
 
