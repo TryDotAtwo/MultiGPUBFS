@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
+#include <cstdlib>
+#include <fstream>
+#include <string>
 #ifdef MGBFS_WINDOW_DEVICE_PROBE
 #include <cuda_runtime.h>
 #include <nccl_device.h>
@@ -25,6 +28,15 @@ int main(int argc, char** argv) {
   const bool nonblocking = argc == 2 && std::strcmp(argv[1], "nonblocking") == 0;
   const bool device_probe = argc == 2 && std::strcmp(argv[1], "read_write") == 0;
   if (argc > 2 || (argc == 2 && !nonblocking && !device_probe)) return 1;
+  const char* rank_text=std::getenv("MGBFS_WINDOW_RANK");
+  const char* bootstrap=std::getenv("MGBFS_WINDOW_BOOTSTRAP");
+  int process_rank=-1;
+  if(bool(rank_text)!=bool(bootstrap))return 1;
+  if(rank_text) {
+    if(std::strcmp(rank_text,"0")!=0&&std::strcmp(rank_text,"1")!=0)return 1;
+    if(!*bootstrap||device_probe)return 1; // GPU sample uses thread-local rendezvous.
+    process_rank=rank_text[0]-'0';
+  }
 #ifndef MGBFS_WINDOW_DEVICE_PROBE
   if(device_probe)return 1;
 #else
@@ -41,10 +53,36 @@ int main(int argc, char** argv) {
   };
 #endif
   ncclUniqueId id{};
-  if (ncclGetUniqueId(&id) != ncclSuccess) return 2;
+  if(process_rank<0||process_rank==0) {
+    if(ncclGetUniqueId(&id)!=ncclSuccess)return 2;
+    if(process_rank==0) {
+      // Diagnostic callers supply a fresh bootstrap path. Publish atomically,
+      // so rank 1 never observes a partial unique ID.
+      if(std::ifstream(bootstrap).good())return 2;
+      const std::string tmp=std::string(bootstrap)+".tmp";
+      std::ofstream out(tmp,std::ios::binary);
+      out.write(reinterpret_cast<const char*>(&id),sizeof(id));
+      out.close();
+      if(!out||std::rename(tmp.c_str(),bootstrap)!=0)return 2;
+    }
+  } else {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+    bool ready=false;
+    while(std::chrono::steady_clock::now()<deadline) {
+      std::ifstream in(bootstrap,std::ios::binary);
+      if(in.good()) {
+        in.read(reinterpret_cast<char*>(&id),sizeof(id));
+        if(in.gcount()!=sizeof(id)||in.peek()!=EOF)return 2;
+        ready=true;break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if(!ready)return 2;
+  }
   std::array<int, 2> results{};
   std::array<std::thread, 2> ranks;
   for (int rank = 0; rank < 2; ++rank) {
+    if(process_rank>=0&&rank!=process_rank)continue;
     ranks[rank] = std::thread([&, rank] {
 #ifdef MGBFS_WINDOW_DEVICE_PROBE
       struct Exit {std::atomic<bool>& bit;~Exit(){bit.store(true,std::memory_order_release);}} exit{finished[rank]};
@@ -154,6 +192,6 @@ int main(int argc, char** argv) {
       ncclCommDestroy(comm);
     });
   }
-  for (auto& rank : ranks) rank.join();
+  for (auto& rank : ranks) if(rank.joinable())rank.join();
   return results[0] != 0 ? results[0] : results[1];
 }
