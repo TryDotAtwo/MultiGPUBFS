@@ -65,15 +65,23 @@ def run(config, source, root, runtime_env):
     command = ['torchrun', '--standalone', f'--nproc-per-node={world}', '--no-python',
         str(cli), 'bench', '--reference', f'lrx{n}r{r}', str(config['batch']),
         str(root/'bootstrap'), str(root/'archive'), str(root/'result/rank-{rank}.json')]
-    # CLI expands {RANK_OUT} itself only via run_group; torchrun processes need
-    # a small shell-free rank wrapper to substitute LOCAL_RANK.
+    # Native CLI writes rank-N.json into this shared output directory.
     command[-1] = str(root/'result')
     start = list(range(n-r+1)) + [n-r]*(r-1)
     saved = dict(config, command=command, binary_sha256=binary_sha,
+        runtime_paths=runtime_env,
+        gpu_inventory=subprocess.check_output(['nvidia-smi',
+            '--query-gpu=index,uuid,name,memory.total,driver_version',
+            '--format=csv,noheader'],text=True).splitlines(),
         runtime_configuration={k:v for k,v in env.items() if k.startswith(('MGBFS_', 'NCCL_'))})
     archive = TailArchive(root/'saved', n=n, r=r, start=start,
         actions=dict(L='cyclic left rotation', R='cyclic right rotation', X='swap positions 0 and 1'),
         program_commit=commit, launch_config=saved, sample_interval_seconds=.05)
+    archive.manifest['vram_observation'] = dict(
+        source='separate nvidia-smi monitor', timestamp='host receipt time',
+        window='earliest rank BEGIN to latest rank END',
+        missing_sample=None, caveat='short layers may contain no sample; peaks between samples may be missed')
+    archive.manifest['layer_time_scope'] = 'maximum rank whole-layer duration at existing advance boundary'
     publisher = None
     if config.get('repo_id'):
         from huggingface_hub import get_token
@@ -125,7 +133,7 @@ def run(config, source, root, runtime_env):
     logthread = threading.Thread(target=log_reader, daemon=True)
     logthread.start()
     deadline = time.monotonic()+config.get('timeout_seconds',300)
-    reason, failure = 'running', None
+    reason, failure, deferred_error = 'running', None, None
     try:
         while True:
             if time.monotonic() > deadline:
@@ -138,7 +146,9 @@ def run(config, source, root, runtime_env):
                 message = None
             if message:
                 if message[0] == 'error':
-                    raise RuntimeError(f'archive rank {message[1]}: {message[2]}')
+                    deferred_error = f'archive rank {message[1]}: {message[2]}'
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGTERM)
                 if message[0] == 'receipt':
                     receipts[message[1]] = message[2]
                 elif message[0] == 'layer':
@@ -168,8 +178,9 @@ def run(config, source, root, runtime_env):
                     if generation:
                         publisher.enqueue(generation/'manifest.json')
             if stopped.is_set() and process.poll() is not None:
-                if process.returncode != 0:
-                    raise RuntimeError(f'native exit {process.returncode}')
+                drained = messages.empty() and all(not thread.is_alive() for thread in threads)
+                if drained and (process.returncode != 0 or deferred_error):
+                    raise RuntimeError(deferred_error or f'native exit {process.returncode}')
                 if len(receipts)==world and not pending:
                     expected = archive.manifest['last_completed_layer']+1
                     if any(receipt['depths']!=expected for receipt in receipts.values()):
@@ -177,6 +188,9 @@ def run(config, source, root, runtime_env):
                     reports = [json.loads((root/f'result/rank-{rank}.json').read_text()) for rank in range(world)]
                     if any(report['status']!='COMPLETE' for report in reports):
                         raise ValueError('native result incomplete')
+                    actual_counts = [sum(row) for row in zip(*(report['local_layer_sizes'] for report in reports))]
+                    if actual_counts != [layer['states'] for layer in archive.manifest['layers']]:
+                        raise ValueError('archived counts differ from native reports')
                     reason = 'graph exhausted'
                     break
         final = archive.snapshot(True, reason)

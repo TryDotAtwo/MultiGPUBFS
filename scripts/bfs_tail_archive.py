@@ -127,23 +127,28 @@ class TailArchive:
             target = generation / Path(entry["path"]).name
             offset = entry["bytes"] - take
             digest = hashlib.sha256()
-            with (self.root / entry["path"]).open("rb") as source, target.open("wb") as dest:
-                source.seek(offset)
-                left = take
-                while left:
-                    chunk = source.read(min(left, 4 * 1024 * 1024))
-                    if not chunk:
-                        raise ValueError("tail truncated")
-                    dest.write(chunk)
-                    digest.update(chunk)
-                    left -= len(chunk)
-                dest.flush()
-                os.fsync(dest.fileno())
+            if take == entry["bytes"]:
+                os.link(self.root / entry["path"], target)
+                checksum = entry["sha256"]
+            else:
+                with (self.root / entry["path"]).open("rb") as source, target.open("wb") as dest:
+                    source.seek(offset)
+                    left = take
+                    while left:
+                        chunk = source.read(min(left, 4 * 1024 * 1024))
+                        if not chunk:
+                            raise ValueError("tail truncated")
+                        dest.write(chunk)
+                        digest.update(chunk)
+                        left -= len(chunk)
+                    dest.flush()
+                    os.fsync(dest.fileno())
+                checksum = digest.hexdigest()
             selected.append(dict(entry, path=str(target.relative_to(self.root)),
                                  states=take // self.width, bytes=take,
                                  full_layer=take == entry["bytes"],
                                  first_state_ordinal=offset // self.width,
-                                 sha256=digest.hexdigest()))
+                                 sha256=checksum))
             remaining -= take
         manifest = dict(self.manifest, status="COMPLETE" if complete else "INCOMPLETE",
                         stop_reason=reason, files=sorted(selected, key=lambda x: x["depth"]))
