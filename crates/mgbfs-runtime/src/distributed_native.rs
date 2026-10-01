@@ -2613,7 +2613,9 @@ impl DistributedNativeBfs {
         let s = self.stream.0;
         let (begin, physical) = parent.map(|e| (e.sequence + offset, e.begin + offset))
             .unwrap_or((0, 0));
-        let peer = self.cfg.rank ^ round;
+        // The scheduler retains one local owner round with world=1. There is
+        // no remote source or receive lease in that case.
+        let peer = if self.cfg.world == 1 { self.cfg.rank } else { self.cfg.rank ^ round };
         let logical_peer = self.cfg.logical_owner_to_rank.iter()
             .position(|&rank| rank == peer).ok_or("OWNER_MAP")?;
         let gate = || -> Result<()> { check(unsafe { mgbfs_owner_lsa_fatal_gate(
@@ -2629,7 +2631,7 @@ impl DistributedNativeBfs {
                 check(cudaMemcpyAsync(d.exchange_counts.at(logical_peer * 4), count.cast(), 4, 3, s))
             }
         };
-        for group in usize::from(round > 1)..2 {
+        for group in usize::from(round > 1)..self.cfg.world.min(2) as usize {
             let count = unsafe { d.counts.at(group * 4).cast::<u32>() };
             let extent = unsafe { d.extents.at(group * std::mem::size_of::<Extent>()).cast::<Extent>() };
             let control = unsafe { d.controls.at(group * std::mem::size_of::<Control>()).cast::<Control>() };
