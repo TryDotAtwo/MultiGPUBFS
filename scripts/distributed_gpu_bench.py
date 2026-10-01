@@ -90,7 +90,7 @@ def aggregate_rank_results(ranks,world=2):
  if any(x.get('world_size',world)!=world for x in ranks):raise ValueError('rank world mismatch')
  if any(x['status']!='COMPLETE' or x['backend']!=ranks[0]['backend'] for x in ranks):raise ValueError('rank result contract mismatch')
  # Legacy reports may omit a field everywhere; partial presence is not agreement.
- for key in ('group','batch','frontier_profile','owner_backend','pre_dedup',
+ for key in ('group','batch','frontier_profile','owner_backend','pre_dedup','transport_backend',
              'capacity_mode','global_capacity_records','global_state_ring_records',
              'archive_enabled','archive_state_bytes','generation_variant',
              'hash_first_generation','warmup_completed','library_pool_reserved_bytes',
@@ -115,6 +115,7 @@ def aggregate_rank_results(ranks,world=2):
  elif any(x is None or type(x) not in (int,float) or not math.isfinite(x) or x<s for x,s in zip(archive_file,search)):raise ValueError('incomplete archive file timing')
  else:archive_file_max=max(archive_file)
  row=dict(status='COMPLETE',world_size=world,backend=ranks[0]['backend'],rank_results=ranks,search_complete_seconds=max(search),durable_run_commit_seconds=durable_max,archive_file_commit_seconds=archive_file_max)
+ if 'transport_backend' in ranks[0]:row['transport_backend']=ranks[0]['transport_backend']
  if 'local_layer_sizes' in ranks[0]:
   if any('local_layer_sizes' not in x or len(x['local_layer_sizes'])!=len(ranks[0]['local_layer_sizes']) for x in ranks):raise ValueError('rank depth mismatch')
   row['layer_sizes']=[sum(values) for values in zip(*(x['local_layer_sizes'] for x in ranks))]
@@ -163,6 +164,8 @@ def run_group(command,out,label,env,timeout=7200,required_processes=()):
 def stats(rows):
  if not rows:raise ValueError('EMPTY_MEASUREMENTS')
  if any(x.get('profiled',False) for x in rows):raise ValueError('PROFILED_MEASUREMENTS')
+ if any('transport_backend' in x for x in rows) and (any('transport_backend' not in x for x in rows) or any(x['transport_backend']!=rows[0]['transport_backend'] for x in rows)):
+  raise ValueError('MEASUREMENT_CONFIGURATION_MISMATCH: transport_backend')
  world=len(rows[0]['smi_peak_mib_per_rank'])
  if world not in (1,2,4,8) or any(len(x['smi_peak_mib_per_rank'])!=world for x in rows):raise ValueError('MEMORY_WORLD_MISMATCH')
  if any(x.get('smi_peak_mib_total') is None or any(v is None for v in x['smi_peak_mib_per_rank']) for x in rows):raise ValueError('INCOMPLETE_MEMORY_SAMPLES')

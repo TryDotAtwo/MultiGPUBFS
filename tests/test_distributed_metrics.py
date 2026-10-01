@@ -13,6 +13,27 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_rank_transport_must_agree_and_is_retained_in_measurement(self):
+        base = dict(status='COMPLETE', backend='native_test',
+            local_layer_sizes=[1], search_complete_seconds=1, transport_backend='Lsa')
+        ranks = [dict(base, rank=0), dict(base, rank=1)]
+        self.assertEqual(aggregate_rank_results(ranks)['transport_backend'], 'Lsa')
+        ranks[1]['transport_backend'] = 'HostSizedNccl'
+        with self.assertRaisesRegex(ValueError, 'rank configuration mismatch: transport_backend'):
+            aggregate_rank_results(ranks)
+        del ranks[1]['transport_backend']
+        with self.assertRaisesRegex(ValueError, 'rank configuration mismatch: transport_backend'):
+            aggregate_rank_results(ranks)
+
+    def test_statistics_cannot_mix_transport_modes(self):
+        row = dict(search_complete_seconds=1, smi_peak_mib_per_rank=[100],
+            smi_peak_mib_total=100, transport_backend='Lsa')
+        for other in (dict(row, transport_backend='HostSizedNccl'),
+                      {k:v for k,v in row.items() if k != 'transport_backend'}):
+            with self.assertRaisesRegex(ValueError, 'MEASUREMENT_CONFIGURATION_MISMATCH: transport_backend'):
+                stats([row, other])
+        self.assertEqual(stats([row, dict(row, search_complete_seconds=3)])['median_seconds'], 2)
+
     def test_rank_aggregation_rejects_conflicting_run_identity(self):
         base = dict(status='COMPLETE', backend='native_test', world_size=2,
                     local_layer_sizes=[1, 0], search_complete_seconds=1,
