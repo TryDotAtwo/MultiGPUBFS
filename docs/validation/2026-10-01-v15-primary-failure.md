@@ -56,3 +56,38 @@ tests and six owner_pair tests were rerun afterwards and pass. CUDA/library-owne
 Rust typecheck passes, not a native link/hardware verification. This correction
 does not fix NCCL's underlying initcheck/memcheck failures. Hardware verification
 of the corrected source remains pending.
+
+## Replay admission
+
+Correction source d018a6d7d2dc65747cfc72b4b9a7adfc2e70c86c was pushed to
+origin/codex/library-first-bfs. The private wrapper pins this immutable source.
+Its Python AST and metadata validation pass. Kaggle refused its push with
+"Maximum weekly GPU quota of 30.00 hours reached." This is not a running v16
+or a hardware result. A subsequent status query still reports COMPLETE for
+the existing notebook. Do not repeatedly push or launch a second notebook.
+
+Existing production NCCL wrapper test double was compiled with g++ in the
+reused isolated Linux image and exited zero (nonblocking progress, grouped
+failure cleanup, single abort and terminal-handle guards). This validates
+wrapper behavior against stubs, not NCCL itself or actual inter-GPU transport.
+
+## Independent local checks while Kaggle is unavailable
+
+Two existing CUDA fixtures were freshly compiled from d018a6d for sm_86:
+tests/macro_settle.cu + cuda/macro_settle.cu, and
+tests/macro_future_checked.cu + cuda/future_merge.cu + cuda/macro_settle.cu.
+Both passed all four unfiltered tools (memcheck, racecheck, initcheck,
+synccheck), with error-exitcode 97 enabled. All process exits were zero;
+racecheck reported zero errors/warnings and the other tools zero errors.
+This checks bounded settle/future kernels, not distributed macro BFS.
+
+Hardware: RTX 3070 Laptop GPU, 8,192 MiB, driver 572.70. nvcc 12.8.93;
+Compute Sanitizer 2025.1.0.0 build 35583870. Reused image
+multigpubfs-gpu:dev, SHA256 55f9efc3c2d82a3110e23f9fdc194026d6f55197105d10dfd6f48a4d0240bf0f.
+Read-only workspace mount, no network, temporary binaries inside disposable
+container, no large local dataset. This does not replace any 2xT4 gate.
+
+Python: all 31 distributed metric tests and 22 promotion/reconciliation tests
+pass. The first attempted HF test filename pattern matched zero tests and
+was not treated as verification; the correct test_promo*.py discovery was
+run afterwards. No old remote publication was overwritten.
