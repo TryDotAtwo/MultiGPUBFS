@@ -80,6 +80,51 @@ fn native_macro_nonidentity_source_preserves_original_layers() {
 }
 
 #[test]
+fn native_macro_compact_permutation_layers_equal_full_state_oracle() {
+    for n in [4, 5] {
+        let mut graph = MatrixGroup::symmetric_permutation_matrices(n).unwrap();
+        graph.start = graph.successor(&graph.start, 0).unwrap();
+        let expected: Vec<Vec<Vec<u8>>> = graph
+            .exact_layers(graph.expected_max_unique_states as usize)
+            .unwrap()
+            .into_iter()
+            .map(|layer| {
+                let mut encoded: Vec<_> = layer.into_iter()
+                    .map(|state| mgbfs_core::matrix::encode_permutation_matrix(&state, n).unwrap())
+                    .collect();
+                encoded.sort();
+                encoded
+            })
+            .collect();
+        for macro_depth in [1, 2, 3] {
+            for prededup in [false, true] {
+                let mut bfs = MacroNativeBfs::new(
+                    &graph,
+                    [macro_depth as u8; 16],
+                    MacroNativeConfig {
+                        macro_depth,
+                        batch: 7,
+                        layer_capacity: graph.expected_max_unique_states as u32,
+                        future_capacity_per_depth: 16_384,
+                        prededup,
+                        generation_variant: 5,
+                        untouched_vram_reserve_bytes: 0,
+                    },
+                ).unwrap();
+                let mut actual = Vec::new();
+                loop {
+                    let mut layer = bfs.snapshot().unwrap();
+                    layer.sort();
+                    actual.push(layer);
+                    if !bfs.advance().unwrap() { break; }
+                }
+                assert_eq!(actual, expected, "S{n} compact K={macro_depth} pre={prededup}");
+            }
+        }
+    }
+}
+
+#[test]
 fn native_macro_runtime_capacity_failure_is_sticky() {
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut config = MacroNativeConfig {
