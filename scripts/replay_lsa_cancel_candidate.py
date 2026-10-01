@@ -15,6 +15,18 @@ import re
 import signal
 
 
+def configure_owner_environment(env, backend, rank_map):
+    if backend not in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
+        raise ValueError('UNKNOWN_OWNER_BACKEND')
+    if rank_map not in ('0,1', '1,0'):
+        raise ValueError('INVALID_TWO_RANK_MAP')
+    env.update(MGBFS_OWNER_BACKEND=backend, MGBFS_RANK_MAP=rank_map)
+    if backend == 'CUCO_RANK':
+        env['MGBFS_LIBRARY_POOL_BYTES'] = str(64 << 20)
+    else:
+        env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
+
+
 def instrument_rank_command(binary, arguments, tool, report_prefix):
     target = [str(binary), *arguments]
     if tool is None:
@@ -118,6 +130,7 @@ def main():
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
+    parser.add_argument('--rank-map', choices=('0,1', '1,0'), default='0,1')
     parser.add_argument('--owner-backend', choices=('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'),
                         default='CUCO_RANK')
     args = parser.parse_args()
@@ -162,12 +175,9 @@ def main():
         MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
         MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
         MGBFS_PRE_DEDUP=args.pre_dedup, MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
-        MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0,1",
+        MGBFS_CAPACITY_MODE="max_per_rank",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
-    if args.owner_backend == "CUCO_RANK":
-        env['MGBFS_LIBRARY_POOL_BYTES'] = str(64 << 20)
-    else:
-        env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
+    configure_owner_environment(env, args.owner_backend, args.rank_map)
     if args.reference_size != 4:
         # Capacity is deliberately conservative for this bounded full-state
         # oracle, not a prediction of unknown production frontiers.
@@ -182,6 +192,7 @@ def main():
     report['profile'] = args.profile
     report['pre_dedup'] = args.pre_dedup
     report['owner_backend'] = args.owner_backend
+    report['rank_map'] = args.rank_map
     report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("constructor", "MGBFS_TEST_CONSTRUCTOR_FAULT_RANK"),

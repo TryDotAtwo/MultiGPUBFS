@@ -320,6 +320,17 @@ def main():
                             cwd=source, env=env, log=output)
                     report["native_process_gates"].append({"backend": backend, "profile": profile, **result})
                     save()
+                    for prededup, rank_map in (("ON", "1,0"), ("OFF", "0,1"), ("OFF", "1,0")):
+                        label = "native-equivalence-" + backend + "-" + profile + "-" + prededup + "-" + rank_map.replace(',', '')
+                        with (logs / (label + ".log")).open("w") as output:
+                            result = run_protocol_replay([str(venv / "bin/python"),
+                                str(source / "scripts/replay_lsa_cancel_candidate.py"), str(work), str(logs / label),
+                                "--owner-backend", backend, "--profile", profile, "--healthy-only",
+                                "--pre-dedup", prededup, "--rank-map", rank_map],
+                                cwd=source, env=env, log=output)
+                        report["native_process_gates"].append({"backend": backend, "profile": profile,
+                            "prededup": prededup, "rank_map": rank_map, **result})
+                        save()
             report["status"] = ("NATIVE_PROCESS_GATES_PASS" if all(row["returncode"] == 0 and not row["timed_out"]
                 for row in report["native_process_gates"]) else "NATIVE_PROCESS_GATES_FAILED")
             return
