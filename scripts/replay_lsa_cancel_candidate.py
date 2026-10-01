@@ -15,6 +15,56 @@ import re
 import signal
 
 
+def s4_reference_layers():
+    """Independent full-state oracle: row permutations, no GPU hash/dedup code."""
+    frontier = {(0, 1, 2, 3)}
+    visited, layers = set(frontier), []
+    while frontier:
+        layers.append({bytes(int(column == state[row])
+                             for row in range(4) for column in range(4))
+                       for state in frontier})
+        children = set()
+        for state in frontier:
+            children.update((state[1:] + state[:1], state[-1:] + state[:-1],
+                             (state[1], state[0], state[2], state[3])))
+        frontier = children - visited
+        visited.update(frontier)
+    return layers
+
+
+def verify_process_archives(case, frame_reader=None):
+    """Reuse the checksummed archive reader, then compare every state/depth."""
+    if frame_reader is None:
+        from export_hf_dataset import frames
+        frame_reader = frames
+    expected = s4_reference_layers()
+    actual = [set() for _ in expected]
+    visited, digest = set(), None
+    for rank in (0, 1):
+        local = [0] * len(expected)
+        for depth, width, count, payload, config in frame_reader(
+                case / f'archive-rank-{rank}.mgbfsar1'):
+            if width != 16 or not 0 <= depth < len(expected):
+                raise ValueError('PROCESS_ORACLE_SHAPE')
+            if digest is not None and config != digest:
+                raise ValueError('PROCESS_ORACLE_CONFIG')
+            digest = config
+            for index in range(count):
+                state = payload[index * width:(index + 1) * width]
+                if state in visited:
+                    raise ValueError('PROCESS_ORACLE_DUPLICATE')
+                visited.add(state)
+                actual[depth].add(state)
+                local[depth] += 1
+        result = json.loads((case / f'result/rank-{rank}.json').read_text())
+        if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
+            raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
+    if actual != expected:
+        raise ValueError('PROCESS_ORACLE_LAYER')
+    return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)),
+                scope='two independent rank-process archives; full canonical states at every depth')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("work", type=Path)
@@ -95,6 +145,10 @@ def main():
             row["pass"] = (not forced and (all(c == 0 for c in row["returncodes"])
                 if key is None else all(c not in (None, 0) for c in row["returncodes"])
                 and not row["group_complete"]))
+            if key is None:
+                row["pass"] &= row["group_complete"]
+                if row["pass"]:
+                    row["full_state_oracle"] = verify_process_archives(case)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
