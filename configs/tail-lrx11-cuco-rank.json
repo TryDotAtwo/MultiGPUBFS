@@ -1,0 +1,25 @@
+{
+  "n": 11,
+  "r": 4,
+  "world": 2,
+  "batch": 32768,
+  "timeout_seconds": 300,
+  "repo_id": "TryDotAtwo/multigpubfs-bfs-results",
+  "run_id": "replace-with-fresh-run-id",
+  "env": {
+    "MGBFS_PROFILE": "DENSE",
+    "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+    "MGBFS_PRE_DEDUP": "ON",
+    "MGBFS_CAPACITY_MODE": "max_per_rank",
+    "MGBFS_BENCH_CAPACITY": "1000000",
+    "MGBFS_FUTURE_CAPACITY": "2000000",
+    "MGBFS_BUCKET_CAPACITY": "1000000",
+    "MGBFS_BUCKETS": "256",
+    "MGBFS_SHARDS": "8",
+    "MGBFS_JOB_BUCKETS": "4",
+    "MGBFS_LIBRARY_POOL_BYTES": "536870912",
+    "MGBFS_ARCHIVE_ROWS": "8192",
+    "MGBFS_ARCHIVE_SLOTS": "256",
+    "NCCL_CUMEM_ENABLE": "0"
+  }
+}

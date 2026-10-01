@@ -88,7 +88,7 @@ def run(config, source, root, runtime_env):
         from tail_upload import Publisher
         publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], get_token())
     messages, stopped = queue.Queue(), threading.Event()
-    begins, ends, samples, lock = {}, {}, [], threading.Lock()
+    begins, ends, samples, native_errors, lock = {}, {}, [], [], threading.Lock()
     readers, threads, pending, receipts = [], [], {}, {}
     for rank in range(world):
         fifo = root/f'archive-rank-{rank}.mgbfsar1'
@@ -122,6 +122,9 @@ def run(config, source, root, runtime_env):
         with (root/'native.log').open('w', buffering=1) as log:
             for line in process.stdout:
                 log.write(line)
+                fatal = re.search(r'MGBFS_RUNTIME_FATAL rank=\d+ error=([^\s]+)', line)
+                if fatal:
+                    native_errors.append(fatal[1])
                 match = re.search(r'MGBFS_DEPTH_(BEGIN|END) rank=(\d+) depth=(\d+) (.*)', line)
                 if match:
                     fields = dict(re.findall(r'(\w+)=([^\s]+)', match[4]))
@@ -180,7 +183,8 @@ def run(config, source, root, runtime_env):
             if stopped.is_set() and process.poll() is not None:
                 drained = messages.empty() and all(not thread.is_alive() for thread in threads)
                 if drained and (process.returncode != 0 or deferred_error):
-                    raise RuntimeError(deferred_error or f'native exit {process.returncode}')
+                    primary = 'native fatal: '+','.join(dict.fromkeys(native_errors)) if native_errors else None
+                    raise RuntimeError(primary or deferred_error or f'native exit {process.returncode}')
                 if len(receipts)==world and not pending:
                     expected = archive.manifest['last_completed_layer']+1
                     if any(receipt['depths']!=expected for receipt in receipts.values()):
