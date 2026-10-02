@@ -1,8 +1,21 @@
 import unittest
-from replay_lsa_cancel_candidate import configure_owner_environment
+from replay_lsa_cancel_candidate import configure_owner_environment, configure_epoch_window
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_epoch_window_explicit_and_inherited(self):
+        for requested, inherited, expected in ((None, None, 2), (None, '3', 3), (4, '3', 4)):
+            env = {} if inherited is None else {'MGBFS_EPOCH_WINDOW': inherited}
+            self.assertEqual(configure_epoch_window(env, requested), expected)
+            self.assertEqual(env['MGBFS_EPOCH_WINDOW'], str(expected))
+
+    def test_epoch_window_rejects_without_mutation(self):
+        for value in ('bad', '1', '4294967296', '-2'):
+            env = {'MGBFS_EPOCH_WINDOW': value}
+            with self.assertRaises(ValueError):
+                configure_epoch_window(env, None)
+            self.assertEqual(env, {'MGBFS_EPOCH_WINDOW': value})
+
     def test_native_drops_inherited_pool_and_preserves_other_environment(self):
         for backend in ('CUB_SORT_MERGE', 'BMMA_BUCKET'):
             env = {'MGBFS_LIBRARY_POOL_BYTES': '123', 'CUDA_VISIBLE_DEVICES': '0,1'}

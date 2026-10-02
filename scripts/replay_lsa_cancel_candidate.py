@@ -15,6 +15,16 @@ import re
 import signal
 
 
+def configure_epoch_window(env, requested=None):
+    value = requested if requested is not None else env.get('MGBFS_EPOCH_WINDOW', '2')
+    text = str(value)
+    if re.fullmatch(r'[0-9]+', text) is None or not 2 <= int(text) <= 0xffffffff:
+        raise ValueError('EPOCH_WINDOW_CONFIG')
+    window = int(text)
+    env['MGBFS_EPOCH_WINDOW'] = str(window)
+    return window
+
+
 def configure_hash_seed(env, value):
     if not isinstance(value, str) or re.fullmatch(r'[0-9a-fA-F]{32}', value) is None:
         raise ValueError('HASH_SEED_HEX_32')
@@ -118,7 +128,8 @@ def u_reference_layers(n, modulus):
     return layers
 
 
-def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None):
+def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
+                            expected_epoch_window=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -145,6 +156,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
         result = json.loads((case / f'result/rank-{rank}.json').read_text())
         if expected_seed is not None and result.get('hash_seed_hex') != expected_seed:
             raise ValueError('PROCESS_ORACLE_HASH_SEED')
+        if expected_epoch_window is not None and result.get('epoch_window') != expected_epoch_window:
+            raise ValueError('PROCESS_ORACLE_EPOCH_WINDOW')
         if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
             raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
     if actual != expected:
@@ -178,6 +191,8 @@ def main():
     parser.add_argument('--unitriangular-modulus', type=int, choices=range(2, 7),
                         help='full-state U4 oracle instead of symmetric permutation matrices')
     parser.add_argument('--batch', type=int, default=1)
+    parser.add_argument('--epoch-window', type=int,
+                        help='bounded completion credits; inherits environment or defaults to 2, not payload slots')
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
     parser.add_argument('--rank-map', choices=('0,1', '1,0'), default='0,1')
@@ -189,6 +204,8 @@ def main():
     try:
         seed_environment = {}
         seed_hex = configure_hash_seed(seed_environment, args.hash_seed_hex)
+        epoch_environment = dict(os.environ)
+        epoch_window = configure_epoch_window(epoch_environment, args.epoch_window)
     except ValueError as error:
         parser.error(str(error))
     if args.batch < 1:
@@ -200,6 +217,7 @@ def main():
     source = work / "source"
     env = dict(os.environ)
     env.update(seed_environment)
+    env['MGBFS_EPOCH_WINDOW'] = str(epoch_window)
     if args.instrument_processes == 'nsys':
         # Batch/archive attribution must be present in a full runtime trace.
         # This enables ranges only, never TRACE_ROUTE's diagnostic host waits.
@@ -215,6 +233,7 @@ def main():
         str(work / "cuda-12.9/lib"), *libdirs, env.get("LD_LIBRARY_PATH", "")])
     env["PATH"] = str(work / "cargo/bin") + ":" + env.get("PATH", "")
     report = {"scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
+        "epoch_window": epoch_window,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
             cwd=source, text=True).strip(), "cases": []}
     diff = subprocess.check_output(["git", "diff", "--binary"], cwd=source)
@@ -313,7 +332,8 @@ def main():
                 row["pass"] &= row["group_complete"]
                 if row["pass"]:
                     row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
-                        modulus=args.unitriangular_modulus, expected_seed=seed_hex)
+                        modulus=args.unitriangular_modulus, expected_seed=seed_hex,
+                        expected_epoch_window=epoch_window)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
