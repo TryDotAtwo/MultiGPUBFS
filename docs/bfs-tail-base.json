@@ -1,12 +1,27 @@
 {
-  "base_commit": "8702d26f8d56d7a0dbd89eafdc5a331b7fe450b1",
-  "selection_scope": "latest local published BFS; measured LRX15r4 profile as archive integration baseline",
+  "base_commit": "4c82501db1fc38de396d49af6b187ab22fc14568",
+  "selection_scope": "native source tested on two RTX 3090; owner choice measured on the common completed LRX15r4 prefix",
   "graph": "lrx15r4",
   "profile": "DENSE",
-  "owner_backend": "CUCO_INDEXED",
+  "owner_backend": "CUCO_RANK",
   "state_codec": "permutation_u8",
   "pre_dedup": "ON",
   "performance_evidence": {
+    "source_commit": "4c82501db1fc38de396d49af6b187ab22fc14568",
+    "hardware": "2 RTX 3090 24 GB",
+    "common_completed_layers": 26,
+    "counts_match": true,
+    "repeats_per_mode": 3,
+    "cuco_rank_median_seconds_without_archive": 0.461959,
+    "cuco_rank_median_seconds_with_archive": 0.646725,
+    "cuco_indexed_median_seconds_without_archive": 0.520959,
+    "cuco_indexed_median_seconds_with_archive": 0.742327,
+    "full_graph_completed": false,
+    "verification_scope": "COMMON_COMPLETED_PREFIX_ONLY",
+    "archive_slots_in_comparison": 256,
+    "reference": "HF evidence/20261002-directhf/suite/panel-comparison.json (publication pending repository quota)"
+  },
+  "historical_full_orbit_reference": {
     "source_commit": "a7d267b496e971f2493d7760c9126347d97af6cc",
     "hardware": "8 H200 NV18",
     "seconds": 90.093109197,
@@ -17,7 +32,7 @@
     "verification_scope": "ORBIT_TOTAL_AND_CONFIG_ONLY",
     "reference": "docs/validation/lrx-multiset-status.md"
   },
-  "current_base_performance_verified": false,
-  "tail_archive_performance_verified": false,
+  "current_base_performance_verified": "common completed prefix only",
+  "tail_archive_performance_verified": "common completed prefix only; larger host ring under validation",
   "universal_fastest_claim": false
 }
