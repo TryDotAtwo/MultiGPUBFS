@@ -29,7 +29,10 @@ synchronization is introduced by this module.
 
 `tail_upload.Publisher` is one background worker with a 25 GB pending-byte
 limit. It pins files with hard links immediately when enqueued, verifies
-checksums, uploads payloads, and publishes the manifest last. Failed uploads
+checksums, batches snapshot payloads into a single commit, and publishes the
+manifest in a following commit. Only the newest not-yet-started snapshot remains
+queued; the in-flight snapshot stays pinned. Every local completed-layer
+snapshot and all completed-layer statistics are still generated. Failed uploads
 retain pinned inputs and propagate an error. Run paths are
 `tail-runs/<run_id>/...`; use a fresh run_id. Remote obsolete files may remain
 but are not referenced by the latest manifest. Live HF publication was validated
@@ -68,6 +71,23 @@ identical configuration resumes pending pairs without overwriting earlier
 runs. The alphabet must fit four bits and the native orbit count must fit u64;
 unsupported pairs are explicitly recorded, never claimed as completed.
 The grid driver has CPU tests; a complete GPU grid has not yet been executed.
+
+GPU-host publication for a finite sweep can use `scripts/publish_tail_batch.py`.
+Run the grid without per-case `repo_id` while HF commits are throttled, retaining
+the states on that GPU host's SSD, then run on the same host:
+
+```sh
+python scripts/publish_tail_batch.py --sweep-root /root/my-sweep \
+  --repo-id TryDotAtwo/multigpubfs-bfs-results --deadline-unix <absolute-deadline>
+```
+
+This verifies every staged checksum before making payload commits. All case
+payloads share one commit; case manifests and the sweep ledger follow in another.
+The CLI waits on repository commit quota responses until its deadline and leaves
+inputs intact on failure. It does not download states to the user's computer.
+Direct GPU-host uploads and remote checksum readback passed for both owners at
+(7,4), and for 16-byte states at (17,16), (32,31), and (32,32). The exact native
+source and separately deployed publisher versions are recorded in HF evidence.
 
 Storage stress: `python scripts/stress_tail_archive.py <fresh-directory>`;
 requires at least 18 decimal GB free. Recorded physical validation is in
