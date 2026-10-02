@@ -256,11 +256,13 @@ static void retire_fatal_vote_word(){
       "clear fatal vote enqueue");
   ck(cudaDeviceSynchronize());
   req(word.get()[0]==0,"clear fatal vote word");
-  ring.put({{6,14,0,2,10,4,17,0,0}});
-  req(mgbfs_state_ring_fatal_vote_word(ring.p,word.p,nullptr)==0,
-      "sticky fatal vote enqueue");
-  ck(cudaDeviceSynchronize());
-  req(word.get()[0]==1,"sticky fatal vote word");
+  for(uint32_t code:{11u,12u,16u,17u,42u}){
+    ring.put({{6,14,0,2,10,4,code,0,0}});
+    req(mgbfs_state_ring_fatal_vote_word(ring.p,word.p,nullptr)==0,
+        "sticky fatal vote enqueue");
+    ck(cudaDeviceSynchronize());
+    req(word.get()[0]==code,"sticky fatal cause lost");
+  }
 }
 // Verification harness only: CPU prepares candidates/descriptors and reads
 // snapshots. It is NOT a production CPU data plane or performance benchmark.

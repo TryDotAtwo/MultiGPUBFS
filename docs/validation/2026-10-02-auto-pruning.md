@@ -1,5 +1,10 @@
 # Automatic fixed-r pruning GPU validation
 
+Policy v2 is superseded by v3. These frozen results remain historical evidence;
+any pruning attributed only to a generic ring/archive failure must not be used
+as a confirmed capacity boundary. Confirmed typed capacity/OOM cases remain
+separate. New acceptance runs use a fresh root and preserve the old receipts.
+
 Source: `6c1c0cbc926b99ad3714d44622a8146cd6bf49ca` on the isolated
 `codex/bfs-tail-archive` branch. Hardware: two RTX 3060, 12 GiB each.
 The native binary was built at `fd05c5ff3c67b3937c22bac24138f722ae27075a`;

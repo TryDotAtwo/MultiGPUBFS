@@ -2,6 +2,34 @@
 
 Branch: `codex/bfs-tail-archive`. The active BFS checkout is not modified.
 
+The automatic GPU-host entry point needs no graph range or capacity settings:
+
+```sh
+python scripts/run_auto_tail.py --source /root/tail-src \
+  --runtime-env /root/runtime-env.json --root /root/my-auto-run \
+  --repo-id TryDotAtwo/multigpubfs-bfs-results --deadline-unix <absolute-deadline>
+```
+
+The platform must provide an independent lease deadline and an HF write secret.
+The program inspects free memory on every visible GPU, uses the smallest free
+budget, and chooses each pair's capacity automatically. Sizing leaves explicit
+headroom and is conservative; it is not a proof of maximum hardware capacity.
+Supported pairs are discovered in increasing n, with resource-stop pruning
+independent for each r. Packing/u64 exclusions and deadline-pending pairs remain
+explicit in the sweep ledger.
+
+Completed cohorts publish in the background, approximately every 20 attempted
+pairs. Only queued ledgers are coalesced; each in-flight ledger is frozen before
+payload planning. Completed case files remain immutable on GPU-host SSD through
+publication and streamed HF checksum readback. The final report verifies every
+manifest, all retained payloads, and the full ledger including skipped pairs.
+Nothing in this command downloads states to the user's computer.
+
+The physical publication gate is `scripts/validate_tail_storage_hf.py`. It writes
+13 GB of explicitly synthetic data, verifies 1 GB intermediate snapshots, then
+publishes and reads back 10.4 GB of complete layers and a 1 GB partial suffix.
+Synthetic storage completion must not be interpreted as graph exhaustion.
+
 `scripts/bfs_tail_archive.py` implements SSD retention and publication ordering.
 `scripts/run_tail_bfs.py` wires it to the existing CUDA/NCCL archive FIFO and
 the existing global layer completion boundary. `tail_wire.py` validates the
@@ -76,13 +104,21 @@ arguments as the single-run driver. `--plan-only` needs no GPU configuration.
 After a resource stop at `(n,r)`, larger n at that same r are recorded as
 unattempted INCOMPLETE with `pruned_by`; other r branches continue independently.
 This is an operational heuristic, not proof that skipped graphs cannot fit.
-Recognized stops include allocation OOM, capacity/ring limits and SSD exhaustion.
-CUDA status 2 requires a diagnostic whose source line is a CUDA allocation,
+Recognized branch stops require GPU allocation OOM or specifically typed search
+capacity evidence. Generic ring failures, archive queue/worker failures, host
+pinning failures and SSD exhaustion do not prune larger n at that r.
+CUDA status 2 requires a diagnostic whose source line is a device CUDA allocation,
 so unrelated NCCL errors with the same numeric status do not prune a branch.
 HF upload errors, archive worker I/O errors and timeouts do not trigger pruning.
 Native sticky layer/request capacity code 16 is recognized specifically;
 other rank-depth codes and remote cancellation alone do not prove a resource
-stop. The policy fingerprint is v2. The automatic 527-pair GPU pruning test
+stop. Source `cuda/state_commit.cu` maps numeric ring code 11 to row capacity,
+12 to descriptor capacity, and 16 to layer/request capacity. Those codes are
+preserved by the existing MAX vote; no new collective or synchronization is
+added. Other codes, including protocol/FIFO code 17, do not prune a branch.
+SSD full stops globally, leaving other pairs pending and eligible after storage
+is restored. The policy fingerprint is v3; old v2 ledgers cannot be resumed
+implicitly under it. The automatic 527-pair GPU pruning test
 on two RTX 3060 is recorded in `validation/2026-10-02-auto-pruning.md`.
 Resume preserves the policy and prior exclusions; changing resource limits or
 retrying pruned pairs requires a fresh root/run ID.

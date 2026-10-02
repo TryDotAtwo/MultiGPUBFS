@@ -265,7 +265,8 @@ extern "C" int mgbfs_state_retire_dense_prefix_value(MgbfsStateRingControl*r,Mgb
  return cudaGetLastError()==cudaSuccess?0:2;
 }
 __global__ void ring_fatal_vote_word(const MgbfsStateRingControl* ring,uint32_t* word){
- *word=ring->fatal!=0;
+ // Preserve the sticky cause through MAX; callers still gate on nonzero.
+ *word=ring->fatal;
 }
 extern "C" int mgbfs_state_ring_fatal_vote_word(const MgbfsStateRingControl*ring,uint32_t*word,void*stream){
  if(!ring||!word)return 1;

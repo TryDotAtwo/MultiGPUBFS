@@ -25,6 +25,15 @@ class AutomaticPlanningTests(unittest.TestCase):
         for inventory in ([],[{'free_bytes':0}],[{'free_bytes':128<<20}]):
             with self.assertRaises(ValueError):device_budget(inventory)
 
+    def test_archive_credits_fit_host_memory_and_scale_with_word_width(self):
+        base=dict(world=2,host_available_bytes=8<<30,
+            resource_plan=device_budget([{'free_bytes':12<<30}]),env={})
+        for n,r in ((3,2),(17,10),(32,25)):
+            cfg=pair_config(base,n,r);e=cfg['env']
+            size=2*(n+16)*int(e['MGBFS_ARCHIVE_ROWS'])*int(e['MGBFS_ARCHIVE_SLOTS'])
+            self.assertLessEqual(size,base['host_available_bytes']//4)
+            self.assertGreaterEqual(int(e['MGBFS_ARCHIVE_SLOTS']),64)
+
     def test_background_keeps_inflight_and_freezes_latest_queued_ledger(self):
         started=threading.Event();release=threading.Event();seen=[]
         def publish(root,repo,api,deadline,*,ledger):

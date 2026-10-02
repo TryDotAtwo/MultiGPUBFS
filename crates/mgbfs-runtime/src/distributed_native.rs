@@ -3249,8 +3249,11 @@ impl DistributedNativeBfs {
                         if trace_route {
                             eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=preowner_vote_queued", self.cfg.rank, self.depth);
                         }
-                    } else if self.all_max_ring_fatal()? != 0 {
-                        return Err("GROUP_STATE_RING_RETIRE_FATAL".into());
+                    } else {
+                        let code = self.all_max_ring_fatal()?;
+                        if code != 0 {
+                            return Err(format!("GROUP_STATE_RING_RETIRE_FATAL_{code}"));
+                        }
                     }
                 }
                 if round != 1 || self.hash_first.is_some() {

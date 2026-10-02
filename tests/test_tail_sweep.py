@@ -39,12 +39,40 @@ class SweepTests(unittest.TestCase):
             self.assertEqual(len(calls),4)
 
     def test_upload_and_worker_io_errors_do_not_prune(self):
-        for reason in ('HF HTTP 429','ConnectionError','ARCHIVE_WORKER_FATAL WRITE','search deadline'):
+        for reason in ('HF HTTP 429','ConnectionError','ARCHIVE_WORKER_FATAL WRITE','search deadline',
+                'GROUP_STATE_RING_RETIRE_FATAL','ARCHIVE_PIN_RING_FATAL: receiving on an empty channel',
+                'no space left on device','REMOTE_SEARCH_CANCELLED','out of memory','capacity exhausted'):
             self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
+
+    def test_ambiguous_failure_keeps_later_same_r_eligible(self):
+        for reason in ('GROUP_STATE_RING_RETIRE_FATAL','GROUP_STATE_RING_RETIRE_FATAL_17',
+                'ARCHIVE_PIN_RING_FATAL: receiving on an empty channel','search deadline'):
+            calls=[]
+            def fake(config,source,case,runtime):
+                calls.append((config['n'],config['r']));case.mkdir();path=case/'manifest.json'
+                path.write_text(json.dumps(dict(status='INCOMPLETE',last_completed_layer=-1,stop_reason=reason)))
+                return path
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);v=execute({},root,root,{},[(4,1),(5,1),(5,2)],10,fake)
+                self.assertEqual(calls,[(4,1),(5,1),(5,2)])
+                self.assertFalse(any('pruned_by' in x for x in v['cases'].values()))
+
+    def test_ssd_full_stops_globally_without_branch_pruning(self):
+        calls=[]
+        def fake(config,source,case,runtime):
+            calls.append((config['n'],config['r']));case.mkdir();path=case/'manifest.json'
+            path.write_text(json.dumps(dict(status='INCOMPLETE',last_completed_layer=-1,
+                stop_reason='no space left on device')));return path
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);v=execute({},root,root,{},[(4,1),(5,1),(5,2)],10,fake)
+            self.assertEqual(calls,[(4,1)]);self.assertEqual(v['pending'],[[5,1],[5,2]])
+            self.assertIn('SSD full',v['global_stop_reason'])
 
     def test_native_layer_capacity_code_is_specific(self):
         for reason in ('native fatal: LIBRARY_RANK_DEPTH_FATAL_16_16,ARCHIVE_INCOMPLETE',
-                       'LIBRARY_RANK_DEPTH_FATAL_16_0','LIBRARY_RANK_DEPTH_FATAL_0_16'):
+                       'LIBRARY_RANK_DEPTH_FATAL_16_0','LIBRARY_RANK_DEPTH_FATAL_0_16',
+                       'GROUP_STATE_RING_RETIRE_FATAL_11','GROUP_STATE_RING_RETIRE_FATAL_12',
+                       'GROUP_STATE_RING_RETIRE_FATAL_16'):
             self.assertTrue(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
         for reason in ('LIBRARY_RANK_DEPTH_FATAL_10_10','LIBRARY_RANK_DEPTH_FATAL_160_160',
                        'REMOTE_NEXT_EXTENT_FATAL','REMOTE_SEARCH_CANCELLED','CUDA_SET_DEVICE'):
@@ -58,6 +86,9 @@ class SweepTests(unittest.TestCase):
             log.write_text('MGBFS_NATIVE_STATUS status=2 file=native.rs line=1\n')
             self.assertTrue(allocation_failure(case,source))
             log.write_text('MGBFS_NATIVE_STATUS status=2 file=native.rs line=2\n')
+            self.assertFalse(allocation_failure(case,source))
+            (source/'host.rs').write_text('check(cudaHostAlloc(&mut ptr, bytes, 0));\n')
+            log.write_text('MGBFS_NATIVE_STATUS status=2 file=host.rs line=1\n')
             self.assertFalse(allocation_failure(case,source))
             self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason='CUDA_STATUS_2')))
 

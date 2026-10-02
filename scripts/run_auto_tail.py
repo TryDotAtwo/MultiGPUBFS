@@ -82,6 +82,13 @@ def pair_config(base, n, r):
         MGBFS_FUTURE_CAPACITY=str(capacity*2), MGBFS_BUCKET_CAPACITY=str(capacity),
         MGBFS_LIBRARY_POOL_BYTES=str(pool))
     cfg['batch'] = min(32768, capacity)
+    rows=min(8192,capacity)
+    host=base.get('host_available_bytes',8<<30)
+    host_slots=(host//4)//(base.get('world',2)*(n+16)*rows)
+    target_slots=(order+rows-1)//rows+2
+    slots=min(8192,host_slots,max(64,target_slots))
+    if slots<64:raise ValueError('insufficient host archive credit memory')
+    cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots))
     return cfg
 
 
@@ -175,7 +182,9 @@ def main():
         for line in lines:
             index,name,free=line.split(',')
             inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
+        from streamed_bfs_launcher import available_host_bytes
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
+            host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
                 MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='CUCO_RANK',MGBFS_PRE_DEDUP='ON',
                 MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BUCKETS='16',MGBFS_SHARDS='8',

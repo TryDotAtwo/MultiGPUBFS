@@ -30,16 +30,20 @@ def automatic_pairs(n_min=2,n_max=32,r_min=1,r_max=None):
 
 def resource_stop(record):
     if record.get('status')!='INCOMPLETE' or not record.get('attempted',False):return False
-    if record.get('resource_classification')=='cuda_allocation_failure':return True
     reason=record.get('reason','').lower()
+    if 'no space left on device' in reason:return False
+    if record.get('resource_classification')=='cuda_allocation_failure':return True
     # cuda/state_commit.cu uses sticky code 16 for layer/request capacity.
     # Other rank-depth codes and remote cancellation alone are not evidence.
     if re.search(r'\blibrary_rank_depth_fatal_(?:16_(?:0|16)|0_16)\b',reason):return True
+    # Source-confirmed search-ring row/descriptor/layer capacity, not a
+    # generic ring failure (protocol/transport codes must remain eligible).
+    if re.search(r'\bgroup_state_ring_retire_fatal_(?:11|12|16)\b',reason):return True
     return any(marker in reason for marker in (
-        'out of memory','cuda_error_out_of_memory','cudaerrormemoryallocation',
-        'capacity exceeded','capacity exhausted','no space left on device',
-        'group_state_ring_retire_fatal',
-        'archive_pin_ring_fatal: receiving on an empty channel'))
+        'cuda_error_out_of_memory','cudaerrormemoryallocation',
+        'cuda out of memory','cuda error: out of memory',
+        'search capacity exceeded','search capacity exhausted',
+        'gpu capacity exceeded','gpu capacity exhausted'))
 
 
 def allocation_failure(case,source):
@@ -56,7 +60,7 @@ def allocation_failure(case,source):
         lines=path.read_text(encoding='utf-8').splitlines()
         index=int(line)-1
         if 0<=index<len(lines) and any(name in lines[index] for name in (
-                'cudaMalloc(', 'cudaMallocAsync(', 'cudaMallocHost(', 'cudaHostAlloc(')):
+                'cudaMalloc(', 'cudaMallocAsync(')):
             return True
     return False
 
@@ -66,7 +70,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
         raise ValueError('positive sweep deadline required')
     root.mkdir(parents=True,exist_ok=True)
     ledger_path=root/'sweep.json'
-    fingerprint=dict(base=base,grid=grid,pruning_policy='fixed-r-resource-stop-v2')
+    fingerprint=dict(base=base,grid=grid,pruning_policy='fixed-r-resource-stop-v3')
     if ledger_path.exists():
         ledger=json.loads(ledger_path.read_text())
         if ledger['configuration']!=json.loads(json.dumps(fingerprint)):
@@ -136,6 +140,9 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                         pruning_is_heuristic=True)
         atomic_json(ledger_path,ledger)
         if on_progress is not None:on_progress(ledger)
+        if 'no space left on device' in record.get('reason','').lower():
+            ledger['global_stop_reason']='SSD full; pending pairs remain eligible on restored storage'
+            break
     ledger['pending']=[list(pair) for pair in grid if f'n{pair[0]}-m{pair[1]}' not in ledger['cases']]
     atomic_json(ledger_path,ledger)
     return ledger
