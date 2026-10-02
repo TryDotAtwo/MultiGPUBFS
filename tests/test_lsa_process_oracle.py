@@ -12,7 +12,7 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
-    def check(self, mutation=None):
+    def check(self, mutation=None, result_mutation=None, expected_seed=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -32,8 +32,11 @@ class ProcessOracleTests(unittest.TestCase):
             for rank in range(2):
                 counts = [sum(d == depth for d, _ in rows[rank])
                           for depth in range(len(expected))]
-                (root / f'result/rank-{rank}.json').write_text(json.dumps(
-                    dict(status='COMPLETE', local_layer_sizes=counts)))
+                record = dict(status='COMPLETE', local_layer_sizes=counts,
+                              hash_seed_hex='00000000000000000000000000000001')
+                if result_mutation:
+                    result_mutation(rank, record)
+                (root / f'result/rank-{rank}.json').write_text(json.dumps(record))
                 header = b'MGBFSAR1' + struct.pack('<Q', 16) + bytes.fromhex('ab' * 32)
                 chain, sequence, pieces = hashlib.sha256(header).digest(), 0, [header]
                 for depth, count in enumerate(counts):
@@ -49,7 +52,25 @@ class ProcessOracleTests(unittest.TestCase):
                 item, _ = frame(chain, sequence, 3, len(counts), sum(counts), b'')
                 pieces.append(item)
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
-            return replay.verify_process_archives(root)
+            if expected_seed is None:
+                return replay.verify_process_archives(root)
+            return replay.verify_process_archives(root, expected_seed=expected_seed)
+
+    def test_requested_seed_must_match_each_runtime_rank(self):
+        seed = '00000000000000000000000000000001'
+        self.assertEqual(self.check(expected_seed=seed)['unique_states'], 24)
+        for rank in (0, 1):
+            def change(current, record):
+                if current == rank:
+                    record['hash_seed_hex'] = '00000000000000000000000000000000'
+            with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_HASH_SEED'):
+                self.check(result_mutation=change, expected_seed=seed)
+
+    def test_missing_runtime_seed_cannot_validate_requested_seed(self):
+        def change(rank, record):
+            record.pop('hash_seed_hex')
+        with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_HASH_SEED'):
+            self.check(result_mutation=change, expected_seed='00000000000000000000000000000001')
 
     def test_all_layers_from_two_process_archives_match_independent_oracle(self):
         row = self.check()

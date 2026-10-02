@@ -118,7 +118,7 @@ def u_reference_layers(n, modulus):
     return layers
 
 
-def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None):
+def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -143,6 +143,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None)
                 actual[depth].add(state)
                 local[depth] += 1
         result = json.loads((case / f'result/rank-{rank}.json').read_text())
+        if expected_seed is not None and result.get('hash_seed_hex') != expected_seed:
+            raise ValueError('PROCESS_ORACLE_HASH_SEED')
         if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
             raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
     if actual != expected:
@@ -311,7 +313,7 @@ def main():
                 row["pass"] &= row["group_complete"]
                 if row["pass"]:
                     row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
-                        modulus=args.unitriangular_modulus)
+                        modulus=args.unitriangular_modulus, expected_seed=seed_hex)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
