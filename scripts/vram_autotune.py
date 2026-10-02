@@ -24,11 +24,15 @@ def select_capacity(query, upper, *, minimum=32768):
                 for key in ('required_bytes', 'reserve_bytes', 'free_after_nccl_warmup_bytes'):
                     if type(record.get(key)) is not int or record[key] < 0:
                         raise ValueError('invalid native memory query')
+                margin = record.get('query_to_run_margin_bytes', 0)
+                if type(margin) is not int or margin < 0:
+                    raise ValueError('invalid query-to-run margin')
             cache[rows] = records
         return cache[rows]
 
     def fits(rows):
-        return all(x['required_bytes'] + x['reserve_bytes'] <=
+        return all(x['required_bytes'] + x['reserve_bytes'] +
+                   x.get('query_to_run_margin_bytes', 0) <=
                    x['free_after_nccl_warmup_bytes'] for x in probe(rows))
 
     if not fits(minimum):
@@ -45,7 +49,9 @@ def select_capacity(query, upper, *, minimum=32768):
         if slope <= 0:
             raise ValueError('non-increasing native allocation plan')
         free = min(first['free_after_nccl_warmup_bytes'], other['free_after_nccl_warmup_bytes'])
-        room = free - max(first['reserve_bytes'], other['reserve_bytes']) - first['required_bytes']
+        reserve = max(x['reserve_bytes'] + x.get('query_to_run_margin_bytes', 0)
+                      for x in (first, other))
+        room = free - reserve - first['required_bytes']
         prediction = min(prediction, minimum + int(room / slope))
     candidate = max(minimum, min(upper, prediction))
     low, high = minimum, upper + 1
@@ -76,6 +82,9 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
     cli = (source / config.get('binary_path', 'target/release/mgbfs')).resolve()
     if not cli.is_relative_to(source):
         raise ValueError('query binary must belong to checkout')
+    margin = config.get('startup_memory_margin_bytes', 64 << 20)
+    if type(margin) is not int or margin < 0:
+        raise ValueError('invalid query-to-run margin')
     env = dict(os.environ, **runtime_env)
     env.update(config['env'])
     env.update(MGBFS_MEMORY_QUERY='1', MGBFS_BENCH_SKIP_ARCHIVE='1',
@@ -101,4 +110,9 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
     if (len(records) != world or 'MEMORY_QUERY_DONE' not in output or
             sorted(x.get('rank', -1) for x in records) != list(range(world))):
         raise RuntimeError('native memory query failed; inspect '+str(root/'query.log'))
+    # Archive-enabled startup consumed 8 MiB more than the archive-free probe
+    # on the two-3090 gate. Keep explicit uncertainty headroom across launches;
+    # this is additional to the native reserve, not a hot-path allocation.
+    for record in records:
+        record['query_to_run_margin_bytes'] = margin
     return sorted(records, key=lambda x: x['rank'])

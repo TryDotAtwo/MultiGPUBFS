@@ -23,7 +23,16 @@ class CapacitySelectionTests(unittest.TestCase):
             command = launch.call_args.args[0]
             self.assertEqual(command[-1], '--search-only')
             self.assertEqual(launch.call_args.kwargs['env']['MGBFS_MEMORY_QUERY'], '1')
+            for record in records:
+                record['query_to_run_margin_bytes'] = 64 << 20
             self.assertEqual(result, records)
+
+    def test_query_to_run_headroom_is_reserved_in_capacity_selection(self):
+        def query(rows):
+            return [dict(required_bytes=rows*10, reserve_bytes=100,
+                         query_to_run_margin_bytes=200,
+                         free_after_nccl_warmup_bytes=10000)]
+        self.assertEqual(select_capacity(query, 2000, minimum=256)[0], 970)
 
     def test_uses_limiting_rank_with_exact_aligned_queries(self):
         for upper in (32768, 50000, 1000000):
