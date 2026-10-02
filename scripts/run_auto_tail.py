@@ -93,29 +93,53 @@ def verify_hf(root, repo, api, token):
     ledger = json.loads((root/'sweep.json').read_text())
     revision = api.repo_info(repo, repo_type='dataset').sha
     run_id = ledger['configuration']['base']['run_id']
+    session=requests.Session()
+    session.headers['Authorization']='Bearer '+token
+    locals_=threading.local()
+    pace_lock=threading.Lock()
+    next_request=0.
+    def get(client,url,**kwargs):
+        nonlocal next_request
+        for attempt in range(4):
+            # Resolve URLs may involve two Hub requests. Keep the readback
+            # below the observed 5000-resolves/300s budget, with spare capacity.
+            with pace_lock:
+                delay=max(0,next_request-time.monotonic())
+                next_request=max(next_request,time.monotonic())+1/7
+            if delay:time.sleep(delay)
+            response=client.get(url,**kwargs)
+            if response.status_code!=429:return response
+            wait=min(300,max(1,int(response.headers.get('Retry-After','30'))))
+            response.close()
+            if attempt==3:raise RuntimeError('HF readback rate limit persists')
+            time.sleep(wait)
+        raise RuntimeError('HF readback unavailable')
     work = []
     for key, record in ledger['cases'].items():
         if not record.get('attempted'): continue
         local = json.loads((root/key/'saved/manifest.json').read_text())
         prefix = 'tail-runs/'+run_id+'-'+key+'/'
-        with requests.get(hf_hub_url(repo, prefix+'manifest.json',
+        with get(session,hf_hub_url(repo, prefix+'manifest.json',
                 repo_type='dataset', revision=revision),
-                headers={'Authorization':'Bearer '+token}, timeout=60) as response:
+                timeout=60) as response:
             response.raise_for_status()
             if response.json() != local: raise ValueError('HF manifest differs')
         work.extend((prefix, entry) for entry in local['files'])
     def check(item):
         prefix, entry = item
-        with requests.get(hf_hub_url(repo, prefix+entry['path'],
+        if not hasattr(locals_,'session'):
+            locals_.session=requests.Session()
+            locals_.session.headers['Authorization']='Bearer '+token
+        with get(locals_.session,hf_hub_url(repo, prefix+entry['path'],
                 repo_type='dataset', revision=revision), stream=True,
-                headers={'Authorization':'Bearer '+token}, timeout=(30,120)) as response:
+                timeout=(30,120)) as response:
             return verify_payload(response, entry)
-    with ThreadPoolExecutor(max_workers=4) as workers:
+    with ThreadPoolExecutor(max_workers=8) as workers:
         size = sum(workers.map(check, work))
     # Read the complete ledger too: exclusions are part of the output contract.
-    with requests.get(hf_hub_url(repo, 'tail-sweeps/'+root.name+'/sweep.json',
+    with get(session,hf_hub_url(repo, 'tail-sweeps/'+root.name+'/sweep.json',
             repo_type='dataset', revision=revision),
-            headers={'Authorization':'Bearer '+token}, timeout=60) as response:
+            timeout=60) as response:
         response.raise_for_status()
         if response.json() != ledger: raise ValueError('HF sweep ledger differs')
     return dict(revision=revision, files=len(work), bytes=size,
