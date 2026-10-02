@@ -13,6 +13,25 @@ from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stat
 
 
 class RankMetrics(unittest.TestCase):
+    def test_repeat_statistics_reject_different_runtime_configuration(self):
+        base = dict(search_complete_seconds=1, smi_peak_mib_per_rank=[100,100],
+                    smi_peak_mib_total=200, epoch_window=2, frontier_profile='DENSE',
+                    hash_seed_hex='00' * 16)
+        for key, value in [('epoch_window',3), ('frontier_profile','HASH_FIRST'),
+                           ('hash_seed_hex','01' * 16)]:
+            with self.subTest(key=key), self.assertRaisesRegex(
+                    ValueError, 'MEASUREMENT_CONFIGURATION_MISMATCH: '+key):
+                stats([base,dict(base,**{key:value})])
+
+    def test_aggregation_preserves_and_checks_epoch_window(self):
+        base = dict(status='COMPLETE',backend='native_test',local_layer_sizes=[1],
+                    search_complete_seconds=1,epoch_window=3)
+        ranks = [dict(base,rank=0),dict(base,rank=1)]
+        self.assertEqual(aggregate_rank_results(ranks).get('epoch_window'),3)
+        ranks[1]['epoch_window']=2
+        with self.assertRaisesRegex(ValueError,'rank configuration mismatch: epoch_window'):
+            aggregate_rank_results(ranks)
+
     def test_rank_transport_must_agree_and_is_retained_in_measurement(self):
         base = dict(status='COMPLETE', backend='native_test',
             local_layer_sizes=[1], search_complete_seconds=1, transport_backend='Lsa')
