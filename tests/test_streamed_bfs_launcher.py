@@ -68,9 +68,19 @@ class StreamedLauncher(unittest.TestCase):
                     'inactive_file 999999\ntotal_inactive_file 400000\ntotal_dirty 30000\ntotal_writeback 20000\n')
                 self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 450000)
                 current.write_text('200000')
-                self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 800000)
+                self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 750000)
                 maximum.write_text('2000000')
                 self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 1024000)
+
+    def test_recent_clean_cache_counts_but_unevictable_pages_remain_reserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            meminfo=root/'meminfo';meminfo.write_text('MemAvailable: 1000 kB\n')
+            maximum,current=root/'memory.max',root/'memory.current'
+            maximum.write_text('800000');current.write_text('700000')
+            (root/'memory.stat').write_text('inactive_file 100000\nactive_file 500000\n'
+                'file_dirty 30000\nfile_writeback 20000\nunevictable 100000\n')
+            self.assertEqual(launcher.available_host_bytes(meminfo,[(maximum,current)]),550000)
 
     def test_publication_runs_after_consumers_finish(self):
         with tempfile.TemporaryDirectory() as directory:

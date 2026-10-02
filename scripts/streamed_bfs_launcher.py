@@ -39,10 +39,12 @@ def available_host_bytes(meminfo=Path('/proc/meminfo'), limits=None):
                     counters = dict(line.split() for line in stat.read_text().splitlines())
                     prefix = 'total_' if 'total_inactive_file' in counters else ''
                     inactive = int(counters.get(prefix+'inactive_file', '0'))
+                    active = int(counters.get(prefix+'active_file', '0'))
+                    unevictable = int(counters.get(prefix+'unevictable', '0'))
                     file_prefix = 'file_' if current.name == 'memory.current' else prefix
                     dirty = int(counters.get(file_prefix+'dirty', '0'))
                     writeback = int(counters.get(file_prefix+'writeback', '0'))
-                    reclaimable = min(used, max(0, inactive-dirty-writeback))
+                    reclaimable = max(0, min(used, inactive+active)-dirty-writeback-unevictable)
                 available = min(available, max(0, int(limit)-used+reclaimable))
     return available
 
