@@ -77,6 +77,7 @@ fn run() -> Result<()> {
         20260828u128.to_le_bytes(),
         id,
         DistributedConfig {
+            epoch_window: 2,
             rank,
             world,
             logical_owner_to_rank: rank_map.to_vec(),

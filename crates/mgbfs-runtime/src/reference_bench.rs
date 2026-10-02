@@ -365,6 +365,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     let default_bucket_capacity =
         crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
     let cfg = DistributedConfig {
+        epoch_window: match std::env::var("MGBFS_EPOCH_WINDOW") {
+            Ok(value) => crate::reference_launch::epoch_window_for_launch(Some(&value))?,
+            Err(std::env::VarError::NotPresent) =>
+                crate::reference_launch::epoch_window_for_launch(None)?,
+            Err(_) => return Err("ENV_MGBFS_EPOCH_WINDOW".into()),
+        },
         untouched_vram_reserve: 1 << 30,
         rank,
         world,
@@ -389,8 +395,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         "job_buckets": cfg.job_buckets,
         "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
-        "epoch_window": crate::reference_launch::epoch_window_for_launch(
-            std::env::var("MGBFS_EPOCH_WINDOW").ok().as_deref())?,
+        "epoch_window": cfg.epoch_window,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
         "warmup_requested": warmup_requested,

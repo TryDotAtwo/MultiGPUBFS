@@ -25,6 +25,7 @@ fn one_rank_vram_rejection_aborts_both_before_runtime_allocation() {
             std::thread::spawn(move || {
                 let graph = MatrixGroup::unitriangular(3, 3).unwrap();
                 let cfg = DistributedConfig {
+                    epoch_window: 2,
                     rank,
                     world: 2,
                     logical_owner_to_rank: vec![0, 1],
@@ -457,6 +458,7 @@ fn owner_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
                 std::thread::spawn(move || {
                     let g = MatrixGroup::unitriangular(3, 3).unwrap();
                     let cfg = DistributedConfig {
+                        epoch_window: 2,
                         untouched_vram_reserve: 1 << 30,
                         rank,
                         world: 2,
@@ -702,6 +704,7 @@ fn archive_fixture_batch(
                     MatrixGroup::unitriangular(3, 3).unwrap()
                 };
                 let cfg = DistributedConfig {
+                    epoch_window: 2,
                     untouched_vram_reserve: 1 << 30,
                     rank,
                     world,

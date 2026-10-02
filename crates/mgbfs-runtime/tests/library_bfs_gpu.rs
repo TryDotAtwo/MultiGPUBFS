@@ -10,6 +10,7 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
     let cfg = DistributedConfig {
+        epoch_window: 2,
         rank: 0,
         world: 1,
         logical_owner_to_rank: vec![0, 0],
@@ -43,6 +44,7 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
     let mut cfg = DistributedConfig {
+        epoch_window: 2,
         rank: 0,
         world: 1,
         logical_owner_to_rank: vec![0, 0],
@@ -92,6 +94,7 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                     0
                 );
                 let cfg = DistributedConfig {
+                    epoch_window: 2,
                     rank: 0,
                     world: 1,
                     logical_owner_to_rank: vec![0, 0],

@@ -309,6 +309,7 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
             let peer_cancel = Arc::clone(&peer_cancel);
             std::thread::spawn(move || {
                 let cfg = DistributedConfig {
+                    epoch_window: 2,
                     rank,
                     world: 2,
                     logical_owner_to_rank: vec![0, 1],
@@ -624,6 +625,7 @@ fn one_rank_constructor_failure_after_nccl_stops_peer() {
             }
             ready.wait();
             let cfg = DistributedConfig {
+                epoch_window: 2,
                 rank, world: 2, logical_owner_to_rank: vec![0, 1], batch: 1,
                 layer_capacity: 64, state_ring_capacity: 64, buckets: 8,
                 shards: 4, job_buckets: 2, bucket_capacity: 32, prededup: true,
@@ -699,6 +701,7 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                     std::panic::catch_unwind(|| {
                     if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=before_constructor"); }
                     let cfg = DistributedConfig {
+                        epoch_window: 2,
                         rank,
                         world: 2,
                         logical_owner_to_rank: vec![0, 1],
@@ -840,6 +843,7 @@ fn fixture(
                         eprintln!("MGBFS_LSA_GATE rank={rank} phase=before_constructor");
                     }
                     let cfg = DistributedConfig {
+                        epoch_window: 2,
                         rank,
                         world,
                         logical_owner_to_rank: owners.to_vec(),

@@ -243,6 +243,7 @@ unsafe fn history_view(
 
 #[derive(Clone)]
 pub struct DistributedConfig {
+    pub epoch_window: usize,
     pub rank: u32,
     pub world: u32,
     pub logical_owner_to_rank: Vec<u32>,
@@ -502,6 +503,7 @@ mod plan_error_tests {
         let mut id = [0u8; 128];
         assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
         let cfg = DistributedConfig {
+            epoch_window: 2,
             rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
             transport: mgbfs_core::config::ReferenceTransport::Lsa,
             batch: 2, layer_capacity: 8, state_ring_capacity: 16,
@@ -526,6 +528,7 @@ mod plan_error_tests {
             let mut id = [0u8; 128];
             assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
             let cfg = DistributedConfig {
+                epoch_window: 2,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
                 batch: 2, layer_capacity: 8, state_ring_capacity: 16,
@@ -1219,13 +1222,8 @@ impl DistributedNativeBfs {
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
-        let epoch_window_value = std::env::var("MGBFS_EPOCH_WINDOW")
-            .map(Some).or_else(|error| match error {
-                std::env::VarError::NotPresent => Ok(None),
-                _ => Err("ENV_MGBFS_EPOCH_WINDOW".to_string()),
-            })?;
-        let epoch_window = crate::reference_launch::epoch_window_for_launch(
-            epoch_window_value.as_deref())?;
+        if cfg.epoch_window < 2 { return Err("EPOCH_WINDOW_CONFIG".into()); }
+        let epoch_window = cfg.epoch_window;
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
                 || matches!(library_options, Some((_, owner)) if owner != ReferenceOwner::CucoRank))
