@@ -18,8 +18,14 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
     for key,record in ledger['cases'].items():
         if '/' in key or '\\' in key or key in ('','.','..'):
             raise ValueError('unsafe case key')
-        base=root/key/'saved'; manifest_path=base/'manifest.json'
         if not record.get('attempted',True):continue
+        try:
+            from .tail_parquet import publication_root
+        except ImportError:
+            from tail_parquet import publication_root
+        base=publication_root(root/key/'saved',
+            ledger['configuration']['base'].get('archive_format','packed'))
+        manifest_path=base/'manifest.json'
         manifest=json.loads(manifest_path.read_text())
         prefix='tail-runs/'+run_id+'-'+key+'/'
         for entry in manifest['files']:

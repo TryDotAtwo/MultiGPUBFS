@@ -127,7 +127,10 @@ def verify_hf(root, repo, api, token):
     work = []
     for key, record in ledger['cases'].items():
         if not record.get('attempted'): continue
-        local = json.loads((root/key/'saved/manifest.json').read_text())
+        from tail_parquet import publication_root
+        saved=publication_root(root/key/'saved',
+            ledger['configuration']['base'].get('archive_format','packed'))
+        local = json.loads((saved/'manifest.json').read_text())
         prefix = 'tail-runs/'+run_id+'-'+key+'/'
         with get(session,hf_hub_url(repo, prefix+'manifest.json',
                 repo_type='dataset', revision=revision),
@@ -187,6 +190,7 @@ def main(cancelled=None):
             inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
         from streamed_bfs_launcher import available_host_bytes
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
+            archive_format='parquet',
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
                 MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='CUCO_RANK',MGBFS_PRE_DEDUP='ON',
