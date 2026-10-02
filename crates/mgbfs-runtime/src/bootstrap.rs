@@ -4,6 +4,107 @@ use mgbfs_core::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
 
+#[cfg(test)]
+mod outcome_escalation_tests {
+    use super::*;
+    use crate::control_connection::ControlConnection;
+    use std::time::{Duration, Instant};
+
+    fn pair() -> (ControlConnection, ControlConnection) {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (root, _) = listener.accept().unwrap();
+        (ControlConnection::new(root, 2, 0, 1).unwrap(),
+         ControlConnection::new(peer, 2, 1, 0).unwrap())
+    }
+    fn receive(conn: &mut ControlConnection) -> Option<crate::control_wire::ControlFrame> {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            match conn.poll_boundary_receive() {
+                Ok(Some(frame)) => return Some(frame),
+                Ok(None) => (),
+                Err(error) if error == "CONTROL_EOF" => return None,
+                Err(error) => panic!("unexpected control error: {error}"),
+            }
+            std::thread::yield_now();
+        }
+        None
+    }
+
+    #[test]
+    fn peer_sends_archive_failure_after_search_success() {
+        let (mut root, peer) = pair();
+        let local = Arc::new(AtomicU8::new(1));
+        let signal = local.clone();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![Some(peer), None];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            search_sideband_loop(1, &mut peers, &signal, &AtomicBool::new(false),
+                &retirement, Duration::from_secs(3))
+        });
+        assert_eq!(receive(&mut root), Some(search_frame(1, false)));
+        local.store(2, Ordering::Release);
+        let escalation = receive(&mut root);
+        // Complete the actual retirement handshake even when escalation is broken.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut root, search_frame(0, true), deadline).unwrap();
+        assert_eq!(receive(&mut root), Some(retirement_frame(1, 1)));
+        boundary_send(&mut root, retirement_frame(0, 2), deadline).unwrap();
+        assert_eq!(worker.join().unwrap().unwrap(), true);
+        assert_eq!(escalation, Some(search_frame(1, true)),
+            "archive failure was suppressed after the initial success notification");
+    }
+
+    #[test]
+    fn coordinator_accepts_success_to_failure_escalation() {
+        let (root, mut peer) = pair();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed = cancelled.clone();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![None, Some(root)];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            search_sideband_loop(0, &mut peers, &AtomicU8::new(0), &observed,
+                &retirement, Duration::from_secs(3))
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut peer, search_frame(1, false), deadline).unwrap();
+        boundary_send(&mut peer, search_frame(1, true), deadline).unwrap();
+        let cancellation = receive(&mut peer);
+        if cancellation.is_some() {
+            boundary_send(&mut peer, retirement_frame(1, 1), deadline).unwrap();
+            assert_eq!(receive(&mut peer), Some(retirement_frame(0, 2)));
+        }
+        let result = worker.join().unwrap();
+        assert_eq!(result, Ok(true));
+        assert_eq!(cancellation, Some(search_frame(0, true)));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn queued_archive_failure_is_not_mistaken_for_reader_retirement() {
+        let (root, mut peer) = pair();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![None, Some(root)];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            // Coordinator already consumed peer success before its own fatal.
+            let mut initial = vec![0, 1];
+            search_retirement_loop(0, &mut peers, &retirement, &mut initial,
+                Instant::now() + Duration::from_secs(2))
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut peer, search_frame(1, true), deadline).unwrap();
+        // Merely receiving failure must not release the registered window.
+        assert_eq!(receive(&mut peer), None);
+        boundary_send(&mut peer, retirement_frame(1, 1), deadline).unwrap();
+        let completion = receive(&mut peer);
+        assert_eq!(worker.join().unwrap(), Ok(()));
+        assert_eq!(completion, Some(retirement_frame(0, 2)));
+    }
+}
+
 pub struct SearchSideband {
     local: Arc<AtomicU8>,
     cancelled: Arc<AtomicBool>,
@@ -62,7 +163,7 @@ fn retirement_frame(rank: u32, epoch: u64) -> crate::control_wire::ControlFrame 
 
 fn search_retirement_loop(rank: u32,
     peers: &mut [Option<crate::control_connection::ControlConnection>],
-    retirement: &SearchRetirement, initial: &mut [bool],
+    retirement: &SearchRetirement, initial: &mut [u8],
     deadline: std::time::Instant) -> Result<()> {
     let mut acknowledged = vec![false; peers.len()];
     let mut sent = false;
@@ -80,10 +181,11 @@ fn search_retirement_loop(rank: u32,
                     if frame == retirement_frame(peer as u32, 1) && !acknowledged[peer] {
                         acknowledged[peer] = true;
                     } else if frame == search_frame(peer as u32, frame.fatal_code != 0)
-                        && !initial[peer] && !acknowledged[peer] {
+                        && (initial[peer] == 0 || (initial[peer] == 1 && frame.fatal_code != 0))
+                        && !acknowledged[peer] {
                         // A success/failure notification already queued before
                         // cancellation is not a reader-retirement ACK.
-                        initial[peer] = true;
+                        initial[peer] = 1 + u8::from(frame.fatal_code != 0);
                     } else { return Err("SEARCH_RETIREMENT_FRAME".into()); }
                 }
             }
@@ -148,8 +250,10 @@ fn search_sideband_loop(
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
-    let mut sent = false;
-    let mut ready = vec![false; peers.len()];
+    // Search success is provisional while the asynchronous archive worker is
+    // still active. Permit exactly one monotone success -> failure update.
+    let mut sent = 0u8;
+    let mut ready = vec![0u8; peers.len()];
     loop {
         if std::time::Instant::now() >= deadline {
             cancelled.store(true, Ordering::Release);
@@ -162,12 +266,14 @@ fn search_sideband_loop(
                 let conn = peers[peer].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
                 if let Some(frame) = conn.poll_boundary_receive()? {
                     if frame != search_frame(peer as u32, frame.fatal_code != 0)
-                        || ready[peer] { return Err("SEARCH_SIDEBAND_FRAME".into()); }
-                    ready[peer] = true;
+                        || (ready[peer] != 0 && !(ready[peer] == 1 && frame.fatal_code != 0)) {
+                        return Err("SEARCH_SIDEBAND_FRAME".into());
+                    }
+                    ready[peer] = 1 + u8::from(frame.fatal_code != 0);
                     failed |= frame.fatal_code != 0;
                 }
             }
-            if failed || (state == 1 && ready[1..].iter().all(|&x| x)) {
+            if failed || (state == 1 && ready[1..].iter().all(|&x| x != 0)) {
                 if failed { cancelled.store(true, Ordering::Release); }
                 for peer in peers.iter_mut().skip(1) {
                     boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
@@ -180,9 +286,9 @@ fn search_sideband_loop(
             }
         } else {
             let conn = peers[0].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
-            if state != 0 && !sent {
+            if state != 0 && (sent == 0 || (sent == 1 && state == 2)) {
                 boundary_send(conn, search_frame(rank, state == 2), deadline)?;
-                sent = true;
+                sent = state;
             }
             if let Some(frame) = conn.poll_boundary_receive()? {
                 if frame != search_frame(0, frame.fatal_code != 0) {
