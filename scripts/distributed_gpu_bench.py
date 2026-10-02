@@ -4,6 +4,25 @@ from pathlib import Path
 from symmetric_gpu_bench import matrix_generators,math_factorial
 from process_scope import spawn_group, stop_group
 
+BASELINE_COMMIT = 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
+
+def baseline_provenance(module_file, expected_commit=BASELINE_COMMIT):
+ root=Path(module_file).resolve().parent.parent
+ try:
+  revision=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True,stderr=subprocess.PIPE).strip()
+  dirty=subprocess.check_output(['git','-C',str(root),'status','--porcelain'],text=True,stderr=subprocess.PIPE).strip()
+ except (OSError,subprocess.CalledProcessError) as error:
+  raise ValueError('BASELINE_CHECKOUT_UNVERIFIED') from error
+ if revision!=expected_commit:raise ValueError('BASELINE_REVISION')
+ if dirty:raise ValueError('BASELINE_DIRTY')
+ return dict(commit=revision,module_file=str(Path(module_file).resolve()))
+
+def imported_baseline_provenance():
+ import importlib.util
+ spec=importlib.util.find_spec('cayleypy')
+ if spec is None or not spec.origin:raise ValueError('BASELINE_IMPORT_MISSING')
+ return baseline_provenance(spec.origin)
+
 RUN_CONFIGURATION_FIELDS = (
  'group','batch','frontier_profile','owner_backend','pre_dedup','transport_backend',
  'capacity_mode','global_capacity_records','global_state_ring_records',
@@ -11,7 +30,7 @@ RUN_CONFIGURATION_FIELDS = (
  'hash_first_generation','warmup_completed','library_pool_reserved_bytes',
  'graph_kind','start_state','expected_unique_states','generators',
  'hash_seed_hex','bootstrap_digest','logical_owner_to_rank','epoch_window',
- 'output_contract','archive_commit_scope')
+ 'output_contract','archive_commit_scope','baseline_provenance')
 
 class ProgressRelay:
  """Bounded, read-only tail of depth telemetry; retain the full log on disk."""
@@ -39,10 +58,11 @@ class ProgressRelay:
    self.pending=b'';self.dropping=False
 
 def baseline_worker(n,batch,out):
+ provenance=imported_baseline_provenance()
  if int(os.environ['WORLD_SIZE'])==1:
   from symmetric_gpu_bench import baseline
   row=baseline(n,batch,False)
-  row.update(rank=0,world_size=1,warmup_completed=True)
+  row.update(rank=0,world_size=1,warmup_completed=True,baseline_provenance=provenance)
   Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/'rank-0.json').write_text(json.dumps(row))
   return
  import numpy as np,torch,torch.distributed as dist
@@ -54,6 +74,7 @@ def baseline_worker(n,batch,out):
  warm=graph.bfs(max_layer_size_to_store=1);assert warm.bfs_completed and sum(warm.layer_sizes)==math_factorial(n)
  del warm;gc.collect();torch.cuda.synchronize();torch.cuda.empty_cache();torch.cuda.reset_peak_memory_stats();dist.barrier();before_free,total=torch.cuda.mem_get_info();start=time.perf_counter();result=graph.bfs(max_layer_size_to_store=1);torch.cuda.synchronize();dist.barrier();seconds=time.perf_counter()-start;after_free,_=torch.cuda.mem_get_info();assert result.bfs_completed and sum(result.layer_sizes)==math_factorial(n)
  row=dict(status='COMPLETE',backend='cayleypy_torchrun',rank=rank,group=f's{n}',batch=batch,warmup_completed=True,search_complete_seconds=seconds,durable_run_commit_seconds=None,layer_sizes=result.layer_sizes,torch_peak_allocated_bytes=torch.cuda.max_memory_allocated(),torch_peak_reserved_bytes=torch.cuda.max_memory_reserved(),cuda_before_used_bytes=total-before_free,cuda_after_used_bytes=total-after_free,output_contract='global counts; no archive')
+ row['baseline_provenance']=provenance
  Path(out).mkdir(parents=True,exist_ok=True);(Path(out)/f'rank-{rank}.json').write_text(json.dumps(row))
 
 def smi_peaks(text,world=2):
