@@ -7,6 +7,68 @@ impl Drop for Fixture {
     fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
 }
 
+// Independent full-state oracle: checksummed counts alone cannot detect a
+// generation/layout bug which substitutes a different state at the same depth.
+fn assert_s4_archive_full_states(path: &std::path::Path) {
+    let bytes = std::fs::read(path).unwrap();
+    mgbfs_runtime::archive::verify(&bytes).unwrap();
+    let word = |offset: usize| u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
+    let width = word(8);
+    assert_eq!(width, 16);
+    let oracle = mgbfs_core::matrix::MatrixGroup::symmetric_permutation_matrices(4)
+        .unwrap().exact_layers(24).unwrap();
+    let mut actual = vec![std::collections::BTreeSet::new(); oracle.len()];
+    let mut cursor = 48;
+    loop {
+        let kind = word(cursor + 8);
+        let depth = word(cursor + 16);
+        let rows = word(cursor + 24);
+        let size = word(cursor + 32);
+        if kind == 1 {
+            assert!(depth < actual.len(), "unexpected archive depth");
+            for row in 0..rows {
+                let start = cursor + 80 + row * width;
+                assert!(actual[depth].insert(bytes[start..start + width].to_vec()),
+                    "duplicate archived state at depth {depth}");
+            }
+        }
+        if kind == 3 { break; }
+        cursor += 112 + size;
+    }
+    for (depth, expected) in oracle.into_iter().enumerate() {
+        assert_eq!(actual[depth], expected.into_iter().collect(),
+            "full-state mismatch at depth {depth}");
+    }
+}
+
+#[test]
+fn full_state_gate_rejects_checksummed_wrong_states_with_correct_counts() {
+    use mgbfs_runtime::archive::{Archive, FileExtent};
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture(std::env::temp_dir().join(format!("mgbfs-oracle-mutation-{nonce}")));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let path = fixture.0.join("wrong.mgbfsar1");
+    let graph = mgbfs_core::matrix::MatrixGroup::symmetric_permutation_matrices(4).unwrap();
+    let mut layers = graph.exact_layers(24).unwrap();
+    // Swap two distinct states across depths: preserve every layer count and
+    // the complete unique set, but falsify BFS distance. Recompute checksums
+    // through the real archive writer so structural verification still passes.
+    let old_start = layers[0][0].clone();
+    layers[0][0] = layers[1][0].clone();
+    layers[1][0] = old_start;
+    let mut archive = Archive::new(FileExtent::create_new(&path).unwrap(), 16384, 16, [0; 32]).unwrap();
+    for (depth, states) in layers.iter().enumerate() {
+        let flat: Vec<u8> = states.iter().flatten().copied().collect();
+        archive.records(depth as u64, &flat, &vec![[0; 4]; states.len()]).unwrap();
+        archive.layer_commit(depth as u64, states.len() as u64).unwrap();
+    }
+    archive.run_commit().unwrap();
+    drop(archive);
+    mgbfs_runtime::archive::verify(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(std::panic::catch_unwind(|| assert_s4_archive_full_states(&path)).is_err(),
+        "full-state gate accepted a checksummed wrong depth assignment");
+}
+
 #[test]
 fn tensor_generation_hardware_admission_and_layer_counts() {
     let hardware = Command::new("nvidia-smi")
@@ -47,6 +109,7 @@ fn tensor_generation_hardware_admission_and_layer_counts() {
         assert!(Command::new(env!("CARGO_BIN_EXE_mgbfs"))
             .arg("verify").arg(fixture.0.join("archive-rank-0.mgbfsar1"))
             .status().unwrap().success());
+        assert_s4_archive_full_states(&fixture.0.join("archive-rank-0.mgbfsar1"));
         return;
     }
     assert_eq!(output.status.code(), Some(1), "{stderr}");
@@ -93,6 +156,7 @@ fn native_only_cli_executes_requested_owner_capture() {
     assert_eq!(record["status"], "COMPLETE");
     assert_eq!(record["local_layer_sizes"], serde_json::json!([1, 3, 5, 6, 5, 3, 1]));
     assert!(fixture.0.join("result/group-complete.json").exists());
+    assert_s4_archive_full_states(&fixture.0.join("archive-rank-0.mgbfsar1"));
 }
 
 // One physical GPU is deliberately not described as a two-rank gate. This
