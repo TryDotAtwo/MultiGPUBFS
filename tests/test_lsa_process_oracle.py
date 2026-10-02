@@ -12,7 +12,7 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
-    def check(self, mutation=None, result_mutation=None, expected_seed=None):
+    def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -33,7 +33,7 @@ class ProcessOracleTests(unittest.TestCase):
                 counts = [sum(d == depth for d, _ in rows[rank])
                           for depth in range(len(expected))]
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
-                              hash_seed_hex='00000000000000000000000000000001')
+                              hash_seed_hex='00000000000000000000000000000001', epoch_window=3)
                 if result_mutation:
                     result_mutation(rank, record)
                 (root / f'result/rank-{rank}.json').write_text(json.dumps(record))
@@ -52,9 +52,21 @@ class ProcessOracleTests(unittest.TestCase):
                 item, _ = frame(chain, sequence, 3, len(counts), sum(counts), b'')
                 pieces.append(item)
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
-            if expected_seed is None:
-                return replay.verify_process_archives(root)
-            return replay.verify_process_archives(root, expected_seed=expected_seed)
+            return replay.verify_process_archives(root, expected_seed=expected_seed,
+                expected_epoch_window=expected_epoch_window)
+
+    def test_requested_epoch_window_matches_both_ranks(self):
+        self.assertEqual(self.check(expected_epoch_window=3)['unique_states'], 24)
+        for rank in (0, 1):
+            for missing in (False, True):
+                def change(current, record):
+                    if current == rank:
+                        if missing:
+                            record.pop('epoch_window')
+                        else:
+                            record['epoch_window'] = 2
+                with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_EPOCH_WINDOW'):
+                    self.check(result_mutation=change, expected_epoch_window=3)
 
     def test_requested_seed_must_match_each_runtime_rank(self):
         seed = '00000000000000000000000000000001'
