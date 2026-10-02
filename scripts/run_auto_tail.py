@@ -95,6 +95,34 @@ def pair_config(base, n, r):
     return cfg
 
 
+def tune_pair(base, source, case, runtime_env, *, query=None):
+    """Native warmed admission, before creating any case archive or running BFS."""
+    from vram_autotune import native_query, select_capacity
+    n,r=base['n'],base['r']
+    upper=max(256,min(math.factorial(n)//math.factorial(r),(2**31-1)//3))
+    def configuration(rows):
+        draft=json.loads(json.dumps(base))
+        # Keep the established fast batch and conservative pool growth for now.
+        # Pool utilization is a separate tuning gate; these are reserved bytes,
+        # never an assertion that every byte holds live graph states.
+        draft['resource_plan'].update(max_rows_per_rank=rows,
+            library_pool_bytes=max(64<<20,((rows*512+255)//256)*256))
+        return pair_config(draft,n,r)
+    def probe(rows):
+        cfg=configuration(rows)
+        if query is not None:return query(cfg)
+        return native_query(cfg,source,case.parent/(case.name+f'-query-{rows}'),runtime_env)
+    rows,probes=select_capacity(probe,upper)
+    cfg=configuration(rows)
+    cfg['resource_plan']=dict(policy='native-warmed-admission-v2',
+        selected_rows_per_rank=rows, max_rows_per_rank=rows,
+        library_pool_bytes=int(cfg['env']['MGBFS_LIBRARY_POOL_BYTES']),
+        probes=[dict(rows_per_rank=k,ranks=v) for k,v in sorted(probes.items())],
+        pool_policy='reserved-512-bytes-per-capacity-row-pending-pool-peak-tuning',
+        maximum_hardware_capacity_proven=False)
+    return cfg
+
+
 def verify_hf(root, repo, api, token):
     from concurrent.futures import ThreadPoolExecutor
     from huggingface_hub import hf_hub_url
@@ -191,6 +219,7 @@ def main(cancelled=None):
         from streamed_bfs_launcher import available_host_bytes
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
             archive_format='parquet',
+            native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
                 MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='CUCO_RANK',MGBFS_PRE_DEDUP='ON',
@@ -208,7 +237,9 @@ def main(cancelled=None):
         if count-last_published>=20:
             publisher.enqueue(ledger);last_published=count
     def adaptive(config,source,case,env):
-        return run(pair_config(config,config['n'],config['r']),source,case,env,cancelled=cancelled)
+        cfg=(tune_pair(config,source,case,env) if config.get('native_capacity_probe')
+             else pair_config(config,config['n'],config['r']))
+        return run(cfg,source,case,env,cancelled=cancelled)
     # Each layer writes its bounded intermediate snapshot immediately.
     # Completed cohorts publish in the background without per-layer quota storms.
     remaining=args.deadline_unix-time.time()

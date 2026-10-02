@@ -349,6 +349,7 @@ impl Drop for CancelMirror {
     }
 }
 fn admit_device_group(
+    rank: u32,
     comm: *mut c_void,
     stream: *mut c_void,
     required: u64,
@@ -367,6 +368,20 @@ fn admit_device_group(
     };
     vote(0)?; // Initialize the actual collective before querying free VRAM.
     let (mut free, mut total) = (0usize, 0usize);
+    if std::env::var("MGBFS_MEMORY_QUERY").ok().as_deref() == Some("1") {
+        let status = check(unsafe { cudaMemGetInfo(&mut free, &mut total) });
+        if vote(u32::from(status.is_err()))? != 0 {
+            return Err("MEMORY_QUERY_GROUP_FAILED".into());
+        }
+        println!("MGBFS_MEMORY_QUERY {}", serde_json::json!({
+            "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
+            "free_after_nccl_warmup_bytes": free, "total_bytes": total,
+            "scope": "explicit_device_allocations_including_fixed_library_pool",
+        }));
+        // Query subprocesses intentionally stop before large allocations and
+        // before BFS. No capacity failure or completed layer is claimed.
+        return Err("MEMORY_QUERY_DONE".into());
+    }
     let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) })
         .and_then(|_| crate::distributed_memory::device_admission(required, reserve, free as u64));
     if vote(u32::from(local.is_err()))? != 0 {
@@ -1378,6 +1393,7 @@ impl DistributedNativeBfs {
             return Err("TEST_INJECTED_CONSTRUCTOR_ERROR".into());
         }
         admit_device_group(
+            cfg.rank,
             comm.0,
             raw,
             owned_memory.total(),

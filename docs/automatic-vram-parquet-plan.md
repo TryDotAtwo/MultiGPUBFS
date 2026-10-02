@@ -15,6 +15,21 @@ Old configurations retain their original packed format for resume compatibility.
 
 13 targeted CPU tests pass. New format has not yet been checked on rented GPU/HF.
 
+Native constructor query mode now initializes the real NCCL collective and
+reports the existing allocation ledger and free VRAM before large allocation.
+Python startup selector predicts an affine capacity, then confirms exact native
+queries and corrects rounding/nonlinear boundaries with bisection. New sweeps
+use this path before each BFS. Batch remains 32768 for sufficiently large cases;
+Cuco <=50% table occupancy is unchanged. Probe errors are fatal startup errors,
+not graph capacity/pruning evidence. Existing 1 GiB native reserve is unchanged.
+
+Important: fixed library pool still uses a conservative 512 bytes/capacity row.
+The selector maximizes admission for that reserved profile, not optimal live
+state capacity. Exact worst-case pool sizing and reserve calibration remain
+required. Query mode intentionally exits with MEMORY_QUERY_DONE; only complete
+rank-labelled query output is accepted. Windows CPU tests cannot compile or
+validate the Linux CUDA constructor branch. Actual GPU gate remains open.
+
 ## Required remaining work
 
 1. Extract allocation-only native planning using existing CUDA library query APIs.

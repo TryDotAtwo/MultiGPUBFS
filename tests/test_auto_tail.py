@@ -9,11 +9,29 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from run_auto_tail import device_budget,pair_config,SweepPublisher
+from run_auto_tail import device_budget,pair_config,tune_pair,SweepPublisher
 import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_native_tuning_uses_actual_queries_and_preserves_fast_batch(self):
+        base=dict(n=16,r=4,world=2,host_available_bytes=8<<30,env={},
+                  resource_plan=device_budget([{'free_bytes':12<<30}]))
+        original=json.loads(json.dumps(base))
+        def query(cfg):
+            self.assertEqual(cfg['batch'],32768)
+            e=cfg['env'];rows=int(e['MGBFS_BENCH_CAPACITY'])
+            self.assertEqual(int(e['MGBFS_FUTURE_CAPACITY']),2*rows)
+            return [dict(rank=rank,required_bytes=rows*640+100000,
+                reserve_bytes=1<<30,free_after_nccl_warmup_bytes=free)
+                for rank,free in enumerate((12<<30,10<<30))]
+        cfg=tune_pair(base,Path('fixture'),Path('case'),{},query=query)
+        expected=((10<<30)-(1<<30)-100000)//640
+        self.assertEqual(int(cfg['env']['MGBFS_BENCH_CAPACITY']),expected)
+        self.assertGreater(expected,base['resource_plan']['max_rows_per_rank'])
+        self.assertEqual(base,original)
+        self.assertFalse(cfg['resource_plan']['maximum_hardware_capacity_proven'])
+
     def test_failed_sweep_or_publication_preserves_local_error_report(self):
         class FailedPublisher:
             closed=False;generations=0;error=None
