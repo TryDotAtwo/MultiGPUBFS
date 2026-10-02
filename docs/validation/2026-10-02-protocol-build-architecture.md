@@ -113,3 +113,31 @@ Probe evidence saved locally at build/a4000-sm86-protocol-20261002/
 sm86-vendor-probe.tar.gz, SHA256
 a29cf26ba62ea467b32abec5c21fee178c33741575c9614f4a51de670ca11869.
 Final Python tests203 pass,8 skips; supervisor9 pass,1 skip.
+
+## Additional profile and owner coverage
+
+Clean runtime bb97d5a, same two independent A4000 rank processes:
+
+- HASH_FIRST S8 timeline passes all 40320 states and 29 layers. Each rank
+  records 178 batch ranges, with zero host StreamSynchronize, synchronous
+  memcpy or EventSynchronize inside those ranges. Non-archive copies are
+  1068 D2D copies per rank; archive D2H copies are 352/346. This does not
+  establish optimal overlap or performance superiority.
+- CUCO_RANK and CUB_SORT_MERGE, each DENSE/HASH_FIRST, pass S8 with rank map
+  [1,0] and pre-dedup OFF. Every canonical state at every depth matches CPU.
+- CUB_SORT_MERGE passes the healthy S4 case plus 18 asymmetric failures per
+  profile: 36 additional failures terminate without false group COMPLETE.
+- Seed 1 passes both profiles with CUCO_RANK. Correct seed 20260828
+  (hex 013527dc) passes both profiles with CUB, map [1,0], pre-dedup OFF.
+  Earlier directories labelled seed20260828-cub actually used 20261084
+  (013528dc) and are not credited as the required seed.
+- Ordinary parallel cargo test --locked passes again, without strace or
+  serial override. This does not explain prior intermittent bootstrap timeouts.
+
+Small continuation evidence excludes graph archives:
+build/a4000-sm86-protocol-20261002/sm86-mode-continuation.tar.gz,
+SHA256 7ef8d38e666c30a81fbe6714a60977bf54397e0a1234ed3eb7abe81fbdfbbe42.
+This package covers timeline, map/pre-dedup and CUB failures, not seed runs.
+The physical T4 gate, unfiltered memcheck/initcheck, paired A/B, production
+CLI and distributed macro-depth remain open. No runtime fallback, vendor
+error suppression or paid lease extension was introduced.
