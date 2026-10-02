@@ -53,7 +53,12 @@ Remaining integration gates:
   10.4 GB, evicted the oldest layer and verified retained SHA-256 by readback.
   The INCOMPLETE suffix was exactly 1 GB and its checksum also matched.
   This synthetic payload check is not a >=10 GB real BFS/GPU result.
-- Compare archive on/off on (15,4), with identical configuration and hardware.
+- Archive on/off was compared on (15,4) on two RTX 3090 GPUs with three
+  repetitions per owner and mode. All twelve runs share 26 completed layers;
+  comparisons use that identical prefix, not a full graph completion.
+  Median whole-layer totals were 0.462 s / 0.647 s for CUCO_RANK without/with
+  archiving and 0.521 s / 0.742 s for CUCO_INDEXED. This selects CUCO_RANK
+  for this measured configuration; it does not establish a universal winner.
 
 Validation: `python -m unittest discover -s tests -p 'test_*tail*.py'`.
 GPU full-word oracle: `lrx_multiset_two_rank_cuco_full_state_oracle`.
@@ -70,7 +75,18 @@ unsupported pairs, and the remaining unstarted pairs. Restarting with the
 identical configuration resumes pending pairs without overwriting earlier
 runs. The alphabet must fit four bits and the native orbit count must fit u64;
 unsupported pairs are explicitly recorded, never claimed as completed.
-The grid driver has CPU tests; a complete GPU grid has not yet been executed.
+The finite GPU grid for 2<=n<=15 and 1<=m<=n executed all 119 pairs on two
+RTX 3090 GPUs: 93 COMPLETE and 26 INCOMPLETE with 256 archive ring slots.
+Rerunning those 26 pairs with 2048 host archive ring slots completed eight
+additional graphs, leaving 101 COMPLETE and 18 INCOMPLETE among unique pairs.
+These remaining graphs retain explicit native stop reasons; they are not
+claimed complete. The baseline 2591 payload files (2,161,864,688 bytes) and
+119 final manifests were published directly from the GPU host in HF commit
+`745f6dfff88013ae13d32806c606fed11d9406f1`. Remote streamed checksum verification
+and publication of the larger-ring cohort are separate acceptance steps.
+Required metadata checks passed for all 145 baseline/rerun manifests, including
+exact starts, actions, packing, program/binary identifiers, complete launch
+configuration, contiguous layer counts/times, and per-GPU sampled observations.
 
 GPU-host publication for a finite sweep can use `scripts/publish_tail_batch.py`.
 Run the grid without per-case `repo_id` while HF commits are throttled, retaining
