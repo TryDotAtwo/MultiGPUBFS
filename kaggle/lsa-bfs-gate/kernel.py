@@ -13,11 +13,11 @@ import sys
 import tempfile
 import time
 
-SOURCE = "b85d3b7f2d47df8243723e6d72e6e64da9d6abf9"
+SOURCE = "924ee24a6c08fdab018c64694b43fff64dc61b40"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "rounds_gate"
+MODE = "native_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
-NCCL_VARIANT = "wheel"  # Opt-in: minimum_arch_guard or minimum_arch_guard_posix.
+NCCL_VARIANT = "minimum_arch_guard_posix"
 
 
 def cuda_build_target(hardware):
@@ -128,6 +128,7 @@ def main():
     spec.loader.exec_module(library)
     env = library.isolated_environment(os.environ)
     env["NCCL_CUMEM_ENABLE"] = "1"
+    env["MGBFS_EPOCH_WINDOW"] = "3"
     env["PIP_DEFAULT_TIMEOUT"] = "300"
     env["PIP_RETRIES"] = "5"
 
