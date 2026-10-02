@@ -145,6 +145,27 @@ int main() {
   assert(mgbfs_nccl_poll(receiver) != 0);
   mgbfs_nccl_destroy(receiver);
   assert(destroy_calls == destroys_before);
+  // Cancellation during a failing group's asynchronous close must run the
+  // same dispatcher's abort, without replacing the original send error or
+  // permitting another NCCL operation on the released handle.
+  void* failed_group = nullptr;
+  assert(mgbfs_nccl_create(0,2,0,&id,&failed_group,nullptr,0)==0);
+  cancel_after = 3;
+  assert(mgbfs_nccl_bind_cancel(failed_group,cancellation_probe,&cancel_after)==0);
+  fail_stage = 2;
+  group_end_override = ncclInProgress;
+  async_state = ncclInProgress;
+  async_pending_queries = 0;
+  const int failure_aborts = abort_calls;
+  assert(mgbfs_nccl_send_recv(failed_group,&byte,1,1,&byte,1,nullptr)==3);
+  assert(abort_calls==failure_aborts+1 && group_depth==0);
+  const int failure_sends = send_calls;
+  assert(mgbfs_nccl_send_recv(failed_group,&byte,1,1,&byte,1,nullptr)!=0);
+  assert(send_calls==failure_sends);
+  assert(mgbfs_nccl_abort(failed_group)==0 && abort_calls==failure_aborts+1);
+  mgbfs_nccl_destroy(failed_group);
+  fail_stage = 0;
+  group_end_override = -1;
   // Cancellation must be installed before an in-progress initialization,
   // not only after a communicator has been returned to Rust.
   assert(mgbfs_nccl_create_with_cancel != nullptr);
