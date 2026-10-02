@@ -753,7 +753,7 @@ pub struct DistributedNativeBfs {
     exchange_stream: Stream,
     exchange_done: Event,
     owner_consumed: Option<Event>,
-    epoch_completed: [Event; 2],
+    epoch_completed: Vec<Event>,
     epoch_outstanding: std::collections::VecDeque<usize>,
     archive_stream: Stream,
     archive_done: [Event; 2],
@@ -1219,6 +1219,13 @@ impl DistributedNativeBfs {
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
+        let epoch_window_value = std::env::var("MGBFS_EPOCH_WINDOW")
+            .map(Some).or_else(|error| match error {
+                std::env::VarError::NotPresent => Ok(None),
+                _ => Err("ENV_MGBFS_EPOCH_WINDOW".to_string()),
+            })?;
+        let epoch_window = crate::reference_launch::epoch_window_for_launch(
+            epoch_window_value.as_deref())?;
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
                 || matches!(library_options, Some((_, owner)) if owner != ReferenceOwner::CucoRank))
@@ -1433,7 +1440,13 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
         let exchange_stream = Stream(raw_exchange);
         let exchange_done = Event::new()?;
-        let epoch_completed = [Event::new()?, Event::new()?];
+        let mut epoch_completed = Vec::new();
+        epoch_completed.try_reserve_exact(epoch_window)
+            .map_err(|_| "EPOCH_EVENT_CAPACITY")?;
+        for _ in 0..epoch_window { epoch_completed.push(Event::new()?); }
+        let mut epoch_outstanding = std::collections::VecDeque::new();
+        epoch_outstanding.try_reserve_exact(epoch_window)
+            .map_err(|_| "EPOCH_CREDIT_CAPACITY")?;
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
         let archive_stream = Stream(raw_archive);
@@ -1713,7 +1726,7 @@ impl DistributedNativeBfs {
             owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
                 .then(Event::new).transpose()?,
             epoch_completed,
-            epoch_outstanding: std::collections::VecDeque::with_capacity(2),
+            epoch_outstanding,
             archive_stream,
             archive_done,
             archived_depth: None,
@@ -1943,6 +1956,10 @@ impl DistributedNativeBfs {
     /// Submitted lookahead batches, not a claim of measured GPU overlap.
     pub fn dense_lookahead_batches(&self) -> u64 {
         self.dense_lookahead
+    }
+    /// Allocated completion-credit window; payload storage is unchanged.
+    pub fn epoch_window(&self) -> usize {
+        self.epoch_completed.len()
     }
     fn enqueue_frontier_generation(&mut self, batch: ParentBatch) -> Result<u64> {
         let sequence = self

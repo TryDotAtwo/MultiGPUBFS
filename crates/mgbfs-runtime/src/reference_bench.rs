@@ -389,6 +389,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         "job_buckets": cfg.job_buckets,
         "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
+        "epoch_window": crate::reference_launch::epoch_window_for_launch(
+            std::env::var("MGBFS_EPOCH_WINDOW").ok().as_deref())?,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
         "warmup_requested": warmup_requested,
@@ -674,6 +676,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         }
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
+        value["epoch_window"] = serde_json::json!(bfs.epoch_window());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         #[cfg(feature = "library-owner")]
         if let Some(usage) = bfs.library_pool_usage()? {

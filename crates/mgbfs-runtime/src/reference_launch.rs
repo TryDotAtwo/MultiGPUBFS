@@ -1,5 +1,13 @@
 use mgbfs_core::Result;
 
+/// Number of completion credits, not a count of payload receive buffers.
+pub fn epoch_window_for_launch(value: Option<&str>) -> Result<usize> {
+    let count = value.unwrap_or("2").parse::<u32>()
+        .map_err(|_| "ENV_MGBFS_EPOCH_WINDOW")?;
+    if count < 2 { return Err("ENV_MGBFS_EPOCH_WINDOW".into()); }
+    usize::try_from(count).map_err(|_| "ENV_MGBFS_EPOCH_WINDOW".into())
+}
+
 /// Decode and validate before device admission. Paths are not graph identity.
 pub fn load_matrix_manifest(path: &std::path::Path) -> Result<(String, mgbfs_core::matrix::MatrixGroup)> {
     use sha2::{Digest, Sha256};

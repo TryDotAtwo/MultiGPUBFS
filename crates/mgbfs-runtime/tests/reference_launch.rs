@@ -1,4 +1,15 @@
 use mgbfs_runtime::reference_launch::macro_depth_for_launch;
+use mgbfs_runtime::reference_launch::epoch_window_for_launch;
+
+#[test]
+fn epoch_window_is_explicit_and_never_silently_clamped() {
+    assert_eq!(epoch_window_for_launch(None).unwrap(), 2);
+    assert_eq!(epoch_window_for_launch(Some("3")).unwrap(), 3);
+    assert_eq!(epoch_window_for_launch(Some("17")).unwrap(), 17);
+    for value in ["", "0", "1", "-1", "x", "4294967296"] {
+        assert!(epoch_window_for_launch(Some(value)).is_err());
+    }
+}
 use mgbfs_runtime::reference_launch::{bench_archive_for_launch, bench_phase_paths, bench_warmup_for_launch, BenchPhase};
 
 #[test]
