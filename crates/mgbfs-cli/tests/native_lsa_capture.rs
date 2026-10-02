@@ -15,6 +15,7 @@ fn assert_s4_archive_full_states(path: &std::path::Path) {
     let word = |offset: usize| u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
     let width = word(8);
     assert_eq!(width, 16);
+    let hash = mgbfs_core::hash::GemmHash::from_seed(width, 20260828u128.to_le_bytes()).unwrap();
     let oracle = mgbfs_core::matrix::MatrixGroup::symmetric_permutation_matrices(4)
         .unwrap().exact_layers(24).unwrap();
     let mut actual = vec![std::collections::BTreeSet::new(); oracle.len()];
@@ -28,6 +29,10 @@ fn assert_s4_archive_full_states(path: &std::path::Path) {
             assert!(depth < actual.len(), "unexpected archive depth");
             for row in 0..rows {
                 let start = cursor + 80 + row * width;
+                let hash_start = cursor + 80 + rows * width + row * 16;
+                assert_eq!(&bytes[hash_start..hash_start + 16],
+                    &hash.hash(&bytes[start..start + width]).unwrap().to_le_bytes(),
+                    "state/hash mismatch at depth {depth}, row {row}");
                 assert!(actual[depth].insert(bytes[start..start + width].to_vec()),
                     "duplicate archived state at depth {depth}");
             }
@@ -57,9 +62,11 @@ fn full_state_gate_rejects_checksummed_wrong_states_with_correct_counts() {
     layers[0][0] = layers[1][0].clone();
     layers[1][0] = old_start;
     let mut archive = Archive::new(FileExtent::create_new(&path).unwrap(), 16384, 16, [0; 32]).unwrap();
+    let hash = mgbfs_core::hash::GemmHash::from_seed(16, 20260828u128.to_le_bytes()).unwrap();
     for (depth, states) in layers.iter().enumerate() {
         let flat: Vec<u8> = states.iter().flatten().copied().collect();
-        archive.records(depth as u64, &flat, &vec![[0; 4]; states.len()]).unwrap();
+        let hashes: Vec<_> = states.iter().map(|state| hash.hash(state).unwrap().0).collect();
+        archive.records(depth as u64, &flat, &hashes).unwrap();
         archive.layer_commit(depth as u64, states.len() as u64).unwrap();
     }
     archive.run_commit().unwrap();
@@ -85,6 +92,7 @@ fn tensor_generation_hardware_admission_and_layer_counts() {
         .arg(fixture.0.join("result"))
         .env("RANK", "0").env("LOCAL_RANK", "0").env("WORLD_SIZE", "1")
         .env("TORCHELASTIC_RUN_ID", "tc-admission")
+        .env("MGBFS_HASH_SEED_HEX", "000000000000000000000000013527dc")
         .env("MGBFS_OWNER_BACKEND", "CUB_SORT_MERGE")
         .env("MGBFS_PROFILE", "HASH_FIRST")
         .env("MGBFS_HASH_FIRST_GENERATION", "INT_MMA_SM75")
@@ -133,6 +141,7 @@ fn native_only_cli_executes_requested_owner_capture() {
     for (key, value) in [
         ("RANK", "0"), ("LOCAL_RANK", "0"), ("WORLD_SIZE", "1"),
         ("TORCHELASTIC_RUN_ID", "native-lsa-capture"),
+        ("MGBFS_HASH_SEED_HEX", "000000000000000000000000013527dc"),
         ("MGBFS_OWNER_BACKEND", "CUB_SORT_MERGE"), ("MGBFS_PROFILE", "DENSE"),
         ("MGBFS_PRE_DEDUP", "ON"), ("MGBFS_BENCH_CAPACITY", "64"),
         ("MGBFS_FUTURE_CAPACITY", "128"), ("MGBFS_BUCKETS", "8"),
