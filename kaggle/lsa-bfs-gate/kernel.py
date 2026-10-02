@@ -13,11 +13,11 @@ import sys
 import tempfile
 import time
 
-SOURCE = "81158d1501b3fde249e38916af0dc392d527a135"
+SOURCE = "b85d3b7f2d47df8243723e6d72e6e64da9d6abf9"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "rounds_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
-NCCL_VARIANT = "wheel"  # Explicit experimental opt-in: minimum_arch_guard.
+NCCL_VARIANT = "wheel"  # Opt-in: minimum_arch_guard or minimum_arch_guard_posix.
 
 
 def cuda_build_target(hardware):
@@ -216,7 +216,7 @@ def main():
         run([sys.executable, "-m", "pip", "install", "--no-deps", "--target",
              str(nccl_target), "nvidia-nccl-cu12==2.29.7"], "nccl-install")
         nccl = nccl_target / "nvidia/nccl"
-        if NCCL_VARIANT == "minimum_arch_guard":
+        if NCCL_VARIANT in ("minimum_arch_guard", "minimum_arch_guard_posix"):
             upstream = "b91894bd5b190c874d98a017f93f5daa515b65d0"
             patch_file = source / "patches/nccl-2.29.7-minimum-arch.patch"
             patch_digest = hashlib.sha256(patch_file.read_bytes()).hexdigest()
@@ -231,6 +231,20 @@ def main():
                 raise RuntimeError("NCCL_SOURCE_COMMIT_MISMATCH")
             run(["git", "apply", "--check", str(patch_file)], "nccl-patch-check", cwd=vendor)
             run(["git", "apply", str(patch_file)], "nccl-patch", cwd=vendor)
+            posix_patch_digest = None
+            if NCCL_VARIANT == "minimum_arch_guard_posix":
+                # Fixed before process startup. Keep VMM/LSA enabled; no probe
+                # error suppression, auto fallback, or legacy cudaMalloc.
+                env["NCCL_MNNVL_ENABLE"] = "0"
+                posix_patch = source / "patches/nccl-2.29.7-explicit-posix.patch"
+                posix_patch_digest = hashlib.sha256(posix_patch.read_bytes()).hexdigest()
+                if posix_patch_digest != "e73af6f263bb0eebb22904a20251c8b5da0dec2b463fdeb3c5a9c4fbc88b3072":
+                    raise RuntimeError("NCCL_POSIX_PATCH_DIGEST_MISMATCH")
+                run(["git", "apply", "--check", str(posix_patch)], "nccl-posix-check", cwd=vendor)
+                run(["git", "apply", str(posix_patch)], "nccl-posix-patch", cwd=vendor)
+                policy_env = dict(env, MGBFS_NCCL_POLICY_SOURCE=str(vendor))
+                gate.run([sys.executable, str(source / "scripts/test_nccl_allocator_policy.py")],
+                    cwd=source, env=policy_env, logs=logs, name="nccl-allocator-policy", timeout=60)
             # Existing independent-process replay resolves this exact root.
             # Preserve the wheel separately instead of accidentally replaying it.
             shutil.move(str(nccl_target), str(work / "nccl-wheel"))
@@ -240,6 +254,8 @@ def main():
                  "BUILDDIR=" + str(nccl)], "nccl-build", cwd=vendor, timeout=5400)
             report["nccl_dependency"] = dict(variant=NCCL_VARIANT,
                 upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm" + architecture,
+                posix_patch_sha256=posix_patch_digest,
+                mnnvl_enable=env.get("NCCL_MNNVL_ENABLE"),
                 nvtx=1, experimental=True,
                 library_sha256=hashlib.sha256((nccl / "lib/libnccl.so.2.29.7").read_bytes()).hexdigest())
             save()
