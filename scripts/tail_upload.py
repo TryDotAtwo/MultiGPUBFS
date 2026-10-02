@@ -5,8 +5,25 @@ import os
 import queue
 import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
+
+
+def retry_upload(operation):
+    """Retry idempotent same-path publication after bounded transport failures."""
+    for attempt in range(4):
+        try:
+            return operation()
+        except Exception as error:
+            code = getattr(getattr(error, 'response', None), 'status_code', None)
+            transient = type(error).__name__ in {
+                'RemoteProtocolError', 'ReadTimeout', 'ConnectTimeout', 'ConnectError',
+                'ReadError', 'ConnectionError', 'Timeout', 'ChunkedEncodingError'}
+            transient = transient or code == 429 or (isinstance(code, int) and code >= 500)
+            if not transient or attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
 
 
 class Publisher:
@@ -72,16 +89,16 @@ class Publisher:
                     payloads.append((path, self.prefix+'/'+entry['path']))
                 if payloads and callable(getattr(self.api, 'create_commit', None)):
                     from huggingface_hub import CommitOperationAdd
-                    self.api.create_commit(repo_id=self.repo_id, repo_type='dataset',
+                    retry_upload(lambda: self.api.create_commit(repo_id=self.repo_id, repo_type='dataset',
                         operations=[CommitOperationAdd(path_in_repo=remote,
                             path_or_fileobj=str(path)) for path, remote in payloads],
-                        commit_message='Upload checked BFS snapshot payloads')
+                        commit_message='Upload checked BFS snapshot payloads'))
                 else:
                     for path, remote in payloads:
-                        self.api.upload_file(path_or_fileobj=str(path), repo_id=self.repo_id,
-                            repo_type='dataset', path_in_repo=remote)
-                receipt = self.api.upload_file(path_or_fileobj=str(pinned/'manifest.json'),
-                    repo_id=self.repo_id, repo_type='dataset', path_in_repo=self.prefix+'/manifest.json')
+                        retry_upload(lambda: self.api.upload_file(path_or_fileobj=str(path), repo_id=self.repo_id,
+                            repo_type='dataset', path_in_repo=remote))
+                receipt = retry_upload(lambda: self.api.upload_file(path_or_fileobj=str(pinned/'manifest.json'),
+                    repo_id=self.repo_id, repo_type='dataset', path_in_repo=self.prefix+'/manifest.json'))
                 (self.root/'receipt.json').write_text(json.dumps(dict(
                     commit_url=str(receipt), status=manifest['status'],
                     last_completed_layer=manifest['last_completed_layer'])))

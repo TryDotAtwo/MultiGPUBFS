@@ -4,10 +4,40 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from scripts.bfs_tail_archive import TailArchive,pack_state
-from scripts.tail_upload import Publisher
+from scripts.tail_upload import Publisher,retry_upload
 
 
 class UploadTests(unittest.TestCase):
+    def test_transport_retry_is_bounded(self):
+        calls=[]
+        RemoteProtocolError=type('RemoteProtocolError',(Exception,),{})
+        def operation():
+            calls.append(1)
+            raise RemoteProtocolError('disconnected')
+        with patch('scripts.tail_upload.time.sleep'):
+            with self.assertRaises(RemoteProtocolError):
+                retry_upload(operation)
+        self.assertEqual(len(calls),4)
+
+    def test_transport_retry_can_recover(self):
+        calls=[]
+        RemoteProtocolError=type('RemoteProtocolError',(Exception,),{})
+        def operation():
+            calls.append(1)
+            if len(calls)==1: raise RemoteProtocolError('disconnected')
+            return 'receipt'
+        with patch('scripts.tail_upload.time.sleep'):
+            self.assertEqual(retry_upload(operation),'receipt')
+        self.assertEqual(len(calls),2)
+
+    def test_non_transient_error_is_not_retried(self):
+        calls=[]
+        def operation():
+            calls.append(1)
+            raise ValueError('invalid operation')
+        with self.assertRaises(ValueError): retry_upload(operation)
+        self.assertEqual(len(calls),1)
+
     def archive(self,root):
         archive=TailArchive(root,n=3,r=1,start=[0,1,2],actions={'L':'left','R':'right','X':'swap'},
             program_commit='abc',launch_config={},sample_interval_seconds=.05)
