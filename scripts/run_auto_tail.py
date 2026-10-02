@@ -82,7 +82,10 @@ def pair_config(base, n, r):
         MGBFS_FUTURE_CAPACITY=str(capacity*2), MGBFS_BUCKET_CAPACITY=str(capacity),
         MGBFS_LIBRARY_POOL_BYTES=str(pool))
     cfg['batch'] = min(32768, capacity)
-    rows=min(8192,capacity)
+    # Use the existing batch-sized native scratch instead of emitting four
+    # small archive frames per full batch. Pinned bytes still share the same
+    # bounded host budget; no additional device allocation is introduced.
+    rows=cfg['batch']
     host=base.get('host_available_bytes',8<<30)
     host_slots=(host//4)//(base.get('world',2)*(n+16)*rows)
     target_slots=(order+rows-1)//rows+2

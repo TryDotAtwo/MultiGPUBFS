@@ -66,6 +66,7 @@ class AutomaticPlanningTests(unittest.TestCase):
             resource_plan=device_budget([{'free_bytes':12<<30}]),env={})
         for n,r in ((3,2),(17,10),(32,25)):
             cfg=pair_config(base,n,r);e=cfg['env']
+            self.assertEqual(int(e['MGBFS_ARCHIVE_ROWS']),cfg['batch'])
             size=2*(n+16)*int(e['MGBFS_ARCHIVE_ROWS'])*int(e['MGBFS_ARCHIVE_SLOTS'])
             self.assertLessEqual(size,base['host_available_bytes']//4)
             self.assertGreaterEqual(int(e['MGBFS_ARCHIVE_SLOTS']),64)
