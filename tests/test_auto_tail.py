@@ -1,12 +1,48 @@
 import sys
 import unittest
 import threading
+import tempfile
+import json
+import os
+import time
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from run_auto_tail import device_budget,pair_config,SweepPublisher
+import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_failed_sweep_or_publication_preserves_local_error_report(self):
+        class FailedPublisher:
+            closed=False;generations=0;error=None
+            def enqueue(self,ledger):pass
+            def finish(self):self.closed=True;raise RuntimeError('injected HF failure')
+        for compute_failure in (False,True):
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                (root/'automatic-config.json').write_text(json.dumps(dict(resource_plan={})))
+                (root/'runtime.json').write_text('{}')
+                ledger=dict(cases={},pending=[[2,1]])
+                (root/'sweep.json').write_text(json.dumps(ledger))
+                args=['run_auto_tail','--source',str(root),'--runtime-env',str(root/'runtime.json'),
+                      '--root',str(root),'--repo-id','fixture','--deadline-unix',str(time.time()+3600)]
+                hub=SimpleNamespace(HfApi=lambda **kw:None,get_token=lambda:'fixture')
+                with patch.object(sys,'argv',args),patch.dict(sys.modules,{'huggingface_hub':hub}),\
+                     patch.object(run_auto_tail,'os',SimpleNamespace(name='posix',environ=os.environ)),\
+                     patch.object(run_auto_tail,'SweepPublisher',return_value=FailedPublisher()),\
+                     patch.object(run_auto_tail,'execute',return_value=ledger,
+                        side_effect=RuntimeError('injected compute failure') if compute_failure else None):
+                    with self.assertRaisesRegex(RuntimeError,'injected'):
+                        run_auto_tail.main()
+                report=json.loads((root/'automatic-report.json').read_text())
+                self.assertEqual(report['status'],'INCOMPLETE')
+                self.assertEqual(report['publication_status'],'FAILED')
+                self.assertTrue(report['local_snapshots_retained'])
+                self.assertTrue(report['pending'])
+                self.assertEqual(json.loads((root/'sweep.json').read_text()),ledger)
+
     def test_uses_smallest_available_gpu_and_retains_headroom(self):
         p=device_budget([{'free_bytes':12<<30},{'free_bytes':8<<30}])
         self.assertEqual(p['free_bytes'],8<<30)
