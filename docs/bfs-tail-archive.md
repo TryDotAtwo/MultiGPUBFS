@@ -153,8 +153,8 @@ python scripts/publish_tail_batch.py --sweep-root /root/my-sweep \
   --repo-id TryDotAtwo/multigpubfs-bfs-results --deadline-unix <absolute-deadline>
 ```
 
-This verifies every staged checksum before making payload commits. All case
-payloads share one commit; case manifests and the sweep ledger follow in another.
+This verifies every staged checksum before making payload commits. Payload commits contain at most 25 GB and 10,000 files each; case manifests
+and the frozen sweep ledger follow after all corresponding payload commits.
 The CLI waits on repository commit quota responses until its deadline and leaves
 inputs intact on failure. It does not download states to the user's computer.
 Direct GPU-host uploads and remote checksum readback passed for both owners at

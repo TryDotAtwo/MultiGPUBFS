@@ -29,7 +29,21 @@ def available_host_bytes(meminfo=Path('/proc/meminfo'), limits=None):
         if maximum.exists() and current.exists():
             limit = maximum.read_text().strip()
             if limit != 'max':
-                available = min(available, max(0, int(limit)-int(current.read_text())))
+                used = int(current.read_text())
+                # Container usage includes reclaimable file cache from previous
+                # archives. Treating it as pinned/RSS shrinks later runs' host
+                # credit pools even though those clean pages can be reclaimed.
+                reclaimable = 0
+                stat = current.parent/'memory.stat'
+                if stat.exists():
+                    counters = dict(line.split() for line in stat.read_text().splitlines())
+                    prefix = 'total_' if 'total_inactive_file' in counters else ''
+                    inactive = int(counters.get(prefix+'inactive_file', '0'))
+                    file_prefix = 'file_' if current.name == 'memory.current' else prefix
+                    dirty = int(counters.get(file_prefix+'dirty', '0'))
+                    writeback = int(counters.get(file_prefix+'writeback', '0'))
+                    reclaimable = min(used, max(0, inactive-dirty-writeback))
+                available = min(available, max(0, int(limit)-used+reclaimable))
     return available
 
 

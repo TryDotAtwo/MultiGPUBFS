@@ -54,6 +54,24 @@ class StreamedLauncher(unittest.TestCase):
             maximum.write_text('100000')
             self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 0)
 
+    def test_container_clean_cache_is_reclaimable_but_dirty_pages_are_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            meminfo = root/'meminfo'; meminfo.write_text('MemAvailable: 1000 kB\n')
+            for version in (1, 2):
+                maximum = root/('memory.max' if version == 2 else 'memory.limit_in_bytes')
+                current = root/('memory.current' if version == 2 else 'memory.usage_in_bytes')
+                maximum.write_text('800000'); current.write_text('700000')
+                (root/'memory.stat').write_text(
+                    'inactive_file 400000\nfile_dirty 30000\nfile_writeback 20000\n'
+                    if version == 2 else
+                    'inactive_file 999999\ntotal_inactive_file 400000\ntotal_dirty 30000\ntotal_writeback 20000\n')
+                self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 450000)
+                current.write_text('200000')
+                self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 800000)
+                maximum.write_text('2000000')
+                self.assertEqual(launcher.available_host_bytes(meminfo, [(maximum,current)]), 1024000)
+
     def test_publication_runs_after_consumers_finish(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
