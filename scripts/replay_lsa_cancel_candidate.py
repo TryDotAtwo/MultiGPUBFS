@@ -49,6 +49,21 @@ def instrumentation_clean(text, tool):
     return bool(rows) and not any(int(n) for n in rows)
 
 
+def failure_has_no_complete(case):
+    """A nonzero exit alone cannot rule out false per-rank completion."""
+    result = case / 'result'
+    if (result / 'group-complete.json').exists():
+        return False
+    for path in result.glob('rank-*.json'):
+        try:
+            record = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(record, dict) or record.get('status') != 'INCOMPLETE':
+            return False
+    return True
+
+
 def s4_reference_layers():
     return s_reference_layers(4)
 
@@ -243,7 +258,7 @@ def main():
                    "group_complete": (case / "result/group-complete.json").exists()}
             row["pass"] = (not forced and (all(c == 0 for c in row["returncodes"])
                 if key is None else all(c not in (None, 0) for c in row["returncodes"])
-                and not row["group_complete"]))
+                and failure_has_no_complete(case)))
             if key is None:
                 row["pass"] &= row["group_complete"]
                 if row["pass"]:
