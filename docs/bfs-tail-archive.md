@@ -106,6 +106,10 @@ inputs intact on failure. It does not download states to the user's computer.
 Direct GPU-host uploads and remote checksum readback passed for both owners at
 (7,4), and for 16-byte states at (17,16), (32,31), and (32,32). The exact native
 source and separately deployed publisher versions are recorded in HF evidence.
+If a terminated upload exhausts retries with an Xet network error, retain the
+GPU-host inputs and retry publication with `HF_HUB_DISABLE_XET=1`. This uses
+ordinary HF LFS upload without repeating BFS. Do not start a competing uploader
+while the original handle is still active.
 
 Storage stress: `python scripts/stress_tail_archive.py <fresh-directory>`;
 requires at least 18 decimal GB free. Recorded physical validation is in
