@@ -15,6 +15,14 @@ import re
 import signal
 
 
+def configure_hash_seed(env, value):
+    if not isinstance(value, str) or re.fullmatch(r'[0-9a-fA-F]{32}', value) is None:
+        raise ValueError('HASH_SEED_HEX_32')
+    seed = value.lower()
+    env['MGBFS_HASH_SEED_HEX'] = seed
+    return seed
+
+
 def configure_owner_environment(env, backend, rank_map):
     if backend not in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('UNKNOWN_OWNER_BACKEND')
@@ -171,9 +179,16 @@ def main():
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
     parser.add_argument('--rank-map', choices=('0,1', '1,0'), default='0,1')
+    parser.add_argument('--hash-seed-hex', default='000000000000000000000000013527dc',
+                        help='explicit 128-bit seed, 32 hex digits; overrides inherited environment')
     parser.add_argument('--owner-backend', choices=('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'),
                         default='CUCO_RANK')
     args = parser.parse_args()
+    try:
+        seed_environment = {}
+        seed_hex = configure_hash_seed(seed_environment, args.hash_seed_hex)
+    except ValueError as error:
+        parser.error(str(error))
     if args.batch < 1:
         parser.error('--batch must be positive')
     if args.unitriangular_modulus is not None and args.reference_size != 4:
@@ -182,6 +197,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     source = work / "source"
     env = dict(os.environ)
+    env.update(seed_environment)
     if args.instrument_processes == 'nsys':
         # Batch/archive attribution must be present in a full runtime trace.
         # This enables ranges only, never TRACE_ROUTE's diagnostic host waits.
@@ -239,6 +255,7 @@ def main():
     report['pre_dedup'] = args.pre_dedup
     report['owner_backend'] = args.owner_backend
     report['rank_map'] = args.rank_map
+    report['hash_seed_hex'] = seed_hex
     report['owner_dag_capture_requested'] = 'MGBFS_TEST_OWNER_DAG_CAPTURE' in env
     faults = [("startup", "MGBFS_TEST_NCCL_STARTUP_FAULT_RANK"),
               ("constructor", "MGBFS_TEST_CONSTRUCTOR_FAULT_RANK"),
