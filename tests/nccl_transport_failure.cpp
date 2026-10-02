@@ -6,6 +6,7 @@ int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls =
 int abort_calls = 0, destroy_calls = 0, finalize_calls = 0;
 int async_state = 0, async_query_status = 0;
 int async_pending_queries = 0;
+int group_end_override = -1;
 int init_blocking = -1, init_calls = 0;
 int last_send_peer = -1, last_recv_peer = -1;
 int cancel_after = -1;
@@ -45,6 +46,19 @@ int main() {
     assert(send_calls == (stage == 1 ? 0 : 1));
     assert(recv_calls == (stage == 1 || stage == 2 ? 0 : 1));
   }
+  // An operation error does not authorize skipping GroupEnd's asynchronous
+  // progress protocol. Preserve the first error, but settle the open group
+  // before the dispatcher can issue another NCCL operation or abort.
+  for (int stage : {2, 3}) {
+    fail_stage = stage;
+    group_end_override = ncclInProgress;
+    async_state = ncclInProgress;
+    async_pending_queries = 3;
+    assert(mgbfs_nccl_send_recv(comm, &byte, 1, 1, &byte, 1, nullptr) == stage + 1);
+    assert(async_pending_queries == 0);
+    assert(group_depth == 0);
+  }
+  group_end_override = -1;
   async_state = ncclInProgress;
   async_pending_queries = 3;
   fail_stage = 0;
@@ -86,6 +100,14 @@ int main() {
   send_calls = end_calls = 0;
   assert(mgbfs_nccl_scatter(source, 2, payload, 4, sizes, nullptr, 0, 0, nullptr) != 0);
   assert(send_calls == 0 && end_calls == 0);
+  fail_stage = 2;
+  group_end_override = ncclInProgress;
+  async_state = ncclInProgress;
+  async_pending_queries = 3;
+  assert(mgbfs_nccl_scatter(source, 2, payload, 5, sizes, nullptr, 0, 0, nullptr) == 3);
+  assert(async_pending_queries == 0 && group_depth == 0);
+  fail_stage = 0;
+  group_end_override = -1;
   async_state = ncclInProgress;
   async_pending_queries = 3;
   mgbfs_nccl_destroy(source);
@@ -101,6 +123,14 @@ int main() {
   assert(recv_calls == 0 && end_calls == 0 && group_depth == 0);
   assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, payload, 5, 5, nullptr) == 0);
   assert(recv_calls == 1 && end_calls == 1 && group_depth == 0);
+  fail_stage = 3;
+  group_end_override = ncclInProgress;
+  async_state = ncclInProgress;
+  async_pending_queries = 3;
+  assert(mgbfs_nccl_scatter(receiver, 2, nullptr, 0, nullptr, payload, 5, 5, nullptr) == 4);
+  assert(async_pending_queries == 0 && group_depth == 0);
+  fail_stage = 0;
+  group_end_override = -1;
   // Exercise the dispatcher's explicit fatal abort, not only cancellation
   // encountered while polling an in-progress NCCL operation.
   const int aborts_before = abort_calls;

@@ -221,8 +221,12 @@ extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_byt
   // Close every successfully opened group, including the immediate-error path.
   // Preserve the first operation error if group cleanup also reports failure.
   const auto end = ncclGroupEnd();
-  return status ? status : ((end==ncclSuccess||end==ncclInProgress)
-      ? await_nccl(p,end) : 5);
+  // A prior operation error must not bypass an in-progress GroupEnd. The
+  // dispatcher may abort immediately after return; finish NCCL's enqueue
+  // protocol first, while retaining the original operation error.
+  const int settled = (end==ncclSuccess||end==ncclInProgress)
+      ? await_nccl(p,end) : 5;
+  return status ? status : settled;
 }
 extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
@@ -276,8 +280,9 @@ extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uin
     if(result!=ncclSuccess && result!=ncclInProgress)status=4;
   }
   const auto end = ncclGroupEnd();
-  return status ? status : ((end==ncclSuccess||end==ncclInProgress)
-      ? await_nccl(p,end) : 5);
+  const int settled = (end==ncclSuccess||end==ncclInProgress)
+      ? await_nccl(p,end) : 5;
+  return status ? status : settled;
 }
 
 #ifdef MGBFS_NCCL_LSA
