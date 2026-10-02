@@ -20,6 +20,14 @@ HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "wheel"  # Explicit experimental opt-in: minimum_arch_guard.
 
 
+def cuda_build_target(hardware):
+    """Match the admitted physical GPU; never reuse another major's SASS."""
+    targets = {"T4": "75", "RTX2070": "75", "A4000": "86"}
+    if hardware not in targets:
+        raise ValueError("UNSUPPORTED_CUDA_BUILD_HARDWARE: " + hardware)
+    return targets[hardware]
+
+
 def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
     scripts = str(Path(__file__).resolve().parents[2] / 'scripts')
@@ -80,6 +88,7 @@ def run_protocol_replay(command, cwd, env, log, timeout=1800):
 
 
 def main():
+    architecture = cuda_build_target(HARDWARE)
     work = Path(tempfile.mkdtemp(prefix="mgbfs-lsa-bfs-", dir="/tmp"))
     logs = Path("/kaggle/working/lsa-bfs-gate")
     logs.mkdir(parents=True, exist_ok=True)
@@ -92,6 +101,7 @@ def main():
                if MODE == "warmup_admission_gate" else
                "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
     report["hardware_target"] = HARDWARE
+    report["cuda_architecture"] = "sm" + architecture
     report["t4_acceptance_eligible"] = HARDWARE == "T4"
     if HARDWARE != "T4":
         report["scope"] = "explicit " + HARDWARE + " hardware diagnostic; not T4 acceptance"
@@ -226,10 +236,10 @@ def main():
             shutil.move(str(nccl_target), str(work / "nccl-wheel"))
             nccl = nccl_target / "nvidia/nccl"
             run(["make", "-j2", "src.build", "NVTX=1", "CUDA_HOME=" + str(sdk),
-                 "NVCC_GENCODE=-gencode=arch=compute_75,code=sm_75",
+                 "NVCC_GENCODE=-gencode=arch=compute_" + architecture + ",code=sm_" + architecture,
                  "BUILDDIR=" + str(nccl)], "nccl-build", cwd=vendor, timeout=5400)
             report["nccl_dependency"] = dict(variant=NCCL_VARIANT,
-                upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm75",
+                upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm" + architecture,
                 nvtx=1, experimental=True,
                 library_sha256=hashlib.sha256((nccl / "lib/libnccl.so.2.29.7").read_bytes()).hexdigest())
             save()
@@ -355,7 +365,7 @@ def main():
                       cuco, env, logs, "cuco")
         build = work / "library-build"
         run(["cmake", "-S", str(source / "experiments/library_owner"), "-B", str(build),
-             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75",
+             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=" + architecture,
              "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUDAToolkit_ROOT=" + str(sdk),
              "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
@@ -372,7 +382,7 @@ def main():
              "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
              *(["-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"]
                if MODE == "timeline_backtrace" else []),
-             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+             "-DCMAKE_CUDA_ARCHITECTURES=" + architecture, "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUTLASS_ROOT=" + str(cutlass), "-DMGBFS_NCCL_LSA=ON",
              "-DMGBFS_NCCL_ROOT=" + str(nccl),
              *(['-DMGBFS_NVTX=ON', '-DMGBFS_NVTX_INCLUDE_DIR=' + str(sdk / 'include')]

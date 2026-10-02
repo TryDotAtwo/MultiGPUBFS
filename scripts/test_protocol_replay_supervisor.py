@@ -15,6 +15,13 @@ spec.loader.exec_module(gate)
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_build_target_matches_admitted_hardware(self):
+        for hardware, expected in [('T4', '75'), ('RTX2070', '75'), ('A4000', '86')]:
+            with self.subTest(hardware=hardware):
+                self.assertEqual(gate.cuda_build_target(hardware), expected)
+        with self.assertRaises(ValueError):
+            gate.cuda_build_target('unknown')
+
     def test_window_pair_requires_both_rank_registration_markers(self):
         with tempfile.TemporaryDirectory() as directory:
             command = [sys.executable, '-c',
