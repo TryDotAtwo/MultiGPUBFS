@@ -23,12 +23,21 @@ use this path before each BFS. Batch remains 32768 for sufficiently large cases;
 Cuco <=50% table occupancy is unchanged. Probe errors are fatal startup errors,
 not graph capacity/pruning evidence. Existing 1 GiB native reserve is unchanged.
 
-Important: fixed library pool still uses a conservative 512 bytes/capacity row.
-The selector maximizes admission for that reserved profile, not optimal live
-state capacity. Exact worst-case pool sizing and reserve calibration remain
-required. Query mode intentionally exits with MEMORY_QUERY_DONE; only complete
+The pool autosizer now calls a native Cuco/CUB query: workspace allocations,
+actual rounded hash-table extents, accepted SoA planes and rank metadata, each
+charged with 256-byte allocation alignment. Worst histories assume arbitrary
+shard skew; this is an upper bound, not an exact maximum reachable pool usage.
+Fragmentation slack is max(64 MiB, 5% of queried bytes); hardware calibration
+remains required. The original 512 bytes/row survives only as a parser placeholder,
+replaced before native admission. Query mode intentionally exits with
+MEMORY_QUERY_DONE; only complete
 rank-labelled query output is accepted. Windows CPU tests cannot compile or
 validate the Linux CUDA constructor branch. Actual GPU gate remains open.
+
+Added CUDA gate assertions: query makes no RMM allocation, upper bound covers
+real rank construction, invalid input clears output. These assertions have not
+yet run on CUDA hardware. Public API checked against NVIDIA cuCollections extent
+and open-addressing implementations; deployed pinned version still needs a build.
 
 ## Required remaining work
 

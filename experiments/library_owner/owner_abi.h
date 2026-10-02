@@ -52,6 +52,13 @@ int mgbfs_library_rank_create_cuco_v1(const MgbfsLibraryKeysV1* previous,
     const MgbfsLibraryKeysV1* current, const uint32_t* accepted_capacities,
     uint32_t shards, uint32_t incoming_capacity, uint32_t logical_owner,
     uint32_t world, void* cuda_stream, void** rank_owner);
+/* Startup-only upper bound for all shard histories at layer capacity.
+ * Queries CUB workspace and actual cuco extent rounding; allocates no table.
+ * Includes 256-byte suballocation rounding, excludes pool fragmentation slack.
+ */
+int mgbfs_library_rank_pool_query_v1(uint32_t layer_capacity,
+    uint32_t accepted_capacity, uint32_t shards, uint32_t incoming_capacity,
+    uint64_t* rounded_bytes);
 int mgbfs_library_rank_compare_v1(void* rank_owner, uint64_t epoch,
     MgbfsLibraryCandidatesV1 input, const uint32_t* valid_rows,
     MgbfsOwnerControl* owner, MgbfsStateRingControl* ring,

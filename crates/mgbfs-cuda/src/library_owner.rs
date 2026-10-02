@@ -79,6 +79,10 @@ const _: [(); 24] = [(); std::mem::size_of::<PoolUsageV1>()];
 
 #[cfg(feature = "library-owner")]
 extern "C" {
+    pub fn mgbfs_library_rank_pool_query_v1(
+        layer_capacity: u32, accepted_capacity: u32, shards: u32,
+        incoming_capacity: u32, rounded_bytes: *mut u64,
+    ) -> i32;
     pub fn mgbfs_library_rank_create_cuco_v1(
         previous: *const KeysV1,
         current: *const KeysV1,

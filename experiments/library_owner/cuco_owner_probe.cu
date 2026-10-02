@@ -190,9 +190,20 @@ int main() {
     void* rank_owner=nullptr;
     auto prior_resource=rmm::mr::get_current_device_resource_ref();
     rmm::mr::set_current_device_resource_ref(stats);
+    auto const before_rank=stats.get_bytes_counter().value;
+    uint64_t queried_pool=0;
+    require(mgbfs_library_rank_pool_query_v1(cap,2,2,cap,&queried_pool)==0&&queried_pool,
+        "RANK_POOL_QUERY");
+    require(stats.get_bytes_counter().value==before_rank,
+        "RANK_POOL_QUERY_NO_DEVICE_ALLOCATION");
     require(mgbfs_library_rank_create_cuco_v1(previous.data(),current.data(),
         capacities.data(),2,cap,0,2,stream.value(),&rank_owner)==0&&rank_owner,
         "RANK_ABI_CREATE");
+    require(stats.get_bytes_counter().value-before_rank<=queried_pool,
+        "RANK_POOL_QUERY_COVERS_CONSTRUCTOR");
+    uint64_t invalid_query=42;
+    require(mgbfs_library_rank_pool_query_v1(UINT32_MAX,2,2,cap,&invalid_query)!=0&&
+        invalid_query==0,"RANK_POOL_QUERY_INVALID_CLEARS_OUTPUT");
     auto run_batch=[&](uint64_t epoch,bool full_dag=false){
       auto capacity_view=batch.candidates();capacity_view.keys.rows=cap;
       if(full_dag){

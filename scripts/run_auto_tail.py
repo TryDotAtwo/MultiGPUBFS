@@ -102,11 +102,11 @@ def tune_pair(base, source, case, runtime_env, *, query=None):
     upper=max(256,min(math.factorial(n)//math.factorial(r),(2**31-1)//3))
     def configuration(rows):
         draft=json.loads(json.dumps(base))
-        # Keep the established fast batch and conservative pool growth for now.
-        # Pool utilization is a separate tuning gate; these are reserved bytes,
-        # never an assertion that every byte holds live graph states.
+        # The numeric pool is a compatible parser placeholder. Native autosize
+        # replaces it with the queried worst-case bound before admission.
         draft['resource_plan'].update(max_rows_per_rank=rows,
             library_pool_bytes=max(64<<20,((rows*512+255)//256)*256))
+        draft['env']['MGBFS_LIBRARY_POOL_AUTOSIZE']='1'
         return pair_config(draft,n,r)
     def probe(rows):
         cfg=configuration(rows)
@@ -114,11 +114,16 @@ def tune_pair(base, source, case, runtime_env, *, query=None):
         return native_query(cfg,source,case.parent/(case.name+f'-query-{rows}'),runtime_env)
     rows,probes=select_capacity(probe,upper)
     cfg=configuration(rows)
+    pools=[x.get('library_pool_bytes') for x in probes[rows]]
+    if all(type(x) is int and x>0 for x in pools):
+        # The native autosizer remains enabled; persist the actual bound as well
+        # so selection/configuration metadata does not retain the old placeholder.
+        cfg['env']['MGBFS_LIBRARY_POOL_BYTES']=str(max(pools))
     cfg['resource_plan']=dict(policy='native-warmed-admission-v2',
         selected_rows_per_rank=rows, max_rows_per_rank=rows,
         library_pool_bytes=int(cfg['env']['MGBFS_LIBRARY_POOL_BYTES']),
         probes=[dict(rows_per_rank=k,ranks=v) for k,v in sorted(probes.items())],
-        pool_policy='reserved-512-bytes-per-capacity-row-pending-pool-peak-tuning',
+        pool_policy='native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack',
         maximum_hardware_capacity_proven=False)
     return cfg
 

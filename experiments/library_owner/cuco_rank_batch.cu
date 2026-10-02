@@ -222,6 +222,58 @@ struct CucoRankBatch::Impl {
   }
 };
 
+// Keep this next to the actual constructor/workspace allocations. Queries
+// don't construct a Set, launch kernels, or change the current RMM resource.
+extern "C" int mgbfs_library_rank_pool_query_v1(uint32_t layer,
+    uint32_t accepted,uint32_t shards,uint32_t incoming,uint64_t* result) {
+  if(result)*result=0;
+  if(!result||!layer||!accepted||!incoming||!shards||shards>256||
+      (shards&(shards-1))||incoming>INT32_MAX||
+      uint64_t(layer)*2+accepted>INT32_MAX)return -1;
+  try {
+    uint64_t bytes=0;
+    auto charge=[&](uint64_t n){
+      if(n>UINT64_MAX-255||bytes>UINT64_MAX-((n+255)&~uint64_t{255}))
+        throw std::runtime_error("POOL_QUERY_OVERFLOW");
+      bytes+=(n+255)&~uint64_t{255};
+    };
+    auto table=[&](uint64_t rows){
+      using Storage=typename Set::storage_ref_type;
+      auto extent=cuco::make_valid_extent<typename Set::probing_scheme_type,Storage>(
+          cuco::extent<size_t>{size_t(rows*2)});
+      charge(uint64_t(size_t(extent))*sizeof(uint64_t));
+    };
+    uint64_t stride=(uint64_t(incoming)+63)&~uint64_t{63};
+    charge(stride*16); // workspace candidate SoA
+    charge(uint64_t(incoming)*4); // minima
+    charge(uint64_t(incoming)*4); // representatives
+    charge(incoming); // flags
+    charge(uint64_t(incoming)*4); // selected
+    charge(uint64_t(incoming)*4); // sources
+    charge(8); // control
+    size_t scratch=0;
+    cuco_owner_detail::check(cub::DeviceSelect::Flagged(nullptr,scratch,
+        thrust::counting_iterator<uint32_t>{0},static_cast<uint8_t*>(nullptr),
+        static_cast<uint32_t*>(nullptr),static_cast<uint32_t*>(nullptr),
+        int(incoming),cudaStream_t{nullptr}));
+    charge(scratch);
+    table(incoming);
+    for(uint32_t shard=0;shard<shards;++shard){
+      charge(((uint64_t(accepted)+63)&~uint64_t{63})*16);
+      // Histories may skew arbitrarily. Each shard can see up to two complete
+      // rank layers; charge that safe bound rather than assuming uniform keys.
+      table(uint64_t(layer)*2+accepted);
+    }
+    charge(uint64_t(shards)*sizeof(ContainsRef));
+    charge(uint64_t(shards)*sizeof(InsertRef));
+    charge(uint64_t(shards)*sizeof(AcceptedView));
+    charge(uint64_t(shards)*4);charge(uint64_t(shards)*4);
+    charge(uint64_t(shards)*4);charge(uint64_t(shards+1)*4);
+    *result=bytes;
+    return 0;
+  } catch (...) {return -1;}
+}
+
 CucoRankBatch::CucoRankBatch(std::vector<MgbfsLibraryKeysV1> previous,
     std::vector<MgbfsLibraryKeysV1> current,std::vector<uint32_t> caps,
     uint32_t incoming,uint32_t logical_owner,uint32_t world,

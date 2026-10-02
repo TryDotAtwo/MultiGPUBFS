@@ -350,6 +350,7 @@ impl Drop for CancelMirror {
 }
 fn admit_device_group(
     rank: u32,
+    pool_bytes: Option<u64>,
     comm: *mut c_void,
     stream: *mut c_void,
     required: u64,
@@ -377,6 +378,7 @@ fn admit_device_group(
             "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
             "free_after_nccl_warmup_bytes": free, "total_bytes": total,
             "scope": "explicit_device_allocations_including_fixed_library_pool",
+            "library_pool_bytes": pool_bytes,
         }));
         // Query subprocesses intentionally stop before large allocations and
         // before BFS. No capacity failure or completed layer is claimed.
@@ -1150,7 +1152,7 @@ impl DistributedNativeBfs {
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
-        let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
+        let mut library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
                 || matches!(library_options, Some((_, owner)) if owner != ReferenceOwner::CucoRank))
@@ -1241,6 +1243,24 @@ impl DistributedNativeBfs {
         } else {
             stride
         };
+        #[cfg(feature = "library-owner")]
+        if std::env::var("MGBFS_LIBRARY_POOL_AUTOSIZE").ok().as_deref() == Some("1") {
+            if !matches!(library_options, Some((_, ReferenceOwner::CucoRank))) {
+                return Err("POOL_AUTOSIZE_REQUIRES_CUCO_RANK".into());
+            }
+            let capacity = (u64::from(cfg.buckets / cfg.shards)
+                * u64::from(cfg.bucket_capacity)).min(cfg.layer_capacity.into());
+            let mut rounded = 0u64;
+            check(unsafe { mgbfs_library_rank_pool_query_v1(
+                cfg.layer_capacity, capacity as u32, cfg.shards, candidates, &mut rounded,
+            ) })?;
+            // Fragmentation remains explicitly reserved until hardware peak
+            // measurements justify tightening it. No allocation growth in BFS.
+            let slack = (64u64 << 20).max(rounded / 20);
+            let bytes = rounded.checked_add(slack).and_then(|x| x.checked_add(255))
+                .ok_or("POOL_AUTOSIZE_OVERFLOW")? & !255;
+            library_pool_bytes = Some(bytes);
+        }
         let shared_shape = crate::distributed_memory::SharedBufferShape {
             state_stride: stride as u64,
             packet_stride: packet_stride as u64,
@@ -1394,6 +1414,7 @@ impl DistributedNativeBfs {
         }
         admit_device_group(
             cfg.rank,
+            library_pool_bytes,
             comm.0,
             raw,
             owned_memory.total(),

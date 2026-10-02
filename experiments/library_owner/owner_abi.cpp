@@ -222,6 +222,10 @@ extern "C" int mgbfs_library_owner_export_v1(void* owner, MgbfsLibraryKeysV1* ke
 }
 
 #ifndef MGBFS_HAS_CUCO
+extern "C" int mgbfs_library_rank_pool_query_v1(uint32_t,uint32_t,uint32_t,uint32_t,uint64_t* result) {
+  if(result)*result=0;
+  return -1;
+}
 extern "C" int mgbfs_library_cuco_workspace_create_v1(uint32_t, void*, void** workspace) {
   if (workspace) *workspace = nullptr;
   return -1;
