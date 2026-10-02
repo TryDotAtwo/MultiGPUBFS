@@ -19,7 +19,7 @@
     "full_graph_completed": false,
     "verification_scope": "COMMON_COMPLETED_PREFIX_ONLY",
     "archive_slots_in_comparison": 256,
-    "reference": "HF evidence/20261002-directhf/suite/panel-comparison.json (publication pending repository quota)"
+    "reference": "HF evidence/20261002-directhf/suite/panel-comparison.json at commit 745f6dfff88013ae13d32806c606fed11d9406f1"
   },
   "historical_full_orbit_reference": {
     "source_commit": "a7d267b496e971f2493d7760c9126347d97af6cc",
@@ -34,6 +34,6 @@
   },
   "current_base_performance_verified": true,
   "tail_archive_performance_verified": true,
-  "performance_verification_scope": "common completed prefix only; larger host ring under validation",
+  "performance_verification_scope": "owner performance comparison on common completed prefix only; larger host ring separately validated by GPU grid and HF checksum readback",
   "universal_fastest_claim": false
 }
