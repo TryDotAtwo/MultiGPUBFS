@@ -1,14 +1,74 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from sweep_tail_bfs import execute,pairs
+from sweep_tail_bfs import execute,pairs,automatic_pairs,unsupported_reason,resource_stop,allocation_failure
 
 
 class SweepTests(unittest.TestCase):
+    def test_automatic_cli_without_range_or_gpu_config(self):
+        script=Path(__file__).resolve().parents[1]/'scripts/sweep_tail_bfs.py'
+        result=subprocess.run([sys.executable,str(script),'--plan-only'],capture_output=True,text=True,check=True)
+        grid=json.loads(result.stdout)
+        self.assertEqual({tuple(pair) for pair in grid},set(pairs(2,32)))
+        self.assertEqual(len(grid),527)
+        self.assertLess(grid.index([16,1]),grid.index([17,1]))
+        self.assertLess(grid.index([16,1]),grid.index([16,2]))
+
+    def test_resource_pruning_keeps_other_r_independent_and_resumes(self):
+        calls=[]
+        def fake(config,source,case,runtime):
+            pair=(config['n'],config['r']);calls.append(pair)
+            case.mkdir();path=case/'manifest.json'
+            failed=pair==(16,3)
+            path.write_text(json.dumps(dict(status='INCOMPLETE' if failed else 'COMPLETE',
+                last_completed_layer=3,stop_reason='CUDA_ERROR_OUT_OF_MEMORY' if failed else 'exhausted')))
+            return path
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);grid=automatic_pairs(16,18,3,4);base={'run_id':'prune'}
+            ledger=execute(base,root,root,{},grid,10,fake)
+            self.assertEqual(calls,[(16,3),(16,4),(17,4),(18,4)])
+            for n in (17,18):
+                item=ledger['cases'][f'n{n}-m3']
+                self.assertFalse(item['attempted']);self.assertEqual(item['pruned_by'],{'n':16,'r':3})
+            execute(base,root,root,{},grid,10,fake)
+            self.assertEqual(len(calls),4)
+
+    def test_upload_and_worker_io_errors_do_not_prune(self):
+        for reason in ('HF HTTP 429','ConnectionError','ARCHIVE_WORKER_FATAL WRITE','search deadline'):
+            self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
+
+    def test_native_status_two_requires_allocation_origin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);source=root/'source';source.mkdir();case=root/'case';case.mkdir()
+            (source/'native.rs').write_text('check(cudaMalloc(&mut ptr, bytes));\ncheck(ncclCommInitRank());\n')
+            log=case/'native.log'
+            log.write_text('MGBFS_NATIVE_STATUS status=2 file=native.rs line=1\n')
+            self.assertTrue(allocation_failure(case,source))
+            log.write_text('MGBFS_NATIVE_STATUS status=2 file=native.rs line=2\n')
+            self.assertFalse(allocation_failure(case,source))
+            self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason='CUDA_STATUS_2')))
+
+    def test_all_supported_pairs_attempted_once(self):
+        calls=[]
+        def fake(config,source,case,runtime):
+            calls.append((config['n'],config['r']))
+            case.mkdir();path=case/'manifest.json'
+            path.write_text(json.dumps(dict(status='COMPLETE',last_completed_layer=0,stop_reason='exhausted')))
+            return path
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);grid=automatic_pairs()
+            ledger=execute({'run_id':'auto'},root,root,{},grid,120,fake)
+            expected={pair for pair in pairs() if unsupported_reason(*pair) is None}
+            self.assertEqual(set(calls),expected)
+            self.assertEqual(len(calls),len(expected))
+            self.assertEqual(ledger['pending'],[])
+            self.assertEqual(len(ledger['cases']),527)
+
     def test_bounds(self):
         self.assertEqual(pairs(3,4,2,3),[(3,2),(3,3),(4,2),(4,3)])
         with self.assertRaises(ValueError): pairs(4,3)

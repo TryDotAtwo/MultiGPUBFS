@@ -68,9 +68,20 @@ Archived full-word oracle: `python scripts/verify_tail_oracle.py <saved-root>`.
 Matched benchmark: `scripts/tail_remote_panel.py` (isolated rental paths).
 
 Finite grid driver: `scripts/sweep_tail_bfs.py`, where `m` maps to native `r`.
-Pass explicit `--n-min`, `--n-max`, optional `--m-min`/`--m-max`, a positive
-`--deadline-seconds`, and the same config/source/runtime-env arguments as the
-single-run driver. `--plan-only` prints the grid without launching GPUs.
+No range is required: by default the driver considers every `(n,r)` with
+`2<=n<=32` and `1<=r<=n`, visiting increasing n. Packing/alphabet and u64 orbit
+limits are classified before any GPU work. Explicit range filters remain optional.
+Pass a positive `--deadline-seconds` and the same config/source/runtime-env
+arguments as the single-run driver. `--plan-only` needs no GPU configuration.
+After a resource stop at `(n,r)`, larger n at that same r are recorded as
+unattempted INCOMPLETE with `pruned_by`; other r branches continue independently.
+This is an operational heuristic, not proof that skipped graphs cannot fit.
+Recognized stops include allocation OOM, capacity/ring limits and SSD exhaustion.
+CUDA status 2 requires a diagnostic whose source line is a CUDA allocation,
+so unrelated NCCL errors with the same numeric status do not prune a branch.
+HF upload errors, archive worker I/O errors and timeouts do not trigger pruning.
+Resume preserves the policy and prior exclusions; changing resource limits or
+retrying pruned pairs requires a fresh root/run ID.
 Each pair gets its own run directory and HF run ID. `sweep.json` records
 COMPLETE/INCOMPLETE, last completed layer and reason per attempted pair,
 unsupported pairs, and the remaining unstarted pairs. Restarting with the

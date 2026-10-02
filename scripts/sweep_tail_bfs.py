@@ -1,19 +1,61 @@
-"""Explicit finite (n,m) sweep; m is the repeated-symbol count r in native CLI."""
+"""Automatic supported (n,r) sweep; legacy m arguments map to native r."""
 import argparse
 import copy
 import json
 import math
+import re
 import time
 from pathlib import Path
 from bfs_tail_archive import atomic_json
 from run_tail_bfs import run
 
 
-def pairs(n_min,n_max,m_min=1,m_max=None):
+def pairs(n_min=2,n_max=32,m_min=1,m_max=None):
     if not 2<=n_min<=n_max<=32 or m_min<1 or (m_max is not None and m_max<m_min):
         raise ValueError('invalid finite sweep bounds')
     return [(n,m) for n in range(n_min,n_max+1)
             for m in range(m_min,min(n,m_max if m_max is not None else n)+1)]
+
+
+def unsupported_reason(n,r):
+    if n-r+1>16:return 'alphabet exceeds four bits'
+    if math.factorial(n)//math.factorial(r)>=2**64:return 'native orbit count exceeds u64'
+    return None
+
+
+def automatic_pairs(n_min=2,n_max=32,r_min=1,r_max=None):
+    # Ascend n within every independent fixed-r branch.
+    return pairs(n_min,n_max,r_min,r_max)
+
+
+def resource_stop(record):
+    if record.get('status')!='INCOMPLETE' or not record.get('attempted',False):return False
+    if record.get('resource_classification')=='cuda_allocation_failure':return True
+    reason=record.get('reason','').lower()
+    return any(marker in reason for marker in (
+        'out of memory','cuda_error_out_of_memory','cudaerrormemoryallocation',
+        'capacity exceeded','capacity exhausted','no space left on device',
+        'group_state_ring_retire_fatal',
+        'archive_pin_ring_fatal: receiving on an empty channel'))
+
+
+def allocation_failure(case,source):
+    """Status 2 alone is ambiguous: confirm its source is a CUDA allocation."""
+    log=case/'native.log'
+    if not log.exists():return False
+    with log.open('rb') as stream:
+        stream.seek(max(0,log.stat().st_size-65536))
+        tail=stream.read().decode('utf-8',errors='replace')
+    source=source.resolve()
+    for file,line in re.findall(r'MGBFS_NATIVE_STATUS status=2 file=(\S+) line=(\d+)',tail):
+        path=(source/file).resolve()
+        if not path.is_relative_to(source) or not path.is_file():continue
+        lines=path.read_text(encoding='utf-8').splitlines()
+        index=int(line)-1
+        if 0<=index<len(lines) and any(name in lines[index] for name in (
+                'cudaMalloc(', 'cudaMallocAsync(', 'cudaMallocHost(', 'cudaHostAlloc(')):
+            return True
+    return False
 
 
 def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
@@ -21,26 +63,46 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
         raise ValueError('positive sweep deadline required')
     root.mkdir(parents=True,exist_ok=True)
     ledger_path=root/'sweep.json'
-    fingerprint=dict(base=base,grid=grid)
+    fingerprint=dict(base=base,grid=grid,pruning_policy='fixed-r-resource-stop-v1')
     if ledger_path.exists():
         ledger=json.loads(ledger_path.read_text())
         if ledger['configuration']!=json.loads(json.dumps(fingerprint)):
             raise ValueError('resume configuration differs')
     else:
         ledger=dict(configuration=fingerprint,cases={})
+    # Classify structural exclusions even when the compute deadline expires.
+    for n,m in grid:
+        reason=unsupported_reason(n,m)
+        key=f'n{n}-m{m}'
+        if reason and key not in ledger['cases']:
+            ledger['cases'][key]=dict(status='INCOMPLETE',last_completed_layer=-1,
+                reason=reason,attempted=False,n=n,m=m)
+    atomic_json(ledger_path,ledger)
     deadline=time.monotonic()+deadline_seconds
+    blocked={}
+    for record in ledger['cases'].values():
+        if resource_stop(record):
+            r=record['m']
+            if r not in blocked or record['n']<blocked[r]['n']:blocked[r]=record
     for n,m in grid:
         key=f'n{n}-m{m}'
         if key in ledger['cases']:
             continue  # Never overwrite/retry an existing run implicitly.
+        if m in blocked and n>blocked[m]['n'] and unsupported_reason(n,m) is None:
+            stop=blocked[m]
+            ledger['cases'][key]=dict(status='INCOMPLETE',last_completed_layer=-1,
+                reason=f"skipped larger n at fixed r={m} after resource stop at n={stop['n']}: {stop['reason']}",
+                attempted=False,n=n,m=m,pruned_by=dict(n=stop['n'],r=m),
+                pruning_is_heuristic=True)
+            atomic_json(ledger_path,ledger)
+            continue
         remaining=deadline-time.monotonic()
         if remaining<=0:
             break
         config=copy.deepcopy(base)
         config.update(n=n,r=m,run_id=base.get('run_id','sweep')+'-'+key,
                       timeout_seconds=min(base.get('timeout_seconds',300),remaining))
-        unsupported='alphabet exceeds four bits' if n-m+1>16 else (
-            'native orbit count exceeds u64' if math.factorial(n)//math.factorial(m)>=2**64 else None)
+        unsupported=unsupported_reason(n,m)
         if unsupported:
             record=dict(status='INCOMPLETE',last_completed_layer=-1,reason=unsupported,
                         attempted=False,n=n,m=m)
@@ -56,7 +118,19 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
                 manifest=json.loads(path.read_text()) if path.exists() else {}
                 record=dict(status='INCOMPLETE',last_completed_layer=manifest.get('last_completed_layer',-1),
                             reason=manifest.get('stop_reason',str(error)),attempted=True,n=n,m=m)
+        if record['status']=='INCOMPLETE' and allocation_failure(root/key,source):
+            record['resource_classification']='cuda_allocation_failure'
         ledger['cases'][key]=record
+        if resource_stop(record):
+            blocked[m]=record
+            # Record future exclusions now, even if the global deadline is near.
+            for next_n,next_r in grid:
+                next_key=f'n{next_n}-m{next_r}'
+                if next_r==m and next_n>n and next_key not in ledger['cases'] and unsupported_reason(next_n,next_r) is None:
+                    ledger['cases'][next_key]=dict(status='INCOMPLETE',last_completed_layer=-1,
+                        reason=f"skipped larger n at fixed r={m} after resource stop at n={n}: {record['reason']}",
+                        attempted=False,n=next_n,m=next_r,pruned_by=dict(n=n,r=m),
+                        pruning_is_heuristic=True)
         atomic_json(ledger_path,ledger)
     ledger['pending']=[list(pair) for pair in grid if f'n{pair[0]}-m{pair[1]}' not in ledger['cases']]
     atomic_json(ledger_path,ledger)
@@ -65,21 +139,24 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--config',type=Path,required=True)
-    p.add_argument('--runtime-env',type=Path,required=True)
-    p.add_argument('--source',type=Path,required=True)
-    p.add_argument('--root',type=Path,required=True)
-    p.add_argument('--n-min',type=int,required=True)
-    p.add_argument('--n-max',type=int,required=True)
-    p.add_argument('--m-min',type=int,default=1)
-    p.add_argument('--m-max',type=int)
-    p.add_argument('--deadline-seconds',type=float,required=True)
+    p.add_argument('--config',type=Path)
+    p.add_argument('--runtime-env',type=Path)
+    p.add_argument('--source',type=Path)
+    p.add_argument('--root',type=Path)
+    p.add_argument('--n-min',type=int,default=2)
+    p.add_argument('--n-max',type=int,default=32)
+    p.add_argument('--r-min','--m-min',dest='m_min',type=int,default=1)
+    p.add_argument('--r-max','--m-max',dest='m_max',type=int)
+    p.add_argument('--deadline-seconds',type=float)
     p.add_argument('--plan-only',action='store_true')
     args=p.parse_args()
-    grid=pairs(args.n_min,args.n_max,args.m_min,args.m_max)
+    grid=automatic_pairs(args.n_min,args.n_max,args.m_min,args.m_max)
     if args.plan_only:
         print(json.dumps(grid))
         return
+    missing=[name for name in ('config','runtime_env','source','root','deadline_seconds')
+             if getattr(args,name) is None]
+    if missing:p.error('GPU execution requires '+', '.join('--'+name.replace('_','-') for name in missing))
     ledger=execute(json.loads(args.config.read_text()),args.source,args.root,
         json.loads(args.runtime_env.read_text()),grid,args.deadline_seconds)
     print(json.dumps(ledger,indent=2))
