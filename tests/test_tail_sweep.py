@@ -42,6 +42,14 @@ class SweepTests(unittest.TestCase):
         for reason in ('HF HTTP 429','ConnectionError','ARCHIVE_WORKER_FATAL WRITE','search deadline'):
             self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
 
+    def test_native_layer_capacity_code_is_specific(self):
+        for reason in ('native fatal: LIBRARY_RANK_DEPTH_FATAL_16_16,ARCHIVE_INCOMPLETE',
+                       'LIBRARY_RANK_DEPTH_FATAL_16_0','LIBRARY_RANK_DEPTH_FATAL_0_16'):
+            self.assertTrue(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
+        for reason in ('LIBRARY_RANK_DEPTH_FATAL_10_10','LIBRARY_RANK_DEPTH_FATAL_160_160',
+                       'REMOTE_NEXT_EXTENT_FATAL','REMOTE_SEARCH_CANCELLED','CUDA_SET_DEVICE'):
+            self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,reason=reason)))
+
     def test_native_status_two_requires_allocation_origin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'source';source.mkdir();case=root/'case';case.mkdir()

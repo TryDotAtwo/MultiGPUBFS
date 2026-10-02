@@ -32,6 +32,9 @@ def resource_stop(record):
     if record.get('status')!='INCOMPLETE' or not record.get('attempted',False):return False
     if record.get('resource_classification')=='cuda_allocation_failure':return True
     reason=record.get('reason','').lower()
+    # cuda/state_commit.cu uses sticky code 16 for layer/request capacity.
+    # Other rank-depth codes and remote cancellation alone are not evidence.
+    if re.search(r'\blibrary_rank_depth_fatal_(?:16_(?:0|16)|0_16)\b',reason):return True
     return any(marker in reason for marker in (
         'out of memory','cuda_error_out_of_memory','cudaerrormemoryallocation',
         'capacity exceeded','capacity exhausted','no space left on device',
@@ -63,7 +66,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
         raise ValueError('positive sweep deadline required')
     root.mkdir(parents=True,exist_ok=True)
     ledger_path=root/'sweep.json'
-    fingerprint=dict(base=base,grid=grid,pruning_policy='fixed-r-resource-stop-v1')
+    fingerprint=dict(base=base,grid=grid,pruning_policy='fixed-r-resource-stop-v2')
     if ledger_path.exists():
         ledger=json.loads(ledger_path.read_text())
         if ledger['configuration']!=json.loads(json.dumps(fingerprint)):
