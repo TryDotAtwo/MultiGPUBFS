@@ -87,12 +87,34 @@ def s_reference_layers(n):
     return layers
 
 
-def verify_process_archives(case, frame_reader=None, n=4, world=2):
+def u_reference_layers(n, modulus):
+    """Exact full bytes; elementary left row operations, no GPU hashes."""
+    if not 2 <= n <= 4 or not 2 <= modulus <= 6:
+        raise ValueError('BOUNDED_REFERENCE_UNITRIANGULAR')
+    frontier = {bytes(int(i == j) for i in range(n) for j in range(n))}
+    visited, layers = set(frontier), []
+    while frontier:
+        layers.append(frontier)
+        children = set()
+        for state in frontier:
+            for row in range(n - 1):
+                for delta in (1, modulus - 1):
+                    child = bytearray(state)
+                    for column in range(n):
+                        index = row * n + column
+                        child[index] = (state[index] + delta * state[index + n]) % modulus
+                    children.add(bytes(child))
+        frontier = children - visited
+        visited.update(frontier)
+    return layers
+
+
+def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
         frame_reader = frames
-    expected = s_reference_layers(n)
+    expected = s_reference_layers(n) if modulus is None else u_reference_layers(n, modulus)
     actual = [set() for _ in expected]
     visited, digest = set(), None
     for rank in range(world):
@@ -142,6 +164,8 @@ def main():
     parser.add_argument('--capacity-faults', action='store_true',
                         help='also exhaust actual owner capacity on either independent rank')
     parser.add_argument('--reference-size', type=int, choices=range(2, 9), default=4)
+    parser.add_argument('--unitriangular-modulus', type=int, choices=range(2, 7),
+                        help='full-state U4 oracle instead of symmetric permutation matrices')
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
@@ -151,6 +175,8 @@ def main():
     args = parser.parse_args()
     if args.batch < 1:
         parser.error('--batch must be positive')
+    if args.unitriangular_modulus is not None and args.reference_size != 4:
+        parser.error('unitriangular replay requires --reference-size 4')
     work, output = args.work.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     source = work / "source"
@@ -193,16 +219,20 @@ def main():
         MGBFS_CAPACITY_MODE="max_per_rank",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
     configure_owner_environment(env, args.owner_backend, args.rank_map)
-    if args.reference_size != 4:
+    if args.reference_size != 4 or args.unitriangular_modulus is not None:
         # Capacity is deliberately conservative for this bounded full-state
         # oracle, not a prediction of unknown production frontiers.
         import math
-        capacity = max(64, math.factorial(args.reference_size))
+        capacity = max(64, math.factorial(args.reference_size) if args.unitriangular_modulus is None
+                       else args.unitriangular_modulus ** 6)
         env.update(MGBFS_BENCH_CAPACITY=str(capacity),
                    MGBFS_FUTURE_CAPACITY=str(capacity * 2),
                    MGBFS_BUCKET_CAPACITY=str(capacity),
                    MGBFS_ARCHIVE_ROWS='512', MGBFS_ARCHIVE_SLOTS='128')
     report['reference_size'] = args.reference_size
+    reference_group = (f's{args.reference_size}' if args.unitriangular_modulus is None
+                       else f'u4m{args.unitriangular_modulus}')
+    report['reference_group'] = reference_group
     report['batch'] = args.batch
     report['profile'] = args.profile
     report['pre_dedup'] = args.pre_dedup
@@ -242,7 +272,7 @@ def main():
                 streams.append(stream)
                 rank_env = dict(case_env, RANK=str(rank), LOCAL_RANK=str(rank), WORLD_SIZE="2")
                 command = instrument_rank_command(source / 'target/debug/mgbfs', [
-                    "bench", "--reference", f"s{args.reference_size}", str(args.batch), str(case / "bootstrap"),
+                    "bench", "--reference", reference_group, str(args.batch), str(case / "bootstrap"),
                     str(case / "archive"), str(case / "result")],
                     args.instrument_processes, case / f'rank-{rank}')
                 processes.append(subprocess.Popen(command, cwd=source,
@@ -262,7 +292,8 @@ def main():
             if key is None:
                 row["pass"] &= row["group_complete"]
                 if row["pass"]:
-                    row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size)
+                    row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
+                        modulus=args.unitriangular_modulus)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
