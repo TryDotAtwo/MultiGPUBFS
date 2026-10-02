@@ -385,6 +385,16 @@ def main():
             report["scope"] = "native rank owner: separate single-GPU T4 processes; two-rank checks only on verified P2P"
             report["t4_acceptance_eligible"] = False
             report["native_leaf_gates"] = []
+            # Exercise the actual host NCCL wrapper's error/progress ordering
+            # before GPU gates. This is API-boundary-double coverage only,
+            # never a replacement for independent-rank transport faults.
+            protocol = work / "native-host-nccl-protocol"
+            run(["g++", "-std=c++17", "-I" + str(source / "tests/nccl_stubs"),
+                 str(source / "tests/nccl_transport_failure.cpp"), "-o", str(protocol)],
+                "native-host-nccl-protocol-build")
+            run([str(protocol)], "native-host-nccl-protocol", timeout=30)
+            report["native_host_nccl_protocol"] = "PASS_API_BOUNDARY_DOUBLE_NOT_GPU"
+            save()
             for backend, defines in (("CUB_SORT_MERGE", []), ("BMMA_BUCKET", ["-DMGBFS_TEST_BMMA=1"])):
                 binary = work / ("native-rank-leaf-" + backend.lower())
                 run([str(sdk / "bin/nvcc"), "-std=c++17", "-lineinfo", "-arch=sm_75",
