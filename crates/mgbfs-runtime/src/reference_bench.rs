@@ -223,7 +223,7 @@ struct PreparedPass {
     cfg: DistributedConfig,
     bootstrap_digest: [u8; 32],
 }
-fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
+fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
@@ -234,7 +234,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err("TOPOLOGY".into());
     }
     if world == 1 && crate::reference_launch::macro_depth_from_env(world)? {
-        return run_macro_pass(args, warmup_completed, is_measure);
+        return run_macro_pass(args, warmup_completed, is_measure, manifest);
     }
     // Rendezvous by launch identity first. Config digest is agreed over the
     // connected control channel, so an invalid local config can report failure
@@ -246,11 +246,13 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
     )?;
     crate::reference_launch::macro_depth_from_env(world)?;
-    let multiset = if args[1].starts_with("lrx") {
+    let multiset = if !manifest && args[1].starts_with("lrx") {
         Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
     } else { None };
     let (group, graph) = if let Some(word) = &multiset {
         (word.label(), word.position_group()?)
+    } else if manifest {
+        crate::reference_launch::load_matrix_manifest(Path::new(&args[1]))?
     } else { MatrixGroup::from_reference_label(&args[1])? };
     let expected_states = multiset.as_ref().map_or(graph.expected_max_unique_states, |x| x.order());
     let n = graph.rows;
@@ -279,6 +281,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         Ok("matrix_u8") | Err(_) => false,
         _ => return Err("STATE_CODEC".into()),
     };
+    if manifest && compact_states { return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into()); }
     let archive_width = match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
         Ok("permutation_u8") => n,
         Err(_) if compact_states => n,
@@ -287,6 +290,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     };
     if compact_states && archive_width != n {
         return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
+    }
+    if manifest && archive_width != graph.start.len() {
+        return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into());
     }
     if group.starts_with('u') && (compact_states || archive_width != graph.start.len()) {
         return Err("UNITRIANGULAR_REQUIRES_MATRIX_CODEC".into());
@@ -717,7 +723,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
 
 /// The existing weighted CUDA backend is single-rank. It remains separate
 /// from the unit-cost NCCL runtime until distributed weighted settlement exists.
-fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result<()> {
+fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool) -> Result<()> {
     crate::reference_launch::bench_warmup_for_launch(
         std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
         std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
@@ -743,7 +749,9 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     if unsafe { cudaSetDevice(local as i32) } != 0 {
         return Err("CUDA_SET_DEVICE".into());
     }
-    let (group, graph) = MatrixGroup::from_reference_label(&args[1])?;
+    let (group, graph) = if manifest {
+        crate::reference_launch::load_matrix_manifest(Path::new(&args[1]))?
+    } else { MatrixGroup::from_reference_label(&args[1])? };
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
     let capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse().map_err(|_| "CAPACITY")?,
@@ -758,6 +766,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
         _ => return Err("STATE_CODEC".into()),
     };
     let generation_variant = if compact { 5 } else { 1 };
+    if manifest && compact { return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into()); }
     let layout = MacroStateLayout::derive(&graph, generation_variant)?;
     match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
         Ok("permutation_u8") if compact => (),
@@ -881,6 +890,14 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
 /// the remaining arguments are group, batch, bootstrap, archive and output.
 /// This does not implement the production RunConfigV1 dispatcher.
 pub fn run(args: Vec<String>) -> Result<()> {
+    run_source(args, false)
+}
+/// Manifest input uses the same rank admission, owner, transport and archive.
+/// This is still the benchmark contract, not the RunConfigV1 dispatcher.
+pub fn run_manifest(args: Vec<String>) -> Result<()> {
+    run_source(args, true)
+}
+fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
     use crate::benchmark::{run_phases, Phase};
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
@@ -901,6 +918,6 @@ pub fn run(args: Vec<String>) -> Result<()> {
             &args.iter().map(String::as_str).collect::<Vec<_>>(), warmup, phase,
         )?;
         run_pass(&paths, warmup && phase == crate::reference_launch::BenchPhase::Measure,
-            phase == crate::reference_launch::BenchPhase::Measure)
+            phase == crate::reference_launch::BenchPhase::Measure, manifest)
     })
 }

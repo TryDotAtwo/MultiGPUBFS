@@ -10,14 +10,19 @@ impl Drop for Fixture {
 // Independent full-state oracle: checksummed counts alone cannot detect a
 // generation/layout bug which substitutes a different state at the same depth.
 fn assert_s4_archive_full_states(path: &std::path::Path) {
+    let oracle = mgbfs_core::matrix::MatrixGroup::symmetric_permutation_matrices(4)
+        .unwrap().exact_layers(24).unwrap();
+    assert_archive_full_states(path, 16, oracle);
+}
+
+fn assert_archive_full_states(path: &std::path::Path, expected_width: usize,
+                              oracle: Vec<Vec<Vec<u8>>>) {
     let bytes = std::fs::read(path).unwrap();
     mgbfs_runtime::archive::verify(&bytes).unwrap();
     let word = |offset: usize| u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
     let width = word(8);
-    assert_eq!(width, 16);
+    assert_eq!(width, expected_width);
     let hash = mgbfs_core::hash::GemmHash::from_seed(width, 20260828u128.to_le_bytes()).unwrap();
-    let oracle = mgbfs_core::matrix::MatrixGroup::symmetric_permutation_matrices(4)
-        .unwrap().exact_layers(24).unwrap();
     let mut actual = vec![std::collections::BTreeSet::new(); oracle.len()];
     let mut cursor = 48;
     loop {
@@ -43,6 +48,44 @@ fn assert_s4_archive_full_states(path: &std::path::Path) {
     for (depth, expected) in oracle.into_iter().enumerate() {
         assert_eq!(actual[depth], expected.into_iter().collect(),
             "full-state mismatch at depth {depth}");
+    }
+}
+
+#[test]
+#[ignore = "requires actual CUDA/NCCL LSA hardware"]
+fn manifest_nonidentity_start_runs_both_profiles_with_full_state_archive() {
+    for profile in ["DENSE", "HASH_FIRST"] {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let fixture = Fixture(std::env::temp_dir().join(format!("mgbfs-manifest-gpu-{profile}-{nonce}")));
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        let manifest = fixture.0.join("graph.json");
+        std::fs::write(&manifest, r#"{"schema":1,"rows":2,"cols":2,"modulus":3,
+            "start":[1,1,0,1],"generators":[[1,1,0,1],[1,2,0,1]],
+            "inverse_map":[1,0],"expected_max_unique_states":3}"#).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_mgbfs"))
+            .args(["bench", "--manifest"]).arg(&manifest).arg("1")
+            .arg(fixture.0.join("bootstrap")).arg(fixture.0.join("archive"))
+            .arg(fixture.0.join("result"))
+            .env("RANK", "0").env("LOCAL_RANK", "0").env("WORLD_SIZE", "1")
+            .env("TORCHELASTIC_RUN_ID", format!("manifest-{nonce}"))
+            .env("MGBFS_HASH_SEED_HEX", "000000000000000000000000013527dc")
+            .env("MGBFS_OWNER_BACKEND", "CUB_SORT_MERGE").env("MGBFS_PROFILE", profile)
+            .env("MGBFS_HASH_FIRST_GENERATION", "SCALAR")
+            .env("MGBFS_TRANSPORT_BACKEND", "NCCL_LSA").env("MGBFS_RANK_MAP", "0")
+            .env("MGBFS_STATE_CODEC", "matrix_u8").env("MGBFS_ARCHIVE_CODEC", "matrix_u8")
+            .env("MGBFS_BUCKETS", "8").env("MGBFS_SHARDS", "4")
+            .env("MGBFS_JOB_BUCKETS", "2").env("MGBFS_BUCKET_CAPACITY", "32")
+            .env("MGBFS_BENCH_CAPACITY", "64").env("MGBFS_FUTURE_CAPACITY", "128")
+            .env("MGBFS_BENCH_WARMUP", "0").env("MGBFS_BENCH_SKIP_ARCHIVE", "0")
+            .env("MGBFS_ARCHIVE_STREAM", "0").env("MGBFS_MACRO_DEPTH", "1")
+            .env("MGBFS_ARCHIVE_ROWS", "8").env("MGBFS_ARCHIVE_SLOTS", "64")
+            .env("MGBFS_PRE_DEDUP", "ON").env("NCCL_CUMEM_ENABLE", "1")
+            .env_remove("MGBFS_LIBRARY_POOL_BYTES").env_remove("MGBFS_TEST_OWNER_DAG_CAPTURE")
+            .output().unwrap();
+        assert!(output.status.success(), "{profile}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(fixture.0.join("result/group-complete.json").exists());
+        assert_archive_full_states(&fixture.0.join("archive-rank-0.mgbfsar1"), 4,
+            vec![vec![vec![1,1,0,1]], vec![vec![1,0,0,1], vec![1,2,0,1]]]);
     }
 }
 

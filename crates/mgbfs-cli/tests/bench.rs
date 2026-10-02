@@ -50,6 +50,18 @@ fn bench_reaches_native_launcher_or_reports_missing_build_without_fallback() {
 }
 
 #[test]
+fn manifest_bench_reaches_same_launcher_without_cpu_fallback() {
+    let result = invoke(&["bench", "--manifest", "graph.json", "16",
+                          "bootstrap", "archive", "results"]);
+    let expected = if cfg!(all(feature = "cuda", target_os = "linux")) {
+        "ENV_RANK"
+    } else {
+        "CLI_BENCH_REQUIRES_LINUX_CUDA"
+    };
+    assert_eq!(result["error"], expected);
+}
+
+#[test]
 fn public_bench_cannot_disable_the_archive_output_contract() {
     for value in ["1", "invalid"] {
         let nonce = std::time::SystemTime::now()

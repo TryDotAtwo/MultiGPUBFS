@@ -1,5 +1,17 @@
 use mgbfs_core::Result;
 
+/// Decode and validate before device admission. Paths are not graph identity.
+pub fn load_matrix_manifest(path: &std::path::Path) -> Result<(String, mgbfs_core::matrix::MatrixGroup)> {
+    use sha2::{Digest, Sha256};
+    let file = std::fs::File::open(path).map_err(|e| format!("MATRIX_MANIFEST_OPEN: {e}"))?;
+    let graph: mgbfs_core::matrix::MatrixGroup = serde_json::from_reader(std::io::BufReader::new(file))
+        .map_err(|e| format!("MATRIX_MANIFEST_PARSE: {e}"))?;
+    graph.validate()?;
+    let digest = Sha256::digest(serde_json::to_vec(&graph).map_err(|e| e.to_string())?);
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Ok((format!("matrix-{hex}"), graph))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchPhase { Warmup, Measure }
 

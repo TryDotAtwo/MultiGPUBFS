@@ -4,9 +4,11 @@ fn execute() -> Result<(), (i32, String)> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|x| x.to_str()) {
         Some("--help") | Some("-h") if args.len() == 1 => {
+            println!("mgbfs bench --manifest <matrix.json> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nManifest input uses the same benchmark runtime; it is not the production RunConfigV1 dispatcher.");
             println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
         }
-        Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only")) && args[1] == "--reference" => {
+        Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only"))
+            && (args[1] == "--reference" || args[1] == "--manifest") => {
             #[cfg(not(all(feature = "cuda", target_os = "linux")))]
             match std::env::var("MGBFS_MACRO_DEPTH").as_deref() {
                 Ok("1") | Err(std::env::VarError::NotPresent) => (),
@@ -35,7 +37,11 @@ fn execute() -> Result<(), (i32, String)> {
                     .chain(args[2..7].iter().map(|s| s.clone().into_string()
                         .map_err(|_| (2, "CLI_BENCH_ARGUMENT_ENCODING".into()))))
                     .collect::<Result<Vec<_>, _>>()?;
-                mgbfs_runtime::reference_bench::run(launch).map_err(|e| (1, e))?;
+                if args[1] == "--manifest" {
+                    mgbfs_runtime::reference_bench::run_manifest(launch).map_err(|e| (1, e))?;
+                } else {
+                    mgbfs_runtime::reference_bench::run(launch).map_err(|e| (1, e))?;
+                }
             }
             #[cfg(not(all(feature = "cuda", target_os = "linux")))]
             return Err((2, "CLI_BENCH_REQUIRES_LINUX_CUDA".into()));
