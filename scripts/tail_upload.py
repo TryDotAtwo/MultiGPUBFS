@@ -27,7 +27,7 @@ def retry_upload(operation):
 
 
 class Publisher:
-    def __init__(self, root, repo_id, run_id, token=None, max_pending_bytes=25_000_000_000, *, api=None):
+    def __init__(self, root, repo_id, run_id, token=None, max_pending_bytes=25_000_000_000, *, api=None, coalesce_pending=True):
         if api is None:
             from huggingface_hub import HfApi
             if not token:
@@ -39,15 +39,37 @@ class Publisher:
         self.root.mkdir(exist_ok=False)
         self.queue, self.error = queue.Queue(), None
         self.pending, self.limit, self.lock = 0, max_pending_bytes, threading.Lock()
+        self.coalesce_pending, self.closed = coalesce_pending, False
         self.thread = threading.Thread(target=self._work, daemon=True)
         self.thread.start()
 
     def enqueue(self, manifest_path):
+        if self.closed:
+            raise RuntimeError('publisher already finishing')
         if self.error:
             raise RuntimeError('HF worker failed') from self.error
         manifest_path = Path(manifest_path)
         manifest = json.loads(manifest_path.read_text())
         size = sum(f['bytes'] for f in manifest['files'])
+        if self.coalesce_pending:
+            # Every snapshot is self-contained and includes all completed-layer
+            # statistics. Replace only queued inputs; the in-flight item remains
+            # pinned until its manifest commit succeeds.
+            while True:
+                try:
+                    older = self.queue.get_nowait()
+                except queue.Empty:
+                    break
+                if older is None:
+                    self.queue.put(None)
+                    self.queue.task_done()
+                    raise RuntimeError('publisher already finishing')
+                try:
+                    shutil.rmtree(older[0])
+                finally:
+                    with self.lock:
+                        self.pending -= older[2]
+                    self.queue.task_done()
         with self.lock:
             if self.pending + size > self.limit:
                 raise RuntimeError('HF pending byte bound exceeded')
@@ -112,6 +134,7 @@ class Publisher:
                 self.queue.task_done()
 
     def finish(self):
+        self.closed = True
         self.queue.put(None)
         self.queue.join()
         self.thread.join()

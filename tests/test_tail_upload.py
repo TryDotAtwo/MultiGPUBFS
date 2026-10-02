@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,34 @@ from scripts.tail_upload import Publisher,retry_upload
 
 
 class UploadTests(unittest.TestCase):
+    def test_latest_queued_snapshot_replaces_only_pending_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d); archive=self.archive(root/'run')
+            entered,release=threading.Event(),threading.Event()
+            depths=[]
+            class Api:
+                def upload_file(self,**kw):
+                    if kw['path_in_repo'].endswith('/manifest.json'):
+                        depths.append(json.loads(Path(kw['path_or_fileobj']).read_text())['last_completed_layer'])
+                    elif not entered.is_set():
+                        entered.set()
+                        if not release.wait(5): raise TimeoutError('test release deadline')
+                    return 'receipt'
+            publisher=Publisher(root/'pins','test/data','run1',api=Api())
+            try:
+                publisher.enqueue(archive.snapshot())
+                self.assertTrue(entered.wait(3))
+                archive.completed_layer(1,1,[pack_state([1,2,0])],.1,{'0':124})
+                publisher.enqueue(archive.snapshot())
+                archive.completed_layer(2,1,[pack_state([2,0,1])],.1,{'0':125})
+                publisher.enqueue(archive.snapshot())
+                self.assertEqual(len(list((root/'pins').glob('*/manifest.json'))),2)
+            finally:
+                release.set()
+                publisher.finish()
+            self.assertEqual(depths,[0,2])
+            self.assertEqual(publisher.pending,0)
+
     def test_transport_retry_is_bounded(self):
         calls=[]
         RemoteProtocolError=type('RemoteProtocolError',(Exception,),{})
