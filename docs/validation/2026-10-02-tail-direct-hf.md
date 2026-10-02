@@ -26,9 +26,10 @@ oracles check actual reachable words.
 
 All 26 INCOMPLETE pairs were rerun with 2048 host archive ring slots:
 8 additional COMPLETE, 18 INCOMPLETE. Across unique pairs: 101 COMPLETE,
-18 INCOMPLETE. Publication/readback of this additional cohort remains a
-separate gate until its verifier finishes; it must not be counted as verified
-offsite merely from its local manifest.
+18 INCOMPLETE. The additional cohort's 1055 files, totaling 6,212,697,168 bytes,
+were published at HF commit `da05ec7af6f871560adf5253e7b8831ece21275d`.
+Its streamed checksum readback remains a separate gate until its verifier
+finishes; publication acceptance alone is not a readback verification.
 
 Required metadata checks passed for all 145 manifests: exact start and actions,
 8/16-byte nibble packing, source commit and binary SHA-256, full launch/runtime
