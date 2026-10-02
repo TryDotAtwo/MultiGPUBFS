@@ -62,6 +62,17 @@ mod producer_capture_tests {
             assert_eq!(cudaGraphExecDestroy(exec), 0);
             assert_eq!(cudaGraphDestroy(captured), 0);
         }
+        // A host-only conservative bound must cover the real device count
+        // before settlement; production must not read that count per batch.
+        for slot in &bfs.future {
+            if slot.depth.is_some() {
+                let device = slot.state.one::<FrontierState>().unwrap();
+                assert_eq!(device.fatal, 0);
+                assert!(device.count <= slot.count_bound,
+                    "future live count {} exceeds scheduled merge bound {}",
+                    device.count, slot.count_bound);
+            }
+        }
         let count = bfs.settle_depth(2).unwrap();
         std::mem::swap(&mut bfs.current_states, &mut bfs.next_states);
         bfs.current_count = count;
@@ -180,7 +191,9 @@ struct FutureSlot {
     states: Buffer,
     hashes: Buffer,
     state: Buffer,
-    count: u32,
+    // Exact after depth finalization; conservative during queued production.
+    // Used only to bound existing CUB work, never as a device live count.
+    count_bound: u32,
 }
 
 pub struct MacroNativeBfs {
@@ -523,7 +536,7 @@ impl MacroNativeBfs {
                 states: buffer(future_state_bytes)?,
                 hashes: buffer(cfg.future_capacity_per_depth as usize * 16)?,
                 state: buffer(std::mem::size_of::<FrontierState>())?,
-                count: 0,
+                count_bound: 0,
             });
         }
         let mut start = vec![0u8; stride];
@@ -756,6 +769,9 @@ impl MacroNativeBfs {
                     return Err("FUTURE_SLOT_ALIAS".into());
                 }
                 slot.depth = Some(target);
+                let old_bound = slot.count_bound;
+                let next_bound = old_bound.checked_add(count).ok_or("COUNT_OVERFLOW")?
+                    .min(self.cfg.future_capacity_per_depth);
                 unsafe {
                     check(mgbfs_route_run(
                         self.route.0,
@@ -768,11 +784,12 @@ impl MacroNativeBfs {
                         self.cfg.prededup as i32,
                         self.stream.0,
                     ))?;
-                    check(mgbfs_future_merge_run(
+                    check(mgbfs_future_merge_run_bounded(
                         self.future_merge.0,
                         slot.states.ptr.cast(),
                         slot.hashes.ptr,
                         slot.state.ptr.cast(),
+                        old_bound,
                         self.children[producer_bank]
                             .at(row_begin * self.stride)
                             .cast(),
@@ -780,9 +797,11 @@ impl MacroNativeBfs {
                         self.sorted_hashes.ptr,
                         self.sorted_refs.ptr.cast(),
                         self.route_count.ptr.cast(),
+                        count,
                         self.stream.0,
                     ))?;
                 }
+                slot.count_bound = next_bound;
             }
             check(unsafe {
                 cudaEventRecord(self.producer_consumed[producer_bank].0, self.stream.0)
@@ -845,7 +864,7 @@ impl MacroNativeBfs {
                 if state.fatal != 0 {
                     return Err(format!("FUTURE_CAPACITY_{}", state.fatal));
                 }
-                slot.count = state.count;
+                slot.count_bound = state.count;
             }
         }
         if settled.fatal != 0 || next.fatal != 0 || settled.count != next.count {
@@ -873,7 +892,7 @@ impl MacroNativeBfs {
             check(unsafe { cudaMemsetAsync(self.future[slot_index].state.ptr, 0,
                 std::mem::size_of::<FrontierState>(), self.stream.0) })?;
             self.future[slot_index].depth = None;
-            self.future[slot_index].count = 0;
+            self.future[slot_index].count_bound = 0;
         }
         Ok(next.count)
     }
@@ -905,7 +924,7 @@ impl MacroNativeBfs {
         while self
             .future
             .iter()
-            .any(|slot| slot.depth.is_some() && slot.count > 0)
+            .any(|slot| slot.depth.is_some() && slot.count_bound > 0)
         {
             let target = self.depth.checked_add(1).ok_or("DEPTH_OVERFLOW")?;
             let count = self.settle_depth(target)?;
