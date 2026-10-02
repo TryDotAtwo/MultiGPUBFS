@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -83,6 +84,8 @@ class AllocatorPolicy(unittest.TestCase):
     def setUpClass(cls):
         compiler = shutil.which('g++')
         if not compiler or not (SOURCE / 'src/allocator.cc').exists():
+            if 'MGBFS_NCCL_POLICY_SOURCE' in os.environ:
+                raise RuntimeError('NCCL_POLICY_GATE_DEPENDENCY_MISSING')
             raise unittest.SkipTest('requires g++ and pinned NCCL source')
         text = (SOURCE / 'src/allocator.cc').read_text()
         begin = text.index('ncclResult_t  ncclMemAlloc(')
@@ -114,6 +117,21 @@ class AllocatorPolicy(unittest.TestCase):
 
     def test_posix_allocation_error_is_fatal_without_fallback(self):
         self.assertEqual(self.run_policy(0,1,2),(2,1,1))
+
+
+class GateAdmission(unittest.TestCase):
+    def test_explicit_gate_rejects_missing_vendor_source(self):
+        with tempfile.TemporaryDirectory() as source:
+            env = dict(os.environ, MGBFS_NCCL_POLICY_SOURCE=source)
+            result = subprocess.run([sys.executable,__file__,'AllocatorPolicy'],
+                                    env=env,capture_output=True,text=True)
+            self.assertNotEqual(result.returncode,0)
+
+    def test_explicit_gate_rejects_missing_compiler(self):
+        env = dict(os.environ, MGBFS_NCCL_POLICY_SOURCE=str(SOURCE), PATH='')
+        result = subprocess.run([sys.executable,__file__,'AllocatorPolicy'],
+                                env=env,capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
 
 
 if __name__=='__main__':
