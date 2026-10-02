@@ -63,8 +63,53 @@ Small protocol evidence package saved locally (not a large graph dataset):
 build/a4000-sm86-protocol-20261002/sm86-protocol-results.tar.gz,
 SHA256 0400d8c7b5766359ef9300860bbca346af3c03fda02df48538becc7400f6eafc.
 No benchmark speed or memory advantage is claimed. Full S8 Nsight Systems
-timeline is in progress using checksum-pinned2025.3.2 and its isolated NVTX3
-headers; timeline still requires inspection. An attempted reuse of NCCL-source
+timeline uses checksum-pinned2025.3.2 and its isolated NVTX3
+headers. An attempted reuse of NCCL-source
 include failed before execution because it shadowed installed NCCL headers;
 the isolated profiler include avoids that conflict. Mandatory physical2T4
 remains open.
+
+Full S8 timeline completed successfully:40320 canonical states and29 layers,
+two independent rank-process archives checked against CPU oracle. Each rank
+records178 explicit same-thread mgbfs.batch ranges. Within them:
+
+| API category | Rank0 | Rank1 |
+| --- | ---: | ---: |
+| cudaStreamSynchronize | 0 | 0 |
+| synchronous cudaMemcpy | 0 | 0 |
+| cudaEventSynchronize | 0 | 0 |
+| async copies, all nested mgbfs.archive_d2h | 352 | 346 |
+| unscoped batch copies | 0 | 0 |
+
+Nonblocking event queries and GPU-side StreamWaitEvent remain. No evidence in
+these ranges of D2H counts/control required to submit the next healthy batch.
+Finalization still contains synchronous controls as designed. API callchain
+symbols were not resolved by this capture; attribution above uses explicit
+same-thread NVTX containment, not an inference from missing stacks.
+
+Across the entire recorded GPU interval span (including setup/finalization),
+rank0/rank1 busy union is384.981/429.010ms, multi-stream union10.606/8.684ms,
+compute/copy overlap0.561/0.511ms. These are recorded intervals, not occupancy,
+FLOPS, useful work, or benchmark throughput. This small profiled S8 does not
+establish optimal overlap or an advantage over CayleyPy.
+
+Trace package7.3MiB excludes graph archives, saved locally at
+build/a4000-sm86-protocol-20261002/sm86-timeline-evidence.tar.gz,
+SHA256 eef1ce73f6a1b75353349f6d587dd0a7f8c4db6e11aa5cd66a156c6c0bf3691d.
+Nsight2025.3.2 exact package digest verified; isolated profiler NVTX3 headers.
+The reduced vendor device probe also now uses the same admitted architecture
+instead of its separate hardcoded sm75 flag.
+
+Reduced existing experiments/nccl_window_isolation.cu (sm86, same NCCL/CUDA)
+also reproduces the initcheck failure without any BFS code. Two independent
+plain processes return0 and both reach window_register/device_comm_create.
+Under initcheck, both return7 and neither reaches window registration success;
+rank1 first reports dev_runtime.cc:1037 unspecified launch failure719, while
+rank0 later times out at the probe's unchanged30s progress bound. Both report
+zero sanitizer memory errors. This supports independent vendor/tool-path
+reproduction, not a proven underlying cause or a completed gate.
+
+Probe evidence saved locally at build/a4000-sm86-protocol-20261002/
+sm86-vendor-probe.tar.gz, SHA256
+a29cf26ba62ea467b32abec5c21fee178c33741575c9614f4a51de670ca11869.
+Final Python tests203 pass,8 skips; supervisor9 pass,1 skip.

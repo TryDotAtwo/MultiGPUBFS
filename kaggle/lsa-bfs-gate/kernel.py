@@ -284,7 +284,7 @@ def main():
             return
         if MODE in ("nccl_window_isolation", "nccl_window_nonblocking", "nccl_window_processes"):
             binary = work / "nccl-window-isolation"
-            compiler = ([str(sdk / 'bin/nvcc'), '-std=c++17', '-arch=sm_75', '-lineinfo',
+            compiler = ([str(sdk / 'bin/nvcc'), '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
                          '-DMGBFS_WINDOW_DEVICE_PROBE=1', '-Xcompiler=-pthread']
                         if MODE == 'nccl_window_processes' else ['g++', '-std=c++17', '-pthread', '-x', 'c++'])
             linker = (['-Xlinker=-rpath,' + str(nccl / 'lib')] if MODE == 'nccl_window_processes'
