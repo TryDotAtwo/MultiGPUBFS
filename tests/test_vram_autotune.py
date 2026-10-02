@@ -1,12 +1,30 @@
 import sys
 import unittest
+import json
+import tempfile
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from vram_autotune import select_capacity
+from vram_autotune import select_capacity, native_query
 
 
 class CapacitySelectionTests(unittest.TestCase):
+    def test_native_query_explicitly_selects_archive_free_cli_contract(self):
+        records = [dict(rank=i, required_bytes=123, reserve_bytes=10,
+                        free_after_nccl_warmup_bytes=1000) for i in range(2)]
+        output = '\n'.join('MGBFS_MEMORY_QUERY ' + json.dumps(r) for r in records)
+        process = MagicMock()
+        process.communicate.return_value = (output + '\nMEMORY_QUERY_DONE', None)
+        with tempfile.TemporaryDirectory() as directory, patch(
+                'vram_autotune.subprocess.Popen', return_value=process) as launch:
+            cfg = dict(world=2, n=7, r=3, batch=256, env={})
+            result = native_query(cfg, Path(directory), Path(directory)/'query', {})
+            command = launch.call_args.args[0]
+            self.assertEqual(command[-1], '--search-only')
+            self.assertEqual(launch.call_args.kwargs['env']['MGBFS_MEMORY_QUERY'], '1')
+            self.assertEqual(result, records)
+
     def test_uses_limiting_rank_with_exact_aligned_queries(self):
         for upper in (32768, 50000, 1000000):
             def query(rows):

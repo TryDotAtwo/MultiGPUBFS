@@ -84,7 +84,8 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
         MGBFS_STATE_CODEC='permutation_u8', MGBFS_ARCHIVE_CODEC='permutation_u8')
     command = ['torchrun', '--standalone', f'--nproc-per-node={world}', '--no-python',
         str(cli), 'bench', '--reference', f"lrx{config['n']}r{config['r']}",
-        str(config['batch']), str(root/'bootstrap'), str(root/'archive'), str(root/'result')]
+        str(config['batch']), str(root/'bootstrap'), str(root/'archive'), str(root/'result'),
+        '--search-only']
     process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
     try:
