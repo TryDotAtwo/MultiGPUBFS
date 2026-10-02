@@ -60,6 +60,7 @@ class Publisher:
                 pinned, manifest, size = item
                 if self.error:
                     continue
+                payloads = []
                 for entry in manifest['files']:
                     path = pinned / entry['path']
                     sha = hashlib.sha256()
@@ -68,8 +69,17 @@ class Publisher:
                             sha.update(chunk)
                     if path.stat().st_size != entry['bytes'] or sha.hexdigest() != entry['sha256']:
                         raise ValueError('pinned snapshot checksum')
-                    self.api.upload_file(path_or_fileobj=str(path), repo_id=self.repo_id,
-                        repo_type='dataset', path_in_repo=self.prefix+'/'+entry['path'])
+                    payloads.append((path, self.prefix+'/'+entry['path']))
+                if payloads and callable(getattr(self.api, 'create_commit', None)):
+                    from huggingface_hub import CommitOperationAdd
+                    self.api.create_commit(repo_id=self.repo_id, repo_type='dataset',
+                        operations=[CommitOperationAdd(path_in_repo=remote,
+                            path_or_fileobj=str(path)) for path, remote in payloads],
+                        commit_message='Upload checked BFS snapshot payloads')
+                else:
+                    for path, remote in payloads:
+                        self.api.upload_file(path_or_fileobj=str(path), repo_id=self.repo_id,
+                            repo_type='dataset', path_in_repo=remote)
                 receipt = self.api.upload_file(path_or_fileobj=str(pinned/'manifest.json'),
                     repo_id=self.repo_id, repo_type='dataset', path_in_repo=self.prefix+'/manifest.json')
                 (self.root/'receipt.json').write_text(json.dumps(dict(

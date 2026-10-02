@@ -14,6 +14,40 @@ class UploadTests(unittest.TestCase):
         archive.completed_layer(0,1,[pack_state([0,1,2])],.1,{'0':123})
         return archive
 
+    def test_batch_payload_commit_precedes_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            archive=self.archive(root/'run')
+            calls=[]
+            class Api:
+                def create_commit(self, **kw):
+                    operations=kw['operations']
+                    self.assert_payloads=all(not op.path_in_repo.endswith('/manifest.json') for op in operations)
+                    calls.append(('payloads',len(operations),self.assert_payloads))
+                def upload_file(self, **kw):
+                    calls.append(('manifest',kw['path_in_repo']))
+                    return 'receipt'
+            publisher=Publisher(root/'pins','test/data','run1',api=Api())
+            publisher.enqueue(archive.snapshot())
+            publisher.finish()
+            self.assertEqual(calls[0],('payloads',1,True))
+            self.assertEqual(calls[1][0],'manifest')
+
+    def test_failed_batch_retains_snapshot_without_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            archive=self.archive(root/'run')
+            class Api:
+                def create_commit(self, **kw):
+                    raise OSError('batch failed')
+                def upload_file(self, **kw):
+                    raise AssertionError('manifest must not be published')
+            publisher=Publisher(root/'pins','test/data','run1',api=Api())
+            publisher.enqueue(archive.snapshot())
+            with self.assertRaises(RuntimeError):
+                publisher.finish()
+            self.assertTrue(list((root/'pins').glob('*/manifest.json')))
+
     def test_pins_survive_next_snapshot_and_manifest_is_last(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
