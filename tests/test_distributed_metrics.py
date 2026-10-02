@@ -27,6 +27,11 @@ class RankMetrics(unittest.TestCase):
                 'commit','-qm','fixture')
             revision=git('rev-parse','HEAD')
             self.assertEqual(benchmark.baseline_provenance(module,revision)['commit'],revision)
+            ignored=root/'shadow'/'cayleypy';ignored.mkdir(parents=True)
+            shadow=ignored/'__init__.py';shadow.write_text('VERSION=99\n')
+            (root/'.git'/'info'/'exclude').write_text('shadow/\n')
+            with self.assertRaisesRegex(ValueError,'BASELINE_CHECKOUT_UNVERIFIED'):
+                benchmark.baseline_provenance(shadow,revision)
             with self.assertRaisesRegex(ValueError,'BASELINE_REVISION'):
                 benchmark.baseline_provenance(module,'0'*40)
             module.write_text('VERSION=2\n')

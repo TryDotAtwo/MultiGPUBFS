@@ -9,8 +9,12 @@ BASELINE_COMMIT = 'f0f2b8e5ee61173039ab9742f3a7756c9b6365e6'
 def baseline_provenance(module_file, expected_commit=BASELINE_COMMIT):
  root=Path(module_file).resolve().parent.parent
  try:
-  revision=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True,stderr=subprocess.PIPE).strip()
-  dirty=subprocess.check_output(['git','-C',str(root),'status','--porcelain'],text=True,stderr=subprocess.PIPE).strip()
+  top=subprocess.check_output(['git','-C',str(root),'rev-parse','--show-toplevel'],text=True,encoding='utf-8',stderr=subprocess.PIPE).strip()
+  if Path(top).resolve()!=root:raise ValueError('BASELINE_CHECKOUT_UNVERIFIED')
+  subprocess.check_output(['git','-C',str(root),'ls-files','--error-unmatch',
+      str(Path(module_file).resolve().relative_to(root))],text=True,encoding='utf-8',stderr=subprocess.PIPE)
+  revision=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True,encoding='utf-8',stderr=subprocess.PIPE).strip()
+  dirty=subprocess.check_output(['git','-C',str(root),'status','--porcelain'],text=True,encoding='utf-8',stderr=subprocess.PIPE).strip()
  except (OSError,subprocess.CalledProcessError) as error:
   raise ValueError('BASELINE_CHECKOUT_UNVERIFIED') from error
  if revision!=expected_commit:raise ValueError('BASELINE_REVISION')
