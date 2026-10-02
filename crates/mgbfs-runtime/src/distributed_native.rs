@@ -312,6 +312,9 @@ struct LsaView {
     fatal: *const u32,
     hashes: *const c_void,
     states: *const u8,
+    // Borrowed from Comm's preallocated mapped terminal word. Comm outlives
+    // this view; both GPU and host use system/Acquire atomics, never memcpy.
+    terminal: *const std::sync::atomic::AtomicU32,
 }
 // Failure-only sideband subscription. Never reads GPU data or calls CUDA/NCCL.
 // Keep it before Comm in field drop order: joining closes the host writer lease
@@ -483,6 +486,53 @@ impl Drop for Plan {
 #[cfg(test)]
 mod plan_error_tests {
     use super::*;
+    extern "C" {
+        fn mgbfs_nccl_lsa_fatal_vote(comm: *mut c_void, send: *const u32,
+            receive: *mut u32, stream: *mut c_void) -> i32;
+    }
+
+    #[test]
+    fn lsa_logical_fatal_closes_admission_after_the_completed_epoch() {
+        // Removing the device-to-mapped failure publication, or ignoring it
+        // in admission, must let this real runtime wrongly admit another batch.
+        for (ring_fatal, owner_error) in [(0, 0), (7, 0), (0, 9)] {
+            let graph = MatrixGroup::unitriangular(3, 2).unwrap();
+            let mut id = [0u8; 128];
+            assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            let cfg = DistributedConfig {
+                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                batch: 2, layer_capacity: 8, state_ring_capacity: 16,
+                buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
+                prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            };
+            let bfs = DistributedNativeBfs::new_reference_with_owner(
+                &graph, [0; 16], id, cfg, None, OwnerBackend::CubSortMerge, 256,
+            ).unwrap();
+            // Generic reductions can be nonzero without an owner failure.
+            bfs.collective_send.put_u32(3).unwrap();
+            check(unsafe { mgbfs_nccl_lsa_fatal_vote(
+                bfs.comm.0, bfs.collective_send.ptr.cast(),
+                bfs.collective_recv.ptr.cast(), bfs.stream.0,
+            ) }).unwrap();
+            check(unsafe { cudaStreamSynchronize(bfs.stream.0) }).unwrap();
+            assert!(bfs.ensure_not_cancelled().is_ok(), "non-owner vote cancelled admission");
+            bfs.ring.put(&[Ring { fatal: ring_fatal, capacity: 16, ..Ring::default() }]).unwrap();
+            bfs.control.put(&[Control { error: owner_error, ..Control::default() }]).unwrap();
+            check(unsafe { mgbfs_owner_lsa_fatal_gate(
+                bfs.comm.0, bfs.ring.ptr.cast(), bfs.control.ptr.cast(),
+                bfs.collective_send.ptr.cast(), bfs.collective_recv.ptr.cast(), bfs.stream.0,
+            ) }).unwrap();
+            // Test-only drain stands for observing a completed epoch credit.
+            check(unsafe { cudaStreamSynchronize(bfs.stream.0) }).unwrap();
+            let admitted = bfs.ensure_not_cancelled();
+            if ring_fatal == 0 && owner_error == 0 {
+                assert!(admitted.is_ok(), "healthy epoch rejected: {admitted:?}");
+            } else {
+                assert!(admitted.is_err(), "completed fatal epoch reopened batch admission");
+            }
+        }
+    }
 
     #[test]
     fn constructor_preserves_numeric_failure_without_vendor_message() {
@@ -835,6 +885,13 @@ impl DistributedNativeBfs {
         Ok(())
     }
     fn ensure_not_cancelled(&self) -> Result<()> {
+        if let Some(view) = self.lsa_view.as_ref() {
+            let stopped = unsafe { &*view.terminal }.load(std::sync::atomic::Ordering::Acquire);
+            if stopped != 0 {
+                return Err(if stopped & 2 != 0 { "GROUP_OWNER_OR_PRE_OWNER_FATAL:LSA_DEVICE_LOGICAL_FATAL" }
+                    else { "LSA_TRANSPORT_CANCELLED" }.into());
+            }
+        }
         if self.cancel_requested.as_ref().is_some_and(|flag|
             flag.load(std::sync::atomic::Ordering::Acquire)) {
             Err("REMOTE_SEARCH_CANCELLED".into())
@@ -852,7 +909,9 @@ impl DistributedNativeBfs {
         loop {
             self.ensure_not_cancelled()?;
             match unsafe { mgbfs_cuda::ffi::cudaEventQuery(event.0) } {
-                0 => return Ok(()),
+                // The vote may publish failure between the first host probe
+                // and observing completion; never release admission unchecked.
+                0 => return self.ensure_not_cancelled(),
                 600 => {
                     match unsafe { mgbfs_nccl_poll(self.comm.0) } {
                         0 | 4 => {},
@@ -1411,7 +1470,13 @@ impl DistributedNativeBfs {
             check(unsafe { mgbfs_nccl_lsa_view(
                 comm.0, &mut count, &mut fatal, &mut hashes, &mut states,
             ) })?;
-            Some(LsaView { count, fatal, hashes, states: states.cast() })
+            let mut terminal = std::ptr::null_mut();
+            check(unsafe { mgbfs_nccl_lsa_cancel_word(comm.0, &mut terminal) })?;
+            if terminal.is_null() || terminal as usize %
+                std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0 {
+                return Err("LSA_CANCEL_WORD_ALIGNMENT".into());
+            }
+            Some(LsaView { count, fatal, hashes, states: states.cast(), terminal: terminal.cast() })
         } else {
             None
         };

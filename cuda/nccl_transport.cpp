@@ -379,7 +379,7 @@ __global__ void lsa_copy_exact(ncclDevComm dev,ncclWindow_t win,
 // kernel can remain unmatched between a rank-local host failure and a later
 // HASH_FIRST rendezvous. CTA0 publishes/reduces; all CTA counters participate.
 __global__ void lsa_fatal_vote(ncclDevComm dev,ncclWindow_t win,
-    const uint32_t* send,uint32_t* receive,const uint32_t* terminal,
+    const uint32_t* send,uint32_t* receive,uint32_t* terminal,
     MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
   auto* local=static_cast<uint32_t*>(ncclGetLsaPointer(win,0,dev.lsaRank));
   if(blockIdx.x==0&&threadIdx.x==0)local[4]=ring?(ring->fatal!=0||owner->error!=0):*send;
@@ -397,6 +397,17 @@ __global__ void lsa_fatal_vote(ncclDevComm dev,ncclWindow_t win,
     }
   }
   lsa_rendezvous(dev,win,terminal);
+  // Only the owner vote publishes logical failure. Generic fatal reductions
+  // may carry a nonzero schedule/count, not an error. The final rendezvous
+  // precedes publication so a healthy peer cannot miss this vote's writes.
+  // Reuse the preallocated mapped terminal word: 1 is host cancellation,
+  // 2 is device logical failure. Concurrent publishers only write nonzero,
+  // so no PCIe atomic RMW is needed and cancellation cannot be cleared.
+  // No count D2H or successful-epoch callback.
+  if(ring&&blockIdx.x==0&&threadIdx.x==0&&*receive){
+    cuda::atomic_ref<uint32_t,cuda::thread_scope_system> stopped(*terminal);
+    stopped.store(2u,cuda::memory_order_release);
+  }
 }
 void lsa_error(char* error,size_t capacity,const char* where,ncclResult_t code){
   if(error&&capacity)std::snprintf(error,capacity,"%s: %s",where,ncclGetErrorString(code));
