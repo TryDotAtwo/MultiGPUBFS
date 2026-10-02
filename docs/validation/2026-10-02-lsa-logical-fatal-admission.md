@@ -59,3 +59,9 @@ four-tool gates on T4 or NCCL registration initcheck. Fresh two-T4 asymmetric
 capacity/owner/archive tests and final timeline/A-B remain required. Earlier
 c555339 timeline describes the preceding source, not this candidate's trace.
 No distributed macro or full-goal completion claim.
+
+Published runtime: edd45cd712a6b2964f1db8236fb1f7e97b65e35f. The sole
+private native-rank-owner T4 gate pins that source (config 17c5bfe). Previous
+worker status was COMPLETE; new push was rejected with Maximum weekly GPU
+quota of 30.00 hours reached. CLI exit zero is not admission. No new worker
+or concurrent notebook was started; target-hardware evidence remains open.
