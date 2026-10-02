@@ -141,3 +141,45 @@ This package covers timeline, map/pre-dedup and CUB failures, not seed runs.
 The physical T4 gate, unfiltered memcheck/initcheck, paired A/B, production
 CLI and distributed macro-depth remain open. No runtime fallback, vendor
 error suppression or paid lease extension was introduced.
+
+BMMA_BUCKET physical replay on this sm86 rental stops at its initial healthy
+case: both processes return NATIVE_PLAN_CREATE_FAILED status=3, before BFS,
+without group COMPLETE. bounded_owner.cu explicitly admits only sm75 for
+this backend. The guard was preserved; no CUB fallback or physical BMMA
+correctness claim is made. HASH_FIRST Tensor generation likewise has an
+explicit sm75 contract; A4000 cannot substitute for its positive T4 gate.
+
+## Unitriangular independent-process gate
+
+The existing replay now accepts --unitriangular-modulus 2..6 (U4 only).
+Its independent CPU oracle uses elementary left row operations on canonical
+matrix bytes, not runtime successors or hashes. RED tests failed for the
+missing oracle, then pass for literal U3 mod2 eight-cycle layers, inverse
+moves mod3, and bounded-input rejection. scripts discovery:26 tests,1 skip;
+tests discovery:203 tests,8 skips. No Rust/CUDA runtime change in this slice.
+
+All20 physical runs (five moduli x DENSE/HASH_FIRST x CUCO_RANK/CUB) pass
+full-state and exact-depth archive comparison with two independent processes:
+
+| U4 modulus | Unique states | Nonempty layers |
+| --- | ---: | ---: |
+| 2 | 64 | 9 |
+| 3 | 729 | 9 |
+| 4 | 4096 | 11 |
+| 5 | 15625 | 11 |
+| 6 | 46656 | 14 |
+
+Both CUB S8 timelines also pass. Every rank/profile contains178 batch ranges
+with zero runtime host-sync/synchronous-memcpy; DENSE copies are archive D2H
+352/346, HASH_FIRST adds1068 D2D copies/rank. There is no recorded driver API
+table in these exports: absence of driver-level sync is not independently
+proved by querying a missing table. This remains a scoped diagnostic trace,
+not a benchmark or physical T4 acceptance.
+
+Runtime remains bb97d5a; replay harness is commit6749b8d, supplied separately
+to the diagnostic checkout. Harness file SHA256 as executed:
+54b1f7dd1580c638ef47b46c532f2d2ee9c2d9936b44619a7a85c7a64726a5af.
+Small local evidence archive excludes graph archives and nsys-rep, retaining
+SQLite, logs, summaries and actual replay patches:
+build/a4000-sm86-protocol-20261002/sm86-final-oracles.tar.gz,
+SHA256 1de743eedd05e1c345c5b0856a0b9044b8270d281cecb2577b0e55036ce36a10.
