@@ -9,6 +9,16 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 class GateTests(unittest.TestCase):
+    def test_explicit_2070_diagnostic_does_not_admit_it_as_t4(self):
+        inventory = '0, NVIDIA GeForce RTX 2070, GPU-a, 8192, 7000\n1, NVIDIA GeForce RTX 2070, GPU-b, 8192, 7000\n'
+        self.assertEqual(len(gate.validate_gpus(inventory, hardware='RTX2070')), 2)
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory)
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory.replace('GPU-b', 'GPU-a'), hardware='RTX2070')
+        with self.assertRaises(ValueError):
+            gate.validate_gpus(inventory.replace('7000', '512'), hardware='RTX2070')
+
     def test_explicit_a4000_diagnostic_does_not_weaken_default_t4_gate(self):
         inventory = '0, NVIDIA RTX A4000, GPU-a, 16376, 15000\n1, NVIDIA RTX A4000, GPU-b, 16376, 15000\n'
         with self.assertRaises(ValueError):

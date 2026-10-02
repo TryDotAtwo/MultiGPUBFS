@@ -39,7 +39,8 @@ def ping_pong_selection(tool):
 def validate_gpus(csv_text, *, hardware="T4"):
     # Explicit alternate hardware is diagnostic evidence, never the T4 gate.
     names = {"T4": ("Tesla T4", "NVIDIA Tesla T4", "NVIDIA T4"),
-             "A4000": ("NVIDIA RTX A4000", "RTX A4000")}
+             "A4000": ("NVIDIA RTX A4000", "RTX A4000"),
+             "RTX2070": ("NVIDIA GeForce RTX 2070", "GeForce RTX 2070")}
     if hardware not in names:
         raise ValueError("Unsupported diagnostic hardware")
     rows = []
