@@ -47,8 +47,10 @@ metrics are not part of the tail manifest.
 
 Remaining integration gates:
 
-- Cancellation still needs a dedicated run; native capacity failure retained
-  completed layers 0..3 in the isolated two-GPU validation.
+- An early launcher deadline cancellation passed on the isolated two-GPU
+  host: INCOMPLETE, depth -1, zero admitted files. This tests cancellation
+  before any layer completes. Native capacity failure separately retained
+  completed layers 0..3 in the two-GPU validation.
 - Physical SSD stress wrote 13 decimal GB, retained four full layers totaling
   10.4 GB, evicted the oldest layer and verified retained SHA-256 by readback.
   The INCOMPLETE suffix was exactly 1 GB and its checksum also matched.
