@@ -380,6 +380,12 @@ fn admit_device_group(
             "scope": "explicit_device_allocations_including_fixed_library_pool",
             "library_pool_bytes": pool_bytes,
         }));
+        std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
+        // Every rank must publish its record before any constructor unwinds
+        // and aborts NCCL or notifies the search-cancellation sideband. Without
+        // this rendezvous a fast query rank can cancel a peer still returning
+        // from the preceding collective, losing that peer's memory record.
+        vote(0)?;
         // Query subprocesses intentionally stop before large allocations and
         // before BFS. No capacity failure or completed layer is claimed.
         return Err("MEMORY_QUERY_DONE".into());
