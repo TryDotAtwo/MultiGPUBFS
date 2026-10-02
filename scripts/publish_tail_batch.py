@@ -4,12 +4,13 @@ import hashlib
 import json
 import math
 import time
+import tempfile
 from pathlib import Path, PurePosixPath
 
 
-def plan(root, max_bytes=25_000_000_000):
+def plan(root, max_bytes=25_000_000_000, *, ledger=None):
     root=Path(root).resolve()
-    ledger=json.loads((root/'sweep.json').read_text())
+    if ledger is None:ledger=json.loads((root/'sweep.json').read_text())
     run_id=ledger['configuration']['base']['run_id']
     if not isinstance(run_id,str) or '/' in run_id or '\\' in run_id or run_id in ('','.','..'):
         raise ValueError('unsafe sweep run ID')
@@ -40,13 +41,16 @@ def plan(root, max_bytes=25_000_000_000):
     return payloads,manifests,total
 
 
-def publish(root,repo_id,api,deadline_unix=None):
+def publish(root,repo_id,api,deadline_unix=None, *, ledger=None):
     from huggingface_hub import CommitOperationAdd
     try:
         from .tail_upload import retry_upload
     except ImportError:
         from tail_upload import retry_upload
-    payloads,manifests,total=plan(root)
+    # Freeze the ledger before planning payloads. The producer may add cases
+    # while the background worker uploads this exact completed-case cohort.
+    if ledger is None:ledger=json.loads((Path(root)/'sweep.json').read_text())
+    payloads,manifests,total=plan(root,ledger=ledger)
     def commit(items,message):
         if deadline_unix is not None and time.time()>=deadline_unix:
             raise TimeoutError('HF publication deadline; staged inputs retained')
@@ -54,8 +58,11 @@ def publish(root,repo_id,api,deadline_unix=None):
             operations=[CommitOperationAdd(path_in_repo=remote,path_or_fileobj=str(path))
                         for path,remote in items],commit_message=message))
     if payloads:commit(payloads,'Publish checked finite BFS sweep payloads')
-    metadata=[(Path(root)/'sweep.json','tail-sweeps/'+Path(root).name+'/sweep.json')]
-    receipt=commit(manifests+metadata,'Publish BFS sweep manifests after payloads')
+    with tempfile.TemporaryDirectory(prefix='hf-ledger-',dir=root) as staging:
+        frozen=Path(staging)/'sweep.json'
+        frozen.write_text(json.dumps(ledger,indent=2),encoding='utf-8')
+        metadata=[(frozen,'tail-sweeps/'+Path(root).name+'/sweep.json')]
+        receipt=commit(manifests+metadata,'Publish BFS sweep manifests after payloads')
     return dict(cases=len(manifests),files=len(payloads),bytes=total,receipt=str(receipt))
 
 

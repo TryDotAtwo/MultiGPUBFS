@@ -9,11 +9,48 @@ import math
 import os
 import subprocess
 import time
+import threading
 from pathlib import Path
 
 from bfs_tail_archive import atomic_json
 from run_tail_bfs import run
 from sweep_tail_bfs import automatic_pairs, execute
+
+
+class SweepPublisher:
+    """Coalesce only queued ledgers; completed case payloads stay immutable."""
+    def __init__(self, root, repo, api, deadline, publish):
+        self.root,self.repo,self.api,self.deadline,self.publish=root,repo,api,deadline,publish
+        self.condition=threading.Condition()
+        self.pending=None;self.closed=False;self.error=None;self.receipt=None;self.generations=0
+        self.thread=threading.Thread(target=self._work,daemon=True);self.thread.start()
+
+    def enqueue(self, ledger):
+        frozen=json.loads(json.dumps(ledger))
+        frozen['pending']=[pair for pair in frozen['configuration']['grid']
+            if f'n{pair[0]}-m{pair[1]}' not in frozen['cases']]
+        with self.condition:
+            if self.error:raise RuntimeError('background sweep publication failed') from self.error
+            if self.closed:raise RuntimeError('publisher already closed')
+            self.pending=frozen;self.condition.notify()
+
+    def _work(self):
+        try:
+            while True:
+                with self.condition:
+                    self.condition.wait_for(lambda:self.pending is not None or self.closed)
+                    if self.pending is None:return
+                    ledger=self.pending;self.pending=None
+                self.receipt=self.publish(self.root,self.repo,self.api,self.deadline,ledger=ledger)
+                self.generations+=1
+        except BaseException as error:
+            with self.condition:self.error=error;self.condition.notify_all()
+
+    def finish(self):
+        with self.condition:self.closed=True;self.condition.notify()
+        self.thread.join()
+        if self.error:raise RuntimeError('background sweep publication failed') from self.error
+        return self.receipt
 
 
 def device_budget(inventory):
@@ -122,21 +159,31 @@ def main():
                 NCCL_CUMEM_ENABLE='0'))
         atomic_json(config_path,base)
     runtime=json.loads(args.runtime_env.read_text())
+    publisher=SweepPublisher(args.root,args.repo_id,api,args.deadline_unix,publish)
+    last_published=0
+    def progress(ledger):
+        nonlocal last_published
+        if publisher.error:raise RuntimeError('background publication failed') from publisher.error
+        count=sum(x.get('attempted',False) for x in ledger['cases'].values())
+        if count-last_published>=20:
+            publisher.enqueue(ledger);last_published=count
     def adaptive(config,source,case,env):
         return run(pair_config(config,config['n'],config['r']),source,case,env)
-    # Each layer still writes its bounded intermediate snapshot immediately.
-    # The final GPU-host bulk publisher avoids per-layer HF commit quota storms.
+    # Each layer writes its bounded intermediate snapshot immediately.
+    # Completed cohorts publish in the background without per-layer quota storms.
     remaining=args.deadline_unix-time.time()
     publication_reserve=min(1200,remaining*.25)
     ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
-                   remaining-publication_reserve,adaptive)
-    receipt=publish(args.root,args.repo_id,api,args.deadline_unix)
+                   remaining-publication_reserve,adaptive,on_progress=progress)
+    publisher.enqueue(ledger)
+    receipt=publisher.finish()
     verified=verify_hf(args.root,args.repo_id,api,token)
     report=dict(status='VERIFIED',pending=ledger['pending'],publication=receipt,
         verification=verified,resource_plan=base['resource_plan'],
         attempted=sum(x.get('attempted',False) for x in ledger['cases'].values()),
         complete=sum(x['status']=='COMPLETE' for x in ledger['cases'].values()),
-        pruned=sum('pruned_by' in x for x in ledger['cases'].values()))
+        pruned=sum('pruned_by' in x for x in ledger['cases'].values()),
+        background_publication_generations=publisher.generations)
     atomic_json(args.root/'automatic-report.json',report)
     api.upload_file(path_or_fileobj=str(args.root/'automatic-report.json'),
         repo_id=args.repo_id,repo_type='dataset',

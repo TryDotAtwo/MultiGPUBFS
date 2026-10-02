@@ -35,6 +35,22 @@ class BatchTests(unittest.TestCase):
             (saved/'snapshot/layer.bin').write_bytes(b'corrupt!')
             with self.assertRaisesRegex(ValueError,'checksum'):plan(root)
 
+    def test_new_case_cannot_race_into_published_ledger(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);self.fixture(root)
+            frozen=json.loads((root/'sweep.json').read_text());seen=[]
+            class Api:
+                def create_commit(self,**kwargs):
+                    for op in kwargs['operations']:
+                        if op.path_in_repo.endswith('/sweep.json'):
+                            seen.append(json.loads(Path(op.path_or_fileobj).read_text()))
+                    changed=json.loads(json.dumps(frozen))
+                    changed['cases']['n4-m1']=dict(attempted=True,status='COMPLETE')
+                    (root/'sweep.json').write_text(json.dumps(changed))
+                    return 'receipt'
+            publish(root,'test/data',Api())
+            self.assertEqual(seen,[frozen])
+
     def test_traversal_and_byte_bound_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);saved,entry=self.fixture(root)

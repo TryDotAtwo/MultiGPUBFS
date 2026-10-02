@@ -61,7 +61,7 @@ def allocation_failure(case,source):
     return False
 
 
-def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
+def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_progress=None):
     if deadline_seconds<=0:
         raise ValueError('positive sweep deadline required')
     root.mkdir(parents=True,exist_ok=True)
@@ -135,6 +135,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run):
                         attempted=False,n=next_n,m=next_r,pruned_by=dict(n=n,r=m),
                         pruning_is_heuristic=True)
         atomic_json(ledger_path,ledger)
+        if on_progress is not None:on_progress(ledger)
     ledger['pending']=[list(pair) for pair in grid if f'n{pair[0]}-m{pair[1]}' not in ledger['cases']]
     atomic_json(ledger_path,ledger)
     return ledger
