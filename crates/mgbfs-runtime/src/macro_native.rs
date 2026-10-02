@@ -245,7 +245,12 @@ impl MacroNativeBfs {
     pub fn new(graph: &MatrixGroup, seed: [u8; 16], cfg: MacroNativeConfig) -> Result<Self> {
         graph.validate()?;
         let layout = MacroStateLayout::derive(graph, cfg.generation_variant)?;
-        let macros = MacroGeneratorSet::compile(graph, cfg.macro_depth)?;
+        if cfg.batch == 0 { return Err("MACRO_NATIVE_CONFIG".into()); }
+        let macros = MacroGeneratorSet::compile_bounded(graph, cfg.macro_depth,
+            (i32::MAX as u32 / cfg.batch) as usize)
+            .map_err(|error| if error == "MACRO_TRANSITION_BUDGET" {
+                "MACRO_NATIVE_CONFIG".into()
+            } else { error })?;
         let moves = u32::try_from(macros.transitions.len()).map_err(|_| "MACRO_MOVES")?;
         let candidates = cfg
             .batch

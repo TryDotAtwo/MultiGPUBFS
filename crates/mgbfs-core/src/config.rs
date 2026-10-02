@@ -244,8 +244,15 @@ impl RunConfigV1 {
         self.graph.validate()?;
         self.topology.validate()?;
         let c = &self.capacities;
+        if self.parent_batch == 0 { return Err("ROUTE_SLOT_CAPACITY".into()); }
+        let operator_budget = usize::try_from(c.route_slot_records / self.parent_batch)
+            .unwrap_or(usize::MAX);
         let macro_generators =
-            crate::macro_generators::MacroGeneratorSet::compile(&self.graph, self.macro_depth)?;
+            crate::macro_generators::MacroGeneratorSet::compile_bounded(
+                &self.graph, self.macro_depth, operator_budget)
+                .map_err(|error| if error == "MACRO_TRANSITION_BUDGET" {
+                    "ROUTE_SLOT_CAPACITY".into()
+                } else { error })?;
         let generated = self
             .parent_batch
             .checked_mul(macro_generators.transitions.len() as u64)
