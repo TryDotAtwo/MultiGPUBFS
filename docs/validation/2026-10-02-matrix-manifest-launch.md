@@ -38,7 +38,18 @@ Evidence:
   state's recomputed Hash128 match; group COMPLETE exists.
 - Existing unrelated unused_mut warning in reference_bench.rs remains.
 
-This does not prove new two-process manifest startup/failure handling, physical
-2T4 acceptance, sanitizer-complete status, multi-GPU macro or performance.
+The new peer_malformed_manifest_cancels_valid_rank_before_archive_admission
+fixture runs two independent CLI processes. Rank0 receives the valid manifest;
+rank1 receives truncated JSON. Both terminate naturally in0.39s under the15s
+test bound; rank0 reports REMOTE_CONFIGURATION_FATAL and rank1 reports
+MATRIX_MANIFEST_PARSE. Neither rank creates an archive, per-rank result or
+group COMPLETE. This uses one local physical GPU: rank1 fails preparation
+before device admission. It is pre-communicator control evidence, not a
+physical two-GPU search or post-communicator cancellation gate.
+
+Full Linux CUDA/library-owner CLI suite passes:15 tests,2 explicit ignored
+hardware fixtures; the new admission fixture was executed separately above.
+This does not prove physical2T4 acceptance, sanitizer-complete status,
+multi-GPU macro or performance.
 No paid resource was created. Fresh 2T4 quote only returned machine28909,
 the previously failed peer-read/write host; it was not rented again.

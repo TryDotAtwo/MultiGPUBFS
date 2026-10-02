@@ -120,6 +120,72 @@ fn full_state_gate_rejects_checksummed_wrong_states_with_correct_counts() {
 }
 
 #[test]
+#[ignore = "requires CUDA build; exercises two-process pre-communicator control only"]
+fn peer_malformed_manifest_cancels_valid_rank_before_archive_admission() {
+    use std::{process::Stdio, time::{Duration, Instant}};
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture(std::env::temp_dir().join(format!("mgbfs-manifest-peer-failure-{nonce}")));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let good = fixture.0.join("good.json");
+    let bad = fixture.0.join("bad.json");
+    std::fs::write(&good, r#"{"schema":1,"rows":2,"cols":2,"modulus":3,
+        "start":[1,1,0,1],"generators":[[1,1,0,1],[1,2,0,1]],
+        "inverse_map":[1,0],"expected_max_unique_states":3}"#).unwrap();
+    std::fs::write(&bad, "{truncated").unwrap();
+    let mut children = Vec::new();
+    for rank in 0..2 {
+        let log = std::fs::File::create(fixture.0.join(format!("rank-{rank}.log"))).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_mgbfs"));
+        command.args(["bench", "--manifest"]).arg(if rank == 0 { &good } else { &bad })
+            .arg("1").arg(fixture.0.join("bootstrap")).arg(fixture.0.join("archive"))
+            .arg(fixture.0.join("result"))
+            .env("RANK", rank.to_string()).env("LOCAL_RANK", rank.to_string()).env("WORLD_SIZE", "2")
+            .env("TORCHELASTIC_RUN_ID", format!("manifest-peer-{nonce}"))
+            .env("MGBFS_PROFILE", "DENSE").env("MGBFS_OWNER_BACKEND", "CUB_SORT_MERGE")
+            .env("MGBFS_TRANSPORT_BACKEND", "NCCL_LSA").env("MGBFS_RANK_MAP", "0,1")
+            .env("MGBFS_HASH_FIRST_GENERATION", "SCALAR")
+            .env("MGBFS_STATE_CODEC", "matrix_u8").env("MGBFS_ARCHIVE_CODEC", "matrix_u8")
+            .env("MGBFS_BUCKETS", "8").env("MGBFS_SHARDS", "4").env("MGBFS_JOB_BUCKETS", "2")
+            .env("MGBFS_BUCKET_CAPACITY", "32").env("MGBFS_BENCH_CAPACITY", "64")
+            .env("MGBFS_FUTURE_CAPACITY", "128").env("MGBFS_BENCH_WARMUP", "0")
+            .env("MGBFS_BENCH_SKIP_ARCHIVE", "0").env("MGBFS_ARCHIVE_STREAM", "0")
+            .env("MGBFS_MACRO_DEPTH", "1").env("MGBFS_PRE_DEDUP", "ON")
+            .env_remove("MGBFS_LIBRARY_POOL_BYTES").env_remove("MGBFS_TEST_OWNER_DAG_CAPTURE")
+            .stdout(Stdio::null()).stderr(Stdio::from(log));
+        match command.spawn() {
+            Ok(child) => children.push(child),
+            Err(error) => {
+                for child in &mut children { let _ = child.kill(); let _ = child.wait(); }
+                panic!("rank spawn failed: {error}");
+            }
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut completed = false;
+    while Instant::now() < deadline {
+        if children.iter_mut().all(|child| child.try_wait().unwrap().is_some()) {
+            completed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !completed {
+        for child in &mut children { let _ = child.kill(); let _ = child.wait(); }
+        panic!("manifest admission did not terminate both independent processes within 15s");
+    }
+    for child in &mut children { assert!(!child.wait().unwrap().success()); }
+    let valid_log = std::fs::read_to_string(fixture.0.join("rank-0.log")).unwrap();
+    let failed_log = std::fs::read_to_string(fixture.0.join("rank-1.log")).unwrap();
+    assert!(valid_log.contains("REMOTE_CONFIGURATION_FATAL"), "{valid_log}");
+    assert!(failed_log.contains("MATRIX_MANIFEST_PARSE"), "{failed_log}");
+    assert!(!fixture.0.join("result/group-complete.json").exists());
+    for rank in 0..2 {
+        assert!(!fixture.0.join(format!("archive-rank-{rank}.mgbfsar1")).exists());
+        assert!(!fixture.0.join(format!("result/rank-{rank}.json")).exists());
+    }
+}
+
+#[test]
 fn tensor_generation_hardware_admission_and_layer_counts() {
     let hardware = Command::new("nvidia-smi")
         .args(["--id=0", "--query-gpu=compute_cap", "--format=csv,noheader"])
