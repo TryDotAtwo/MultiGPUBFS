@@ -21,6 +21,56 @@ pub struct MacroNativeConfig {
     pub untouched_vram_reserve_bytes: u64,
 }
 
+#[cfg(test)]
+mod producer_capture_tests {
+    use super::*;
+    extern "C" {
+        fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
+        fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
+        fn cudaGraphInstantiateWithFlags(exec: *mut *mut c_void, graph: *mut c_void, flags: u64) -> i32;
+        fn cudaGraphLaunch(exec: *mut c_void, stream: *mut c_void) -> i32;
+        fn cudaGraphExecDestroy(exec: *mut c_void) -> i32;
+        fn cudaGraphDestroy(graph: *mut c_void) -> i32;
+    }
+    #[test]
+    fn macro_produce_captures_and_runs_without_host_count_readback() {
+        let graph = MatrixGroup::symmetric_permutation_matrices(4).unwrap();
+        let mut bfs = MacroNativeBfs::new(&graph, [0; 16], MacroNativeConfig {
+            macro_depth: 2, batch: 1, layer_capacity: 64,
+            future_capacity_per_depth: 128, prededup: true,
+            generation_variant: 1, untouched_vram_reserve_bytes: 0,
+        }).unwrap();
+        assert!(bfs.advance().unwrap()); // Three parents: both producer banks are reused.
+        unsafe {
+            assert_eq!(cudaStreamSynchronize(bfs.stream.0), 0);
+            assert_eq!(cudaStreamBeginCapture(bfs.stream.0, 1), 0);
+            // Join both preallocated producer streams through captured events.
+            for event in &bfs.producer_consumed {
+                assert_eq!(cudaEventRecord(event.0, bfs.stream.0), 0);
+            }
+            let produced = bfs.produce();
+            let mut captured = std::ptr::null_mut();
+            let end = cudaStreamEndCapture(bfs.stream.0, &mut captured);
+            if produced.is_err() || end != 0 {
+                if !captured.is_null() { cudaGraphDestroy(captured); }
+                panic!("real macro producer cannot capture: produce={produced:?}, end={end}");
+            }
+            let mut exec = std::ptr::null_mut();
+            assert_eq!(cudaGraphInstantiateWithFlags(&mut exec, captured, 0), 0);
+            assert_eq!(cudaGraphLaunch(exec, bfs.stream.0), 0);
+            assert_eq!(cudaStreamSynchronize(bfs.stream.0), 0);
+            assert_eq!(cudaGraphExecDestroy(exec), 0);
+            assert_eq!(cudaGraphDestroy(captured), 0);
+        }
+        let count = bfs.settle_depth(2).unwrap();
+        std::mem::swap(&mut bfs.current_states, &mut bfs.next_states);
+        bfs.current_count = count;
+        let mut actual = bfs.snapshot().unwrap();
+        actual.sort();
+        assert_eq!(actual, graph.exact_layers(24).unwrap()[2]);
+    }
+}
+
 fn check(status: i32) -> Result<()> {
     if status == 0 {
         Ok(())
@@ -174,7 +224,6 @@ pub struct MacroNativeBfs {
     settle_state: Buffer,
     history: Buffer,
     history_counts_gpu: Buffer,
-    history_counts: Vec<u32>,
     future: Vec<FutureSlot>,
     memory_plan: MacroMemoryPlan,
 }
@@ -549,7 +598,6 @@ impl MacroNativeBfs {
             settle_state,
             history,
             history_counts_gpu,
-            history_counts,
             future,
             memory_plan: memory,
         })
@@ -742,56 +790,27 @@ impl MacroNativeBfs {
             parent_offset += parents;
             producer_bank ^= 1;
         }
-        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
-        for slot in &mut self.future {
-            if slot.depth.is_some() {
-                let state = slot.state.one::<FrontierState>()?;
-                if state.fatal != 0 {
-                    return Err(format!("FUTURE_CAPACITY_{}", state.fatal));
-                }
-                slot.count = state.count;
-            }
-        }
         Ok(())
     }
     fn settle_depth(&mut self, target: u32) -> Result<u32> {
         check(unsafe {
             cudaStreamWaitEvent(self.stream.0, self.archive_done[self.current_bank ^ 1].0, 0)
         })?;
-        self.next_state.put(&[FrontierState::default()])?;
+        check(unsafe { cudaMemsetAsync(self.next_state.ptr, 0,
+            std::mem::size_of::<FrontierState>(), self.stream.0) })?;
         let slot_index = (target % self.effective_depth) as usize;
-        let (source_states, source_hashes, source_count) =
-            if self.future[slot_index].depth == Some(target) {
-                (
-                    &self.future[slot_index].states,
-                    &self.future[slot_index].hashes,
-                    self.future[slot_index].count,
-                )
-            } else {
-                (
-                    &self.future[slot_index].states,
-                    &self.future[slot_index].hashes,
-                    0,
-                )
-            };
-        self.route_count.put(&[source_count])?;
+        let slot = &self.future[slot_index];
+        if slot.depth.is_some() && slot.depth != Some(target) {
+            return Err("FUTURE_SLOT_ALIAS".into());
+        }
         unsafe {
-            check(mgbfs_route_run(
-                self.route.0,
-                source_hashes.ptr,
-                self.identity_refs.ptr.cast(),
-                self.sorted_hashes.ptr,
-                self.sorted_refs.ptr.cast(),
-                self.route_count.ptr.cast(),
-                source_count,
-                0,
-                self.stream.0,
-            ))?;
-            check(mgbfs_macro_settle_run(
+            // Future merge already preserves sorted unique hashes. Consume its
+            // count/fatal directly, with identity refs into the dense state plane.
+            check(mgbfs_macro_settle_run_frontier(
                 self.settle.0,
-                self.sorted_hashes.ptr,
-                self.sorted_refs.ptr.cast(),
-                self.route_count.ptr.cast(),
+                slot.hashes.ptr,
+                self.identity_refs.ptr.cast(),
+                slot.state.ptr.cast(),
                 self.history.ptr,
                 self.history_counts_gpu.ptr.cast(),
                 self.survivor_hashes.ptr,
@@ -803,8 +822,8 @@ impl MacroNativeBfs {
             ))?;
             check(mgbfs_materialize_run(
                 self.materialize.0,
-                source_states.ptr.cast(),
-                source_count,
+                slot.states.ptr.cast(),
+                self.cfg.future_capacity_per_depth,
                 self.survivor_hashes.ptr,
                 self.survivor_refs.ptr.cast(),
                 self.survivor_count.ptr.cast(),
@@ -817,6 +836,18 @@ impl MacroNativeBfs {
         }
         let settled = self.settle_state.one::<MacroSettleState>()?;
         let next = self.next_state.one::<FrontierState>()?;
+        // This is the depth-finalization boundary, not a prerequisite for the
+        // next producer batch. Check every provisional depth before accepting
+        // the settled layer; poisoning a later target must not be overlooked.
+        for slot in &mut self.future {
+            if slot.depth.is_some() {
+                let state = slot.state.one::<FrontierState>()?;
+                if state.fatal != 0 {
+                    return Err(format!("FUTURE_CAPACITY_{}", state.fatal));
+                }
+                slot.count = state.count;
+            }
+        }
         if settled.fatal != 0 || next.fatal != 0 || settled.count != next.count {
             return Err(format!(
                 "MACRO_SETTLE_FATAL_{}_{}",
@@ -834,16 +865,16 @@ impl MacroNativeBfs {
                 self.stream.0,
             ))?;
         }
-        self.history_counts[history_slot] = next.count;
-        self.history_counts_gpu.put(&self.history_counts)?;
+        check(unsafe { cudaMemcpyAsync(
+            self.history_counts_gpu.at(history_slot * std::mem::size_of::<u32>()),
+            self.next_state.ptr, std::mem::size_of::<u32>(), 3, self.stream.0,
+        ) })?;
         if self.future[slot_index].depth == Some(target) {
-            self.future[slot_index]
-                .state
-                .put(&[FrontierState::default()])?;
+            check(unsafe { cudaMemsetAsync(self.future[slot_index].state.ptr, 0,
+                std::mem::size_of::<FrontierState>(), self.stream.0) })?;
             self.future[slot_index].depth = None;
             self.future[slot_index].count = 0;
         }
-        check(unsafe { cudaStreamSynchronize(self.stream.0) })?;
         Ok(next.count)
     }
     pub fn advance(&mut self) -> Result<bool> {
