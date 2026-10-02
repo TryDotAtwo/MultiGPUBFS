@@ -32,7 +32,8 @@
     "verification_scope": "ORBIT_TOTAL_AND_CONFIG_ONLY",
     "reference": "docs/validation/lrx-multiset-status.md"
   },
-  "current_base_performance_verified": "common completed prefix only",
-  "tail_archive_performance_verified": "common completed prefix only; larger host ring under validation",
+  "current_base_performance_verified": true,
+  "tail_archive_performance_verified": true,
+  "performance_verification_scope": "common completed prefix only; larger host ring under validation",
   "universal_fastest_claim": false
 }
