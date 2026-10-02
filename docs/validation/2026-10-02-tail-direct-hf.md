@@ -28,8 +28,11 @@ All 26 INCOMPLETE pairs were rerun with 2048 host archive ring slots:
 8 additional COMPLETE, 18 INCOMPLETE. Across unique pairs: 101 COMPLETE,
 18 INCOMPLETE. The additional cohort's 1055 files, totaling 6,212,697,168 bytes,
 were published at HF commit `da05ec7af6f871560adf5253e7b8831ece21275d`.
-Its streamed checksum readback remains a separate gate until its verifier
-finishes; publication acceptance alone is not a readback verification.
+Streamed readback passed for all 1055 files, including retention rules and
+COMPLETE orbit counts. Together both cohorts verified 3646 files and
+8,374,561,856 bytes across 145 attempted runs.
+
+[Additional cohort readback](https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/main/evidence/20261002-directhf/ring2048/verification.json)
 
 Required metadata checks passed for all 145 manifests: exact start and actions,
 8/16-byte nibble packing, source commit and binary SHA-256, full launch/runtime
@@ -72,6 +75,20 @@ all nine SHA-256 values matched, total 9,107,472 bytes, frozen source commit
 
 [Source readback evidence](https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/main/evidence/20261002-directhf/final-source/verification.json)
 
-The additional cohort's readback and explicit rental deletion are pending
-acceptance steps. Native ring-stop reasons remain explicit INCOMPLETE outcomes;
-they are not promoted to confirmed VRAM capacity causes.
+The final report was published at `7bc550e0ffd406beb7bd75ced210b71274a5f2bb`
+and independently read back on the GPU host: 43903 bytes, SHA-256
+`6c5332147e46e44ac024f9e282daf7357dbf1d52a436641d12d33e60d9a01acc`.
+Native ring-stop reasons remain explicit INCOMPLETE outcomes; they are not
+promoted to confirmed VRAM capacity causes.
+
+[Verified final report](https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/7bc550e0ffd406beb7bd75ced210b71274a5f2bb/evidence/20261002-directhf/final-report.json)
+
+The GPU-host token was removed before teardown. DELETE of own lease 53888860
+was accepted at Unix time 1790967504.885737; a subsequent provider list at
+1790967517.726964 confirmed that all own instances 53761045, 53767456 and
+53888860 were absent. Other agents' leases were not changed.
+Vast's authenticated Billing UI, refreshed after teardown, showed own-instance
+charges of $0.11 + $0.32 + $1.66 = $2.09 including GPU, storage and bandwidth,
+within the $10 cap. Recent activity may be delayed, so this is the displayed
+post-teardown charge, not an assertion of a finalized invoice. The API key
+lacks billing_read; checking the existing signed-in UI avoided broadening it.

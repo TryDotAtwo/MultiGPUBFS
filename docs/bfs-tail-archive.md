@@ -45,7 +45,7 @@ window. A short layer with no observation records a null peak explicitly;
 it does not invent an exact physical maximum. Raw CUDA kernel/duplicate/path
 metrics are not part of the tail manifest.
 
-Remaining integration gates:
+Recorded integration validation:
 
 - An early launcher deadline cancellation passed on the isolated two-GPU
   host: INCOMPLETE, depth -1, zero admitted files. This tests cancellation
@@ -85,7 +85,10 @@ These remaining graphs retain explicit native stop reasons; they are not
 claimed complete. The baseline 2591 payload files (2,161,864,688 bytes) and
 119 final manifests were published directly from the GPU host in HF commit
 `745f6dfff88013ae13d32806c606fed11d9406f1`. Remote streamed checksum verification
-and publication of the larger-ring cohort are separate acceptance steps.
+passed for both cohorts: 3646 files, 8,374,561,856 bytes. The larger-ring cohort
+is frozen at HF commit `da05ec7af6f871560adf5253e7b8831ece21275d`; the combined
+verified report is at `evidence/20261002-directhf/final-report.json` in the same
+dataset.
 Required metadata checks passed for all 145 baseline/rerun manifests, including
 exact starts, actions, packing, program/binary identifiers, complete launch
 configuration, contiguous layer counts/times, and per-GPU sampled observations.
