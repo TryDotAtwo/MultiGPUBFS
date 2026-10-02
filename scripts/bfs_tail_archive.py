@@ -110,7 +110,7 @@ class TailArchive:
             temp.unlink(missing_ok=True)
             raise
         entry = dict(depth=depth, states=count, full_layer=True,
-                     bytes=size, sha256=digest.hexdigest(), path=str(path.relative_to(self.root)))
+                     bytes=size, sha256=digest.hexdigest(), path=path.relative_to(self.root).as_posix())
         self.retained.append(entry)
         self.manifest["layers"].append(dict(depth=depth, states=count, seconds=seconds,
                                           vram_peak_bytes=dict(vram_peak_bytes)))
@@ -156,7 +156,7 @@ class TailArchive:
                     dest.flush()
                     os.fsync(dest.fileno())
                 checksum = digest.hexdigest()
-            selected.append(dict(entry, path=str(target.relative_to(self.root)),
+            selected.append(dict(entry, path=target.relative_to(self.root).as_posix(),
                                  states=take // self.width, bytes=take,
                                  full_layer=take == entry["bytes"],
                                  first_state_ordinal=offset // self.width,

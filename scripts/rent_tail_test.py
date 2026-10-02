@@ -15,8 +15,10 @@ def main():
     parser.add_argument('--min-gpu-ram',type=int,default=8000)
     parser.add_argument('--min-cpu-ram',type=int,default=32000)
     parser.add_argument('--max-hourly',type=float,default=.30)
+    parser.add_argument('--project-cap-usd',type=float,default=10)
     args=parser.parse_args()
-    if not args.label.startswith('mgbfs-lrx13-') or not 0<args.max_hourly<=.60:
+    if (not args.label.startswith('mgbfs-lrx13-') or not 0<args.max_hourly<=.60
+            or args.project_cap_usd not in (10,30)):
         parser.error('scoped label and hourly quote <= $0.60 required')
     root = args.root
     root.mkdir(parents=True, exist_ok=True)
@@ -40,7 +42,7 @@ def main():
     quote = {k: offer.get(k) for k in ('id', 'machine_id', 'gpu_name', 'num_gpus',
         'gpu_ram', 'gpu_total_ram', 'cpu_ram', 'dph_total', 'storage_cost',
         'inet_up_cost', 'inet_down_cost', 'reliability')}
-    quote.update(disk_gb=100, estimated_hourly_usd=hourly, cap_usd=10,
+    quote.update(disk_gb=100, estimated_hourly_usd=hourly, cap_usd=args.project_cap_usd,
                  deadline_hours=2, transfer_budget_usd=2, reserve_usd=5)
     (root / 'quote.json').write_text(json.dumps(quote, indent=2))
     if max(offer['inet_up_cost'], offer['inet_down_cost']) * 100 > 2:
@@ -62,7 +64,7 @@ def main():
         raise RuntimeError('rental not confirmed')
     lease = dict(id=int(body['new_contract']), machine_id=offer['machine_id'],
                  label=label, start_date=started, destroy_at_unix=started+7200,
-                 work_deadline_unix=started+6900, total_project_cap_usd=10,
+                 work_deadline_unix=started+6900, total_project_cap_usd=args.project_cap_usd,
                  hourly_usd_upper=args.max_hourly, traffic_budget_usd=2,
                  purpose='isolated tail archive and CUCO comparison')
     (root / 'lease.json').write_text(json.dumps(lease, indent=2))

@@ -694,7 +694,7 @@ pub struct DistributedNativeBfs {
     exchange_stream: Stream,
     exchange_done: Event,
     owner_consumed: Option<Event>,
-    epoch_completed: [Event; 2],
+    epoch_completed: Vec<Event>,
     epoch_outstanding: std::collections::VecDeque<usize>,
     archive_stream: Stream,
     archive_done: [Event; 2],
@@ -1378,7 +1378,10 @@ impl DistributedNativeBfs {
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
         let exchange_stream = Stream(raw_exchange);
         let exchange_done = Event::new()?;
-        let epoch_completed = [Event::new()?, Event::new()?];
+        let inflight=crate::reference_launch::inflight_batches(
+            std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref())?;
+        let epoch_completed=(0..inflight).map(|_| Event::new())
+            .collect::<Result<Vec<_>>>()?;
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
         let archive_stream = Stream(raw_archive);
@@ -1654,7 +1657,7 @@ impl DistributedNativeBfs {
             owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
                 .then(Event::new).transpose()?,
             epoch_completed,
-            epoch_outstanding: std::collections::VecDeque::with_capacity(2),
+            epoch_outstanding: std::collections::VecDeque::with_capacity(inflight),
             archive_stream,
             archive_done,
             archived_depth: None,

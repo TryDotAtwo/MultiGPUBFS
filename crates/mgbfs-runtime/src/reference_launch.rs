@@ -1,5 +1,15 @@
 use mgbfs_core::Result;
 
+/// Setup-only bound for device-count epochs. Does not enlarge data buffers.
+pub fn inflight_batches(value: Option<&str>) -> Result<usize> {
+    let count=value.unwrap_or("2").parse::<usize>()
+        .map_err(|_| "ENV_MGBFS_INFLIGHT_BATCHES")?;
+    if !(1..=32).contains(&count) {
+        return Err("ENV_MGBFS_INFLIGHT_BATCHES".into());
+    }
+    Ok(count)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchPhase { Warmup, Measure }
 

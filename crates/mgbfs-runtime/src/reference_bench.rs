@@ -377,6 +377,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
         "warmup_requested": warmup_requested,
         "transport": format!("{:?}", cfg.transport),
+        "inflight_batches": crate::reference_launch::inflight_batches(
+            std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref())?,
+        "library_pool_autosize": std::env::var("MGBFS_LIBRARY_POOL_AUTOSIZE").ok(),
+        "memory_query": std::env::var("MGBFS_MEMORY_QUERY").ok(),
     });
     let bootstrap_digest: [u8; 32] =
         Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)

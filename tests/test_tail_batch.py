@@ -7,6 +7,34 @@ from scripts.publish_tail_batch import plan,publish
 
 
 class BatchTests(unittest.TestCase):
+    def test_many_layers_publish_one_parquet_payload_before_manifest(self):
+        from scripts.bfs_tail_archive import TailArchive
+        import pyarrow.parquet as pq
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);saved=root/'n4-m2'/'saved'
+            archive=TailArchive(saved,n=4,r=2,start=[0,1,2,2],
+                actions=dict(L='left',R='right',X='swap'),program_commit='fixture',
+                launch_config={},sample_interval_seconds=.05,complete_bytes=100000)
+            expected=[]
+            for depth in range(50):
+                state=depth.to_bytes(8,'little');expected.append(state)
+                archive.completed_layer(depth,1,[state],.01,{'0':100})
+            archive.snapshot(complete=True,reason='fixture complete')
+            ledger=dict(configuration=dict(base=dict(run_id='parquet-fixture',
+                archive_format='parquet')),cases={'n4-m2':dict(attempted=True)})
+            (root/'sweep.json').write_text(json.dumps(ledger))
+            payloads,manifests,_=plan(root)
+            self.assertEqual(len(payloads),1)
+            self.assertTrue(payloads[0][1].endswith('.parquet'))
+            rows=pq.read_table(payloads[0][0]).to_pylist()
+            self.assertEqual([x['state'] for x in rows],expected)
+            result=json.loads(manifests[0][0].read_text())
+            self.assertEqual(result['status'],'COMPLETE')
+            self.assertEqual(len(result['layers']),50)
+            self.assertEqual(len(result['retained_layers']),50)
+            self.assertTrue(all(x['full_layer'] for x in result['retained_layers']))
+            self.assertEqual(result['retained_packed_bytes'],400)
+
     def fixture(self,root):
         saved=root/'n3-m1/saved';(saved/'snapshot').mkdir(parents=True)
         payload=saved/'snapshot/layer.bin';payload.write_bytes(b'12345678')

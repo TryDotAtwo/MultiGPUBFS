@@ -1,4 +1,16 @@
 use mgbfs_runtime::reference_launch::macro_depth_for_launch;
+
+#[test]
+fn bounded_device_epoch_queue_preserves_legacy_default_and_accepts_32() {
+    use mgbfs_runtime::reference_launch::inflight_batches;
+    assert_eq!(inflight_batches(None).unwrap(),2);
+    for value in 1..=32 {
+        assert_eq!(inflight_batches(Some(&value.to_string())).unwrap(),value);
+    }
+    for value in ["0","33","-1","bad","999999999999999999999999999"] {
+        assert_eq!(inflight_batches(Some(value)).unwrap_err(),"ENV_MGBFS_INFLIGHT_BATCHES");
+    }
+}
 use mgbfs_runtime::reference_launch::{bench_archive_for_launch, bench_phase_paths, bench_warmup_for_launch, BenchPhase};
 
 #[test]

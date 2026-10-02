@@ -62,3 +62,18 @@ and open-addressing implementations; deployed pinned version still needs a build
    $10 total before provisioning; previous instance is destroyed.
 
 Do not mark the active goal complete until remaining gates are satisfied.
+
+2026-10-03 checkpoint: Parquet integration test joins 50 complete layers into one
+payload and recovers every state and all layer metadata. Native epoch completion
+events can now be preallocated for 1..32 in-flight device-count batches using
+MGBFS_INFLIGHT_BATCHES; default remains 2 until hardware validation. Bootstrap
+agreement now includes this value, pool autosize and memory-query mode. This is
+a bounded submission queue, not yet CUDA Graph capture. Applies only to
+NCCL_LSA + rank-owner device epochs; the automatic default HOST_SIZED_NCCL still
+observes per-batch exchange counts on the host. NCCL_LSA requires NCCL >=2.29.
+
+User explicitly added $20 for further GPU testing; total authorization now $30.
+Old scoped Vast key works for instances, has no billing_read permission. No own
+live instances were present at the checkpoint. New stages must remain within
+the added $20, independent of unconfirmed earlier billing; lease watchdogs remain
+required. States may never be downloaded to the user's computer.
