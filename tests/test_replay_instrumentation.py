@@ -23,6 +23,7 @@ class InstrumentationCommandTest(unittest.TestCase):
     def test_nsys_collects_copy_and_wait_callchains(self):
         command = self.command('nsys')
         self.assertIn('--sample=process-tree', command)
+        self.assertIn('--cuda-trace-all-apis=true', command)
         self.assertIn('--cudabacktrace=memory:0,sync:0,other:0', command)
 
     def test_unknown_instrumentation_rejected(self):

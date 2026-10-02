@@ -36,6 +36,7 @@ def instrument_rank_command(binary, arguments, tool, report_prefix):
                 '--error-exitcode', '97', *target]
     if tool == 'nsys':
         return ['nsys', 'profile', '--trace=cuda,nvtx,osrt', '--sample=process-tree',
+                '--cuda-trace-all-apis=true',
                 '--cudabacktrace=memory:0,sync:0,other:0', '--cpuctxsw=none',
                 '-o', str(report_prefix), *target]
     raise ValueError('UNKNOWN_PROCESS_INSTRUMENTATION')
