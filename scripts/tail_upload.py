@@ -19,7 +19,7 @@ def retry_upload(operation):
             code = getattr(getattr(error, 'response', None), 'status_code', None)
             transient = type(error).__name__ in {
                 'RemoteProtocolError', 'ReadTimeout', 'ConnectTimeout', 'ConnectError',
-                'ReadError', 'ConnectionError', 'Timeout', 'ChunkedEncodingError'}
+                'ReadError', 'ConnectionError', 'Timeout', 'ChunkedEncodingError', 'SSLError'}
             transient = transient or code == 429 or (isinstance(code, int) and code >= 500)
             if not transient or attempt == 3:
                 raise
