@@ -400,6 +400,12 @@ def main():
                     save()
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli", "--features", "cuda,library-owner"],
                 "native-rank-cli-build", timeout=1800)
+            run(["cargo", "test", "--locked", "-p", "mgbfs-cli", "--features", "cuda,library-owner",
+                 "--test", "native_lsa_capture", "tensor_generation_hardware_admission_and_layer_counts",
+                 "--", "--exact", "--nocapture", "--test-threads=1"],
+                "tensor-generation-hardware-admission", timeout=300)
+            report["tensor_generation_cli_gate"] = "PASS_HARDWARE_CONDITIONAL_COUNTS_ARCHIVE"
+            save()
             spec = importlib.util.spec_from_file_location("native_replay", source / "scripts/replay_lsa_cancel_candidate.py")
             replay = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(replay)

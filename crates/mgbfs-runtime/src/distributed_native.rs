@@ -492,6 +492,32 @@ mod plan_error_tests {
     }
 
     #[test]
+    fn tensor_hash_first_rejects_unsupported_device_at_construction() {
+        extern "C" { fn cudaDeviceGetAttribute(out: *mut i32, attribute: i32, device: i32) -> i32; }
+        let (mut major, mut minor) = (0, 0);
+        assert_eq!(unsafe { cudaDeviceGetAttribute(&mut major, 75, 0) }, 0);
+        assert_eq!(unsafe { cudaDeviceGetAttribute(&mut minor, 76, 0) }, 0);
+        if (major, minor) == (7, 5) { return; } // Unsupported-device fixture only.
+        let graph = MatrixGroup::unitriangular(3, 2).unwrap();
+        let mut id = [0u8; 128];
+        assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+        let cfg = DistributedConfig {
+            rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+            transport: mgbfs_core::config::ReferenceTransport::Lsa,
+            batch: 2, layer_capacity: 8, state_ring_capacity: 16,
+            buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
+            prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
+        };
+        match DistributedNativeBfs::new_reference_with_owner_and_cancel(
+            &graph, [0; 16], id, cfg, Some(8), OwnerBackend::CubSortMerge,
+            256, true, None, None,
+        ) {
+            Ok(_) => panic!("unsupported Tensor backend was admitted until first batch"),
+            Err(error) => assert_eq!(error, "HASH_FIRST_TC_DEVICE_UNSUPPORTED"),
+        }
+    }
+
+    #[test]
     fn lsa_logical_fatal_closes_admission_after_the_completed_epoch() {
         // Removing the device-to-mapped failure publication, or ignoring it
         // in admission, must let this real runtime wrongly admit another batch.
@@ -1247,6 +1273,13 @@ impl DistributedNativeBfs {
         cfg.buckets = local_buckets;
         cfg.shards = local_shards;
         check(unsafe { cudaSetDevice(cfg.rank as i32) })?;
+        if hash_first_tensor_generation {
+            match unsafe { mgbfs_hash_first_tc_validate_device() } {
+                0 => (),
+                3 => return Err("HASH_FIRST_TC_DEVICE_UNSUPPORTED".into()),
+                status => return Err(format!("HASH_FIRST_TC_DEVICE_QUERY_{status}")),
+            }
+        }
         let permutation_n = encode_permutation_matrix(&graph.start, graph.rows)
             .ok()
             .filter(|_| {
@@ -1924,7 +1957,7 @@ impl DistributedNativeBfs {
                 let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
                 check(mgbfs_device_store_u32(h.parent_count.ptr.cast(), batch.count, s))?;
                 let generate = if self.hash_first_tensor_generation {
-                    mgbfs_generate_hash_only_tc
+                    mgbfs_generate_hash_only_tc_admitted
                 } else { mgbfs_generate_hash_only };
                 check(generate(h.n, self.moves, h.modulus, self.stride as u32,
                     self.cfg.batch, self.candidates, self.cfg.rank, batch.sequence,
@@ -3001,7 +3034,7 @@ impl DistributedNativeBfs {
                     .unwrap_or((0, 0));
                 unsafe {
                     let generate = if self.hash_first_tensor_generation {
-                        mgbfs_generate_hash_only_tc
+                        mgbfs_generate_hash_only_tc_admitted
                     } else {
                         mgbfs_generate_hash_only
                     };

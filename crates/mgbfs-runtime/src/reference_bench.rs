@@ -322,6 +322,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
         cfg!(feature = "library-owner"),
     )?;
+    if selection.tensor_generation {
+        // This preparation result is agreed by the existing control channel
+        // before archive/pinned admission or communicator creation.
+        crate::failure::check_native_status(unsafe { cudaSetDevice(local as i32) })?;
+        match unsafe { mgbfs_cuda::ffi::mgbfs_hash_first_tc_validate_device() } {
+            0 => (),
+            3 => return Err("HASH_FIRST_TC_DEVICE_UNSUPPORTED".into()),
+            status => return Err(format!("HASH_FIRST_TC_DEVICE_QUERY_{status}")),
+        }
+    }
     if multiset.is_some() && (!compact_states || profile != "DENSE" || selection.tensor_generation) {
         return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
     }

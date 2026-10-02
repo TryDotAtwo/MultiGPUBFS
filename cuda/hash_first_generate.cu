@@ -97,6 +97,30 @@ extern "C" int mgbfs_generate_hash_only(
    coefficients,offsets,candidate_count,hashes,origins);
  return cudaGetLastError()==cudaSuccess?0:2;
 }
+extern "C" int mgbfs_hash_first_tc_validate_device(){
+ int device=0;cudaDeviceProp properties{};
+ if(cudaGetDevice(&device)!=cudaSuccess||cudaGetDeviceProperties(&properties,device)!=cudaSuccess)return 2;
+ return properties.major==7&&properties.minor==5?0:3;
+}
+extern "C" int mgbfs_generate_hash_only_tc_admitted(
+ uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t parent_capacity,
+ uint32_t capacity,uint32_t source,uint64_t begin,const uint8_t* parents,
+ const uint8_t* generators,const uint32_t* coefficients,const uint32_t* offsets,
+ const uint32_t* parent_count,uint32_t* hashes,MgbfsRegenerateOrigin* origins,
+ uint32_t* candidate_count,uint32_t* fatal,void* raw_stream){
+ if(!n||uint64_t(n)*n>33025||!moves||moves>65536||modulus<2||modulus>256||
+    uint64_t(n)*n>stride||stride%16||!parent_capacity||!capacity||!parents||
+    !generators||!coefficients||!offsets||!parent_count||!hashes||!origins||
+    !candidate_count||!fatal)return 1;
+ // Caller admitted SM75 at initialization; no per-batch device queries.
+ auto stream=static_cast<cudaStream_t>(raw_stream);
+ validate<<<1,1,0,stream>>>(moves,parent_capacity,capacity,begin,parent_count,candidate_count,fatal);
+ if(cudaGetLastError()!=cudaSuccess)return 2;
+ const uint32_t blocks=uint32_t((uint64_t(capacity)+7)/8>4096?4096:(uint64_t(capacity)+7)/8);
+ generate<true><<<blocks,256,0,stream>>>(n,moves,modulus,stride,source,begin,parents,generators,
+   coefficients,offsets,candidate_count,hashes,origins);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
 extern "C" int mgbfs_generate_hash_only_tc(
  uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t parent_capacity,
  uint32_t capacity,uint32_t source,uint64_t begin,const uint8_t* parents,
@@ -107,15 +131,9 @@ extern "C" int mgbfs_generate_hash_only_tc(
     uint64_t(n)*n>stride||stride%16||!parent_capacity||!capacity||!parents||
     !generators||!coefficients||!offsets||!parent_count||!hashes||!origins||
     !candidate_count||!fatal)return 1;
- // Explicit experimental SM75 policy; no scalar fallback on other devices.
- int device=0;cudaDeviceProp properties{};
- if(cudaGetDevice(&device)!=cudaSuccess||cudaGetDeviceProperties(&properties,device)!=cudaSuccess)return 2;
- if(properties.major!=7||properties.minor!=5)return 3;
- auto stream=static_cast<cudaStream_t>(raw_stream);
- validate<<<1,1,0,stream>>>(moves,parent_capacity,capacity,begin,parent_count,candidate_count,fatal);
- if(cudaGetLastError()!=cudaSuccess)return 2;
- const uint32_t blocks=uint32_t((uint64_t(capacity)+7)/8>4096?4096:(uint64_t(capacity)+7)/8);
- generate<true><<<blocks,256,0,stream>>>(n,moves,modulus,stride,source,begin,parents,generators,
-   coefficients,offsets,candidate_count,hashes,origins);
- return cudaGetLastError()==cudaSuccess?0:2;
+ const int supported=mgbfs_hash_first_tc_validate_device();
+ if(supported)return supported;
+ return mgbfs_generate_hash_only_tc_admitted(n,moves,modulus,stride,parent_capacity,
+   capacity,source,begin,parents,generators,coefficients,offsets,parent_count,
+   hashes,origins,candidate_count,fatal,raw_stream);
 }

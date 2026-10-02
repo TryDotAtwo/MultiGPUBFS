@@ -79,6 +79,17 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         /// Experimental SM75 integer-MMA generation, register-only hash reduction.
+        pub fn mgbfs_hash_first_tc_validate_device() -> i32;
+        /// Requires successful SM75 admission on the same current device.
+        /// Same shapes/lifetimes as legacy tc; no per-batch hardware query.
+        pub fn mgbfs_generate_hash_only_tc_admitted(
+            n: u32, moves: u32, modulus: u32, stride: u32, parent_capacity: u32,
+            candidate_capacity: u32, source: u32, parent_begin: u64,
+            parents: *const u8, generators: *const u8, coefficients: *const u32,
+            offsets: *const u32, parent_count: *const u32, hashes: *mut u32,
+            origins: *mut RegenerateOrigin, candidate_count: *mut u32,
+            fatal: *mut u32, stream: *mut c_void,
+        ) -> i32;
         /// Same pointer/lifetime contract as mgbfs_generate_hash_only.
         pub fn mgbfs_generate_hash_only_tc(
             n: u32,

@@ -8,6 +8,55 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn tensor_generation_hardware_admission_and_layer_counts() {
+    let hardware = Command::new("nvidia-smi")
+        .args(["--id=0", "--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output().unwrap();
+    assert!(hardware.status.success());
+    let supported = String::from_utf8_lossy(&hardware.stdout).trim() == "7.5";
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let fixture = Fixture(std::env::temp_dir().join(format!("mgbfs-tc-admission-{nonce}")));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let output = Command::new("timeout")
+        .args(["30", env!("CARGO_BIN_EXE_mgbfs"), "bench", "--reference", "s4", "7"])
+        .arg(fixture.0.join("bootstrap")).arg(fixture.0.join("archive"))
+        .arg(fixture.0.join("result"))
+        .env("RANK", "0").env("LOCAL_RANK", "0").env("WORLD_SIZE", "1")
+        .env("TORCHELASTIC_RUN_ID", "tc-admission")
+        .env("MGBFS_OWNER_BACKEND", "CUB_SORT_MERGE")
+        .env("MGBFS_PROFILE", "HASH_FIRST")
+        .env("MGBFS_HASH_FIRST_GENERATION", "INT_MMA_SM75")
+        .env("MGBFS_TRANSPORT_BACKEND", "NCCL_LSA").env("MGBFS_RANK_MAP", "0")
+        .env("MGBFS_STATE_CODEC", "matrix_u8").env("MGBFS_ARCHIVE_CODEC", "matrix_u8")
+        .env("MGBFS_BUCKETS", "8").env("MGBFS_SHARDS", "4")
+        .env("MGBFS_JOB_BUCKETS", "2").env("MGBFS_BUCKET_CAPACITY", "32")
+        .env("MGBFS_BENCH_CAPACITY", "64").env("MGBFS_FUTURE_CAPACITY", "128")
+        .env("MGBFS_BENCH_WARMUP", "0").env("MGBFS_BENCH_SKIP_ARCHIVE", "0")
+        .env("MGBFS_ARCHIVE_STREAM", "0").env("MGBFS_MACRO_DEPTH", "1")
+        .env_remove("MGBFS_LIBRARY_POOL_BYTES").env_remove("MGBFS_TEST_OWNER_DAG_CAPTURE")
+        .output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if supported {
+        assert!(output.status.success(), "SM75 Tensor BFS failed: {stderr}");
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture.0.join("result/rank-0.json")).unwrap()).unwrap();
+        assert_eq!(record["status"], "COMPLETE");
+        assert_eq!(record["hash_first_generation"], "INT_MMA_SM75");
+        assert_eq!(record["local_layer_sizes"], serde_json::json!([1, 3, 5, 6, 5, 3, 1]));
+        assert!(fixture.0.join("result/group-complete.json").exists());
+        assert!(Command::new(env!("CARGO_BIN_EXE_mgbfs"))
+            .arg("verify").arg(fixture.0.join("archive-rank-0.mgbfsar1"))
+            .status().unwrap().success());
+        return;
+    }
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("HASH_FIRST_TC_DEVICE_UNSUPPORTED"), "{stderr}");
+    assert!(!fixture.0.join("archive-rank-0.mgbfsar1").exists(),
+        "unsupported backend reserved an archive before hardware admission");
+    assert!(!fixture.0.join("result/group-complete.json").exists());
+}
+
+#[test]
 fn native_only_cli_executes_requested_owner_capture() {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let fixture = Fixture(std::env::temp_dir().join(format!(
