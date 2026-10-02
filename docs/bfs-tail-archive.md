@@ -80,6 +80,10 @@ Recognized stops include allocation OOM, capacity/ring limits and SSD exhaustion
 CUDA status 2 requires a diagnostic whose source line is a CUDA allocation,
 so unrelated NCCL errors with the same numeric status do not prune a branch.
 HF upload errors, archive worker I/O errors and timeouts do not trigger pruning.
+Native sticky layer/request capacity code 16 is recognized specifically;
+other rank-depth codes and remote cancellation alone do not prove a resource
+stop. The policy fingerprint is v2. The automatic 527-pair GPU pruning test
+on two RTX 3060 is recorded in `validation/2026-10-02-auto-pruning.md`.
 Resume preserves the policy and prior exclusions; changing resource limits or
 retrying pruned pairs requires a fresh root/run ID.
 Each pair gets its own run directory and HF run ID. `sweep.json` records
