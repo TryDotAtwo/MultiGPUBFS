@@ -35,13 +35,13 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
             if path.stat().st_size!=entry['bytes'] or digest.hexdigest()!=entry['sha256']:
                 raise ValueError('staged payload checksum mismatch')
             total+=entry['bytes']
-            if total>max_bytes:raise ValueError('batch byte bound exceeded')
+            if max_bytes is not None and total>max_bytes:raise ValueError('batch byte bound exceeded')
             payloads.append((path,prefix+entry['path']))
         manifests.append((manifest_path,prefix+'manifest.json'))
     return payloads,manifests,total
 
 
-def publish(root,repo_id,api,deadline_unix=None, *, ledger=None):
+def publish(root,repo_id,api,deadline_unix=None, *, ledger=None, max_batch_bytes=25_000_000_000):
     from huggingface_hub import CommitOperationAdd
     try:
         from .tail_upload import retry_upload
@@ -50,20 +50,31 @@ def publish(root,repo_id,api,deadline_unix=None, *, ledger=None):
     # Freeze the ledger before planning payloads. The producer may add cases
     # while the background worker uploads this exact completed-case cohort.
     if ledger is None:ledger=json.loads((Path(root)/'sweep.json').read_text())
-    payloads,manifests,total=plan(root,ledger=ledger)
+    if max_batch_bytes<=0:raise ValueError('positive publication batch bound required')
+    payloads,manifests,total=plan(root,max_bytes=None,ledger=ledger)
     def commit(items,message):
         if deadline_unix is not None and time.time()>=deadline_unix:
             raise TimeoutError('HF publication deadline; staged inputs retained')
         return retry_upload(lambda:api.create_commit(repo_id=repo_id,repo_type='dataset',
             operations=[CommitOperationAdd(path_in_repo=remote,path_or_fileobj=str(path))
                         for path,remote in items],commit_message=message))
-    if payloads:commit(payloads,'Publish checked finite BFS sweep payloads')
+    batch=[];batch_bytes=0;payload_commits=0
+    for item in payloads:
+        size=item[0].stat().st_size
+        if size>max_batch_bytes:raise ValueError('one payload exceeds publication batch bound')
+        if batch and (batch_bytes+size>max_batch_bytes or len(batch)>=10000):
+            commit(batch,'Publish checked BFS sweep payload batch')
+            payload_commits+=1;batch=[];batch_bytes=0
+        batch.append(item);batch_bytes+=size
+    if batch:
+        commit(batch,'Publish checked BFS sweep payload batch');payload_commits+=1
     with tempfile.TemporaryDirectory(prefix='hf-ledger-',dir=root) as staging:
         frozen=Path(staging)/'sweep.json'
         frozen.write_text(json.dumps(ledger,indent=2),encoding='utf-8')
         metadata=[(frozen,'tail-sweeps/'+Path(root).name+'/sweep.json')]
         receipt=commit(manifests+metadata,'Publish BFS sweep manifests after payloads')
-    return dict(cases=len(manifests),files=len(payloads),bytes=total,receipt=str(receipt))
+    return dict(cases=len(manifests),files=len(payloads),bytes=total,receipt=str(receipt),
+                payload_commits=payload_commits,max_batch_bytes=max_batch_bytes)
 
 
 def main():

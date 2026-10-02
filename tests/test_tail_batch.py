@@ -51,6 +51,25 @@ class BatchTests(unittest.TestCase):
             publish(root,'test/data',Api())
             self.assertEqual(seen,[frozen])
 
+    def test_total_larger_than_batch_is_split_before_any_manifest(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);saved,entry=self.fixture(root)
+            entries=[]
+            for i in range(3):
+                path=saved/f'snapshot/{i}.bin';path.write_bytes(bytes([i])*8)
+                entries.append(dict(path=f'snapshot/{i}.bin',bytes=8,
+                    sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+            (saved/'manifest.json').write_text(json.dumps(dict(files=entries,status='COMPLETE')))
+            calls=[]
+            class Api:
+                def create_commit(self,**kwargs):
+                    calls.append([op.path_in_repo for op in kwargs['operations']]);return 'receipt'
+            result=publish(root,'test/data',Api(),max_batch_bytes=10)
+            self.assertEqual(result['payload_commits'],3)
+            self.assertEqual(result['bytes'],24)
+            self.assertEqual(len(calls),4)
+            self.assertTrue(all(not any(p.endswith('.json') for p in row) for row in calls[:3]))
+
     def test_traversal_and_byte_bound_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);saved,entry=self.fixture(root)
