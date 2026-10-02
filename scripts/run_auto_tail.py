@@ -154,7 +154,7 @@ def verify_hf(root, repo, api, token):
                 all_checksums_verified=True, sweep_ledger_verified=True)
 
 
-def main():
+def main(cancelled=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--source',type=Path,required=True)
     p.add_argument('--runtime-env',type=Path,required=True)
@@ -201,17 +201,35 @@ def main():
         if count-last_published>=20:
             publisher.enqueue(ledger);last_published=count
     def adaptive(config,source,case,env):
-        return run(pair_config(config,config['n'],config['r']),source,case,env)
+        return run(pair_config(config,config['n'],config['r']),source,case,env,cancelled=cancelled)
     # Each layer writes its bounded intermediate snapshot immediately.
     # Completed cohorts publish in the background without per-layer quota storms.
     remaining=args.deadline_unix-time.time()
     publication_reserve=min(1200,remaining*.25)
-    ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
-                   remaining-publication_reserve,adaptive,on_progress=progress)
-    publisher.enqueue(ledger)
-    receipt=publisher.finish()
-    verified=verify_hf(args.root,args.repo_id,api,token)
+    ledger=None
+    try:
+        ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
+                       remaining-publication_reserve,adaptive,on_progress=progress,should_stop=cancelled)
+        publisher.enqueue(ledger)
+        receipt=publisher.finish()
+        verified=verify_hf(args.root,args.repo_id,api,token)
+    except BaseException as error:
+        if not publisher.closed:
+            try:publisher.finish()
+            except BaseException:pass
+        if ledger is None:
+            path=args.root/'sweep.json'
+            ledger=json.loads(path.read_text()) if path.exists() else dict(cases={})
+            ledger['pending']=[list(pair) for pair in automatic_pairs()
+                if f'n{pair[0]}-m{pair[1]}' not in ledger['cases']]
+        atomic_json(args.root/'automatic-report.json',dict(status='INCOMPLETE',
+            pending=ledger['pending'],stop_reason=ledger.get('global_stop_reason'),
+            publication_status='FAILED',failure=str(error),local_snapshots_retained=True,
+            background_publication_generations=publisher.generations))
+        raise
     report=dict(status='VERIFIED',pending=ledger['pending'],publication=receipt,
+        sweep_status='INCOMPLETE' if ledger['pending'] else 'COMPLETE',
+        stop_reason=ledger.get('global_stop_reason'),
         verification=verified,resource_plan=base['resource_plan'],
         attempted=sum(x.get('attempted',False) for x in ledger['cases'].values()),
         complete=sum(x['status']=='COMPLETE' for x in ledger['cases'].values()),
@@ -224,4 +242,6 @@ def main():
     print(json.dumps(report),flush=True)
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    from run_tail_bfs import cancellation_signals
+    with cancellation_signals() as cancelled:main(cancelled)

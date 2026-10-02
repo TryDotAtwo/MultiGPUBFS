@@ -10,6 +10,7 @@ import signal
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from bfs_tail_archive import TailArchive, atomic_json
 from tail_wire import consume
@@ -56,7 +57,37 @@ def native_failure(line):
     return None
 
 
-def run(config, source, root, runtime_env, *, publisher_api=None):
+@contextmanager
+def cancellation_signals():
+    """Signals request cleanup; they never interrupt a snapshot or upload."""
+    reason = [None]
+    def request(signum, _frame):
+        reason[0] = 'requested cancellation: '+signal.Signals(signum).name
+    previous = {sig: signal.signal(sig, request) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield lambda: reason[0]
+    finally:
+        for sig, handler in previous.items():signal.signal(sig, handler)
+
+
+def finish_run(root, final, reason, failure, commit, binary_sha, publisher):
+    """Always record the local outcome, including a failed final upload."""
+    upload_error = None
+    if publisher:
+        try:publisher.enqueue(final)
+        except BaseException as error:upload_error = error
+        try:publisher.finish()
+        except BaseException as error:upload_error = upload_error or error
+    if upload_error:
+        failure = failure or upload_error
+        reason += '; HF publication failed; local snapshots and pinned inputs retained'
+    atomic_json(root/'run-summary.json', dict(status='INCOMPLETE' if failure else 'COMPLETE',
+        reason=reason, manifest=str(final), program_commit=commit, binary_sha256=binary_sha,
+        publication_status='FAILED' if upload_error else ('COMPLETE' if publisher else 'NOT_REQUESTED')))
+    return failure, reason
+
+
+def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None):
     if os.name != 'posix':
         raise ValueError('Linux required')
     n, r, world = config['n'], config['r'], config.get('world', 2)
@@ -155,10 +186,20 @@ def run(config, source, root, runtime_env, *, publisher_api=None):
     logthread.start()
     deadline = time.monotonic()+config.get('timeout_seconds',300)
     reason, failure, deferred_error = 'running', None, None
+    cancellation_error, cancellation_started = None, None
     try:
         while True:
-            if time.monotonic() > deadline:
-                raise TimeoutError('search deadline')
+            now = time.monotonic()
+            request = cancelled() if cancelled else None
+            if cancellation_error is None and ((request and process.poll() is None) or now > deadline):
+                cancellation_error = RuntimeError(request) if request else TimeoutError('search deadline')
+                cancellation_started = now
+                if process.poll() is None:
+                    try:os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:pass
+            if cancellation_started is not None and now > cancellation_started+10 and process.poll() is None:
+                try:os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:pass
             if publisher and publisher.error:
                 raise RuntimeError('HF background upload failed')
             try:
@@ -200,6 +241,11 @@ def run(config, source, root, runtime_env, *, publisher_api=None):
                         publisher.enqueue(generation/'manifest.json')
             if stopped.is_set() and process.poll() is not None:
                 drained = messages.empty() and all(not thread.is_alive() for thread in threads)
+                # All queued rank parts must be committed before cancellation
+                # or a native error seals the final prefix snapshot.
+                if drained and ready:continue
+                if drained and cancellation_error:
+                    raise cancellation_error
                 if drained and (process.returncode != 0 or deferred_error):
                     primary = 'native fatal: '+','.join(dict.fromkeys(native_errors)) if native_errors else None
                     raise RuntimeError(primary or deferred_error or f'native exit {process.returncode}')
@@ -234,11 +280,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None):
             thread.join(timeout=5)
         for reader in readers:
             reader.close()
-        if publisher:
-            publisher.enqueue(final)
-            publisher.finish()
-    atomic_json(root/'run-summary.json', dict(status='INCOMPLETE' if failure else 'COMPLETE',
-        reason=reason, manifest=str(final), program_commit=commit, binary_sha256=binary_sha))
+    failure, reason = finish_run(root, final, reason, failure, commit, binary_sha, publisher)
     if failure:
         raise failure
     return final
@@ -251,8 +293,9 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--runtime-env', type=Path, required=True)
     args = parser.parse_args()
-    print(run(json.loads(args.config.read_text()), args.source, args.root,
-        json.loads(args.runtime_env.read_text())), flush=True)
+    with cancellation_signals() as cancelled:
+        print(run(json.loads(args.config.read_text()), args.source, args.root,
+            json.loads(args.runtime_env.read_text()), cancelled=cancelled), flush=True)
 
 
 if __name__ == '__main__':

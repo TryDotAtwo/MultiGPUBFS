@@ -10,6 +10,25 @@ from sweep_tail_bfs import execute,pairs,automatic_pairs,unsupported_reason,reso
 
 
 class SweepTests(unittest.TestCase):
+    def test_controlled_stop_preserves_case_and_leaves_other_pairs_pending(self):
+        reason=[None];calls=[]
+        def fake(config,source,case,runtime):
+            calls.append((config['n'],config['r']));case.mkdir()
+            path=case/'manifest.json'
+            reason[0]='requested cancellation: SIGTERM'
+            path.write_text(json.dumps(dict(status='INCOMPLETE',last_completed_layer=3,
+                stop_reason=reason[0])))
+            return path
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            ledger=execute({},root,root,{},[(4,1),(5,1),(5,2)],10,fake,
+                should_stop=lambda:reason[0])
+            self.assertEqual(calls,[(4,1)])
+            self.assertEqual(ledger['pending'],[[5,1],[5,2]])
+            self.assertEqual(ledger['global_stop_reason'],reason[0])
+            self.assertEqual(ledger['cases']['n4-m1']['last_completed_layer'],3)
+            self.assertFalse(resource_stop(ledger['cases']['n4-m1']))
+
     def test_automatic_cli_without_range_or_gpu_config(self):
         script=Path(__file__).resolve().parents[1]/'scripts/sweep_tail_bfs.py'
         result=subprocess.run([sys.executable,str(script),'--plan-only'],capture_output=True,text=True,check=True)

@@ -18,6 +18,16 @@ Supported pairs are discovered in increasing n, with resource-stop pruning
 independent for each r. Packing/u64 exclusions and deadline-pending pairs remain
 explicit in the sweep ledger.
 
+SIGTERM/SIGINT sent to the Python launcher request controlled cancellation.
+The launcher terminates the native process group, drains whole committed wire
+layers, records an INCOMPLETE suffix of at most 1 GB and the remaining eligible
+pairs, then finishes HF publication. Wait for the Python process to exit before
+deleting its GPU instance. SIGKILL, host loss or immediate instance deletion
+cannot promise a new final upload; only already committed snapshots survive.
+Failed final publication still writes a local run summary and retains local
+snapshots/pinned inputs for retry. Host-credit sizing accounts for reclaimable
+clean file cache inside cgroup limits; dirty/writeback pages remain reserved.
+
 Completed cohorts publish in the background, approximately every 20 attempted
 pairs. Only queued ledgers are coalesced; each in-flight ledger is frozen before
 payload planning. Completed case files remain immutable on GPU-host SSD through

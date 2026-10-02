@@ -65,7 +65,7 @@ def allocation_failure(case,source):
     return False
 
 
-def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_progress=None):
+def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_progress=None, should_stop=None):
     if deadline_seconds<=0:
         raise ValueError('positive sweep deadline required')
     root.mkdir(parents=True,exist_ok=True)
@@ -92,6 +92,10 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             r=record['m']
             if r not in blocked or record['n']<blocked[r]['n']:blocked[r]=record
     for n,m in grid:
+        stop = should_stop() if should_stop else None
+        if stop:
+            ledger['global_stop_reason']=stop
+            break
         key=f'n{n}-m{m}'
         if key in ledger['cases']:
             continue  # Never overwrite/retry an existing run implicitly.
