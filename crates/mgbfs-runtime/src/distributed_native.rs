@@ -491,18 +491,21 @@ mod plan_error_tests {
     #[test]
     fn invalid_epoch_window_is_rejected_before_device_or_communicator_admission() {
         let graph = MatrixGroup::unitriangular(3, 2).unwrap();
-        for epoch_window in [0, 1] {
+        for (epoch_window, state_descriptor_capacity, expected_error) in [
+            (0, 16, "EPOCH_WINDOW_CONFIG"), (1, 16, "EPOCH_WINDOW_CONFIG"),
+            (2, 0, "STATE_DESCRIPTOR_CAPACITY"),
+        ] {
             let cfg = DistributedConfig {
                 epoch_window,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
+                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity,
                 buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
                 prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
             };
             match DistributedNativeBfs::new(&graph, [0;16], [0;128], cfg) {
                 Ok(_) => panic!("invalid credit window admitted"),
-                Err(error) => assert_eq!(error, "EPOCH_WINDOW_CONFIG"),
+                Err(error) => assert_eq!(error, expected_error),
             }
         }
     }

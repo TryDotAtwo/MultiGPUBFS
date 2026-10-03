@@ -33,7 +33,7 @@ RUN_CONFIGURATION_FIELDS = (
  'archive_enabled','archive_state_bytes','generation_variant',
  'hash_first_generation','warmup_completed','library_pool_reserved_bytes',
  'graph_kind','start_state','expected_unique_states','generators',
- 'hash_seed_hex','bootstrap_digest','logical_owner_to_rank','epoch_window',
+ 'hash_seed_hex','bootstrap_digest','logical_owner_to_rank','epoch_window','state_descriptor_capacity',
  'output_contract','archive_commit_scope','baseline_provenance')
 
 class ProgressRelay:

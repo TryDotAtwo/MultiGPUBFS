@@ -42,7 +42,7 @@ class RankMetrics(unittest.TestCase):
         base = dict(search_complete_seconds=1, smi_peak_mib_per_rank=[100,100],
                     smi_peak_mib_total=200, epoch_window=2, frontier_profile='DENSE',
                     hash_seed_hex='00' * 16)
-        for key, value in [('epoch_window',3), ('frontier_profile','HASH_FIRST'),
+        for key, value in [('epoch_window',3), ('state_descriptor_capacity',16), ('frontier_profile','HASH_FIRST'),
                            ('hash_seed_hex','01' * 16)]:
             with self.subTest(key=key), self.assertRaisesRegex(
                     ValueError, 'MEASUREMENT_CONFIGURATION_MISMATCH: '+key):
