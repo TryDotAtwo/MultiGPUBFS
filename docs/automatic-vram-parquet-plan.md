@@ -110,3 +110,13 @@ required. States may never be downloaded to the user's computer.
 - These cards report P2P CNS. The default HostSizedNccl route was tested;
   reusable full 32-batch CUDA Graph windows and multi-GPU LSA remain open.
   Cross-case consolidation into shared Parquet shards also remains open.
+- The INCOMPLETE (15,4) tail retains 616,586,288 packed bytes from its 35
+  completed layers, below the 1 GB limit. Four Parquet shards total 574,119,644
+  bytes. HF readback verified every checksum, manifest and ledger at revision
+  d54a886b011241ac40ef0adb18dbcd84932fce0d. No GPU states were downloaded to
+  the user's computer. Frozen evidence report:
+  https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/f601b5272534cb2c52a62a33f9eecdbd9c55f372/evidence/20261003-vram-parquet/gate-report.json
+- Own instance 53934868 was deleted after publication. Both immediate provider
+  GET and the independent watchdog confirmed ABSENT. Exact billed charges
+  remain unavailable with the scoped key; the quote and enforced lease deadline
+  are separate from a billed-cost claim.
