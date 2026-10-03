@@ -2935,6 +2935,7 @@ impl DistributedNativeBfs {
         }
         let mut epoch_serial = 0usize;
         for scheduled_round in 0..scheduled_rounds {
+            let graph_mode = graph_mode && scheduled_round < (scheduled_rounds / 32) * 32;
             let _batch_range = TraceRange::new(trace_ranges, b"mgbfs.batch\0");
             self.ensure_not_cancelled()?;
             if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
@@ -3550,6 +3551,16 @@ impl DistributedNativeBfs {
                 // an ordinary completion record after the launched window.
                 check(unsafe { cudaEventRecord(self.owner_consumed.as_ref()
                     .ok_or("LSA_OWNER_EVENT_MISSING")?.0, s) })?;
+                if scheduled_round + 1 == (scheduled_rounds / 32) * 32
+                    && scheduled_round + 1 < scheduled_rounds {
+                    // A graph launch does not enqueue its captured kernels on
+                    // the original generation stream. Its first direct tail
+                    // producer must not overwrite shared children/hash buffers
+                    // while the launched window still reads them.
+                    check(unsafe { cudaStreamWaitEvent(self.generation_stream.0,
+                        self.owner_consumed.as_ref()
+                            .ok_or("LSA_OWNER_EVENT_MISSING")?.0, 0) })?;
+                }
             }
             if device_epoch && (!graph_mode || (scheduled_round+1)%32 == 0
                 || scheduled_round+1 == scheduled_rounds) {
