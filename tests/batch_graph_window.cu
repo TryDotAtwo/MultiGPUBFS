@@ -57,6 +57,8 @@ int main() {
   require(full_windows==2 && batches==69,"WINDOW_BATCH_ACCOUNTING");
   require(launches==3 && updates>=1 && rebuilds>=2,"WINDOW_UPDATE_AND_SHORT_TAIL");
   // Cancellation must end capture before auxiliary streams or payloads drop.
+  unsigned value_before_cancel{};
+  check(cudaMemcpy(&value_before_cancel,value,sizeof(value_before_cancel),cudaMemcpyDeviceToHost));
   check(mgbfs_batch_graph_begin_v1(window,owner,generation,exchange));
   produce<<<1,1,0,generation>>>(value,999);
   mgbfs_batch_graph_cancel_v1(window);
@@ -65,6 +67,9 @@ int main() {
   unsigned cancelled_result{};
   check(cudaMemcpy(&cancelled_result,sum,sizeof(cancelled_result),cudaMemcpyDeviceToHost));
   require(cancelled_result==expected,"CANCEL_EXECUTED_PAYLOAD");
+  unsigned value_after_cancel{};
+  check(cudaMemcpy(&value_after_cancel,value,sizeof(value_after_cancel),cudaMemcpyDeviceToHost));
+  require(value_after_cancel==value_before_cancel,"CANCEL_EXECUTED_PRODUCER");
   mgbfs_batch_graph_destroy_v1(window);
   check(cudaFree(value)); check(cudaFree(sum)); check(cudaFreeHost(host));
   for (auto e : {generated,packed,consumed,archived}) check(cudaEventDestroy(e));
