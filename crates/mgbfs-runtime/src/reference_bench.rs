@@ -223,7 +223,122 @@ struct PreparedPass {
     cfg: DistributedConfig,
     bootstrap_digest: [u8; 32],
 }
-fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool) -> Result<()> {
+fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<PreparedPass> {
+    use mgbfs_core::config::{FrontierProfile, RunConfigV1, ReferenceTransport};
+    let file = std::fs::File::open(&args[1]).map_err(|e| format!("CONFIG_OPEN: {e}"))?;
+    let config: RunConfigV1 = serde_json::from_reader(std::io::BufReader::new(file))
+        .map_err(|e| format!("CONFIG_PARSE: {e}"))?;
+    let digest = config.digest()?;
+    if config.topology.world_size != world { return Err("RUN_TOPOLOGY_MISMATCH".into()); }
+    // Named unsupported contracts, not coerced benchmark defaults. Multi-rank
+    // weighted settlement and extra producer banks are still separate work.
+    if config.macro_depth != 1 { return Err("RUN_MACRO_DISPATCH_UNAVAILABLE".into()); }
+    if config.capacities.route_slot_count != 2 { return Err("RUN_ROUTE_BANK_COUNT_UNAVAILABLE".into()); }
+    let narrow = |value: u64| -> Result<u32> {
+        let value = u32::try_from(value).map_err(|_| "RUN_CAPACITY_ABI")?;
+        if value == 0 || value > i32::MAX as u32 { return Err("RUN_CAPACITY_ABI".into()); }
+        Ok(value)
+    };
+    let batch = narrow(config.parent_batch)?;
+    let capacity = narrow(config.capacities.layer_hash_records_per_arena)?;
+    let future = narrow(config.capacities.state_ring_records)?;
+    let candidates = batch.checked_mul(config.graph.generators.len() as u32)
+        .ok_or("RUN_CANDIDATE_OVERFLOW")?;
+    let slots = narrow(config.capacities.route_slot_records)?;
+    if slots != candidates { return Err("RUN_ROUTE_RECORD_COUNT_UNAVAILABLE".into()); }
+    let buckets = config.topology.shards_per_rank.checked_mul(config.topology.buckets_per_shard)
+        .and_then(|x| x.checked_mul(world)).ok_or("RUN_TOPOLOGY_OVERFLOW")?;
+    let shards = config.topology.shards_per_rank.checked_mul(world).ok_or("RUN_TOPOLOGY_OVERFLOW")?;
+    let width = config.graph.start.len();
+    let slot_stride = (width as u64).checked_add(16).ok_or("RUN_ARCHIVE_BYTES")?;
+    if config.capacities.pinned_archive_slot_bytes % slot_stride != 0 {
+        return Err("RUN_PINNED_SLOT_ALIGNMENT".into());
+    }
+    let archive_rows = narrow(config.capacities.pinned_archive_slot_bytes / slot_stride)?;
+    if archive_rows < batch { return Err("RUN_PINNED_SLOT_BATCH_CAPACITY".into()); }
+    let profile = match config.frontier_profile {
+        FrontierProfile::Dense => "DENSE", FrontierProfile::HashFirst => "HASH_FIRST",
+    }.to_owned();
+    let pre = if config.local_pre_dedup { "ON" } else { "OFF" }.to_owned();
+    let owner = match config.owner_backend {
+        mgbfs_core::config::OwnerBackend::CubSortMerge => "CUB_SORT_MERGE",
+        mgbfs_core::config::OwnerBackend::BmmaBucket => "BMMA_BUCKET",
+    }.to_owned();
+    let hash_first_generation = if config.frontier_profile == FrontierProfile::HashFirst {
+        "INT_MMA_SM75"
+    } else { "SCALAR" }.to_owned();
+    let selection = ReferenceSelection::parse(&profile, &owner, &pre, false, candidates, 256)?
+        .with_hash_first_generation(&hash_first_generation)?.with_transport("NCCL_LSA")?;
+    let cfg = DistributedConfig {
+        epoch_window: 2, rank, world,
+        logical_owner_to_rank: if world == 1 { vec![0, 0] } else { config.topology.logical_owner_to_rank.clone() },
+        transport: ReferenceTransport::Lsa, batch, layer_capacity: capacity,
+        state_ring_capacity: future,
+        state_descriptor_capacity: narrow(config.capacities.state_extent_descriptors)?,
+        buckets, shards, job_buckets: config.topology.buckets_per_shard.min(4),
+        bucket_capacity: narrow(config.capacities.next_bucket_capacity_records)?,
+        prededup: config.local_pre_dedup, generation_variant: 1,
+        untouched_vram_reserve: config.capacities.untouched_vram_reserve_bytes,
+    };
+    let group = format!("matrix-{}", digest.iter().map(|x| format!("{x:02x}")).collect::<String>());
+    Ok(PreparedPass {
+        multiset: None, group, n: config.graph.rows, graph: config.graph,
+        batch, declared_capacity: capacity, declared_future: future, mode: CapacityMode::MaxPerRank,
+        global_capacity: u64::from(capacity) * u64::from(world),
+        global_future: u64::from(future) * u64::from(world), capacity, future,
+        compact_states: false, archive_width: width, profile, owner, pre,
+        seed: config.seed, seed_hex: format!("{:032x}", u128::from_le_bytes(config.seed)),
+        hash_first_generation, selection, digest,
+        archive_path: format!("{}-rank-{rank}.mgbfsar1", args[4]), archive_enabled: true,
+        disk_bytes: config.capacities.disk_extent_bytes_per_rank, archive_rows,
+        archive_slots: config.capacities.pinned_archive_slots as usize, stream_archive: false,
+        cfg, bootstrap_digest: digest,
+    })
+}
+#[cfg(test)]
+mod production_tests {
+    use super::*;
+    fn prepare(config: mgbfs_core::config::RunConfigV1) -> Result<PreparedPass> {
+        let path = std::env::temp_dir().join(format!("mgbfs-production-{}-{}",
+            std::process::id(), std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let result = prepare_production(&["run".into(), path.to_str().unwrap().into(),
+            "unused".into(), "bootstrap".into(), "archive".into(), "output".into()], 1, 2);
+        std::fs::remove_file(path).unwrap();
+        result
+    }
+    #[test]
+    fn typed_run_preserves_admitted_config_and_independent_capacities() {
+        let mut config = mgbfs_core::config::RunConfigV1::fixture(3).unwrap();
+        config.capacities.route_slot_count = 2;
+        config.capacities.state_extent_descriptors = 321;
+        config.seed = [42; 16];
+        config.topology.logical_owner_to_rank = vec![1, 0];
+        let expected = config.digest().unwrap();
+        let prepared = prepare(config.clone()).unwrap();
+        assert_eq!(prepared.digest, expected);
+        assert_eq!(prepared.bootstrap_digest, expected);
+        assert_eq!(prepared.seed, config.seed);
+        assert_eq!(prepared.cfg.state_descriptor_capacity, 321);
+        assert_eq!(prepared.cfg.state_ring_capacity as u64, config.capacities.state_ring_records);
+        assert_eq!(prepared.cfg.logical_owner_to_rank, vec![1, 0]);
+        assert_eq!(prepared.disk_bytes, config.capacities.disk_extent_bytes_per_rank);
+        assert_eq!(u64::from(prepared.archive_rows) * (prepared.archive_width as u64 + 16),
+            config.capacities.pinned_archive_slot_bytes);
+        assert!(prepared.archive_enabled);
+    }
+    #[test]
+    fn typed_run_does_not_coerce_unimplemented_contracts() {
+        let config = mgbfs_core::config::RunConfigV1::fixture(3).unwrap();
+        assert_eq!(prepare(config.clone()).err().unwrap(), "RUN_ROUTE_BANK_COUNT_UNAVAILABLE");
+        let mut config = config;
+        config.capacities.route_slot_count = 2;
+        config.capacities.pinned_archive_slot_bytes -= 1;
+        assert_eq!(prepare(config).err().unwrap(), "RUN_PINNED_SLOT_ALIGNMENT");
+    }
+}
+fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool, production: bool) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
@@ -233,7 +348,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     if !world.is_power_of_two() || world > 8 || rank != local {
         return Err("TOPOLOGY".into());
     }
-    if world == 1 && crate::reference_launch::macro_depth_from_env(world)? {
+    if !production && world == 1 && crate::reference_launch::macro_depth_from_env(world)? {
         return run_macro_pass(args, warmup_completed, is_measure, manifest);
     }
     // Rendezvous by launch identity first. Config digest is agreed over the
@@ -241,6 +356,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     // instead of leaving its peer in a stale-config bootstrap timeout.
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
     let prepared = (|| -> Result<PreparedPass> {
+    if production { return prepare_production(args, rank, world); }
     let warmup_requested = crate::reference_launch::bench_warmup_for_launch(
         std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
         std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
@@ -684,6 +800,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["epoch_window"] = serde_json::json!(bfs.epoch_window());
+        value["run_contract"] = serde_json::json!(if production { "RunConfigV1" } else { "reference_bench" });
         value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         #[cfg(feature = "library-owner")]
@@ -908,6 +1025,13 @@ pub fn run(args: Vec<String>) -> Result<()> {
 pub fn run_manifest(args: Vec<String>) -> Result<()> {
     run_source(args, true)
 }
+/// Typed configuration enters the same admission, cancellation, GPU pipeline
+/// and group publication as bench. Unsupported config contracts fail in the
+/// cross-rank preparation vote, before communicator/archive construction.
+pub fn run_config(config: String, bootstrap: String, archive: String, output: String) -> Result<()> {
+    run_pass(&["mgbfs-run".into(), config, "unused".into(), bootstrap, archive, output],
+        false, true, true, true)
+}
 fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
     use crate::benchmark::{run_phases, Phase};
     if args.len() != 6 {
@@ -929,6 +1053,6 @@ fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
             &args.iter().map(String::as_str).collect::<Vec<_>>(), warmup, phase,
         )?;
         run_pass(&paths, warmup && phase == crate::reference_launch::BenchPhase::Measure,
-            phase == crate::reference_launch::BenchPhase::Measure, manifest)
+            phase == crate::reference_launch::BenchPhase::Measure, manifest, false)
     })
 }

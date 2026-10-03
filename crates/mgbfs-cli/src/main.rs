@@ -3,9 +3,23 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 fn execute() -> Result<(), (i32, String)> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|x| x.to_str()) {
+        Some("run") if args.len() == 5 => {
+            #[cfg(all(feature = "cuda", target_os = "linux"))]
+            {
+                let paths = args[1..].iter().map(|x| x.clone().into_string()
+                    .map_err(|_| (2, "CLI_RUN_ARGUMENT_ENCODING".into())))
+                    .collect::<Result<Vec<_>, _>>()?;
+                mgbfs_runtime::reference_bench::run_config(paths[0].clone(), paths[1].clone(),
+                    paths[2].clone(), paths[3].clone()).map_err(|e| (1, e))?;
+            }
+            #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+            return Err((2, "CLI_RUN_REQUIRES_LINUX_CUDA".into()));
+        }
+        Some("run") => return Err((2,
+            "CLI_USAGE: mgbfs run <config.json> <bootstrap> <archive-prefix> <output-dir>".into())),
         Some("--help") | Some("-h") if args.len() == 1 => {
             println!("mgbfs bench --manifest <matrix.json> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nManifest input uses the same benchmark runtime; it is not the production RunConfigV1 dispatcher.");
-            println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
+            println!("mgbfs run <config.json> <bootstrap> <archive-prefix> <output-dir>\nRun currently supports unit-depth matrix states, two producer banks, exact candidate slot capacity and aligned pinned slots; other contracts fail explicitly.\nmgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nHardware preflight/calibrate are not connected yet.");
         }
         Some("bench") if (args.len() == 7 || (args.len() == 8 && args[7] == "--search-only"))
             && (args[1] == "--reference" || args[1] == "--manifest") => {
