@@ -298,6 +298,16 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
 #[cfg(test)]
 mod production_tests {
     use super::*;
+    #[test]
+    fn physical_gate_fixture_has_the_independent_s4_layers() {
+        let config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
+            include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+        config.validate().unwrap();
+        assert_eq!(u128::from_le_bytes(config.seed), 20260828);
+        assert_eq!(config.graph.exact_layers(24).unwrap().iter().map(Vec::len)
+            .collect::<Vec<_>>(), vec![1, 3, 5, 6, 5, 3, 1]);
+        assert!(prepare(config).unwrap().archive_enabled);
+    }
     fn prepare(config: mgbfs_core::config::RunConfigV1) -> Result<PreparedPass> {
         let path = std::env::temp_dir().join(format!("mgbfs-production-{}-{}",
             std::process::id(), std::time::SystemTime::now()
