@@ -4,6 +4,7 @@ The external platform must own the lease deadline. No provisioning here.
 Capacity sizing is conservative, not a proof of maximum hardware capacity.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -12,7 +13,7 @@ import time
 import threading
 from pathlib import Path
 
-from bfs_tail_archive import atomic_json
+from bfs_tail_archive import atomic_json,TailArchive
 from run_tail_bfs import run
 from sweep_tail_bfs import automatic_pairs, execute
 
@@ -107,7 +108,7 @@ def pair_config(base, n, r):
     return cfg
 
 
-def tune_pair(base, source, case, runtime_env, *, query=None):
+def tune_pair(base, source, case, runtime_env, *, query=None, deadline=None, cancelled=None):
     """Native warmed admission, before creating any case archive or running BFS."""
     from vram_autotune import native_query, select_capacity
     n,r=base['n'],base['r']
@@ -121,9 +122,12 @@ def tune_pair(base, source, case, runtime_env, *, query=None):
         draft['env']['MGBFS_LIBRARY_POOL_AUTOSIZE']='1'
         return pair_config(draft,n,r)
     def probe(rows):
+        if (deadline is not None and deadline<=time.time()) or (cancelled and cancelled()):
+            raise TimeoutError('startup capacity probe deadline or cancellation')
         cfg=configuration(rows)
         if query is not None:return query(cfg)
-        return native_query(cfg,source,case.parent/(case.name+f'-query-{rows}'),runtime_env)
+        timeout=90 if deadline is None else min(90,max(.1,deadline-time.time()))
+        return native_query(cfg,source,case.parent/(case.name+f'-query-{rows}'),runtime_env,timeout=timeout)
     rows,probes=select_capacity(probe,upper)
     cfg=configuration(rows)
     pools=[x.get('library_pool_bytes') for x in probes[rows]]
@@ -140,10 +144,31 @@ def tune_pair(base, source, case, runtime_env, *, query=None):
     return cfg
 
 
+def startup_failure_snapshot(config, source, case, reason):
+    """Publish honest empty INCOMPLETE metadata when no BFS layer was started."""
+    source,case=Path(source).resolve(),Path(case)
+    binary=(source/config.get('binary_path','target/release/mgbfs')).resolve()
+    if not binary.is_relative_to(source):raise ValueError('binary outside source checkout')
+    commit=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    cfg=json.loads(json.dumps(config))
+    cfg.update(search_started=False,binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+        probe_configurations=[json.loads(p.read_text()) for p in sorted(
+            case.parent.glob(case.name+'-query-*/query-config.json'))])
+    case.mkdir(parents=True,exist_ok=False)
+    n,r=config['n'],config['r']
+    archive=TailArchive(case/'saved',n=n,r=r,start=list(range(n-r+1))+[n-r]*(r-1),
+        actions=dict(L='cyclic left rotation',R='cyclic right rotation',X='swap positions 0 and 1'),
+        program_commit=commit,launch_config=cfg,sample_interval_seconds=.05)
+    return archive.snapshot(False,reason)
+
+
 def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
     """Admission and optional matched calibration happen before the real BFS."""
-    cfg=(tune_pair(config,source,case,runtime) if config.get('native_capacity_probe')
-         else pair_config(config,config['n'],config['r']))
+    try:
+        cfg=(tune_pair(config,source,case,runtime,deadline=deadline,cancelled=cancelled)
+             if config.get('native_capacity_probe') else pair_config(config,config['n'],config['r']))
+    except Exception as error:
+        return startup_failure_snapshot(config,source,case,'startup capacity probe failed: '+str(error))
     explicit_graph=runtime.get('MGBFS_CUDA_GRAPH_BATCHES',os.environ.get('MGBFS_CUDA_GRAPH_BATCHES'))
     if explicit_graph is not None:
         cfg['env'].setdefault('MGBFS_CUDA_GRAPH_BATCHES',explicit_graph)
@@ -159,7 +184,7 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
         cfg['env']['MGBFS_CUDA_GRAPH_BATCHES']=str(decision['graph_batches'])
     remaining=deadline-time.time()
     if remaining<=0 or (cancelled and cancelled()):
-        raise TimeoutError('automatic run deadline or cancellation before BFS')
+        return startup_failure_snapshot(cfg,source,case,'automatic run deadline or cancellation before BFS')
     cfg['timeout_seconds']=min(cfg.get('timeout_seconds',120),remaining)
     return run(cfg,source,case,runtime,cancelled=cancelled)
 

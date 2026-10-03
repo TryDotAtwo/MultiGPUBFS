@@ -14,6 +14,34 @@ import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_startup_timeout_preserves_publishable_empty_incomplete_case(self):
+        from publish_tail_batch import plan
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);source=root/'source';binary=source/'target/release/mgbfs'
+            binary.parent.mkdir(parents=True);binary.write_bytes(b'fixture binary')
+            cfg=dict(n=7,r=1,world=2,env={},native_capacity_probe=True)
+            with patch.object(run_auto_tail,'tune_pair',side_effect=TimeoutError('probe deadline')),\
+                 patch.object(run_auto_tail.subprocess,'check_output',return_value='fixture-commit\n'),\
+                 patch.object(run_auto_tail,'run') as runner:
+                manifest=run_auto_tail.run_adaptive(cfg,source,root/'n7-m1',{},deadline=time.time()+60)
+            runner.assert_not_called()
+            data=json.loads(manifest.read_text())
+            self.assertEqual((data['status'],data['last_completed_layer']),('INCOMPLETE',-1))
+            self.assertEqual(data['files'],[])
+            self.assertEqual(data['layers'],[])
+            self.assertFalse(data['launch_config']['search_started'])
+            ledger=dict(configuration=dict(base=dict(run_id='fixture')),cases={'n7-m1':dict(attempted=True)})
+            payloads,manifests,size=plan(root,ledger=ledger)
+            self.assertEqual((payloads,size),([],0))
+            self.assertEqual(len(manifests),1)
+
+    def test_probe_deadline_prevents_new_native_query(self):
+        cfg=dict(n=15,r=4,world=2,env={},resource_plan=device_budget([{'free_bytes':12<<30}]))
+        with patch('vram_autotune.native_query') as query:
+            with self.assertRaises(TimeoutError):
+                tune_pair(cfg,Path('source'),Path('case'),{},deadline=time.time()-1)
+        query.assert_not_called()
+
     def test_automatic_reserve_preserves_explicit_settings_and_native_floor(self):
         self.assertEqual(run_auto_tail.automatic_reserve({},{}),str(256<<20))
         self.assertEqual(run_auto_tail.automatic_reserve({},
