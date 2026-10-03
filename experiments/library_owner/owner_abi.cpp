@@ -31,7 +31,7 @@ extern "C" int mgbfs_library_pool_create_v1(uint64_t bytes, uint64_t reserve, vo
   if (!output) return -1;
   *output = nullptr;
   try {
-    if (!bytes || bytes % 256 || reserve < (1ULL << 30) ||
+    if (!bytes || bytes % 256 || reserve < (64ULL << 20) ||
         bytes > std::numeric_limits<size_t>::max()) return -1;
     int device;
     size_t free, total;
