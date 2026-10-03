@@ -115,8 +115,15 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
                          for rank in range(config['world'])]
                 from run_tail_bfs import native_completion
                 complete,_=native_completion(ranks,limit,len(fingerprint))
+                archived=json.loads(Path(manifest).read_text())
                 samples.append(dict(configuration_identity=identity,pair=index//2,
                     graph_batches=mode,status='COMPLETE' if complete else 'PREFIX_COMPLETE',full_state_parity=True,
+                    layers=archived['layers'],archive_status=archived['status'],
+                    last_completed_layer=archived['last_completed_layer'],
+                    vram_sampling_interval_seconds=archived['vram_sampling_interval_seconds'],
+                    program_commit=archived['program_commit'],
+                    binary_sha256=archived['launch_config'].get('binary_sha256'),
+                    calibration_inputs_retained=True,
                     search_seconds=max(x.get('search_complete_seconds',x.get('search_prefix_seconds')) for x in ranks),
                     full_windows_per_rank=[(x.get('batch_graph') or {}).get('full_windows',0)
                                            for x in ranks]))
@@ -129,6 +136,8 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
                 if saved.is_symlink() or saved.resolve()!=case.resolve()/'saved' or case.resolve().parent!=root.resolve():
                     raise ValueError('calibration cleanup path outside owned case')
                 shutil.rmtree(saved)
+                samples[-1]['calibration_inputs_retained']=False
+                atomic_json(root/'decision.json',decision)
             decision.update(select_graph_profile(samples), status='CALIBRATED')
         except Exception as error:
             decision.update(status='NOT_CALIBRATED',graph_batches=0,

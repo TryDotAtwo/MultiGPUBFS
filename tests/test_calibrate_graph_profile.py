@@ -55,6 +55,9 @@ class CalibrationTests(unittest.TestCase):
             self.assertEqual(len(result['samples']),6)
             self.assertFalse((Path(d)/'calibration/run-0/saved').exists())
             self.assertTrue((Path(d)/'calibration/run-0/result/rank-0.json').exists())
+            self.assertEqual(result['samples'][0]['layers'][0]['vram_peak_bytes'],{'0':100,'1':100})
+            self.assertEqual(result['samples'][0]['vram_sampling_interval_seconds'],.05)
+            self.assertFalse(result['samples'][0]['calibration_inputs_retained'])
 
     def test_parity_failure_keeps_direct_and_evidence(self):
         self.corrupt=True
