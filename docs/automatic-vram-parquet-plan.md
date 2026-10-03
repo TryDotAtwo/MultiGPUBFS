@@ -77,3 +77,36 @@ Old scoped Vast key works for instances, has no billing_read permission. No own
 live instances were present at the checkpoint. New stages must remain within
 the added $20, independent of unconfirmed earlier billing; lease watchdogs remain
 required. States may never be downloaded to the user's computer.
+
+2026-10-03 two-RTX-3090 hardware checkpoint (source 8941007):
+
+- CUDA 12.9, pinned Cuco and Linux Rust build pass. Native Cuco pool query
+  assertions pass: no device allocation, bound covers construction, invalid
+  input clears output. The two-rank multiset oracle passes for n=5 and n=7
+  with CUB, CucoIndexed and CucoRank, prededup on and off.
+- Actual repeated native probes exposed two startup bugs: archive-free CLI
+  needs explicit --search-only; query teardown needs a collective rendezvous
+  after every rank prints/flushed its record. Both are fixed. These operations
+  run only during startup queries.
+- Archive-enabled startup used 8 MiB more VRAM than the query subprocess.
+  Selection now includes explicit query-to-run headroom (default 64 MiB), in
+  addition to the existing native 1 GiB untouched reserve. This uncertainty
+  margin is recorded in query evidence and is not a BFS-loop allocation.
+- Updated selector completed 29 two-rank queries and selected 71,204,144 rows
+  per rank for (15,4). Actual archived BFS completed depths 0..34 in the bounded
+  30-second gate. Observed peak was 24,194,842,624 bytes on each 25,296,044,032
+  byte GPU, about 95.6%, sampled every 50 ms. Status is INCOMPLETE because of
+  the deadline, not graph exhaustion. This establishes admission and useful
+  execution for this hardware/profile; it is not a universal maximum proof.
+- Complete (9,3): all 60,480 states in 30 layers independently match CPU BFS
+  layer sets. One Parquet payload of 336,876 bytes was published before its
+  manifest; HF stream readback verified SHA-256, bytes, manifest and ledger
+  at revision 4be0a4090e0a1345b9f170f7bab61116787fd383.
+- Matched (11,4), archive enabled, same capacities and 497,712,640-byte pool:
+  three alternating repeats completed all 44 layers / 1,663,200 states with
+  identical layer counts. Median search seconds: fixed pool 0.578487657,
+  native autosize 0.583000463, ratio 1.007801041. This short-workload result
+  does not prove zero overhead or performance on saturated larger layers.
+- These cards report P2P CNS. The default HostSizedNccl route was tested;
+  reusable full 32-batch CUDA Graph windows and multi-GPU LSA remain open.
+  Cross-case consolidation into shared Parquet shards also remains open.
