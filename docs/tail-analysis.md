@@ -37,7 +37,12 @@ print(rows)
 This documented example is for the diagnostic run; its buffer capacity was
 deliberately small. Local synthetic tests verify shared-case selection, depth
 selection, bounded yielded batches, width rejection and nibble order. This
-helper's HF range-read path has not yet been tested on a GPU host.
+helper's HF range-read path subsequently passed on an isolated Linux rental
+for (8,6), (17,14), and (32,31), including case/depth filtering, 8/16-byte
+decoding and batches bounded to seven rows. The retained row counts were
+56, 4080 and 32. The same host passed 47 archive tests and 15 automatic tests.
+
+Evidence: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/e597e44bfa50a744d60b7b1aaaed808fe9ec25cc/evidence/20261004-remote-analysis/report.json
 
 `ordinal` is the position within a layer, preserved for partial tails. A missing
 depth means its states were not retained, not an empty BFS layer. Determine
