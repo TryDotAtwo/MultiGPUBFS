@@ -569,7 +569,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     profiler_window_stop(profile_window)?;
     Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped))
     })();
-    if search_result.is_err() {
+    let memory_query_done = std::env::var("MGBFS_MEMORY_QUERY").ok().as_deref() == Some("1")
+        && search_result.as_ref().err().is_some_and(|error| error == "MEMORY_QUERY_DONE");
+    if memory_query_done {
+        // A query has published its record and rendezvoused; stopping it is
+        // successful control-plane work, not a peer-cancelling search failure.
+        sideband.report_success();
+        sideband.report_retired();
+    } else if search_result.is_err() {
         sideband.report_failure();
         // The failed closure no longer owns a BFS: its abort/drop has returned.
         // Constructor errors can also arrive here before a transport reader exists.
