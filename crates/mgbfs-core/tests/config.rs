@@ -1,6 +1,20 @@
 use mgbfs_core::{config::RunConfigV1, hash::Hash128};
 
 #[test]
+fn production_cuco_requires_explicit_aligned_pool_budget() {
+    let mut wire = serde_json::to_value(RunConfigV1::fixture(5).unwrap()).unwrap();
+    wire["owner_backend"] = serde_json::json!("CUCO_RANK");
+    let decode = |value| serde_json::from_value::<RunConfigV1>(value).unwrap();
+    assert_eq!(decode(wire.clone()).validate().unwrap_err(), "CONFIG_LIBRARY_POOL_REQUIRED");
+    wire["library_pool_bytes"] = serde_json::json!(257);
+    assert_eq!(decode(wire.clone()).validate().unwrap_err(), "CONFIG_LIBRARY_POOL_ALIGNMENT");
+    wire["library_pool_bytes"] = serde_json::json!(67108864);
+    decode(wire.clone()).validate().unwrap();
+    wire["owner_backend"] = serde_json::json!("CUB_SORT_MERGE");
+    assert_eq!(decode(wire).validate().unwrap_err(), "CONFIG_UNUSED_LIBRARY_POOL");
+}
+
+#[test]
 fn config_digest_survives_json_roundtrip_but_not_seed_or_rank_changes() {
     let c = RunConfigV1::fixture(5).unwrap();
     c.validate().unwrap();

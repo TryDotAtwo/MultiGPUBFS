@@ -15,6 +15,14 @@ pub enum OwnerBackend {
     BmmaBucket,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RunOwnerBackend {
+    CubSortMerge,
+    BmmaBucket,
+    CucoRank,
+}
+
 /// Reference-only dispatch; library selection cannot be coerced to a native
 /// owner. Production RunConfigV1 remains unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,7 +236,9 @@ pub struct RunConfigV1 {
     pub topology: Topology,
     pub frontier_profile: FrontierProfile,
     pub local_pre_dedup: bool,
-    pub owner_backend: OwnerBackend,
+    pub owner_backend: RunOwnerBackend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_pool_bytes: Option<u64>,
     pub generation_backend: GenerationBackend,
     pub hash_backend: HashBackend,
     #[serde(default = "default_macro_depth")]
@@ -243,6 +253,14 @@ impl RunConfigV1 {
         }
         self.graph.validate()?;
         self.topology.validate()?;
+        match (self.owner_backend, self.library_pool_bytes) {
+            (RunOwnerBackend::CucoRank, None) => return Err("CONFIG_LIBRARY_POOL_REQUIRED".into()),
+            (RunOwnerBackend::CucoRank, Some(bytes)) if bytes == 0 || bytes % 256 != 0 =>
+                return Err("CONFIG_LIBRARY_POOL_ALIGNMENT".into()),
+            (RunOwnerBackend::CucoRank, Some(_)) => {},
+            (_, Some(_)) => return Err("CONFIG_UNUSED_LIBRARY_POOL".into()),
+            (_, None) => {},
+        }
         let c = &self.capacities;
         if self.parent_batch == 0 { return Err("ROUTE_SLOT_CAPACITY".into()); }
         let operator_budget = usize::try_from(c.route_slot_records / self.parent_batch)
@@ -305,7 +323,8 @@ impl RunConfigV1 {
             },
             frontier_profile: FrontierProfile::Dense,
             local_pre_dedup: true,
-            owner_backend: OwnerBackend::CubSortMerge,
+            owner_backend: RunOwnerBackend::CubSortMerge,
+            library_pool_bytes: None,
             generation_backend: GenerationBackend::CutlassU8Sm75V1,
             hash_backend: HashBackend::GemmU8P32x4V1,
             macro_depth: 1,

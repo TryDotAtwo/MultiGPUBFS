@@ -261,14 +261,17 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
     }.to_owned();
     let pre = if config.local_pre_dedup { "ON" } else { "OFF" }.to_owned();
     let owner = match config.owner_backend {
-        mgbfs_core::config::OwnerBackend::CubSortMerge => "CUB_SORT_MERGE",
-        mgbfs_core::config::OwnerBackend::BmmaBucket => "BMMA_BUCKET",
+        mgbfs_core::config::RunOwnerBackend::CubSortMerge => "CUB_SORT_MERGE",
+        mgbfs_core::config::RunOwnerBackend::BmmaBucket => "BMMA_BUCKET",
+        mgbfs_core::config::RunOwnerBackend::CucoRank => "CUCO_RANK",
     }.to_owned();
     let hash_first_generation = if config.frontier_profile == FrontierProfile::HashFirst {
         "INT_MMA_SM75"
     } else { "SCALAR" }.to_owned();
     let selection = ReferenceSelection::parse(&profile, &owner, &pre, false, candidates, 256)?
         .with_hash_first_generation(&hash_first_generation)?.with_transport("NCCL_LSA")?;
+    let pool = config.library_pool_bytes.map(|bytes| bytes.to_string());
+    let selection = selection.with_library_pool(pool.as_deref(), cfg!(feature = "library-owner"))?;
     let cfg = DistributedConfig {
         epoch_window: 2, rank, world,
         logical_owner_to_rank: if world == 1 { vec![0, 0] } else { config.topology.logical_owner_to_rank.clone() },
@@ -298,6 +301,19 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
 #[cfg(test)]
 mod production_tests {
     use super::*;
+    #[test]
+    #[cfg(feature = "library-owner")]
+    fn typed_cuco_uses_the_declared_pool_and_existing_rank_owner() {
+        let mut config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
+            include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+        config.owner_backend = mgbfs_core::config::RunOwnerBackend::CucoRank;
+        config.library_pool_bytes = Some(96 << 20);
+        let prepared = prepare(config).unwrap();
+        assert_eq!(prepared.owner, "CUCO_RANK");
+        assert_eq!(prepared.selection.owner, mgbfs_core::config::ReferenceOwner::CucoRank);
+        assert_eq!(prepared.selection.library_pool_bytes, Some(96 << 20));
+        assert!(prepared.archive_enabled);
+    }
     #[test]
     fn physical_gate_fixture_has_the_independent_s4_layers() {
         let config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
