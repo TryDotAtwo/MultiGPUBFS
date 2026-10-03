@@ -3550,6 +3550,10 @@ impl DistributedNativeBfs {
             if graph_mode && ((scheduled_round+1)%32 == 0 || scheduled_round+1 == scheduled_rounds) {
                 self.batch_graph.as_mut().ok_or("BATCH_GRAPH_MISSING")?
                     .submit(scheduled_round%32+1)?;
+                // Captured events encode graph edges; direct tail batches need
+                // an ordinary completion record after the launched window.
+                check(unsafe { cudaEventRecord(self.owner_consumed.as_ref()
+                    .ok_or("LSA_OWNER_EVENT_MISSING")?.0, s) })?;
             }
             if device_epoch && (!graph_mode || (scheduled_round+1)%32 == 0
                 || scheduled_round+1 == scheduled_rounds) {
