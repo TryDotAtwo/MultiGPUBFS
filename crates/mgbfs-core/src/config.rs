@@ -296,7 +296,8 @@ impl RunConfigV1 {
             (c.state_ring_records, self.graph.start.len() as u64),
             (c.state_extent_descriptors, 64),
             (c.layer_hash_records_per_arena, 16),
-            (c.route_slot_records, 32),
+            (c.route_slot_records, 32u64.checked_mul(u64::from(c.route_slot_count))
+                .ok_or("BYTE_OVERFLOW")?),
             (c.pinned_archive_slot_bytes, c.pinned_archive_slots as u64),
         ] {
             count.checked_mul(stride).ok_or("BYTE_OVERFLOW")?;

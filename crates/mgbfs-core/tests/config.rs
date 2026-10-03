@@ -1,6 +1,18 @@
 use mgbfs_core::{config::RunConfigV1, hash::Hash128};
 
 #[test]
+fn preflight_rejects_aggregate_route_bank_byte_overflow() {
+    let mut config = RunConfigV1::fixture(5).unwrap();
+    // Each bank fits u64 by itself, but the declared three-bank reservation
+    // does not. Admission must reject this before any allocation or NCCL call.
+    config.capacities.route_slot_records = u64::MAX / 64;
+    config.capacities.route_slot_count = 2;
+    config.validate().unwrap();
+    config.capacities.route_slot_count = 3;
+    assert_eq!(config.validate().unwrap_err(), "BYTE_OVERFLOW");
+}
+
+#[test]
 fn production_epoch_window_is_bounded_and_part_of_run_identity() {
     let config = RunConfigV1::fixture(5).unwrap();
     let original = config.digest().unwrap();
