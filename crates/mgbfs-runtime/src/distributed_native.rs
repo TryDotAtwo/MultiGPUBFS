@@ -2935,10 +2935,6 @@ impl DistributedNativeBfs {
         }
         let mut epoch_serial = 0usize;
         for scheduled_round in 0..scheduled_rounds {
-            // Preserve the full-window executable across depths. Capturing a
-            // short tail would replace its topology, then force another rebuild
-            // at the next full window. Tail batches use ordinary launch credits.
-            let graph_mode = graph_mode && scheduled_round < (scheduled_rounds / 32) * 32;
             let _batch_range = TraceRange::new(trace_ranges, b"mgbfs.batch\0");
             self.ensure_not_cancelled()?;
             if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
