@@ -88,3 +88,18 @@ https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/3dde0515
 
 Gates 4-6 remain open: archived CLI parity, saturated speed and graph memory
 admission, real shared-cohort HF publication. The graph switch remains opt-in.
+
+Archived CLI/cohort hardware gate (2026-10-03, same 2x A4000): (7,1)
+graph off/on and (8,4) graph on each pass independent full-state verification
+of every completed layer, with actual pinned archive copies active, batch 2,
+192 archive credits. COMPLETE retains all 22 / 18 layers because these cases
+are smaller than the retention threshold. Two different pairs share one
+61,492-byte Parquet file on HF; two manifests and sweep ledger compare exactly.
+HF streamed SHA-256 readback passes. Reading that shared file on the GPU host
+and filtering each pair reproduces every packed state at every depth from the
+raw archives, without duplicates. No states were downloaded to the local host.
+Evidence readback confirmed PASS:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/9cda8c0795e1d64f05d7a1496a52c2fdfd81ee0c/evidence/20261003-graph-archive/report.json
+This is a real small cohort gate, not proof of large-shard throughput or graph
+speed. Saturated timing, graph memory admission, cancellation/archive pressure
+and automatic graph profile enablement remain open.
