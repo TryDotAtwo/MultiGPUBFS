@@ -57,3 +57,17 @@ https://docs.nvidia.com/cuda/archive/12.9.1/cuda-c-programming-guide/index.html
 https://docs.nvidia.com/cuda/archive/12.9.1/cuda-runtime-api/structcudaGraphExecUpdateResultInfo.html
 
 The active goal is not complete while these gates remain open.
+
+2026-10-03 rental observation: isolated 2x RTX A4000 instance 53942300
+confirmed bidirectional P2P OK and dispatched build of 3b29457. The build
+process PID 393 was observed alive during dependency fetch. A subsequent
+local observation gap of about 16.5 hours ended with watchdog ABSENT; an
+independent API GET also confirmed instances=null. No final build summary or
+GPU test output was recovered. Therefore this rental proves neither successful
+CUDA compilation nor graph execution. The local watchdog cannot enforce a
+hard deadline during host/network downtime; quoted cost is not billed cost.
+
+remote_build --graph-smoke-test now builds and runs the native graph test
+automatically as part of the remote job, with output in graph-test-run logs
+and a PASS field only after the expected marker. This remains opt-in and
+unverified on hardware; future test dispatch must enable it explicitly.

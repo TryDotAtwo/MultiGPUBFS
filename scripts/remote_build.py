@@ -1,6 +1,6 @@
 """Build native + cuCollections SM90 from a clean pinned Linux checkout.
 
-No GPU work, provisioning, billing control, or HF credentials are needed.
+GPU smoke tests are opt-in; no provisioning, billing control or HF credentials.
 Requires host C++ toolchain, NCCL headers/library, curl, git, tar, Python >=3.10,
 pip and venv. Dependency pins come from this checkout's validated Kaggle recipe.
 """
@@ -66,6 +66,8 @@ def main():
     parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90'), default='90')
     parser.add_argument('--nccl-lsa-root', type=Path,
                         help='explicit installed NCCL >=2.29 root for device-count transport')
+    parser.add_argument('--graph-smoke-test', action='store_true',
+                        help='build and execute the native 32-batch graph test on a GPU')
     args = parser.parse_args()
     if (sys.platform != 'linux' or sys.version_info < (3, 10) or
             not re.fullmatch('[0-9a-f]{40}', args.commit) or
@@ -193,8 +195,15 @@ def main():
                     digest.update(chunk)
                 report['nccl_library_sha256'] = digest.hexdigest()
         run([cmake, '-S', source/'cuda', '-B', native, *common,
-             '-DBUILD_TESTING=OFF', '-DCUTLASS_ROOT='+str(cutlass), *lsa_options], 'native-configure')
+             '-DBUILD_TESTING='+('ON' if args.graph_smoke_test else 'OFF'), '-DCUTLASS_ROOT='+str(cutlass), *lsa_options], 'native-configure')
         run([cmake, '--build', native, '--target', 'mgbfs_cuda', '--parallel', args.jobs], 'native-build')
+        if args.graph_smoke_test:
+            run([cmake, '--build', native, '--target', 'mgbfs-batch-graph-window-test',
+                 '--parallel', args.jobs], 'graph-test-build')
+            graph_output = run([native/'mgbfs-batch-graph-window-test'], 'graph-test-run')
+            if 'BATCH_GRAPH_32_MULTISTREAM_UPDATE_EXTERNAL_ARCHIVE_PASS' not in graph_output:
+                raise ValueError('GRAPH_SMOKE_TEST_MARKER_MISSING')
+            report['graph_smoke_test'] = 'PASS'
         env['CARGO_HOME'], env['RUSTUP_HOME'] = str(work/'cargo'), str(work/'rustup')
         installer = work/'rustup-init.sh'
         run(['curl', '--fail', '--location', '--max-time', '180', 'https://sh.rustup.rs', '-o', installer], 'rust-download')
