@@ -22,6 +22,7 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
         for prededup in [false, true] {
             for reversed in [false, true] {
                 let mut expected = LrxMultiset::new(n, r).unwrap().exact_layers(8192).unwrap();
+                let expected_depths = expected.len();
                 let mut id = [0u8;128];
                 assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
                 let workers: Vec<_> = (0..2).map(|rank| std::thread::spawn(move || {
@@ -41,6 +42,8 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
                         let trace_depths = std::env::var_os("MGBFS_TEST_GRAPH_DEPTH_TRACE").is_some();
                         loop {
                             layers.push(bfs.snapshot().unwrap());
+                            assert!(layers.len() <= expected_depths,
+                                "graph traversal exceeded exact CPU diameter n={n} r={r} rank={rank}");
                             if trace_depths {
                                 eprintln!("GRAPH_DEPTH_BEGIN rank={rank} n={n} r={r} depth={}", layers.len()-1);
                             }
