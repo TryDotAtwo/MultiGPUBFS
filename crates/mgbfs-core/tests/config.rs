@@ -1,6 +1,22 @@
 use mgbfs_core::{config::RunConfigV1, hash::Hash128};
 
 #[test]
+fn production_epoch_window_is_bounded_and_part_of_run_identity() {
+    let config = RunConfigV1::fixture(5).unwrap();
+    let original = config.digest().unwrap();
+    let mut wire = serde_json::to_value(config).unwrap();
+    wire["completion_epoch_window"] = serde_json::json!(3);
+    let config: RunConfigV1 = serde_json::from_value(wire.clone()).unwrap();
+    config.validate().unwrap();
+    assert_ne!(original, config.digest().unwrap());
+    for value in [0, 1] {
+        wire["completion_epoch_window"] = serde_json::json!(value);
+        let config: RunConfigV1 = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(config.validate().unwrap_err(), "CONFIG_EPOCH_WINDOW");
+    }
+}
+
+#[test]
 fn legacy_native_config_keeps_its_frozen_digest_without_a_pool_field() {
     let config: RunConfigV1 = serde_json::from_str(
         include_str!("../../../tests/run-s4-two-rank.json")).unwrap();

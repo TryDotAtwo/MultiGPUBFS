@@ -33,6 +33,15 @@ def configure_hash_seed(env, value):
     return seed
 
 
+def configure_run_epoch_window(env, config, requested=None):
+    window = config.get('completion_epoch_window', 2)
+    if type(window) is not int or not 2 <= window <= 0xffffffff:
+        raise ValueError('RUN_REPLAY_EPOCH_WINDOW_INVALID')
+    if requested is not None and requested != window:
+        raise ValueError('RUN_REPLAY_EPOCH_WINDOW_MISMATCH')
+    return configure_epoch_window(env, window)
+
+
 def rank_arguments(case, reference_group, batch, run_config=None):
     paths = [str(case / 'bootstrap'), str(case / 'archive'), str(case / 'result')]
     if run_config is not None:
@@ -231,7 +240,8 @@ def main():
         seed_environment = {}
         seed_hex = configure_hash_seed(seed_environment, args.hash_seed_hex)
         epoch_environment = dict(os.environ)
-        epoch_window = configure_epoch_window(epoch_environment, args.epoch_window)
+        epoch_window = (2 if args.run_config is not None else
+                        configure_epoch_window(epoch_environment, args.epoch_window))
     except ValueError as error:
         parser.error(str(error))
     if args.batch < 1:
@@ -253,9 +263,7 @@ def main():
                 raise ValueError('RUN_REPLAY_ORACLE_MODULUS_MISMATCH')
             seed_hex = f"{int.from_bytes(bytes(config['seed']), 'little'):032x}"
             configure_hash_seed(seed_environment, seed_hex)
-            if args.epoch_window not in (None, 2):
-                raise ValueError('RUN_REPLAY_EPOCH_WINDOW_FIXED_TWO')
-            epoch_window = 2
+            epoch_window = configure_run_epoch_window(epoch_environment, config, args.epoch_window)
             args.batch = config['parent_batch']
             args.profile = config['frontier_profile']
             args.owner_backend = config['owner_backend']

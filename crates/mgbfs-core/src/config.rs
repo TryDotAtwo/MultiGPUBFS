@@ -243,6 +243,8 @@ pub struct RunConfigV1 {
     pub hash_backend: HashBackend,
     #[serde(default = "default_macro_depth")]
     pub macro_depth: u32,
+    #[serde(default = "default_epoch_window", skip_serializing_if = "is_default_epoch_window")]
+    pub completion_epoch_window: u32,
     pub parent_batch: u64,
     pub capacities: Capacities,
 }
@@ -253,6 +255,7 @@ impl RunConfigV1 {
         }
         self.graph.validate()?;
         self.topology.validate()?;
+        if self.completion_epoch_window < 2 { return Err("CONFIG_EPOCH_WINDOW".into()); }
         match (self.owner_backend, self.library_pool_bytes) {
             (RunOwnerBackend::CucoRank, None) => return Err("CONFIG_LIBRARY_POOL_REQUIRED".into()),
             (RunOwnerBackend::CucoRank, Some(bytes)) if bytes == 0 || bytes % 256 != 0 =>
@@ -328,6 +331,7 @@ impl RunConfigV1 {
             generation_backend: GenerationBackend::CutlassU8Sm75V1,
             hash_backend: HashBackend::GemmU8P32x4V1,
             macro_depth: 1,
+            completion_epoch_window: 2,
             parent_batch: 16384,
             capacities: Capacities {
                 state_ring_records: 1 << 20,
@@ -348,3 +352,6 @@ impl RunConfigV1 {
 fn default_macro_depth() -> u32 {
     1
 }
+
+fn default_epoch_window() -> u32 { 2 }
+fn is_default_epoch_window(value: &u32) -> bool { *value == 2 }

@@ -4,6 +4,16 @@ from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_typed_epoch_window_is_authoritative_not_inherited(self):
+        from replay_lsa_cancel_candidate import configure_run_epoch_window
+        env = {'MGBFS_EPOCH_WINDOW': 'invalid-inherited-value'}
+        self.assertEqual(configure_run_epoch_window(env, {'completion_epoch_window': 3}), 3)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '3')
+        self.assertEqual(configure_run_epoch_window(env, {}), 2)
+        self.assertEqual(configure_run_epoch_window(env, {'completion_epoch_window': 4}, 4), 4)
+        with self.assertRaises(ValueError):
+            configure_run_epoch_window(env, {'completion_epoch_window': 3}, 4)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '4')
     def test_typed_cuco_uses_snapshot_pool_not_benchmark_or_inherited_pool(self):
         env = {'MGBFS_LIBRARY_POOL_BYTES': '123', 'sentinel': 'keep'}
         configure_owner_environment(env, 'CUCO_RANK', '1,0',

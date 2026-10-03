@@ -273,7 +273,8 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
     let pool = config.library_pool_bytes.map(|bytes| bytes.to_string());
     let selection = selection.with_library_pool(pool.as_deref(), cfg!(feature = "library-owner"))?;
     let cfg = DistributedConfig {
-        epoch_window: 2, rank, world,
+        epoch_window: usize::try_from(config.completion_epoch_window)
+            .map_err(|_| "RUN_EPOCH_WINDOW_ABI")?, rank, world,
         logical_owner_to_rank: if world == 1 { vec![0, 0] } else { config.topology.logical_owner_to_rank.clone() },
         transport: ReferenceTransport::Lsa, batch, layer_capacity: capacity,
         state_ring_capacity: future,
@@ -308,10 +309,13 @@ mod production_tests {
             include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
         config.owner_backend = mgbfs_core::config::RunOwnerBackend::CucoRank;
         config.library_pool_bytes = Some(96 << 20);
+        config.completion_epoch_window = 3;
         let prepared = prepare(config).unwrap();
         assert_eq!(prepared.owner, "CUCO_RANK");
         assert_eq!(prepared.selection.owner, mgbfs_core::config::ReferenceOwner::CucoRank);
         assert_eq!(prepared.selection.library_pool_bytes, Some(96 << 20));
+        assert_eq!(prepared.cfg.epoch_window, 3);
+        assert_eq!(prepared.cfg.state_ring_capacity, 128);
         assert!(prepared.archive_enabled);
     }
     #[test]
