@@ -84,7 +84,12 @@ fn execute() -> Result<(), (i32, String)> {
 
 fn main() {
     if let Err((code, error)) = execute() {
-        eprintln!("{}", serde_json::json!({"status": "ERROR", "error": error}));
+        // Formatting Value directly into stderr issues several small writes.
+        // torchrun ranks share the pipe, so their JSON tokens can interleave.
+        // Serialize first; short terminal records fit one atomic pipe write.
+        // Leading newline also isolates JSON from a peer's partial trace line.
+        let line=format!("\n{}\n",serde_json::json!({"status":"ERROR","error":error}));
+        let _=std::io::Write::write_all(&mut std::io::stderr(),line.as_bytes());
         std::process::exit(code);
     }
 }
