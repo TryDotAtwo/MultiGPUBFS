@@ -1,6 +1,23 @@
 use mgbfs_core::{config::RunConfigV1, hash::Hash128};
 
 #[test]
+fn legacy_native_config_keeps_its_frozen_digest_without_a_pool_field() {
+    let config: RunConfigV1 = serde_json::from_str(
+        include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+    // Independently SHA256'd compact pre-CUCO fixture, in its declared wire order.
+    let digest = config.digest().unwrap().iter().map(|x| format!("{x:02x}"))
+        .collect::<String>();
+    assert_eq!(digest, "dd509823ba8d382ee8de7ca80e6aa483d4dfa17cc053a13eba601b4bbb38ea3c");
+    assert!(serde_json::to_value(&config).unwrap().get("library_pool_bytes").is_none());
+    let mut cuco = config;
+    cuco.owner_backend = mgbfs_core::config::RunOwnerBackend::CucoRank;
+    cuco.library_pool_bytes = Some(64 << 20);
+    let first = cuco.digest().unwrap();
+    cuco.library_pool_bytes = Some(96 << 20);
+    assert_ne!(first, cuco.digest().unwrap());
+}
+
+#[test]
 fn production_cuco_requires_explicit_aligned_pool_budget() {
     let mut wire = serde_json::to_value(RunConfigV1::fixture(5).unwrap()).unwrap();
     wire["owner_backend"] = serde_json::json!("CUCO_RANK");
