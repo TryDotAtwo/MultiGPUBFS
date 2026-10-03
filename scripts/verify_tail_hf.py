@@ -43,7 +43,12 @@ def main():
         path = PurePosixPath(entry['path'])
         if path.is_absolute() or '..' in path.parts or '\\' in entry['path']:
             raise ValueError('unsafe manifest path')
-        with session.get(url(entry['path']), stream=True, timeout=(30, 120)) as response:
+        remote = entry.get('repo_path', prefix+entry['path'])
+        remote_path = PurePosixPath(remote)
+        if remote_path.is_absolute() or '..' in remote_path.parts or '\\' in remote:
+            raise ValueError('unsafe repository payload path')
+        with session.get(hf_hub_url(args.repo_id, remote, repo_type='dataset', revision=revision),
+                         stream=True, timeout=(30, 120)) as response:
             total += verify_payload(response, entry)
     print(json.dumps(dict(repo_id=args.repo_id, run_id=args.run_id, revision=revision,
                          files=len(manifest['files']), bytes=total,

@@ -8,6 +8,28 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 
+def publication_cases(root, ledger):
+    format_ = ledger['configuration']['base'].get('archive_format', 'packed')
+    if format_ == 'parquet_cohort':
+        try:
+            from .tail_cohort import publication_cases as cohorts
+        except ImportError:
+            from tail_cohort import publication_cases as cohorts
+        return cohorts(root, ledger)
+    try:
+        from .tail_parquet import publication_root
+    except ImportError:
+        from tail_parquet import publication_root
+    result = {}
+    for key, record in ledger['cases'].items():
+        if key in ('', '.', '..') or '/' in key or '\\' in key:
+            raise ValueError('unsafe case key')
+        if record.get('attempted', True):
+            base = publication_root(Path(root)/key/'saved', format_)
+            result[key] = (base, base/'manifest.json')
+    return result
+
+
 def plan(root, max_bytes=25_000_000_000, *, ledger=None):
     root=Path(root).resolve()
     if ledger is None:ledger=json.loads((root/'sweep.json').read_text())
@@ -15,17 +37,13 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
     if not isinstance(run_id,str) or '/' in run_id or '\\' in run_id or run_id in ('','.','..'):
         raise ValueError('unsafe sweep run ID')
     payloads,manifests,total=[],[],0
+    cases = publication_cases(root, ledger)
+    seen = {}
     for key,record in ledger['cases'].items():
         if '/' in key or '\\' in key or key in ('','.','..'):
             raise ValueError('unsafe case key')
         if not record.get('attempted',True):continue
-        try:
-            from .tail_parquet import publication_root
-        except ImportError:
-            from tail_parquet import publication_root
-        base=publication_root(root/key/'saved',
-            ledger['configuration']['base'].get('archive_format','packed'))
-        manifest_path=base/'manifest.json'
+        base, manifest_path = cases[key]
         manifest=json.loads(manifest_path.read_text())
         prefix='tail-runs/'+run_id+'-'+key+'/'
         for entry in manifest['files']:
@@ -35,6 +53,16 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
             path=(base/entry['path']).resolve()
             if not path.is_relative_to(base.resolve()):
                 raise ValueError('payload escapes case root')
+            remote = entry.get('repo_path', prefix+entry['path'])
+            repo_path = PurePosixPath(remote)
+            if repo_path.is_absolute() or '..' in repo_path.parts or '\\' in remote:
+                raise ValueError('unsafe repository payload path')
+            signature = (entry['bytes'], entry['sha256'])
+            if remote in seen:
+                if seen[remote] != signature:
+                    raise ValueError('conflicting shared payload')
+                continue
+            seen[remote] = signature
             digest=hashlib.sha256()
             with path.open('rb') as stream:
                 for chunk in iter(lambda:stream.read(4<<20),b''):digest.update(chunk)
@@ -42,7 +70,7 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
                 raise ValueError('staged payload checksum mismatch')
             total+=entry['bytes']
             if max_bytes is not None and total>max_bytes:raise ValueError('batch byte bound exceeded')
-            payloads.append((path,prefix+entry['path']))
+            payloads.append((path,remote))
         manifests.append((manifest_path,prefix+'manifest.json'))
     return payloads,manifests,total
 

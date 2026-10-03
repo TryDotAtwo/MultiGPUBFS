@@ -158,25 +158,34 @@ def verify_hf(root, repo, api, token):
             time.sleep(wait)
         raise RuntimeError('HF readback unavailable')
     work = []
+    from publish_tail_batch import publication_cases
+    publications = publication_cases(root, ledger)
+    seen_payloads = {}
     for key, record in ledger['cases'].items():
         if not record.get('attempted'): continue
-        from tail_parquet import publication_root
-        saved=publication_root(root/key/'saved',
-            ledger['configuration']['base'].get('archive_format','packed'))
-        local = json.loads((saved/'manifest.json').read_text())
+        saved, manifest_path = publications[key]
+        local = json.loads(manifest_path.read_text())
         prefix = 'tail-runs/'+run_id+'-'+key+'/'
         with get(session,hf_hub_url(repo, prefix+'manifest.json',
                 repo_type='dataset', revision=revision),
                 timeout=60) as response:
             response.raise_for_status()
             if response.json() != local: raise ValueError('HF manifest differs')
-        work.extend((prefix, entry) for entry in local['files'])
+        for entry in local['files']:
+            remote = entry.get('repo_path', prefix+entry['path'])
+            signature = (entry['bytes'], entry['sha256'])
+            if remote in seen_payloads:
+                if seen_payloads[remote] != signature:
+                    raise ValueError('conflicting shared HF payload')
+                continue
+            seen_payloads[remote] = signature
+            work.append((remote, entry))
     def check(item):
-        prefix, entry = item
+        remote, entry = item
         if not hasattr(locals_,'session'):
             locals_.session=requests.Session()
             locals_.session.headers['Authorization']='Bearer '+token
-        with get(locals_.session,hf_hub_url(repo, prefix+entry['path'],
+        with get(locals_.session,hf_hub_url(repo, remote,
                 repo_type='dataset', revision=revision), stream=True,
                 timeout=(30,120)) as response:
             return verify_payload(response, entry)
@@ -223,7 +232,7 @@ def main(cancelled=None):
             inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
         from streamed_bfs_launcher import available_host_bytes
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
-            archive_format='parquet',
+            archive_format='parquet_cohort',
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(

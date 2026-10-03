@@ -120,3 +120,21 @@ required. States may never be downloaded to the user's computer.
   GET and the independent watchdog confirmed ABSENT. Exact billed charges
   remain unavailable with the scoped key; the quote and enforced lease deadline
   are separate from a billed-cost claim.
+
+2026-10-03 cohort implementation checkpoint:
+
+New automatic configurations use parquet_cohort: groups of up to 20 completed
+cases share content-addressed payloads, separated by packed width. Conversion
+streams packed inputs directly, bounded to 262144 rows, avoiding intermediate
+per-case Parquet copies. Manifests retain case-specific raw-byte retention,
+statistics, packing, launch metadata and complete/partial layer offsets. Shared
+file entries record physical total rows, case rows and exact file row spans.
+Payload planning and HF readback deduplicate shared repository paths. Complete
+groups reuse their cache as the sweep grows; resumable partial groups receive
+new immutable paths. Payload commits precede all corresponding manifests.
+
+42 tail tests plus 7 automatic-run tests pass, including 20 cases sharing one
+payload, mixed packed widths, shard boundaries, partial offsets, unchanged
+group reuse, corruption rejection, ordered publication and shared readback.
+These are CPU and mocked-HF integration gates; actual remote cohort publication
+remains open. Full reusable 32-batch CUDA Graph windows remain unimplemented.
