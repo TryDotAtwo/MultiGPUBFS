@@ -2908,11 +2908,15 @@ impl DistributedNativeBfs {
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
         let device_epoch = self.lsa_view.is_some() && self.rank_owner_mode();
-        let graph_mode = self.batch_graph.is_some();
-        if graph_mode && (!device_epoch || self.hash_first.is_some() || trace_sync
+        let graph_requested = self.batch_graph.is_some();
+        if graph_requested && (!device_epoch || self.hash_first.is_some() || trace_sync
             || std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_some()) {
             return Err("BATCH_GRAPH_REQUIRES_DENSE_DEVICE_COUNT_RANK_OWNER".into());
         }
+        // Small frontiers cannot fill one window. Keep their existing direct
+        // launch path instead of capturing/reinstantiating a short graph at
+        // every early/late depth. This decision is shared once per layer.
+        let graph_mode = graph_requested && scheduled_rounds >= 32;
         if graph_mode {
             if let Some(a) = archive.as_deref() {
                 let credits = crate::reference_launch::graph_archive_credits(
