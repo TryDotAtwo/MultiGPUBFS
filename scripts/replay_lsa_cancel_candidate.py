@@ -136,7 +136,8 @@ def u_reference_layers(n, modulus):
 
 
 def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
-                            expected_epoch_window=None):
+                            expected_epoch_window=None, expected_config_digest=None,
+                            expected_run_contract=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -152,6 +153,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
                 raise ValueError('PROCESS_ORACLE_SHAPE')
             if digest is not None and config != digest:
                 raise ValueError('PROCESS_ORACLE_CONFIG')
+            if expected_config_digest is not None and config != expected_config_digest:
+                raise ValueError('PROCESS_ORACLE_REQUESTED_CONFIG')
             digest = config
             for index in range(count):
                 state = payload[index * width:(index + 1) * width]
@@ -165,6 +168,10 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
             raise ValueError('PROCESS_ORACLE_HASH_SEED')
         if expected_epoch_window is not None and result.get('epoch_window') != expected_epoch_window:
             raise ValueError('PROCESS_ORACLE_EPOCH_WINDOW')
+        if expected_run_contract is not None and result.get('run_contract') != expected_run_contract:
+            raise ValueError('PROCESS_ORACLE_RUN_CONTRACT')
+        if expected_config_digest is not None and result.get('bootstrap_digest') != list(bytes.fromhex(expected_config_digest)):
+            raise ValueError('PROCESS_ORACLE_BOOTSTRAP_CONFIG')
         if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
             raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
     if actual != expected:
@@ -287,6 +294,16 @@ def main():
             "-p", "mgbfs-cli", "--features", "cuda,library-owner"],
             cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT,
             timeout=600, check=True)
+    expected_config_digest = None
+    if config_snapshot is not None:
+        preflight = subprocess.check_output([str(source / 'target/debug/mgbfs'),
+            'preflight', '--offline', str(config_snapshot)], cwd=source, env=env, text=True)
+        admission = json.loads(preflight)
+        if admission.get('status') != 'CONFIG_VALIDATED':
+            raise ValueError('RUN_REPLAY_CONFIG_NOT_VALIDATED')
+        expected_config_digest = admission['config_digest']
+        report['expected_config_digest'] = expected_config_digest
+        save()
     env.update(MGBFS_OWNER_BACKEND=args.owner_backend, MGBFS_TRACE_FAILURE_TEARDOWN="1",
         MGBFS_PROFILE=args.profile,
         MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8",
@@ -372,7 +389,8 @@ def main():
                 if row["pass"]:
                     row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
                         modulus=args.unitriangular_modulus, expected_seed=seed_hex,
-                        expected_epoch_window=epoch_window)
+                        expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
+                        expected_run_contract='RunConfigV1' if config_snapshot is not None else None)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")

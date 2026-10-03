@@ -12,7 +12,8 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
-    def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None):
+    def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
+              expected_config_digest=None, expected_run_contract=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -33,7 +34,8 @@ class ProcessOracleTests(unittest.TestCase):
                 counts = [sum(d == depth for d, _ in rows[rank])
                           for depth in range(len(expected))]
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
-                              hash_seed_hex='00000000000000000000000000000001', epoch_window=3)
+                              hash_seed_hex='00000000000000000000000000000001', epoch_window=3,
+                              run_contract='RunConfigV1', bootstrap_digest=list(bytes.fromhex('ab' * 32)))
                 if result_mutation:
                     result_mutation(rank, record)
                 (root / f'result/rank-{rank}.json').write_text(json.dumps(record))
@@ -53,7 +55,23 @@ class ProcessOracleTests(unittest.TestCase):
                 pieces.append(item)
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
             return replay.verify_process_archives(root, expected_seed=expected_seed,
-                expected_epoch_window=expected_epoch_window)
+                expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
+                expected_run_contract=expected_run_contract)
+
+    def test_typed_run_evidence_must_match_requested_contract_and_digest(self):
+        self.assertEqual(self.check(expected_config_digest='ab' * 32,
+            expected_run_contract='RunConfigV1')['unique_states'], 24)
+        with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_REQUESTED_CONFIG'):
+            self.check(expected_config_digest='cd' * 32)
+        for rank in (0, 1):
+            for key, value, error in [('run_contract', 'reference_bench', 'PROCESS_ORACLE_RUN_CONTRACT'),
+                                      ('bootstrap_digest', [0] * 32, 'PROCESS_ORACLE_BOOTSTRAP_CONFIG')]:
+                def change(current, record):
+                    if current == rank:
+                        record[key] = value
+                with self.assertRaisesRegex(ValueError, error):
+                    self.check(result_mutation=change, expected_config_digest='ab' * 32,
+                        expected_run_contract='RunConfigV1')
 
     def test_requested_epoch_window_matches_both_ranks(self):
         self.assertEqual(self.check(expected_epoch_window=3)['unique_states'], 24)
