@@ -1,5 +1,10 @@
 # Automatic VRAM, bounded CUDA Graphs, analytical archives
 
+Earlier checkpoints below are historical. Current automatic/HF/release evidence
+is recorded in [the automatic and release gate](validation/2026-10-03-automatic-and-release.md)
+and [the repeated-query gate](validation/2026-10-03-memory-query-rendezvous.md).
+Remaining target-hardware checks must be assessed against those newer results.
+
 Active goal requested 2026-10-03. Isolated branch `codex/bfs-tail-archive`.
 
 ## Implemented checkpoint

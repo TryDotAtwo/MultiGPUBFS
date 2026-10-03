@@ -1,5 +1,10 @@
 # 32-batch CUDA Graph hardware gate
 
+Earlier checkpoints below are historical. Current automatic/HF/release evidence
+is recorded in [the automatic and release gate](validation/2026-10-03-automatic-and-release.md)
+and [the repeated-query gate](validation/2026-10-03-memory-query-rendezvous.md).
+Remaining target-hardware checks must be assessed against those newer results.
+
 Explicit switch: `MGBFS_CUDA_GRAPH_BATCHES=32`; default remains 0 until the
 hardware gates pass. Bootstrap includes this value so all ranks agree. The
 initial implementation requires DENSE rank-owner device-count epochs with

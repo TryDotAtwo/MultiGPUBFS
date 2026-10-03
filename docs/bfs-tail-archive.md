@@ -28,10 +28,12 @@ Failed final publication still writes a local run summary and retains local
 snapshots/pinned inputs for retry. Host-credit sizing accounts for reclaimable
 clean file cache inside cgroup limits; dirty/writeback pages remain reserved.
 
-Completed cohorts publish in the background, approximately every 20 attempted
-pairs. Only queued ledgers are coalesced; each in-flight ledger is frozen before
+Completed cohorts publish in the background, after 20 attempted
+pairs or a target of 2 decimal GB of packed states in a closed group. Only queued ledgers are coalesced; each in-flight ledger is frozen before
 payload planning. Completed case files remain immutable on GPU-host SSD through
-publication and streamed HF checksum readback. The final report verifies every
+publication and streamed HF checksum readback. Verified closed groups then
+release local state files, preserving metadata and durable receipts for reuse.
+The final report verifies every
 manifest, all retained payloads, and the full ledger including skipped pairs.
 Nothing in this command downloads states to the user's computer.
 
