@@ -116,3 +116,12 @@ rebuilds per rank, versus 24-25 in the original all-window capture path.
 Hardware PASS readback:
 https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/c010703f76555ad1abf156995075c2195a51fd2c/evidence/20261003-graph-gen-bridge/tail-graph-gen-bridge-report.json
 Speed and archived parity of this new version remain under test.
+
+04b74cc archived timing gate on (11,4), batch 1024, 2048 pinned credits:
+six alternating runs (three per mode), complete sorted packed-state equality
+at every depth across all runs. Graph median 0.963307146 s, direct median
+0.939719612 s, ratio 1.0251006084 (+2.51%). Captured windows per rank 15,
+executable rebuilds 1 and updates 14. Therefore this workload does not prove
+no slowdown; Graph remains opt-in. This supersedes neither larger-workload
+measurements nor startup profile selection, both still open. HF readback PASS:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/26dfe515b074febdd966776cad9ecf528fda8474/evidence/20261003-graph-speed-gen-bridge/report.json
