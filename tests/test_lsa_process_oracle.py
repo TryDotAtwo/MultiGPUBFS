@@ -14,7 +14,7 @@ from test_export_hf_dataset import frame
 class ProcessOracleTests(unittest.TestCase):
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
               expected_config_digest=None, expected_run_contract=None, expected_route_banks=None,
-              require_bank_reuse=False):
+              require_bank_reuse=False, marker_mutation=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -37,6 +37,7 @@ class ProcessOracleTests(unittest.TestCase):
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
                               hash_seed_hex='00000000000000000000000000000001', epoch_window=3,
                               run_contract='RunConfigV1', route_banks=3, route_bank_reuses=2,
+                              rank=rank, world_size=2, archive_commit_scope='file_fsync',
                               bootstrap_digest=list(bytes.fromhex('ab' * 32)))
                 if result_mutation:
                     result_mutation(rank, record)
@@ -56,10 +57,46 @@ class ProcessOracleTests(unittest.TestCase):
                 item, _ = frame(chain, sequence, 3, len(counts), sum(counts), b'')
                 pieces.append(item)
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
+            marker = dict(schema='mgbfs-group-run-commit-v1', status='COMPLETE', world_size=2,
+                          bootstrap_digest=list(bytes.fromhex('ab' * 32)),
+                          archive_commit_scope='file_fsync', rank_sha256=[
+                              list(hashlib.sha256((root / f'result/rank-{r}.json').read_bytes()).digest())
+                              for r in range(2)])
+            if marker_mutation:
+                marker_mutation(marker)
+            if marker is not None and marker.get('schema') != 'omit-marker':
+                (root / 'result/group-complete.json').write_text(json.dumps(marker))
             return replay.verify_process_archives(root, expected_seed=expected_seed,
                 expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
                 expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks,
                 require_bank_reuse=require_bank_reuse)
+
+    def test_group_commit_must_authenticate_exact_rank_results_and_scope(self):
+        for key, value in [('schema', 'omit-marker'), ('schema', 'unknown'), ('status', 'INCOMPLETE'),
+                           ('world_size', 1), ('bootstrap_digest', [0] * 32),
+                           ('archive_commit_scope', 'search_only'), ('rank_sha256', []),
+                           ('rank_sha256', [[0] * 32, [0] * 32])]:
+            def change(marker):
+                marker[key] = value
+            with self.subTest(key=key, value=value):
+                with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_GROUP_COMMIT'):
+                    self.check(marker_mutation=change)
+
+    def test_per_rank_identity_and_archive_scope_are_required(self):
+        for key, value in [('rank', 9), ('world_size', 1), ('archive_commit_scope', 'search_only')]:
+            def change(rank, record):
+                if rank == 1:
+                    record[key] = value
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_RANK_IDENTITY_OR_SCOPE'):
+                    self.check(result_mutation=change)
+
+    def test_group_commit_also_requires_each_rank_bootstrap_to_match_archive(self):
+        def change(rank, record):
+            if rank == 1:
+                record['bootstrap_digest'] = [0] * 32
+        with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_GROUP_COMMIT'):
+            self.check(result_mutation=change)
 
     def test_reuse_gate_requires_positive_aggregate_actual_reuse(self):
         self.assertEqual(self.check(require_bank_reuse=True)['route_bank_reuses'], [2, 2])

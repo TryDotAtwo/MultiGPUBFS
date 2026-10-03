@@ -184,6 +184,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
     actual = [set() for _ in expected]
     visited, digest = set(), None
     bank_reuses = []
+    rank_hashes = []
+    rank_digests = []
     for rank in range(world):
         local = [0] * len(expected)
         for depth, width, count, payload, config in frame_reader(
@@ -202,7 +204,10 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
                 visited.add(state)
                 actual[depth].add(state)
                 local[depth] += 1
-        result = json.loads((case / f'result/rank-{rank}.json').read_text())
+        result_bytes = (case / f'result/rank-{rank}.json').read_bytes()
+        result = json.loads(result_bytes)
+        rank_hashes.append(list(hashlib.sha256(result_bytes).digest()))
+        rank_digests.append(result.get('bootstrap_digest'))
         if expected_seed is not None and result.get('hash_seed_hex') != expected_seed:
             raise ValueError('PROCESS_ORACLE_HASH_SEED')
         if expected_epoch_window is not None and result.get('epoch_window') != expected_epoch_window:
@@ -219,10 +224,25 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
             raise ValueError('PROCESS_ORACLE_BOOTSTRAP_CONFIG')
         if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
             raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
+        if (type(result.get('rank')) is not int or result['rank'] != rank or
+                type(result.get('world_size')) is not int or result['world_size'] != world or
+                result.get('archive_commit_scope') != 'file_fsync'):
+            raise ValueError('PROCESS_ORACLE_RANK_IDENTITY_OR_SCOPE')
     if actual != expected:
         raise ValueError('PROCESS_ORACLE_LAYER')
     if require_bank_reuse and not any(bank_reuses):
         raise ValueError('PROCESS_ORACLE_ROUTE_BANK_REUSE')
+    try:
+        marker = json.loads((case / 'result/group-complete.json').read_bytes())
+    except (OSError, ValueError) as error:
+        raise ValueError('PROCESS_ORACLE_GROUP_COMMIT') from error
+    if (not isinstance(marker, dict) or marker.get('schema') != 'mgbfs-group-run-commit-v1' or
+            marker.get('status') != 'COMPLETE' or type(marker.get('world_size')) is not int or
+            marker['world_size'] != world or marker.get('archive_commit_scope') != 'file_fsync' or
+            marker.get('bootstrap_digest') != list(bytes.fromhex(digest)) or
+            marker.get('rank_sha256') != rank_hashes or
+            any(value != list(bytes.fromhex(digest)) for value in rank_digests)):
+        raise ValueError('PROCESS_ORACLE_GROUP_COMMIT')
     return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)), route_bank_reuses=bank_reuses,
                 scope=f'{world} independent rank-process archives; full canonical states at every depth')
 
