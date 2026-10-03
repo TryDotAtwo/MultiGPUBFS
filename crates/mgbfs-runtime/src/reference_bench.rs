@@ -349,7 +349,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let default_bucket_capacity =
         crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
     let cfg = DistributedConfig {
-        untouched_vram_reserve: 1 << 30,
+        untouched_vram_reserve: crate::reference_launch::vram_reserve_bytes(
+            std::env::var("MGBFS_VRAM_RESERVE_BYTES").ok().as_deref())?,
         rank,
         world,
         logical_owner_to_rank: rank_map,

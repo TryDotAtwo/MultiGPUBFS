@@ -1,6 +1,17 @@
 use mgbfs_runtime::reference_launch::macro_depth_for_launch;
 
 #[test]
+fn reserve_is_explicit_with_driver_headroom_and_rejects_invalid_bytes() {
+    use mgbfs_runtime::reference_launch::vram_reserve_bytes as reserve;
+    assert_eq!(reserve(None).unwrap(), 1 << 30);
+    assert_eq!(reserve(Some("268435456")).unwrap(), 256 << 20);
+    assert_eq!(reserve(Some("67108864")).unwrap(), 64 << 20);
+    for value in ["0", "1", "67108863", "-1", "bad", "18446744073709551616"] {
+        assert_eq!(reserve(Some(value)).unwrap_err(), "ENV_MGBFS_VRAM_RESERVE_BYTES");
+    }
+}
+
+#[test]
 fn full_graph_window_policy_is_explicit_and_cluster_agreed() {
     use mgbfs_runtime::reference_launch::graph_batches;
     assert_eq!(graph_batches(None).unwrap(), 0);

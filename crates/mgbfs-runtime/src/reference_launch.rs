@@ -1,5 +1,15 @@
 use mgbfs_core::Result;
 
+/// Startup-only reserve; native admission still checks warmed free memory.
+pub fn vram_reserve_bytes(value: Option<&str>) -> Result<u64> {
+    let bytes = value.unwrap_or("1073741824").parse::<u64>()
+        .map_err(|_| "ENV_MGBFS_VRAM_RESERVE_BYTES")?;
+    if bytes < 64 << 20 {
+        return Err("ENV_MGBFS_VRAM_RESERVE_BYTES".into());
+    }
+    Ok(bytes)
+}
+
 /// Explicit full-window capture policy. Legacy submissions remain the default
 /// until the multi-rank graph/archive hardware acceptance gates pass.
 pub fn graph_batches(value: Option<&str>) -> Result<u32> {
