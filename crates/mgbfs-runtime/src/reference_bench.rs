@@ -379,6 +379,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         batch,
         layer_capacity: capacity,
         state_ring_capacity: future,
+        state_descriptor_capacity: env_u32("MGBFS_STATE_DESCRIPTOR_CAPACITY", future)?,
         buckets,
         shards,
         job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4)?,
@@ -396,6 +397,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
         "epoch_window": cfg.epoch_window,
+        "state_descriptor_capacity": cfg.state_descriptor_capacity,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
         "warmup_requested": warmup_requested,
@@ -682,6 +684,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["epoch_window"] = serde_json::json!(bfs.epoch_window());
+        value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         #[cfg(feature = "library-owner")]
         if let Some(usage) = bfs.library_pool_usage()? {

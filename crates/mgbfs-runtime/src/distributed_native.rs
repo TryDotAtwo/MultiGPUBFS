@@ -251,6 +251,7 @@ pub struct DistributedConfig {
     pub batch: u32,
     pub layer_capacity: u32,
     pub state_ring_capacity: u32,
+    pub state_descriptor_capacity: u32,
     pub buckets: u32,
     pub shards: u32,
     pub job_buckets: u32,
@@ -495,7 +496,7 @@ mod plan_error_tests {
                 epoch_window,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 2, layer_capacity: 8, state_ring_capacity: 16,
+                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
                 buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
                 prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
             };
@@ -524,7 +525,7 @@ mod plan_error_tests {
             epoch_window: 2,
             rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
             transport: mgbfs_core::config::ReferenceTransport::Lsa,
-            batch: 2, layer_capacity: 8, state_ring_capacity: 16,
+            batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
             buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
             prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
         };
@@ -549,7 +550,7 @@ mod plan_error_tests {
                 epoch_window: 2,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 2, layer_capacity: 8, state_ring_capacity: 16,
+                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
                 buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
                 prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
             };
@@ -1241,6 +1242,7 @@ impl DistributedNativeBfs {
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
         if cfg.epoch_window < 2 { return Err("EPOCH_WINDOW_CONFIG".into()); }
+        if cfg.state_descriptor_capacity == 0 { return Err("STATE_DESCRIPTOR_CAPACITY".into()); }
         let epoch_window = cfg.epoch_window;
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
@@ -1709,7 +1711,7 @@ impl DistributedNativeBfs {
             tail: u64::from(current_count),
             descriptor_tail: u64::from(current_count),
             capacity: u64::from(cfg.state_ring_capacity),
-            descriptor_capacity: u64::from(cfg.state_ring_capacity),
+            descriptor_capacity: u64::from(cfg.state_descriptor_capacity),
             ..Ring::default()
         }])?;
         let mut result = Self {
@@ -1976,6 +1978,9 @@ impl DistributedNativeBfs {
     /// Allocated completion-credit window; payload storage is unchanged.
     pub fn epoch_window(&self) -> usize {
         self.epoch_completed.len()
+    }
+    pub fn state_descriptor_capacity(&self) -> u32 {
+        self.cfg.state_descriptor_capacity
     }
     fn enqueue_frontier_generation(&mut self, batch: ParentBatch) -> Result<u64> {
         let sequence = self
