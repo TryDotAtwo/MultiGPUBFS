@@ -5,10 +5,30 @@ import json
 import signal
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from run_tail_bfs import native_failure,finish_run,cancellation_signals,native_completion
+from run_tail_bfs import native_failure,finish_run,cancellation_signals,native_completion,release_rank_spools
 
 
 class FailureTests(unittest.TestCase):
+    def test_rank_spools_wait_for_readers_and_preserve_final_snapshot(self):
+        class Reader:
+            alive=True
+            def is_alive(self):return self.alive
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);spool=root/'spool-0';spool.mkdir()
+            part=spool/'layer-000003.bin';part.write_bytes(b'pending rank')
+            saved=root/'saved';saved.mkdir()
+            final=saved/'layer-000002.bin';final.write_bytes(b'completed snapshot')
+            metadata=spool/'receipt.json';metadata.write_text('{}')
+            reader=Reader()
+            self.assertFalse(release_rank_spools(root,1,[reader]))
+            self.assertTrue(part.exists())
+            reader.alive=False
+            self.assertTrue(release_rank_spools(root,1,[reader]))
+            self.assertFalse(part.exists())
+            self.assertEqual(final.read_bytes(),b'completed snapshot')
+            self.assertTrue(metadata.exists())
+            self.assertTrue(release_rank_spools(root,1,[reader]))
+
     def test_completed_prefix_is_never_graph_completion(self):
         rank=dict(status='INCOMPLETE',stop_reason='calibration layer limit',
                   calibration_layers=34,last_completed_layer=33)

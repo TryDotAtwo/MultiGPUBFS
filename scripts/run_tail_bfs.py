@@ -44,6 +44,32 @@ def chunks(paths):
                 yield chunk
 
 
+def release_rank_spools(root, world, threads):
+    """Discard uncommitted rank parts only after every reader has stopped.
+
+    Saved snapshots live elsewhere. Never follow a replaced spool directory or
+    unlink through a symlink, and preserve all input while a reader can write.
+    """
+    if any(thread.is_alive() for thread in threads):
+        return False
+    root = Path(root).resolve()
+    paths = []
+    for rank in range(world):
+        directory = root / f'spool-{rank}'
+        if directory.is_symlink():
+            raise ValueError('rank spool directory is a symlink')
+        if not directory.exists():
+            continue
+        for path in directory.glob('layer-*.bin'):
+            if path.is_symlink() or path.resolve().parent != directory.resolve():
+                raise ValueError('rank spool file escapes directory')
+            if path.is_file():
+                paths.append(path)
+    for path in paths:
+        path.unlink()
+    return True
+
+
 def native_failure(line):
     match=re.search(r'MGBFS_(?:RUNTIME|ARCHIVE_WORKER)_FATAL (?:rank|device)=\d+ error=(.*)',line)
     if match:
@@ -296,8 +322,12 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         memory.wait(timeout=10)
         for thread in threads:
             thread.join(timeout=5)
-        for reader in readers:
-            reader.close()
+        for reader, thread in zip(readers, threads):
+            # Closing a descriptor while read/select is using it can race with
+            # descriptor reuse. A slow reader keeps its inputs for recovery.
+            if not thread.is_alive():
+                reader.close()
+        release_rank_spools(root, world, threads)
     failure, reason = finish_run(root, final, reason, failure, commit, binary_sha, publisher,
                                complete=traversal_complete)
     archive.release_working_tail()
