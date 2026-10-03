@@ -38,9 +38,16 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
                         let mut bfs = DistributedNativeBfs::new_lrx_multiset_reference(
                             &graph,[7;16],id,cfg,ReferenceOwner::CucoRank,Some(64<<20)).unwrap();
                         let mut layers = Vec::new();
+                        let trace_depths = std::env::var_os("MGBFS_TEST_GRAPH_DEPTH_TRACE").is_some();
                         loop {
                             layers.push(bfs.snapshot().unwrap());
+                            if trace_depths {
+                                eprintln!("GRAPH_DEPTH_BEGIN rank={rank} n={n} r={r} depth={}", layers.len()-1);
+                            }
                             if !bfs.advance().unwrap() { break; }
+                            if trace_depths {
+                                eprintln!("GRAPH_DEPTH_END rank={rank} n={n} r={r} depth={}", layers.len()-1);
+                            }
                         }
                         let stats = bfs.batch_graph_stats().unwrap().unwrap();
                         assert!(stats["full_windows"].as_u64().unwrap() > 0);
