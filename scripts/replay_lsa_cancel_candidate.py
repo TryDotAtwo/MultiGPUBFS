@@ -42,6 +42,24 @@ def configure_run_epoch_window(env, config, requested=None):
     return configure_epoch_window(env, window)
 
 
+def configure_route_banks(env, requested=None):
+    value = requested if requested is not None else env.get('MGBFS_ROUTE_BANKS', '2')
+    if isinstance(value, bool) or str(value) not in ('2', '3', '4'):
+        raise ValueError('ROUTE_BANK_CONFIG')
+    banks = int(value)
+    env['MGBFS_ROUTE_BANKS'] = str(banks)
+    return banks
+
+
+def configure_run_route_banks(env, config, requested=None):
+    banks = config.get('capacities', {}).get('route_slot_count')
+    if type(banks) is not int or not 2 <= banks <= 4:
+        raise ValueError('RUN_REPLAY_ROUTE_BANKS_INVALID')
+    if requested is not None and requested != banks:
+        raise ValueError('RUN_REPLAY_ROUTE_BANKS_MISMATCH')
+    return configure_route_banks(env, banks)
+
+
 def rank_arguments(case, reference_group, batch, run_config=None):
     paths = [str(case / 'bootstrap'), str(case / 'archive'), str(case / 'result')]
     if run_config is not None:
@@ -156,7 +174,7 @@ def u_reference_layers(n, modulus):
 
 def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
                             expected_epoch_window=None, expected_config_digest=None,
-                            expected_run_contract=None):
+                            expected_run_contract=None, expected_route_banks=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -187,6 +205,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
             raise ValueError('PROCESS_ORACLE_HASH_SEED')
         if expected_epoch_window is not None and result.get('epoch_window') != expected_epoch_window:
             raise ValueError('PROCESS_ORACLE_EPOCH_WINDOW')
+        if expected_route_banks is not None and result.get('route_banks') != expected_route_banks:
+            raise ValueError('PROCESS_ORACLE_ROUTE_BANKS')
         if expected_run_contract is not None and result.get('run_contract') != expected_run_contract:
             raise ValueError('PROCESS_ORACLE_RUN_CONTRACT')
         if expected_config_digest is not None and result.get('bootstrap_digest') != list(bytes.fromhex(expected_config_digest)):
@@ -228,6 +248,8 @@ def main():
                         help='test the typed run dispatcher with this immutable config instead of bench')
     parser.add_argument('--epoch-window', type=int,
                         help='bounded completion credits; inherits environment or defaults to 2, not payload slots')
+    parser.add_argument('--route-banks', type=int, choices=(2, 3, 4),
+                        help='physical source payload banks, independent of completion credits and receive slot')
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
     parser.add_argument('--rank-map', choices=('0,1', '1,0'), default='0,1')
@@ -242,6 +264,8 @@ def main():
         epoch_environment = dict(os.environ)
         epoch_window = (2 if args.run_config is not None else
                         configure_epoch_window(epoch_environment, args.epoch_window))
+        route_banks = (2 if args.run_config is not None else
+                       configure_route_banks(epoch_environment, args.route_banks))
     except ValueError as error:
         parser.error(str(error))
     if args.batch < 1:
@@ -264,6 +288,7 @@ def main():
             seed_hex = f"{int.from_bytes(bytes(config['seed']), 'little'):032x}"
             configure_hash_seed(seed_environment, seed_hex)
             epoch_window = configure_run_epoch_window(epoch_environment, config, args.epoch_window)
+            route_banks = configure_run_route_banks(epoch_environment, config, args.route_banks)
             args.batch = config['parent_batch']
             args.profile = config['frontier_profile']
             args.owner_backend = config['owner_backend']
@@ -282,6 +307,7 @@ def main():
     env = dict(os.environ)
     env.update(seed_environment)
     env['MGBFS_EPOCH_WINDOW'] = str(epoch_window)
+    env['MGBFS_ROUTE_BANKS'] = str(route_banks)
     if args.instrument_processes == 'nsys':
         # Batch/archive attribution must be present in a full runtime trace.
         # This enables ranges only, never TRACE_ROUTE's diagnostic host waits.
@@ -297,7 +323,7 @@ def main():
         str(work / "cuda-12.9/lib"), *libdirs, env.get("LD_LIBRARY_PATH", "")])
     env["PATH"] = str(work / "cargo/bin") + ":" + env.get("PATH", "")
     report = {"scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
-        "epoch_window": epoch_window,
+        "epoch_window": epoch_window, "route_banks": route_banks,
         "run_contract": "RunConfigV1" if production_config is not None else "reference_bench",
         "run_config_sha256": hashlib.sha256(production_config).hexdigest() if production_config is not None else None,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
@@ -409,7 +435,8 @@ def main():
                     row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
                         modulus=args.unitriangular_modulus, expected_seed=seed_hex,
                         expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
-                        expected_run_contract='RunConfigV1' if config_snapshot is not None else None)
+                        expected_run_contract='RunConfigV1' if config_snapshot is not None else None,
+                        expected_route_banks=route_banks)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")

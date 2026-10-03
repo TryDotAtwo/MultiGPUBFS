@@ -4,6 +4,38 @@ from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_route_banks_are_not_completion_credits(self):
+        from replay_lsa_cancel_candidate import configure_route_banks
+        env = {'MGBFS_EPOCH_WINDOW': '4'}
+        self.assertEqual(configure_route_banks(env), 2)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '2')
+        self.assertEqual(configure_route_banks(env, 3), 3)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '4')
+        env['MGBFS_ROUTE_BANKS'] = '4'
+        self.assertEqual(configure_route_banks(env), 4)
+
+    def test_invalid_route_banks_do_not_mutate_environment(self):
+        from replay_lsa_cancel_candidate import configure_route_banks
+        for value in (1, 5, True, 'bad'):
+            env = {'MGBFS_ROUTE_BANKS': '2', 'sentinel': 'keep'}
+            with self.assertRaises(ValueError):
+                configure_route_banks(env, value)
+            self.assertEqual(env, {'MGBFS_ROUTE_BANKS': '2', 'sentinel': 'keep'})
+
+    def test_typed_route_banks_override_inherited_environment(self):
+        from replay_lsa_cancel_candidate import configure_run_route_banks
+        env = {'MGBFS_ROUTE_BANKS': 'invalid-inherited-value'}
+        config = {'capacities': {'route_slot_count': 3}, 'completion_epoch_window': 4}
+        self.assertEqual(configure_run_route_banks(env, config), 3)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+        with self.assertRaises(ValueError):
+            configure_run_route_banks(env, config, 2)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+        for value in (None, True, '3', 1, 5):
+            with self.assertRaises(ValueError):
+                configure_run_route_banks(env, {'capacities': {'route_slot_count': value}})
+            self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+
     def test_typed_epoch_window_is_authoritative_not_inherited(self):
         from replay_lsa_cancel_candidate import configure_run_epoch_window
         env = {'MGBFS_EPOCH_WINDOW': 'invalid-inherited-value'}

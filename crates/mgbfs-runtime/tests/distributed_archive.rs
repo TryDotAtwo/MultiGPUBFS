@@ -12,6 +12,48 @@ use mgbfs_runtime::{
 use std::sync::{Arc, Mutex};
 
 struct Disk(Arc<Mutex<Vec<u8>>>);
+#[path = "support/route_archive.rs"]
+mod route_archive;
+
+#[test]
+fn native_lsa_route_banks_preserve_full_state_layers_on_one_gpu() {
+    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
+    let expected = graph.exact_layers(64).unwrap();
+    for banks in [2, 3, 4] {
+        for hash_first in [false, true] {
+            let mut id = [0u8; 128];
+            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            let cfg = DistributedConfig {
+                route_banks: banks, epoch_window: 3,
+                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                batch: 1, layer_capacity: 64, state_ring_capacity: 256,
+                state_descriptor_capacity: 256, buckets: 8, shards: 2,
+                job_buckets: 2, bucket_capacity: 32, prededup: true,
+                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            };
+            let materialization = hash_first.then_some(graph.generators.len() as u32);
+            let mut bfs = DistributedNativeBfs::new_reference_with_owner(
+                &graph, [42; 16], id, cfg, materialization,
+                mgbfs_core::config::OwnerBackend::CubSortMerge, 256,
+            ).unwrap();
+            assert_eq!(bfs.route_bank_count(), banks);
+            assert_eq!(bfs.epoch_window(), 3);
+            let archive_bytes = Arc::new(Mutex::new(Vec::new()));
+            let mut archive = PinnedArchive::new(route_archive::MemoryExtent(archive_bytes.clone()),
+                100_000, 16, [0; 32], 3, 128).unwrap();
+            for (depth, wanted) in expected.iter().enumerate() {
+                let mut actual = bfs.snapshot().unwrap();
+                actual.sort();
+                assert_eq!(&actual, wanted, "banks={banks} hash_first={hash_first} depth={depth}");
+                assert_eq!(bfs.advance_archived(&mut archive).unwrap(), depth + 1 < expected.len());
+            }
+            archive.finish().unwrap();
+            route_archive::assert_layers(&archive_bytes.lock().unwrap(), &expected, [42; 16]);
+            assert!(bfs.dense_lookahead_batches() > banks as u64);
+        }
+    }
+}
 
 #[test]
 fn one_rank_vram_rejection_aborts_both_before_runtime_allocation() {
@@ -25,6 +67,7 @@ fn one_rank_vram_rejection_aborts_both_before_runtime_allocation() {
             std::thread::spawn(move || {
                 let graph = MatrixGroup::unitriangular(3, 3).unwrap();
                 let cfg = DistributedConfig {
+                    route_banks: 2,
                     epoch_window: 2,
                     rank,
                     world: 2,
@@ -458,6 +501,7 @@ fn owner_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
                 std::thread::spawn(move || {
                     let g = MatrixGroup::unitriangular(3, 3).unwrap();
                     let cfg = DistributedConfig {
+                        route_banks: 2,
                         epoch_window: 2,
                         untouched_vram_reserve: 1 << 30,
                         rank,
@@ -704,6 +748,7 @@ fn archive_fixture_batch(
                     MatrixGroup::unitriangular(3, 3).unwrap()
                 };
                 let cfg = DistributedConfig {
+                    route_banks: 2,
                     epoch_window: 2,
                     untouched_vram_reserve: 1 << 30,
                     rank,

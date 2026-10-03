@@ -243,6 +243,9 @@ unsafe fn history_view(
 
 #[derive(Clone)]
 pub struct DistributedConfig {
+    /// Physical raw/sorted/packed source payload banks, independent of credits
+    /// and the single LSA receive slot. Selected before allocation.
+    pub route_banks: usize,
     pub epoch_window: usize,
     pub rank: u32,
     pub world: u32,
@@ -307,6 +310,22 @@ struct Buffer {
     ptr: *mut c_void,
     bytes: usize,
     stream: *mut c_void,
+}
+
+/// Stable-address raw -> sorted -> packed source bank. Every buffer is charged
+/// by distributed_memory before admission and allocated before depth zero.
+/// The producer may overwrite this bank only behind its last-reader event.
+struct RouteBank {
+    children: Buffer,
+    child_hashes: Buffer,
+    sorted_hashes: Buffer,
+    sorted_refs: Buffer,
+    route_count: Buffer,
+    packed_states: Buffer,
+    owner_counts: Buffer,
+    generation_control: Buffer,
+    generation_done: NativeEvent,
+    last_reader: Event,
 }
 #[derive(Clone, Copy)]
 struct LsaView {
@@ -496,6 +515,7 @@ mod plan_error_tests {
             (2, 0, "STATE_DESCRIPTOR_CAPACITY"),
         ] {
             let cfg = DistributedConfig {
+                route_banks: 2,
                 epoch_window,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
@@ -525,6 +545,7 @@ mod plan_error_tests {
         let mut id = [0u8; 128];
         assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
         let cfg = DistributedConfig {
+            route_banks: 2,
             epoch_window: 2,
             rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
             transport: mgbfs_core::config::ReferenceTransport::Lsa,
@@ -550,6 +571,7 @@ mod plan_error_tests {
             let mut id = [0u8; 128];
             assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
             let cfg = DistributedConfig {
+                route_banks: 2,
                 epoch_window: 2,
                 rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
@@ -673,7 +695,6 @@ struct HashFirstDevice {
     extents: Buffer,
     controls: Buffer,
     exchange_counts: Buffer,
-    generation_control: Buffer,
 }
 fn append_extent(extents: &mut Vec<Extent>, mut extent: Extent) -> Result<()> {
     if extent.count == 0 {
@@ -749,7 +770,7 @@ impl HashFirstStorage {
                 Some(HashFirstDevice { counts: b("device_counts")?,
                     extents: b("device_extents")?, controls: b("device_controls")?,
                     exchange_counts: b("device_exchange_counts")?,
-                    generation_control: b("device_generation_control")? })
+                    })
             } else { None },
             ledger,
         })
@@ -771,7 +792,6 @@ pub struct DistributedNativeBfs {
     failed: bool,
     stream: Stream,
     generation_stream: Stream,
-    generation_done: NativeEvent,
     pack_done: Event,
     generation_sequence: u64,
     dense_lookahead: u64,
@@ -802,17 +822,13 @@ pub struct DistributedNativeBfs {
     states: Buffer,
     prev: Buffer,
     curr: Buffer,
-    children: Buffer,
-    child_hashes: Buffer,
+    route_banks: Vec<RouteBank>,
+    active_route_bank: usize,
+    prefetched: std::collections::VecDeque<(ParentBatch, u64, usize)>,
     archive_hashes: Buffer,
     archive_states: Buffer,
-    sorted_hashes: Buffer,
-    sorted_refs: Buffer,
-    route_count: Buffer,
     owner_window: Option<Buffer>,
     native_rank: Option<NativeRankStorage>,
-    packed_states: Buffer,
-    owner_counts: Buffer,
     recv_states: Option<Buffer>,
     recv_hashes: Option<Buffer>,
     recv_count: Option<Buffer>,
@@ -1244,6 +1260,7 @@ impl DistributedNativeBfs {
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
+        if !(2..=4).contains(&cfg.route_banks) { return Err("ROUTE_BANK_CONFIG".into()); }
         if cfg.epoch_window < 2 { return Err("EPOCH_WINDOW_CONFIG".into()); }
         if cfg.state_descriptor_capacity == 0 { return Err("STATE_DESCRIPTOR_CAPACITY".into()); }
         let epoch_window = cfg.epoch_window;
@@ -1368,6 +1385,7 @@ impl DistributedNativeBfs {
         } else {
             crate::distributed_memory::shared_buffers(shared_shape)?
         };
+        let shared_memory = crate::distributed_memory::with_route_banks(&shared_memory, cfg.route_banks)?;
         let mut owned_memory = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
         for a in &shared_memory.allocations {
             owned_memory.add(&format!("shared.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -1391,7 +1409,6 @@ impl DistributedNativeBfs {
                 l.add("device_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
                 l.add("device_controls", 2, std::mem::size_of::<Control>() as u64, 256)?;
                 l.add("device_exchange_counts", cfg.world.into(), 4, 256)?;
-                l.add("device_generation_control", 2, 4, 256)?;
             }
             for a in &l.allocations {
                 owned_memory.add(&format!("hash_first.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -1455,7 +1472,6 @@ impl DistributedNativeBfs {
         let mut raw_generation = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_generation, 1) })?;
         let generation_stream = Stream(raw_generation);
-        let generation_done = NativeEvent::new()?;
         let pack_done = Event::new()?;
         let mut raw_exchange = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_exchange, 1) })?;
@@ -1717,6 +1733,27 @@ impl DistributedNativeBfs {
             descriptor_capacity: u64::from(cfg.state_descriptor_capacity),
             ..Ring::default()
         }])?;
+        let mut route_banks = Vec::new();
+        route_banks.try_reserve_exact(cfg.route_banks).map_err(|_| "ROUTE_BANK_HOST_CAPACITY")?;
+        let mut initial_count = Some(route_count);
+        for index in 0..cfg.route_banks {
+            let name = |field: &str| if index == 0 { field.to_owned() }
+                else { format!("route_bank_{index}.{field}") };
+            route_banks.push(RouteBank {
+                children: b(&name("children"))?,
+                child_hashes: b(&name("child_hashes"))?,
+                sorted_hashes: b(&name("sorted_hashes"))?,
+                sorted_refs: b(&name("sorted_refs"))?,
+                route_count: if index == 0 { initial_count.take().ok_or("ROUTE_INITIAL_COUNT")? }
+                    else { b(&name("route_count"))? },
+                packed_states: b(&name("packed_states"))?,
+                owner_counts: b(&name("owner_counts"))?,
+                generation_control: b(&name("generation_control"))?,
+                generation_done: NativeEvent::new()?, last_reader: Event::new()?,
+            });
+        }
+        let mut prefetched = std::collections::VecDeque::new();
+        prefetched.try_reserve_exact(cfg.route_banks).map_err(|_| "ROUTE_PREFETCH_HOST_CAPACITY")?;
         let mut result = Self {
             #[cfg(feature = "library-owner")]
             library_owner: None,
@@ -1738,7 +1775,6 @@ impl DistributedNativeBfs {
             // result. An error here must not destroy it before peers vote.
             stream: Stream(std::ptr::null_mut()),
             generation_stream,
-            generation_done,
             pack_done,
             generation_sequence: 0,
             dense_lookahead: 0,
@@ -1775,21 +1811,17 @@ impl DistributedNativeBfs {
             states,
             prev,
             curr,
-            children: b("children")?,
-            child_hashes: b("child_hashes")?,
+            route_banks,
+            active_route_bank: 0,
+            prefetched,
             archive_hashes: b("archive_hashes")?,
             archive_states: b("archive_states")?,
-            sorted_hashes: b("sorted_hashes")?,
-            sorted_refs: b("sorted_refs")?,
-            route_count,
             owner_window: if library_pool_bytes.is_some() || native_rank_mode { Some(b("owner_window")?) } else { None },
             native_rank: if native_rank_mode { Some(NativeRankStorage {
                 previous: b("rank_prev_directory")?, current: b("rank_curr_directory")?,
                 survivors: b("rank_shard_counts")?, accepted: b("rank_shard_accepted")?,
                 capacities: b("rank_shard_capacities")?, offsets: b("rank_shard_offsets")?,
             }) } else { None },
-            packed_states: b("packed_states")?,
-            owner_counts: b("owner_counts")?,
             recv_states: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
                 .then(|| b("recv_states")).transpose()?,
             recv_hashes: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
@@ -1982,10 +2014,12 @@ impl DistributedNativeBfs {
     pub fn epoch_window(&self) -> usize {
         self.epoch_completed.len()
     }
+    pub fn route_bank_count(&self) -> usize { self.route_banks.len() }
     pub fn state_descriptor_capacity(&self) -> u32 {
         self.cfg.state_descriptor_capacity
     }
-    fn enqueue_frontier_generation(&mut self, batch: ParentBatch) -> Result<u64> {
+    fn enqueue_frontier_generation(&mut self, batch: ParentBatch, bank: usize) -> Result<u64> {
+        if bank >= self.route_banks.len() { return Err("GENERATION_ROUTE_BANK".into()); }
         let sequence = self
             .generation_sequence
             .checked_add(1)
@@ -1995,7 +2029,7 @@ impl DistributedNativeBfs {
         // parent batch may retire while these read-only operations are running.
         unsafe {
             if let Some(h) = self.hash_first.as_ref() {
-                let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
+                h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
                 check(mgbfs_device_store_u32(h.parent_count.ptr.cast(), batch.count, s))?;
                 let generate = if self.hash_first_tensor_generation {
                     mgbfs_generate_hash_only_tc_admitted
@@ -2004,30 +2038,45 @@ impl DistributedNativeBfs {
                     self.cfg.batch, self.candidates, self.cfg.rank, batch.sequence,
                     self.states.at(batch.begin as usize * self.stride).cast(),
                     h.generators.ptr.cast(), h.coefficients.ptr.cast(), h.offsets.ptr.cast(),
-                    h.parent_count.ptr.cast(), self.child_hashes.ptr.cast(), self.children.ptr.cast(),
+                    h.parent_count.ptr.cast(), self.route_banks[bank].child_hashes.ptr.cast(), self.route_banks[bank].children.ptr.cast(),
                     // Producer count must not overwrite the current owner's
                     // routed-count before its selected origins are committed.
-                    d.generation_control.at(4).cast(), d.generation_control.ptr.cast(), s))?;
+                    self.route_banks[bank].generation_control.at(4).cast(),
+                    self.route_banks[bank].generation_control.ptr.cast(), s))?;
             } else {
             check(mgbfs_generate_run(
                 self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
                 self.states.at(batch.begin as usize * self.stride).cast(),
-                self.children.ptr.cast(),
+                self.route_banks[bank].children.ptr.cast(),
                 batch.count,
                 s,
             ))?;
             check(mgbfs_hash_run(
                 self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
-                self.children.ptr.cast(),
-                self.child_hashes.ptr.cast(),
+                self.route_banks[bank].children.ptr.cast(),
+                self.route_banks[bank].child_hashes.ptr.cast(),
                 batch.count * self.moves,
                 s,
             ))?;
             }
-            self.generation_done.record(sequence, s)?;
+            self.route_banks[bank].generation_done.record(sequence, s)?;
         }
         self.generation_sequence = sequence;
         Ok(sequence)
+    }
+    /// One producer admission, using only the immutable frontier directory
+    /// obtained at FinalizeDepth. No device count or event completion readback.
+    fn enqueue_route_prefetch(&mut self, cursor: &mut ParentCursor, produced: &mut usize) -> Result<bool> {
+        if self.prefetched.len() == self.route_banks.len() { return Err("ROUTE_PREFETCH_CAPACITY".into()); }
+        let Some(batch) = cursor.take(&self.front, self.cfg.batch)? else { return Ok(false); };
+        let bank = *produced % self.route_banks.len();
+        let sequence = self.enqueue_frontier_generation(batch, bank)?;
+        self.prefetched.push_back((batch, sequence, bank));
+        if *produced != 0 {
+            self.dense_lookahead = self.dense_lookahead.checked_add(1).ok_or("GENERATION_COUNTER_OVERFLOW")?;
+        }
+        *produced = produced.checked_add(1).ok_or("GENERATION_ROUTE_SEQUENCE")?;
+        Ok(true)
     }
     fn all_max(&self, value: u32) -> Result<u32> {
         self.collective_send.put_u32(value)?;
@@ -2167,12 +2216,12 @@ impl DistributedNativeBfs {
             return Err("RANK_OWNER_REQUIRES_DEVICE_WINDOW".into());
         }
         let s = self.stream.0;
-        self.route_count.put_u32(rows)?;
+        self.route_banks[self.active_route_bank].route_count.put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
                 source_hashes,
-                self.route_count.ptr.cast(),
+                self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                 self.candidates,
                 self.cfg.buckets,
                 self.cfg
@@ -2381,12 +2430,12 @@ impl DistributedNativeBfs {
             owner.selected.ptr,
         );
         let s = self.stream.0;
-        self.route_count.put_u32(rows)?;
+        self.route_banks[self.active_route_bank].route_count.put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
                 source_hashes,
-                self.route_count.ptr.cast(),
+                self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                 self.candidates,
                 self.cfg.buckets,
                 self.cfg
@@ -2981,7 +3030,15 @@ impl DistributedNativeBfs {
         }
         let scheduled_rounds = self.all_max(local_rounds?)?;
         let mut cursor = ParentCursor::default();
-        let mut prefetched: Option<(ParentBatch, u64)> = None;
+        if !self.prefetched.is_empty() { return Err("ROUTE_PREFETCH_DEPTH_LEAK".into()); }
+        let mut producer_cursor = ParentCursor::default();
+        let mut produced = 0usize;
+        let pipelined_generation = self.hash_first.as_ref().map_or(true, |h| h.device.is_some());
+        if pipelined_generation {
+            for _ in 0..self.route_banks.len() {
+                if !self.enqueue_route_prefetch(&mut producer_cursor, &mut produced)? { break; }
+            }
+        }
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
         let device_epoch = self.lsa_view.is_some() && self.rank_owner_mode();
@@ -2992,7 +3049,7 @@ impl DistributedNativeBfs {
             check(unsafe { cudaMemsetAsync(self.collective_recv.ptr, 0, 4, s) })?;
         }
         let mut epoch_serial = 0usize;
-        for _ in 0..scheduled_rounds {
+        for scheduled_round in 0..scheduled_rounds {
             let _batch_range = TraceRange::new(trace_ranges, b"mgbfs.batch\0");
             self.ensure_not_cancelled()?;
             if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
@@ -3000,12 +3057,12 @@ impl DistributedNativeBfs {
                 self.wait_epoch_credit(slot)?;
                 self.epoch_outstanding.pop_front();
             }
+            self.active_route_bank = scheduled_round as usize % self.route_banks.len();
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
             let parent = work.map(|b| self.front[b.extent]);
             let parents = work.map(|b| b.count).unwrap_or(0);
-            let next_work = cursor.peek(&self.front, self.cfg.batch)?;
             let mut generation = None;
             let candidate_count = parents * self.moves;
             if trace_route {
@@ -3052,15 +3109,14 @@ impl DistributedNativeBfs {
             }
             if self.hash_first.as_ref().is_some_and(|h| h.device.is_some()) && work.is_some() {
                 let batch = work.ok_or("GENERATION_BATCH_MISSING")?;
-                let sequence = match prefetched.take() {
-                    Some((expected, sequence)) if expected == batch => sequence,
+                let sequence = match self.prefetched.pop_front() {
+                    Some((expected, sequence, bank)) if expected == batch && bank == self.active_route_bank => sequence,
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
-                    None => self.enqueue_frontier_generation(batch)?,
+                    None => return Err("GENERATION_BATCH_MISSING".into()),
                 };
-                unsafe { self.generation_done.wait(sequence, s)?; }
+                unsafe { self.route_banks[self.active_route_bank].generation_done.wait(sequence, s)?; }
                 generation = Some(sequence);
-                let fatal = self.hash_first.as_ref().and_then(|h| h.device.as_ref())
-                    .ok_or("HASH_FIRST_DEVICE_STORAGE")?.generation_control.ptr.cast();
+                let fatal = self.route_banks[self.active_route_bank].generation_control.ptr.cast();
                 check(unsafe { mgbfs_owner_import_transport_fatal(
                     fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
                 ) })?;
@@ -3093,9 +3149,9 @@ impl DistributedNativeBfs {
                         h.coefficients.ptr.cast(),
                         h.offsets.ptr.cast(),
                         h.parent_count.ptr.cast(),
-                        self.child_hashes.ptr.cast(),
-                        self.children.ptr.cast(),
-                        self.route_count.ptr.cast(),
+                        self.route_banks[self.active_route_bank].child_hashes.ptr.cast(),
+                        self.route_banks[self.active_route_bank].children.ptr.cast(),
+                        self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                         h.local_fatal.ptr.cast(),
                         s,
                     ))?;
@@ -3115,13 +3171,13 @@ impl DistributedNativeBfs {
                     return Err("HASH_FIRST_GENERATION_FATAL".into());
                 }
             } else if let Some(batch) = work {
-                let sequence = match prefetched.take() {
-                    Some((expected, sequence)) if expected == batch => sequence,
+                let sequence = match self.prefetched.pop_front() {
+                    Some((expected, sequence, bank)) if expected == batch && bank == self.active_route_bank => sequence,
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
-                    None => self.enqueue_frontier_generation(batch)?,
+                    None => return Err("GENERATION_BATCH_MISSING".into()),
                 };
                 unsafe {
-                    self.generation_done.wait(sequence, s)?;
+                    self.route_banks[self.active_route_bank].generation_done.wait(sequence, s)?;
                 }
                 generation = Some(sequence);
             }
@@ -3137,11 +3193,11 @@ impl DistributedNativeBfs {
                 }
                 check(mgbfs_route_run(
                     self.route.0,
-                    self.child_hashes.ptr,
+                    self.route_banks[self.active_route_bank].child_hashes.ptr,
                     self.identity_refs.ptr.cast(),
-                    self.sorted_hashes.ptr,
-                    self.sorted_refs.ptr.cast(),
-                    self.route_count.ptr.cast(),
+                    self.route_banks[self.active_route_bank].sorted_hashes.ptr,
+                    self.route_banks[self.active_route_bank].sorted_refs.ptr.cast(),
+                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                     candidate_count,
                     self.cfg.prededup as i32,
                     s,
@@ -3157,13 +3213,13 @@ impl DistributedNativeBfs {
                     self.cfg.world,
                     packet_stride as u32,
                     self.candidates,
-                    self.children.ptr.cast(),
+                    self.route_banks[self.active_route_bank].children.ptr.cast(),
                     candidate_count,
-                    self.sorted_hashes.ptr,
-                    self.sorted_refs.ptr.cast(),
-                    self.route_count.ptr.cast(),
-                    self.packed_states.ptr.cast(),
-                    self.owner_counts.ptr.cast(),
+                    self.route_banks[self.active_route_bank].sorted_hashes.ptr,
+                    self.route_banks[self.active_route_bank].sorted_refs.ptr.cast(),
+                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                    self.route_banks[self.active_route_bank].packed_states.ptr.cast(),
+                    self.route_banks[self.active_route_bank].owner_counts.ptr.cast(),
                     s,
                 )
             })?;
@@ -3174,7 +3230,7 @@ impl DistributedNativeBfs {
                 check(unsafe {
                     mgbfs_owner_window_from_counts(
                         self.cfg.world, self.candidates, logical_owner,
-                        self.owner_counts.ptr.cast(), self.route_count.ptr.cast(),
+                        self.route_banks[self.active_route_bank].owner_counts.ptr.cast(), self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                         window.ptr.cast(), window.at(4).cast(), s,
                     )
                 })?;
@@ -3185,9 +3241,9 @@ impl DistributedNativeBfs {
                 self.wait_comm_stream(s)?;
             }
             let host_ranges = if self.lsa_view.is_none() {
-                let routed = self.route_count.one::<u32>()?;
+                let routed = self.route_banks[self.active_route_bank].route_count.one::<u32>()?;
                 let mut owner_counts = [0u32; 8];
-                self.owner_counts.read(&mut owner_counts[..self.cfg.world as usize])?;
+                self.route_banks[self.active_route_bank].owner_counts.read(&mut owner_counts[..self.cfg.world as usize])?;
                 if crate::route_count::packed_count(
                     candidate_count,
                     &owner_counts[..self.cfg.world as usize],
@@ -3207,31 +3263,6 @@ impl DistributedNativeBfs {
             if trace_route {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={:?}", self.cfg.rank, self.depth, host_ranges.as_ref().map(|(rows, _)| rows));
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
-            }
-            if let Some(sequence) = generation {
-                // Reuse children/child_hashes only after pack has finished.
-                // LSA keeps this dependency entirely on GPU; legacy NCCL
-                // retains the host-observed completion path.
-                if self.lsa_view.is_some() {
-                    unsafe {
-                        self.generation_done.retire_after_device_barrier(
-                            sequence, self.generation_stream.0, self.pack_done.0,
-                        )?;
-                    }
-                } else {
-                    if !self.generation_done.poll(sequence)? {
-                        return Err("GENERATION_PACK_ORDER".into());
-                    }
-                    self.generation_done.retire(sequence)?;
-                }
-                if let Some(next) = next_work {
-                    let sequence = self.enqueue_frontier_generation(next)?;
-                    prefetched = Some((next, sequence));
-                    self.dense_lookahead = self
-                        .dense_lookahead
-                        .checked_add(1)
-                        .ok_or("GENERATION_COUNTER_OVERFLOW")?;
-                }
             }
             let world = self.cfg.world;
             let (local_offset, local_rows) = host_ranges.as_ref()
@@ -3270,8 +3301,8 @@ impl DistributedNativeBfs {
                     }
                     check(unsafe {
                         mgbfs_nccl_lsa_exchange_rows(
-                            self.comm.0, self.sorted_hashes.ptr,
-                            self.packed_states.ptr, self.owner_counts.ptr.cast(),
+                            self.comm.0, self.route_banks[self.active_route_bank].sorted_hashes.ptr,
+                            self.route_banks[self.active_route_bank].packed_states.ptr, self.route_banks[self.active_route_bank].owner_counts.ptr.cast(),
                             self.collective_recv.ptr.cast(),
                             logical_owner, exchange_peer, packet_stride as u32,
                             self.exchange_stream.0,
@@ -3312,7 +3343,7 @@ impl DistributedNativeBfs {
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
-                            self.sorted_hashes.at(remote_offset as usize * 16),
+                            self.route_banks[self.active_route_bank].sorted_hashes.at(remote_offset as usize * 16),
                             u64::from(remote_rows) * 16,
                             exchange_peer,
                             self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
@@ -3323,7 +3354,7 @@ impl DistributedNativeBfs {
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
-                            self.packed_states
+                            self.route_banks[self.active_route_bank].packed_states
                                 .at(remote_offset as usize * packet_stride),
                             u64::from(remote_rows) * packet_stride as u64,
                             exchange_peer,
@@ -3409,12 +3440,12 @@ impl DistributedNativeBfs {
                     }
                 }
                 let local_states: *const u8 = unsafe {
-                    self.packed_states
+                    self.route_banks[self.active_route_bank].packed_states
                         .at(local_offset as usize * packet_stride)
                         .cast()
                 };
                 let local_hashes: *const c_void = unsafe {
-                    self.sorted_hashes.at(local_offset as usize * 16)
+                    self.route_banks[self.active_route_bank].sorted_hashes.at(local_offset as usize * 16)
                 };
                 let (remote_states, remote_hashes, remote_count):
                     (*const u8, *const c_void, *const u32) = if let Some(view) = lsa {
@@ -3457,11 +3488,11 @@ impl DistributedNativeBfs {
                             }
                             let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
                             let (states, hashes, begin, rows, source_rows) = if group == 0 {
-                                (self.packed_states.ptr as *const u8,
-                                 self.sorted_hashes.ptr as *const c_void,
+                                (self.route_banks[self.active_route_bank].packed_states.ptr as *const u8,
+                                 self.route_banks[self.active_route_bank].sorted_hashes.ptr as *const c_void,
                                  window.ptr as *const u32,
                                  unsafe { window.at(4) } as *const u32,
-                                 self.route_count.ptr as *const u32)
+                                 self.route_banks[self.active_route_bank].route_count.ptr as *const u32)
                             } else {
                                 (remote_states, remote_hashes,
                                  unsafe { window.at(8) } as *const u32,
@@ -3573,6 +3604,17 @@ impl DistributedNativeBfs {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
             }
+            if let Some(sequence) = generation {
+                // The owner stream has joined each exchange and completed
+                // compare/materialization/retirement for this source bank.
+                // Reuse is a GPU dependency, not a host snapshot of counts.
+                let bank = &mut self.route_banks[self.active_route_bank];
+                check(unsafe { cudaEventRecord(bank.last_reader.0, s) })?;
+                unsafe { bank.generation_done.retire_after_device_barrier(
+                    sequence, self.generation_stream.0, bank.last_reader.0,
+                )?; }
+                self.enqueue_route_prefetch(&mut producer_cursor, &mut produced)?;
+            }
             if device_epoch {
                 let slot = epoch_serial % self.epoch_completed.len();
                 check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
@@ -3584,6 +3626,7 @@ impl DistributedNativeBfs {
             }
         }
         let _finalize_range = TraceRange::new(trace_ranges, b"mgbfs.FinalizeDepth\0");
+        if !self.prefetched.is_empty() { return Err("ROUTE_PREFETCH_FINALIZE_LEAK".into()); }
         while device_epoch && !self.epoch_outstanding.is_empty() {
             let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
             self.wait_epoch_credit(slot)?;
@@ -3608,7 +3651,7 @@ impl DistributedNativeBfs {
                     self.prev.ptr,
                     self.cfg.layer_capacity,
                     self.directory.ptr.cast(),
-                    self.route_count.ptr.cast(),
+                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
                     self.fatal.ptr.cast(),
                     s,
                 ))?;
@@ -3662,12 +3705,12 @@ impl DistributedNativeBfs {
             std::mem::swap(&mut library.previous, &mut library.current);
             // Finalization reads this word through the synchronous host
             // snapshot immediately below, outside the producer stream.
-            self.route_count.put(&[count])?;
+            self.route_banks[self.active_route_bank].route_count.put(&[count])?;
         }
         if self.fatal.one::<u32>()? != 0 {
             return Err("FINALIZE_FATAL".into());
         }
-        let count = self.route_count.one::<u32>()?;
+        let count = self.route_banks[self.active_route_bank].route_count.one::<u32>()?;
         if self.layer_count.one::<u32>()? != count {
             return Err("LAYER_COUNT_MISMATCH".into());
         }

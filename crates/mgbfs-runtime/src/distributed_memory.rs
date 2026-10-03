@@ -128,6 +128,28 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
     Ok(l)
 }
 
+/// Expand the actual source route payload storage. Receive and owner scratch
+/// remain separate resources; completion credits do not multiply either.
+/// All names in bank zero retain the existing allocation-query ABI.
+pub fn with_route_banks(base: &AllocationLedger, banks: usize) -> Result<AllocationLedger> {
+    if !(2..=4).contains(&banks) { return Err("ROUTE_BANK_CONFIG".into()); }
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in &base.allocations {
+        result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
+    }
+    result.add("generation_control", 2, 4, 256)?;
+    for bank in 1..banks {
+        for name in ["children", "child_hashes", "sorted_hashes", "sorted_refs",
+            "packed_states", "route_count", "owner_counts"] {
+            let allocation = base.allocations.iter().find(|a| a.name == name)
+                .ok_or("ROUTE_BANK_ALLOCATION_MISSING")?;
+            result.add(&format!("route_bank_{bank}.{name}"), allocation.payload_bytes, 1, 256)?;
+        }
+        result.add(&format!("route_bank_{bank}.generation_control"), 2, 4, 256)?;
+    }
+    Ok(result)
+}
+
 /// Library-owner shared storage, excluding the separately charged fixed RMM
 /// pool. History is four aligned SoA planes; no duplicate legacy owner arrays.
 pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {

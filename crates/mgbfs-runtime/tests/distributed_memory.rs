@@ -1,6 +1,31 @@
 use mgbfs_runtime::distributed_memory::{shared_buffers, SharedBufferShape};
 
 #[test]
+fn route_banks_reserve_distinct_payload_and_device_control_ranges() {
+    use mgbfs_runtime::distributed_memory::with_route_banks;
+    let base = shared_buffers(shape()).unwrap();
+    let ledger = with_route_banks(&base, 3).unwrap();
+    let bytes = |name: &str| ledger.allocations.iter()
+        .find(|a| a.name == name).unwrap().payload_bytes;
+    // 21 candidates with 16-byte packets. Each bank has the entire
+    // raw/sorted/packed storage, not just a descriptor or completion credit.
+    for bank in 0..3 {
+        let prefix = if bank == 0 { String::new() } else { format!("route_bank_{bank}.") };
+        for (name, expected) in [("children", 336), ("child_hashes", 336),
+            ("sorted_hashes", 336), ("sorted_refs", 168), ("packed_states", 336),
+            ("route_count", 4), ("owner_counts", 32), ("generation_control", 8)] {
+            assert_eq!(bytes(&format!("{prefix}{name}")), expected);
+        }
+    }
+    assert_eq!(bytes("states"), 4096);
+    assert_eq!(bytes("recv_states"), 336); // A separate single receive slot.
+    assert_eq!(ledger.total() - base.total(), 256 + 2 * 3072);
+    assert!(with_route_banks(&base, 1).is_err());
+    assert!(with_route_banks(&base, 0).is_err());
+    assert!(with_route_banks(&base, usize::MAX).is_err());
+}
+
+#[test]
 fn packed_owner_count_storage_fits_all_eight_ranks() {
     let ledger = shared_buffers(shape()).unwrap();
     let counts = ledger

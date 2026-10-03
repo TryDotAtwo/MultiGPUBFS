@@ -77,6 +77,7 @@ fn run() -> Result<()> {
         20260828u128.to_le_bytes(),
         id,
         DistributedConfig {
+            route_banks: 2,
             epoch_window: 2,
             rank,
             world,

@@ -2,6 +2,52 @@
 //! Full generation/owner/materialization/depth-rotation gate, not a benchmark.
 use mgbfs_core::matrix::MatrixGroup;
 use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs};
+#[path = "support/route_archive.rs"]
+mod route_archive;
+
+#[test]
+fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
+    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
+    let expected = graph.exact_layers(64).unwrap();
+    for banks in [2, 3, 4] {
+        for hash_first in [false, true] {
+            eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=create_begin");
+            let mut id = [0u8; 128];
+            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            let cfg = DistributedConfig {
+                route_banks: banks, epoch_window: 3,
+                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                batch: 1, layer_capacity: 64, state_ring_capacity: 256,
+                state_descriptor_capacity: 256, buckets: 8, shards: 2,
+                job_buckets: 2, bucket_capacity: 32, prededup: true,
+                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            };
+            let materialization = hash_first.then_some(graph.generators.len() as u32);
+            let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
+                &graph, [42; 16], id, cfg, materialization, 64 << 20, false,
+                mgbfs_core::config::ReferenceOwner::CucoRank,
+            ).unwrap();
+            eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=create_done");
+            assert_eq!(bfs.route_bank_count(), banks);
+            assert_eq!(bfs.epoch_window(), 3);
+            let archive_bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut archive = mgbfs_runtime::pinned_archive::PinnedArchive::new(
+                route_archive::MemoryExtent(archive_bytes.clone()),
+                100_000, 16, [0; 32], 3, 128).unwrap();
+            for (depth, wanted) in expected.iter().enumerate() {
+                let mut actual = bfs.snapshot().unwrap();
+                actual.sort();
+                assert_eq!(&actual, wanted, "banks={banks} hash_first={hash_first} depth={depth}");
+                assert_eq!(bfs.advance_archived(&mut archive).unwrap(), depth + 1 < expected.len());
+                eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=depth_done depth={depth}");
+            }
+            archive.finish().unwrap();
+            route_archive::assert_layers(&archive_bytes.lock().unwrap(), &expected, [42; 16]);
+            assert!(bfs.dense_lookahead_batches() > banks as u64);
+        }
+    }
+}
 
 #[test]
 fn cuco_rank_dense_layers_match_full_state_oracle() {
@@ -10,6 +56,7 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
     let cfg = DistributedConfig {
+        route_banks: 2,
         epoch_window: 2,
         rank: 0,
         world: 1,
@@ -44,6 +91,7 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
     let mut cfg = DistributedConfig {
+        route_banks: 2,
         epoch_window: 2,
         rank: 0,
         world: 1,
@@ -94,6 +142,7 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                     0
                 );
                 let cfg = DistributedConfig {
+                    route_banks: 2,
                     epoch_window: 2,
                     rank: 0,
                     world: 1,

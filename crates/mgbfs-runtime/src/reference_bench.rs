@@ -231,9 +231,9 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
     let digest = config.digest()?;
     if config.topology.world_size != world { return Err("RUN_TOPOLOGY_MISMATCH".into()); }
     // Named unsupported contracts, not coerced benchmark defaults. Multi-rank
-    // weighted settlement and extra producer banks are still separate work.
+    // weighted settlement remains separate; physical source banks are explicit.
     if config.macro_depth != 1 { return Err("RUN_MACRO_DISPATCH_UNAVAILABLE".into()); }
-    if config.capacities.route_slot_count != 2 { return Err("RUN_ROUTE_BANK_COUNT_UNAVAILABLE".into()); }
+    if !(2..=4).contains(&config.capacities.route_slot_count) { return Err("RUN_ROUTE_BANK_COUNT_UNAVAILABLE".into()); }
     let narrow = |value: u64| -> Result<u32> {
         let value = u32::try_from(value).map_err(|_| "RUN_CAPACITY_ABI")?;
         if value == 0 || value > i32::MAX as u32 { return Err("RUN_CAPACITY_ABI".into()); }
@@ -273,6 +273,7 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
     let pool = config.library_pool_bytes.map(|bytes| bytes.to_string());
     let selection = selection.with_library_pool(pool.as_deref(), cfg!(feature = "library-owner"))?;
     let cfg = DistributedConfig {
+        route_banks: config.capacities.route_slot_count as usize,
         epoch_window: usize::try_from(config.completion_epoch_window)
             .map_err(|_| "RUN_EPOCH_WINDOW_ABI")?, rank, world,
         logical_owner_to_rank: if world == 1 { vec![0, 0] } else { config.topology.logical_owner_to_rank.clone() },
@@ -302,6 +303,19 @@ fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<Prepared
 #[cfg(test)]
 mod production_tests {
     use super::*;
+    #[test]
+    fn typed_route_banks_are_independent_of_completion_credits() {
+        for banks in [2, 3, 4] {
+            let mut config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
+                include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+            config.capacities.route_slot_count = banks;
+            config.completion_epoch_window = 3;
+            let prepared = prepare(config).unwrap();
+            assert_eq!(prepared.cfg.route_banks, banks as usize);
+            assert_eq!(prepared.cfg.epoch_window, 3);
+            assert_eq!(prepared.cfg.state_ring_capacity, 128);
+        }
+    }
     #[test]
     #[cfg(feature = "library-owner")]
     fn typed_cuco_uses_the_declared_pool_and_existing_rank_owner() {
@@ -360,7 +374,8 @@ mod production_tests {
     }
     #[test]
     fn typed_run_does_not_coerce_unimplemented_contracts() {
-        let config = mgbfs_core::config::RunConfigV1::fixture(3).unwrap();
+        let mut config = mgbfs_core::config::RunConfigV1::fixture(3).unwrap();
+        config.capacities.route_slot_count = 5;
         assert_eq!(prepare(config.clone()).err().unwrap(), "RUN_ROUTE_BANK_COUNT_UNAVAILABLE");
         let mut config = config;
         config.capacities.route_slot_count = 2;
@@ -511,6 +526,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     let default_bucket_capacity =
         crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
     let cfg = DistributedConfig {
+        route_banks: env_u32("MGBFS_ROUTE_BANKS", 2)? as usize,
         epoch_window: match std::env::var("MGBFS_EPOCH_WINDOW") {
             Ok(value) => crate::reference_launch::epoch_window_for_launch(Some(&value))?,
             Err(std::env::VarError::NotPresent) =>
@@ -543,6 +559,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
         "epoch_window": cfg.epoch_window,
+        "route_banks": cfg.route_banks,
         "state_descriptor_capacity": cfg.state_descriptor_capacity,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
@@ -830,6 +847,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["epoch_window"] = serde_json::json!(bfs.epoch_window());
+        value["route_banks"] = serde_json::json!(bfs.route_bank_count());
         value["run_contract"] = serde_json::json!(if production { "RunConfigV1" } else { "reference_bench" });
         value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);

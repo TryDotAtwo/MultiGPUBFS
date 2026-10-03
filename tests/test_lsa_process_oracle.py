@@ -13,7 +13,7 @@ from test_export_hf_dataset import frame
 
 class ProcessOracleTests(unittest.TestCase):
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
-              expected_config_digest=None, expected_run_contract=None):
+              expected_config_digest=None, expected_run_contract=None, expected_route_banks=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -35,7 +35,8 @@ class ProcessOracleTests(unittest.TestCase):
                           for depth in range(len(expected))]
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
                               hash_seed_hex='00000000000000000000000000000001', epoch_window=3,
-                              run_contract='RunConfigV1', bootstrap_digest=list(bytes.fromhex('ab' * 32)))
+                              run_contract='RunConfigV1', route_banks=3,
+                              bootstrap_digest=list(bytes.fromhex('ab' * 32)))
                 if result_mutation:
                     result_mutation(rank, record)
                 (root / f'result/rank-{rank}.json').write_text(json.dumps(record))
@@ -56,7 +57,17 @@ class ProcessOracleTests(unittest.TestCase):
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
             return replay.verify_process_archives(root, expected_seed=expected_seed,
                 expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
-                expected_run_contract=expected_run_contract)
+                expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks)
+
+    def test_route_bank_evidence_matches_both_ranks(self):
+        self.assertEqual(self.check(expected_route_banks=3)['unique_states'], 24)
+        for rank in (0, 1):
+            for value in (None, 2):
+                def change(current, record):
+                    if current == rank:
+                        record['route_banks'] = value
+                with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_ROUTE_BANKS'):
+                    self.check(result_mutation=change, expected_route_banks=3)
 
     def test_typed_run_evidence_must_match_requested_contract_and_digest(self):
         self.assertEqual(self.check(expected_config_digest='ab' * 32,
