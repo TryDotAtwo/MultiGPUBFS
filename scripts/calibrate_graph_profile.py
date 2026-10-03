@@ -41,12 +41,13 @@ def full_state_fingerprint(manifest_path, *, calibration_limit=None, max_bytes=5
         if (len(data) != layer['states'] * width or len(data) != entry['bytes']
                 or hashlib.sha256(data).hexdigest() != entry['sha256']):
             raise ValueError('calibration archive checksum or count differs')
-        states = sorted(data[i:i+width] for i in range(0, len(data), width))
-        if any(a == b for a, b in zip(states, states[1:])):
+        # Fixed-size void elements sort by their raw bytes, exactly as Python
+        # bytes do. Avoid millions of Python objects and per-state hash calls.
+        import numpy as np
+        states = np.sort(np.frombuffer(data, dtype=f'V{width}'))
+        if np.any(states[1:] == states[:-1]):
             raise ValueError('duplicate calibration states')
-        digest = hashlib.sha256()
-        for state in states:
-            digest.update(state)
+        digest = hashlib.sha256(memoryview(states).cast('B'))
         result.append((layer['depth'], layer['states'], digest.hexdigest()))
     return result
 
@@ -118,7 +119,7 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
                 archived=json.loads(Path(manifest).read_text())
                 samples.append(dict(configuration_identity=identity,pair=index//2,
                     graph_batches=mode,status='COMPLETE' if complete else 'PREFIX_COMPLETE',full_state_parity=True,
-                    layers=archived['layers'],archive_status=archived['status'],
+                    layers=archived['layers'],state_fingerprint=fingerprint,archive_status=archived['status'],
                     last_completed_layer=archived['last_completed_layer'],
                     vram_sampling_interval_seconds=archived['vram_sampling_interval_seconds'],
                     program_commit=archived['program_commit'],

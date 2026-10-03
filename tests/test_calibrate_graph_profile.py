@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from calibrate_graph_profile import calibrate
+from calibrate_graph_profile import calibrate,full_state_fingerprint
 from bfs_tail_archive import TailArchive
 
 
@@ -32,6 +32,28 @@ class CalibrationTests(unittest.TestCase):
             if prefix:report.update(calibration_layers=34,last_completed_layer=33,stop_reason='calibration layer limit')
             (case/'result'/f'rank-{rank}.json').write_text(json.dumps(report))
         return manifest
+
+    def test_fixed_width_sort_matches_bytes_and_rejects_duplicates(self):
+        for n, r in ((16, 15), (32, 31)):
+            width = 8 if n <= 16 else 16
+            values = [1 << (4*(n-1)), 1 << 4, 0]
+            data = b''.join(value.to_bytes(width, 'little') for value in values)
+            expected = hashlib.sha256(b''.join(sorted(
+                data[i:i+width] for i in range(0, len(data), width)))).hexdigest()
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = TailArchive(root/'good', n=n, r=r, start=[0]+[1]*(n-1),
+                    actions={'L':'left','R':'right','X':'swap'}, program_commit='fixture',
+                    launch_config={}, sample_interval_seconds=.05)
+                archive.completed_layer(0, 3, [data], .1, {'0':None})
+                manifest = archive.snapshot(True, 'fixture')
+                self.assertEqual(full_state_fingerprint(manifest), [(0, 3, expected)])
+                duplicate = TailArchive(root/'duplicate', n=n, r=r, start=[0]+[1]*(n-1),
+                    actions={'L':'left','R':'right','X':'swap'}, program_commit='fixture',
+                    launch_config={}, sample_interval_seconds=.05)
+                duplicate.completed_layer(0, 3, [data[:width]*3], .1, {'0':None})
+                with self.assertRaisesRegex(ValueError, 'duplicate'):
+                    full_state_fingerprint(duplicate.snapshot(True, 'fixture'))
 
     def test_large_case_uses_matched_prefix_without_leaking_limit(self):
         self.corrupt=False;self.prefix=True
