@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "12391050694ad1b50669f2eee3490fd68cd1e0e1"
+SOURCE = "28b1f29fd85ab3ddc1ddc2c3183a49bac6a5655c"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "typed_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
@@ -27,11 +27,13 @@ def typed_rank_configs(base):
         for credits in (2, 3):
             for prededup in (True, False):
                 for mapping in ([0, 1], [1, 0]):
-                    config = copy.deepcopy(base)
-                    config.update(frontier_profile=profile, completion_epoch_window=credits,
-                        local_pre_dedup=prededup, owner_backend='CUCO_RANK', library_pool_bytes=96 << 20)
-                    config['topology']['logical_owner_to_rank'] = mapping.copy()
-                    cases.append(config)
+                    for banks in (2, 3, 4):
+                        config = copy.deepcopy(base)
+                        config.update(frontier_profile=profile, completion_epoch_window=credits,
+                            local_pre_dedup=prededup, owner_backend='CUCO_RANK', library_pool_bytes=96 << 20)
+                        config['topology']['logical_owner_to_rank'] = mapping.copy()
+                        config['capacities']['route_slot_count'] = banks
+                        cases.append(config)
     return cases
 
 
@@ -445,10 +447,12 @@ def main():
                 detail = json.loads(detail_path.read_text()) if detail_path.exists() else {}
                 row.update(label=label, run_config_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
                     run_contract=detail.get('run_contract'), epoch_window=detail.get('epoch_window'),
+                    route_banks=detail.get('route_banks'),
                     replay_status=detail.get('status'))
                 row['pass'] = row['returncode'] == 0 and not row['timed_out'] and (
                     detail.get('status') == 'DIAGNOSTIC_CASES_PASS' and detail.get('run_contract') == 'RunConfigV1'
-                    and detail.get('epoch_window') == config['completion_epoch_window'])
+                    and detail.get('epoch_window') == config['completion_epoch_window']
+                    and detail.get('route_banks') == config['capacities']['route_slot_count'])
                 report['typed_runs'].append(row)
                 save()
             selected = []
@@ -461,7 +465,8 @@ def main():
                     selected.append(config)
             for config in selected:
                 for tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
-                    replay_typed(config, 'typed-' + config['frontier_profile'] + '-' + tool,
+                    replay_typed(config, 'typed-' + config['frontier_profile'] + '-banks-' +
+                        str(config['capacities']['route_slot_count']) + '-' + tool,
                         ['--healthy-only', '--instrument-processes', tool])
             report['status'] = 'TYPED_GATE_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
             return

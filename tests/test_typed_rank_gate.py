@@ -16,15 +16,16 @@ class TypedRankGateTests(unittest.TestCase):
         saved = copy.deepcopy(base)
         cases = gate.typed_rank_configs(base)
         self.assertEqual(base, saved)
-        self.assertEqual(len(cases), 16)
+        self.assertEqual(len(cases), 48)
         self.assertEqual({(c['frontier_profile'], c['completion_epoch_window'],
-            c['local_pre_dedup'], tuple(c['topology']['logical_owner_to_rank'])) for c in cases},
-            {(p, k, d, m) for p in ('DENSE', 'HASH_FIRST') for k in (2, 3)
-             for d in (False, True) for m in ((0, 1), (1, 0))})
+            c['local_pre_dedup'], tuple(c['topology']['logical_owner_to_rank']),
+            c['capacities']['route_slot_count']) for c in cases},
+            {(p, k, d, m, b) for p in ('DENSE', 'HASH_FIRST') for k in (2, 3)
+             for d in (False, True) for m in ((0, 1), (1, 0)) for b in (2, 3, 4)})
         for c in cases:
             self.assertEqual(c['owner_backend'], 'CUCO_RANK')
             self.assertEqual(c['library_pool_bytes'], 100663296)
-            self.assertEqual(c['capacities']['route_slot_count'], 2)
+            self.assertIn(c['capacities']['route_slot_count'], (2, 3, 4))
             self.assertEqual(c['graph'], saved['graph'])
 
 
