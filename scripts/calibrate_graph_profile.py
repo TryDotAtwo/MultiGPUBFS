@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import subprocess
+import shutil
 import time
 from pathlib import Path
 from bfs_tail_archive import atomic_json
@@ -121,6 +122,13 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
                                            for x in ranks]))
                 decision['samples'] = samples
                 atomic_json(root/'decision.json', decision)
+                # Calibration inputs are temporary. Preserve native reports and
+                # the decision, while preventing six state archives per case
+                # from exhausting the GPU host's SSD during an automatic sweep.
+                saved=case/'saved'
+                if saved.is_symlink() or saved.resolve()!=case.resolve()/'saved' or case.resolve().parent!=root.resolve():
+                    raise ValueError('calibration cleanup path outside owned case')
+                shutil.rmtree(saved)
             decision.update(select_graph_profile(samples), status='CALIBRATED')
         except Exception as error:
             decision.update(status='NOT_CALIBRATED',graph_batches=0,

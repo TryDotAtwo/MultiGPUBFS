@@ -53,6 +53,8 @@ class CalibrationTests(unittest.TestCase):
             self.assertEqual(result['status'],'CALIBRATED')
             self.assertEqual(result['graph_batches'],32)
             self.assertEqual(len(result['samples']),6)
+            self.assertFalse((Path(d)/'calibration/run-0/saved').exists())
+            self.assertTrue((Path(d)/'calibration/run-0/result/rank-0.json').exists())
 
     def test_parity_failure_keeps_direct_and_evidence(self):
         self.corrupt=True

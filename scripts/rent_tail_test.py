@@ -12,6 +12,7 @@ def main():
     parser.add_argument('--root',type=Path,default=Path(__file__).resolve().parents[1]/'test_results/tail-vast-20261002')
     parser.add_argument('--label',default='mgbfs-lrx13-tail-test-20261002')
     parser.add_argument('--gpu-name',default='RTX 4060 Ti')
+    parser.add_argument('--machine-id',type=int,help='reuse a previously validated physical GPU host')
     parser.add_argument('--min-gpu-ram',type=int,default=8000)
     parser.add_argument('--min-cpu-ram',type=int,default=32000)
     parser.add_argument('--max-hourly',type=float,default=.30)
@@ -34,6 +35,9 @@ def main():
                  rentable={'eq': True}, verified={'eq': True},
                  reliability={'gte': .99}, disk_space={'gte': 100},
                  direct_port_count={'gte': 1}, type='ondemand', limit=30)
+    if args.machine_id is not None:
+        if args.machine_id<=0:parser.error('positive machine identity required')
+        query['machine_id']={'eq':args.machine_id}
     response = session.post(base + 'bundles/', json=query, timeout=30)
     response.raise_for_status()
     offers = response.json()['offers']
