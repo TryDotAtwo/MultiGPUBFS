@@ -103,3 +103,16 @@ https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/9cda8c07
 This is a real small cohort gate, not proof of large-shard throughput or graph
 speed. Saturated timing, graph memory admission, cancellation/archive pressure
 and automatic graph profile enablement remain open.
+
+Current mixed-window correctness gate: 04b74cc passes the complete two-rank
+CPU full-state oracle for both pairs, both owner maps and prededup settings.
+Small layers and the final partial window use direct launches. The transition
+requires an ordinary owner completion event after graph launch AND a generation
+stream wait before direct tail producers reuse shared children/hash buffers.
+An earlier owner/exchange-only bridge produced extra layers and was rejected
+by the strengthened CPU-diameter bound; it is not accepted performance evidence.
+The corrected (8,4) run executes seven full windows with only 1-2 executable
+rebuilds per rank, versus 24-25 in the original all-window capture path.
+Hardware PASS readback:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/c010703f76555ad1abf156995075c2195a51fd2c/evidence/20261003-graph-gen-bridge/tail-graph-gen-bridge-report.json
+Speed and archived parity of this new version remain under test.
