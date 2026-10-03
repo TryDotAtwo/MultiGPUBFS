@@ -107,7 +107,7 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
     prefix = 'MGBFS_MEMORY_QUERY '
     records = [json.loads(line.split(prefix, 1)[1]) for line in output.splitlines()
                if prefix in line]
-    if (len(records) != world or 'MEMORY_QUERY_DONE' not in output or
+    if (process.returncode != 0 or len(records) != world or 'MEMORY_QUERY_DONE' not in output or
             sorted(x.get('rank', -1) for x in records) != list(range(world))):
         raise RuntimeError('native memory query failed; inspect '+str(root/'query.log'))
     # Archive-enabled startup consumed 8 MiB more than the archive-free probe

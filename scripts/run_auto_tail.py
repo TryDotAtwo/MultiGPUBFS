@@ -261,6 +261,10 @@ def main(cancelled=None):
                 MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BUCKETS='16',MGBFS_SHARDS='8',
                 MGBFS_JOB_BUCKETS='2',MGBFS_ARCHIVE_ROWS='8192',MGBFS_ARCHIVE_SLOTS='2048',
                 NCCL_CUMEM_ENABLE='0'))
+        from automatic_transport import select_transport
+        runtime=json.loads(args.runtime_env.read_text())
+        base=select_transport(base,args.source,args.root/'transport-gate',runtime,
+            deadline=min(args.deadline_unix-120,time.time()+60),cancelled=cancelled)
         atomic_json(config_path,base)
     runtime=json.loads(args.runtime_env.read_text())
     publisher=SweepPublisher(args.root,args.repo_id,api,args.deadline_unix,publish)

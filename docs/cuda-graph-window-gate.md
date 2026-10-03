@@ -154,3 +154,14 @@ inputs stay on the GPU host; no per-run HF upload is requested. Current whole
 traversal comparison is capped at 512 MiB packed states and a fraction of host
 memory. Larger cases still need bounded-layer calibration; automatic transport
 selection and this newly integrated calibration on actual GPUs remain open.
+
+Automatic transport startup integration (CPU-tested, actual GPU gate pending):
+new automatic configurations without an explicit transport try an archived
+(4,1) LSA traversal with Graph off, then require all 24 words and every layer
+to match the independent CPU oracle. Successful capability admission selects
+NCCL_LSA and enables NCCL cuMem; failure keeps HOST_SIZED_NCCL and records the
+reason. Explicit transport settings and single-rank launches skip this probe.
+This runs once before the sweep, with a 30-second search deadline, outside the
+BFS hot path. It proves capability only, not a transport speed comparison.
+Production Graph calibration then compares the actual admitted configuration.
+Large-case bounded-layer calibration remains open.
