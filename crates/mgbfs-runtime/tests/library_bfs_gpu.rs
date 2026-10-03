@@ -6,6 +6,49 @@ use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs}
 mod route_archive;
 
 #[test]
+fn cuco_lsa_route_bank_capacity_failure_latches_after_reuse() {
+    // A missing device capacity decision or failure latch must fail this test.
+    // U4/F2 has layers 1,3,5,8,11,...; an eight-state next frontier cannot
+    // accept layer four. Batch one exercises bank reuse before that failure.
+    let graph = MatrixGroup::unitriangular(4, 2).unwrap();
+    let expected = graph.exact_layers(64).unwrap();
+    for banks in [2, 3, 4] {
+        for hash_first in [false, true] {
+            eprintln!("ROUTE_BANK_CAPACITY banks={banks} hash_first={hash_first} phase=create");
+            let mut id = [0u8; 128];
+            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            let cfg = DistributedConfig {
+                route_banks: banks, epoch_window: 3,
+                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                batch: 1, layer_capacity: 8, state_ring_capacity: 256,
+                state_descriptor_capacity: 256, buckets: 8, shards: 2,
+                job_buckets: 2, bucket_capacity: 32, prededup: true,
+                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            };
+            let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
+                &graph, [42; 16], id, cfg,
+                hash_first.then_some(graph.generators.len() as u32),
+                64 << 20, false, mgbfs_core::config::ReferenceOwner::CucoRank,
+            ).unwrap();
+            for depth in 0..3 {
+                let mut actual = bfs.snapshot().unwrap();
+                actual.sort();
+                assert_eq!(actual, expected[depth]);
+                assert!(bfs.advance().unwrap());
+            }
+            assert_eq!(bfs.snapshot().unwrap().len(), 8);
+            let error = bfs.advance().expect_err("overfull next frontier was admitted");
+            assert!(error.starts_with("GROUP_OWNER_OR_PRE_OWNER_FATAL"),
+                "unexpected failure instead of device capacity fatal: {error}");
+            assert!(bfs.route_bank_reuses() > 0, "failure did not exercise source-bank reuse");
+            assert_eq!(bfs.advance().unwrap_err(), "DISTRIBUTED_FAILED");
+            eprintln!("ROUTE_BANK_CAPACITY banks={banks} hash_first={hash_first} phase=failed error={error}");
+        }
+    }
+}
+
+#[test]
 fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
