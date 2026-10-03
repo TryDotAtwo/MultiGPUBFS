@@ -508,6 +508,30 @@ impl Drop for Plan {
 mod plan_error_tests {
     use super::*;
     #[test]
+    fn one_rank_lsa_abort_retires_local_readers_without_peer_callback() {
+        let graph = MatrixGroup::unitriangular(3, 2).unwrap();
+        let mut id = [0u8; 128];
+        assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+        let cfg = DistributedConfig {
+            route_banks: 4, epoch_window: 3,
+            rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+            transport: mgbfs_core::config::ReferenceTransport::Lsa,
+            batch: 1, layer_capacity: 64, state_ring_capacity: 128,
+            state_descriptor_capacity: 128, buckets: 8, shards: 2,
+            job_buckets: 2, bucket_capacity: 32, prededup: true,
+            generation_variant: 1, untouched_vram_reserve: 1 << 30,
+        };
+        let mut bfs = DistributedNativeBfs::new_reference_with_owner(
+            &graph, [42;16], id, cfg, None, OwnerBackend::CubSortMerge, 256,
+        ).unwrap();
+        assert!(bfs.advance().unwrap()); // Exercise actual registered LSA readers.
+        let status = unsafe { mgbfs_nccl_abort(bfs.comm.0) };
+        bfs.failed = true;
+        assert_eq!(status, 0, "one-rank reader drain must not require a nonexistent peer");
+        assert_eq!(unsafe { mgbfs_nccl_abort(bfs.comm.0) }, 0,
+            "already completed terminal abort must be idempotent");
+    }
+    #[test]
     fn invalid_epoch_window_is_rejected_before_device_or_communicator_admission() {
         let graph = MatrixGroup::unitriangular(3, 2).unwrap();
         for (epoch_window, state_descriptor_capacity, expected_error) in [

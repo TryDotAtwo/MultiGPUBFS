@@ -118,20 +118,25 @@ int terminal_abort(Comm* p) {
     if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=revoke_ready code=%d\n",p->rank,int(status));
     if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=external_readers_drain_begin\n",p->rank);
     if(status!=ncclSuccess || cudaDeviceSynchronize()!=cudaSuccess ||
-       !p->retirement_probe) {
+       (!p->retirement_probe && p->world!=1)) {
       if(p->retirement_probe)p->retirement_probe(p->retirement_context,-1);
       p->retirement_failed=true;return 12;
     }
     if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN rank=%u stage=external_readers_drain_end\n",p->rank);
-    int acknowledged=p->retirement_probe(p->retirement_context,1);
-    while(acknowledged==0 && std::chrono::steady_clock::now()<deadline) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      acknowledged=p->retirement_probe(p->retirement_context,0);
+    if(p->retirement_probe) {
+      int acknowledged=p->retirement_probe(p->retirement_context,1);
+      while(acknowledged==0 && std::chrono::steady_clock::now()<deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        acknowledged=p->retirement_probe(p->retirement_context,0);
+      }
+      if(acknowledged!=1) {
+        p->retirement_probe(p->retirement_context,-1);
+        p->retirement_failed=true;return 13;
+      }
     }
-    if(acknowledged!=1) {
-      p->retirement_probe(p->retirement_context,-1);
-      p->retirement_failed=true;return 13;
-    }
+    // A one-rank communicator has no peer that can retain our window. The
+    // successful device drain above is its complete reader-retirement proof.
+    // Multi-rank communicators still require every peer's sideband ACK.
     p->readers_retired=true;
   }
 #endif
