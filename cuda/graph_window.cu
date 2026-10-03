@@ -93,6 +93,11 @@ extern "C" int mgbfs_batch_graph_submit_v1(void* handle, uint32_t batches) {
     if (status == cudaSuccess && info.result == cudaGraphExecUpdateSuccess) {
       ++w.updates;
     } else if (status == cudaErrorGraphExecUpdateFailure) {
+      // The failed update also sets the thread's last-error slot. Consume the
+      // handled topology failure before later kernel launch wrappers inspect it.
+      auto last = cudaGetLastError();
+      if (last != cudaSuccess && last != cudaErrorGraphExecUpdateFailure)
+        return last;
       // Physical frontier wraps / final short windows can change topology.
       // Destroying an in-flight exec frees it asynchronously after completion.
       status = cudaGraphExecDestroy(w.executable);
