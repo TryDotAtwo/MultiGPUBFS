@@ -10,6 +10,23 @@ from vram_autotune import select_capacity, native_query
 
 
 class CapacitySelectionTests(unittest.TestCase):
+    def test_native_constructor_stop_requires_every_exact_rank_sentinel(self):
+        records=[dict(rank=i,required_bytes=123,reserve_bytes=10,
+                      free_after_nccl_warmup_bytes=1000) for i in range(2)]
+        measured='\n'.join('MGBFS_MEMORY_QUERY '+json.dumps(x) for x in records)
+        for errors,accepted in [(['MEMORY_QUERY_DONE']*2,True),
+                                (['MEMORY_QUERY_DONE'],False),
+                                (['MEMORY_QUERY_DONE','CUDA_ERROR'],False)]:
+            process=MagicMock(returncode=1)
+            process.communicate.return_value=(measured+'\n'+'\n'.join(
+                json.dumps({'status':'ERROR','error':e}) for e in errors),None)
+            with tempfile.TemporaryDirectory() as directory,patch(
+                    'vram_autotune.subprocess.Popen',return_value=process):
+                cfg=dict(world=2,n=7,r=3,batch=256,env={})
+                if accepted:self.assertEqual(len(native_query(cfg,Path(directory),Path(directory)/'query',{})),2)
+                else:
+                    with self.assertRaises(RuntimeError):native_query(cfg,Path(directory),Path(directory)/'query',{})
+
     def test_valid_records_from_failed_process_are_rejected(self):
         records=[dict(rank=i,required_bytes=123,reserve_bytes=10,
                       free_after_nccl_warmup_bytes=1000) for i in range(2)]

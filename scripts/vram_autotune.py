@@ -107,7 +107,20 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
     prefix = 'MGBFS_MEMORY_QUERY '
     records = [json.loads(line.split(prefix, 1)[1]) for line in output.splitlines()
                if prefix in line]
-    if (process.returncode != 0 or len(records) != world or 'MEMORY_QUERY_DONE' not in output or
+    terminal=[]
+    for line in output.splitlines():
+        try:record=json.loads(line)
+        except ValueError:continue
+        if isinstance(record,dict) and record.get('status')=='ERROR':terminal.append(record.get('error'))
+    # The native constructor uses an error sentinel to unwind before large
+    # allocations. torchrun therefore exits 1 even for a successful query.
+    # Accept only all ranks' exact sentinel reports, never an arbitrary failure
+    # after apparently valid measurements or a mere marker substring.
+    expected_stop=(process.returncode==1 and terminal==['MEMORY_QUERY_DONE']*world
+                   and 'MGBFS_RUNTIME_FATAL' not in output and 'MGBFS_ARCHIVE_WORKER_FATAL' not in output)
+    if ((process.returncode != 0 and not expected_stop)
+            or any(error!='MEMORY_QUERY_DONE' for error in terminal)
+            or len(records) != world or 'MEMORY_QUERY_DONE' not in output or
             sorted(x.get('rank', -1) for x in records) != list(range(world))):
         raise RuntimeError('native memory query failed; inspect '+str(root/'query.log'))
     # Archive-enabled startup consumed 8 MiB more than the archive-free probe
