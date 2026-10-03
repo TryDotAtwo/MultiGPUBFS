@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "28b1f29fd85ab3ddc1ddc2c3183a49bac6a5655c"
+SOURCE = "ce1e0e754ca554ff3dfc784cddda1100e42248c7"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "typed_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
@@ -35,6 +35,22 @@ def typed_rank_configs(base):
                         config['capacities']['route_slot_count'] = banks
                         cases.append(config)
     return cases
+
+
+def typed_reuse_configs(base):
+    """U4(F2): a 13-state layer forces >4 parent batches on some rank."""
+    config = copy.deepcopy(base)
+    generators = []
+    for row in range(3):
+        matrix = base['graph']['start'].copy()
+        matrix[row * 4 + row + 1] = 1
+        generators.append(matrix)
+    config['graph'].update(generators=generators + copy.deepcopy(generators),
+        inverse_map=[3, 4, 5, 0, 1, 2], expected_max_unique_states=64)
+    config['capacities']['route_slot_records'] = 6
+    return [candidate for candidate in typed_rank_configs(config)
+        if candidate['completion_epoch_window'] == 3 and candidate['local_pre_dedup']
+        and candidate['topology']['logical_owner_to_rank'] == [0, 1]]
 
 
 def cuda_build_target(hardware):
@@ -468,6 +484,9 @@ def main():
                     replay_typed(config, 'typed-' + config['frontier_profile'] + '-banks-' +
                         str(config['capacities']['route_slot_count']) + '-' + tool,
                         ['--healthy-only', '--instrument-processes', tool])
+            for index, config in enumerate(typed_reuse_configs(base)):
+                replay_typed(config, 'typed-reuse-' + str(index),
+                    ['--healthy-only', '--unitriangular-modulus', '2', '--require-bank-reuse'])
             report['status'] = 'TYPED_GATE_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
             return
         if MODE == "native_rank_gate":
