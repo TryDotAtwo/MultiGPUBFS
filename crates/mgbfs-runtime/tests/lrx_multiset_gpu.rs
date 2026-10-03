@@ -21,7 +21,7 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
     for (n, r) in [(7, 1), (8, 4)] {
         for prededup in [false, true] {
             for reversed in [false, true] {
-                let mut expected = LrxMultiset::new(n, r).unwrap().exact_layers(256).unwrap();
+                let mut expected = LrxMultiset::new(n, r).unwrap().exact_layers(8192).unwrap();
                 let mut id = [0u8;128];
                 assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
                 let workers: Vec<_> = (0..2).map(|rank| std::thread::spawn(move || {
