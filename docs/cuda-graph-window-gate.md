@@ -71,3 +71,20 @@ remote_build --graph-smoke-test now builds and runs the native graph test
 automatically as part of the remote job, with output in graph-test-run logs
 and a PASS field only after the expected marker. This remains opt-in and
 unverified on hardware; future test dispatch must enable it explicitly.
+
+2026-10-03 physical graph gate: instance 54041651, two RTX A4000,
+NCCL 2.30.7, pinned CUDA 12.9, native graph smoke PASS. First full oracle
+failed because a handled cudaGraphExecUpdate topology failure remained in
+the CUDA last-error slot. Commit 469b41b consumes this handled error; commit
+23f1ed3 preserves the actual scalar-store CUDA error for diagnostics.
+The rebuilt native library passes smoke and the full two-rank oracle: every
+state of every layer for (7,1), (8,4), both owner maps, prededup off/on.
+All sixteen rank/case records report full windows (>0); (7,1) has 34,
+(8,4) has 7 per rank. Existing base a4efa20 was patched on-host and rebuilt;
+this was not a fresh end-to-end build of 469b41b. Source hashes, patch and
+native binary hash are published with the exact log. HF readback confirmed
+PASS at revision 3dde05152d3c2627531643ffe7e28312986a11b0:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/3dde05152d3c2627531643ffe7e28312986a11b0/evidence/20261003-graph-update-fix/tail-update-fix-report.json
+
+Gates 4-6 remain open: archived CLI parity, saturated speed and graph memory
+admission, real shared-cohort HF publication. The graph switch remains opt-in.
