@@ -125,3 +125,13 @@ executable rebuilds 1 and updates 14. Therefore this workload does not prove
 no slowdown; Graph remains opt-in. This supersedes neither larger-workload
 measurements nor startup profile selection, both still open. HF readback PASS:
 https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/26dfe515b074febdd966776cad9ecf528fda8474/evidence/20261003-graph-speed-gen-bridge/report.json
+
+04b74cc larger archived timing gate: (12,4), batch 8192, 4096 pinned credits,
+three alternating runs per mode on two A4000. All 19,958,400 packed states
+at every completed depth compare exactly across all six runs. Direct median
+2.083662558 s; graph median 1.990329454 s; graph/direct ratio 0.9552071886
+(4.48% less search time). Each rank observes 25 full windows, one executable
+rebuild and 24 updates. This evidence proves a gain on this workload, not
+universal graph acceleration or full-VRAM memory admission of the new bridge.
+HF readback verified:
+https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/7f915dc91e2e8d39a2803cab725ef41941796f07/evidence/20261003-graph-speed-large/report.json
