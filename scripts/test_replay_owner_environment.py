@@ -4,6 +4,25 @@ from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_typed_cuco_uses_snapshot_pool_not_benchmark_or_inherited_pool(self):
+        env = {'MGBFS_LIBRARY_POOL_BYTES': '123', 'sentinel': 'keep'}
+        configure_owner_environment(env, 'CUCO_RANK', '1,0',
+            {'owner_backend': 'CUCO_RANK', 'library_pool_bytes': 100663296})
+        self.assertEqual(env['MGBFS_LIBRARY_POOL_BYTES'], '100663296')
+        self.assertEqual(env['sentinel'], 'keep')
+
+    def test_typed_pool_errors_do_not_mutate_environment(self):
+        for pool in (None, 0, 257, True, '67108864'):
+            env = {'sentinel': 'keep'}
+            with self.assertRaises(ValueError):
+                configure_owner_environment(env, 'CUCO_RANK', '0,1',
+                    {'owner_backend': 'CUCO_RANK', 'library_pool_bytes': pool})
+            self.assertEqual(env, {'sentinel': 'keep'})
+        env = {'sentinel': 'keep'}
+        with self.assertRaises(ValueError):
+            configure_owner_environment(env, 'CUB_SORT_MERGE', '0,1',
+                {'owner_backend': 'CUB_SORT_MERGE', 'library_pool_bytes': 67108864})
+        self.assertEqual(env, {'sentinel': 'keep'})
     def test_typed_replay_calls_run_not_bench(self):
         case = Path('case')
         config = Path('snapshot.json')

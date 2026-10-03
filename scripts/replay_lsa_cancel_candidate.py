@@ -40,14 +40,24 @@ def rank_arguments(case, reference_group, batch, run_config=None):
     return ['bench', '--reference', reference_group, str(batch), *paths]
 
 
-def configure_owner_environment(env, backend, rank_map):
+def configure_owner_environment(env, backend, rank_map, run_config=None):
     if backend not in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('UNKNOWN_OWNER_BACKEND')
     if rank_map not in ('0,1', '1,0'):
         raise ValueError('INVALID_TWO_RANK_MAP')
+    pool = 64 << 20
+    if run_config is not None:
+        if run_config['owner_backend'] != backend:
+            raise ValueError('RUN_REPLAY_OWNER_MISMATCH')
+        pool = run_config.get('library_pool_bytes')
+        if backend == 'CUCO_RANK':
+            if type(pool) is not int or not 0 < pool <= 0xffffffffffffffff or pool % 256:
+                raise ValueError('RUN_REPLAY_LIBRARY_POOL_REQUIRED_ALIGNED')
+        elif pool is not None:
+            raise ValueError('RUN_REPLAY_UNUSED_LIBRARY_POOL')
     env.update(MGBFS_OWNER_BACKEND=backend, MGBFS_RANK_MAP=rank_map)
     if backend == 'CUCO_RANK':
-        env['MGBFS_LIBRARY_POOL_BYTES'] = str(64 << 20)
+        env['MGBFS_LIBRARY_POOL_BYTES'] = str(pool)
     else:
         env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
 
@@ -229,10 +239,12 @@ def main():
     if args.unitriangular_modulus is not None and args.reference_size != 4:
         parser.error('unitriangular replay requires --reference-size 4')
     production_config = None
+    replay_config = None
     if args.run_config is not None:
         try:
             production_config = args.run_config.read_bytes()
             config = json.loads(production_config)
+            replay_config = config
             if config['topology']['world_size'] != 2 or config.get('macro_depth', 1) != 1:
                 raise ValueError('RUN_REPLAY_REQUIRES_TWO_RANK_UNIT_DEPTH')
             if config['graph']['rows'] != args.reference_size:
@@ -249,8 +261,7 @@ def main():
             args.owner_backend = config['owner_backend']
             args.pre_dedup = 'ON' if config['local_pre_dedup'] else 'OFF'
             args.rank_map = ','.join(map(str, config['topology']['logical_owner_to_rank']))
-            if args.owner_backend not in ('CUB_SORT_MERGE', 'BMMA_BUCKET'):
-                raise ValueError('RUN_REPLAY_OWNER_UNAVAILABLE')
+            configure_owner_environment({}, args.owner_backend, args.rank_map, replay_config)
         except (OSError, KeyError, TypeError, ValueError) as error:
             parser.error(str(error))
     work, output = args.work.resolve(), args.output.resolve()
@@ -313,7 +324,7 @@ def main():
         MGBFS_PRE_DEDUP=args.pre_dedup, MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
         MGBFS_CAPACITY_MODE="max_per_rank",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
-    configure_owner_environment(env, args.owner_backend, args.rank_map)
+    configure_owner_environment(env, args.owner_backend, args.rank_map, replay_config)
     if args.reference_size != 4 or args.unitriangular_modulus is not None:
         # Capacity is deliberately conservative for this bounded full-state
         # oracle, not a prediction of unknown production frontiers.
