@@ -14,6 +14,34 @@ import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_adaptive_records_calibration_without_changing_buffers(self):
+        config=dict(n=12,r=4,world=2,timeout_seconds=60,
+            env={'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA'},
+            resource_plan=device_budget([{'free_bytes':12<<30}]))
+        expected=pair_config(config,12,4)
+        decision=dict(status='CALIBRATED',graph_batches=32,samples=['fixture'])
+        with patch('calibrate_graph_profile.calibrate',return_value=decision) as calibration,\
+             patch.object(run_auto_tail,'run',return_value=Path('manifest')) as runner:
+            run_auto_tail.run_adaptive(config,Path('source'),Path('root/case'),{},
+                                      deadline=time.time()+600)
+        actual=runner.call_args.args[0]
+        self.assertEqual(actual['graph_profile_selection'],decision)
+        self.assertEqual(actual['env']['MGBFS_CUDA_GRAPH_BATCHES'],'32')
+        for name in ('MGBFS_BENCH_CAPACITY','MGBFS_LIBRARY_POOL_BYTES','MGBFS_ARCHIVE_SLOTS'):
+            self.assertEqual(actual['env'][name],expected['env'][name])
+        self.assertNotIn('MGBFS_CUDA_GRAPH_BATCHES',config['env'])
+        calibration.assert_called_once()
+
+    def test_explicit_graph_profile_bypasses_calibration(self):
+        config=dict(n=12,r=4,world=2,timeout_seconds=60,
+            env={'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA','MGBFS_CUDA_GRAPH_BATCHES':'0'},
+            resource_plan=device_budget([{'free_bytes':12<<30}]))
+        with patch('calibrate_graph_profile.calibrate') as calibration,\
+             patch.object(run_auto_tail,'run',return_value=Path('manifest')):
+            run_auto_tail.run_adaptive(config,Path('source'),Path('root/case'),{},
+                                      deadline=time.time()+600)
+        calibration.assert_not_called()
+
     def test_native_tuning_uses_actual_queries_and_preserves_fast_batch(self):
         base=dict(n=16,r=4,world=2,host_available_bytes=8<<30,env={},
                   resource_plan=device_budget([{'free_bytes':12<<30}]))

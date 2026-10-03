@@ -128,6 +128,27 @@ def tune_pair(base, source, case, runtime_env, *, query=None):
     return cfg
 
 
+def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
+    """Admission and optional matched calibration happen before the real BFS."""
+    cfg=(tune_pair(config,source,case,runtime) if config.get('native_capacity_probe')
+         else pair_config(config,config['n'],config['r']))
+    if (config.get('graph_calibration', True)
+            and cfg['env'].get('MGBFS_TRANSPORT_BACKEND') == 'NCCL_LSA'
+            and 'MGBFS_CUDA_GRAPH_BATCHES' not in cfg['env']):
+        from calibrate_graph_profile import calibrate
+        remaining=deadline-time.time()
+        calibration_deadline=time.time()+min(90,max(0,remaining*.1))
+        decision=calibrate(cfg,source,case.parent/(case.name+'-graph-calibration'),runtime,
+            deadline=calibration_deadline,cancelled=cancelled)
+        cfg['graph_profile_selection']=decision
+        cfg['env']['MGBFS_CUDA_GRAPH_BATCHES']=str(decision['graph_batches'])
+    remaining=deadline-time.time()
+    if remaining<=0 or (cancelled and cancelled()):
+        raise TimeoutError('automatic run deadline or cancellation before BFS')
+    cfg['timeout_seconds']=min(cfg.get('timeout_seconds',120),remaining)
+    return run(cfg,source,case,runtime,cancelled=cancelled)
+
+
 def verify_hf(root, repo, api, token):
     from concurrent.futures import ThreadPoolExecutor
     from huggingface_hub import hf_hub_url
@@ -251,9 +272,8 @@ def main(cancelled=None):
         if count-last_published>=20:
             publisher.enqueue(ledger);last_published=count
     def adaptive(config,source,case,env):
-        cfg=(tune_pair(config,source,case,env) if config.get('native_capacity_probe')
-             else pair_config(config,config['n'],config['r']))
-        return run(cfg,source,case,env,cancelled=cancelled)
+        return run_adaptive(config,source,case,env,
+                            deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)
     # Each layer writes its bounded intermediate snapshot immediately.
     # Completed cohorts publish in the background without per-layer quota storms.
     remaining=args.deadline_unix-time.time()

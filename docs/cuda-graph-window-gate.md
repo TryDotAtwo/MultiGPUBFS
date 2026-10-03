@@ -135,3 +135,22 @@ rebuild and 24 updates. This evidence proves a gain on this workload, not
 universal graph acceleration or full-VRAM memory admission of the new bridge.
 HF readback verified:
 https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/blob/7f915dc91e2e8d39a2803cab725ef41941796f07/evidence/20261003-graph-speed-large/report.json
+
+Startup calibration integration (CPU-tested, new GPU gate pending):
+`run_auto_tail.run_adaptive` now performs six matched archived traversals when
+NCCL_LSA is already selected and no explicit Graph mode is supplied. It compares
+all complete archived layers using sorted packed-state fingerprints, verifies
+checksums/counts/duplicates, and requires actual full windows on every rank.
+Graph is selected only if every pair improves and median search time improves
+at least 2%. Configuration, source, binary and device identity are retained
+with the decision in the actual case launch metadata. Calibration never changes
+the admitted production buffers and runs outside the BFS hot path.
+
+The calibration allowance is at most 90 seconds and 10% of remaining execution
+time, preserving the separate publication allowance. Explicit Graph settings
+are preserved. Unsupported transport, incomplete runs, parity failures or missing
+full windows retain direct launches and record the reason. Packed calibration
+inputs stay on the GPU host; no per-run HF upload is requested. Current whole
+traversal comparison is capped at 512 MiB packed states and a fraction of host
+memory. Larger cases still need bounded-layer calibration; automatic transport
+selection and this newly integrated calibration on actual GPUs remain open.
