@@ -1430,7 +1430,14 @@ impl DistributedNativeBfs {
             owned_memory.total(),
             cfg.untouched_vram_reserve,
             startup_cancel.as_deref(),
-        )?;
+        ).map_err(|error| {
+            if error == "MEMORY_QUERY_DONE" {
+                // Admission completed its all-rank query rendezvous. Suppress
+                // the constructor failure guard for this intentional exit.
+                startup_report.disarm();
+            }
+            error
+        })?;
         let setup_send = Buffer::new(4, raw)?;
         let setup_recv = Buffer::new(4, raw)?;
         let lsa_view = if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
