@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "924ee24a6c08fdab018c64694b43fff64dc61b40"
+SOURCE = "48d4a1ffa351900be593cc5ff2fdb2a32dec6557"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "native_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
@@ -28,8 +28,11 @@ def cuda_build_target(hardware):
     return targets[hardware]
 
 
-def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None):
+def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None,
+                            require_window=True):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
+    if not require_window and required_stage != 'device_comm_only_create':
+        raise ValueError('WINDOWLESS_PROBE_REQUIRES_DEVICE_ONLY_STAGE')
     scripts = str(Path(__file__).resolve().parents[2] / 'scripts')
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
@@ -65,8 +68,9 @@ def run_window_process_pair(command, cwd, env, output, timeout=120, required_sta
     reached = ([text.count(f'rank={rank} stage={required_stage} result=PASS')
                 for rank, text in enumerate(texts)] if required_stage else [1, 1])
     return dict(returncodes=codes, timed_out=timed_out, registered_ranks=registered,
-                required_stage=required_stage, reached_stage=reached,
-                **{'pass': not timed_out and codes == [0, 0] and registered == [1, 1] and reached == [1, 1]})
+                required_stage=required_stage, reached_stage=reached, require_window=require_window,
+                **{'pass': not timed_out and codes == [0, 0]
+                    and registered == ([1, 1] if require_window else [0, 0]) and reached == [1, 1]})
 
 
 def run_protocol_replay(command, cwd, env, log, timeout=1800):
@@ -319,14 +323,16 @@ def main():
                 report['t4_acceptance_eligible'] = False
                 report['window_runs'] = {}
                 probe_env = dict(env, NCCL_DEBUG='INFO')
-                for stage, argument in (('window', 'nonblocking'), ('device_comm_create', 'device_comm')):
+                for stage, argument in (('window', 'nonblocking'),
+                        ('device_comm_only_create', 'device_comm_only'), ('device_comm_create', 'device_comm')):
                     for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
                         label = stage + '-' + tool
                         command = [str(binary), argument]
                         if tool != 'plain':
                             command = ['compute-sanitizer', '--tool', tool, '--error-exitcode', '97', *command]
                         row = run_window_process_pair(command, source, probe_env, logs / ('window-process-' + label),
-                            required_stage=stage if stage != 'window' else None)
+                            required_stage=stage if stage != 'window' else None,
+                            require_window=argument != 'device_comm_only')
                         row['command'] = command
                         if tool != 'plain':
                             from replay_lsa_cancel_candidate import instrumentation_clean

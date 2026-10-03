@@ -15,6 +15,19 @@ spec.loader.exec_module(gate)
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_device_only_probe_requires_both_activation_markers_without_window(self):
+        command = [sys.executable, '-c',
+            "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' stage=device_comm_only_create result=PASS')"]
+        with tempfile.TemporaryDirectory() as directory:
+            row = gate.run_window_process_pair(command, '.', dict(os.environ), Path(directory),
+                required_stage='device_comm_only_create', require_window=False)
+            self.assertTrue(row['pass'])
+            self.assertEqual(row['registered_ranks'], [0, 0])
+            row = gate.run_window_process_pair([sys.executable, '-c', 'pass'], '.',
+                dict(os.environ), Path(directory) / 'missing',
+                required_stage='device_comm_only_create', require_window=False)
+            self.assertFalse(row['pass'])
+
     def test_build_target_matches_admitted_hardware(self):
         for hardware, expected in [('T4', '75'), ('RTX2070', '75'), ('A4000', '86')]:
             with self.subTest(hardware=hardware):
