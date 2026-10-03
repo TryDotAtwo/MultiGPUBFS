@@ -138,3 +138,15 @@ payload, mixed packed widths, shard boundaries, partial offsets, unchanged
 group reuse, corruption rejection, ordered publication and shared readback.
 These are CPU and mocked-HF integration gates; actual remote cohort publication
 remains open. Full reusable 32-batch CUDA Graph windows remain unimplemented.
+
+Reserve calibration (in progress): MGBFS_VRAM_RESERVE_BYTES is parsed once at
+reference startup and included in rank agreement and memory admission. Default
+remains 1 GiB; explicit values must be >=64 MiB. The Rust constructor and native
+RMM pool ABI now use the same floor. Initial smaller-reserve attempts were
+rejected by old hardcoded constructor/ABI floors, not established allocation
+failures, and are not evidence of available-memory limits. On two A4000 the
+rebuilt native ABI successfully creates/destroys a 64 MiB pool for 64/128/256 MiB
+reserves on each GPU and still rejects zero reserve. This only proves the pool
+contract; full admitted BFS, graph-resource headroom and HF tails for these
+reserve values remain under hardware test. No per-batch reserve calculation
+or additional synchronization was added.
