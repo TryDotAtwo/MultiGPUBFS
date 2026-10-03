@@ -109,6 +109,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             continue
         remaining=deadline-time.monotonic()
         if remaining<=0:
+            ledger['global_stop_reason']='compute deadline exhausted'
             break
         config=copy.deepcopy(base)
         config.update(n=n,r=m,run_id=base.get('run_id','sweep')+'-'+key,

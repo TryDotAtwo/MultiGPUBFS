@@ -215,9 +215,18 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
             and 'MGBFS_CUDA_GRAPH_BATCHES' not in cfg['env']):
         from calibrate_graph_profile import calibrate
         remaining=deadline-time.time()
-        calibration_deadline=time.time()+min(90,max(0,remaining*.1))
+        width = 8 if cfg['n'] <= 16 else 16
+        comparison_bytes = min(512<<20, cfg.get('host_available_bytes',8<<30)//16)
+        order = math.factorial(cfg['n'])//math.factorial(cfg['r'])
+        # Large admitted buffers and prefix verification took several minutes
+        # in the measured n15/r4 gate. A 90-second ceiling cannot finish its six
+        # repeats; preserve the 10% fraction but permit a bounded 600s prefix gate.
+        ceiling = 600 if order*width > comparison_bytes else 90
+        allowance = min(ceiling,max(0,remaining*.1))
+        calibration_deadline=time.time()+allowance
         decision=calibrate(cfg,source,case.parent/(case.name+'-graph-calibration'),runtime,
             deadline=calibration_deadline,cancelled=cancelled)
+        decision['startup_budget_seconds']=allowance
         cfg['graph_profile_selection']=decision
         cfg['env']['MGBFS_CUDA_GRAPH_BATCHES']=str(decision['graph_batches'])
     remaining=deadline-time.time()

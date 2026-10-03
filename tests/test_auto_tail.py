@@ -100,6 +100,19 @@ class AutomaticPlanningTests(unittest.TestCase):
         self.assertNotIn('MGBFS_CUDA_GRAPH_BATCHES',config['env'])
         calibration.assert_called_once()
 
+    def test_large_prefix_calibration_budget_is_bounded_outside_bfs(self):
+        config=dict(n=15,r=4,world=2,timeout_seconds=60,
+            env={'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA'},
+            resource_plan=device_budget([{'free_bytes':12<<30}]))
+        with patch.object(run_auto_tail.time,'time',return_value=1000), \
+             patch('calibrate_graph_profile.calibrate',return_value=dict(graph_batches=32)) as calibration, \
+             patch.object(run_auto_tail,'run',return_value=Path('manifest')) as runner:
+            run_auto_tail.run_adaptive(config,Path('source'),Path('root/case'),{},deadline=8200)
+        self.assertEqual(calibration.call_args.kwargs['deadline'],1600)
+        actual=runner.call_args.args[0]
+        self.assertEqual(actual['graph_profile_selection']['startup_budget_seconds'],600)
+        self.assertNotIn('MGBFS_CALIBRATION_LAYERS',actual['env'])
+
     def test_explicit_graph_profile_bypasses_calibration(self):
         config=dict(n=12,r=4,world=2,timeout_seconds=60,
             env={'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA','MGBFS_CUDA_GRAPH_BATCHES':'0'},
