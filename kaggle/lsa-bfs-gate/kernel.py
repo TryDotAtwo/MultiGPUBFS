@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "ce1e0e754ca554ff3dfc784cddda1100e42248c7"
+SOURCE = "788aa89445d7920b8f3d46f1c10d3ddce07a3fb2"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "typed_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
