@@ -1170,7 +1170,7 @@ impl DistributedNativeBfs {
             if !cfg!(feature = "library-owner")
                 || bytes == 0
                 || bytes % 256 != 0
-                || cfg.untouched_vram_reserve < 1 << 30
+                || cfg.untouched_vram_reserve < 64 << 20
             {
                 return Err("LIBRARY_POOL_CONFIG".into());
             }
