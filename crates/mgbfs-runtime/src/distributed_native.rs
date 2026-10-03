@@ -702,6 +702,7 @@ pub struct DistributedNativeBfs {
     owner_consumed: Option<Event>,
     epoch_completed: Vec<Event>,
     epoch_outstanding: std::collections::VecDeque<usize>,
+    batch_graph: Option<crate::batch_graph::BatchGraph>,
     archive_stream: Stream,
     archive_done: [Event; 2],
     archived_depth: Option<u32>,
@@ -1664,6 +1665,9 @@ impl DistributedNativeBfs {
                 .then(Event::new).transpose()?,
             epoch_completed,
             epoch_outstanding: std::collections::VecDeque::with_capacity(inflight),
+            batch_graph: (crate::reference_launch::graph_batches(
+                std::env::var("MGBFS_CUDA_GRAPH_BATCHES").ok().as_deref())? != 0)
+                .then(crate::batch_graph::BatchGraph::new).transpose()?,
             archive_stream,
             archive_done,
             archived_depth: None,
@@ -1893,6 +1897,10 @@ impl DistributedNativeBfs {
     /// Submitted lookahead batches, not a claim of measured GPU overlap.
     pub fn dense_lookahead_batches(&self) -> u64 {
         self.dense_lookahead
+    }
+    /// Host counters only, sampled after BFS for the hardware acceptance report.
+    pub fn batch_graph_stats(&self) -> Result<Option<serde_json::Value>> {
+        self.batch_graph.as_ref().map(|graph| graph.stats()).transpose()
     }
     fn enqueue_frontier_generation(&mut self, batch: ParentBatch) -> Result<u64> {
         let sequence = self
@@ -2765,6 +2773,9 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(None);
+        if result.is_err() {
+            if let Some(graph) = self.batch_graph.as_mut() { graph.cancel(); }
+        }
         if let Err(error) = &result {
             // Publish the originating error before abort/Drop can block or a
             // fail-fast launcher terminates this rank after its peer exits.
@@ -2794,6 +2805,9 @@ impl DistributedNativeBfs {
             return Err("DISTRIBUTED_FAILED".into());
         }
         let result = self.advance_inner(Some(archive));
+        if result.is_err() {
+            if let Some(graph) = self.batch_graph.as_mut() { graph.cancel(); }
+        }
         if let Err(error) = &result {
             eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
         }
@@ -2894,6 +2908,21 @@ impl DistributedNativeBfs {
         let mut archive_released = [false; 2];
         let mut lsa_owner_recorded = false;
         let device_epoch = self.lsa_view.is_some() && self.rank_owner_mode();
+        let graph_mode = self.batch_graph.is_some();
+        if graph_mode && (!device_epoch || self.hash_first.is_some() || trace_sync
+            || std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_some()) {
+            return Err("BATCH_GRAPH_REQUIRES_DENSE_DEVICE_COUNT_RANK_OWNER".into());
+        }
+        if graph_mode {
+            if let Some(a) = archive.as_deref() {
+                let credits = crate::reference_launch::graph_archive_credits(
+                    scheduled_rounds, self.cfg.batch, a.rows, self.epoch_completed.len())?;
+                if a.credit_capacity() < credits {
+                    return Err(format!("GRAPH_ARCHIVE_CREDIT_BUDGET required={credits} available={}",
+                        a.credit_capacity()));
+                }
+            }
+        }
         // The host-sized depth schedule above reuses collective_recv for a
         // nonzero round count. LSA reads this word as its device group-fatal
         // predicate before the first owner vote, so start each depth clean.
@@ -2901,7 +2930,7 @@ impl DistributedNativeBfs {
             check(unsafe { cudaMemsetAsync(self.collective_recv.ptr, 0, 4, s) })?;
         }
         let mut epoch_serial = 0usize;
-        for _ in 0..scheduled_rounds {
+        for scheduled_round in 0..scheduled_rounds {
             let _batch_range = TraceRange::new(trace_ranges, b"mgbfs.batch\0");
             self.ensure_not_cancelled()?;
             if device_epoch && self.epoch_outstanding.len() == self.epoch_completed.len() {
@@ -2909,12 +2938,36 @@ impl DistributedNativeBfs {
                 self.wait_epoch_credit(slot)?;
                 self.epoch_outstanding.pop_front();
             }
+            if graph_mode && scheduled_round % 32 == 0 {
+                // The archive worker observes real D2H events, never captured
+                // events. Stage only this bounded window while parents remain
+                // live; owner retirement waits on those copies inside the graph.
+                if let Some(a) = archive.as_deref_mut() {
+                    let mut staged = cursor;
+                    for _ in 0..(scheduled_rounds-scheduled_round).min(32) {
+                        if let Some(batch) = staged.take(&self.front, self.cfg.batch)? {
+                            self.archive_range(a, batch.begin, u64::from(batch.count), batch.extent)?;
+                        }
+                    }
+                }
+                unsafe {
+                    self.batch_graph.as_mut().ok_or("BATCH_GRAPH_MISSING")?.begin(
+                        s, self.generation_stream.0, self.exchange_stream.0)?;
+                    // Rebind the prior-consumer dependency into this capture.
+                    // Earlier launches are already ordered on the owner stream.
+                    check(cudaEventRecord(self.owner_consumed.as_ref()
+                        .ok_or("LSA_OWNER_EVENT_MISSING")?.0, s))?;
+                }
+                lsa_owner_recorded = true;
+            }
             let work = cursor.take(&self.front, self.cfg.batch)?;
             let extent_index = work.map(|b| b.extent).unwrap_or(0);
             let extent_offset = work.map(|b| b.offset).unwrap_or(0);
             let parent = work.map(|b| self.front[b.extent]);
             let parents = work.map(|b| b.count).unwrap_or(0);
-            let next_work = cursor.peek(&self.front, self.cfg.batch)?;
+            let next_work = if graph_mode && (scheduled_round+1)%32 == 0 {
+                None // Never export a captured generation into the next window.
+            } else { cursor.peek(&self.front, self.cfg.batch)? };
             let mut generation = None;
             let candidate_count = parents * self.moves;
             if trace_route {
@@ -2924,7 +2977,7 @@ impl DistributedNativeBfs {
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_begin", self.cfg.rank, self.depth);
                 }
-                let error = if let Some(extent) = parent {
+                let error = if graph_mode { None } else if let Some(extent) = parent {
                     self.archive_range(
                         a,
                         extent.begin + extent_offset,
@@ -3252,7 +3305,8 @@ impl DistributedNativeBfs {
                             && !archive_released[extent_index])
                     {
                         check(unsafe {
-                            cudaStreamWaitEvent(s, self.archive_done[extent_index].0, 0)
+                            cudaStreamWaitEvent(s, self.archive_done[extent_index].0,
+                                u32::from(graph_mode)) // cudaEventWaitExternal during capture
                         })?;
                         archive_released[extent_index] = true;
                     }
@@ -3485,7 +3539,12 @@ impl DistributedNativeBfs {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
             }
-            if device_epoch {
+            if graph_mode && ((scheduled_round+1)%32 == 0 || scheduled_round+1 == scheduled_rounds) {
+                self.batch_graph.as_mut().ok_or("BATCH_GRAPH_MISSING")?
+                    .submit(scheduled_round%32+1)?;
+            }
+            if device_epoch && (!graph_mode || (scheduled_round+1)%32 == 0
+                || scheduled_round+1 == scheduled_rounds) {
                 let slot = epoch_serial % self.epoch_completed.len();
                 check(unsafe { cudaEventRecord(self.epoch_completed[slot].0, s) })?;
                 self.epoch_outstanding.push_back(slot);

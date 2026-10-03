@@ -17,6 +17,8 @@ pub mod dense_frames;
 pub mod distributed_memory;
 #[cfg(feature = "cuda")]
 pub mod distributed_native;
+#[cfg(feature = "cuda")]
+mod batch_graph;
 pub mod epoch_coordinator;
 pub mod event_generation;
 pub mod exchange;

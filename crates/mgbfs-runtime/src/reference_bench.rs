@@ -381,6 +381,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref())?,
         "library_pool_autosize": std::env::var("MGBFS_LIBRARY_POOL_AUTOSIZE").ok(),
         "memory_query": std::env::var("MGBFS_MEMORY_QUERY").ok(),
+        "graph_batches": crate::reference_launch::graph_batches(
+            std::env::var("MGBFS_CUDA_GRAPH_BATCHES").ok().as_deref())?,
     });
     let bootstrap_digest: [u8; 32] =
         Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
@@ -670,6 +672,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         }
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
+        value["batch_graph"] = serde_json::json!(bfs.batch_graph_stats()?);
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
         #[cfg(feature = "library-owner")]
         if let Some(usage) = bfs.library_pool_usage()? {

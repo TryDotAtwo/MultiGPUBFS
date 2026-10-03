@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--min-gpu-ram',type=int,default=8000)
     parser.add_argument('--min-cpu-ram',type=int,default=32000)
     parser.add_argument('--max-hourly',type=float,default=.30)
+    parser.add_argument('--min-cuda-version',type=float,default=12.9)
     parser.add_argument('--project-cap-usd',type=float,default=10)
     args=parser.parse_args()
     if (not args.label.startswith('mgbfs-lrx13-') or not 0<args.max_hourly<=.60
@@ -28,6 +29,7 @@ def main():
     session.headers['Authorization'] = 'Bearer ' + load_key()
     base = 'https://console.vast.ai/api/v0/'
     query = dict(num_gpus={'eq': 2}, gpu_name={'eq': args.gpu_name},
+                 cuda_max_good={'gte':args.min_cuda_version},
                  gpu_ram={'gte':args.min_gpu_ram}, cpu_ram={'gte':args.min_cpu_ram},
                  rentable={'eq': True}, verified={'eq': True},
                  reliability={'gte': .99}, disk_space={'gte': 100},

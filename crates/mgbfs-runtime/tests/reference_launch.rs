@@ -1,6 +1,30 @@
 use mgbfs_runtime::reference_launch::macro_depth_for_launch;
 
 #[test]
+fn full_graph_window_policy_is_explicit_and_cluster_agreed() {
+    use mgbfs_runtime::reference_launch::graph_batches;
+    assert_eq!(graph_batches(None).unwrap(), 0);
+    assert_eq!(graph_batches(Some("0")).unwrap(), 0);
+    assert_eq!(graph_batches(Some("32")).unwrap(), 32);
+    for value in ["1", "2", "31", "33", "-1", "bad", ""] {
+        assert_eq!(graph_batches(Some(value)).unwrap_err(), "ENV_MGBFS_CUDA_GRAPH_BATCHES");
+    }
+}
+
+#[test]
+fn graph_window_archive_credits_cover_preparation_and_all_inflight_windows() {
+    use mgbfs_runtime::reference_launch::graph_archive_credits as credits;
+    assert_eq!(credits(1000, 32768, 32768, 2).unwrap(), 96);
+    assert_eq!(credits(1000, 32768, 8192, 2).unwrap(), 384);
+    assert_eq!(credits(3, 32768, 32768, 2).unwrap(), 9);
+    assert_eq!(credits(1000, 9, 4, 1).unwrap(), 192);
+    for args in [(0,1,1,1),(1,0,1,1),(1,1,0,1),(1,1,1,0)] {
+        assert_eq!(credits(args.0,args.1,args.2,args.3).unwrap_err(), "GRAPH_ARCHIVE_CREDIT_SHAPE");
+    }
+    assert!(credits(u32::MAX,u32::MAX,1,usize::MAX).is_err());
+}
+
+#[test]
 fn bounded_device_epoch_queue_preserves_legacy_default_and_accepts_32() {
     use mgbfs_runtime::reference_launch::inflight_batches;
     assert_eq!(inflight_batches(None).unwrap(),2);

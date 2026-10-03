@@ -1,5 +1,30 @@
 use mgbfs_core::Result;
 
+/// Explicit full-window capture policy. Legacy submissions remain the default
+/// until the multi-rank graph/archive hardware acceptance gates pass.
+pub fn graph_batches(value: Option<&str>) -> Result<u32> {
+    match value.unwrap_or("0") {
+        "0" => Ok(0), "32" => Ok(32),
+        _ => Err("ENV_MGBFS_CUDA_GRAPH_BATCHES".into()),
+    }
+}
+
+/// Enough archive credits for in-flight graph windows plus the next window's
+/// copies. Depths shorter than 32 batches need only their actual window width.
+pub fn graph_archive_credits(rounds: u32, batch: u32, archive_rows: u32,
+                             inflight: usize) -> Result<usize> {
+    if rounds == 0 || batch == 0 || archive_rows == 0 || inflight == 0 {
+        return Err("GRAPH_ARCHIVE_CREDIT_SHAPE".into());
+    }
+    let width = u64::from(archive_rows.min(batch));
+    let frames = u64::from(batch)/width + u64::from(u64::from(batch)%width != 0);
+    let windows = u64::try_from(inflight).map_err(|_| "GRAPH_ARCHIVE_CREDIT_OVERFLOW")?
+        .checked_add(1).ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
+    let credits = u64::from(rounds.min(32)).checked_mul(frames)
+        .and_then(|x| x.checked_mul(windows)).ok_or("GRAPH_ARCHIVE_CREDIT_OVERFLOW")?;
+    usize::try_from(credits).map_err(|_| "GRAPH_ARCHIVE_CREDIT_OVERFLOW".into())
+}
+
 /// Setup-only bound for device-count epochs. Does not enlarge data buffers.
 pub fn inflight_batches(value: Option<&str>) -> Result<usize> {
     let count=value.unwrap_or("2").parse::<usize>()

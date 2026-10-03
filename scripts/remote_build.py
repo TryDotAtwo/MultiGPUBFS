@@ -64,12 +64,28 @@ def main():
     parser.add_argument('--timeout-seconds', type=int, required=True)
     parser.add_argument('--jobs', type=int, default=2)
     parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90'), default='90')
+    parser.add_argument('--nccl-lsa-root', type=Path,
+                        help='explicit installed NCCL >=2.29 root for device-count transport')
     args = parser.parse_args()
     if (sys.platform != 'linux' or sys.version_info < (3, 10) or
             not re.fullmatch('[0-9a-f]{40}', args.commit) or
             min(args.jobs, args.timeout_seconds) <= 0):
         parser.error('Linux Python >=3.10, full commit, positive jobs and timeout required')
     source, work = args.source.resolve(), args.work.resolve()
+    nccl_lsa_root = args.nccl_lsa_root.resolve() if args.nccl_lsa_root else None
+    if nccl_lsa_root and not all((nccl_lsa_root/p).is_file() for p in
+            ('include/nccl.h', 'include/nccl_device.h', 'lib/libnccl.so.2')):
+        parser.error('NCCL LSA root must contain nccl.h, nccl_device.h and libnccl.so.2')
+    nccl_version = None
+    if nccl_lsa_root:
+        header = (nccl_lsa_root/'include/nccl.h').read_text()
+        try:
+            nccl_version = [int(re.search(r'#define\s+NCCL_'+name+r'\s+(\d+)', header)[1])
+                            for name in ('MAJOR', 'MINOR', 'PATCH')]
+        except (TypeError, ValueError):
+            parser.error('cannot read installed NCCL version')
+        if tuple(nccl_version[:2]) < (2, 29):
+            parser.error('NCCL >=2.29 required for device-count transport')
     if not source.is_dir() or work.exists() or not work.parent.is_dir():
         parser.error('existing source and new work directory with existing parent required')
     if shutil.disk_usage(work.parent).free < 15 * 1024**3:
@@ -85,6 +101,9 @@ def main():
                'PYTHONHOME', 'PYTHONPATH', 'CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')}
     report = dict(status='INCOMPLETE', source=str(source), source_commit=args.commit,
                   cuda_architectures=args.cuda_architecture, scope='compile only; no hardware correctness')
+    report['nccl_lsa_enabled'] = nccl_lsa_root is not None
+    if nccl_version:
+        report['nccl_version'] = nccl_version
 
     def run(command, name):
         print('BUILD_STAGE ' + name, flush=True)
@@ -162,8 +181,19 @@ def main():
              '-DCUDAToolkit_ROOT='+str(sdk), '-DCMAKE_PREFIX_PATH='+';'.join(prefixes),
              '-DCUCO_ROOT='+str(cuco)], 'library-configure')
         run([cmake, '--build', library, '--parallel', args.jobs], 'library-build')
+        lsa_options = (['-DMGBFS_NCCL_LSA=ON', '-DMGBFS_NCCL_ROOT='+str(nccl_lsa_root)]
+                       if nccl_lsa_root else ['-DMGBFS_NCCL_LSA=OFF'])
+        if nccl_lsa_root:
+            report['nccl_lsa_root'] = str(nccl_lsa_root)
+            report['nccl_header_sha256'] = hashlib.sha256(
+                (nccl_lsa_root/'include/nccl.h').read_bytes()).hexdigest()
+            with (nccl_lsa_root/'lib/libnccl.so.2').open('rb') as stream:
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(4 << 20), b''):
+                    digest.update(chunk)
+                report['nccl_library_sha256'] = digest.hexdigest()
         run([cmake, '-S', source/'cuda', '-B', native, *common,
-             '-DBUILD_TESTING=OFF', '-DCUTLASS_ROOT='+str(cutlass)], 'native-configure')
+             '-DBUILD_TESTING=OFF', '-DCUTLASS_ROOT='+str(cutlass), *lsa_options], 'native-configure')
         run([cmake, '--build', native, '--target', 'mgbfs_cuda', '--parallel', args.jobs], 'native-build')
         env['CARGO_HOME'], env['RUSTUP_HOME'] = str(work/'cargo'), str(work/'rustup')
         installer = work/'rustup-init.sh'
@@ -175,6 +205,8 @@ def main():
         env['MGBFS_LIBRARY_OWNER_LIB_DIR'] = str(library)
         env['MGBFS_CUDART_LIB_DIR'] = str(sdk/'lib')
         env['LD_LIBRARY_PATH'] = ':'.join([str(native), str(library), env['LD_LIBRARY_PATH']])
+        if nccl_lsa_root:
+            env['LD_LIBRARY_PATH'] = str(nccl_lsa_root/'lib')+':'+env['LD_LIBRARY_PATH']
         run(['rustc', '--version', '--verbose'], 'rust-version')
         manifest = source/'Cargo.toml'
         artifacts = run(['cargo', 'test', '--manifest-path', manifest, '--locked', '--release',

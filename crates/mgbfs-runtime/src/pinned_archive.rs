@@ -59,6 +59,7 @@ pub struct PinnedArchive {
     pub(crate) width: usize,
     pub(crate) rows: u32,
     pinned_bytes: usize,
+    slots: usize,
     device: i32,
 }
 impl PinnedArchive {
@@ -149,11 +150,15 @@ impl PinnedArchive {
             width,
             rows,
             pinned_bytes,
+            slots,
             device,
         })
     }
     pub fn pinned_bytes(&self) -> usize {
         self.pinned_bytes
+    }
+    pub(crate) fn credit_capacity(&self) -> usize {
+        self.slots
     }
     pub(crate) fn acquire(&self) -> Result<Slot> {
         let mut current = -1;

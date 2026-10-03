@@ -52,8 +52,10 @@ impl NativeEvent {
     /// # Safety
     /// Stream must be live in the intended CUDA context. Enqueue every consumer
     /// after this wait, keep protected buffers live, and drain all consumers
-    /// before retiring/re-recording this generation. Graph capture is outside
-    /// this wrapper's contract.
+    /// before retiring/re-recording this generation. During graph capture every
+    /// record/wait/barrier must belong to the same capture, with one launch per
+    /// submitted generation. Host poll/retire is forbidden during capture;
+    /// retire_after_device_barrier keeps reuse ordered by captured GPU edges.
     pub unsafe fn wait(&mut self, generation: u64, stream: *mut std::ffi::c_void) -> Result<()> {
         let handle = self.handle;
         self.generation.wait(generation, || {
