@@ -294,7 +294,7 @@ def main(cancelled=None):
         from streamed_bfs_launcher import available_host_bytes
         runtime=json.loads(args.runtime_env.read_text())
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
-            archive_format='parquet_cohort',
+            archive_format='parquet_cohort',cohort_group_size=20,cohort_group_bytes=2_000_000_000,
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(

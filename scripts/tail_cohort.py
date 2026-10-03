@@ -9,13 +9,16 @@ except ImportError:
     from bfs_tail_archive import atomic_json
 
 
-def case_groups(root, ledger, *, group_size=20, group_bytes=2_000_000_000):
+def case_groups(root, ledger, *, group_size=None, group_bytes=None):
     """Close stable groups after either bound; keep the growing suffix open.
 
     The byte bound is a target: a whole case can cross it, like retained layers.
     Only immutable manifest metadata is read, so released payloads are reusable.
     """
-    if group_size <= 0 or group_bytes <= 0:
+    base = ledger['configuration']['base']
+    group_size = base.get('cohort_group_size', 20) if group_size is None else group_size
+    group_bytes = base.get('cohort_group_bytes', 2_000_000_000) if group_bytes is None else group_bytes
+    if type(group_size) is not int or type(group_bytes) is not int or group_size <= 0 or group_bytes <= 0:
         raise ValueError('positive cohort bounds required')
     group, size = [], 0
     for key, record in ledger['cases'].items():
@@ -34,10 +37,10 @@ def case_groups(root, ledger, *, group_size=20, group_bytes=2_000_000_000):
         yield group, False
 
 
-def publication_cases(root, ledger, *, group_size=20, shard_bytes=512_000_000,
-                      group_bytes=2_000_000_000):
+def publication_cases(root, ledger, *, group_size=None, shard_bytes=512_000_000,
+                      group_bytes=None):
     root = Path(root)
-    if group_size <= 0 or shard_bytes <= 0:
+    if shard_bytes <= 0:
         raise ValueError('positive cohort bounds required')
     run_id = ledger['configuration']['base']['run_id']
     if not isinstance(run_id, str) or run_id in ('', '.', '..') or '/' in run_id or '\\' in run_id:

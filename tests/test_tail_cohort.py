@@ -144,7 +144,8 @@ class CohortTests(unittest.TestCase):
             root = Path(directory)
             keys = [self.fixture(root, n, 2)[0] for n in (7, 8)]
             ledger = self.ledger(keys)
-            publications = publication_cases(root, ledger, group_size=2)
+            ledger['configuration']['base']['cohort_group_size'] = 2
+            publications = publication_cases(root, ledger)
             contents = {}
             for key, (base, manifest_path) in publications.items():
                 contents[f'tail-runs/cohort-test-{key}/manifest.json'] = manifest_path.read_bytes()
@@ -174,14 +175,11 @@ class CohortTests(unittest.TestCase):
                 self.assertTrue(publications[key][1].exists())
             # Planning for the same repository uses the verified receipt and
             # never attempts conversion from deleted packed states.
-            # Use matching configured group size by reaching the byte bound.
-            with patch('scripts.tail_cohort.case_groups', wraps=lambda *a, **k: iter([
-                    ([(key, root/key/'saved') for key in keys], True)])):
-                payloads, manifests, size = plan(root, ledger=ledger, released_repo='fixture/data')
-                self.assertEqual((payloads, size), ([], 0))
-                self.assertEqual(len(manifests), 2)
-                with self.assertRaisesRegex(ValueError, 'verified HF release receipt'):
-                    plan(root, ledger=ledger, released_repo='different/data')
+            payloads, manifests, size = plan(root, ledger=ledger, released_repo='fixture/data')
+            self.assertEqual((payloads, size), ([], 0))
+            self.assertEqual(len(manifests), 2)
+            with self.assertRaisesRegex(ValueError, 'verified HF release receipt'):
+                plan(root, ledger=ledger, released_repo='different/data')
 
     def test_corrupt_remote_readback_does_not_release_any_local_states(self):
         from scripts.release_tail_cohorts import release

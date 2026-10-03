@@ -14,7 +14,7 @@ except ImportError:
 
 
 def release(root, ledger, repo_id, api, token, *, deadline=None,
-            group_size=20, group_bytes=2_000_000_000):
+            group_size=None, group_bytes=None):
     import requests
     from huggingface_hub import hf_hub_url
     root = Path(root).resolve()
