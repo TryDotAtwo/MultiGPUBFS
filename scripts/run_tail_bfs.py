@@ -70,7 +70,23 @@ def cancellation_signals():
         for sig, handler in previous.items():signal.signal(sig, handler)
 
 
-def finish_run(root, final, reason, failure, commit, binary_sha, publisher):
+def native_completion(reports, calibration_limit, completed_layers):
+    if not reports:
+        raise ValueError('native reports missing')
+    if all(report['status']=='COMPLETE' for report in reports):
+        return True, 'graph exhausted'
+    if calibration_limit is not None:
+        limit=int(calibration_limit)
+        if limit>0 and completed_layers==limit and all(
+                report['status']=='INCOMPLETE'
+                and report.get('stop_reason')=='calibration layer limit'
+                and report.get('calibration_layers')==limit
+                and report.get('last_completed_layer')==limit-1 for report in reports):
+            return False, 'calibration layer limit'
+    raise ValueError('native result incomplete')
+
+
+def finish_run(root, final, reason, failure, commit, binary_sha, publisher, *, complete=True):
     """Always record the local outcome, including a failed final upload."""
     upload_error = None
     if publisher:
@@ -81,7 +97,7 @@ def finish_run(root, final, reason, failure, commit, binary_sha, publisher):
     if upload_error:
         failure = failure or upload_error
         reason += '; HF publication failed; local snapshots and pinned inputs retained'
-    atomic_json(root/'run-summary.json', dict(status='INCOMPLETE' if failure else 'COMPLETE',
+    atomic_json(root/'run-summary.json', dict(status='INCOMPLETE' if failure or not complete else 'COMPLETE',
         reason=reason, manifest=str(final), program_commit=commit, binary_sha256=binary_sha,
         publication_status='FAILED' if upload_error else ('COMPLETE' if publisher else 'NOT_REQUESTED')))
     return failure, reason
@@ -186,6 +202,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     logthread.start()
     deadline = time.monotonic()+config.get('timeout_seconds',300)
     reason, failure, deferred_error = 'running', None, None
+    traversal_complete=True
     cancellation_error, cancellation_started = None, None
     try:
         while True:
@@ -254,14 +271,15 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     if any(receipt['depths']!=expected for receipt in receipts.values()):
                         raise ValueError('rank depths mismatch')
                     reports = [json.loads((root/f'result/rank-{rank}.json').read_text()) for rank in range(world)]
-                    if any(report['status']!='COMPLETE' for report in reports):
-                        raise ValueError('native result incomplete')
+                    traversal_complete,reason=native_completion(reports,
+                        env.get('MGBFS_CALIBRATION_LAYERS'),expected)
+                    if any(len(report['local_layer_sizes'])!=expected for report in reports):
+                        raise ValueError('native rank layer counts differ')
                     actual_counts = [sum(row) for row in zip(*(report['local_layer_sizes'] for report in reports))]
                     if actual_counts != [layer['states'] for layer in archive.manifest['layers']]:
                         raise ValueError('archived counts differ from native reports')
-                    reason = 'graph exhausted'
                     break
-        final = archive.snapshot(True, reason)
+        final = archive.snapshot(traversal_complete, reason)
     except BaseException as error:
         failure, reason = error, str(error)
         final = archive.snapshot(False, reason)
@@ -280,7 +298,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             thread.join(timeout=5)
         for reader in readers:
             reader.close()
-    failure, reason = finish_run(root, final, reason, failure, commit, binary_sha, publisher)
+    failure, reason = finish_run(root, final, reason, failure, commit, binary_sha, publisher,
+                               complete=traversal_complete)
     if failure:
         raise failure
     return final

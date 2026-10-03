@@ -72,6 +72,18 @@ def device_budget(inventory):
                 maximum_hardware_capacity_proven=False)
 
 
+def automatic_reserve(runtime, environ=None):
+    """Startup-only reserve; preserve explicit settings and native floor."""
+    environ=os.environ if environ is None else environ
+    value=runtime.get('MGBFS_VRAM_RESERVE_BYTES',environ.get(
+        'MGBFS_VRAM_RESERVE_BYTES',str(256<<20)))
+    try:bytes_=int(value)
+    except (TypeError,ValueError):raise ValueError('invalid automatic VRAM reserve')
+    if not (64<<20)<=bytes_<=2**64-1:
+        raise ValueError('invalid automatic VRAM reserve')
+    return str(bytes_)
+
+
 def pair_config(base, n, r):
     cfg = json.loads(json.dumps(base))
     order = math.factorial(n)//math.factorial(r)
@@ -132,6 +144,9 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
     """Admission and optional matched calibration happen before the real BFS."""
     cfg=(tune_pair(config,source,case,runtime) if config.get('native_capacity_probe')
          else pair_config(config,config['n'],config['r']))
+    explicit_graph=runtime.get('MGBFS_CUDA_GRAPH_BATCHES',os.environ.get('MGBFS_CUDA_GRAPH_BATCHES'))
+    if explicit_graph is not None:
+        cfg['env'].setdefault('MGBFS_CUDA_GRAPH_BATCHES',explicit_graph)
     if (config.get('graph_calibration', True)
             and cfg['env'].get('MGBFS_TRANSPORT_BACKEND') == 'NCCL_LSA'
             and 'MGBFS_CUDA_GRAPH_BATCHES' not in cfg['env']):
@@ -252,11 +267,13 @@ def main(cancelled=None):
             index,name,free=line.split(',')
             inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
         from streamed_bfs_launcher import available_host_bytes
+        runtime=json.loads(args.runtime_env.read_text())
         base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
             archive_format='parquet_cohort',
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
+                MGBFS_VRAM_RESERVE_BYTES=automatic_reserve(runtime),
                 MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='CUCO_RANK',MGBFS_PRE_DEDUP='ON',
                 MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BUCKETS='16',MGBFS_SHARDS='8',
                 MGBFS_JOB_BUCKETS='2',MGBFS_ARCHIVE_ROWS='8192',MGBFS_ARCHIVE_SLOTS='2048',

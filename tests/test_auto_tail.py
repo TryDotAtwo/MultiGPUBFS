@@ -14,6 +14,16 @@ import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_automatic_reserve_preserves_explicit_settings_and_native_floor(self):
+        self.assertEqual(run_auto_tail.automatic_reserve({},{}),str(256<<20))
+        self.assertEqual(run_auto_tail.automatic_reserve({},
+            {'MGBFS_VRAM_RESERVE_BYTES':str(64<<20)}),str(64<<20))
+        self.assertEqual(run_auto_tail.automatic_reserve(
+            {'MGBFS_VRAM_RESERVE_BYTES':str(1<<30)},{}),str(1<<30))
+        for value in ('0','bad',str(2**64)):
+            with self.assertRaises(ValueError):run_auto_tail.automatic_reserve(
+                {'MGBFS_VRAM_RESERVE_BYTES':value},{})
+
     def test_adaptive_records_calibration_without_changing_buffers(self):
         config=dict(n=12,r=4,world=2,timeout_seconds=60,
             env={'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA'},

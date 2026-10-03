@@ -165,3 +165,30 @@ This runs once before the sweep, with a 30-second search deadline, outside the
 BFS hot path. It proves capability only, not a transport speed comparison.
 Production Graph calibration then compares the actual admitted configuration.
 Large-case bounded-layer calibration remains open.
+
+Bounded-layer implementation checkpoint (GPU acceptance still open):
+MGBFS_CALIBRATION_LAYERS is parsed at startup, included in rank bootstrap
+agreement, and inspected only after the existing completed-layer boundary.
+When the graph remains alive at the limit, every native rank writes INCOMPLETE,
+the exact stop reason and last completed layer, plus search_prefix_seconds.
+It does not write search_complete_seconds. Group commit validates all matching
+rank prefixes and creates group-calibration.json, never group-complete.json.
+The Python launcher preserves INCOMPLETE in its archive and run summary without
+treating this clean calibration stop as a runtime failure.
+
+Large-case calibration now requests a 34-layer prefix for all six runs. Selection
+requires every measured layer fully retained, checksummed and exactly equal;
+missing/partial layers or more than the host comparison byte bound reject the
+measurement and retain direct launches. A selected profile is evidence for this
+prefix, not a claim about the unmeasured rest of the graph. The limit is confined
+to calibration copies of the configuration; production traversal remains unbounded.
+Rust launch/commit tests, Python prefix status/parity tests and Linux-target
+CUDA/library-owner typecheck pass. Native boundary/archive teardown and new
+automatic end-to-end operation still require an actual GPU gate.
+
+New automatic configurations now use a 256 MiB startup VRAM reserve, preserving
+explicit runtime/environment values. The measured two-A4000 30-second (15,4)
+gate observed 98.528% device memory occupancy at this reserve. This is not a
+universal allocator stability guarantee. The CLI's standalone default remains
+1 GiB, and native warmed memory admission plus its separate 64 MiB query-to-run
+margin remain enforced. No reserve work or synchronization enters batch execution.

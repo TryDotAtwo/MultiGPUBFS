@@ -1,5 +1,17 @@
 use mgbfs_core::Result;
 
+/// Optional calibration stop at an existing globally completed layer boundary.
+pub fn calibration_layers(value: Option<&str>) -> Result<Option<u32>> {
+    match value {
+        None => Ok(None),
+        Some(value) => {
+            let layers = value.parse::<u32>().map_err(|_| "ENV_MGBFS_CALIBRATION_LAYERS")?;
+            if layers == 0 { return Err("ENV_MGBFS_CALIBRATION_LAYERS".into()); }
+            Ok(Some(layers))
+        }
+    }
+}
+
 /// Startup-only reserve; native admission still checks warmed free memory.
 pub fn vram_reserve_bytes(value: Option<&str>) -> Result<u64> {
     let bytes = value.unwrap_or("1073741824").parse::<u64>()

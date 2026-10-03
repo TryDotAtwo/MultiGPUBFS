@@ -5,10 +5,25 @@ import json
 import signal
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from run_tail_bfs import native_failure,finish_run,cancellation_signals
+from run_tail_bfs import native_failure,finish_run,cancellation_signals,native_completion
 
 
 class FailureTests(unittest.TestCase):
+    def test_completed_prefix_is_never_graph_completion(self):
+        rank=dict(status='INCOMPLETE',stop_reason='calibration layer limit',
+                  calibration_layers=34,last_completed_layer=33)
+        self.assertEqual(native_completion([rank,rank],'34',34),
+                         (False,'calibration layer limit'))
+        for limit,depth in [(None,34),('35',34),('34',33)]:
+            with self.assertRaises(ValueError):native_completion([rank,rank],limit,depth)
+        with self.assertRaises(ValueError):native_completion([],None,0)
+        with self.assertRaises(ValueError):native_completion([rank,{'status':'COMPLETE'}],'34',34)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            finish_run(root,root/'manifest.json','calibration layer limit',None,
+                       'fixture','fixture',None,complete=False)
+            self.assertEqual(json.loads((root/'run-summary.json').read_text())['status'],'INCOMPLETE')
+
     def test_signals_request_cancellation_and_restore_handlers(self):
         previous=signal.getsignal(signal.SIGTERM)
         with cancellation_signals() as cancelled:

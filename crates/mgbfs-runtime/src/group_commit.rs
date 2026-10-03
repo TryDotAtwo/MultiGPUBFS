@@ -14,7 +14,18 @@ pub fn write_rank_result(dir: &Path, rank: u32, bytes: &[u8]) -> Result<()> {
 }
 
 pub fn write_group_commit(dir: &Path, world: u32, bootstrap_digest: [u8; 32]) -> Result<()> {
-    if world == 0 || world > 8 || dir.join("group-complete.json").exists() {
+    write_commit(dir,world,bootstrap_digest,None)
+}
+
+pub fn write_calibration_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], layers: u32) -> Result<()> {
+    if layers == 0 { return Err("CALIBRATION_COMMIT_LIMIT".into()); }
+    write_commit(dir,world,bootstrap_digest,Some(layers))
+}
+
+fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option<u32>) -> Result<()> {
+    let name = if limit.is_some() { "group-calibration.json" } else { "group-complete.json" };
+    let status = if limit.is_some() { "INCOMPLETE" } else { "COMPLETE" };
+    if world == 0 || world > 8 || dir.join(name).exists() {
         return Err("GROUP_COMMIT_CONFIG_OR_EXISTS".into());
     }
     let mut hashes = Vec::with_capacity(world as usize);
@@ -29,12 +40,19 @@ pub fn write_group_commit(dir: &Path, world: u32, bootstrap_digest: [u8; 32]) ->
         file.sync_all().map_err(|e| format!("GROUP_RANK_SYNC_{rank}: {e}"))?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| format!("GROUP_RANK_JSON_{rank}: {e}"))?;
-        if value["status"] != "COMPLETE"
+        if value["status"] != status
             || value["rank"] != rank
             || value["world_size"] != world
             || value["bootstrap_digest"] != serde_json::json!(bootstrap_digest)
         {
             return Err(format!("GROUP_RANK_MISMATCH_{rank}"));
+        }
+        if let Some(layers) = limit {
+            if value["stop_reason"] != "calibration layer limit"
+                || value["calibration_layers"] != layers
+                || value["last_completed_layer"] != layers-1
+                || value["local_layer_sizes"].as_array().map(Vec::len) != Some(layers as usize)
+            { return Err(format!("CALIBRATION_RANK_MISMATCH_{rank}")); }
         }
         let scope = value["archive_commit_scope"]
             .as_str().ok_or("GROUP_COMMIT_SCOPE")?;
@@ -48,15 +66,16 @@ pub fn write_group_commit(dir: &Path, world: u32, bootstrap_digest: [u8; 32]) ->
     }
     let marker = serde_json::to_vec(&serde_json::json!({
         "schema": "mgbfs-group-run-commit-v1",
-        "status": "COMPLETE",
+        "status": status,
+        "calibration_layers": limit,
         "world_size": world,
         "bootstrap_digest": bootstrap_digest,
         "archive_commit_scope": commit_scope,
         "rank_sha256": hashes,
     }))
     .map_err(|e| format!("GROUP_COMMIT_JSON: {e}"))?;
-    let temporary = dir.join("group-complete.json.tmp");
-    let final_path = dir.join("group-complete.json");
+    let temporary = dir.join(format!("{name}.tmp"));
+    let final_path = dir.join(name);
     let mut file = std::fs::OpenOptions::new()
         .write(true).create_new(true).open(&temporary)
         .map_err(|e| format!("GROUP_COMMIT_CREATE: {e}"))?;

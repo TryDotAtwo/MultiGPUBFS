@@ -1,6 +1,16 @@
 use mgbfs_runtime::reference_launch::macro_depth_for_launch;
 
 #[test]
+fn calibration_limit_is_optional_positive_and_not_graph_completion() {
+    use mgbfs_runtime::reference_launch::calibration_layers;
+    assert_eq!(calibration_layers(None).unwrap(),None);
+    assert_eq!(calibration_layers(Some("34")).unwrap(),Some(34));
+    for value in ["0","-1","bad","4294967296"] {
+        assert_eq!(calibration_layers(Some(value)).unwrap_err(),"ENV_MGBFS_CALIBRATION_LAYERS");
+    }
+}
+
+#[test]
 fn reserve_is_explicit_with_driver_headroom_and_rejects_invalid_bytes() {
     use mgbfs_runtime::reference_launch::vram_reserve_bytes as reserve;
     assert_eq!(reserve(None).unwrap(), 1 << 30);

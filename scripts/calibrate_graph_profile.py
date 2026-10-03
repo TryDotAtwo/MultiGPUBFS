@@ -1,7 +1,7 @@
 """GPU-host startup calibration; packed states never leave the host.
 
-Complete archived traversals only. Larger cases need a separately validated
-bounded-layer calibration path and are left on direct launches for now.
+Whole traversals or a matched prefix stopped at a native completed-layer
+boundary. Both modes require every measured layer to remain fully archived.
 """
 import copy
 import hashlib
@@ -14,12 +14,18 @@ from bfs_tail_archive import atomic_json
 from graph_profile_selection import select_graph_profile
 
 
-def full_state_fingerprint(manifest_path):
+def full_state_fingerprint(manifest_path, *, calibration_limit=None, max_bytes=512<<20):
     manifest_path = Path(manifest_path)
     manifest = json.loads(manifest_path.read_text())
-    if manifest['status'] != 'COMPLETE':
+    if manifest['status'] != 'COMPLETE' and not (
+            calibration_limit is not None and manifest['status']=='INCOMPLETE'
+            and manifest['stop_reason']=='calibration layer limit'
+            and len(manifest['layers'])==calibration_limit
+            and manifest['last_completed_layer']==calibration_limit-1):
         raise ValueError('calibration traversal incomplete')
     width = manifest['packing']['bytes_per_state']
+    if sum(layer['states'] for layer in manifest['layers'])*width>max_bytes:
+        raise ValueError('calibration comparison host memory bound exceeded')
     archive_root = (manifest_path.parent.parent if manifest_path.parent.name.startswith('snapshot-')
                     else manifest_path.parent)
     entries = {entry['depth']: entry for entry in manifest['files']}
@@ -60,14 +66,18 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
         decision['reason'] = 'full-window Graph requires NCCL_LSA'
     elif order < config['world'] * config.get('batch',1) * 32:
         decision['reason'] = 'state count cannot supply a full Graph window per rank'
-    elif order * width > min(512 << 20, config.get('host_available_bytes', 8 << 30)//16):
-        decision['reason'] = 'bounded-layer calibration not yet validated for this case'
     elif deadline - time.time() < 30:
         decision['reason'] = 'insufficient calibration time'
     else:
         try:
+            measurement_config=copy.deepcopy(config)
+            max_bytes=min(512<<20,config.get('host_available_bytes',8<<30)//16)
+            limit=34 if order*width>max_bytes else None
+            if limit is not None:
+                measurement_config['env']['MGBFS_CALIBRATION_LAYERS']=str(limit)
+            decision['calibration_layers']=limit
             if identity is None:
-                normalized = copy.deepcopy(config)
+                normalized = copy.deepcopy(measurement_config)
                 normalized.pop('run_id', None)
                 normalized.pop('timeout_seconds', None)
                 normalized['env'].pop('MGBFS_CUDA_GRAPH_BATCHES', None)
@@ -89,24 +99,24 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
                 remaining = deadline-time.time()
                 if remaining < 5:
                     raise TimeoutError('calibration deadline')
-                cfg = copy.deepcopy(config)
+                cfg = copy.deepcopy(measurement_config)
                 cfg.pop('repo_id', None)
                 cfg['timeout_seconds'] = min(config.get('timeout_seconds',120),remaining)
                 cfg['env']['MGBFS_CUDA_GRAPH_BATCHES'] = str(mode)
                 case = root/f'run-{index}'
                 manifest = runner(cfg,source,case,runtime,cancelled=cancelled)
-                fingerprint = full_state_fingerprint(manifest)
+                fingerprint = full_state_fingerprint(manifest,calibration_limit=limit,max_bytes=max_bytes)
                 if reference is None:
                     reference = fingerprint
                 elif fingerprint != reference:
                     raise ValueError('Graph calibration full-state parity differs')
                 ranks = [json.loads((case/'result'/f'rank-{rank}.json').read_text())
                          for rank in range(config['world'])]
-                if any(x['status'] != 'COMPLETE' for x in ranks):
-                    raise ValueError('calibration rank incomplete')
+                from run_tail_bfs import native_completion
+                complete,_=native_completion(ranks,limit,len(fingerprint))
                 samples.append(dict(configuration_identity=identity,pair=index//2,
-                    graph_batches=mode,status='COMPLETE',full_state_parity=True,
-                    search_seconds=max(x['search_complete_seconds'] for x in ranks),
+                    graph_batches=mode,status='COMPLETE' if complete else 'PREFIX_COMPLETE',full_state_parity=True,
+                    search_seconds=max(x.get('search_complete_seconds',x.get('search_prefix_seconds')) for x in ranks),
                     full_windows_per_rank=[(x.get('batch_graph') or {}).get('full_windows',0)
                                            for x in ranks]))
                 decision['samples'] = samples

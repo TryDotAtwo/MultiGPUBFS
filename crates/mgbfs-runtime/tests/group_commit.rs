@@ -1,6 +1,31 @@
 use mgbfs_runtime::group_commit::{write_group_commit, write_rank_result};
 
 #[test]
+fn calibration_marker_requires_matching_prefix_and_never_writes_complete_marker() {
+    use mgbfs_runtime::group_commit::write_calibration_commit;
+    let root=std::env::temp_dir().join(format!("mgbfs-prefix-{}-{}",std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let digest=[9u8;32];
+    for rank in 0..2 {
+        let record=serde_json::json!({"status":"INCOMPLETE","rank":rank,"world_size":2,
+            "bootstrap_digest":digest,"archive_commit_scope":"fifo_flush",
+            "calibration_layers":3,"last_completed_layer":2,
+            "stop_reason":"calibration layer limit","local_layer_sizes":[1,2,3]});
+        write_rank_result(&root,rank,&serde_json::to_vec(&record).unwrap()).unwrap();
+    }
+    assert!(write_group_commit(&root,2,digest).is_err());
+    assert!(write_calibration_commit(&root,2,digest,4).is_err());
+    write_calibration_commit(&root,2,digest,3).unwrap();
+    assert!(!root.join("group-complete.json").exists());
+    let marker:serde_json::Value=serde_json::from_slice(
+        &std::fs::read(root.join("group-calibration.json")).unwrap()).unwrap();
+    assert_eq!(marker["status"],"INCOMPLETE");
+    assert_eq!(marker["calibration_layers"],3);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rank_result_write_is_durable_and_never_overwrites_existing_run() {
     let root = std::env::temp_dir().join(format!(
         "mgbfs-rank-result-{}-{}",

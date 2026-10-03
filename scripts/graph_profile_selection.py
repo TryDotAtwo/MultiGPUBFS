@@ -24,7 +24,7 @@ def select_graph_profile(samples):
             raise ValueError('calibration configurations differ')
         seconds = sample['search_seconds']
         if (type(seconds) not in (int, float) or not math.isfinite(seconds)
-                or seconds <= 0 or sample['status'] != 'COMPLETE'
+                or seconds <= 0 or sample['status'] not in ('COMPLETE','PREFIX_COMPLETE')
                 or sample['full_state_parity'] is not True):
             raise ValueError('unverified calibration measurement')
         mode = sample['graph_batches']
@@ -50,4 +50,6 @@ def select_graph_profile(samples):
                 configuration_identity=identity, direct_median_seconds=direct,
                 graph_median_seconds=graph, graph_over_direct=graph/direct,
                 all_pairs_improved=wins, required_median_gain=.02,
-                scope='measured configuration only', samples=copy.deepcopy(samples))
+                scope=('matched completed-layer prefix only' if any(
+                    x['status']=='PREFIX_COMPLETE' for x in samples) else 'measured configuration only'),
+                samples=copy.deepcopy(samples))

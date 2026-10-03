@@ -220,6 +220,7 @@ struct PreparedPass {
     archive_rows: u32,
     archive_slots: usize,
     stream_archive: bool,
+    calibration_layers: Option<u32>,
     cfg: DistributedConfig,
     bootstrap_digest: [u8; 32],
 }
@@ -368,6 +369,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     // Reference launch agreement includes geometry and archive settings omitted
     // by the older archive digest. Rank-local capacities are derived from the
     // shared declared capacity and rank map, not compared as equal across ranks.
+    let calibration_layers = crate::reference_launch::calibration_layers(
+        std::env::var("MGBFS_CALIBRATION_LAYERS").ok().as_deref())?;
     let bootstrap_description = serde_json::json!({
         "schema": "reference-bootstrap-v1", "archive_digest": digest,
         "world": world, "buckets": cfg.buckets, "shards": cfg.shards,
@@ -377,6 +380,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
         "warmup_requested": warmup_requested,
+        "calibration_layers": calibration_layers,
         "transport": format!("{:?}", cfg.transport),
         "inflight_batches": crate::reference_launch::inflight_batches(
             std::env::var("MGBFS_INFLIGHT_BATCHES").ok().as_deref())?,
@@ -394,7 +398,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         global_future: future_plan.global_records, capacity, future,
         compact_states, archive_width, profile, owner, pre, seed, seed_hex,
         hash_first_generation, selection, digest, archive_path, archive_enabled,
-        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
+        disk_bytes, archive_rows, archive_slots, stream_archive, calibration_layers, cfg,
         bootstrap_digest,
     })
     })();
@@ -417,7 +421,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         mode, global_capacity, global_future, capacity, future, compact_states,
         archive_width, profile, owner, pre, seed, seed_hex,
         hash_first_generation, selection, digest, archive_path, archive_enabled,
-        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
+        disk_bytes, archive_rows, archive_slots, stream_archive, calibration_layers, cfg,
         bootstrap_digest,
     } = prepared?;
     // Keep control sockets alive throughout this reference run. Dispatching GPU
@@ -515,6 +519,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let start = Instant::now();
     let mut layers = Vec::new();
     let mut times = Vec::new();
+    let mut calibration_stopped = false;
     loop {
         if sideband.cancel_requested() {
             return Err("REMOTE_SEARCH_CANCELLED".into());
@@ -555,10 +560,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if !alive {
             break;
         }
+        if calibration_layers.is_some_and(|limit| layers.len() >= limit as usize) {
+            calibration_stopped = true;
+            break;
+        }
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
-    Ok((bfs, allocated, setup_seconds, search, layers, times, start))
+    Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped))
     })();
     if search_result.is_err() {
         sideband.report_failure();
@@ -580,7 +589,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
         return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
-    let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
+    let (mut bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped) = search_result?;
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     #[cfg(debug_assertions)]
     let archive_commit = archive_commit.and_then(|()| {
@@ -627,6 +636,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+        value["calibration_layers"] = serde_json::json!(calibration_layers);
+        if calibration_stopped {
+            value["status"] = serde_json::json!("INCOMPLETE");
+            value["stop_reason"] = serde_json::json!("calibration layer limit");
+            value["last_completed_layer"] = serde_json::json!(layers.len()-1);
+            value["search_prefix_seconds"] = serde_json::json!(search);
+            value.as_object_mut().ok_or("RECORD_JSON_OBJECT")?.remove("search_complete_seconds");
+        }
         value["output_contract"] = serde_json::json!(if archive_enabled {
             if is_measure { "archive_and_layer_counts" } else { "warmup_layer_counts" }
         } else {
@@ -709,7 +726,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     }
     output?;
     let publication = if rank == 0 && is_measure {
-        crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
+        if calibration_stopped {
+            crate::group_commit::write_calibration_commit(Path::new(&args[5]), world,
+                bootstrap_digest,calibration_layers.ok_or("CALIBRATION_LIMIT_MISSING")?)
+        } else {
+            crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
+        }
     } else { Ok(()) };
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::GroupPublished,
