@@ -300,6 +300,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             reader.close()
     failure, reason = finish_run(root, final, reason, failure, commit, binary_sha, publisher,
                                complete=traversal_complete)
+    archive.release_working_tail()
     if failure:
         raise failure
     return final

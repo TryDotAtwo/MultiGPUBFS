@@ -67,6 +67,7 @@ class TailArchive:
         self.tail.mkdir()
         self.complete_bytes, self.incomplete_bytes = complete_bytes, incomplete_bytes
         self.retained = []
+        self.closed = False
         self.manifest = dict(schema=1, status="INCOMPLETE", last_completed_layer=-1,
             stop_reason="running", graph=dict(n=n, r=r, start=list(start), actions=actions),
             packing=dict(bytes_per_state=self.width, bits_per_symbol=4,
@@ -78,6 +79,8 @@ class TailArchive:
 
     def completed_layer(self, depth, count, chunks, seconds, vram_peak_bytes):
         """chunks: iterable of bytes; no paths, hashes or duplicate metrics."""
+        if self.closed:
+            raise ValueError("archive working tail already released")
         if depth != len(self.manifest["layers"]) or type(count) is not int or count < 0:
             raise ValueError("noncontiguous depth or invalid count")
         if seconds < 0 or not math.isfinite(seconds):
@@ -121,12 +124,33 @@ class TailArchive:
             (self.root / old["path"]).unlink()
         self.snapshot()
 
+    def release_working_tail(self):
+        """Final-only cleanup: committed snapshots retain their own links/copies.
+
+        During search keep the entire COMPLETE-capable tail. After the traversal
+        stops, only the sealed final snapshot is needed for publication/retry.
+        """
+        current = json.loads((self.root/'manifest.json').read_text())
+        for entry in current['files']:
+            payload = (self.root/entry['path']).resolve()
+            if not payload.is_relative_to(self.root.resolve()) or not payload.exists():
+                raise ValueError('final snapshot payload missing before tail release')
+        for entry in self.retained:
+            payload = (self.root/entry['path']).resolve()
+            if payload.parent != self.tail.resolve():
+                raise ValueError('working tail release escapes tail directory')
+            payload.unlink(missing_ok=True)
+        self.closed = True
+        self.retained = []
+
     def snapshot(self, complete=False, reason="running"):
         """Publish local snapshot, limiting INCOMPLETE to whole packed records.
 
         COMPLETE keeps whole layers; INCOMPLETE may take the suffix of the
         oldest selected layer. Payload files are immutable for this generation.
         """
+        if self.closed:
+            raise ValueError("archive working tail already released")
         generation = self.root / f"snapshot-{len(self.manifest['layers']):06d}-{uuid.uuid4().hex}"
         # Repeated calls (e.g. final stop reason) reuse verified immutable files.
         generation.mkdir(exist_ok=True)

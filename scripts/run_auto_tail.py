@@ -44,8 +44,46 @@ class SweepPublisher:
                     ledger=self.pending;self.pending=None
                 self.receipt=self.publish(self.root,self.repo,self.api,self.deadline,ledger=ledger)
                 self.generations+=1
+                with self.condition:self.condition.notify_all()
         except BaseException as error:
             with self.condition:self.error=error;self.condition.notify_all()
+
+    def wait_for_capacity(self, ledger, *, deadline, cancelled=None,
+                          max_pending_bytes=10_000_000_000):
+        """Case-boundary backpressure; never adds a GPU/batch synchronization.
+
+        Count only final snapshot files still present on this host. The worker
+        unlinks verified closed groups; producer metadata remains immutable.
+        A whole case can overshoot the target before the next case is delayed.
+        """
+        if max_pending_bytes <= 0 or not math.isfinite(deadline):
+            raise ValueError('positive pending-state bound and finite deadline required')
+        while True:
+            with self.condition:
+                if self.error:
+                    raise RuntimeError('background sweep publication failed') from self.error
+            pending = 0
+            for key, record in ledger['cases'].items():
+                if not record.get('attempted', True):
+                    continue
+                saved = Path(self.root)/key/'saved'
+                manifest = json.loads((saved/'manifest.json').read_text())
+                for entry in manifest['files']:
+                    path = (saved/entry['path']).resolve()
+                    if not path.is_relative_to(saved.resolve()):
+                        raise ValueError('pending-state file escapes saved root')
+                    try:
+                        pending += path.stat().st_size
+                    except FileNotFoundError:
+                        # A durable release receipt precedes the worker's unlink.
+                        # Payload planning/readback independently validates that receipt.
+                        pass
+            if pending <= max_pending_bytes:
+                return True
+            if time.time() >= deadline or (cancelled and cancelled()):
+                return False
+            with self.condition:
+                self.condition.wait(timeout=min(1, max(.01, deadline-time.time())))
 
     def finish(self):
         with self.condition:self.closed=True;self.condition.notify()
@@ -323,6 +361,9 @@ def main(cancelled=None):
         sealed_count = sum(len(members) for members, sealed in case_groups(args.root, ledger) if sealed)
         if sealed_count > last_published:
             publisher.enqueue(ledger);last_published=sealed_count
+        if not publisher.wait_for_capacity(ledger,
+                deadline=args.deadline_unix-publication_reserve,cancelled=cancelled):
+            ledger['global_stop_reason']='publication backlog at compute deadline or cancellation'
     def adaptive(config,source,case,env):
         return run_adaptive(config,source,case,env,
                             deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)

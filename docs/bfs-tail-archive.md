@@ -33,6 +33,12 @@ pairs or a target of 2 decimal GB of packed states in a closed group. Only queue
 payload planning. Completed case files remain immutable on GPU-host SSD through
 publication and streamed HF checksum readback. Verified closed groups then
 release local state files, preserving metadata and durable receipts for reuse.
+Between pairs, the launcher waits for verified publication/release when final
+snapshot files still on the host exceed 10 decimal GB (a whole case may cross
+the target). No such wait runs inside a BFS batch or layer. After each traversal
+stops, its COMPLETE-capable working tail is released; immutable final snapshot
+links/copies remain for publication and retry. This avoids retaining a 10 GB
+working tail for every finished INCOMPLETE case that needs only a 1 GB suffix.
 The final report verifies every
 manifest, all retained payloads, and the full ledger including skipped pairs.
 Nothing in this command downloads states to the user's computer.

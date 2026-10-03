@@ -14,6 +14,36 @@ import run_auto_tail
 
 
 class AutomaticPlanningTests(unittest.TestCase):
+    def test_publication_capacity_waits_only_between_cases_until_verified_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory);saved = root/'n7-m1/saved';saved.mkdir(parents=True)
+            payload = saved/'states.bin';payload.write_bytes(b'01234567')
+            (saved/'manifest.json').write_text(json.dumps(dict(files=[dict(path=payload.name)])))
+            ledger = dict(configuration=dict(grid=[[7,1]]),cases={'n7-m1':dict(attempted=True)})
+            started = threading.Event();allow_release = threading.Event();finished = threading.Event()
+            def publish(*args, **kwargs):
+                started.set();allow_release.wait(3);payload.unlink();return {'released':True}
+            publisher = SweepPublisher(root,'fixture',None,time.time()+3,publish)
+            publisher.enqueue(ledger);self.assertTrue(started.wait(1))
+            result = []
+            def wait():
+                result.append(publisher.wait_for_capacity(ledger,deadline=time.time()+3,max_pending_bytes=1))
+                finished.set()
+            waiter = threading.Thread(target=wait);waiter.start()
+            self.assertFalse(finished.wait(.05))
+            allow_release.set();self.assertTrue(finished.wait(2));waiter.join();publisher.finish()
+            self.assertEqual(result,[True])
+
+    def test_publication_capacity_deadline_retains_state_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory);saved=root/'n7-m1/saved';saved.mkdir(parents=True)
+            payload=saved/'states.bin';payload.write_bytes(b'01234567')
+            (saved/'manifest.json').write_text(json.dumps(dict(files=[dict(path=payload.name)])))
+            ledger=dict(cases={'n7-m1':dict(attempted=True)})
+            publisher=SweepPublisher(root,'fixture',None,time.time()+3,lambda *a,**k:None)
+            self.assertFalse(publisher.wait_for_capacity(ledger,deadline=time.time()-1,max_pending_bytes=1))
+            self.assertEqual(payload.read_bytes(),b'01234567');publisher.finish()
+
     def test_startup_timeout_preserves_publishable_empty_incomplete_case(self):
         from publish_tail_batch import plan
         with tempfile.TemporaryDirectory() as directory:

@@ -45,6 +45,26 @@ class TailTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 publish_snapshot(path, fail)
 
+    def test_final_tail_release_preserves_exact_complete_and_partial_snapshots(self):
+        for complete in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                archive = self.make(Path(directory)/'run', complete_bytes=80, incomplete_bytes=16)
+                for depth in range(4):
+                    archive.completed_layer(depth, 3, [pack_state([0,1,2])*3], .2, {'0':None})
+                path = archive.snapshot(complete, 'stopped')
+                manifest = json.loads(path.read_text())
+                saved = [(archive.root/f['path'], (archive.root/f['path']).read_bytes())
+                         for f in manifest['files']]
+                archive.release_working_tail()
+                self.assertFalse(list(archive.tail.glob('*.bin')))
+                for payload, data in saved:
+                    self.assertEqual(payload.read_bytes(), data)
+                self.assertEqual(json.loads(path.read_text()), manifest)
+                with self.assertRaisesRegex(ValueError, 'released'):
+                    archive.snapshot()
+                with self.assertRaisesRegex(ValueError, 'released'):
+                    archive.completed_layer(4, 1, [pack_state([0,1,2])], .2, {'0':None})
+
     def test_failed_layer_does_not_advance(self):
         with tempfile.TemporaryDirectory() as d:
             archive = self.make(Path(d)/'run')
