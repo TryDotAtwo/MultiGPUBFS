@@ -795,6 +795,7 @@ pub struct DistributedNativeBfs {
     pack_done: Event,
     generation_sequence: u64,
     dense_lookahead: u64,
+    route_bank_reuses: u64,
     exchange_stream: Stream,
     exchange_done: Event,
     owner_consumed: Option<Event>,
@@ -1778,6 +1779,7 @@ impl DistributedNativeBfs {
             pack_done,
             generation_sequence: 0,
             dense_lookahead: 0,
+            route_bank_reuses: 0,
             exchange_stream,
             exchange_done,
             owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
@@ -2015,6 +2017,8 @@ impl DistributedNativeBfs {
         self.epoch_completed.len()
     }
     pub fn route_bank_count(&self) -> usize { self.route_banks.len() }
+    /// Repeated bank admissions within a depth, not a GPU-overlap measurement.
+    pub fn route_bank_reuses(&self) -> u64 { self.route_bank_reuses }
     pub fn state_descriptor_capacity(&self) -> u32 {
         self.cfg.state_descriptor_capacity
     }
@@ -2071,6 +2075,10 @@ impl DistributedNativeBfs {
         let Some(batch) = cursor.take(&self.front, self.cfg.batch)? else { return Ok(false); };
         let bank = *produced % self.route_banks.len();
         let sequence = self.enqueue_frontier_generation(batch, bank)?;
+        if *produced >= self.route_banks.len() {
+            self.route_bank_reuses = self.route_bank_reuses.checked_add(1)
+                .ok_or("ROUTE_BANK_REUSE_COUNTER_OVERFLOW")?;
+        }
         self.prefetched.push_back((batch, sequence, bank));
         if *produced != 0 {
             self.dense_lookahead = self.dense_lookahead.checked_add(1).ok_or("GENERATION_COUNTER_OVERFLOW")?;

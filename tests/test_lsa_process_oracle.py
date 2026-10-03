@@ -13,7 +13,8 @@ from test_export_hf_dataset import frame
 
 class ProcessOracleTests(unittest.TestCase):
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
-              expected_config_digest=None, expected_run_contract=None, expected_route_banks=None):
+              expected_config_digest=None, expected_run_contract=None, expected_route_banks=None,
+              require_bank_reuse=False):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -35,7 +36,7 @@ class ProcessOracleTests(unittest.TestCase):
                           for depth in range(len(expected))]
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
                               hash_seed_hex='00000000000000000000000000000001', epoch_window=3,
-                              run_contract='RunConfigV1', route_banks=3,
+                              run_contract='RunConfigV1', route_banks=3, route_bank_reuses=2,
                               bootstrap_digest=list(bytes.fromhex('ab' * 32)))
                 if result_mutation:
                     result_mutation(rank, record)
@@ -57,7 +58,20 @@ class ProcessOracleTests(unittest.TestCase):
                 (root / f'archive-rank-{rank}.mgbfsar1').write_bytes(b''.join(pieces))
             return replay.verify_process_archives(root, expected_seed=expected_seed,
                 expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
-                expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks)
+                expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks,
+                require_bank_reuse=require_bank_reuse)
+
+    def test_reuse_gate_requires_positive_aggregate_actual_reuse(self):
+        self.assertEqual(self.check(require_bank_reuse=True)['route_bank_reuses'], [2, 2])
+        for value in (None, 0, -1, True, '1'):
+            def change(rank, record):
+                record['route_bank_reuses'] = value
+            with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_ROUTE_BANK_REUSE'):
+                self.check(result_mutation=change, require_bank_reuse=True)
+        def asymmetric(rank, record):
+            record['route_bank_reuses'] = 0 if rank == 0 else 3
+        self.assertEqual(self.check(result_mutation=asymmetric, require_bank_reuse=True)
+                         ['route_bank_reuses'], [0, 3])
 
     def test_route_bank_evidence_matches_both_ranks(self):
         self.assertEqual(self.check(expected_route_banks=3)['unique_states'], 24)

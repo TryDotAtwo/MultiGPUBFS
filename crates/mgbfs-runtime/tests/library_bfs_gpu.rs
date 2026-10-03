@@ -31,6 +31,8 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
             eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=create_done");
             assert_eq!(bfs.route_bank_count(), banks);
             assert_eq!(bfs.epoch_window(), 3);
+            assert_eq!(bfs.route_bank_reuses(), 0);
+            let mut expected_reuses = 0u64;
             let archive_bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let mut archive = mgbfs_runtime::pinned_archive::PinnedArchive::new(
                 route_archive::MemoryExtent(archive_bytes.clone()),
@@ -40,11 +42,17 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
                 actual.sort();
                 assert_eq!(&actual, wanted, "banks={banks} hash_first={hash_first} depth={depth}");
                 assert_eq!(bfs.advance_archived(&mut archive).unwrap(), depth + 1 < expected.len());
+                // Batch=1: the first N parents use distinct banks; every
+                // remaining parent must reuse one bank at this depth.
+                expected_reuses += wanted.len().saturating_sub(banks) as u64;
+                assert_eq!(bfs.route_bank_reuses(), expected_reuses);
                 eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=depth_done depth={depth}");
             }
             archive.finish().unwrap();
             route_archive::assert_layers(&archive_bytes.lock().unwrap(), &expected, [42; 16]);
             assert!(bfs.dense_lookahead_batches() > banks as u64);
+            assert!(bfs.route_bank_reuses() > 0,
+                "fixture did not reuse a physical bank within a depth");
         }
     }
 }

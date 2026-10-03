@@ -848,6 +848,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
         value["epoch_window"] = serde_json::json!(bfs.epoch_window());
         value["route_banks"] = serde_json::json!(bfs.route_bank_count());
+        value["route_bank_reuses"] = serde_json::json!(bfs.route_bank_reuses());
         value["run_contract"] = serde_json::json!(if production { "RunConfigV1" } else { "reference_bench" });
         value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
         value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);

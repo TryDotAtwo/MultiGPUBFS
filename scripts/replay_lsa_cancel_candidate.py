@@ -174,7 +174,8 @@ def u_reference_layers(n, modulus):
 
 def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
                             expected_epoch_window=None, expected_config_digest=None,
-                            expected_run_contract=None, expected_route_banks=None):
+                            expected_run_contract=None, expected_route_banks=None,
+                            require_bank_reuse=False):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -182,6 +183,7 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
     expected = s_reference_layers(n) if modulus is None else u_reference_layers(n, modulus)
     actual = [set() for _ in expected]
     visited, digest = set(), None
+    bank_reuses = []
     for rank in range(world):
         local = [0] * len(expected)
         for depth, width, count, payload, config in frame_reader(
@@ -207,6 +209,10 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
             raise ValueError('PROCESS_ORACLE_EPOCH_WINDOW')
         if expected_route_banks is not None and result.get('route_banks') != expected_route_banks:
             raise ValueError('PROCESS_ORACLE_ROUTE_BANKS')
+        reuse = result.get('route_bank_reuses')
+        if require_bank_reuse and (type(reuse) is not int or reuse < 0):
+            raise ValueError('PROCESS_ORACLE_ROUTE_BANK_REUSE')
+        bank_reuses.append(reuse)
         if expected_run_contract is not None and result.get('run_contract') != expected_run_contract:
             raise ValueError('PROCESS_ORACLE_RUN_CONTRACT')
         if expected_config_digest is not None and result.get('bootstrap_digest') != list(bytes.fromhex(expected_config_digest)):
@@ -215,7 +221,9 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
             raise ValueError('PROCESS_ORACLE_RANK_COUNTS')
     if actual != expected:
         raise ValueError('PROCESS_ORACLE_LAYER')
-    return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)),
+    if require_bank_reuse and not any(bank_reuses):
+        raise ValueError('PROCESS_ORACLE_ROUTE_BANK_REUSE')
+    return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)), route_bank_reuses=bank_reuses,
                 scope=f'{world} independent rank-process archives; full canonical states at every depth')
 
 
@@ -250,6 +258,8 @@ def main():
                         help='bounded completion credits; inherits environment or defaults to 2, not payload slots')
     parser.add_argument('--route-banks', type=int, choices=(2, 3, 4),
                         help='physical source payload banks, independent of completion credits and receive slot')
+    parser.add_argument('--require-bank-reuse', action='store_true',
+                        help='healthy oracle must observe within-depth physical bank reuse on at least one rank')
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
     parser.add_argument('--pre-dedup', choices=('ON', 'OFF'), default='ON')
     parser.add_argument('--rank-map', choices=('0,1', '1,0'), default='0,1')
@@ -436,7 +446,7 @@ def main():
                         modulus=args.unitriangular_modulus, expected_seed=seed_hex,
                         expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
                         expected_run_contract='RunConfigV1' if config_snapshot is not None else None,
-                        expected_route_banks=route_banks)
+                        expected_route_banks=route_banks, require_bank_reuse=args.require_bank_reuse)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")
