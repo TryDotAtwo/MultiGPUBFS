@@ -102,7 +102,9 @@ def main():
            if not k.startswith('MGBFS_') and k not in ('HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN',
                'PYTHONHOME', 'PYTHONPATH', 'CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')}
     report = dict(status='INCOMPLETE', source=str(source), source_commit=args.commit,
-                  cuda_architectures=args.cuda_architecture, scope='compile only; no hardware correctness')
+                  cuda_architectures=args.cuda_architecture,
+                  scope=('compile and native graph smoke; no BFS correctness'
+                         if args.graph_smoke_test else 'compile only; no hardware correctness'))
     report['nccl_lsa_enabled'] = nccl_lsa_root is not None
     if nccl_version:
         report['nccl_version'] = nccl_version
