@@ -53,7 +53,25 @@ def iter_case_batches(manifest, filesystem, payload_prefix='', *, depths=None,
             parquet = pq.ParquetFile(stream)
             if parquet.schema_arrow.field('state').type != pa.binary(width):
                 raise ValueError('state packing width differs from manifest')
+            # Reject only ranges that provably cannot contain the selection.
+            # Missing statistics always fall back to reading and filtering.
+            columns = {name: index for index, name in enumerate(parquet.schema_arrow.names)}
+            row_groups = []
+            for index in range(parquet.metadata.num_row_groups):
+                group = parquet.metadata.row_group(index)
+                possible = True
+                for name, values in [('n', [n]), ('r', [r]), ('depth', depths)]:
+                    if values is None:
+                        continue
+                    stats = group.column(columns[name]).statistics
+                    if stats is not None and stats.has_min_max:
+                        if not any(stats.min <= value <= stats.max for value in values):
+                            possible = False
+                            break
+                if possible:
+                    row_groups.append(index)
             for batch in parquet.iter_batches(batch_size=batch_rows,
+                    row_groups=row_groups,
                     columns=['n', 'r', 'depth', 'ordinal', 'state']):
                 table = pa.Table.from_batches([batch])
                 keep = pc.and_(pc.equal(table['n'], n), pc.equal(table['r'], r))

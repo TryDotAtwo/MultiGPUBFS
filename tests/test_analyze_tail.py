@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import fsspec
 import pyarrow as pa
@@ -19,11 +20,25 @@ class AnalysisTests(unittest.TestCase):
             manifest=dict(storage_format='parquet',graph=dict(n=4,r=1),
                 packing=dict(bytes_per_state=8),layers=[dict(depth=0,states=1)],
                 files=[dict(path='shared.parquet',layers=[dict(depth=2),dict(depth=3)])])
-            batches=list(iter_case_batches(manifest,fsspec.filesystem('file'),str(root),depths=[3],batch_rows=2))
+            opened=[]
+            original=pq.ParquetFile
+            class ObservedParquet:
+                def __init__(self,stream):self.inner=original(stream)
+                def __getattr__(self,name):return getattr(self.inner,name)
+                def iter_batches(self,**kwargs):
+                    opened.extend(kwargs['row_groups'])
+                    return self.inner.iter_batches(**kwargs)
+            with patch.object(pq,'ParquetFile',ObservedParquet):
+                batches=list(iter_case_batches(manifest,fsspec.filesystem('file'),str(root),depths=[3],batch_rows=2))
+            self.assertEqual(opened,[3,4])
             self.assertEqual(sum(x.num_rows for x in batches),5)
             self.assertTrue(all(x.num_rows<=2 for x in batches))
             self.assertEqual([v for b in batches for v in b['ordinal'].to_pylist()],list(range(5)))
             self.assertEqual(layer_statistics(manifest),[dict(depth=0,states=1)])
+            pq.write_table(pa.Table.from_pylist(rows,schema=schema),root/'shared.parquet',
+                           row_group_size=3,write_statistics=False)
+            self.assertEqual(sum(b.num_rows for b in iter_case_batches(manifest,
+                fsspec.filesystem('file'),str(root),depths=[3],batch_rows=2)),5)
             manifest['packing']['bytes_per_state']=16
             with self.assertRaises(ValueError):list(iter_case_batches(manifest,fsspec.filesystem('file'),str(root)))
 
