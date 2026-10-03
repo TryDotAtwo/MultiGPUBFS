@@ -7,10 +7,28 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import time
+
+
+def run_group(command, *, env, stdout, timeout):
+    """A deadline owns the whole CUDA child group, including cargo test binaries."""
+    process = subprocess.Popen(command, env=env, stdout=stdout,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        code = process.wait(timeout=timeout)
+    except BaseException:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        raise
+    if code:
+        raise subprocess.CalledProcessError(code, command)
 
 
 def evidence_files(work):
@@ -43,22 +61,22 @@ def main():
     driver_log = args.work.parent/(args.work.name+'-driver.log')
     try:
         with driver_log.open('x') as output:
-            subprocess.run([sys.executable, str(args.source/'scripts/remote_build.py'),
+            run_group([sys.executable, str(args.source/'scripts/remote_build.py'),
                 '--source', str(args.source), '--commit', args.commit, '--work', str(args.work),
                 '--timeout-seconds', '1800', '--jobs', '8', '--cuda-architecture', args.cuda_architecture,
                 '--nccl-lsa-root', str(args.nccl_lsa_root), '--graph-smoke-test'],
-                env=env, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=1860)
+                env=env, stdout=output, timeout=1860)
         summary = json.loads((args.work/'build-summary.json').read_text())
         if summary.get('status') != 'BUILT' or summary.get('graph_smoke_test') != 'PASS':
             raise RuntimeError('BUILD_OR_SMOKE_GATE_NOT_PASSED')
         env.update(json.loads((args.work/'runtime-env.json').read_text()))
         env['MGBFS_CUDA_GRAPH_BATCHES'] = '32'
         with (args.work/'graph-oracle.log').open('x') as output:
-            subprocess.run(['cargo', 'test', '--manifest-path', str(args.source/'Cargo.toml'),
+            run_group(['cargo', 'test', '--manifest-path', str(args.source/'Cargo.toml'),
                 '--locked', '--release', '-p', 'mgbfs-runtime', '--features', 'cuda,library-owner',
                 '--test', 'lrx_multiset_gpu', 'lrx_multiset_two_rank_graph_windows_full_state_oracle',
                 '--', '--ignored', '--exact', '--nocapture', '--test-threads=1'],
-                env=env, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=600)
+                env=env, stdout=output, timeout=600)
         oracle = (args.work/'graph-oracle.log').read_text()
         if '1 passed' not in oracle or 'GRAPH_WINDOW_ORACLE rank=0' not in oracle or 'GRAPH_WINDOW_ORACLE rank=1' not in oracle:
             raise RuntimeError('EXACT_ORACLE_EVIDENCE_MISSING')
