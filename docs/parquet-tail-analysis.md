@@ -36,7 +36,8 @@ Retention thresholds count original packed bytes (`retained_packed_bytes`),
 independently of Parquet compression or analytical column overhead.
 
 New automatic configurations use `archive_format=parquet_cohort`. Up to 20
-completed cases share immutable payloads under `tail-shards/<run>/<fingerprint>/`.
+completed cases, or a target of 2 decimal GB of packed states, share immutable payloads under `tail-shards/<run>/<fingerprint>/`.
+A whole case can cross the byte target; cases and retained layers are not truncated to meet it.
 Widths 8 and 16 are grouped separately. Existing configurations retain their
 chosen format. Completed groups are cached by case manifest hashes; later
 cases do not repack earlier full groups. An unfinished final group can be
@@ -54,4 +55,22 @@ contract. Per-case statistics and launch reproducibility remain in each manifest
 
 CPU integration gates cover sharing, widths, shard boundaries, partial offsets,
 cache reuse, corruption rejection, payload-before-manifest commits and shared
-HF readback. Remote publication of this cohort format remains unverified.
+HF readback. Repeated native query and complete-case CPU oracle evidence is linked in
+[the startup-query gate](validation/2026-10-03-memory-query-rendezvous.md).
+Remote cohort publication and the bounded disk-release path require their own
+GPU-host/HF readback gates; successful conversion alone does not prove delivery.
+
+Automatic publication triggers whenever a count- or byte-closed group becomes
+available. After payloads and manifests are committed, the GPU host streams
+back each sealed group's Parquet and compares its full SHA256/size, and compares
+each case manifest at a pinned HF revision. Only then does it persist a release
+receipt and unlink that group's local packed states and Parquet. Statistics,
+configuration, manifests, native reports and the receipt remain. The unfinished
+final group retains its local state files; it may grow on resume. Failed readback
+retains every input of the unverified group.
+
+Subsequent publications reuse verified release receipts for missing local
+payloads in the same repository and do not repack sealed groups. The final
+automatic-run verifier still checks all remote payloads, manifests and the
+sweep ledger. This bounds growth from completed groups; it does not guarantee
+that an arbitrarily large single retained layer fits the SSD.

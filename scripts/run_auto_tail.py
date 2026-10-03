@@ -309,14 +309,20 @@ def main(cancelled=None):
             deadline=min(args.deadline_unix-120,time.time()+60),cancelled=cancelled)
         atomic_json(config_path,base)
     runtime=json.loads(args.runtime_env.read_text())
-    publisher=SweepPublisher(args.root,args.repo_id,api,args.deadline_unix,publish)
+    def publish_and_release(root, repo, api, deadline, *, ledger):
+        from release_tail_cohorts import release
+        receipt = publish(root, repo, api, deadline, ledger=ledger)
+        receipt['local_release'] = release(root, ledger, repo, api, token, deadline=deadline)
+        return receipt
+    publisher=SweepPublisher(args.root,args.repo_id,api,args.deadline_unix,publish_and_release)
     last_published=0
     def progress(ledger):
         nonlocal last_published
         if publisher.error:raise RuntimeError('background publication failed') from publisher.error
-        count=sum(x.get('attempted',False) for x in ledger['cases'].values())
-        if count-last_published>=20:
-            publisher.enqueue(ledger);last_published=count
+        from tail_cohort import case_groups
+        sealed_count = sum(len(members) for members, sealed in case_groups(args.root, ledger) if sealed)
+        if sealed_count > last_published:
+            publisher.enqueue(ledger);last_published=sealed_count
     def adaptive(config,source,case,env):
         return run_adaptive(config,source,case,env,
                             deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)

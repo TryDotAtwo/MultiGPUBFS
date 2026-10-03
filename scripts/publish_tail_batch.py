@@ -30,7 +30,7 @@ def publication_cases(root, ledger):
     return result
 
 
-def plan(root, max_bytes=25_000_000_000, *, ledger=None):
+def plan(root, max_bytes=25_000_000_000, *, ledger=None, released_repo=None):
     root=Path(root).resolve()
     if ledger is None:ledger=json.loads((root/'sweep.json').read_text())
     run_id=ledger['configuration']['base']['run_id']
@@ -63,6 +63,14 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None):
                     raise ValueError('conflicting shared payload')
                 continue
             seen[remote] = signature
+            if not path.exists() and released_repo is not None:
+                marker = base/'release-receipt.json'
+                receipt = json.loads(marker.read_text()) if marker.exists() else {}
+                if (receipt.get('repo_id') == released_repo and receipt.get('revision')
+                        and receipt.get('verified_payloads', {}).get(remote)
+                        == dict(bytes=signature[0], sha256=signature[1])):
+                    continue
+                raise ValueError('missing payload without verified HF release receipt')
             digest=hashlib.sha256()
             with path.open('rb') as stream:
                 for chunk in iter(lambda:stream.read(4<<20),b''):digest.update(chunk)
@@ -85,7 +93,7 @@ def publish(root,repo_id,api,deadline_unix=None, *, ledger=None, max_batch_bytes
     # while the background worker uploads this exact completed-case cohort.
     if ledger is None:ledger=json.loads((Path(root)/'sweep.json').read_text())
     if max_batch_bytes<=0:raise ValueError('positive publication batch bound required')
-    payloads,manifests,total=plan(root,max_bytes=None,ledger=ledger)
+    payloads,manifests,total=plan(root,max_bytes=None,ledger=ledger,released_repo=repo_id)
     def commit(items,message):
         if deadline_unix is not None and time.time()>=deadline_unix:
             raise TimeoutError('HF publication deadline; staged inputs retained')

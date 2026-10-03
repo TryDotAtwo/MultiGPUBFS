@@ -9,7 +9,33 @@ except ImportError:
     from bfs_tail_archive import atomic_json
 
 
-def publication_cases(root, ledger, *, group_size=20, shard_bytes=512_000_000):
+def case_groups(root, ledger, *, group_size=20, group_bytes=2_000_000_000):
+    """Close stable groups after either bound; keep the growing suffix open.
+
+    The byte bound is a target: a whole case can cross it, like retained layers.
+    Only immutable manifest metadata is read, so released payloads are reusable.
+    """
+    if group_size <= 0 or group_bytes <= 0:
+        raise ValueError('positive cohort bounds required')
+    group, size = [], 0
+    for key, record in ledger['cases'].items():
+        if key in ('', '.', '..') or '/' in key or '\\' in key:
+            raise ValueError('unsafe case key')
+        if not record.get('attempted', True):
+            continue
+        saved = Path(root)/key/'saved'
+        manifest = json.loads((saved/'manifest.json').read_text())
+        group.append((key, saved))
+        size += sum(entry['bytes'] for entry in manifest['files'])
+        if len(group) >= group_size or size >= group_bytes:
+            yield group, True
+            group, size = [], 0
+    if group:
+        yield group, False
+
+
+def publication_cases(root, ledger, *, group_size=20, shard_bytes=512_000_000,
+                      group_bytes=2_000_000_000):
     root = Path(root)
     if group_size <= 0 or shard_bytes <= 0:
         raise ValueError('positive cohort bounds required')
@@ -19,13 +45,11 @@ def publication_cases(root, ledger, *, group_size=20, shard_bytes=512_000_000):
     for key in ledger['cases']:
         if key in ('', '.', '..') or '/' in key or '\\' in key:
             raise ValueError('unsafe case key')
-    cases = [(key, root/key/'saved') for key, record in ledger['cases'].items()
-             if record.get('attempted', True)]
     result = {}
-    for begin in range(0, len(cases), group_size):
+    for members_, sealed in case_groups(root, ledger, group_size=group_size, group_bytes=group_bytes):
         # A fixed group of completed cases stays immutable as the sweep grows.
         groups = {}
-        for key, saved in cases[begin:begin+group_size]:
+        for key, saved in members_:
             manifest = json.loads((saved/'manifest.json').read_text())
             groups.setdefault(manifest['packing']['bytes_per_state'], []).append((key, saved))
         for width, members in groups.items():

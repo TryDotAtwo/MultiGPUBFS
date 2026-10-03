@@ -124,6 +124,92 @@ class CohortTests(unittest.TestCase):
                 self.assertEqual(m['files'][0]['states'], 180)
                 self.assertEqual(m['files'][0]['case_states'], 9)
 
+    def test_byte_bound_closes_stable_group_before_twenty_cases(self):
+        from scripts.tail_cohort import case_groups
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keys = [self.fixture(root, n, 2)[0] for n in (7, 8)]
+            ledger = self.ledger(keys)
+            groups = list(case_groups(root, ledger, group_bytes=100))
+            self.assertEqual([(len(m), closed) for m, closed in groups], [(2, True)])
+            first = publication_cases(root, ledger, group_bytes=100)
+            keys.append(self.fixture(root, 9, 2)[0])
+            second = publication_cases(root, self.ledger(keys), group_bytes=100)
+            self.assertEqual(first[keys[0]], second[keys[0]])
+            self.assertNotEqual(second[keys[0]][0], second[keys[2]][0])
+
+    def test_verified_release_reuses_deleted_payload_and_preserves_provenance(self):
+        from scripts.release_tail_cohorts import release
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            keys = [self.fixture(root, n, 2)[0] for n in (7, 8)]
+            ledger = self.ledger(keys)
+            publications = publication_cases(root, ledger, group_size=2)
+            contents = {}
+            for key, (base, manifest_path) in publications.items():
+                contents[f'tail-runs/cohort-test-{key}/manifest.json'] = manifest_path.read_bytes()
+                for entry in json.loads(manifest_path.read_text())['files']:
+                    contents[entry['repo_path']] = (base/entry['path']).read_bytes()
+            class Response:
+                def __init__(self, data): self.data = data
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def raise_for_status(self): pass
+                def json(self): return json.loads(self.data)
+                def iter_content(self, chunk_size): yield self.data
+            class Session:
+                def __init__(self): self.headers = {}
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def get(self, url, **kwargs):
+                    return Response(contents[url.split('/resolve/fixture/',1)[1]])
+            api = SimpleNamespace(repo_info=lambda *a, **k: SimpleNamespace(sha='fixture'))
+            with patch('requests.Session', Session):
+                result = release(root, ledger, 'fixture/data', api, 'fixture', group_size=2)
+            self.assertEqual(set(result['released_cases']), set(keys))
+            self.assertFalse(list(root.rglob('*.bin')))
+            self.assertFalse(list(root.rglob('*.parquet')))
+            for key in keys:
+                self.assertTrue((root/key/'saved/manifest.json').exists())
+                self.assertTrue(publications[key][1].exists())
+            # Planning for the same repository uses the verified receipt and
+            # never attempts conversion from deleted packed states.
+            # Use matching configured group size by reaching the byte bound.
+            with patch('scripts.tail_cohort.case_groups', wraps=lambda *a, **k: iter([
+                    ([(key, root/key/'saved') for key in keys], True)])):
+                payloads, manifests, size = plan(root, ledger=ledger, released_repo='fixture/data')
+                self.assertEqual((payloads, size), ([], 0))
+                self.assertEqual(len(manifests), 2)
+                with self.assertRaisesRegex(ValueError, 'verified HF release receipt'):
+                    plan(root, ledger=ledger, released_repo='different/data')
+
+    def test_corrupt_remote_readback_does_not_release_any_local_states(self):
+        from scripts.release_tail_cohorts import release
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            key, saved = self.fixture(root, 7, 2)
+            ledger = self.ledger([key])
+            publications = publication_cases(root, ledger, group_size=1)
+            m = json.loads(publications[key][1].read_text())
+            class Response:
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def raise_for_status(self): pass
+                def json(self): return m
+                def iter_content(self, chunk_size): yield b'corrupt remote data'
+            class Session:
+                def __init__(self): self.headers = {}
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def get(self, *a, **k): return Response()
+            api = SimpleNamespace(repo_info=lambda *a, **k: SimpleNamespace(sha='fixture'))
+            with patch('requests.Session', Session):
+                with self.assertRaises(ValueError):
+                    release(root, ledger, 'fixture/data', api, 'fixture', group_size=1)
+            self.assertEqual(len(list(saved.rglob('*.bin'))), 2)
+            self.assertTrue(list(publications[key][0].glob('*.parquet')))
+            self.assertFalse((publications[key][0]/'release-receipt.json').exists())
+
     def test_shard_bound_and_corrupt_input_never_commit_cohort(self):
         import pyarrow.parquet as pq
         with tempfile.TemporaryDirectory() as directory:
