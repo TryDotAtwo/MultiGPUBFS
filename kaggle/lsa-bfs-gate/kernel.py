@@ -1,6 +1,7 @@
 """Exact-source, two-T4 CUCO_RANK/LSA full-state BFS correctness gate."""
 import hashlib
 import ctypes
+import copy
 import importlib.util
 import json
 import os
@@ -13,11 +14,25 @@ import sys
 import tempfile
 import time
 
-SOURCE = "48d4a1ffa351900be593cc5ff2fdb2a32dec6557"
+SOURCE = "12391050694ad1b50669f2eee3490fd68cd1e0e1"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "native_rank_gate"
+MODE = "typed_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
+
+
+def typed_rank_configs(base):
+    cases = []
+    for profile in ('DENSE', 'HASH_FIRST'):
+        for credits in (2, 3):
+            for prededup in (True, False):
+                for mapping in ([0, 1], [1, 0]):
+                    config = copy.deepcopy(base)
+                    config.update(frontier_profile=profile, completion_epoch_window=credits,
+                        local_pre_dedup=prededup, owner_backend='CUCO_RANK', library_pool_bytes=96 << 20)
+                    config['topology']['logical_owner_to_rank'] = mapping.copy()
+                    cases.append(config)
+    return cases
 
 
 def cuda_build_target(hardware):
@@ -176,7 +191,7 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        profiling_enabled = MODE in ('typed_rank_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
@@ -206,7 +221,7 @@ def main():
              "--only-binary=:all:", "--no-cache-dir", "--require-hashes", "-r",
              str(source / "experiments/library_owner/requirements-linux-x86_64.lock")],
             "dependencies", timeout=1200)
-        if MODE in ("device_protocol_replay", "native_rank_gate"):
+        if MODE in ("device_protocol_replay", "native_rank_gate", "typed_rank_gate"):
             # The full-state oracle reuses the archive reader in the Parquet
             # exporter; its module-level schemas require Arrow at import time.
             run([sys.executable, "-m", "pip", "--python", python, "install",
@@ -414,6 +429,42 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == 'typed_rank_gate':
+            report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
+            report['typed_runs'] = []
+            base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
+            configs = typed_rank_configs(base)
+            def replay_typed(config, label, extra):
+                snapshot = logs / (label + '-config.json')
+                snapshot.write_text(json.dumps(config, separators=(',', ':')))
+                with (logs / (label + '.log')).open('w') as output:
+                    row = run_protocol_replay([python, str(source / 'scripts/replay_lsa_cancel_candidate.py'),
+                        str(work), str(logs / label), '--run-config', str(snapshot), *extra],
+                        cwd=source, env=env, log=output)
+                detail_path = logs / label / 'summary.json'
+                detail = json.loads(detail_path.read_text()) if detail_path.exists() else {}
+                row.update(label=label, run_config_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                    run_contract=detail.get('run_contract'), epoch_window=detail.get('epoch_window'),
+                    replay_status=detail.get('status'))
+                row['pass'] = row['returncode'] == 0 and not row['timed_out'] and (
+                    detail.get('status') == 'DIAGNOSTIC_CASES_PASS' and detail.get('run_contract') == 'RunConfigV1'
+                    and detail.get('epoch_window') == config['completion_epoch_window'])
+                report['typed_runs'].append(row)
+                save()
+            selected = []
+            for index, config in enumerate(configs):
+                fault_case = config['completion_epoch_window'] == 3 and config['local_pre_dedup'] and (
+                    config['topology']['logical_owner_to_rank'] == [0, 1])
+                replay_typed(config, 'typed-' + str(index),
+                    ['--capacity-faults'] if fault_case else ['--healthy-only'])
+                if fault_case:
+                    selected.append(config)
+            for config in selected:
+                for tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
+                    replay_typed(config, 'typed-' + config['frontier_profile'] + '-' + tool,
+                        ['--healthy-only', '--instrument-processes', tool])
+            report['status'] = 'TYPED_GATE_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+            return
         if MODE == "native_rank_gate":
             report["scope"] = "native rank owner: separate single-GPU T4 processes; two-rank checks only on verified P2P"
             report["t4_acceptance_eligible"] = False
