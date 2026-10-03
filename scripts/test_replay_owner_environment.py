@@ -1,8 +1,16 @@
 import unittest
-from replay_lsa_cancel_candidate import configure_owner_environment, configure_epoch_window
+from replay_lsa_cancel_candidate import configure_owner_environment, configure_epoch_window, rank_arguments
+from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_typed_replay_calls_run_not_bench(self):
+        case = Path('case')
+        config = Path('snapshot.json')
+        self.assertEqual(rank_arguments(case, 's4', 16, config),
+            ['run', str(config), str(case / 'bootstrap'), str(case / 'archive'), str(case / 'result')])
+        self.assertEqual(rank_arguments(case, 's4', 16)[:4], ['bench', '--reference', 's4', '16'])
+
     def test_epoch_window_explicit_and_inherited(self):
         for requested, inherited, expected in ((None, None, 2), (None, '3', 3), (4, '3', 4)):
             env = {} if inherited is None else {'MGBFS_EPOCH_WINDOW': inherited}

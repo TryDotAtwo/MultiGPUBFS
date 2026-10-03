@@ -33,6 +33,13 @@ def configure_hash_seed(env, value):
     return seed
 
 
+def rank_arguments(case, reference_group, batch, run_config=None):
+    paths = [str(case / 'bootstrap'), str(case / 'archive'), str(case / 'result')]
+    if run_config is not None:
+        return ['run', str(run_config), *paths]
+    return ['bench', '--reference', reference_group, str(batch), *paths]
+
+
 def configure_owner_environment(env, backend, rank_map):
     if backend not in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('UNKNOWN_OWNER_BACKEND')
@@ -191,6 +198,8 @@ def main():
     parser.add_argument('--unitriangular-modulus', type=int, choices=range(2, 7),
                         help='full-state U4 oracle instead of symmetric permutation matrices')
     parser.add_argument('--batch', type=int, default=1)
+    parser.add_argument('--run-config', type=Path,
+                        help='test the typed run dispatcher with this immutable config instead of bench')
     parser.add_argument('--epoch-window', type=int,
                         help='bounded completion credits; inherits environment or defaults to 2, not payload slots')
     parser.add_argument('--profile', choices=('DENSE', 'HASH_FIRST'), default='DENSE')
@@ -212,8 +221,37 @@ def main():
         parser.error('--batch must be positive')
     if args.unitriangular_modulus is not None and args.reference_size != 4:
         parser.error('unitriangular replay requires --reference-size 4')
+    production_config = None
+    if args.run_config is not None:
+        try:
+            production_config = args.run_config.read_bytes()
+            config = json.loads(production_config)
+            if config['topology']['world_size'] != 2 or config.get('macro_depth', 1) != 1:
+                raise ValueError('RUN_REPLAY_REQUIRES_TWO_RANK_UNIT_DEPTH')
+            if config['graph']['rows'] != args.reference_size:
+                raise ValueError('RUN_REPLAY_ORACLE_DEGREE_MISMATCH')
+            if args.unitriangular_modulus is not None and config['graph']['modulus'] != args.unitriangular_modulus:
+                raise ValueError('RUN_REPLAY_ORACLE_MODULUS_MISMATCH')
+            seed_hex = f"{int.from_bytes(bytes(config['seed']), 'little'):032x}"
+            configure_hash_seed(seed_environment, seed_hex)
+            if args.epoch_window not in (None, 2):
+                raise ValueError('RUN_REPLAY_EPOCH_WINDOW_FIXED_TWO')
+            epoch_window = 2
+            args.batch = config['parent_batch']
+            args.profile = config['frontier_profile']
+            args.owner_backend = config['owner_backend']
+            args.pre_dedup = 'ON' if config['local_pre_dedup'] else 'OFF'
+            args.rank_map = ','.join(map(str, config['topology']['logical_owner_to_rank']))
+            if args.owner_backend not in ('CUB_SORT_MERGE', 'BMMA_BUCKET'):
+                raise ValueError('RUN_REPLAY_OWNER_UNAVAILABLE')
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            parser.error(str(error))
     work, output = args.work.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
+    config_snapshot = None
+    if production_config is not None:
+        config_snapshot = output / 'run-config.json'
+        config_snapshot.write_bytes(production_config)
     source = work / "source"
     env = dict(os.environ)
     env.update(seed_environment)
@@ -234,6 +272,8 @@ def main():
     env["PATH"] = str(work / "cargo/bin") + ":" + env.get("PATH", "")
     report = {"scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
         "epoch_window": epoch_window,
+        "run_contract": "RunConfigV1" if production_config is not None else "reference_bench",
+        "run_config_sha256": hashlib.sha256(production_config).hexdigest() if production_config is not None else None,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
             cwd=source, text=True).strip(), "cases": []}
     diff = subprocess.check_output(["git", "diff", "--binary"], cwd=source)
@@ -310,9 +350,8 @@ def main():
                 stream = (case / f"rank-{rank}.log").open("w")
                 streams.append(stream)
                 rank_env = dict(case_env, RANK=str(rank), LOCAL_RANK=str(rank), WORLD_SIZE="2")
-                command = instrument_rank_command(source / 'target/debug/mgbfs', [
-                    "bench", "--reference", reference_group, str(args.batch), str(case / "bootstrap"),
-                    str(case / "archive"), str(case / "result")],
+                command = instrument_rank_command(source / 'target/debug/mgbfs',
+                    rank_arguments(case, reference_group, args.batch, config_snapshot),
                     args.instrument_processes, case / f'rank-{rank}')
                 processes.append(subprocess.Popen(command, cwd=source,
                     env=rank_env, stdout=stream, stderr=subprocess.STDOUT,
