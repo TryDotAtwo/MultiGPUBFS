@@ -78,7 +78,7 @@ def worker(args):
                for pair in selected):
             raise ValueError('invalid matched calibration pair')
         app.automatic_pairs = lambda: selected
-    root = args.root/name
+    root = args.root/(args.root.name+'-'+name)
     root.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     events, lock = [], threading.Lock()
@@ -154,10 +154,14 @@ def main():
         child = subprocess.Popen(command, start_new_session=True)
         atomic_json(args.root/'active-worker.json', dict(pid=child.pid, name=name, deadline=deadline))
         child.wait()
-        report_path = args.root/name/'performance.json'
+        report_path = args.root/(args.root.name+'-'+name)/'performance.json'
         if report_path.exists():
             reports.append(json.loads(report_path.read_text()))
         atomic_json(args.root/'comparison.json', dict(reports=reports, matched=compare(reports),
+            all_requested_modes_verified=(len(reports)==len(args.order) and
+                                          all(r['status']=='VERIFIED' for r in reports)),
+            all_requested_grids_terminal=(len(reports)==len(args.order) and
+                                          all(r['all_eligible_pairs_terminal'] for r in reports)),
             requested_order=args.order, not_started=args.order[index+1:],
             scope='Each mode uses the entire automatic grid unless matched calibration was requested. '
                   'Only the external global cost deadline limits runs. '
