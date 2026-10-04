@@ -12,6 +12,17 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
+    def test_warmup_gate_requires_both_authenticated_ranks_to_complete_warmup(self):
+        def warmed(rank, record):
+            record['warmup_completed'] = True
+        self.assertEqual(self.check(result_mutation=warmed, expected_warmup=True)['unique_states'], 24)
+        for bad in (False, None, 1, 'true'):
+            def asymmetric(rank, record):
+                record['warmup_completed'] = bad if rank == 1 else True
+            with self.subTest(value=bad):
+                with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_WARMUP'):
+                    self.check(result_mutation=asymmetric, expected_warmup=True)
+
     def test_reference_archive_and_bootstrap_have_distinct_authenticated_digests(self):
         def record(rank, value):
             value['run_contract'] = 'reference_bench'
@@ -30,7 +41,8 @@ class ProcessOracleTests(unittest.TestCase):
 
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
               expected_config_digest=None, expected_run_contract=None, expected_route_banks=None,
-              require_bank_reuse=False, marker_mutation=None, expected_owner_backend=None):
+              require_bank_reuse=False, marker_mutation=None, expected_owner_backend=None,
+              expected_warmup=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -85,7 +97,8 @@ class ProcessOracleTests(unittest.TestCase):
             return replay.verify_process_archives(root, expected_seed=expected_seed,
                 expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
                 expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks,
-                require_bank_reuse=require_bank_reuse, expected_owner_backend=expected_owner_backend)
+                require_bank_reuse=require_bank_reuse, expected_owner_backend=expected_owner_backend,
+                expected_warmup=expected_warmup)
 
     def test_rank_cannot_silently_substitute_requested_owner_backend(self):
         self.check(expected_owner_backend='CUCO_RANK')

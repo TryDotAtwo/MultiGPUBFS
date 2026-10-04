@@ -23,7 +23,7 @@ NCCL_VARIANT = "minimum_arch_guard_posix"
 
 def oracle_dependency_packages(mode):
     return ['pyarrow==19.0.1'] if mode in ('device_protocol_replay', 'native_rank_gate',
-        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate') else []
+        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate') else []
 
 
 def typed_rank_configs(base):
@@ -149,6 +149,20 @@ def cuda_build_target(hardware):
     if hardware not in targets:
         raise ValueError("UNSUPPORTED_CUDA_BUILD_HARDWARE: " + hardware)
     return targets[hardware]
+
+
+def typed_warmup_cases(base):
+    cases = []
+    for profile in ('DENSE', 'HASH_FIRST'):
+        config = copy.deepcopy(base)
+        config['frontier_profile'] = profile
+        config['owner_backend'] = 'CUCO_RANK'
+        config['library_pool_bytes'] = 96 << 20
+        config['completion_epoch_window'] = 3
+        config['capacities']['route_slot_count'] = 3
+        cases.append(dict(config=config, label='warmup-' + profile,
+                          extra=['--bench-warmup', '--capacity-faults']))
+    return cases
 
 
 def vmm_probe_cases():
@@ -307,7 +321,7 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
@@ -583,7 +597,7 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate'):
+        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
             base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
@@ -610,6 +624,12 @@ def main():
                 save()
                 print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
                 return row
+            if MODE == 'typed_warmup_gate':
+                report['scope'] = 'typed two-rank production warmup and measured archive oracle; asymmetric failures'
+                for case in typed_warmup_cases(base):
+                    replay_typed(case['config'], case['label'], case['extra'])
+                report['status'] = 'TYPED_WARMUP_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
             if MODE == 'typed_stress_gate':
                 report['scope'] = 'full typed U4/F3 state sets; all profile/pre-dedup/rank-map/source-bank combinations'
                 for config in typed_stress_configs(base, 3):

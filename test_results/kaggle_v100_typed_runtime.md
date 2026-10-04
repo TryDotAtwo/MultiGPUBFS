@@ -18,6 +18,14 @@ All small JSON/log outputs are being retained under
 completion and detailed fault/first-failing-API verification remain pending.
 The second notebook v5 remains live; it has not been overwritten.
 
+Retention completed: all 78 nested summaries and small JSON/rank logs saved
+on D. Detailed summaries confirm 108/108 asymmetric fault cases pass,
+zero forced cleanup and zero false group COMPLETE. Maximum observed
+process time is 2.160 seconds rounded upward. Example DENSE/banks2
+initcheck fails before BFS in `window_register`; rank1 returns unhandled
+CUDA error and rank0 reports cancellation/timeout without terminal result.
+No sanitizer waiver follows from these successful failure-protocol checks.
+
 Follow-up prepared: direct CUDA POSIX import diagnostic, source
 `1a00b1da7df33870cd1127c19c11b316bd3ff86c`. Actual nvcc sm75 build passes
 with Wall/Wextra. Local executable invocation cannot run without

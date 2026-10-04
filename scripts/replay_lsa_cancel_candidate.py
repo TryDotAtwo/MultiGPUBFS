@@ -213,7 +213,8 @@ def u_reference_layers(n, modulus):
 def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
                             expected_epoch_window=None, expected_config_digest=None,
                             expected_run_contract=None, expected_route_banks=None,
-                            require_bank_reuse=False, expected_owner_backend=None):
+                            require_bank_reuse=False, expected_owner_backend=None,
+                            expected_warmup=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -262,6 +263,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
         bank_reuses.append(reuse)
         if expected_run_contract is not None and result.get('run_contract') != expected_run_contract:
             raise ValueError('PROCESS_ORACLE_RUN_CONTRACT')
+        if expected_warmup is not None and result.get('warmup_completed') is not expected_warmup:
+            raise ValueError('PROCESS_ORACLE_WARMUP')
         if expected_config_digest is not None and result.get('bootstrap_digest') != list(bytes.fromhex(expected_config_digest)):
             raise ValueError('PROCESS_ORACLE_BOOTSTRAP_CONFIG')
         if result.get('status') != 'COMPLETE' or result.get('local_layer_sizes') != local:
@@ -311,6 +314,8 @@ def main():
     parser.add_argument('--instrument-processes', choices=(
         'memcheck', 'racecheck', 'initcheck', 'synccheck', 'nsys'))
     parser.add_argument('--healthy-only', action='store_true')
+    parser.add_argument('--bench-warmup', action='store_true',
+                        help='run warmup plus measured pass; authenticate warmup evidence from both ranks')
     parser.add_argument('--case-timeout-seconds', type=int,
                         help='explicit bounded per-case deadline (1..3600s), recorded in report')
     parser.add_argument('--capacity-faults', action='store_true',
@@ -432,7 +437,7 @@ def main():
         MGBFS_BENCH_CAPACITY="64", MGBFS_FUTURE_CAPACITY="128", MGBFS_BUCKETS="8",
         MGBFS_SHARDS="4", MGBFS_JOB_BUCKETS="2", MGBFS_BUCKET_CAPACITY="32",
         MGBFS_STATE_CODEC="matrix_u8", MGBFS_ARCHIVE_CODEC="matrix_u8",
-        MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0",
+        MGBFS_ARCHIVE_ROWS="3", MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP=str(int(args.bench_warmup)),
         MGBFS_PRE_DEDUP=args.pre_dedup, MGBFS_BENCH_SKIP_ARCHIVE="0", MGBFS_ARCHIVE_STREAM="0",
         MGBFS_CAPACITY_MODE="max_per_rank",
         MGBFS_TRANSPORT_BACKEND="NCCL_LSA", NCCL_CUMEM_ENABLE="1")
@@ -452,6 +457,7 @@ def main():
                        else f'u4m{args.unitriangular_modulus}')
     report['reference_group'] = reference_group
     report['batch'] = args.batch
+    report['bench_warmup_requested'] = args.bench_warmup
     report['profile'] = args.profile
     report['pre_dedup'] = args.pre_dedup
     report['owner_backend'] = args.owner_backend
@@ -517,7 +523,7 @@ def main():
                         expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
                         expected_run_contract='RunConfigV1' if config_snapshot is not None else None,
                         expected_route_banks=route_banks, require_bank_reuse=args.require_bank_reuse,
-                        expected_owner_backend=args.owner_backend)
+                        expected_owner_backend=args.owner_backend, expected_warmup=args.bench_warmup)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")

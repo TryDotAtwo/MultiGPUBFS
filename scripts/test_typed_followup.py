@@ -14,6 +14,18 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_warmup_runs_both_profiles_with_asymmetric_archive_owner_capacity_faults(self):
+        base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
+        cases = gate.typed_warmup_cases(base)
+        self.assertEqual(len(cases), 2)
+        self.assertEqual({c['config']['frontier_profile'] for c in cases}, {'DENSE', 'HASH_FIRST'})
+        for case in cases:
+            self.assertEqual(case['extra'], ['--bench-warmup', '--capacity-faults'])
+            self.assertEqual(case['config']['owner_backend'], 'CUCO_RANK')
+            self.assertEqual(case['config']['capacities']['route_slot_count'], 3)
+            self.assertEqual(case['config']['completion_epoch_window'], 3)
+        self.assertIn('pyarrow==19.0.1', gate.oracle_dependency_packages('typed_warmup_gate'))
+
     def test_every_typed_execution_installs_archive_reader_dependency(self):
         for mode in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate'):
             self.assertIn('pyarrow==19.0.1', gate.oracle_dependency_packages(mode), mode)
@@ -25,7 +37,7 @@ class FollowupTests(unittest.TestCase):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         with tempfile.TemporaryDirectory(prefix='mgbfs-stress-admission-') as directory:
             path = Path(directory) / 'config.json'
-            for config in gate.typed_stress_configs(base, 3):
+            for config in gate.typed_stress_configs(base, 3) + [c['config'] for c in gate.typed_warmup_cases(base)]:
                 path.write_text(json.dumps(config), encoding='utf-8')
                 result = subprocess.run([str(binary), 'preflight', '--offline', str(path)],
                     capture_output=True, text=True, timeout=10)
