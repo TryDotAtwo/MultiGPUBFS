@@ -1,4 +1,4 @@
-#![cfg(all(feature = "library-owner", target_os = "linux"))]
+#![cfg(all(feature = "library-owner", target_os = "linux", debug_assertions))]
 //! Real CLI/FIFO/archive gate. Small U4/F2 output is bounded by the oracle.
 use std::{
     fs,
@@ -106,6 +106,8 @@ fn native_cli_fifo_preserves_full_layers_and_wire_budget() {
                 ));
             if let Some(key) = fault {
                 cmd.env(key, "0");
+            } else {
+                cmd.env("MGBFS_TEST_OWNER_DAG_CAPTURE", "1");
             }
             let mut child = cmd.spawn().unwrap();
             let deadline = Instant::now() + Duration::from_secs(60);
@@ -152,6 +154,9 @@ fn native_cli_fifo_preserves_full_layers_and_wire_budget() {
                 continue;
             }
             assert!(status.success(), "{}", fs::read_to_string(&log).unwrap());
+            let log_text = fs::read_to_string(&log).unwrap();
+            assert!(log_text.matches("MGBFS_OWNER_DAG_CAPTURE launched").count() > expected.len(),
+                "owner DAG capture did not execute across batches: {log_text}");
             route_archive::assert_layers(&bytes, &expected, 20260828u128.to_le_bytes());
             let record: serde_json::Value =
                 serde_json::from_slice(&fs::read(output.join("rank-0.json")).unwrap()).unwrap();

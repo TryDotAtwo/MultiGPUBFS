@@ -49,3 +49,16 @@ the local GPU. Each failure checks its exact injected error string rather
 than accepting any generic failure; rank and group COMPLETE must be absent.
 This exercises actual asynchronous worker failure reporting, but still does
 not establish asymmetric cancellation between two independent ranks.
+
+## Actual owner DAG capture
+
+Healthy CLI runs now enable `MGBFS_TEST_OWNER_DAG_CAPTURE` and require
+multiple successful graph launches across batches, followed by the same
+full-state/hash/archive oracle checks. The twelve-case gate passed in
+11.42 seconds. `commit_rank_library_batch` captures candidate conversion,
+CUCO compare, shard counts, StateRing reservation, persistent commit and
+either state materialization/extent publication or HASH_FIRST request creation.
+This is actual graph execution, not the older drained-completion leaf test.
+Transport, HASH_FIRST responses and retirement are outside this capture scope;
+capture does not replace the real multi-rank timeline requirement.
+The fixture is debug-only because its injection/probe hooks are debug-only.
