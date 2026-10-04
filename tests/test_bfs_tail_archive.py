@@ -6,6 +6,22 @@ from scripts.bfs_tail_archive import TailArchive, pack_state, packed_width, publ
 
 
 class TailTests(unittest.TestCase):
+    def test_fixed_five_layers_for_both_statuses_without_byte_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            archive=self.make(Path(d)/'run',retained_layers=5,complete_bytes=10000,incomplete_bytes=8)
+            for depth in range(9):
+                archive.completed_layer(depth,2,[pack_state([0,1,2])*2],.1,{'0':100})
+            for complete in (False,True):
+                manifest=json.loads(archive.snapshot(complete,'test').read_text())
+                self.assertEqual([f['depth'] for f in manifest['files']],[4,5,6,7,8])
+                self.assertTrue(all(f['full_layer'] and f['states']==2 for f in manifest['files']))
+                self.assertEqual(len(manifest['layers']),9)
+                self.assertEqual(manifest['retention']['layers'],5)
+
+    def test_fixed_layer_count_must_be_positive_integer(self):
+        with tempfile.TemporaryDirectory() as d:
+            for count in (0,-1,True,1.5):
+                with self.assertRaises(ValueError):self.make(Path(d)/'run',retained_layers=count)
     def make(self, root, **kw):
         return TailArchive(root, n=3, r=1, start=[0, 1, 2],
                            actions={'L': 'rotate left', 'R': 'rotate right', 'X': 'swap first two'},

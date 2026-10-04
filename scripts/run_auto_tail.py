@@ -101,8 +101,10 @@ class EndUploadDiskAdmission:
     """
     def __init__(self, root):
         self.root=Path(root);self.seen=set();self.retained=0;self.largest_layer=0
+        self.fixed_layers=None
 
     def observe(self, ledger):
+        self.fixed_layers=ledger.get('configuration',{}).get('base',{}).get('retained_layers')
         for key,record in ledger['cases'].items():
             if key in self.seen or not record.get('attempted',False):continue
             manifest=json.loads((self.root/key/'saved/manifest.json').read_text())
@@ -116,7 +118,9 @@ class EndUploadDiskAdmission:
     def required_free_bytes(self):
         # Parquet row metadata and a full next-case working tail/spools coexist
         # with retained packed data until verified publication can release it.
-        return (2*self.retained+max(10_000_000_000,3*self.largest_layer)
+        tail=(self.fixed_layers*self.largest_layer if self.fixed_layers is not None
+              else max(10_000_000_000,3*self.largest_layer))
+        return (2*self.retained+tail
                 +2*self.largest_layer+1_000_000_000+(64<<20))
 
     def stop_reason(self):
@@ -376,7 +380,11 @@ def main(cancelled=None):
     p.add_argument('--upload-mode',choices=('search','graph','end','background'),default=None,
         help='search: live Parquet snapshots; graph: after each graph; end (default): SSD then upload/resume cycles; background: completed cohorts in parallel')
     p.add_argument('--deadline-unix',type=float,required=True)
+    p.add_argument('--retained-layers',type=int,default=None,
+        help='retain only this many final whole completed layers, for COMPLETE and INCOMPLETE; no byte target')
     args = p.parse_args()
+    if args.retained_layers is not None and args.retained_layers <= 0:
+        p.error('--retained-layers must be positive')
     if not math.isfinite(args.deadline_unix) or args.deadline_unix-time.time()<300:
         p.error('finite deadline with at least 300 seconds remaining required')
     if os.name!='posix': p.error('GPU execution requires Linux')
@@ -414,6 +422,13 @@ def main(cancelled=None):
         runtime=json.loads(args.runtime_env.read_text())
         base=select_transport(base,args.source,args.root/'transport-gate',runtime,
             deadline=min(args.deadline_unix-120,time.time()+60),cancelled=cancelled)
+        atomic_json(config_path,base)
+    if args.retained_layers is not None:
+        if base.get('retained_layers') not in (None,args.retained_layers):
+            p.error('resume retained layer count differs from saved configuration')
+        if 'retained_layers' not in base and (args.root/'sweep.json').exists():
+            p.error('changing retention requires a new run root')
+        base['retained_layers']=args.retained_layers
         atomic_json(config_path,base)
     mode=args.upload_mode or base.get('upload_mode','end')
     if base.get('upload_mode',mode)!=mode:

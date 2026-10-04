@@ -32,6 +32,16 @@ Upload timing is independent of the table's data policy. All modes retain
 exactly the agreed statistics, provenance and bounded COMPLETE/INCOMPLETE tails;
 no paths or extra deduplication/component metrics are added.
 
+Optional `--retained-layers 5` selects a fixed tail: only the last five whole
+completed layers (or all available layers if fewer) for both COMPLETE and
+INCOMPLETE, without a 10 GB target or 1 GB suffix cap. All layer statistics
+remain available. Without this argument the original retention policy remains.
+Use `--retained-layers 5 --upload-mode graph` to upload and verify each graph's
+five-layer tail before starting the next graph. A changed retention policy
+requires a new run root. This option reduces retained storage and HF traffic;
+all completed states still pass through the native archival stream, so it does
+not eliminate D2H/packing work or promise a measured BFS speedup.
+
 - `--upload-mode end` (default): compute onto GPU-host SSD, then publish.
 - `--upload-mode graph`: publish and verify after each graph. Cohorts contain
   one graph, so this mode trades grouping efficiency for immediate delivery.

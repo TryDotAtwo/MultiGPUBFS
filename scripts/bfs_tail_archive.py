@@ -54,7 +54,11 @@ class TailArchive:
     """
     def __init__(self, root, *, n, r, start, actions, program_commit,
                  launch_config, sample_interval_seconds,
-                 complete_bytes=10 * GB, incomplete_bytes=GB):
+                 complete_bytes=10 * GB, incomplete_bytes=GB, retained_layers=None):
+        retained_layers = launch_config.get('retained_layers') if retained_layers is None else retained_layers
+        if retained_layers is not None and (type(retained_layers) is not int or retained_layers <= 0):
+            raise ValueError('positive fixed layer count required')
+        self.retained_layers = retained_layers
         self.width = packed_width(n, max(start, default=0) + 1)
         if len(start) != n or not program_commit or set(actions) != {"L", "R", "X"}:
             raise ValueError("exact graph/configuration required")
@@ -77,6 +81,9 @@ class TailArchive:
             program_commit=program_commit, launch_config=launch_config,
             vram_sampling_interval_seconds=sample_interval_seconds,
             byte_unit="decimal GB", layers=[], files=[])
+        if retained_layers is not None:
+            self.manifest['retention'] = dict(policy='fixed_whole_layers', layers=retained_layers,
+                                             applies_to=['COMPLETE','INCOMPLETE'])
         atomic_json(self.root / "manifest.json", self.manifest)
 
     def completed_layer(self, depth, count, chunks, seconds, vram_peak_bytes):
@@ -121,7 +128,8 @@ class TailArchive:
                                           vram_peak_bytes=dict(vram_peak_bytes)))
         self.manifest["last_completed_layer"] = depth
         # Keep at least three entire layers AND enough bytes, until graph start.
-        while len(self.retained) > 3 and sum(x["bytes"] for x in self.retained[1:]) >= self.complete_bytes:
+        while (len(self.retained) > self.retained_layers if self.retained_layers is not None
+               else len(self.retained) > 3 and sum(x["bytes"] for x in self.retained[1:]) >= self.complete_bytes):
             old = self.retained.pop(0)
             (self.root / old["path"]).unlink()
         self.snapshot()
@@ -157,10 +165,11 @@ class TailArchive:
         # Repeated calls (e.g. final stop reason) reuse verified immutable files.
         generation.mkdir(exist_ok=True)
         selected, remaining = [], self.incomplete_bytes // self.width * self.width
-        source_entries = self.retained if complete else reversed(self.retained)
+        full_tail = complete or self.retained_layers is not None
+        source_entries = self.retained if full_tail else reversed(self.retained)
         for entry in source_entries:
-            take = entry["bytes"] if complete else min(entry["bytes"], remaining)
-            if not complete and remaining == 0:
+            take = entry["bytes"] if full_tail else min(entry["bytes"], remaining)
+            if not full_tail and remaining == 0:
                 break
             target = generation / Path(entry["path"]).name
             offset = entry["bytes"] - take
