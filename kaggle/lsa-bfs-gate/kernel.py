@@ -124,7 +124,7 @@ def cuda_build_target(hardware):
 def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None,
                             require_window=True):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
-    if not require_window and required_stage != 'device_comm_only_create':
+    if not require_window and required_stage not in ('device_comm_only_create', 'device_comm_zero_create'):
         raise ValueError('WINDOWLESS_PROBE_REQUIRES_DEVICE_ONLY_STAGE')
     # Kaggle relocates the uploaded script; cwd is the pinned source checkout.
     scripts = str(Path(cwd).resolve() / 'scripts')
@@ -422,6 +422,7 @@ def main():
                 report['window_runs'] = {}
                 probe_env = dict(env, NCCL_DEBUG='INFO')
                 for stage, argument in (('window', 'nonblocking'),
+                        ('device_comm_zero_create', 'device_comm_zero'),
                         ('device_comm_only_create', 'device_comm_only'), ('device_comm_create', 'device_comm')):
                     for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
                         label = stage + '-' + tool
@@ -430,7 +431,7 @@ def main():
                             command = ['compute-sanitizer', '--tool', tool, '--error-exitcode', '97', *command]
                         row = run_window_process_pair(command, source, probe_env, logs / ('window-process-' + label),
                             required_stage=stage if stage != 'window' else None,
-                            require_window=argument != 'device_comm_only')
+                            require_window=argument not in ('device_comm_only', 'device_comm_zero'))
                         row['command'] = command
                         if tool != 'plain':
                             from replay_lsa_cancel_candidate import instrumentation_clean

@@ -26,7 +26,8 @@ __global__ void sample_window(ncclDevComm dev,ncclWindow_t window,int rank) {
 #endif
 
 int main(int argc, char** argv) {
-  const bool device_comm_only = argc == 2 && std::strcmp(argv[1], "device_comm_only") == 0;
+  const bool zero_resources = argc == 2 && std::strcmp(argv[1], "device_comm_zero") == 0;
+  const bool device_comm_only = zero_resources || (argc == 2 && std::strcmp(argv[1], "device_comm_only") == 0);
   const bool device_comm = device_comm_only || (argc == 2 && std::strcmp(argv[1], "device_comm") == 0);
   const bool nonblocking = device_comm || (argc == 2 && std::strcmp(argv[1], "nonblocking") == 0);
   const bool device_probe = argc == 2 && std::strcmp(argv[1], "read_write") == 0;
@@ -131,17 +132,18 @@ int main(int argc, char** argv) {
         // device-communicator activation from the user-window registration.
         ncclDevComm dev{};
         ncclDevCommRequirements reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
-        reqs.lsaBarrierCount = 16;
-        std::fprintf(stderr, "rank=%d stage=device_comm_only_create_begin\n", rank);
+        reqs.lsaBarrierCount = zero_resources ? 0 : 16;
+        const char* stage = zero_resources ? "device_comm_zero_create" : "device_comm_only_create";
+        std::fprintf(stderr, "rank=%d stage=%s_begin barriers=%d\n", rank, stage, int(reqs.lsaBarrierCount));
         nccl = progress(ncclDevCommCreate(comm, &reqs, &dev));
         if (nccl != ncclSuccess || dev.lsaSize != 2) {
-          std::fprintf(stderr, "rank=%d stage=device_comm_only_create nccl=%d lsa_size=%d last=%s\n",
-              rank, int(nccl), dev.lsaSize, ncclGetLastError(comm));
+          std::fprintf(stderr, "rank=%d stage=%s nccl=%d lsa_size=%d last=%s\n",
+              rank, stage, int(nccl), dev.lsaSize, ncclGetLastError(comm));
           results[rank] = 12;
           ncclCommAbort(comm);
           return;
         }
-        std::fprintf(stderr, "rank=%d stage=device_comm_only_create result=PASS\n", rank);
+        std::fprintf(stderr, "rank=%d stage=%s result=PASS\n", rank, stage);
         nccl = progress(ncclDevCommDestroy(comm, &dev));
         if (nccl != ncclSuccess) {
           results[rank] = 13;

@@ -15,6 +15,21 @@ spec.loader.exec_module(gate)
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_zero_resource_probe_requires_both_activation_markers(self):
+        code = "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' stage=device_comm_zero_create result=PASS')"
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                row = gate.run_window_process_pair([sys.executable, '-c', code], '.',
+                    dict(os.environ), Path(directory), required_stage='device_comm_zero_create',
+                    require_window=False)
+            except ValueError as error:
+                self.fail('Zero-resource control was rejected: ' + str(error))
+            self.assertTrue(row['pass'])
+            missing = gate.run_window_process_pair([sys.executable, '-c', 'pass'], '.',
+                dict(os.environ), Path(directory)/'missing', required_stage='device_comm_zero_create',
+                require_window=False)
+            self.assertFalse(missing['pass'])
+
     def test_relocated_notebook_loads_supervisor_from_checkout(self):
         root = Path(__file__).resolve().parents[1]
         # Kaggle executes the uploaded script outside its checked-out source.
