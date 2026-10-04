@@ -24,3 +24,7 @@ Do not republish the notebook until that download completes.
 Future native_rank_gate admission requires P2P before building/running;
 this avoids repeatedly spending a build plus24 cases on hosts incapable
 of the required two-rank LSA tests. It does not waive any test on admitted hosts.
+
+Download completed:175 selected outputs retained, including24 original
+rank JSON results and24 original full-state oracle JSON results, before
+the notebook was replaced by the next exact-source retry.
