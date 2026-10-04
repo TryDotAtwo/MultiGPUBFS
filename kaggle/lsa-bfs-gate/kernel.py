@@ -293,6 +293,17 @@ def main():
         (sdk / "lib64").symlink_to("lib", target_is_directory=True)
         env["PATH"] = str(sdk / "bin") + ":" + env.get("PATH", "")
         env["CUDACXX"] = str(sdk / "bin/nvcc")
+        if MODE == 'nccl_window_processes':
+            # The compiler is pinned, but the instrumenter comes from the host.
+            # Record actual versions; do not infer sanitizer identity from nvcc.
+            report['environment_versions'] = {
+                'driver': run(['nvidia-smi', '--query-gpu=driver_version',
+                    '--format=csv,noheader'], 'driver-version').strip(),
+                'cuda_compiler': run([env['CUDACXX'], '--version'], 'nvcc-version').strip(),
+                'compute_sanitizer': run(['compute-sanitizer', '--version'],
+                    'compute-sanitizer-version').strip(),
+            }
+            save()
         venv = work / "venv"
         run([sys.executable, "-m", "venv", "--without-pip", str(venv)], "venv")
         python = str(venv / "bin/python")
