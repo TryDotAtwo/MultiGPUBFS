@@ -42,6 +42,19 @@ int main() {
   assert(await_nccl(static_cast<Comm*>(comm),ncclSuccess,&observed)==0);
   assert(observed==ncclSuccess);
   char byte = 0;
+  // Failed LSA retirement intentionally retains the communicator handle.
+  // Terminal admission must therefore depend on state, not only a null handle.
+  auto* terminal = static_cast<Comm*>(comm);
+  terminal->terminal_started = true;
+  uint32_t terminal_word = 0;
+  const uint64_t terminal_sizes[] = {0, 1};
+  group_depth = send_calls = recv_calls = end_calls = 0;
+  assert(mgbfs_nccl_send_recv(comm, &byte, 1, 1, &byte, 1, nullptr) != 0);
+  assert(mgbfs_nccl_scatter(comm, 0, &byte, 1, terminal_sizes, nullptr, 0, 0, nullptr) != 0);
+  assert(mgbfs_nccl_all_gather_u32(comm, &terminal_word, &terminal_word, nullptr) != 0);
+  assert(mgbfs_nccl_all_reduce_max_u32(comm, &terminal_word, &terminal_word, nullptr) != 0);
+  assert(send_calls == 0 && recv_calls == 0 && end_calls == 0 && group_depth == 0);
+  terminal->terminal_started = false; // Test fixture resumes the separate healthy cases.
   assert(mgbfs_nccl_poll(comm) == 0);
   async_state = ncclInProgress;
   assert(mgbfs_nccl_poll(comm) == 4); // In flight is not a terminal NCCL error.

@@ -216,7 +216,7 @@ extern "C" int mgbfs_nccl_bind_retirement(void* raw,int (*probe)(void*,int),void
 }
 extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_bytes,uint32_t peer,void* recv,uint64_t recv_bytes,void* raw_stream){
   auto* p = static_cast<Comm*>(raw);
-  if(!p || !p->value || (!send && send_bytes) || (!recv && recv_bytes)) return 1;
+  if(!p || !p->value || p->terminal_started || (!send && send_bytes) || (!recv && recv_bytes)) return 1;
   if(p->cancel_requested && p->cancel_requested(p->cancel_context)) return 7;
   auto s = static_cast<cudaStream_t>(raw_stream);
   if(ncclGroupStart() != ncclSuccess) return 2;
@@ -237,8 +237,8 @@ extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_byt
       ? await_nccl(p,end) : 5;
   return status ? status : settled;
 }
-extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
-extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" void mgbfs_nccl_destroy(void* raw){delete static_cast<Comm*>(raw);}
 extern "C" int mgbfs_nccl_abort(void* raw){
   auto* p = static_cast<Comm*>(raw);
@@ -258,7 +258,7 @@ extern "C" int mgbfs_nccl_poll(void* raw){
 }
 extern "C" int mgbfs_nccl_scatter(void* raw,uint32_t source,const void* send,uint64_t send_capacity,const uint64_t* sizes,void* recv,uint64_t recv_bytes,uint64_t recv_capacity,void* stream) {
   auto* p = static_cast<Comm*>(raw);
-  if(!p || !p->value || source >= p->world) return 1;
+  if(!p || !p->value || p->terminal_started || source >= p->world) return 1;
   if(p->cancel_requested && p->cancel_requested(p->cancel_context)) return 7;
   if(p->rank == source) {
     if(!sizes) return 1;
