@@ -15,6 +15,16 @@ import re
 import signal
 
 
+def process_case_timeout(tool, requested):
+    if requested is not None:
+        if type(requested) is not int or not 1 <= requested <= 3600:
+            raise ValueError('CASE_TIMEOUT_CONFIG')
+        return requested
+    # The local full-state racecheck already takes >360s. A 120s cutoff
+    # would kill a healthy two-rank sanitizer gate before collecting evidence.
+    return 600 if tool == 'racecheck' else (120 if tool else 45)
+
+
 def configure_epoch_window(env, requested=None):
     value = requested if requested is not None else env.get('MGBFS_EPOCH_WINDOW', '2')
     text = str(value)
@@ -266,6 +276,8 @@ def main():
     parser.add_argument('--instrument-processes', choices=(
         'memcheck', 'racecheck', 'initcheck', 'synccheck', 'nsys'))
     parser.add_argument('--healthy-only', action='store_true')
+    parser.add_argument('--case-timeout-seconds', type=int,
+                        help='explicit bounded per-case deadline (1..3600s), recorded in report')
     parser.add_argument('--capacity-faults', action='store_true',
                         help='also exhaust actual owner capacity on either independent rank')
     parser.add_argument('--reference-size', type=int, choices=range(2, 9), default=4)
@@ -289,6 +301,7 @@ def main():
                         default='CUCO_RANK')
     args = parser.parse_args()
     try:
+        case_timeout = process_case_timeout(args.instrument_processes, args.case_timeout_seconds)
         seed_environment = {}
         seed_hex = configure_hash_seed(seed_environment, args.hash_seed_hex)
         epoch_environment = dict(os.environ)
@@ -425,6 +438,7 @@ def main():
     if args.healthy_only:
         cases = cases[:1]
     report['process_instrumentation'] = args.instrument_processes
+    report['case_timeout_seconds'] = case_timeout
     for name, key, fault_rank in cases:
         case = output / f"{name}-{fault_rank}"
         case.mkdir()
@@ -448,13 +462,14 @@ def main():
                 processes.append(subprocess.Popen(command, cwd=source,
                     env=rank_env, stdout=stream, stderr=subprocess.STDOUT,
                     start_new_session=True))
-            deadline = started + (120 if args.instrument_processes else 45)
+            deadline = started + case_timeout
             while any(p.poll() is None for p in processes) and time.monotonic() < deadline:
                 time.sleep(.05)
             forced = any(p.poll() is None for p in processes)
             row = {"name": name, "fault_rank": fault_rank, "forced_cleanup": forced,
                    "returncodes": [p.poll() for p in processes],
                    "seconds": time.monotonic() - started,
+                   "deadline_seconds": case_timeout,
                    "group_complete": (case / "result/group-complete.json").exists()}
             row["pass"] = (not forced and (all(c == 0 for c in row["returncodes"])
                 if key is None else all(c not in (None, 0) for c in row["returncodes"])

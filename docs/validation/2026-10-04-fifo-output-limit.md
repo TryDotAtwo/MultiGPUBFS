@@ -74,3 +74,17 @@ Healthy outputs for all four combinations match full CPU-oracle states and
 seeded hashes. Failure cases require the precise injected error and absence
 of rank/group COMPLETE. This does not validate BMMA, multi-rank execution,
 sm75 or paired performance.
+
+## Independent-rank runner deadline
+
+The existing `scripts/replay_lsa_cancel_candidate.py` remains the two-process
+acceptance runner, not this world1 CLI fixture. Its former fixed 120-second
+instrumented deadline was shorter than the observed 369.90-second local
+racecheck. The runner now defaults racecheck cases to 600 seconds; ordinary
+fault cases remain at 45 seconds and other instrumented cases at 120 seconds.
+An explicit 1..3600-second override is validated before launching and recorded
+globally and per case. Forced cleanup remains failure, never sanitizer success.
+The deadline contract failed before implementation and all 23 replay unit
+tests passed after it. These CPU tests do not establish rank cleanup on Linux,
+GPU sanitizer success or hardware readiness. Rental stop deadlines are separate
+and must cover any authorized instrumented run; this change provisions nothing.
