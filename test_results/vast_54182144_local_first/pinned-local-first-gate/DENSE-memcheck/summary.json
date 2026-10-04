@@ -1,0 +1,65 @@
+{
+  "scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
+  "epoch_window": 3,
+  "route_banks": 3,
+  "run_contract": "RunConfigV1",
+  "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+  "base_commit": "52bb77fd8e4cf7ed4187ceeddce598ae5880af43",
+  "cases": [
+    {
+      "name": "healthy",
+      "fault_rank": null,
+      "forced_cleanup": false,
+      "returncodes": [
+        0,
+        0
+      ],
+      "seconds": 9.434515465982258,
+      "deadline_seconds": 120,
+      "group_complete": true,
+      "pass": true,
+      "full_state_oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          3,
+          0
+        ],
+        "scope": "2 independent rank-process archives; full canonical states at every depth"
+      },
+      "instrumentation_clean": true
+    }
+  ],
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "expected_config_digest": "f53c6073ff9789e3e5ef34d421bbf265623ee4fef3415893512708b4927e2564",
+  "reference_size": 4,
+  "reference_group": "s4",
+  "batch": 1,
+  "bench_warmup_requested": false,
+  "profile": "DENSE",
+  "pre_dedup": "ON",
+  "owner_backend": "CUCO_RANK",
+  "rank_map": "0,1",
+  "hash_seed_hex": "000000000000000000000000013527dc",
+  "owner_dag_capture_requested": false,
+  "process_instrumentation": "memcheck",
+  "process_sanitizer": {
+    "executable": "/workspace/sanitizer-13.2/cuda_sanitizer_api-linux-x86_64-13.2.23-archive/compute-sanitizer/compute-sanitizer",
+    "sha256": "dcec87e3437d8127cc58a0b186d4830831ce18a0cd4c5846ac84eac396312172",
+    "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2026 NVIDIA Corporation\nVersion 2026.1.0.0 (build 37182542) (public-release)"
+  },
+  "case_timeout_seconds": 120,
+  "oracle_returncode": 0,
+  "oracle_scope": "two physical GPUs, threads in one process; full state/archive; U/S, maps, pre-dedup",
+  "capacity_fault_returncode": 0,
+  "capacity_fault_profile": "DENSE",
+  "status": "DIAGNOSTIC_CASES_PASS"
+}

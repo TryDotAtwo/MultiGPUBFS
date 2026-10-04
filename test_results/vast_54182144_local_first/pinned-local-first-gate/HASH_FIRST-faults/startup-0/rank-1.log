@@ -1,0 +1,10 @@
+MGBFS_FAILURE_TEARDOWN stream=0x558ed443d6a0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558ed443d6a0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566ce0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566ce0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566cc0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566cc0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566ba0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558ed4566ba0 stage=stream_drain_end
+MGBFS_ARCHIVE_WORKER_FATAL device=1 error=ARCHIVE_INCOMPLETE
+{"error":"","status":"ERROR"}

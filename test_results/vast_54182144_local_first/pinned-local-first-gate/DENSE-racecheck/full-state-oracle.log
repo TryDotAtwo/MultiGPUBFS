@@ -1,0 +1,1295 @@
+warning: variable does not need to be mutable
+    --> crates/mgbfs-runtime/src/reference_bench.rs:1028:10
+     |
+1028 |     let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
+     |          ----^^^
+     |          |
+     |          help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` on by default
+
+warning: `mgbfs-runtime` (lib) generated 1 warning (run `cargo fix --lib -p mgbfs-runtime` to apply 1 suggestion)
+    Finished test [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/library_multi_gpu.rs (target/debug/deps/library_multi_gpu-d667570b3c707344)
+
+running 1 test
+test cuco_rank_lsa_two_gpu_dense_layers_and_archives_match_oracle ... MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+4f7515a36383:58255:58256 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+4f7515a36383:58255:58260 [1] NCCL INFO cudaDriverVersion 13020
+4f7515a36383:58255:58260 [1] NCCL INFO NCCL version 2.29.7+cuda12.9
+4f7515a36383:58255:58260 [1] NCCL INFO NCCL git version HEAD b91894b-dirty
+4f7515a36383:58255:58260 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aef400000
+4f7515a36383:58255:58259 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aef600000
+4f7515a36383:58255:58265 [0] NCCL INFO NET/Plugin: Could not find: libnccl-net.so
+4f7515a36383:58255:58265 [0] NCCL INFO Failed to open libibverbs.so[.1]
+4f7515a36383:58255:58265 [0] NCCL INFO transport/net_ib/init.cc:396 -> 3
+4f7515a36383:58255:58265 [0] NCCL INFO Failed to initialize NET plugin IB
+4f7515a36383:58255:58265 [0] NCCL INFO NET/Socket : Using [0]eth0:172.17.0.3<0>
+4f7515a36383:58255:58265 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58265 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58264 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58264 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58265 [0] NCCL INFO GIN/Plugin: Could not find: libnccl-gin.so
+
+[2026-10-04 18:50:40] 4f7515a36383:58255:58265 [0] misc/ibvwrap.cc:173 NCCL WARN lib wrapper not initialized.
+4f7515a36383:58255:58265 [0] NCCL INFO transport/net_ib/gdr.cc:56 -> 3
+4f7515a36383:58255:58265 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58265 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58264 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58264 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58265 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58264 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58265 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58264 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58265 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x6182070a2f6d97c7 - Init START
+4f7515a36383:58255:58264 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x6182070a2f6d97c7 - Init START
+4f7515a36383:58255:58265 [0] NCCL INFO RAS client listening socket at ::1<28028>
+4f7515a36383:58255:58265 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1b1c07b4e0
+4f7515a36383:58255:58266 [0] NCCL INFO Mem Realloc old size 0, new size 32 pointer 0x7f1abc000b70
+4f7515a36383:58255:58265 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58264 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58265 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58264 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58265 [0] NCCL INFO comm 0x7f1b04b1e650 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58264 [1] NCCL INFO comm 0x7f1afca88d60 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58265 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58264 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58264 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58265 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58265 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58265 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58264 [1] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+4f7515a36383:58255:58264 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58265 [0] NCCL INFO PROFILER/Plugin: Could not find: libnccl-profiler.so
+4f7515a36383:58255:58265 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58267 [0] NCCL INFO [Proxy Service] Device 1 CPU core 33
+4f7515a36383:58255:58268 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 37
+4f7515a36383:58255:58269 [0] NCCL INFO [Proxy Service] Device 0 CPU core 161
+4f7515a36383:58255:58270 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 69
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed400000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed600000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO TUNER/Plugin: Could not find: libnccl-tuner.so
+4f7515a36383:58255:58264 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58264 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58264 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58265 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58265 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58265 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58264 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58264 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58265 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58265 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aef600200
+4f7515a36383:58255:58264 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aef400200
+4f7515a36383:58255:58265 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aef700200
+4f7515a36383:58255:58264 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aef500200
+4f7515a36383:58255:58265 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aef710200
+4f7515a36383:58255:58264 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aMGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000642903, write_seconds: 5.030699999999999e-5, sync_seconds: 8.7e-8, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000562384, write_seconds: 2.9968000000000005e-5, sync_seconds: 6.9e-8, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b80 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b80 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b60 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b60 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b40 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75b40 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75bc0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca75bc0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba60 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba60 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba40 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba40 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba20 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0ba20 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0baa0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b0baa0 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+ef510200
+4f7515a36383:58255:58265 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x6182070a2f6d97c7 - Init COMPLETE
+4f7515a36383:58255:58265 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.44 (kernels 0.34, alloc 0.07, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58264 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x6182070a2f6d97c7 - Init COMPLETE
+4f7515a36383:58255:58264 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.44 (kernels 0.34, alloc 0.07, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58260 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58259 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58272 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58271 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58269 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000d00
+4f7515a36383:58255:58267 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1ab0000d30
+4f7515a36383:58255:58267 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-gyaaK9
+4f7515a36383:58255:58269 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-DwFuNT
+4f7515a36383:58255:58267 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-PfhvMH
+4f7515a36383:58255:58269 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-ANuHst
+4f7515a36383:58255:58267 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-d84zFF
+4f7515a36383:58255:58272 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58269 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-lxlcGA
+4f7515a36383:58255:58267 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-ki8yWJ
+4f7515a36383:58255:58271 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58272 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58269 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-7XGegA
+4f7515a36383:58255:58271 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58271 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58272 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58277 [0] NCCL INFO register comm 0x7f1b04b1e650 buffer 0x1393a00000 size 384
+4f7515a36383:58255:58277 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1ad314cb70
+4f7515a36383:58255:58278 [1] NCCL INFO register comm 0x7f1afca88d60 buffer 0x1393800000 size 384
+4f7515a36383:58255:58278 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1adbb73240
+4f7515a36383:58255:58277 [0] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58278 [1] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58259 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58259 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58259 [0] NCCL INFO comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58259 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58259 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58259 [1] NCCL INFO comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58351 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58350 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58352 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58352 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58352 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58352 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58352 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58352 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58353 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58352 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1aa00064b0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xd5a75281c83b2edb - Init START
+4f7515a36383:58255:58353 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58353 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58353 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58353 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58353 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58353 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xd5a75281c83b2edb - Init START
+4f7515a36383:58255:58352 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58352 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58353 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58353 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58353 [0] NCCL INFO comm 0x7f1b04b1e650 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58352 [1] NCCL INFO comm 0x7f1aa00064b0 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58353 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58353 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58353 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58353 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58352 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58352 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58352 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58353 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58354 [0] NCCL INFO [Proxy Service] Device 1 CPU core 21
+4f7515a36383:58255:58355 [0] NCCL INFO [Proxy Service] Device 0 CPU core 181
+4f7515a36383:58255:58356 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 121
+4f7515a36383:58255:58357 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 89
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58352 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58352 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58353 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58353 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58353 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58352 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58352 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58353 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58352 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58352 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58353 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58352 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58353 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58353 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58352 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1aa00064b0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xd5a75281c83b2edb - Init COMPLETE
+4f7515a36383:58255:58352 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58353 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xd5a75281c83b2edb - Init COMPLETE
+4f7515a36383:58255:58353 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58351 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58350 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58358 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58359 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58354 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000bd0
+4f7515a36383:58255:58355 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1afcfb2d70
+4f7515a36383:58255:58354 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-pZ22q0
+4f7515a36383:58255:58355 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-RQwWm6
+4f7515a36383:58255:58354 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-winTKB
+4f7515a36383:58255:58355 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-z1UZac
+4f7515a36383:58255:58354 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-YYufYD
+4f7515a36383:58255:58358 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/directMGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000560893, write_seconds: 3.2121e-5, sync_seconds: 6.5e-8, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000585902, write_seconds: 3.4794e-5, sync_seconds: 1.23e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b16430 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04b16430 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b044a25f0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b044a25f0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b044a2610 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b044a2610 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04220210 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1b04220210 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0004660 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0004660 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00045b0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00045b0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00045d0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00045d0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00048e0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa00048e0 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+/direct
+4f7515a36383:58255:58355 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-HHj8bd
+4f7515a36383:58255:58354 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-dJQEfo
+4f7515a36383:58255:58359 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58355 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-AjMCLA
+4f7515a36383:58255:58358 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58359 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58359 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58358 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58364 [1] NCCL INFO register comm 0x7f1aa00064b0 buffer 0x1393a00000 size 384
+4f7515a36383:58255:58364 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1ab000b020
+4f7515a36383:58255:58365 [0] NCCL INFO register comm 0x7f1b04b1e650 buffer 0x1393800000 size 384
+4f7515a36383:58255:58365 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1aa80d7750
+4f7515a36383:58255:58365 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58364 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58351 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58351 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58351 [0] NCCL INFO comm 0x7f1b04b1e650 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58351 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58351 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58351 [1] NCCL INFO comm 0x7f1aa00064b0 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58438 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58437 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58439 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58439 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58439 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58439 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58439 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58439 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58440 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58439 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xeb3a893b5f5bbf5b - Init START
+4f7515a36383:58255:58440 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58440 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58440 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58440 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58440 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58440 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1aa00045b0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xeb3a893b5f5bbf5b - Init START
+4f7515a36383:58255:58439 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58439 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58440 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58440 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58439 [1] NCCL INFO comm 0x7f1ad34d8a10 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58440 [0] NCCL INFO comm 0x7f1aa00045b0 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58439 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58439 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58439 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58440 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58440 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58440 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58440 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58440 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58441 [0] NCCL INFO [Proxy Service] Device 1 CPU core 57
+4f7515a36383:58255:58442 [0] NCCL INFO [Proxy Service] Device 0 CPU core 89
+4f7515a36383:58255:58443 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 189
+4f7515a36383:58255:58444 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 61
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58440 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58440 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58439 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58439 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58439 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58440 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58439 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58439 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58440 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58440 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58440 [0] NCCL INFO init.cc:613 Cuda Host AllMGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0006522710000000001, write_seconds: 4.7657000000000015e-5, sync_seconds: 1.13e-7, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000606364, write_seconds: 3.693199999999999e-5, sync_seconds: 1.27e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141f70 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141f70 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141ec0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141ec0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141ee0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa0141ee0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa01421f0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa01421f0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce590 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce590 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce4e0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce4e0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce500 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce500 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce810 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad34ce810 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+oc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58439 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58439 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58439 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58440 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1aa00045b0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xeb3a893b5f5bbf5b - Init COMPLETE
+4f7515a36383:58255:58440 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.03 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58439 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xeb3a893b5f5bbf5b - Init COMPLETE
+4f7515a36383:58255:58439 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.03 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58437 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58438 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58445 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58446 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58442 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1b04b16030
+4f7515a36383:58255:58441 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000d00
+4f7515a36383:58255:58442 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-QClm81
+4f7515a36383:58255:58441 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-Wh03bm
+4f7515a36383:58255:58442 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-SjXgEb
+4f7515a36383:58255:58441 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-8oUPue
+4f7515a36383:58255:58442 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-QlDJax
+4f7515a36383:58255:58441 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-Ghxhj4
+4f7515a36383:58255:58445 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58442 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-Gn3P8a
+4f7515a36383:58255:58446 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58441 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-tKuJXr
+4f7515a36383:58255:58445 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58446 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58445 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58446 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58451 [1] NCCL INFO register comm 0x7f1ad34d8a10 buffer 0x1393a00000 size 384
+4f7515a36383:58255:58451 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1afc94a3f0
+4f7515a36383:58255:58452 [0] NCCL INFO register comm 0x7f1aa00045b0 buffer 0x1393800000 size 384
+4f7515a36383:58255:58452 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1adbac0b70
+4f7515a36383:58255:58452 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58451 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58438 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58438 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58438 [0] NCCL INFO comm 0x7f1aa00045b0 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58438 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58438 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58438 [1] NCCL INFO comm 0x7f1ad34d8a10 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58524 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58525 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58526 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58526 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58526 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58526 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58526 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58526 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58526 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xca3ed9bbd9ab1272 - Init START
+4f7515a36383:58255:58527 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58527 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58527 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58527 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58527 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58527 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58527 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xca3ed9bbd9ab1272 - Init START
+4f7515a36383:58255:58526 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58526 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58527 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58527 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58526 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58527 [1] NCCL INFO comm 0x7f1aa80d86a0 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58526 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58526 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58526 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58526 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58526 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58527 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58527 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58527 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58528 [0] NCCL INFO [Proxy Service] Device 0 CPU core 113
+4f7515a36383:58255:58529 [0] NCCL INFO [Proxy Service] Device 1 CPU core 189
+4f7515a36383:58255:58530 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 117
+4f7515a36383:58255:58531 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 97
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58526 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58526 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58527 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58527 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58527 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58526 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58527 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58527 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58526 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58526 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58526 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58527 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58527 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58527 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58526 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xca3ed9bbd9ab1272 - Init COMPLETE
+4f7515a36383:58255:58526 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58527 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xca3ed9bbd9ab1272 - Init COMPLETE
+4f7515a36383:58255:58527 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58524 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58525 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58532 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58533 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58528 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000bd0
+4f7515a36383:58255:58529 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aa0001220
+4f7515a36383:58255:58528 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-OoDXfi
+4f7515a36383:58255:58529 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-ahFsd5
+4f7515a36383:58255:58528 [0] NCCL INFO Allocated 96378MGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000722745, write_seconds: 4.5413999999999996e-5, sync_seconds: 1.27e-7, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0007399409999999998, write_seconds: 4.5175e-5, sync_seconds: 1.2e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8005710 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8005710 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8004390 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8004390 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80043b0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80043b0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8005990 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8005990 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad31713e0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad31713e0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139850 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139850 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139870 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139870 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3171560 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3171560 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+92 bytes of shared memory in /dev/shm/nccl-FdHBuB
+4f7515a36383:58255:58529 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-FZmwXv
+4f7515a36383:58255:58528 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-36p4s1
+4f7515a36383:58255:58532 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58528 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-l0TH38
+4f7515a36383:58255:58529 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-nHJTZb
+4f7515a36383:58255:58532 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58533 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58529 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-fZrCsv
+4f7515a36383:58255:58533 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58532 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58533 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58538 [1] NCCL INFO register comm 0x7f1aa80d86a0 buffer 0x1393a00000 size 384
+4f7515a36383:58255:58538 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1ab00027e0
+4f7515a36383:58255:58539 [0] NCCL INFO register comm 0x7f1ad34d8a10 buffer 0x1393800000 size 384
+4f7515a36383:58255:58539 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1b04d0c970
+4f7515a36383:58255:58539 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58538 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58524 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58524 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58524 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58524 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58524 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58524 [1] NCCL INFO comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58611 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58612 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58613 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58613 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58613 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58613 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58613 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58613 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58613 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x40216bb7503546ea - Init START
+4f7515a36383:58255:58614 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58614 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58614 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58614 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58614 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58614 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58614 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1adbba8410 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x40216bb7503546ea - Init START
+4f7515a36383:58255:58613 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58613 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58614 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58614 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58613 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58614 [1] NCCL INFO comm 0x7f1adbba8410 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58613 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58613 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58613 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58613 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58614 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58613 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58614 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58614 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58615 [0] NCCL INFO [Proxy Service] Device 0 CPU core 125
+4f7515a36383:58255:58616 [0] NCCL INFO [Proxy Service] Device 1 CPU core 157
+4f7515a36383:58255:58617 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 129
+4f7515a36383:58255:58618 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 161
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58613 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58613 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58614 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58614 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58614 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58613 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58614 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58614 [1] NCCL INFMGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=5
+MGBFS_LSA_GATE rank=1 phase=advance depth=5
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=6
+MGBFS_LSA_GATE rank=0 phase=advance depth=6
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000531992, write_seconds: 3.7390999999999995e-5, sync_seconds: 1.24e-7, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000707192, write_seconds: 5.9881e-5, sync_seconds: 1.23e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76ac0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76ac0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76a10 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76a10 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76a30 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76a30 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76d40 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1adbb76d40 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3225830 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3225830 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139a20 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139a20 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139a40 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3139a40 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3225ab0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3225ab0 stage=stream_drain_end
+O init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58613 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58613 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58613 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58614 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58614 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58614 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58613 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x40216bb7503546ea - Init COMPLETE
+4f7515a36383:58255:58613 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.03 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58614 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1adbba8410 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x40216bb7503546ea - Init COMPLETE
+4f7515a36383:58255:58614 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.03 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58611 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58612 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58619 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58620 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58615 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000d00
+4f7515a36383:58255:58616 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aa8000d70
+4f7515a36383:58255:58616 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-ynkEVD
+4f7515a36383:58255:58615 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-aAP7Wp
+4f7515a36383:58255:58616 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-LxKfRm
+4f7515a36383:58255:58615 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-1kkeYe
+4f7515a36383:58255:58616 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-pnmmRK
+4f7515a36383:58255:58615 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-e6GYFC
+4f7515a36383:58255:58620 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58616 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-RyEG3H
+4f7515a36383:58255:58619 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58615 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-amgoSP
+4f7515a36383:58255:58620 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58619 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58619 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58620 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58625 [1] NCCL INFO register comm 0x7f1adbba8410 buffer 0x1393800000 size 352
+4f7515a36383:58255:58625 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1aa0154a00
+4f7515a36383:58255:58626 [0] NCCL INFO register comm 0x7f1ad34d8a10 buffer 0x1393a00000 size 352
+4f7515a36383:58255:58626 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1afcc9f230
+4f7515a36383:58255:58626 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58625 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58611 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58611 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58611 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 busId 43000 - MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+Destroy COMPLETE
+4f7515a36383:58255:58611 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58611 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58611 [1] NCCL INFO comm 0x7f1adbba8410 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58723 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58722 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58724 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58724 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58724 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58724 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58724 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58724 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58724 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1ab00097e0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xef7b8aedeb293ce9 - Init START
+4f7515a36383:58255:58725 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58725 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58725 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58725 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58725 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58725 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58725 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xef7b8aedeb293ce9 - Init START
+4f7515a36383:58255:58724 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58724 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58725 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58725 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58724 [1] NCCL INFO comm 0x7f1ab00097e0 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58725 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58724 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58724 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58725 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58724 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58725 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58725 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58725 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58725 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58726 [0] NCCL INFO [Proxy Service] Device 1 CPU core 157
+4f7515a36383:58255:58727 [0] NCCL INFO [Proxy Service] Device 0 CPU core 1
+4f7515a36383:58255:58728 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 161
+4f7515a36383:58255:58729 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 5
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58724 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58724 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58725 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58725 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58725 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58724 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58724 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58725 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58724 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58724 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58724 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58725 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58725 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58725 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58724 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1ab00097e0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xef7b8aedeb293ce9 - Init COMPLETE
+4f7515a36383:58255:58724 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58725 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xef7b8aedeb293ce9 - Init COMPLETE
+4f7515a36383:58255:58725 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58723 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58722 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58730 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58731 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58726 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000bd0
+4f7515a36383:58255:58727 MGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=5
+MGBFS_LSA_GATE rank=0 phase=advance depth=5
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=6
+MGBFS_LSA_GATE rank=1 phase=advance depth=6
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0008344509999999998, write_seconds: 5.8302000000000005e-5, sync_seconds: 1.27e-7, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000311375, write_seconds: 1.9609e-5, sync_seconds: 7.6e-8, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad322f2a0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad322f2a0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3226fb0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3226fb0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3226fd0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3226fd0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3171620 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ad3171620 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab00037b0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab00037b0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0004de0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0004de0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0004e00 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0004e00 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0003a30 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab0003a30 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+[0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1adbba45a0
+4f7515a36383:58255:58726 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-fP6qDG
+4f7515a36383:58255:58727 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-zBfpzB
+4f7515a36383:58255:58726 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-w9koem
+4f7515a36383:58255:58727 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-OqBBsE
+4f7515a36383:58255:58726 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-2OR6oh
+4f7515a36383:58255:58730 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58726 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-jQbtDN
+4f7515a36383:58255:58727 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-jOnYKE
+4f7515a36383:58255:58730 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58731 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58727 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-xsP04e
+4f7515a36383:58255:58731 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58730 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58731 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58736 [1] NCCL INFO register comm 0x7f1ab00097e0 buffer 0x1393800000 size 352
+4f7515a36383:58255:58736 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1aa8028220
+4f7515a36383:58255:58737 [0] NCCL INFO register comm 0x7f1ad34d8a10 buffer 0x1393a00000 size 352
+4f7515a36383:58255:58737 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1b04b1a230
+4f7515a36383:58255:58737 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58736 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58723 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58723 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58723 [0] NCCL INFO comm 0x7f1ad34d8a10 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58723 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58723 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58723 [1] NCCL INFO comm 0x7f1ab00097e0 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58833 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58834 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58835 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58835 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58835 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58835 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58835 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58835 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58836 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58835 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1ab00097e0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x55cbc28e5a159c23 - Init START
+4f7515a36383:58255:58836 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58836 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58836 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58836 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58836 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58836 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x55cbc28e5a159c23 - Init START
+4f7515a36383:58255:58835 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58835 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58836 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58836 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58835 [0] NCCL INFO comm 0x7f1ab00097e0 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58836 [1] NCCL INFO comm 0x7f1afca88d60 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58835 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58835 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58835 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58835 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58835 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58836 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58836 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58836 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58837 [0] NCCL INFO [Proxy Service] Device 0 CPU core 161
+4f7515a36383:58255:58838 [0] NCCL INFO [Proxy Service] Device 1 CPU core 5
+4f7515a36383:58255:58839 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 165
+4f7515a36383:58255:58840 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 9
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58835 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58835 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58836 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58836 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58836 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58835 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58836 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58836 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58835 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58835 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58835 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58836 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58836 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58836 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58835 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1ab00097e0 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0x55cbc28e5a159c23 - Init COMPLETE
+4f7515a36383:58255:58835 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58836 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0x55cbc28e5a159c23 - Init COMPLETE
+4f7515a36383:58255:58836 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.02, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58833 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58834 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58841 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58842 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58837 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000d00
+4f7515a36383:58255:58838 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1ad3137820
+4f7515a36383:58255:58837 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-LpoGpG
+4f7515a36383:58255:58838 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-3oRQrt
+4f7515a36383:58255:58837 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-SwyMz6
+4f7515a36383:58255:58838 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-pAz9Zj
+4f7515a36383:58255:58837 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-aH5gI7
+4f7515a36383:58255:58841 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58838 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-5UHg3x
+4f7515a36383:58255:58837 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-mZiNoV
+4f7515a36383:58255:58842 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58838 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-D85xVb
+4f7515a36383:58255:58841 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58842 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58841 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58842 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58847 [1] NCCL INFO register comm 0x7f1afca88d60 buffer 0x1393a00000 size 352
+4f7515a36383:58255:58847 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1adbac0960
+4f7515a36383:58255:58848 [0] NCCL INFO register comm 0x7f1ab00097e0 buffer 0x1393800000 size 352
+4f7515a36383:58255:58848 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1aa01e1050
+4f7515a36383:58255:58848 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, retMGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=5
+MGBFS_LSA_GATE rank=0 phase=advance depth=5
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=6
+MGBFS_LSA_GATE rank=1 phase=advance depth=6
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000408951, write_seconds: 2.3163000000000005e-5, sync_seconds: 8e-8, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.000792299, write_seconds: 4.8794e-5, sync_seconds: 1.2e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d520 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d520 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d4e0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d4e0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014eaf0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014eaf0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d780 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1ab014d780 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a760 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a760 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a740 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a740 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a720 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc94a720 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afcc2ce90 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afcc2ce90 stage=stream_drain_end
+MGBFS_LSA_GATE rank=0 phase=before_constructor
+MGBFS_LSA_GATE rank=1 phase=before_constructor
+=0
+4f7515a36383:58255:58847 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58834 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58834 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58834 [0] NCCL INFO comm 0x7f1ab00097e0 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58834 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58834 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58834 [1] NCCL INFO comm 0x7f1afca88d60 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58945 [1] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed400000
+4f7515a36383:58255:58944 [0] NCCL INFO init.cc:2191 Cuda Host Alloc Size 4 pointer 0x7f1aed600000
+4f7515a36383:58255:58946 [1] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58946 [1] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58946 [1] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58946 [1] NCCL INFO Using network Socket
+4f7515a36383:58255:58946 [1] NCCL INFO MemManager: Initialized for device 1
+4f7515a36383:58255:58946 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58947 [0] NCCL INFO Initialized NET plugin Socket
+4f7515a36383:58255:58946 [1] NCCL INFO [Rank 1] ncclCommInitRankConfig comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xd94496926b76a215 - Init START
+4f7515a36383:58255:58947 [0] NCCL INFO Assigned NET plugin Socket to comm
+4f7515a36383:58255:58947 [0] NCCL INFO Failed to initialize any GIN plugin
+4f7515a36383:58255:58947 [0] NCCL INFO Using network Socket
+4f7515a36383:58255:58947 [0] NCCL INFO MemManager: Initialized for device 0
+4f7515a36383:58255:58947 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58947 [0] NCCL INFO [Rank 0] ncclCommInitRankConfig comm 0x7f1afca88d60 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xd94496926b76a215 - Init START
+4f7515a36383:58255:58947 [0] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 0 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58946 [1] NCCL INFO ncclTopoGetCpuAffinity: Affinity for GPU 1 is 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189. (GPU affinity = 1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189 ; CPU affinity = 0-191).
+4f7515a36383:58255:58947 [0] NCCL INFO NVLS multicast support is not available on dev 0 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58946 [1] NCCL INFO NVLS multicast support is not available on dev 1 (NVLS_NCHANNELS 0)
+4f7515a36383:58255:58946 [1] NCCL INFO comm 0x7f1aa80d86a0 rank 1 nRanks 2 nNodes 1 localRanks 2 localRank 1 MNNVL 0
+4f7515a36383:58255:58947 [0] NCCL INFO comm 0x7f1afca88d60 rank 0 nRanks 2 nNodes 1 localRanks 2 localRank 0 MNNVL 0
+4f7515a36383:58255:58946 [1] NCCL INFO Trees [0] -1/-1/-1->1->0 [1] -1/-1/-1->1->0
+4f7515a36383:58255:58946 [1] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58947 [0] NCCL INFO Channel 00/02 : 0 1
+4f7515a36383:58255:58946 [1] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58947 [0] NCCL INFO Channel 01/02 : 0 1
+4f7515a36383:58255:58947 [0] NCCL INFO Trees [0] 1/-1/-1->0->-1 [1] 1/-1/-1->0->-1
+4f7515a36383:58255:58947 [0] NCCL INFO P2P Chunksize set to 131072
+4f7515a36383:58255:58947 [0] NCCL INFO Check P2P Type isAllDirectP2p 0 directMode 1 isAllCudaP2p 1
+4f7515a36383:58255:58948 [0] NCCL INFO [Proxy Service] Device 1 CPU core 165
+4f7515a36383:58255:58949 [0] NCCL INFO [Proxy Service] Device 0 CPU core 9
+4f7515a36383:58255:58951 [0] NCCL INFO [Proxy Service UDS] Device 0 CPU core 109
+4f7515a36383:58255:58950 [0] NCCL INFO [Proxy Service UDS] Device 1 CPU core 73
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aed800000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x7f1aeda00000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aedc00000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x7f1aede00000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef400000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x7f1aef600000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392000000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:43 Cuda CallocAsync Size 1216 pointer 0x1392200000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392400000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:46 Cuda CallocAsync Size 40 pointer 0x1392600000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392800000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58946 [1] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58946 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58947 [0] NCCL INFO channel.cc:58 Cuda CallocAsync Size 8 pointer 0x1392a00000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
+4f7515a36383:58255:58947 [0] NCCL INFO 2 coll channels, 2 collnet channels, 0 nvls channels, 2 p2p channels, 2 p2p channels per peer
+4f7515a36383:58255:58947 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58946 [1] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392c00000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO init.cc:557 Cuda CallocAsync Size 23648 pointer 0x1392e00000 memType 0
+4f7515a36383:58255:58946 [1] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393000000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO init.cc:559 Cuda CallocAsync Size 8 pointer 0x1393200000 memType 0
+4f7515a36383:58255:58947 [0] NCCL INFO CC Off, workFifoBytes 1048576
+4f7515a36383:58255:58946 [1] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed400200
+4f7515a36383:58255:58946 [1] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed500200
+4f7515a36383:58255:58946 [1] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed510200
+4f7515a36383:58255:58947 [0] NCCL INFO init.cc:602 Cuda Host Alloc Size 1048576 pointer 0x7f1aed600200
+4f7515a36383:58255:58947 [0] NCCL INFO init.cc:612 Cuda Host Alloc Size 65536 pointer 0x7f1aed700200
+4f7515a36383:58255:58947 [0] NCCL INFO init.cc:613 Cuda Host Alloc Size 65536 pointer 0x7f1aed710200
+4f7515a36383:58255:58946 [1] NCCL INFO ncclCommInitRankConfig comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 nvmlDev 1 busId 44000 commId 0xd94496926b76a215 - Init COMPLETE
+4f7515a36383:58255:58946 [1] NCCL INFO Init timings - ncclCommInitRankConfig: rank 1 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58947 [0] NCCL INFO ncclCommInitRankConfig comm 0x7f1afca88d60 rank 0 nranks 2 cudaDev 0 nvmlDev 0 busId 43000 commId 0xd94496926b76a215 - Init COMPLETE
+4f7515a36383:58255:58947 [0] NCCL INFO Init timings - ncclCommInitRankConfig: rank 0 nranks 2 total 0.02 (kernels 0.00, alloc 0.00, bootstrap 0.00, allgathers 0.00, topo 0.01, graphs 0.00, connections 0.00, rest 0.00)
+4f7515a36383:58255:58945 [1] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f75MGBFS_LSA_GATE rank=0 phase=after_constructor
+MGBFS_LSA_GATE rank=1 phase=after_constructor
+MGBFS_LSA_GATE rank=0 phase=advance depth=0
+MGBFS_LSA_GATE rank=1 phase=advance depth=0
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=1
+MGBFS_LSA_GATE rank=1 phase=advance depth=1
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=2
+MGBFS_LSA_GATE rank=1 phase=advance depth=2
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=3
+MGBFS_LSA_GATE rank=0 phase=advance depth=3
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=4
+MGBFS_LSA_GATE rank=1 phase=advance depth=4
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_LSA_GATE rank=0 phase=advance depth=5
+MGBFS_LSA_GATE rank=1 phase=advance depth=5
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_LSA_GATE rank=1 phase=advance depth=6
+MGBFS_LSA_GATE rank=0 phase=advance depth=6
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=1 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0009068419999999998, write_seconds: 5.224899999999999e-5, sync_seconds: 1.23e-7, sync_calls: 1 }
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.00047018, write_seconds: 3.653099999999999e-5, sync_seconds: 1.2e-7, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8028190 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8028190 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80297c0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80297c0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80297e0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa80297e0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8028410 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1aa8028410 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5580 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5580 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5560 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5560 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5520 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afc7c5520 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca84870 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x7f1afca84870 stage=stream_drain_end
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 5.90s
+
+15a36383:58255:58944 [0] NCCL INFO misc/utils.cc:255 memory stack hunk malloc(65536)
+4f7515a36383:58255:58952 [1] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58953 [0] NCCL INFO Symmetric VA size=16GB
+4f7515a36383:58255:58948 [1] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1aac000bd0
+4f7515a36383:58255:58949 [0] NCCL INFO Mem Realloc old size 0, new size 8 pointer 0x7f1ab01417c0
+4f7515a36383:58255:58948 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-eUp8X2
+4f7515a36383:58255:58949 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-pAOzpt
+4f7515a36383:58255:58948 [1] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-zJFAEH
+4f7515a36383:58255:58949 [0] NCCL INFO Allocated 9637892 bytes of shared memory in /dev/shm/nccl-TjGMVc
+4f7515a36383:58255:58948 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-wYh9aR
+4f7515a36383:58255:58952 [1] NCCL INFO Channel 00 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58949 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-EvRIE6
+4f7515a36383:58255:58948 [1] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-bKlo0t
+4f7515a36383:58255:58953 [0] NCCL INFO Channel 00 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58949 [0] NCCL INFO Allocated 4100 bytes of shared memory in /dev/shm/nccl-MMSrw5
+4f7515a36383:58255:58952 [1] NCCL INFO Channel 01 : 1[1] -> 0[0] via SHM/direct/direct
+4f7515a36383:58255:58953 [0] NCCL INFO Channel 01 : 0[0] -> 1[1] via SHM/direct/direct
+4f7515a36383:58255:58952 [1] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58953 [0] NCCL INFO Connected all rings, use ring PXN 0 GDR 1
+4f7515a36383:58255:58958 [1] NCCL INFO register comm 0x7f1aa80d86a0 buffer 0x1393a00000 size 352
+4f7515a36383:58255:58958 [1] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1ad322db70
+4f7515a36383:58255:58959 [0] NCCL INFO register comm 0x7f1afca88d60 buffer 0x1393800000 size 352
+4f7515a36383:58255:58959 [0] NCCL INFO Mem Realloc old size 0, new size 256 pointer 0x7f1b04b16110
+4f7515a36383:58255:58959 [0] NCCL INFO Inserted window 0x1b5c00d048 into address map, ret=0
+4f7515a36383:58255:58958 [1] NCCL INFO Inserted window 0x139400d048 into address map, ret=0
+4f7515a36383:58255:58944 [0] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58944 [0] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58944 [0] NCCL INFO comm 0x7f1afca88d60 rank 0 nranks 2 cudaDev 0 busId 43000 - Destroy COMPLETE
+4f7515a36383:58255:58944 [1] NCCL INFO MemManager: Destroying (refCount=0)
+4f7515a36383:58255:58944 [1] NCCL INFO MemManager: Destroyed
+4f7515a36383:58255:58944 [1] NCCL INFO comm 0x7f1aa80d86a0 rank 1 nranks 2 cudaDev 1 busId 44000 - Destroy COMPLETE
+4f7515a36383:58255:58255 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault

@@ -1,0 +1,4 @@
+MGBFS_ARCHIVE_WORKER_FATAL device=0 error=ARCHIVE_INCOMPLETE
+{"error":"TEST_INJECTED_NCCL_STARTUP_ERROR","status":"ERROR"}
+4f7515a36383:65382:65382 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+4f7515a36383:65382:65382 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault
