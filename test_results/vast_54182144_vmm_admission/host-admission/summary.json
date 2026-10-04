@@ -1,0 +1,82 @@
+{
+  "scope": "actual two-rank VMM peer reads before BFS admission",
+  "rows": [
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "label": "driver-init"
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "label": "runtime-init"
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "label": "symmetric"
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "label": "primary-alias"
+    }
+  ],
+  "pass": true
+}

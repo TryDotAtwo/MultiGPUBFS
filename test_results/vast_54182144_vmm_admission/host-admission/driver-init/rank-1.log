@@ -1,0 +1,11 @@
+rank=1 stage=context result=ENTER
+rank=1 stage=local_create result=ENTER
+rank=1 stage=local_map result=ENTER
+rank=1 stage=initialize result=ENTER
+rank=1 stage=vmm_local_initialized result=PASS
+rank=1 stage=export_exchange result=ENTER
+rank=1 stage=peer_import result=ENTER
+rank=1 stage=peer_map result=ENTER
+rank=1 stage=check_launch result=ENTER
+rank=1 result_bits=0 own=00000065 expected=00000065 peer=00000064 peer_expected=00000064
+rank=1 stage=vmm_import result=PASS

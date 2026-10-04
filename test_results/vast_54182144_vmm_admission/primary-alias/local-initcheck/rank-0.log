@@ -1,0 +1,13 @@
+========= COMPUTE-SANITIZER
+rank=0 stage=context result=ENTER
+rank=0 stage=symmetric_reserve result=ENTER
+rank=0 symmetric_stride=17179869184 virtual_bytes=34359738368
+rank=0 stage=local_create result=ENTER
+rank=0 stage=primary_alias_map result=ENTER
+rank=0 stage=local_map result=ENTER
+rank=0 stage=runtime_initialize_after_import result=ENTER
+rank=0 stage=vmm_runtime_initialized result=PASS
+rank=0 stage=check_launch result=ENTER
+rank=0 result_bits=0 own=64646464 expected=64646464 peer=65656565 peer_expected=65656565
+rank=0 stage=vmm_local result=PASS
+========= ERROR SUMMARY: 0 errors
