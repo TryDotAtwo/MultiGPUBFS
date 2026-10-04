@@ -391,6 +391,10 @@ fn admit_device_group(
         // this rendezvous a fast query rank can cancel a peer still returning
         // from the preceding collective, losing that peer's memory record.
         vote(0)?;
+        if crate::session_cache::enabled() {
+            let ready = unsafe { mgbfs_nccl_session_park(comm) } == 0;
+            crate::session_cache::permit_comm(vote(u32::from(!ready))? == 0);
+        }
         // Query subprocesses intentionally stop before large allocations and
         // before BFS. No capacity failure or completed layer is claimed.
         return Err("MEMORY_QUERY_DONE".into());
@@ -768,6 +772,9 @@ pub struct DistributedNativeBfs {
     collective_recv: Buffer,
 }
 impl DistributedNativeBfs {
+    pub fn session_parkable(&self) -> bool {
+        (unsafe { mgbfs_nccl_session_park(self.comm.0) }) == 0
+    }
     fn rank_owner_mode(&self) -> bool {
         if self.native_rank.is_some() { return true; }
         #[cfg(feature = "library-owner")]

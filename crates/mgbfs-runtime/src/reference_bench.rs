@@ -753,6 +753,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err(publication.err().unwrap_or_else(|| "REMOTE_GROUP_PUBLICATION_FATAL".into()));
     }
     publication?;
+    if crate::session_cache::enabled() {
+        let parked = bfs.session_parkable();
+        let rejected = control_group.agree_boundary(
+            crate::bootstrap::BoundaryPhase::SessionReuse, !parked,
+            Duration::from_secs(60),
+        )?;
+        crate::session_cache::permit_comm(!rejected);
+    }
     Ok(())
 }
 

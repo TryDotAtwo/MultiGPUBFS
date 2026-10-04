@@ -214,6 +214,7 @@ pub enum BoundaryPhase {
     ArchiveCommitted = 2,
     OutputWritten = 3,
     GroupPublished = 4,
+    SessionReuse = 5,
 }
 impl BootstrapGroup {
     pub fn start_search_sideband(&mut self, timeout: std::time::Duration) -> Result<SearchSideband> {

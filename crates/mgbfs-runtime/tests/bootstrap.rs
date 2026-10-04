@@ -170,18 +170,21 @@ fn boundary_agreement_preserves_phase_order_and_success() {
             || panic!("peer cannot create NCCL ID"),
         ).unwrap();
         for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
-            BoundaryPhase::OutputWritten] {
+            BoundaryPhase::OutputWritten, BoundaryPhase::GroupPublished] {
             assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
         }
+        assert!(group.agree_boundary(BoundaryPhase::SessionReuse, true, Duration::from_secs(3)).unwrap());
     });
     let mut coordinator = rendezvous(
         &path, 0, 2, record().identity, Duration::from_secs(3),
         || Ok([23; 128]),
     ).unwrap();
     for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
-        BoundaryPhase::OutputWritten] {
+        BoundaryPhase::OutputWritten, BoundaryPhase::GroupPublished] {
         assert!(!coordinator.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
     }
+    // One rank rejects parking: neither may reuse the communicator.
+    assert!(coordinator.agree_boundary(BoundaryPhase::SessionReuse, false, Duration::from_secs(3)).unwrap());
     peer.join().unwrap();
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();

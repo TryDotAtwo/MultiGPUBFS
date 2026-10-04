@@ -1,6 +1,7 @@
 //! Only resident-session jobs use this rank-local, shape-bounded cache.
 use std::{cell::RefCell, ffi::c_void};
 use mgbfs_cuda::ffi::*;
+use mgbfs_cuda::native_owner::cudaFreeHost;
 #[derive(Default)]
 struct Cache {
     enabled: bool,
@@ -11,6 +12,7 @@ struct Cache {
     buffer_hits: u64,
     comm_hits: u64,
     pool_hits: u64,
+    permit_comm: bool,
     #[cfg(feature = "library-owner")]
     pool: Option<(*mut c_void, u64)>,
 }
@@ -56,10 +58,13 @@ pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void) -> bool {
 }
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
 pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
+pub fn enabled() -> bool { CACHE.with(|c| c.borrow().enabled) }
+pub fn permit_comm(value: bool) { CACHE.with(|c| c.borrow_mut().permit_comm = value); }
 pub fn begin(shape: String) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         c.buffer_hits = 0;c.comm_hits = 0;c.pool_hits = 0;
+        c.permit_comm = false;
         if c.enabled && c.shape != shape { c.release_storage(); c.shape = shape; }
     });
 }
@@ -99,10 +104,9 @@ pub fn comm_take() -> Option<*mut c_void> {
 pub fn comm_put(ptr: *mut c_void) -> bool {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if !c.enabled || !c.comm.is_null() || ptr.is_null() { return false; }
-        // Native park refuses aborted/LSA communicators and clears callbacks
-        // before their Arc contexts die. One boundary sync, never per batch.
-        if unsafe { mgbfs_nccl_session_park(ptr) } != 0 { return false; }
+        if !c.enabled || !c.permit_comm || !c.comm.is_null() || ptr.is_null() { return false; }
+        // Park and all-rank agreement happen before ownership is cached.
+        // Never let just one rank reuse an old communicator.
         c.comm = ptr; true
     })
 }
