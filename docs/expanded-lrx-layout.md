@@ -31,7 +31,11 @@ and complete n128r127 oracle; four dynamic layout/Parquet tests;70 tail tests;
 remain covered. The wide Parquet test covers n17r1,n65r64,n128r1 with synthetic
 single-layer payloads, not full GPU enumerations.
 
-Outstanding: build and run the modified native runtime on two GPUs for actual
-wide n/alphabet cases, independent word-layer oracle and archived HF readback,
-then measure runtime/startup overhead. Earlier hardware gates through n32
-do not establish correctness or speed of this expansion.
+Hardware expansion gate completed on 2026-10-04: two RTX3060 and two RTXA4000,
+native CUDA12.9/NCCL2.30.7, commit3fd7730. Seven wide cases per model were
+checked against independent CPU layers and published/read back from HF.
+See validation/2026-10-04-wide-two-gpu.md for measured scope and timings.
+The streaming archive's whole-orbit extent overflow was fixed in this gate.
+Normal startup selected HOST_SIZED_NCCL on both rentals: 3060 lacks usable LSA;
+A4000's LSA correctness gate failed with22_22 on this branch. This does not
+validate LSA/Graph32 or B300, nor diagnose newer main-branch code.
