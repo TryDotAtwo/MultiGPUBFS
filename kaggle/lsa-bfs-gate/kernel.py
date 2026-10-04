@@ -16,7 +16,7 @@ import time
 
 SOURCE = "5a4ea73f5dd58a5ed58e0178caedc60b991514e6"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "typed_rank_gate"
+MODE = "typed_followup_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
