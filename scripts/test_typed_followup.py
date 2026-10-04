@@ -14,6 +14,13 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_macro_capture_gate_runs_real_lib_test_not_zero_test_filter(self):
+        command = gate.macro_capture_command()
+        self.assertEqual(command[:8], ['cargo', 'test', '--locked', '-p',
+            'mgbfs-runtime', '--features', 'cuda,library-owner', '--lib'])
+        self.assertIn('macro_native::producer_capture_tests::macro_produce_captures_and_runs_without_host_count_readback', command)
+        self.assertEqual(command[-4:], ['--', '--exact', '--nocapture', '--test-threads=1'])
+
     def test_version_comparison_selects_host_before_sdk_wrapper_and_does_not_mutate_base(self):
         env = {'PATH': '/sdk/bin:/usr/bin', 'keep': 'yes'}
         for version, prefix in (('host', '/usr/local/cuda/bin'), ('cuda129', '/sdk/compute-sanitizer')):

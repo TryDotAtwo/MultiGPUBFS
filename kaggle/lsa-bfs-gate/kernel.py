@@ -27,6 +27,13 @@ def oracle_dependency_packages(mode):
         'typed_sanitizer_version_gate') else []
 
 
+def macro_capture_command():
+    return ['cargo', 'test', '--locked', '-p', 'mgbfs-runtime',
+        '--features', 'cuda,library-owner', '--lib',
+        'macro_native::producer_capture_tests::macro_produce_captures_and_runs_without_host_count_readback',
+        '--', '--exact', '--nocapture', '--test-threads=1']
+
+
 def typed_rank_configs(base):
     cases = []
     for profile in ('DENSE', 'HASH_FIRST'):
@@ -629,6 +636,14 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == 'macro_capture_gate':
+            report['scope'] = 'single-rank existing macro producer CUDA Graph capture and exact layer oracle; not multi-GPU macro admission'
+            output = run(macro_capture_command(), 'macro-producer-capture', timeout=900)
+            if 'test result: ok. 1 passed; 0 failed' not in output:
+                raise RuntimeError('MACRO_CAPTURE_TEST_NOT_EXECUTED')
+            report['macro_producer_capture'] = 'PASS'
+            report['status'] = 'COMPLETE'
+            return
         if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
