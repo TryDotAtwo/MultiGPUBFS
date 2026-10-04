@@ -137,11 +137,21 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         raise ValueError('graph/topology')
     root.mkdir(parents=True, exist_ok=False)
     source = source.resolve()
-    commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    from resident_session import active_session
+    session = active_session()
+    metadata = session.metadata if session else {}
+    identity_key = str(source)
+    commit = metadata.get(identity_key+'commit')
+    if commit is None:
+        commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+        metadata[identity_key+'commit'] = commit
     cli = (source/config.get('binary_path','target/release/mgbfs')).resolve()
     if not cli.is_relative_to(source):
         raise ValueError('binary must belong to the source checkout')
-    binary_sha = hashlib.sha256(cli.read_bytes()).hexdigest()
+    binary_sha = metadata.get(str(cli)+'sha')
+    if binary_sha is None:
+        binary_sha = hashlib.sha256(cli.read_bytes()).hexdigest()
+        metadata[str(cli)+'sha'] = binary_sha
     env = dict(os.environ, **runtime_env)
     env.update(config.get('env', {}))
     env.update(MGBFS_BENCH_WORLD_SIZE=str(world), MGBFS_RANK_MAP=','.join(map(str,range(world))),
@@ -155,12 +165,16 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     command[-1] = str(root/'result')
     start = list(range(n-r+1)) + [n-r]*(r-1)
     from state_layout import orbit_layout
+    inventory = metadata.get('gpu_inventory')
+    if inventory is None:
+        inventory = subprocess.check_output(['nvidia-smi',
+            '--query-gpu=index,uuid,name,memory.total,driver_version',
+            '--format=csv,noheader'],text=True).splitlines()
+        metadata['gpu_inventory'] = inventory
     saved = dict(config, command=command, binary_sha256=binary_sha,
         orbit_layout=orbit_layout(n,r),
         runtime_paths=runtime_env,
-        gpu_inventory=subprocess.check_output(['nvidia-smi',
-            '--query-gpu=index,uuid,name,memory.total,driver_version',
-            '--format=csv,noheader'],text=True).splitlines(),
+        gpu_inventory=inventory,
         runtime_configuration={k:v for k,v in env.items() if k.startswith(('MGBFS_', 'NCCL_'))})
     archive = TailArchive(root/'saved', n=n, r=r, start=start,
         actions=dict(L='cyclic left rotation', R='cyclic right rotation', X='swap positions 0 and 1'),
@@ -208,8 +222,15 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             except ValueError:
                 pass
     threading.Thread(target=monitor, daemon=True).start()
-    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+    from resident_session import launch
+    process = launch(command, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    if session:
+        archive.manifest['launch_config']['resident_session'] = dict(
+            root=str(session.root), generation=session.generation-1,
+            sequence=process.sequence, rank_group_pid=process.pid,
+            worker_command=['torchrun','--standalone',f'--nproc-per-node={world}',
+                '--no-python',str(cli),'session',str(session.directory)])
     def log_reader():
         with (root/'native.log').open('w', buffering=1) as log:
             for line in process.stdout:

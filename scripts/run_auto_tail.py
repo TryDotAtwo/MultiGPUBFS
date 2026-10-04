@@ -166,7 +166,21 @@ def tune_pair(base, source, case, runtime_env, *, query=None, deadline=None, can
         if query is not None:return query(cfg)
         timeout=90 if deadline is None else min(90,max(.1,deadline-time.time()))
         return native_query(cfg,source,case.parent/(case.name+f'-query-{rows}'),runtime_env,timeout=timeout)
-    rows,probes=select_capacity(probe,upper)
+    from resident_session import active_session
+    session = active_session() if query is None else None
+    # r changes the orbit bound/start word, not native byte-state geometry.
+    # Keep admission evidence per n and launch policy inside this rank session.
+    profile_key = json.dumps(dict(n=n, world=base['world'], env=base['env'],
+        margin=base.get('startup_memory_margin_bytes',64<<20),runtime=runtime_env),sort_keys=True)
+    cached = session.capacity_profiles.get(profile_key) if session else None
+    reused = (cached is not None and cached[0] <= upper
+              and (cached[0] < cached[2] or upper <= cached[2]))
+    if reused:
+        rows,probes=cached[:2]
+    else:
+        rows,probes=select_capacity(probe,upper)
+        if session is not None and (cached is None or upper > cached[2]):
+            session.capacity_profiles[profile_key]=(rows,probes,upper)
     cfg=configuration(rows)
     pools=[x.get('library_pool_bytes') for x in probes[rows]]
     if all(type(x) is int and x>0 for x in pools):
@@ -179,6 +193,7 @@ def tune_pair(base, source, case, runtime_env, *, query=None, deadline=None, can
         probes=[dict(rows_per_rank=k,ranks=v) for k,v in sorted(probes.items())],
         pool_policy='native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack',
         maximum_hardware_capacity_proven=False)
+    cfg['resource_plan']['resident_admission_reused'] = reused
     return cfg
 
 
@@ -388,8 +403,11 @@ def main(cancelled=None):
     publication_reserve=min(1200,remaining*.25)
     ledger=None
     try:
-        ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
-                       remaining-publication_reserve,adaptive,on_progress=progress,should_stop=cancelled)
+        from resident_session import resident
+        import uuid
+        with resident(args.root/('resident-'+uuid.uuid4().hex)):
+            ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
+                           remaining-publication_reserve,adaptive,on_progress=progress,should_stop=cancelled)
         publisher.enqueue(ledger)
         receipt=publisher.finish()
         verified=verify_hf(args.root,args.repo_id,api,token)

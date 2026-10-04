@@ -99,7 +99,8 @@ def native_query(config, source, root, runtime_env, *, timeout=90):
     atomic_json(root/'query-config.json',dict(configuration=config,command=command,
         runtime_paths=runtime_env,timeout_seconds=timeout,
         effective_environment={k:v for k,v in env.items() if k.startswith(('MGBFS_','NCCL_'))}))
-    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+    from resident_session import launch
+    process = launch(command, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
     try:
         output, _ = process.communicate(timeout=timeout)

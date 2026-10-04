@@ -16,6 +16,8 @@ use mgbfs_cuda::library_owner::*;
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};
 
+pub fn enable_session_cache() { crate::session_cache::enable(); }
+
 #[cfg(debug_assertions)]
 extern "C" {
     fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
@@ -142,7 +144,9 @@ impl Drop for LibraryOwnerStorage {
                     drained = mgbfs_library_cuco_workspace_destroy_v1(self.cuco_workspace) == 0;
                 }
                 if drained {
-                    mgbfs_library_pool_destroy_v1(self.pool);
+                    if !crate::session_cache::pool_put(self.pool) {
+                        mgbfs_library_pool_destroy_v1(self.pool);
+                    }
                 }
             }
         }
@@ -241,7 +245,7 @@ unsafe fn history_view(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DistributedConfig {
     pub rank: u32,
     pub world: u32,
@@ -376,7 +380,8 @@ fn admit_device_group(
         }
         println!("MGBFS_MEMORY_QUERY {}", serde_json::json!({
             "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
-            "free_after_nccl_warmup_bytes": free, "total_bytes": total,
+            "free_after_nccl_warmup_bytes": (free as u64 + crate::session_cache::reusable_bytes()).min(total as u64), "total_bytes": total,
+            "session_reusable_bytes": crate::session_cache::reusable_bytes(),
             "scope": "explicit_device_allocations_including_fixed_library_pool",
             "library_pool_bytes": pool_bytes,
         }));
@@ -391,7 +396,8 @@ fn admit_device_group(
         return Err("MEMORY_QUERY_DONE".into());
     }
     let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) })
-        .and_then(|_| crate::distributed_memory::device_admission(required, reserve, free as u64));
+        .and_then(|_| crate::distributed_memory::device_admission(required, reserve,
+            (free as u64 + crate::session_cache::reusable_bytes()).min(total as u64)));
     if vote(u32::from(local.is_err()))? != 0 {
         return Err(format!(
             "VRAM_PREFLIGHT_GROUP: {}",
@@ -412,8 +418,8 @@ fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
 }
 impl Buffer {
     fn new(bytes: usize, stream: *mut c_void) -> Result<Self> {
-        let mut ptr = std::ptr::null_mut();
-        check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?;
+        let mut ptr = crate::session_cache::buffer_take(bytes).unwrap_or(std::ptr::null_mut());
+        if ptr.is_null() { check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?; }
         let x = Self { ptr, bytes, stream };
         check(unsafe { cudaMemsetAsync(ptr, 0, bytes.max(1), stream) })?;
         Ok(x)
@@ -459,7 +465,7 @@ impl Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe {
-            cudaFree(self.ptr);
+            if !crate::session_cache::buffer_put(self.ptr, self.bytes) { cudaFree(self.ptr); }
         }
     }
 }
@@ -555,6 +561,7 @@ impl Drop for Event {
 struct Comm(*mut c_void, bool);
 impl Drop for Comm {
     fn drop(&mut self) {
+        if !self.1 && crate::session_cache::comm_put(self.0) { return; }
         unsafe {
             if self.1 {
                 mgbfs_nccl_abort(self.0);
@@ -1373,6 +1380,7 @@ impl DistributedNativeBfs {
                 candidates, stride as u32)?;
             owned_memory.add("transport.lsa_symmetric_slot", slot, 1, 256)?;
         }
+        crate::session_cache::begin(format!("n={};stride={stride};cfg={cfg:?};pool={library_pool_bytes:?};owner={library_options:?};materialize={materialization_capacity:?}", graph.rows));
         let mut raw = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw, 1) })?;
         let stream = Stream(raw);
@@ -1392,9 +1400,16 @@ impl DistributedNativeBfs {
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
         let archive_stream = Stream(raw_archive);
-        let mut comm = std::ptr::null_mut();
+        let mut comm = if cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa {
+            crate::session_cache::comm_take().unwrap_or(std::ptr::null_mut())
+        } else { std::ptr::null_mut() };
         let mut error = [0i8; 512];
-        if unsafe {
+        if !comm.is_null() {
+            if let Some(token) = &startup_cancel {
+                check(unsafe { mgbfs_nccl_bind_cancel(comm, Some(nccl_cancel_probe),
+                    std::sync::Arc::as_ptr(token).cast_mut().cast()) })?;
+            }
+        } else if unsafe {
             mgbfs_nccl_create_with_cancel(
                 cfg.rank,
                 cfg.world,
@@ -1413,7 +1428,7 @@ impl DistributedNativeBfs {
                 .to_string_lossy()
                 .into_owned());
         }
-        let comm = Comm(comm, true);
+        let mut comm = Comm(comm, true);
         // Declared after Comm: on a constructor error the sideband learns
         // failure before communicator cleanup can wait for a peer.
         let mut startup_report = crate::failure::FailureReportGuard::new(startup_failure);
@@ -1435,6 +1450,7 @@ impl DistributedNativeBfs {
                 // Admission completed its all-rank query rendezvous. Suppress
                 // the constructor failure guard for this intentional exit.
                 startup_report.disarm();
+                comm.1 = false;
             }
             error
         })?;
@@ -1774,10 +1790,10 @@ impl DistributedNativeBfs {
                 raw,
             )?;
             let control_transfer = unsafe { ControlTransfer::new(raw)? };
-            let mut pool = std::ptr::null_mut();
-            check(unsafe {
+            let mut pool = crate::session_cache::pool_take(pool_bytes).unwrap_or(std::ptr::null_mut());
+            if pool.is_null() { check(unsafe {
                 mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
-            })?;
+            })?; }
             let per_shard = cfg.buckets / cfg.shards;
             let capacity = u32::try_from(
                 (u64::from(per_shard) * u64::from(cfg.bucket_capacity))

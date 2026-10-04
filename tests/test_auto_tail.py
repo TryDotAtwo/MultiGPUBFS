@@ -141,6 +141,30 @@ class AutomaticPlanningTests(unittest.TestCase):
         self.assertEqual(base,original)
         self.assertFalse(cfg['resource_plan']['maximum_hardware_capacity_proven'])
 
+    def test_resident_admission_reuses_hardware_bound_but_not_small_orbit_bound(self):
+        from types import SimpleNamespace
+        session=SimpleNamespace(capacity_profiles={})
+        base=dict(n=16,r=4,world=2,host_available_bytes=8<<30,env={},
+                  resource_plan=device_budget([{'free_bytes':12<<30}]))
+        def query(cfg,*args,**kwargs):
+            rows=int(cfg['env']['MGBFS_BENCH_CAPACITY'])
+            return [dict(rank=rank,required_bytes=rows*640+100000,
+                reserve_bytes=1<<30,free_after_nccl_warmup_bytes=10<<30)
+                for rank in range(2)]
+        with patch('resident_session.active_session',return_value=session),\
+             patch('vram_autotune.native_query',side_effect=query) as probe:
+            first=tune_pair(base,Path('fixture'),Path('case'),{})
+            calls=probe.call_count
+            second=tune_pair(dict(base,r=5),Path('fixture'),Path('other'),{})
+            self.assertEqual(probe.call_count,calls)
+            self.assertTrue(second['resource_plan']['resident_admission_reused'])
+            self.assertEqual(first['env']['MGBFS_BENCH_CAPACITY'],second['env']['MGBFS_BENCH_CAPACITY'])
+            session.capacity_profiles.clear()
+            tune_pair(dict(base,r=16),Path('fixture'),Path('small'),{})
+            calls=probe.call_count
+            tune_pair(base,Path('fixture'),Path('large'),{})
+            self.assertGreater(probe.call_count,calls)
+
     def test_failed_sweep_or_publication_preserves_local_error_report(self):
         class FailedPublisher:
             closed=False;generations=0;error=None

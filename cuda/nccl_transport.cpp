@@ -199,6 +199,20 @@ extern "C" int mgbfs_nccl_bind_cancel(void* raw,int (*probe)(void*),void* contex
   p->cancel_context=context;
   return 0;
 }
+extern "C" int mgbfs_nccl_session_park(void* raw){
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started)return 1;
+#ifdef MGBFS_NCCL_LSA
+  // LSA window reuse needs its own collective generation-reset acceptance.
+  if(p->device_ready)return 2;
+#endif
+  if(cudaDeviceSynchronize()!=cudaSuccess)return 3;
+  ncclResult_t state=ncclSuccess;
+  if(ncclCommGetAsyncError(p->value,&state)!=ncclSuccess||state!=ncclSuccess)return 4;
+  p->cancel_requested=nullptr;p->cancel_context=nullptr;
+  p->retirement_probe=nullptr;p->retirement_context=nullptr;
+  return 0;
+}
 extern "C" int mgbfs_nccl_bind_retirement(void* raw,int (*probe)(void*,int),void* context){
   auto* p=static_cast<Comm*>(raw);
   if(!p||!p->value||!probe||!context)return 1;

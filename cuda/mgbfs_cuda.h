@@ -235,6 +235,7 @@ int mgbfs_nccl_create_with_cancel(uint32_t rank,uint32_t world,uint32_t device,
 /* Bind a probe owned by the rank's dispatcher; only that dispatcher calls
  * NCCL/abort. The probe context must outlive the communicator. */
 int mgbfs_nccl_bind_cancel(void* comm,int (*probe)(void*),void* context);
+int mgbfs_nccl_session_park(void* comm);
 /* Error-only reader retirement: action 1 publishes local quiescence; action 0
  * polls group acknowledgement. Return 1 only after ALL ranks retired readers,
  * 0 pending, -1 protocol failure. Context outlives communicator. */

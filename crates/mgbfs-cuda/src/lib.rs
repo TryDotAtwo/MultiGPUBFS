@@ -414,6 +414,7 @@ pub mod ffi {
             probe: Option<extern "C" fn(*mut c_void) -> i32>,
             context: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_nccl_session_park(comm: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create_with_cancel(
             rank: u32, world: u32, device: u32, id128: *const c_void,
             out: *mut *mut c_void, error: *mut c_char, error_capacity: usize,

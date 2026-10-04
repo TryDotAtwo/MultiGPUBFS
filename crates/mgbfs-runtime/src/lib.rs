@@ -4,6 +4,11 @@ pub mod archive;
 pub mod benchmark;
 pub mod bootstrap;
 pub mod reference_launch;
+pub mod session_protocol;
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub mod session_worker;
+#[cfg(feature = "cuda")]
+mod session_cache;
 pub mod byte_admission;
 mod control_admission;
 pub mod control_connection;

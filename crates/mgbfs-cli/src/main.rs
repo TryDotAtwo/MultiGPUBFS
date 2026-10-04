@@ -3,6 +3,12 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 fn execute() -> Result<(), (i32, String)> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|x| x.to_str()) {
+        Some("session") if args.len() == 2 => {
+            #[cfg(all(feature = "cuda", target_os = "linux"))]
+            mgbfs_runtime::session_worker::run(&PathBuf::from(&args[1])).map_err(|e| (1, e))?;
+            #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+            return Err((2, "CLI_SESSION_REQUIRES_LINUX_CUDA".into()));
+        }
         Some("--help") | Some("-h") if args.len() == 1 => {
             println!("mgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nProduction run/preflight/calibrate commands are not connected yet.");
         }
