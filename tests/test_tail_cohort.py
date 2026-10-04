@@ -11,6 +11,19 @@ from scripts.publish_tail_batch import plan, publish
 
 
 class CohortTests(unittest.TestCase):
+    def test_storage_boundary_seals_short_group_and_resume_keeps_members(self):
+        from scripts.tail_cohort import case_groups, seal_current_cohort
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            first=self.fixture(root,7,2)[0]
+            ledger=self.ledger([first])
+            seal_current_cohort(root,ledger)
+            self.assertEqual(ledger['cohort_seal_after'],[first])
+            second=self.fixture(root,8,3)[0]
+            ledger['cases'][second]=dict(attempted=True)
+            groups=list(case_groups(root,ledger))
+            self.assertEqual([(len(g),sealed) for g,sealed in groups],[(1,True),(1,False)])
+            self.assertEqual(groups[0][0][0][0],first)
     def fixture(self, root, n, r, width=8):
         key = f'n{n}-m{r}'
         saved = root/key/'saved'

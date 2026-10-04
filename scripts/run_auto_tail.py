@@ -471,6 +471,9 @@ def main(cancelled=None):
                     max(.001,remaining-publication_reserve),adaptive,
                     on_progress=progress,should_stop=compute_stop)
                 compute_finished=time.time()
+                from tail_cohort import seal_current_cohort
+                seal_current_cohort(args.root,ledger)
+                atomic_json(args.root/'sweep.json',ledger)
                 publisher.enqueue(ledger)
                 receipt=publisher.finish()
                 upload_cycles.append(dict(compute_started_at=compute_started,

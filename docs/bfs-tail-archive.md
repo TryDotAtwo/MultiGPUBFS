@@ -45,8 +45,9 @@ reserves space for the next working tail/spools and final Parquet conversion.
 A storage pause publishes and reads back all staged data, frees verified closed
 groups, and resumes the pending queue in the original mode with the same warm
 rank session. Completed cases are not recalculated. A failed upload preserves
-inputs and does not release unverified state data. An open final cohort remains
-on SSD until enough cases seal it; if storage still cannot admit another case,
+inputs and does not release unverified state data. At a storage pause or final
+stop, the last short cohort is sealed and its boundary saved for resumption.
+If storage still cannot admit another case,
 the program reports that explicitly rather than looping without progress.
 
 There is no independent 120/300-second graph timeout. Traversal and archive drain

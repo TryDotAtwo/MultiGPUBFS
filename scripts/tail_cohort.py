@@ -21,6 +21,7 @@ def case_groups(root, ledger, *, group_size=None, group_bytes=None):
     if type(group_size) is not int or type(group_bytes) is not int or group_size <= 0 or group_bytes <= 0:
         raise ValueError('positive cohort bounds required')
     group, size = [], 0
+    seal_after = set(ledger.get('cohort_seal_after', []))
     for key, record in ledger['cases'].items():
         if key in ('', '.', '..') or '/' in key or '\\' in key:
             raise ValueError('unsafe case key')
@@ -30,11 +31,21 @@ def case_groups(root, ledger, *, group_size=None, group_bytes=None):
         manifest = json.loads((saved/'manifest.json').read_text())
         group.append((key, saved))
         size += sum(entry['bytes'] for entry in manifest['files'])
-        if len(group) >= group_size or size >= group_bytes:
+        if len(group) >= group_size or size >= group_bytes or key in seal_after:
             yield group, True
             group, size = [], 0
     if group:
         yield group, False
+
+
+def seal_current_cohort(root, ledger):
+    """Persist a boundary before release so resumed cases never extend it."""
+    if not ledger['cases']:
+        return
+    groups = list(case_groups(root, ledger))
+    if groups and not groups[-1][1]:
+        key = groups[-1][0][-1][0]
+        ledger.setdefault('cohort_seal_after', []).append(key)
 
 
 def publication_cases(root, ledger, *, group_size=None, shard_bytes=512_000_000,
