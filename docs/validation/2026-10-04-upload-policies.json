@@ -1,0 +1,429 @@
+{
+  "status": "PASS",
+  "source_commit": "768c1056ad3dc6d44e41b6c58a22dfe21ca1f74f",
+  "binary_sha256": "9446c3eb608f9ab1934300680b9ae40e616dc2d8ba8e9acffd64feab7d443303",
+  "hardware": {
+    "gpus": "2 x RTX 3060 12GB",
+    "driver": "595.71.05",
+    "cuda": "12.9",
+    "nccl": "2.30.7",
+    "sm": 86,
+    "transport": "HOST_SIZED_NCCL",
+    "graph_batches": 0
+  },
+  "full_sweep": {
+    "source_commit": "d2356c270dbef73d75e9e9d75957b91d1424ae52",
+    "counts": {
+      "grid": 8255,
+      "attempted": 93,
+      "complete": 87,
+      "incomplete": 6,
+      "pruned": 458,
+      "pending": 7704,
+      "native_exhausted_but_archive_incomplete": [],
+      "bad_counts": [],
+      "incomplete_native_traces": []
+    },
+    "program_wall_seconds": 2137.783151935786,
+    "compute_sweep_including_archive_seconds": 1022.2408359469846,
+    "publication_seconds": 972.0784289203584,
+    "final_readback_seconds": 139.0553735550493,
+    "successful_native_search_seconds": 146.69787213499998,
+    "known_search_lower_bound_seconds": 454.348985135,
+    "unreported_failed_search_work": "unknown; completed native layers only are counted",
+    "admission_seconds": 13.925005647353828,
+    "native_setup_seconds": 1.091572095,
+    "actual_pair_search_gap": {
+      "count": 92,
+      "sum": 561.720892906189,
+      "median": 0.12641561031341553,
+      "mean": 6.105661879415098,
+      "max": 136.5187439918518
+    },
+    "verification": {
+      "revision": "2f2d5939088781c6c369274c5c424f4a4d663d15",
+      "files": 90,
+      "bytes": 13896774792,
+      "manifests_verified": 93,
+      "all_checksums_verified": true,
+      "sweep_ledger_verified": true
+    }
+  },
+  "upload_modes": {
+    "end": {
+      "status": "PASS",
+      "storage_pause_resume_cycles": 2,
+      "resident_pids": [
+        1407996
+      ],
+      "cpu_oracle": {
+        "n4-m1": {
+          "states": 24,
+          "layers": 7
+        },
+        "n4-m2": {
+          "states": 12,
+          "layers": 4
+        },
+        "n4-m3": {
+          "states": 4,
+          "layers": 3
+        }
+      },
+      "verification": {
+        "revision": "98b5407da0b34f843afe34d1be4b34fb4795d46b",
+        "files": 2,
+        "bytes": 11849,
+        "manifests_verified": 3,
+        "all_checksums_verified": true,
+        "sweep_ledger_verified": true
+      },
+      "upload_cycles": [
+        {
+          "compute_started_at": 1791113625.781028,
+          "compute_finished_at": 1791113627.6677785,
+          "upload_finished_at": 1791113629.8791559,
+          "stop_reason": "SSD admission stopped compute for final upload: free=99075760128 required=100000000000000000000",
+          "receipt": {
+            "cases": 1,
+            "files": 1,
+            "bytes": 5959,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/c0882b136c108e562a8fc94cdb482369670e9ba8",
+            "payload_commits": 1,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "c0882b136c108e562a8fc94cdb482369670e9ba8",
+              "released_cases": [
+                "n4-m1"
+              ]
+            }
+          }
+        },
+        {
+          "compute_started_at": 1791113629.8823557,
+          "compute_finished_at": 1791113630.0395346,
+          "upload_finished_at": 1791113633.8804207,
+          "stop_reason": null,
+          "receipt": {
+            "cases": 3,
+            "files": 1,
+            "bytes": 5890,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/98b5407da0b34f843afe34d1be4b34fb4795d46b",
+            "payload_commits": 1,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "98b5407da0b34f843afe34d1be4b34fb4795d46b",
+              "released_cases": [
+                "n4-m1",
+                "n4-m2",
+                "n4-m3"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "graph": {
+      "status": "PASS",
+      "storage_pause_resume_cycles": 2,
+      "resident_pids": [
+        1408486
+      ],
+      "cpu_oracle": {
+        "n4-m1": {
+          "states": 24,
+          "layers": 7
+        },
+        "n4-m2": {
+          "states": 12,
+          "layers": 4
+        },
+        "n4-m3": {
+          "states": 4,
+          "layers": 3
+        }
+      },
+      "verification": {
+        "revision": "4f7d67a6737276f8e0393b9e57367b35c977cb9f",
+        "files": 3,
+        "bytes": 12459,
+        "manifests_verified": 3,
+        "all_checksums_verified": true,
+        "sweep_ledger_verified": true
+      },
+      "upload_cycles": [
+        {
+          "compute_started_at": 1791113637.9100156,
+          "compute_finished_at": 1791113642.2373362,
+          "upload_finished_at": 1791113643.3486707,
+          "stop_reason": "SSD admission stopped compute for final upload: free=99075420160 required=100000000000000000000",
+          "receipt": {
+            "cases": 1,
+            "files": 0,
+            "bytes": 0,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/939171221810cecebc3a8e0580f811497c14b8d4",
+            "payload_commits": 0,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "939171221810cecebc3a8e0580f811497c14b8d4",
+              "released_cases": [
+                "n4-m1"
+              ]
+            }
+          }
+        },
+        {
+          "compute_started_at": 1791113643.351906,
+          "compute_finished_at": 1791113649.2901754,
+          "upload_finished_at": 1791113650.100701,
+          "stop_reason": null,
+          "receipt": {
+            "cases": 3,
+            "files": 0,
+            "bytes": 0,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/4f7d67a6737276f8e0393b9e57367b35c977cb9f",
+            "payload_commits": 0,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "4f7d67a6737276f8e0393b9e57367b35c977cb9f",
+              "released_cases": [
+                "n4-m1",
+                "n4-m2",
+                "n4-m3"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "background": {
+      "status": "PASS",
+      "storage_pause_resume_cycles": 2,
+      "resident_pids": [
+        1408945
+      ],
+      "cpu_oracle": {
+        "n4-m1": {
+          "states": 24,
+          "layers": 7
+        },
+        "n4-m2": {
+          "states": 12,
+          "layers": 4
+        },
+        "n4-m3": {
+          "states": 4,
+          "layers": 3
+        }
+      },
+      "verification": {
+        "revision": "e5a8e5d6e96030da06a9c059eb5c194bcf38c02f",
+        "files": 3,
+        "bytes": 12459,
+        "manifests_verified": 3,
+        "all_checksums_verified": true,
+        "sweep_ledger_verified": true
+      },
+      "upload_cycles": [
+        {
+          "compute_started_at": 1791113654.299605,
+          "compute_finished_at": 1791113656.4839592,
+          "upload_finished_at": 1791113660.0152955,
+          "stop_reason": "SSD admission stopped compute for final upload: free=99075096576 required=100000000000000000000",
+          "receipt": {
+            "cases": 1,
+            "files": 0,
+            "bytes": 0,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/c375e085921eef0f5c99c00f123998c987e1cf17",
+            "payload_commits": 0,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "c375e085921eef0f5c99c00f123998c987e1cf17",
+              "released_cases": [
+                "n4-m1"
+              ]
+            }
+          }
+        },
+        {
+          "compute_started_at": 1791113660.0183687,
+          "compute_finished_at": 1791113660.1791828,
+          "upload_finished_at": 1791113664.9726722,
+          "stop_reason": null,
+          "receipt": {
+            "cases": 3,
+            "files": 1,
+            "bytes": 2843,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/e5a8e5d6e96030da06a9c059eb5c194bcf38c02f",
+            "payload_commits": 1,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "e5a8e5d6e96030da06a9c059eb5c194bcf38c02f",
+              "released_cases": [
+                "n4-m1",
+                "n4-m2",
+                "n4-m3"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "search": {
+      "status": "PASS",
+      "storage_pause_resume_cycles": 2,
+      "resident_pids": [
+        1409495
+      ],
+      "cpu_oracle": {
+        "n4-m1": {
+          "states": 24,
+          "layers": 7
+        },
+        "n4-m2": {
+          "states": 12,
+          "layers": 4
+        },
+        "n4-m3": {
+          "states": 4,
+          "layers": 3
+        }
+      },
+      "verification": {
+        "revision": "909ca750c8bdcaa434b637f2be6876b4181840a8",
+        "files": 3,
+        "bytes": 12459,
+        "manifests_verified": 3,
+        "all_checksums_verified": true,
+        "sweep_ledger_verified": true
+      },
+      "upload_cycles": [
+        {
+          "compute_started_at": 1791113669.8560996,
+          "compute_finished_at": 1791113674.871725,
+          "upload_finished_at": 1791113679.0334451,
+          "stop_reason": "SSD admission stopped compute for final upload: free=98928496640 required=100000000000000000000",
+          "receipt": {
+            "cases": 1,
+            "files": 0,
+            "bytes": 0,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/31ef3edfa3e525485b92a18187aaaef5f4c5104e",
+            "payload_commits": 0,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "31ef3edfa3e525485b92a18187aaaef5f4c5104e",
+              "released_cases": [
+                "n4-m1"
+              ]
+            }
+          }
+        },
+        {
+          "compute_started_at": 1791113679.036685,
+          "compute_finished_at": 1791113685.1992118,
+          "upload_finished_at": 1791113689.5477564,
+          "stop_reason": null,
+          "receipt": {
+            "cases": 3,
+            "files": 0,
+            "bytes": 0,
+            "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/909ca750c8bdcaa434b637f2be6876b4181840a8",
+            "payload_commits": 0,
+            "max_batch_bytes": 25000000000,
+            "local_release": {
+              "revision": "909ca750c8bdcaa434b637f2be6876b4181840a8",
+              "released_cases": [
+                "n4-m1",
+                "n4-m2",
+                "n4-m3"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "credit_regression": {
+    "n8-m1": {
+      "program_commit": "b9bc075fbe9e0a7ea829b5d5eab570949b477ec0",
+      "status": "COMPLETE",
+      "layers": 29,
+      "states": 40320,
+      "retained_packed_bytes": 322560,
+      "search_seconds": 0.251937461,
+      "remaining_local_state_files": 0
+    },
+    "n12-m4": {
+      "program_commit": "b9bc075fbe9e0a7ea829b5d5eab570949b477ec0",
+      "status": "COMPLETE",
+      "layers": 55,
+      "states": 19958400,
+      "retained_packed_bytes": 159667200,
+      "search_seconds": 4.983277727,
+      "remaining_local_state_files": 0
+    },
+    "n13-m3": {
+      "program_commit": "b9bc075fbe9e0a7ea829b5d5eab570949b477ec0",
+      "status": "COMPLETE",
+      "layers": 72,
+      "states": 1037836800,
+      "retained_packed_bytes": 8302694400,
+      "search_seconds": 118.893536712,
+      "remaining_local_state_files": 0
+    }
+  },
+  "cpu_credit_oracle": {
+    "status": "PASS",
+    "started_at": 1791113663.698796,
+    "scope": "Full CPU layer/state oracle for (8,1), reading HF Parquet on GPU host only",
+    "revision": "9d84f047852ae8cf9b66ff550f5812b70ec83d7b",
+    "layers": 29,
+    "states": 40320,
+    "finished_at": 1791113667.098114
+  },
+  "tests": {
+    "local_tail_tests": 76,
+    "local_upload_tests": 9,
+    "local_vram_tests": 8,
+    "cuda_archive_worker_tests": 5,
+    "cpu_archive_credit_tests": 3
+  },
+  "scope": "Actual two-rank HOST_SIZED_NCCL on RTX3060. CUDA Graph32/NCCL_LSA/B300 are not validated by this run. Storage pressure is forced through admission, then actual HF upload/readback/release/resume. Large credit regression uses b9bc075 (same wait helper) while final 768c105 makes waiting explicitly opt-in for bare native runtime and selected by the durable-tail launcher.",
+  "lease": {
+    "id": 54135219,
+    "machine_id": 137174,
+    "label": "mgbfs-lrx13-full-3060-20261004",
+    "started_at": 1791108636.7255778,
+    "destroy_at_unix": 1791115836.7255778,
+    "gpu_name": "RTX 3060",
+    "quoted_hourly": 0.13444444444444445
+  },
+  "observed_instance_network_rx_plus_tx_bytes": 82563446209,
+  "receipt_revisions": {
+    "full_analysis": "5abd31e9a063c86a9ed193f14825424b8813cbc9",
+    "credit": "0438364ea080fd9ea221c4f04fcdd2eaf7826b01",
+    "final_policy": "fa2083808e8e435d7e05b983c670c3f0c064fe67",
+    "cpu_oracle": "9351d9e2d06643e16853be5c89fafac75a398d14"
+  },
+  "cleanup": {
+    "id": 54135219,
+    "machine_id": 137174,
+    "label": "mgbfs-lrx13-full-3060-20261004",
+    "at": 1791113893.4308925,
+    "delete": "DELETE_REQUESTED",
+    "confirmation": "ABSENT"
+  },
+  "pre_destroy": {
+    "at": 1791113877.8927798,
+    "all_own_test_jobs_terminal": true,
+    "remote_hf_token_removed": true
+  },
+  "cost_estimate": {
+    "rental_seconds": 5256.7053146362305,
+    "quoted_compute_plus_disk_usd": 0.19631522934289627,
+    "quoted_network_usd": 0.3253944065111985,
+    "billing_verified": false,
+    "scope": "Estimate from accepted rental and traffic quotes and observed interface RX+TX; billing API lacks billing_read. Includes entire current rental, not earlier deleted rentals.",
+    "quoted_total_usd": 0.5217096358540948
+  }
+}
