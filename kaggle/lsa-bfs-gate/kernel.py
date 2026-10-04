@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "b47c2707bc3dd346ae0cdc8c2b6df7ff45198443"
+SOURCE = "8cf73be2581c33bf68d4caf7b6b09ccace57198c"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "typed_rank_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
@@ -111,6 +111,36 @@ def typed_followup_cases(base):
                 tool='nsys', extra=['--healthy-only', '--unitriangular-modulus', '2',
                     '--require-bank-reuse', '--instrument-processes', 'nsys']))
     return cases
+
+
+def typed_paired_config(base, n):
+    """Explicit matrix L/R/X production input; no reference-dispatch defaults."""
+    if type(n) is not int or not 2 <= n <= 20:
+        raise ValueError('PAIRED_MATRIX_SIZE')
+    config = copy.deepcopy(base)
+    identity = list(range(n))
+    permutations = [identity[1:] + identity[:1], identity[-1:] + identity[:-1],
+                    [1, 0, *identity[2:]]]
+    order = 1
+    for value in range(2, n + 1):
+        order *= value
+    config['graph'] = dict(schema=1, rows=n, cols=n, modulus=2,
+        start=[int(i == j) for i in range(n) for j in range(n)],
+        generators=[[int(j == permutation[i]) for i in range(n) for j in range(n)]
+                    for permutation in permutations], inverse_map=[1, 0, 2],
+        expected_max_unique_states=order)
+    config.update(owner_backend='CUCO_RANK', library_pool_bytes=96 << 20,
+                  parent_batch=32768, frontier_profile='DENSE', local_pre_dedup=True,
+                  macro_depth=1, completion_epoch_window=3)
+    config['topology'].update(world_size=2, shards_per_rank=4, buckets_per_shard=256,
+                              logical_owner_to_rank=[0, 1])
+    config['capacities'].update(state_ring_records=1_000_000,
+        state_extent_descriptors=1_000_000, layer_hash_records_per_arena=1_000_000,
+        next_bucket_capacity_records=1_000_000, route_slot_records=98304,
+        route_slot_count=3, pinned_archive_slots=256,
+        pinned_archive_slot_bytes=32768 * (n * n + 16),
+        disk_extent_bytes_per_rank=1 << 30, untouched_vram_reserve_bytes=1 << 30)
+    return config
 
 
 def cuda_build_target(hardware):
@@ -1011,7 +1041,11 @@ def main():
             sys.path.insert(0, str(source / "scripts"))
             from distributed_gpu_bench import run_group, stats
             from library_gpu_screen import run_case
-            report.update(scope="paired physical 2xT4 S10; native archive mandatory, CayleyPy no archive",
+            paired_config = typed_paired_config(json.loads(
+                (source / 'tests/run-s4-two-rank.json').read_text()), 10)
+            paired_config_path = logs / 'paired-s10-run-config.json'
+            paired_config_path.write_text(json.dumps(paired_config, separators=(',', ':')))
+            report.update(scope="paired physical 2xT4 S10; production RunConfigV1 native archive mandatory, CayleyPy no archive",
                           baseline_commit=baseline_commit, rows=[])
             save()
             expected = None
@@ -1021,17 +1055,16 @@ def main():
                                 else ("cayleypy", "native")):
                     label = f"paired-s10-{backend}-r{repeat}"
                     if backend == "native":
-                        archive_root = work / label
+                        archive_root = logs / (label + '-archives')
                         case_env = dict(env, MGBFS_TRANSPORT_BACKEND="NCCL_LSA",
                                         MGBFS_SHARDS="4", MGBFS_BUCKETS="256",
                                         MGBFS_ARCHIVE_SLOTS="256")
                         result = run_case(str(source / "target/release/mgbfs"),
                                           logs / label, archive_root, "s10", 3_628_800,
                                           2, 32768, 1_000_000, 1_000_000, 96 << 20,
-                                          "DENSE", "ON", case_env, owner="CUCO_RANK")
+                                          "DENSE", "ON", case_env, owner="CUCO_RANK",
+                                          run_config=paired_config_path)
                         row = result["measurement"]
-                        for rank in range(2):
-                            (archive_root / f"archive-rank-{rank}.mgbfsar1").unlink()
                     else:
                         case_env = dict(env, PYTHONPATH=str(baseline),
                                         CUDA_VISIBLE_DEVICES="0,1",
@@ -1051,6 +1084,7 @@ def main():
                     samples[backend].append(row)
                     report["rows"].append({"label": label, "backend": backend,
                                            "search_seconds": row["search_complete_seconds"],
+                                           "durable_seconds": row.get("durable_run_commit_seconds"),
                                            "peak_mib_per_rank": row["smi_peak_mib_per_rank"],
                                            "archive_contract": ("verified file_fsync"
                                                                 if backend == "native" else "none")})

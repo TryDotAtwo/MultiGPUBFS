@@ -11,6 +11,22 @@ spec.loader.exec_module(gate)
 
 
 class TypedRankGateTests(unittest.TestCase):
+    def test_paired_config_preserves_lrx_graph_and_explicit_native_storage(self):
+        base = json.loads((ROOT / 'tests/run-s4-two-rank.json').read_text())
+        saved = copy.deepcopy(base)
+        config = gate.typed_paired_config(base, 4)
+        self.assertEqual(config['graph'], base['graph'])
+        self.assertEqual(base, saved)
+        self.assertEqual(config['owner_backend'], 'CUCO_RANK')
+        self.assertEqual(config['parent_batch'], 32768)
+        self.assertEqual(config['capacities']['route_slot_records'], 98304)
+        self.assertEqual(config['capacities']['route_slot_count'], 3)
+        self.assertEqual(config['capacities']['pinned_archive_slot_bytes'], 1048576)
+        config = gate.typed_paired_config(base, 10)
+        self.assertEqual(config['graph']['expected_max_unique_states'], 3628800)
+        self.assertEqual(config['graph']['inverse_map'], [1, 0, 2])
+        self.assertEqual(config['capacities']['pinned_archive_slot_bytes'], 3801088)
+
     def test_reuse_fixture_has_more_batches_than_four_banks_on_one_rank(self):
         base = json.loads((ROOT / 'tests/run-s4-two-rank.json').read_text())
         saved = copy.deepcopy(base)
