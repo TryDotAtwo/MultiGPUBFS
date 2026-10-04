@@ -16,5 +16,11 @@ No additional runtime or process framework is introduced.
 Local validation: oracle rejection test RED then GREEN; 238 Python tests
 OK/8 skipped, 60 script tests OK/3 skipped. Both warmup configurations pass
 the actual CLI offline admission. GPU execution remains pending.
-Asymmetric disagreement about warmup settings still needs a separate
-hardware failure case; this preparation does not claim that gate is done.
+Warmup replays now also flip the requested setting on each rank separately
+in two additional failure cases. A launcher-only control is removed before
+starting the rank; the runtime sees ordinary contradictory warmup settings.
+Both ranks must exit nonzero within the bounded deadline, report the real
+configuration fatal, and produce neither measured group nor per-rank COMPLETE.
+The active v103 uses the earlier immutable source without these new cases;
+their hardware execution remains pending. The launcher tests cover both
+flip directions and preservation of the unselected rank/environment.

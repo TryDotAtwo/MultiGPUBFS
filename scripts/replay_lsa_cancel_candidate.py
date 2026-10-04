@@ -44,6 +44,19 @@ def process_case_timeout(tool, requested):
     return 600 if tool == 'racecheck' else (120 if tool else 45)
 
 
+def rank_environment(env, rank):
+    if type(rank) is not int or rank not in (0, 1):
+        raise ValueError('REPLAY_RANK')
+    result = dict(env, RANK=str(rank), LOCAL_RANK=str(rank), WORLD_SIZE='2')
+    selected = result.pop('MGBFS_REPLAY_WARMUP_MISMATCH_RANK', None)
+    if selected is not None:
+        if selected not in ('0', '1') or result.get('MGBFS_BENCH_WARMUP') not in ('0', '1'):
+            raise ValueError('REPLAY_WARMUP_MISMATCH')
+        if selected == str(rank):
+            result['MGBFS_BENCH_WARMUP'] = '0' if result['MGBFS_BENCH_WARMUP'] == '1' else '1'
+    return result
+
+
 def configure_epoch_window(env, requested=None):
     value = requested if requested is not None else env.get('MGBFS_EPOCH_WINDOW', '2')
     text = str(value)
@@ -472,6 +485,8 @@ def main():
               ("worker_write", "MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK"),
               ("worker_sync", "MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK"),
               ("finish", "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK")]
+    if args.bench_warmup:
+        faults.append(('warmup_mismatch', 'MGBFS_REPLAY_WARMUP_MISMATCH_RANK'))
     cases = [("healthy", None, None)] + [(name, key, rank)
         for name, key in faults for rank in (0, 1)]
     if args.capacity_faults:
@@ -485,6 +500,7 @@ def main():
         case.mkdir()
         case_env = dict(env)
         case_env.pop('MGBFS_TEST_OWNER_CAPACITY_RANK', None)
+        case_env.pop('MGBFS_REPLAY_WARMUP_MISMATCH_RANK', None)
         for _, fault in faults:
             case_env.pop(fault, None)
         if key:
@@ -496,7 +512,7 @@ def main():
             for rank in (0, 1):
                 stream = (case / f"rank-{rank}.log").open("w")
                 streams.append(stream)
-                rank_env = dict(case_env, RANK=str(rank), LOCAL_RANK=str(rank), WORLD_SIZE="2")
+                rank_env = rank_environment(case_env, rank)
                 command = instrument_rank_command(source / 'target/debug/mgbfs',
                     rank_arguments(case, reference_group, args.batch, config_snapshot),
                     args.instrument_processes, case / f'rank-{rank}')
@@ -545,7 +561,8 @@ def main():
                         "admission": "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
                         "worker_write": "TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR",
                         "worker_sync": "TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR",
-                        "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR"}
+                        "finish": "TEST_INJECTED_ARCHIVE_FINISH_ERROR",
+                        "warmup_mismatch": "REMOTE_CONFIGURATION_FATAL"}
             if key:
                 if name == 'capacity':
                     row['fault_reached'] = any(marker in text for marker in (

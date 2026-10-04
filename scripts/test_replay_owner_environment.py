@@ -4,6 +4,18 @@ from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_warmup_disagreement_changes_only_selected_rank_and_never_forwards_test_control(self):
+        from replay_lsa_cancel_candidate import rank_environment
+        env = {'MGBFS_BENCH_WARMUP': '1', 'MGBFS_REPLAY_WARMUP_MISMATCH_RANK': '1', 'keep': 'yes'}
+        self.assertEqual(rank_environment(env, 0), {'MGBFS_BENCH_WARMUP': '1', 'keep': 'yes',
+            'RANK': '0', 'LOCAL_RANK': '0', 'WORLD_SIZE': '2'})
+        self.assertEqual(rank_environment(env, 1), {'MGBFS_BENCH_WARMUP': '0', 'keep': 'yes',
+            'RANK': '1', 'LOCAL_RANK': '1', 'WORLD_SIZE': '2'})
+        self.assertEqual(env['MGBFS_BENCH_WARMUP'], '1')
+        env.update(MGBFS_BENCH_WARMUP='0', MGBFS_REPLAY_WARMUP_MISMATCH_RANK='0')
+        self.assertEqual(rank_environment(env, 0)['MGBFS_BENCH_WARMUP'], '1')
+        self.assertEqual(rank_environment(env, 1)['MGBFS_BENCH_WARMUP'], '0')
+
     def test_route_banks_are_not_completion_credits(self):
         from replay_lsa_cancel_candidate import configure_route_banks
         env = {'MGBFS_EPOCH_WINDOW': '4'}
