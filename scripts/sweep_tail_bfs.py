@@ -85,6 +85,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 reason=reason,attempted=False,n=n,m=m)
     atomic_json(ledger_path,ledger)
     deadline=time.monotonic()+deadline_seconds
+    previous_runner_finished = None
     blocked={}
     for record in ledger['cases'].values():
         if resource_stop(record):
@@ -119,6 +120,11 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                         attempted=False,n=n,m=m)
         else:
             case=root/key
+            runner_started = time.monotonic()
+            runner_started_unix = time.time()
+            transition_before = (None if previous_runner_finished is None
+                                 else runner_started-previous_runner_finished)
+            manifest = {}
             try:
                 manifest_path=runner(config,source,case,runtime)
                 manifest=json.loads(manifest_path.read_text())
@@ -129,6 +135,26 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 manifest=json.loads(path.read_text()) if path.exists() else {}
                 record=dict(status='INCOMPLETE',last_completed_layer=manifest.get('last_completed_layer',-1),
                             reason=manifest.get('stop_reason',str(error)),attempted=True,n=n,m=m)
+            previous_runner_finished = time.monotonic()
+            searches = []
+            for rank in range(config.get('world',2)):
+                report_path = case/'result'/f'rank-{rank}.json'
+                if report_path.exists():
+                    try:
+                        native = json.loads(report_path.read_text())
+                    except (OSError,ValueError):
+                        continue  # A killed rank may leave a partial report.
+                    seconds = native.get('search_complete_seconds')
+                    if seconds is None:seconds=native.get('search_prefix_seconds')
+                    if type(seconds) in (int,float) and math.isfinite(seconds) and seconds >= 0:
+                        searches.append(seconds)
+            record['timing'] = dict(runner_started_at_unix=runner_started_unix,
+                runner_wall_seconds=previous_runner_finished-runner_started,
+                transition_before_seconds=transition_before,
+                completed_layer_seconds=sum(layer['seconds'] for layer in manifest.get('layers',[])),
+                production_search_seconds=max(searches) if len(searches)==config.get('world',2) else None,
+                automatic_phase_seconds=manifest.get('launch_config',{}).get('automatic_phase_seconds'),
+                scope='runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report')
         if record['status']=='INCOMPLETE' and allocation_failure(root/key,source):
             record['resource_classification']='cuda_allocation_failure'
         ledger['cases'][key]=record

@@ -131,6 +131,29 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(pairs(3,4,2,3),[(3,2),(3,3),(4,2),(4,3)])
         with self.assertRaises(ValueError): pairs(4,3)
 
+    def test_timing_separates_runner_and_inter_pair_progress(self):
+        from unittest.mock import patch
+        clock=[100.0]
+        def runner(config,source,case,runtime):
+            case.mkdir();(case/'result').mkdir()
+            clock[0]+=2
+            for rank in range(2):
+                (case/'result'/f'rank-{rank}.json').write_text(json.dumps(dict(search_complete_seconds=.25)))
+            path=case/'manifest.json'
+            path.write_text(json.dumps(dict(status='COMPLETE',last_completed_layer=0,
+                stop_reason='exhausted',layers=[dict(seconds=.2)])))
+            return path
+        def progress(ledger):clock[0]+=3
+        with tempfile.TemporaryDirectory() as tmp,patch('sweep_tail_bfs.time.monotonic',side_effect=lambda:clock[0]):
+            root=Path(tmp)
+            ledger=execute({},root,root,{},[(3,2),(4,3)],100,runner,on_progress=progress)
+            first=ledger['cases']['n3-m2']['timing'];second=ledger['cases']['n4-m3']['timing']
+            self.assertIsNone(first['transition_before_seconds'])
+            self.assertEqual(second['transition_before_seconds'],3)
+            self.assertEqual(second['runner_wall_seconds'],2)
+            self.assertEqual(second['production_search_seconds'],.25)
+            self.assertEqual(second['completed_layer_seconds'],.2)
+
     def test_resume_and_failure(self):
         calls=[]
         def fake(config,source,case,runtime):

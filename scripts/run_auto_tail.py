@@ -202,11 +202,14 @@ def startup_failure_snapshot(config, source, case, reason):
 
 def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
     """Admission and optional matched calibration happen before the real BFS."""
+    adaptive_started=time.monotonic()
     try:
         cfg=(tune_pair(config,source,case,runtime,deadline=deadline,cancelled=cancelled)
              if config.get('native_capacity_probe') else pair_config(config,config['n'],config['r']))
     except Exception as error:
         return startup_failure_snapshot(config,source,case,'startup capacity probe failed: '+str(error))
+    admission_finished=time.monotonic()
+    cfg['automatic_phase_seconds']=dict(admission=admission_finished-adaptive_started,graph_calibration=0.0)
     explicit_graph=runtime.get('MGBFS_CUDA_GRAPH_BATCHES',os.environ.get('MGBFS_CUDA_GRAPH_BATCHES'))
     if explicit_graph is not None:
         cfg['env'].setdefault('MGBFS_CUDA_GRAPH_BATCHES',explicit_graph)
@@ -225,8 +228,10 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
         ceiling = 600 if order*width > comparison_bytes else 90
         allowance = min(ceiling,max(0,remaining*.1))
         calibration_deadline=time.time()+allowance
+        calibration_started=time.monotonic()
         decision=calibrate(cfg,source,case.parent/(case.name+'-graph-calibration'),runtime,
             deadline=calibration_deadline,cancelled=cancelled)
+        cfg['automatic_phase_seconds']['graph_calibration']=time.monotonic()-calibration_started
         decision['startup_budget_seconds']=allowance
         cfg['graph_profile_selection']=decision
         cfg['env']['MGBFS_CUDA_GRAPH_BATCHES']=str(decision['graph_batches'])
