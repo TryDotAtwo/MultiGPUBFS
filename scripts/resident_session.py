@@ -78,6 +78,7 @@ class Session:
 
     def _start(self, command, env):
         self.world = int(env['MGBFS_BENCH_WORLD_SIZE'])
+        self.identity = self._identity(command, env)
         self.directory = self.root/f'generation-{self.generation}'
         self.directory.mkdir()
         self.generation += 1
@@ -88,6 +89,13 @@ class Session:
         self.sequence = 0
         self.router = threading.Thread(target=self._route, daemon=True)
         self.router.start()
+
+    @staticmethod
+    def _identity(command, env):
+        cli = command.index('--no-python')+1
+        return (tuple(command[:cli+1]), env['MGBFS_BENCH_WORLD_SIZE'],
+            env.get('MGBFS_TRANSPORT_BACKEND'),env.get('CUDA_VISIBLE_DEVICES'),
+            tuple(sorted((k,v) for k,v in env.items() if k.startswith('NCCL_'))))
 
     def _route(self):
         process = self.process
@@ -120,6 +128,8 @@ class Session:
     def launch(self, command, env):
         if self.job is not None and self.job.returncode is None:
             raise RuntimeError('resident session already has an active job')
+        if self.process is not None and self.identity != self._identity(command, env):
+            self._stop()
         # Query error sentinel is recoverable; all other failures exit workers.
         if self.job is not None and self.job.returncode:
             if not (self.query_job and self.job.errors ==

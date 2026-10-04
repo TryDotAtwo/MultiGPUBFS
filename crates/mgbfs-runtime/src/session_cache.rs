@@ -2,7 +2,6 @@
 use std::{cell::RefCell, ffi::c_void};
 use mgbfs_cuda::ffi::*;
 use mgbfs_cuda::native_owner::cudaFreeHost;
-#[derive(Default)]
 struct Cache {
     enabled: bool,
     shape: String,
@@ -15,6 +14,15 @@ struct Cache {
     permit_comm: bool,
     #[cfg(feature = "library-owner")]
     pool: Option<(*mut c_void, u64)>,
+}
+impl Default for Cache {
+    fn default() -> Self {
+        Self { enabled:false, shape:String::new(), buffers:Vec::new(), pinned:Vec::new(),
+            comm:std::ptr::null_mut(), buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,
+            #[cfg(feature = "library-owner")]
+            pool:None,
+        }
+    }
 }
 impl Cache {
     fn release_storage(&mut self) {
@@ -118,6 +126,7 @@ pub fn pool_take(bytes: u64) -> Option<*mut c_void> {
         else { None }
     })
 }
+#[cfg(target_os = "linux")]
 pub fn stats() -> serde_json::Value {
     CACHE.with(|c| { let c = c.borrow();serde_json::json!({
         "buffer_hits":c.buffer_hits,"comm_hits":c.comm_hits,"pool_hits":c.pool_hits,
