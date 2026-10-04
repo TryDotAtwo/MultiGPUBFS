@@ -16,20 +16,23 @@ def read_exact(stream, size):
     return b''.join(chunks)
 
 
-def pack_batch(raw, count, n):
-    if not 1 <= n <= 32 or len(raw) != count * n:
+def pack_batch(raw, count, n, bits_per_symbol=4):
+    if not 1 <= n <= 128 or len(raw) != count * n or bits_per_symbol not in (4,8):
         raise ValueError('word shape')
     symbols = np.frombuffer(raw, dtype=np.uint8).reshape(count, n)
-    if np.any(symbols > 15):
+    if np.any(symbols >= 1 << bits_per_symbol):
         raise ValueError('alphabet exceeds four bits')
-    width = 8 if n <= 16 else 16
+    width = ((n*bits_per_symbol+63)//64)*8
     result = np.zeros((count, width), dtype=np.uint8)
-    for i in range(n):
-        result[:, i // 2] |= symbols[:, i] << (4 * (i % 2))
+    if bits_per_symbol == 8:
+        result[:, :n] = symbols
+    else:
+        for i in range(n):
+            result[:, i // 2] |= symbols[:, i] << (4 * (i % 2))
     return result.tobytes()
 
 
-def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024):
+def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per_symbol=4):
     """Callback only after checksummed layer commit; returns run receipt.
 
     Incomplete final layer is removed on EOF/error. Root belongs to one rank.
@@ -63,7 +66,7 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024):
                 if output is None:
                     path = root / f'layer-{depth:06d}.bin'
                     output = path.open('xb')
-                output.write(pack_batch(payload[:count*n], count, n))
+                output.write(pack_batch(payload[:count*n], count, n, bits_per_symbol))
                 rows += count
             elif kind == 2:
                 if size != 0 or count != rows:

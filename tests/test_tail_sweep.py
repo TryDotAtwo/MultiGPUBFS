@@ -33,8 +33,8 @@ class SweepTests(unittest.TestCase):
         script=Path(__file__).resolve().parents[1]/'scripts/sweep_tail_bfs.py'
         result=subprocess.run([sys.executable,str(script),'--plan-only'],capture_output=True,text=True,check=True)
         grid=json.loads(result.stdout)
-        self.assertEqual({tuple(pair) for pair in grid},set(pairs(2,32)))
-        self.assertEqual(len(grid),527)
+        self.assertEqual({tuple(pair) for pair in grid},set(pairs(2,128)))
+        self.assertEqual(len(grid),8255)
         self.assertLess(grid.index([16,1]),grid.index([17,1]))
         self.assertLess(grid.index([16,1]),grid.index([16,2]))
 
@@ -119,13 +119,13 @@ class SweepTests(unittest.TestCase):
             path.write_text(json.dumps(dict(status='COMPLETE',last_completed_layer=0,stop_reason='exhausted')))
             return path
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);grid=automatic_pairs()
+            root=Path(tmp);grid=automatic_pairs(2,8)
             ledger=execute({'run_id':'auto'},root,root,{},grid,120,fake)
-            expected={pair for pair in pairs() if unsupported_reason(*pair) is None}
+            expected={pair for pair in pairs(2,8) if unsupported_reason(*pair) is None}
             self.assertEqual(set(calls),expected)
             self.assertEqual(len(calls),len(expected))
             self.assertEqual(ledger['pending'],[])
-            self.assertEqual(len(ledger['cases']),527)
+            self.assertEqual(len(ledger['cases']),35)
 
     def test_bounds(self):
         self.assertEqual(pairs(3,4,2,3),[(3,2),(3,3),(4,2),(4,3)])
@@ -151,8 +151,8 @@ class SweepTests(unittest.TestCase):
 
     def test_unsupported(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ledger=execute({},Path(tmp),Path(tmp),{},[(32,1)],10,
+            ledger=execute({},Path(tmp),Path(tmp),{},[(129,1)],10,
                            lambda *args: self.fail('unsupported case executed'))
-            self.assertFalse(ledger['cases']['n32-m1']['attempted'])
+            self.assertFalse(ledger['cases']['n129-m1']['attempted'])
 
 if __name__=='__main__': unittest.main()

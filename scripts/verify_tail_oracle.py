@@ -23,6 +23,7 @@ def verify(root):
         visited.update(frontier)
     actual = [set() for _ in expected]
     width = manifest['packing']['bytes_per_state']
+    bits = manifest['packing'].get('bits_per_symbol',4)
     for entry in manifest['files']:
         if not entry['full_layer']:
             raise ValueError('partial layer in complete archive')
@@ -31,9 +32,9 @@ def verify(root):
             raise ValueError('checksum/size')
         for offset in range(0,len(data),width):
             value = int.from_bytes(data[offset:offset+width],'little')
-            if value >> (4*n):
+            if value >> (bits*n):
                 raise ValueError('nonzero padding')
-            state = tuple((value>>(4*i))&15 for i in range(n))
+            state = tuple((value>>(bits*i))&((1<<bits)-1) for i in range(n))
             if state in actual[entry['depth']]:
                 raise ValueError('duplicate state')
             actual[entry['depth']].add(state)

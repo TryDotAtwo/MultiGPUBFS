@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 /// L/R cyclic position shifts and X swapping positions 0/1. This is a
 /// Schreier graph of words, not a group of invertible state matrices.
-pub struct LrxMultiset { start: Vec<u8>, order: u64 }
+pub struct LrxMultiset { start: Vec<u8>, order: u64, order_words: Vec<u64> }
 impl LrxMultiset {
     pub fn from_label(label: &str) -> Result<Self> {
         let (n,r) = label.strip_prefix("lrx").and_then(|s| s.split_once('r'))
@@ -29,13 +29,28 @@ impl LrxMultiset {
         if !(2..=255).contains(&n) || repeated == 0 || repeated > n {
             return Err("LRX_MULTISET_SHAPE".into());
         }
-        let order = ((repeated + 1)..=n).try_fold(1u64, |a,b|
-            a.checked_mul(b as u64).ok_or("LRX_MULTISET_ORDER_OVERFLOW"))?;
+        // Exact startup-only arithmetic. CUCO uses full word equality, not
+        // this mathematical orbit number as a device key.
+        let mut order_words = vec![1u64];
+        for factor in (repeated + 1)..=n {
+            let mut carry = 0u128;
+            for word in &mut order_words {
+                let product = u128::from(*word) * factor as u128 + carry;
+                *word = product as u64;
+                carry = product >> 64;
+            }
+            if carry != 0 { order_words.push(carry as u64); }
+        }
+        // The existing native allocation/planning ABI accepts a u64 upper
+        // bound. Saturation does not discard the exact orbit metadata.
+        let order = if order_words.len() == 1 { order_words[0] } else { u64::MAX };
         let start = (0..n).map(|i| i.min(n-repeated) as u8).collect();
-        Ok(Self { start, order })
+        Ok(Self { start, order, order_words })
     }
     pub fn start(&self) -> &[u8] { &self.start }
     pub fn order(&self) -> u64 { self.order }
+    pub fn order_words(&self) -> &[u64] { &self.order_words }
+    pub fn order_fits_u64(&self) -> bool { self.order_words.len() == 1 }
     pub fn successor(&self, state: &[u8], generator: usize) -> Result<Vec<u8>> {
         let mut canonical = state.to_vec();
         canonical.sort_unstable();

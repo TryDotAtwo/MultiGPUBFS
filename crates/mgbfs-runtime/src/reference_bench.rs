@@ -693,6 +693,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
             value["start_state"] = serde_json::json!(word.start());
             value["expected_unique_states"] = serde_json::json!(word.order());
+            value["expected_unique_states_u64_is_bound"] = serde_json::json!(!word.order_fits_u64());
+            value["expected_unique_states_words_le"] = serde_json::json!(word.order_words());
             value["generators"] = serde_json::json!(["L", "R", "X"]);
         }
         value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");

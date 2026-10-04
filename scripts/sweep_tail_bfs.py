@@ -10,20 +10,19 @@ from bfs_tail_archive import atomic_json
 from run_tail_bfs import run
 
 
-def pairs(n_min=2,n_max=32,m_min=1,m_max=None):
-    if not 2<=n_min<=n_max<=32 or m_min<1 or (m_max is not None and m_max<m_min):
+def pairs(n_min=2,n_max=128,m_min=1,m_max=None):
+    if not 2<=n_min<=n_max<=128 or m_min<1 or (m_max is not None and m_max<m_min):
         raise ValueError('invalid finite sweep bounds')
     return [(n,m) for n in range(n_min,n_max+1)
             for m in range(m_min,min(n,m_max if m_max is not None else n)+1)]
 
 
 def unsupported_reason(n,r):
-    if n-r+1>16:return 'alphabet exceeds four bits'
-    if math.factorial(n)//math.factorial(r)>=2**64:return 'native orbit count exceeds u64'
+    if not 2<=n<=128 or not 1<=r<=n:return 'outside supported n/r domain'
     return None
 
 
-def automatic_pairs(n_min=2,n_max=32,r_min=1,r_max=None):
+def automatic_pairs(n_min=2,n_max=128,r_min=1,r_max=None):
     # Ascend n within every independent fixed-r branch.
     return pairs(n_min,n_max,r_min,r_max)
 
@@ -160,7 +159,7 @@ def main():
     p.add_argument('--source',type=Path)
     p.add_argument('--root',type=Path)
     p.add_argument('--n-min',type=int,default=2)
-    p.add_argument('--n-max',type=int,default=32)
+    p.add_argument('--n-max',type=int,default=128)
     p.add_argument('--r-min','--m-min',dest='m_min',type=int,default=1)
     p.add_argument('--r-max','--m-max',dest='m_max',type=int)
     p.add_argument('--deadline-seconds',type=float)

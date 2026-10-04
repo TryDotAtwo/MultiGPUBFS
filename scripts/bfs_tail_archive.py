@@ -10,21 +10,23 @@ import os
 import shutil
 import uuid
 from pathlib import Path
+try:
+    from .state_layout import state_layout
+except ImportError:
+    from state_layout import state_layout
 
 GB = 1_000_000_000
 
 
 def packed_width(n, alphabet):
-    if not 1 <= n <= 32 or not 1 <= alphabet <= 16:
-        raise ValueError("four-bit packing requires n<=32 and alphabet<=16")
-    return 8 if n <= 16 else 16
+    return state_layout(n, alphabet)['bytes_per_state']
 
 
 def pack_state(symbols):
-    width = packed_width(len(symbols), max(symbols, default=0) + 1)
-    if any(type(x) is not int or x < 0 or x > 15 for x in symbols):
-        raise ValueError("symbol outside [0,15]")
-    return sum(x << (4 * i) for i, x in enumerate(symbols)).to_bytes(width, "little")
+    if any(type(x) is not int or x < 0 for x in symbols):
+        raise ValueError("nonnegative integer symbols required")
+    layout = state_layout(len(symbols), max(symbols, default=0) + 1)
+    return sum(x << (layout['bits_per_symbol'] * i) for i, x in enumerate(symbols)).to_bytes(layout['bytes_per_state'], "little")
 
 
 def atomic_json(path, value):
@@ -70,8 +72,8 @@ class TailArchive:
         self.closed = False
         self.manifest = dict(schema=1, status="INCOMPLETE", last_completed_layer=-1,
             stop_reason="running", graph=dict(n=n, r=r, start=list(start), actions=actions),
-            packing=dict(bytes_per_state=self.width, bits_per_symbol=4,
-                         byte_order="little", symbol_order="symbol i at bits 4*i", padding="zero"),
+            packing=dict(**state_layout(n,max(start,default=0)+1),
+                         byte_order="little", symbol_order="symbol i at bits bits_per_symbol*i", padding="zero"),
             program_commit=program_commit, launch_config=launch_config,
             vram_sampling_interval_seconds=sample_interval_seconds,
             byte_unit="decimal GB", layers=[], files=[])

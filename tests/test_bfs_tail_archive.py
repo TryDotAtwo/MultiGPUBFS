@@ -15,8 +15,7 @@ class TailTests(unittest.TestCase):
     def test_packing(self):
         self.assertEqual(pack_state([1, 2, 3]), bytes.fromhex('2103000000000000'))
         self.assertEqual(packed_width(17, 16), 16)
-        with self.assertRaises(ValueError):
-            packed_width(32, 17)
+        self.assertEqual(packed_width(32,17),32)
 
     def test_complete_keeps_three_and_byte_threshold(self):
         with tempfile.TemporaryDirectory() as d:

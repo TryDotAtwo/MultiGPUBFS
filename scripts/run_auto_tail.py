@@ -215,7 +215,8 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
             and 'MGBFS_CUDA_GRAPH_BATCHES' not in cfg['env']):
         from calibrate_graph_profile import calibrate
         remaining=deadline-time.time()
-        width = 8 if cfg['n'] <= 16 else 16
+        from bfs_tail_archive import packed_width
+        width = packed_width(cfg['n'], cfg['n']-cfg['r']+1)
         comparison_bytes = min(512<<20, cfg.get('host_available_bytes',8<<30)//16)
         order = math.factorial(cfg['n'])//math.factorial(cfg['r'])
         # Large admitted buffers and prefix verification took several minutes

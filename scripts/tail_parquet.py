@@ -40,7 +40,7 @@ def convert(root, destination, *, shard_bytes=512_000_000, row_group_rows=262144
     destination = Path(destination)
     manifest = json.loads((root / 'manifest.json').read_text())
     width = manifest['packing']['bytes_per_state']
-    if width not in (8, 16):
+    if type(width) is not int or width < 8 or width > 128 or width % 8:
         raise ValueError('unsupported packed width')
     destination.mkdir(parents=True, exist_ok=False)
     schema = pa.schema([

@@ -133,10 +133,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     if os.name != 'posix':
         raise ValueError('Linux required')
     n, r, world = config['n'], config['r'], config.get('world', 2)
-    if not 2 <= n <= 32 or not 1 <= r <= n or world not in (1, 2, 4, 8):
+    if not 2 <= n <= 128 or not 1 <= r <= n or world not in (1, 2, 4, 8):
         raise ValueError('graph/topology')
-    if n-r+1 > 16:
-        raise ValueError('alphabet does not fit four bits')
     root.mkdir(parents=True, exist_ok=False)
     source = source.resolve()
     commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
@@ -156,7 +154,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     # Native CLI writes rank-N.json into this shared output directory.
     command[-1] = str(root/'result')
     start = list(range(n-r+1)) + [n-r]*(r-1)
+    from state_layout import orbit_layout
     saved = dict(config, command=command, binary_sha256=binary_sha,
+        orbit_layout=orbit_layout(n,r),
         runtime_paths=runtime_env,
         gpu_inventory=subprocess.check_output(['nvidia-smi',
             '--query-gpu=index,uuid,name,memory.total,driver_version',
@@ -189,7 +189,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         def read_rank(rank=rank, reader=reader):
             try:
                 receipt = consume(reader, root/f'spool-{rank}', n,
-                    lambda depth,count,path,digest: messages.put(('layer',rank,depth,count,path,digest)))
+                    lambda depth,count,path,digest: messages.put(('layer',rank,depth,count,path,digest)),
+                    bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
                 messages.put(('receipt',rank,receipt))
             except BaseException as error:
                 messages.put(('error',rank,str(error)))

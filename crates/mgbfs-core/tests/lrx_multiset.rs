@@ -30,7 +30,7 @@ fn moves_act_on_positions_and_preserve_repetitions() {
 
 #[test]
 fn malformed_degree_multiplicity_and_overflow_are_rejected() {
-    for (n, repeated) in [(0,4), (3,4), (15,0), (21,1), (257,4)] {
+    for (n, repeated) in [(0,4), (3,4), (15,0), (257,4)] {
         assert!(LrxMultiset::new(n, repeated).is_err());
     }
     assert_eq!(LrxMultiset::new(4,4).unwrap().exact_layers(1).unwrap().len(), 1);
@@ -51,6 +51,19 @@ fn reference_label_and_generator_matrices_preserve_the_word_action() {
     for bad in ["s15", "lrx15", "lrx15r0", "lrx15r4junk"] {
         assert!(LrxMultiset::from_label(bad).is_err());
     }
+}
+
+#[test]
+fn wide_orbit_is_exact_in_aligned_u64_words() {
+    let graph = LrxMultiset::new(27,12).unwrap();
+    let expected = (13u128..=27).product::<u128>();
+    assert_eq!(graph.order_words(), &[expected as u64, (expected >> 64) as u64]);
+    assert!(!graph.order_fits_u64());
+    assert_eq!(graph.order(), u64::MAX);
+    let easy = LrxMultiset::new(128,127).unwrap();
+    assert_eq!(easy.order_words(), &[128]);
+    assert_eq!(easy.exact_layers(128).unwrap().iter().map(Vec::len).sum::<usize>(),128);
+    assert!(LrxMultiset::new(128,1).unwrap().order_words().len()>2);
 }
 
 #[test]

@@ -63,7 +63,8 @@ def calibrate(config, source, root, runtime, *, deadline, cancelled=None,
     decision = dict(graph_batches=0, policy='matched-complete-archive-v1',
                     status='NOT_CALIBRATED', samples=[])
     order = math.factorial(config['n']) // math.factorial(config['r'])
-    width = 8 if config['n'] <= 16 else 16
+    from bfs_tail_archive import packed_width
+    width = packed_width(config['n'], config['n']-config['r']+1)
     if config['env'].get('MGBFS_TRANSPORT_BACKEND') != 'NCCL_LSA':
         decision['reason'] = 'full-window Graph requires NCCL_LSA'
     elif order < config['world'] * config.get('batch',1) * 32:

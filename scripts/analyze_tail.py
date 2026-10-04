@@ -83,8 +83,10 @@ def iter_case_batches(manifest, filesystem, payload_prefix='', *, depths=None,
                     yield selected
 
 
-def unpack_state(state, n):
+def unpack_state(state, n, bits_per_symbol=4):
     """Low nibble is the earlier symbol; trailing padding is excluded."""
-    if not 2 <= n <= 32 or len(state) != (8 if n <= 16 else 16):
+    if not 2 <= n <= 128 or bits_per_symbol not in (4,8,16,32,64) or len(state) != ((n*bits_per_symbol+63)//64)*8:
         raise ValueError('packed state shape')
-    return tuple((state[index//2] >> (4*(index%2))) & 15 for index in range(n))
+    value=int.from_bytes(state,'little')
+    mask=(1<<bits_per_symbol)-1
+    return tuple((value>>(bits_per_symbol*index)) & mask for index in range(n))

@@ -93,7 +93,7 @@ def merge(members, destination, prefix, *, shard_bytes=512_000_000):
     if len(manifests) != len(members) or len(graphs) != len(members):
         raise ValueError('duplicate cohort case/graph')
     widths = {m['packing']['bytes_per_state'] for m in manifests.values()}
-    if len(widths) != 1 or next(iter(widths)) not in (8, 16) or shard_bytes <= 0:
+    if len(widths) != 1 or not 8 <= next(iter(widths)) <= 128 or next(iter(widths)) % 8 or shard_bytes <= 0:
         raise ValueError('cohort packing/bounds')
     limit = max(1, shard_bytes//(next(iter(widths))+14))
     writer, path, count, spans = None, None, 0, []
