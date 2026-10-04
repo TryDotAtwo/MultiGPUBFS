@@ -14,9 +14,9 @@ import sys
 import tempfile
 import time
 
-SOURCE = "bd294070c77f8be27972d089fb5207ac1a838b73"
+SOURCE = "7815d1766b4037054f52f68f67b948fb593dc51e"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "typed_warmup_gate"
+MODE = "macro_capture_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
