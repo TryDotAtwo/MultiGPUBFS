@@ -126,7 +126,8 @@ def run_window_process_pair(command, cwd, env, output, timeout=120, required_sta
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
     if not require_window and required_stage != 'device_comm_only_create':
         raise ValueError('WINDOWLESS_PROBE_REQUIRES_DEVICE_ONLY_STAGE')
-    scripts = str(Path(__file__).resolve().parents[2] / 'scripts')
+    # Kaggle relocates the uploaded script; cwd is the pinned source checkout.
+    scripts = str(Path(cwd).resolve() / 'scripts')
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
     from process_scope import spawn_group, stop_group

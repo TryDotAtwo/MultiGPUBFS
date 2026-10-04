@@ -15,6 +15,27 @@ spec.loader.exec_module(gate)
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_relocated_notebook_loads_supervisor_from_checkout(self):
+        root = Path(__file__).resolve().parents[1]
+        # Kaggle executes the uploaded script outside its checked-out source.
+        # A fresh interpreter prevents prior imports from masking this failure.
+        code = """
+import importlib.util, os, sys
+from pathlib import Path
+root, output = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('gate', root/'kaggle/lsa-bfs-gate/kernel.py')
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+gate.__file__ = str(output/'uploaded/script.py')
+command = [sys.executable, '-c', "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' mode=nonblocking stage=window_register result=PASS')"]
+row = gate.run_window_process_pair(command, root, dict(os.environ), output/'logs')
+assert row['pass'] and row['returncodes'] == [0, 0], row
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-c', code, str(root), directory],
+                cwd=directory, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_device_only_probe_requires_both_activation_markers_without_window(self):
         command = [sys.executable, '-c',
             "import os; print('rank='+os.environ['MGBFS_WINDOW_RANK']+' stage=device_comm_only_create result=PASS')"]
