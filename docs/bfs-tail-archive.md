@@ -15,8 +15,8 @@ The program inspects free memory on every visible GPU, uses the smallest free
 budget, and chooses each pair's capacity automatically. Sizing leaves explicit
 headroom and is conservative; it is not a proof of maximum hardware capacity.
 Supported pairs are discovered in increasing n, with resource-stop pruning
-independent for each r. Packing/u64 exclusions and deadline-pending pairs remain
-explicit in the sweep ledger.
+independent for each r. All pairs in `2 <= n <= 128, 1 <= r <= n` are format
+supported. Resource-pruned and deadline-pending pairs remain explicit in the ledger.
 
 SIGTERM/SIGINT sent to the Python launcher request controlled cancellation.
 The launcher terminates the native process group, drains whole committed wire
@@ -169,8 +169,9 @@ Each pair gets its own run directory and HF run ID. `sweep.json` records
 COMPLETE/INCOMPLETE, last completed layer and reason per attempted pair,
 unsupported pairs, and the remaining unstarted pairs. Restarting with the
 identical configuration resumes pending pairs without overwriting earlier
-runs. The alphabet must fit four bits and the native orbit count must fit u64;
-unsupported pairs are explicitly recorded, never claimed as completed.
+runs. Symbol storage automatically selects 4/8/16/... bits and rounds the state
+to whole aligned u64 words. Orbit ordinals also use as many u64 words as needed;
+neither a four-bit alphabet nor a single-word orbit is a current format limit.
 The finite GPU grid for 2<=n<=15 and 1<=m<=n executed all 119 pairs on two
 RTX 3090 GPUs: 93 COMPLETE and 26 INCOMPLETE with 256 archive ring slots.
 Rerunning those 26 pairs with 2048 host archive ring slots completed eight

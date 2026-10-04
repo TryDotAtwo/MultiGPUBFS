@@ -264,6 +264,7 @@ mod worker_failure_tests {
         let second=archive.acquire().unwrap();
         let error=archive.acquire().err().unwrap();
         assert!(error.starts_with("ARCHIVE_PIN_RING_FATAL:"));
+        archive.layer(0,0).unwrap();
         archive.finish().unwrap();
         drop(first);drop(second);
     }
