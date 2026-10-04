@@ -26,6 +26,10 @@ static void runtime(cudaError_t rc, const char* stage) {
   if (rc != cudaSuccess)
     throw std::runtime_error(std::string(stage) + ":" + cudaGetErrorString(rc));
 }
+static void entering(int rank, const char* stage) {
+  std::printf("rank=%d stage=%s result=ENTER\n", rank, stage);
+  std::fflush(stdout);
+}
 struct Fd {
   int value = -1;
   ~Fd() { if (value >= 0) close(value); }
@@ -108,6 +112,7 @@ int main(int argc, char** argv) {
   const std::string path = std::string(path_env) + ".socket";
   bool owns_path = false;
   try {
+    entering(rank, "context");
     runtime(cudaSetDevice(rank), "set_device");
     runtime(cudaFree(nullptr), "context");
     Fd connection, listener;
@@ -146,21 +151,27 @@ int main(int argc, char** argv) {
     prop.location.id = rank;
     prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     driver(cuMemGetAllocationGranularity(&own.bytes, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM), "granularity");
+    entering(rank, "local_create");
     driver(cuMemCreate(&own.handle, own.bytes, &prop, 0), "create");
+    entering(rank, "local_map");
     own.map(rank);
     const unsigned expected = 100u + rank;
     // Initialize before export; diagnostic synchronizations are intentional.
+    entering(rank, "initialize");
     driver(cuMemsetD32(own.address, expected, own.bytes / sizeof(unsigned)), "initialize");
     runtime(cudaDeviceSynchronize(), "initialized");
     std::printf("rank=%d stage=vmm_local_initialized result=PASS\n", rank); std::fflush(stdout);
     if (!local) {
       Fd exported, imported;
+      entering(rank, "export_exchange");
       driver(cuMemExportToShareableHandle(&exported.value, own.handle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0), "export");
       send_fd(connection.value, exported.value, own.bytes);
       imported.value = receive_fd(connection.value, own.bytes);
       peer.bytes = own.bytes;
+      entering(rank, "peer_import");
       driver(cuMemImportFromShareableHandle(&peer.handle, reinterpret_cast<void*>(static_cast<intptr_t>(imported.value)),
              CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR), "import");
+      entering(rank, "peer_map");
       peer.map(rank);
       barrier(connection.value);
     }
@@ -169,6 +180,7 @@ int main(int argc, char** argv) {
     if (local) {
       driver(cuMemsetD32(own.address + sizeof(unsigned), expected ^ 1u, 1), "local_peer_initialize");
     }
+    entering(rank, "check_launch");
     check_values<<<1,32>>>(own_ptr, local ? own_ptr + 1 : reinterpret_cast<unsigned*>(peer.address),
                           own_ptr + 2, expected);
     runtime(cudaGetLastError(), "check_launch");
