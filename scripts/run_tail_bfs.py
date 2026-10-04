@@ -255,6 +255,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     reason, failure, deferred_error = 'running', None, None
     traversal_complete=True
     cancellation_error, cancellation_started = None, None
+    ready = False
     try:
         while True:
             now = time.monotonic()
@@ -271,7 +272,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             if publisher and publisher.error:
                 raise RuntimeError('HF background upload failed')
             try:
-                message = messages.get(timeout=.05)
+                # A committed layer may leave further complete layers in pending.
+                # Drain those immediately instead of sleeping 50 ms per layer.
+                message = messages.get(timeout=0 if ready else .05)
             except queue.Empty:
                 message = None
             if message:
