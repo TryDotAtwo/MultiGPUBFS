@@ -30,4 +30,12 @@ MODE=typed_rank_gate does not run Nsight Systems. No timeline evidence
 is claimed for v97. The full small-output download remains in progress;
 the six targeted failure summaries and twelve rank logs are already
 retained. Do not replace this notebook until the outstanding download
-has completed. Nested fault-scenario counts require separate verification.
+has completed.
+
+Subsequent verification: the complete small-output download finished and
+contains all 78 nested replay summaries. Across these summaries, 108
+injected asymmetric fault cases pass: admission, capacity, constructor,
+constructor_late, finish, owner, startup, worker_sync and worker_write.
+None required forced cleanup; none reported group_complete. The maximum
+observed case process time was 2.213 seconds (rounded upward). These are
+failure-protocol measurements, not BFS search-time benchmarks.
