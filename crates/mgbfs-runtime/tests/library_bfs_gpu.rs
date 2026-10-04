@@ -5,8 +5,17 @@ use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs}
 #[path = "support/route_archive.rs"]
 mod route_archive;
 
+// The library backend owns a process-global RMM resource. Independent Rust
+// test threads must not concurrently replace it. Real rank concurrency is
+// tested in separate processes, not by sharing that resource in this binary.
+static GPU_FIXTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn gpu_fixture() -> std::sync::MutexGuard<'static, ()> {
+    GPU_FIXTURE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn cuco_lsa_route_bank_capacity_failure_latches_after_reuse() {
+    let _fixture = gpu_fixture();
     // A missing device capacity decision or failure latch must fail this test.
     // U4/F2 has layers 1,3,5,8,11,...; an eight-state next frontier cannot
     // accept layer four. Batch one exercises bank reuse before that failure.
@@ -50,6 +59,7 @@ fn cuco_lsa_route_bank_capacity_failure_latches_after_reuse() {
 
 #[test]
 fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
+    let _fixture = gpu_fixture();
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
     for banks in [2, 3, 4] {
@@ -102,6 +112,7 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
 
 #[test]
 fn cuco_rank_dense_layers_match_full_state_oracle() {
+    let _fixture = gpu_fixture();
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
     let mut id = [0u8; 128];
@@ -138,6 +149,7 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
 
 #[test]
 fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
+    let _fixture = gpu_fixture();
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let mut id = [0u8; 128];
     assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
@@ -177,6 +189,7 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
 
 #[test]
 fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
+    let _fixture = gpu_fixture();
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
     for library_owner in [
