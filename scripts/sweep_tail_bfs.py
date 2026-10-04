@@ -76,6 +76,9 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             raise ValueError('resume configuration differs')
     else:
         ledger=dict(configuration=fingerprint,cases={})
+    # A storage/upload cycle resumes eligible pairs; its previous stop reason
+    # is historical and must not label the new pass.
+    ledger.pop('global_stop_reason',None)
     # Classify structural exclusions even when the compute deadline expires.
     for n,m in grid:
         reason=unsupported_reason(n,m)
@@ -113,7 +116,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             break
         config=copy.deepcopy(base)
         config.update(n=n,r=m,run_id=base.get('run_id','sweep')+'-'+key,
-                      timeout_seconds=min(base.get('timeout_seconds',300),remaining))
+                      timeout_seconds=remaining)
         unsupported=unsupported_reason(n,m)
         if unsupported:
             record=dict(status='INCOMPLETE',last_completed_layer=-1,reason=unsupported,

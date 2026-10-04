@@ -11,6 +11,7 @@ import os
 import subprocess
 import time
 import threading
+import shutil
 from pathlib import Path
 
 from bfs_tail_archive import atomic_json,TailArchive
@@ -90,6 +91,39 @@ class SweepPublisher:
         self.thread.join()
         if self.error:raise RuntimeError('background sweep publication failed') from self.error
         return self.receipt
+
+
+class EndUploadDiskAdmission:
+    """Reserve physical SSD space for the next tail and final Parquet conversion.
+
+    Only newly completed cases are read; there is no per-layer disk polling.
+    This is a conservative storage estimate, not a pair/state-count limit.
+    """
+    def __init__(self, root):
+        self.root=Path(root);self.seen=set();self.retained=0;self.largest_layer=0
+
+    def observe(self, ledger):
+        for key,record in ledger['cases'].items():
+            if key in self.seen or not record.get('attempted',False):continue
+            manifest=json.loads((self.root/key/'saved/manifest.json').read_text())
+            self.retained+=sum(entry['bytes'] for entry in manifest['files']
+                if (self.root/key/'saved'/entry['path']).exists())
+            width=manifest['packing']['bytes_per_state']
+            self.largest_layer=max(self.largest_layer,
+                max((layer['states']*width for layer in manifest['layers']),default=0))
+            self.seen.add(key)
+
+    def required_free_bytes(self):
+        # Parquet row metadata and a full next-case working tail/spools coexist
+        # with retained packed data until verified publication can release it.
+        return (2*self.retained+max(10_000_000_000,3*self.largest_layer)
+                +2*self.largest_layer+1_000_000_000+(64<<20))
+
+    def stop_reason(self):
+        free=shutil.disk_usage(self.root).free;required=self.required_free_bytes()
+        if free<required:
+            return f'SSD admission stopped compute for final upload: free={free} required={required}'
+        return None
 
 
 def device_budget(inventory):
@@ -253,7 +287,9 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
     remaining=deadline-time.time()
     if remaining<=0 or (cancelled and cancelled()):
         return startup_failure_snapshot(cfg,source,case,'automatic run deadline or cancellation before BFS')
-    cfg['timeout_seconds']=min(cfg.get('timeout_seconds',120),remaining)
+    # A pair has no independent time limit: only the externally authorized
+    # compute deadline/cancellation can stop the traversal and archive drain.
+    cfg['timeout_seconds']=remaining
     return run(cfg,source,case,runtime,cancelled=cancelled)
 
 
@@ -337,6 +373,8 @@ def main(cancelled=None):
     p.add_argument('--runtime-env',type=Path,required=True)
     p.add_argument('--root',type=Path,required=True)
     p.add_argument('--repo-id',required=True)
+    p.add_argument('--upload-mode',choices=('end','background'),default=None,
+        help='end (default): retain on SSD and upload after compute; background: publish closed cohorts while searching')
     p.add_argument('--deadline-unix',type=float,required=True)
     args = p.parse_args()
     if not math.isfinite(args.deadline_unix) or args.deadline_unix-time.time()<300:
@@ -361,7 +399,8 @@ def main(cancelled=None):
             inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
         from streamed_bfs_launcher import available_host_bytes
         runtime=json.loads(args.runtime_env.read_text())
-        base=dict(world=len(inventory),run_id=args.root.name,timeout_seconds=120,
+        base=dict(world=len(inventory),run_id=args.root.name,
+            upload_mode=args.upload_mode or 'end',
             archive_format='parquet_cohort',cohort_group_size=20,cohort_group_bytes=2_000_000_000,
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
@@ -376,7 +415,17 @@ def main(cancelled=None):
         base=select_transport(base,args.source,args.root/'transport-gate',runtime,
             deadline=min(args.deadline_unix-120,time.time()+60),cancelled=cancelled)
         atomic_json(config_path,base)
+    mode=args.upload_mode or base.get('upload_mode','end')
+    if base.get('upload_mode',mode)!=mode:
+        p.error('resume upload mode differs from saved configuration; use a new run root')
     runtime=json.loads(args.runtime_env.read_text())
+    disk_admission=EndUploadDiskAdmission(args.root) if mode=='end' else None
+    previous_ledger=args.root/'sweep.json'
+    if disk_admission and previous_ledger.exists():
+        disk_admission.observe(json.loads(previous_ledger.read_text()))
+    def compute_stop():
+        return ((cancelled() if cancelled else None)
+                or (disk_admission.stop_reason() if disk_admission else None))
     def publish_and_release(root, repo, api, deadline, *, ledger):
         from release_tail_cohorts import release
         receipt = publish(root, repo, api, deadline, ledger=ledger)
@@ -387,6 +436,9 @@ def main(cancelled=None):
     def progress(ledger):
         nonlocal last_published
         if publisher.error:raise RuntimeError('background publication failed') from publisher.error
+        if mode=='end':
+            disk_admission.observe(ledger)
+            return
         from tail_cohort import case_groups
         sealed_count = sum(len(members) for members, sealed in case_groups(args.root, ledger) if sealed)
         if sealed_count > last_published:
@@ -397,19 +449,41 @@ def main(cancelled=None):
     def adaptive(config,source,case,env):
         return run_adaptive(config,source,case,env,
                             deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)
-    # Each layer writes its bounded intermediate snapshot immediately.
-    # Completed cohorts publish in the background without per-layer quota storms.
-    remaining=args.deadline_unix-time.time()
-    publication_reserve=min(1200,remaining*.25)
-    ledger=None
+    # Each layer still writes an intermediate SSD snapshot. End mode uploads
+    # at a physical-storage boundary and resumes the same immutable ledger.
+    ledger=None;upload_cycles=[]
     try:
         from resident_session import resident
         import uuid
         with resident(args.root/('resident-'+uuid.uuid4().hex)):
-            ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
-                           remaining-publication_reserve,adaptive,on_progress=progress,should_stop=cancelled)
-        publisher.enqueue(ledger)
-        receipt=publisher.finish()
+            while True:
+                remaining=args.deadline_unix-time.time()
+                publication_reserve=min(1200,remaining*.25)
+                compute_started=time.time()
+                ledger=execute(base,args.source,args.root,runtime,automatic_pairs(),
+                    max(.001,remaining-publication_reserve),adaptive,
+                    on_progress=progress,should_stop=compute_stop)
+                compute_finished=time.time()
+                publisher.enqueue(ledger)
+                receipt=publisher.finish()
+                upload_cycles.append(dict(compute_started_at=compute_started,
+                    compute_finished_at=compute_finished,upload_finished_at=time.time(),
+                    stop_reason=ledger.get('global_stop_reason'),receipt=receipt))
+                atomic_json(args.root/'upload-cycles.json',upload_cycles)
+                reason=ledger.get('global_stop_reason','')
+                if (mode!='end' or not ledger['pending']
+                        or not reason.startswith('SSD admission stopped compute')
+                        or (cancelled and cancelled())
+                        or args.deadline_unix-time.time()<300):
+                    break
+                disk_admission=EndUploadDiskAdmission(args.root)
+                disk_admission.observe(ledger)
+                if disk_admission.stop_reason():
+                    ledger['global_stop_reason']='SSD admission cannot resume after verified upload'
+                    atomic_json(args.root/'sweep.json',ledger)
+                    break
+                publisher=SweepPublisher(args.root,args.repo_id,api,
+                    args.deadline_unix,publish_and_release)
         verified=verify_hf(args.root,args.repo_id,api,token)
     except BaseException as error:
         if not publisher.closed:
@@ -423,16 +497,17 @@ def main(cancelled=None):
         atomic_json(args.root/'automatic-report.json',dict(status='INCOMPLETE',
             pending=ledger['pending'],stop_reason=ledger.get('global_stop_reason'),
             publication_status='FAILED',failure=str(error),local_snapshots_retained=True,
-            background_publication_generations=publisher.generations))
+            upload_mode=mode,background_publication_generations=publisher.generations))
         raise
     report=dict(status='VERIFIED',pending=ledger['pending'],publication=receipt,
+        upload_cycles=upload_cycles,
         sweep_status='INCOMPLETE' if ledger['pending'] else 'COMPLETE',
         stop_reason=ledger.get('global_stop_reason'),
         verification=verified,resource_plan=base['resource_plan'],
         attempted=sum(x.get('attempted',False) for x in ledger['cases'].values()),
         complete=sum(x['status']=='COMPLETE' for x in ledger['cases'].values()),
         pruned=sum('pruned_by' in x for x in ledger['cases'].values()),
-        background_publication_generations=publisher.generations)
+        upload_mode=mode,background_publication_generations=publisher.generations)
     atomic_json(args.root/'automatic-report.json',report)
     api.upload_file(path_or_fileobj=str(args.root/'automatic-report.json'),
         repo_id=args.repo_id,repo_type='dataset',

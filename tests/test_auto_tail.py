@@ -194,6 +194,65 @@ class AutomaticPlanningTests(unittest.TestCase):
                 self.assertTrue(report['pending'])
                 self.assertEqual(json.loads((root/'sweep.json').read_text()),ledger)
 
+    def test_pair_uses_only_global_deadline_not_legacy_sixty_second_limit(self):
+        config=dict(n=12,r=4,world=2,timeout_seconds=60,graph_calibration=False,
+            env={},resource_plan=device_budget([{'free_bytes':12<<30}]))
+        with patch.object(run_auto_tail.time,'time',return_value=1000), \
+             patch.object(run_auto_tail,'run',return_value=Path('manifest')) as runner:
+            run_auto_tail.run_adaptive(config,Path('source'),Path('root/case'),{},deadline=8200)
+        self.assertEqual(runner.call_args.args[0]['timeout_seconds'],7200)
+
+    def test_end_upload_releases_then_resumes_pending_pairs_and_background_still_streams(self):
+        for mode in ('end','background'):
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);events=[];calls=[]
+                base=dict(resource_plan={},run_id='fixture',upload_mode=mode,cohort_group_size=1)
+                (root/'automatic-config.json').write_text(json.dumps(base));(root/'runtime.json').write_text('{}')
+                class Publisher:
+                    def __init__(self,*args):self.closed=False;self.error=None;self.generations=0
+                    def enqueue(self,ledger):events.append('enqueue')
+                    def finish(self):
+                        self.closed=True;self.generations+=1;events.append('uploaded_verified_released')
+                        for path in root.glob('n*-m*/saved/states.bin'):path.unlink(missing_ok=True)
+                        return {'receipt':'fixture'}
+                    def wait_for_capacity(self,*args,**kwargs):return True
+                def execute(base,source,runroot,runtime,grid,budget,runner,*,on_progress,should_stop):
+                    calls.append(len(calls)+1);events.append('compute-start')
+                    keys=['n2-m1'] if mode=='end' and len(calls)==1 else ['n2-m1','n3-m1']
+                    ledger=dict(configuration=dict(base=base,grid=[[2,1],[3,1]]),
+                        cases={key:dict(status='COMPLETE',attempted=True) for key in keys},
+                        pending=[[3,1]] if len(keys)==1 else [])
+                    if len(keys)==1:ledger['global_stop_reason']='SSD admission stopped compute fixture'
+                    for key in keys:
+                        saved=root/key/'saved';saved.mkdir(parents=True,exist_ok=True)
+                        if not (saved/'manifest.json').exists():
+                            (saved/'states.bin').write_bytes(bytes(8))
+                            (saved/'manifest.json').write_text(json.dumps(dict(
+                                packing={'bytes_per_state':8},layers=[{'states':1}],
+                                files=[dict(path='states.bin',bytes=8)])))
+                    on_progress(ledger);events.append('compute-finished')
+                    (root/'sweep.json').write_text(json.dumps(ledger));return ledger
+                args=['run_auto_tail','--source',str(root),'--runtime-env',str(root/'runtime.json'),
+                      '--root',str(root),'--repo-id','fixture','--deadline-unix',str(time.time()+3600)]
+                hub=SimpleNamespace(HfApi=lambda **kw:SimpleNamespace(upload_file=lambda **kw:None),get_token=lambda:'fixture')
+                with patch.object(sys,'argv',args),patch.dict(sys.modules,{'huggingface_hub':hub}), \
+                     patch.object(run_auto_tail,'os',SimpleNamespace(name='posix',environ=os.environ)), \
+                     patch.object(run_auto_tail,'SweepPublisher',Publisher), \
+                     patch.object(run_auto_tail,'execute',side_effect=execute), \
+                     patch.object(run_auto_tail,'verify_hf',return_value={'verified':True}), \
+                     patch.object(run_auto_tail.EndUploadDiskAdmission,'stop_reason',return_value=None), \
+                     patch('builtins.print'):
+                    run_auto_tail.main()
+                if mode=='end':
+                    self.assertEqual(len(calls),2)
+                    self.assertGreater(events.index('enqueue'),events.index('compute-finished'))
+                    self.assertLess(events.index('uploaded_verified_released'),events.index('compute-start',1))
+                else:
+                    self.assertEqual(len(calls),1)
+                    self.assertLess(events.index('enqueue'),events.index('compute-finished'))
+                report=json.loads((root/'automatic-report.json').read_text())
+                self.assertEqual(report['upload_mode'],mode);self.assertEqual(report['pending'],[])
+
     def test_uses_smallest_available_gpu_and_retains_headroom(self):
         p=device_budget([{'free_bytes':12<<30},{'free_bytes':8<<30}])
         self.assertEqual(p['free_bytes'],8<<30)
