@@ -21,6 +21,9 @@ pub(crate) struct Slot {
 unsafe impl Send for Slot {}
 impl Slot {
     fn new(bytes: usize) -> Result<Self> {
+        if let Some((ptr, ready)) = crate::session_cache::pinned_take(bytes) {
+            return Ok(Self {ptr,bytes,ready});
+        }
         let mut ptr = std::ptr::null_mut();
         let status = unsafe { cudaHostAlloc(&mut ptr, bytes, 0) };
         if status != 0 {
@@ -41,7 +44,8 @@ impl Drop for Slot {
     fn drop(&mut self) {
         unsafe {
             // Also protects queued slots dropped after a disk/queue failure.
-            cudaEventSynchronize(self.ready);
+            if cudaEventSynchronize(self.ready) == 0 &&
+                crate::session_cache::pinned_put(self.ptr,self.bytes,self.ready) { return; }
             cudaEventDestroy(self.ready);
             cudaFreeHost(self.ptr);
         }
@@ -81,6 +85,7 @@ impl PinnedArchive {
     ) -> Result<Self> {
         let plan = ArchiveRingPlan::new(width, rows, slots)?;
         let bytes = plan.slot_bytes;
+        crate::session_cache::prepare_pinned(bytes, slots);
         let pinned_bytes = plan.pinned_bytes;
         // Fail disk reservation/header validation before pinning host RAM.
         let mut archive = Archive::new_run_durable(extent, disk_bytes, width, config_digest)?;

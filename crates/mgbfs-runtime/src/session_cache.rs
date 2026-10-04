@@ -6,6 +6,7 @@ struct Cache {
     enabled: bool,
     shape: String,
     buffers: Vec<(*mut c_void, usize)>,
+    pinned: Vec<(*mut c_void, usize, *mut c_void)>,
     comm: *mut c_void,
     buffer_hits: u64,
     comm_hits: u64,
@@ -25,8 +26,33 @@ impl Cache {
 impl Drop for Cache {
     fn drop(&mut self) {
         self.release_storage();
+        for (ptr, _, event) in self.pinned.drain(..) { unsafe { cudaEventDestroy(event);cudaFreeHost(ptr); } }
         if !self.comm.is_null() { unsafe { mgbfs_nccl_destroy(self.comm); } }
     }
+}
+pub fn prepare_pinned(bytes: usize, slots: usize) {
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let mut keep = Vec::new();
+        for (ptr, n, event) in c.pinned.drain(..) {
+            if n == bytes && keep.len() < slots { keep.push((ptr,n,event)); }
+            else { unsafe { cudaEventDestroy(event);cudaFreeHost(ptr); } }
+        }
+        c.pinned = keep;
+    });
+}
+pub fn pinned_take(bytes: usize) -> Option<(*mut c_void,*mut c_void)> {
+    CACHE.with(|c| {
+        let mut c=c.borrow_mut();
+        let i=c.pinned.iter().position(|(_,n,_)| *n==bytes)?;
+        let (ptr,_,event)=c.pinned.swap_remove(i);Some((ptr,event))
+    })
+}
+pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void) -> bool {
+    CACHE.with(|c| {
+        let mut c=c.borrow_mut();if !c.enabled { return false; }
+        c.pinned.push((ptr,bytes,event));true
+    })
 }
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
 pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
