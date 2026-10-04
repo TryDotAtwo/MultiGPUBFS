@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-SOURCE = "bd294070c77f8be27972d089fb5207ac1a838b73"
+SOURCE = "a136204ab4a377e0655216d9a9e11640c51b5526"
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     gate.SOURCE = SOURCE
-    gate.MODE = "cuda_posix_import"
+    gate.MODE = "typed_sanitizer_version_gate"
     gate.main()
 
 
