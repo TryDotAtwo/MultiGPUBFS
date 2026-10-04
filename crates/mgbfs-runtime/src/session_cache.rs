@@ -12,13 +12,14 @@ struct Cache {
     comm_hits: u64,
     pool_hits: u64,
     permit_comm: bool,
+    nccl_id: Option<[u8;128]>,
     #[cfg(feature = "library-owner")]
     pool: Option<(*mut c_void, u64)>,
 }
 impl Default for Cache {
     fn default() -> Self {
         Self { enabled:false, shape:String::new(), buffers:Vec::new(), pinned:Vec::new(),
-            comm:std::ptr::null_mut(), buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,
+            comm:std::ptr::null_mut(), buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,nccl_id:None,
             #[cfg(feature = "library-owner")]
             pool:None,
         }
@@ -67,7 +68,16 @@ pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void) -> bool {
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
 pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
 pub fn enabled() -> bool { CACHE.with(|c| c.borrow().enabled) }
-pub fn permit_comm(value: bool) { CACHE.with(|c| c.borrow_mut().permit_comm = value); }
+pub fn permit_comm(value: bool) { CACHE.with(|c| {
+    let mut c=c.borrow_mut();c.permit_comm=value;if !value { c.nccl_id=None; }
+}); }
+pub fn bootstrap_id(create: impl FnOnce() -> mgbfs_core::Result<[u8;128]>) -> mgbfs_core::Result<[u8;128]> {
+    CACHE.with(|c| {
+        let mut c=c.borrow_mut();
+        if c.enabled { if let Some(id)=c.nccl_id { return Ok(id); } }
+        let id=create()?;if c.enabled { c.nccl_id=Some(id); }Ok(id)
+    })
+}
 pub fn begin(shape: String) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();

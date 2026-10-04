@@ -176,11 +176,13 @@ fn bootstrap(
         run_id: run_digest[..16].try_into().unwrap(),
     };
     crate::bootstrap::rendezvous(path, rank, world, identity, Duration::from_secs(60), || {
+        crate::session_cache::bootstrap_id(|| {
         let mut id = [0; 128];
         if unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) } != 0 {
             return Err("NCCL_ID".into());
         }
         Ok(id)
+        })
     })
 }
 fn used() -> Result<usize> {
