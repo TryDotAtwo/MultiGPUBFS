@@ -341,6 +341,28 @@ def main():
                     'compute-sanitizer-version').strip(),
             }
             save()
+        if MODE == 'cuda_posix_import':
+            binary = work / 'cuda-posix-import'
+            run([env['CUDACXX'], '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
+                 str(source / 'experiments/cuda_posix_import.cu'), '-lcuda', '-o', str(binary)],
+                'vmm-build')
+            report['scope'] = 'CUDA VMM local/import diagnostics; no NCCL or BFS acceptance'
+            report['vmm_cases'] = []
+            for case in vmm_probe_cases():
+                command = [str(binary), case['mode']]
+                if case['tool']:
+                    command = ['compute-sanitizer', '--tool', case['tool'],
+                               '--error-exitcode', '97'] + command
+                row = run_window_process_pair(command, source, env,
+                    logs / ('vmm-' + case['label']), timeout=180,
+                    required_stage='vmm_' + case['mode'], require_window=False)
+                row.update(case)
+                row['command'] = command
+                report['vmm_cases'].append(row)
+                (logs / 'vmm-cases.json').write_text(json.dumps(report['vmm_cases'], indent=2))
+            report['status'] = ('COMPLETE' if all(c['pass'] for c in report['vmm_cases'])
+                                else 'INCOMPLETE')
+            return
         venv = work / "venv"
         run([sys.executable, "-m", "venv", "--without-pip", str(venv)], "venv")
         python = str(venv / "bin/python")
@@ -448,28 +470,6 @@ def main():
             if completed.returncode != 0 or report["abort_isolation"]["passed_ranks"] != 2:
                 raise RuntimeError("NCCL_NONBLOCKING_ABORT_GATE")
             report["status"] = "COMPLETE"
-            return
-        if MODE == 'cuda_posix_import':
-            binary = work / 'cuda-posix-import'
-            run([env['CUDACXX'], '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
-                 str(source / 'experiments/cuda_posix_import.cu'), '-lcuda', '-o', str(binary)],
-                'vmm-build')
-            report['scope'] = 'CUDA VMM local/import diagnostics; no NCCL or BFS acceptance'
-            report['vmm_cases'] = []
-            for case in vmm_probe_cases():
-                command = [str(binary), case['mode']]
-                if case['tool']:
-                    command = ['compute-sanitizer', '--tool', case['tool'],
-                               '--error-exitcode', '97'] + command
-                row = run_window_process_pair(command, source, env,
-                    logs / ('vmm-' + case['label']), timeout=180,
-                    required_stage='vmm_' + case['mode'], require_window=False)
-                row.update(case)
-                row['command'] = command
-                report['vmm_cases'].append(row)
-                (logs / 'vmm-cases.json').write_text(json.dumps(report['vmm_cases'], indent=2))
-            report['status'] = ('COMPLETE' if all(c['pass'] for c in report['vmm_cases'])
-                                else 'INCOMPLETE')
             return
         if MODE in ("nccl_window_isolation", "nccl_window_nonblocking", "nccl_window_processes"):
             binary = work / "nccl-window-isolation"
