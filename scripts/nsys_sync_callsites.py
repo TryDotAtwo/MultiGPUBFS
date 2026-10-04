@@ -7,6 +7,27 @@ import sqlite3
 from pathlib import Path
 
 
+def phase_api(db, tables):
+    """Inclusive named ranges, matching CPU threads; nested rows are not additive."""
+    if 'NVTX_EVENTS' not in tables:
+        return dict(status='UNAVAILABLE', rows=[])
+    columns = {row[1] for row in db.execute('PRAGMA table_info(CUPTI_ACTIVITY_KIND_RUNTIME)')}
+    if 'globalTid' not in columns:
+        return dict(status='UNAVAILABLE', rows=[])
+    rows = db.execute('''
+        SELECT n.text,s.value,COUNT(*),SUM(a.end-a.start)
+        FROM NVTX_EVENTS n JOIN CUPTI_ACTIVITY_KIND_RUNTIME a
+          ON a.globalTid=n.globalTid AND a.start>=n.start AND a.end<=n.end
+        JOIN StringIds s ON s.id=a.nameId
+        WHERE n.text IN ('mgbfs.batch','mgbfs.FinalizeDepth','mgbfs.archive_d2h')
+          AND (s.value LIKE '%Synchronize%' OR s.value LIKE 'cudaMemcpy%')
+        GROUP BY n.text,s.value ORDER BY n.text,s.value
+    ''').fetchall()
+    return dict(status='MEASURED', scope='Thread-matched fully contained runtime API intervals; nested ranges overlap; not dependency proof',
+                rows=[dict(phase=phase,api=api,calls=calls,api_duration_ns=duration)
+                      for phase,api,calls,duration in rows])
+
+
 def summarize(database: Path) -> dict:
     with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as db:
         tables = {row[0] for row in db.execute(
@@ -63,9 +84,10 @@ def summarize(database: Path) -> dict:
             entry["api_duration_ns"] += duration
         return {
             "scope": "CUDA runtime sync/copy API callsites in captured window; profiler overhead applies",
-            "callchain_status": 'AVAILABLE' if 'CUDA_CALLCHAINS' in tables else 'UNAVAILABLE',
+            "callchain_status": 'AVAILABLE' if any(any(symbol for symbol in symbols) for symbols in chains.values()) else 'UNAVAILABLE',
             "api_names": [{"api": name, "calls": count} for name, count in api_names],
             "rows": sorted(grouped.values(), key=lambda row: (-row["calls"], row["api"])),
+            "phase_api": phase_api(db, tables),
         }
 
 

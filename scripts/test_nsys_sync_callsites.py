@@ -8,6 +8,23 @@ from nsys_sync_callsites import summarize
 
 
 class SyncCallsiteTest(unittest.TestCase):
+    def test_empty_callchain_table_does_not_claim_source_attribution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / 'empty-chains.sqlite'
+            with closing(sqlite3.connect(database)) as db:
+                db.executescript('''
+                    CREATE TABLE StringIds (id INTEGER, value TEXT);
+                    CREATE TABLE CUPTI_ACTIVITY_KIND_RUNTIME
+                        (nameId INTEGER, callchainId INTEGER, start INTEGER, end INTEGER);
+                    CREATE TABLE CUDA_CALLCHAINS
+                        (id INTEGER, stackDepth INTEGER, symbol INTEGER);
+                    INSERT INTO StringIds VALUES (1,'cudaStreamSynchronize');
+                    INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (1,NULL,0,10);
+                ''')
+            result = summarize(database)
+            self.assertEqual(result['callchain_status'], 'UNAVAILABLE')
+            self.assertEqual(result['rows'][0]['calls'], 1)
+
     def test_missing_callchains_keeps_counts_without_inventing_source_attribution(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / 'no-callchains.sqlite'
