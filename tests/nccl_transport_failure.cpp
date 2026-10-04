@@ -1,6 +1,7 @@
 // Compile the actual production wrapper against a deterministic NCCL test double.
 // This tests wrapper cleanup, not NCCL correctness or GPU communication.
 #include <cassert>
+#include <initializer_list>
 #include "../cuda/nccl_transport.cpp"
 int fail_stage = 0, group_depth = 0, send_calls = 0, recv_calls = 0, end_calls = 0;
 int abort_calls = 0, destroy_calls = 0, finalize_calls = 0;
