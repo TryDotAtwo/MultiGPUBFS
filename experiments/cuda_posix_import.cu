@@ -34,6 +34,10 @@ struct Fd {
   int value = -1;
   ~Fd() { if (value >= 0) close(value); }
 };
+struct Stream {
+  cudaStream_t value = nullptr;
+  ~Stream() { if (value) cudaStreamDestroy(value); }
+};
 static void ready(int fd, short events) {
   pollfd p{fd, events, 0};
   int rc;
@@ -98,13 +102,15 @@ struct Mapping {
   }
 };
 __global__ void check_values(const unsigned* own, const unsigned* peer,
-                             unsigned* result, unsigned expected) {
+                             unsigned* result, unsigned expected, unsigned peer_expected) {
   if (!blockIdx.x && !threadIdx.x)
-    *result = (own[0] == expected && peer[0] == (expected ^ 1u)) ? 0u : 1u;
+    *result = (own[0] == expected && peer[0] == peer_expected) ? 0u : 1u;
 }
 int main(int argc, char** argv) {
-  const bool local = argc == 2 && std::strcmp(argv[1], "local") == 0;
-  if (argc != 2 || (!local && std::strcmp(argv[1], "import") != 0)) return 1;
+  if (argc != 2 && argc != 3) return 1;
+  const bool local = std::strcmp(argv[1], "local") == 0;
+  const bool runtime_init = argc == 3 && std::strcmp(argv[2], "--runtime-init") == 0;
+  if ((!local && std::strcmp(argv[1], "import") != 0) || (argc == 3 && !runtime_init)) return 1;
   const char* rank_env = std::getenv("MGBFS_WINDOW_RANK");
   const char* path_env = std::getenv("MGBFS_WINDOW_BOOTSTRAP");
   if (!rank_env || !path_env || (std::strcmp(rank_env,"0") && std::strcmp(rank_env,"1"))) return 1;
@@ -155,12 +161,15 @@ int main(int argc, char** argv) {
     driver(cuMemCreate(&own.handle, own.bytes, &prop, 0), "create");
     entering(rank, "local_map");
     own.map(rank);
-    const unsigned expected = 100u + rank;
-    // Initialize before export; diagnostic synchronizations are intentional.
-    entering(rank, "initialize");
-    driver(cuMemsetD32(own.address, expected, own.bytes / sizeof(unsigned)), "initialize");
-    runtime(cudaDeviceSynchronize(), "initialized");
-    std::printf("rank=%d stage=vmm_local_initialized result=PASS\n", rank); std::fflush(stdout);
+    const unsigned expected = runtime_init ? (100u + rank) * 0x01010101u : 100u + rank;
+    const unsigned peer_expected = runtime_init ? (101u - rank) * 0x01010101u : 101u - rank;
+    if (!runtime_init) {
+      // Original v101 control: Driver API initialization before export.
+      entering(rank, "initialize");
+      driver(cuMemsetD32(own.address, expected, own.bytes / sizeof(unsigned)), "initialize");
+      runtime(cudaDeviceSynchronize(), "initialized");
+      std::printf("rank=%d stage=vmm_local_initialized result=PASS\n", rank); std::fflush(stdout);
+    }
     if (!local) {
       Fd exported, imported;
       entering(rank, "export_exchange");
@@ -175,14 +184,25 @@ int main(int argc, char** argv) {
       peer.map(rank);
       barrier(connection.value);
     }
+    Stream stream;
+    if (runtime_init) {
+      // NCCL-shaped order: mapping/import first, then runtime async memset.
+      entering(rank, "runtime_initialize_after_import");
+      runtime(cudaStreamCreateWithFlags(&stream.value, cudaStreamNonBlocking), "stream_create");
+      runtime(cudaMemsetAsync(reinterpret_cast<void*>(own.address), 100 + rank,
+                             own.bytes, stream.value), "runtime_memset");
+      runtime(cudaStreamSynchronize(stream.value), "runtime_initialized");
+      if (!local) barrier(connection.value); // Both exporters initialized before either read.
+      std::printf("rank=%d stage=vmm_runtime_initialized result=PASS\n", rank); std::fflush(stdout);
+    }
     // Result lives in our own initialized VMM allocation, not another allocator.
     auto* own_ptr = reinterpret_cast<unsigned*>(own.address);
     if (local) {
-      driver(cuMemsetD32(own.address + sizeof(unsigned), expected ^ 1u, 1), "local_peer_initialize");
+      driver(cuMemsetD32(own.address + sizeof(unsigned), peer_expected, 1), "local_peer_initialize");
     }
     entering(rank, "check_launch");
-    check_values<<<1,32>>>(own_ptr, local ? own_ptr + 1 : reinterpret_cast<unsigned*>(peer.address),
-                          own_ptr + 2, expected);
+    check_values<<<1,32,0,stream.value>>>(own_ptr, local ? own_ptr + 1 : reinterpret_cast<unsigned*>(peer.address),
+                                       own_ptr + 2, expected, peer_expected);
     runtime(cudaGetLastError(), "check_launch");
     runtime(cudaDeviceSynchronize(), "check_complete");
     unsigned result = 1;

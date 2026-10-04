@@ -166,8 +166,10 @@ def typed_warmup_cases(base):
 
 
 def vmm_probe_cases():
-    return [dict(mode=mode, tool=tool, label=f'{mode}-{tool or "plain"}')
+    return [dict(mode=mode, tool=tool, runtime_init=runtime_init,
+                 label=f'{mode}-{tool or "plain"}' + ('-runtime-init' if runtime_init else ''))
             for mode in ('local', 'import')
+            for runtime_init in (False, True)
             for tool in (None, 'memcheck', 'racecheck', 'initcheck', 'synccheck')]
 
 
@@ -364,6 +366,8 @@ def main():
             report['vmm_cases'] = []
             for case in vmm_probe_cases():
                 command = [str(binary), case['mode']]
+                if case['runtime_init']:
+                    command.append('--runtime-init')
                 if case['tool']:
                     command = ['compute-sanitizer', '--tool', case['tool'],
                                '--error-exitcode', '97'] + command

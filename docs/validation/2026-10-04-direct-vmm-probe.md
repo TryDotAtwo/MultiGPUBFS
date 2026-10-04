@@ -27,3 +27,13 @@ to distinguish a CUDA import/instrumentation failure from an NCCL-specific
 resource setup failure. Even an import-only initcheck failure must be
 compared with the retained full-runtime error and phase before attributing
 a common cause. Production barriers/resources are not disabled.
+
+Follow-up after v101 passed all ten pairs: the same test now optionally
+accepts `--runtime-init`. In this variant both ranks map/import before
+initializing their own allocation with `cudaMemsetAsync` on an explicit
+nonblocking stream. A rendezvous after stream completion precedes peer
+reads. Literal expected values distinguish both ranks; the local control
+and the original Driver API path remain in the same 20-pair matrix.
+This isolates API/order differences, not NCCL shadow-table/address-layout
+behavior. Actual sm75 compilation with Wall/Wextra passes; 60 script tests
+OK/3 skipped. Hardware execution is not yet claimed for this variant.

@@ -12,11 +12,11 @@ spec.loader.exec_module(gate)
 class VmmProbeTests(unittest.TestCase):
     def test_matrix_contains_unfiltered_local_and_import_controls(self):
         cases = gate.vmm_probe_cases()
-        self.assertEqual(len(cases), 10)
-        self.assertEqual({(c['mode'], c['tool']) for c in cases},
-                         {(m, t) for m in ('local', 'import')
+        self.assertEqual(len(cases), 20)
+        self.assertEqual({(c['mode'], c['tool'], c['runtime_init']) for c in cases},
+                         {(m, t, r) for m in ('local', 'import') for r in (False, True)
                           for t in (None, 'memcheck', 'racecheck', 'initcheck', 'synccheck')})
-        self.assertEqual(len({c['label'] for c in cases}), 10)
+        self.assertEqual(len({c['label'] for c in cases}), 20)
 
     def test_windowless_arbitrary_stage_still_rejected(self):
         with self.assertRaisesRegex(ValueError, 'WINDOWLESS_PROBE'):
