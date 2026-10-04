@@ -1,0 +1,17 @@
+{
+  "version": 108,
+  "source": "8a43bc87292e28c48b27ebb69e648fe77c95290f",
+  "status": "INCOMPLETE",
+  "observed_cases": 12,
+  "search_started": false,
+  "failures": {
+    "CONFIG_UNUSED_LIBRARY_POOL": 8,
+    "BOOTSTRAP_LAUNCH_ID_REQUIRED": 4
+  },
+  "evidence_scope": "Summary and representative raw logs inspected through authenticated output API. This record transcribes observed evidence; it is not the original log archive. Latest outputs disappeared after v109 submission; version_label=108 returned404.",
+  "v109_changes": [
+    "native owner library_pool_bytes=null, not0",
+    "explicit nonempty TORCHELASTIC_RUN_ID per case"
+  ],
+  "correctness_claim": false
+}
