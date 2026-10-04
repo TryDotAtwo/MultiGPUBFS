@@ -3513,7 +3513,11 @@ impl DistributedNativeBfs {
                                 return Ok(());
                             }
                             #[cfg(debug_assertions)]
-                            if group == 1 && round == 1 && scheduled_rounds > 1
+                            // Multi-rank injection remains on the first remote
+                            // owner job. World=1 has no such job, so exercise
+                            // the same host-error cancellation on its local job.
+                            if round == 1 && ((group == 1 && scheduled_rounds > 1)
+                                || (world == 1 && group == 0))
                                 && TEST_OWNER_HOST_FAULT.with(|flag| flag.replace(false))
                             {
                                 return Err("TEST_INJECTED_OWNER_HOST_ERROR".into());
