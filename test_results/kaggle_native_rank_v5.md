@@ -14,6 +14,14 @@ DENSE/HASH_FIRST. CUB HASH_FIRST initcheck passes this time. This does not
 establish deterministic initcheck acceptance for that backend.
 Detailed general-log retention is still running; do not overwrite v5 yet.
 
+Subsequent retention verification: complete download finished, 55 summaries
+(54 nested), twelve SQLite exports, original rank logs and JSON records
+saved under `build/kaggle-native-v5-observation`. Nested results confirm
+108/108 asymmetric fault cases PASS, no forced cleanup, no false group
+COMPLETE; maximum observed process time2.209s rounded upward. All five
+initcheck failures occur before BFS in window_register/device_comm_create.
+The retained failure logs do not identify an owner-kernel memory defect.
+
 ## Full S8 timeline evidence retained and inspected
 
 All six timeline summaries, twelve analysis JSONs and twelve SQLite exports
@@ -56,3 +64,23 @@ These traces support the no-readback healthy-batch property for the six
 reference-dispatch owner/profile combinations on this workload. They do
 not prove production macro-depth, arbitrary world sizes, all four sanitizer
 gates or performance superiority. Paired A/B remains outstanding.
+
+## Batch kernel cost observation, not an optimization claim
+
+CUCO DENSE rank0, GPU kernels correlated to launch APIs fully contained
+in the same-thread batch NVTX range:
+
+| Short kernel family | Calls | GPU interval sum ms |
+|---|---:|---:|
+| lsa_fatal_vote |534|65.643|
+| radix single-tile sort |176|26.534|
+| lsa_copy_exact |178|17.041|
+| CUTLASS Kernel (short name) |440|9.055|
+| lsa_publish_count |178|6.626|
+
+These sums include waiting and instrumentation; they are not critical-path
+time or FLOPS. Generation prefetched outside the current batch range is
+not all attributed here. The generic CUTLASS short name groups multiple
+GEMMs and is not a split of child/hash generation. Do not remove fatal
+votes based on this table: they protect asymmetric failure and receive
+lifetime. Larger-batch A/B is needed to determine amortized costs.
