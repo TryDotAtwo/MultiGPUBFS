@@ -1,0 +1,36 @@
+diff --git a/src/dev_runtime.cc b/src/dev_runtime.cc
+index bb13314..8cf944a 100644
+--- a/src/dev_runtime.cc
++++ b/src/dev_runtime.cc
+@@ -208,7 +208,8 @@ static ncclResult_t symMemoryMapLsaTeam(
+   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+   accessDesc.location.id = comm->cudaDev;
+   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+-  for (int r = 0; r < devr->lsaSize; r++) {
++  for (int order = 0; order < devr->lsaSize; order++) {
++    const int r = (devr->lsaSelf + order) % devr->lsaSize;
+     CUmemGenericAllocationHandle impHandle;
+     if (r == devr->lsaSelf) {
+       impHandle = memHandle;
+@@ -978,6 +979,7 @@ ncclResult_t ncclDevrCommCreateInternal(
+   NCCLCHECKGOTO(symWindowTableInitOnce(comm, stream), ret, fail_stream); // ensure devr->windowTable exists
+   outDevComm->windowTable = devr->windowTable;
+ 
++
+   if (bufSizeTotal == 0) {
+     outDevComm->resourceWindow = nullptr;
+     outDevComm->resourceWindow_inlined = {};
+@@ -1001,11 +1003,13 @@ ncclResult_t ncclDevrCommCreateInternal(
+       /*localReg=*/nullptr, &outDevComm->resourceWindow, &win,
+       stream), ret, fail_stream_mem);
+     mem = nullptr; // Reference given to symWindowCreate
++
+     NCCLCHECKGOTO(ncclShadowPoolToHost(&devr->shadows, win->vidmem, &winHost), ret, fail_stream_mem_win);
+     outDevComm->resourceWindow_inlined = *winHost;
+     outDevComm->ginSignalShadows = (uint64_t*)add4G((char*)winHost->lsaFlatBase + ginSignalShadowsOffset, winHost->lsaRank*winHost->stride4G);
+ 
+     CUDACHECKGOTO(cudaMemsetAsync(win->userPtr, 0, bufSizeTotal, stream), ret, fail_stream_mem_win);
++
+   }
+ 
+   if (devr->ginEnabled) {

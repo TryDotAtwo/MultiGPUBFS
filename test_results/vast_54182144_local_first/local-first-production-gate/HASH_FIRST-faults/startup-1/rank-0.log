@@ -1,0 +1,12 @@
+MGBFS_FAILURE_TEARDOWN stream=0x557b421f9ae0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x557b421f9ae0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8460 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8460 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8440 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8440 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8320 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x557b422b8320 stage=stream_drain_end
+MGBFS_ARCHIVE_WORKER_FATAL device=0 error=ARCHIVE_INCOMPLETE
+{"error":"","status":"ERROR"}
+4f7515a36383:49136:49136 [0] NCCL INFO ENV/Plugin: Could not find: libnccl-env.so
+4f7515a36383:49136:49136 [0] NCCL INFO ENV/Plugin: Closing env plugin ncclEnvDefault

@@ -500,6 +500,12 @@ def main():
                 policy_env = dict(env, MGBFS_NCCL_POLICY_SOURCE=str(vendor))
                 gate.run([sys.executable, str(source / "scripts/test_nccl_allocator_policy.py")],
                     cwd=source, env=policy_env, logs=logs, name="nccl-allocator-policy", timeout=60)
+            local_first_patch = source / "patches/nccl-2.29.7-local-first-map.patch"
+            local_first_digest = hashlib.sha256(local_first_patch.read_bytes()).hexdigest()
+            if local_first_digest != "95a042db1698504182c0cf0ee34c8c74dbaf5cb376d1aeeae93d464b0378b5b1":
+                raise RuntimeError("NCCL_LOCAL_FIRST_PATCH_DIGEST_MISMATCH")
+            run(["git", "apply", "--check", str(local_first_patch)], "nccl-local-first-check", cwd=vendor)
+            run(["git", "apply", str(local_first_patch)], "nccl-local-first-patch", cwd=vendor)
             # Existing independent-process replay resolves this exact root.
             # Preserve the wheel separately instead of accidentally replaying it.
             shutil.move(str(nccl_target), str(work / "nccl-wheel"))
@@ -510,6 +516,7 @@ def main():
             report["nccl_dependency"] = dict(variant=NCCL_VARIANT,
                 upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm" + architecture,
                 posix_patch_sha256=posix_patch_digest,
+                local_first_map_patch_sha256=local_first_digest,
                 mnnvl_enable=env.get("NCCL_MNNVL_ENABLE"),
                 nvtx=1, experimental=True,
                 library_sha256=hashlib.sha256((nccl / "lib/libnccl.so.2.29.7").read_bytes()).hexdigest())

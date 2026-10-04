@@ -1,0 +1,902 @@
+{
+  "scope": "full typed BFS, local-first mapping patch; no diagnostic host drains; all resources intact",
+  "library_sha256": "0907a9bd973e9192e34b4001c768688bc86efcf030fb879fb6ea9d0f5ce0cf1c",
+  "rows": [
+    {
+      "profile": "DENSE",
+      "tool": "initcheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 7.023188299033791,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "HASH_FIRST",
+      "tool": "initcheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 7.628530755639076,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "DENSE",
+      "tool": "memcheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 9.634314793162048,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "HASH_FIRST",
+      "tool": "memcheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 10.641247618943453,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "DENSE",
+      "tool": "racecheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 21.309031335636973,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "HASH_FIRST",
+      "tool": "racecheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 41.660035502165556,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "DENSE",
+      "tool": "synccheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 4.869348964653909,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "HASH_FIRST",
+      "tool": "synccheck",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 5.5730374520644546,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          },
+          "instrumentation_clean": true
+        }
+      ]
+    },
+    {
+      "profile": "DENSE",
+      "tool": "faults",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 2.0094888252206147,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          }
+        },
+        {
+          "name": "startup",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0557401436381042,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "startup",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0084938709624112,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.3602692768909037,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.5108698047697544,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor_late",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9587881253100932,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor_late",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0618924028240144,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "owner",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.009391515981406,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "owner",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0093738646246493,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "admission",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0567083847709,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "admission",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.006065220106393,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_write",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9602569518610835,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_write",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.958499550819397,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_sync",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9083186849020422,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_sync",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.959535343106836,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "finish",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0591685199178755,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "finish",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0097077237442136,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "capacity",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.059593169949949,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true,
+          "capacity_profile": "DENSE"
+        },
+        {
+          "name": "capacity",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9589471709914505,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true,
+          "capacity_profile": "DENSE"
+        }
+      ]
+    },
+    {
+      "profile": "HASH_FIRST",
+      "tool": "faults",
+      "returncode": 0,
+      "status": "DIAGNOSTIC_CASES_PASS",
+      "cases": [
+        {
+          "name": "healthy",
+          "fault_rank": null,
+          "forced_cleanup": false,
+          "returncodes": [
+            0,
+            0
+          ],
+          "seconds": 1.9595843409188092,
+          "deadline_seconds": 120,
+          "group_complete": true,
+          "pass": true,
+          "full_state_oracle": {
+            "unique_states": 24,
+            "layer_sizes": [
+              1,
+              3,
+              5,
+              6,
+              5,
+              3,
+              1
+            ],
+            "route_bank_reuses": [
+              3,
+              0
+            ],
+            "scope": "2 independent rank-process archives; full canonical states at every depth"
+          }
+        },
+        {
+          "name": "startup",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.1560431541875005,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "startup",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0068806409835815,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.5113626066595316,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.511342785321176,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor_late",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0597769990563393,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "constructor_late",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0593814593739808,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "owner",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0093839899636805,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "owner",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9609896270558238,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "admission",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0062510087154806,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "admission",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.0564007530920208,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_write",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9590005902573466,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_write",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9587169359438121,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_sync",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.009374899789691,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "worker_sync",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.9593412759713829,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "finish",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.109825341962278,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "finish",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.958774311002344,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true
+        },
+        {
+          "name": "capacity",
+          "fault_rank": 0,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 2.0120469657704234,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true,
+          "capacity_profile": "HASH_FIRST"
+        },
+        {
+          "name": "capacity",
+          "fault_rank": 1,
+          "forced_cleanup": false,
+          "returncodes": [
+            1,
+            1
+          ],
+          "seconds": 1.959012886043638,
+          "deadline_seconds": 120,
+          "group_complete": false,
+          "pass": true,
+          "fault_reached": true,
+          "capacity_profile": "HASH_FIRST"
+        }
+      ]
+    }
+  ]
+}

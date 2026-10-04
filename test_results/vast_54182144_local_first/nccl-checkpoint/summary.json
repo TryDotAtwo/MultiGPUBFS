@@ -1,0 +1,43 @@
+{
+  "scope": "diagnostic NCCL host drains, NOT production acceptance",
+  "rows": [
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_only_create",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "label": "plain"
+    },
+    {
+      "returncodes": [
+        12,
+        12
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_only_create",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "label": "initcheck"
+    }
+  ]
+}

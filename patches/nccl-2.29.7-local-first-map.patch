@@ -1,0 +1,14 @@
+--- a/src/dev_runtime.cc
++++ b/src/dev_runtime.cc
+@@ -208,7 +208,10 @@
+   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+   accessDesc.location.id = comm->cudaDev;
+   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+-  for (int r = 0; r < devr->lsaSize; r++) {
++  // Establish the local mapping before importing peer mappings. The rank-indexed
++  // VA layout and all-gather order are unchanged; every rank is mapped exactly once.
++  for (int order = 0; order < devr->lsaSize; order++) {
++    const int r = (devr->lsaSelf + order) % devr->lsaSize;
+     CUmemGenericAllocationHandle impHandle;
+     if (r == devr->lsaSelf) {
+       impHandle = memHandle;

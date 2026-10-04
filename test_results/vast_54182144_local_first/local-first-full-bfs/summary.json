@@ -1,0 +1,15 @@
+{
+  "scope": "full typed BFS, local-first mapping patch; no diagnostic host drains",
+  "rows": [
+    {
+      "profile": "DENSE",
+      "returncode": 1,
+      "status": null
+    },
+    {
+      "profile": "HASH_FIRST",
+      "returncode": 1,
+      "status": null
+    }
+  ]
+}

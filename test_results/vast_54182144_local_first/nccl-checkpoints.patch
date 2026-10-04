@@ -1,0 +1,32 @@
+diff --git a/src/dev_runtime.cc b/src/dev_runtime.cc
+index bb13314..f958c59 100644
+--- a/src/dev_runtime.cc
++++ b/src/dev_runtime.cc
+@@ -977,6 +977,9 @@ ncclResult_t ncclDevrCommCreateInternal(
+ 
+   NCCLCHECKGOTO(symWindowTableInitOnce(comm, stream), ret, fail_stream); // ensure devr->windowTable exists
+   outDevComm->windowTable = devr->windowTable;
++  fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=table_init before_sync\n", comm->rank);
++  { cudaError_t diag = cudaStreamSynchronize(stream); fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=table_init error=%d\n", comm->rank, int(diag)); CUDACHECKGOTO(diag, ret, fail_stream); }
++
+ 
+   if (bufSizeTotal == 0) {
+     outDevComm->resourceWindow = nullptr;
+@@ -1001,11 +1004,17 @@ ncclResult_t ncclDevrCommCreateInternal(
+       /*localReg=*/nullptr, &outDevComm->resourceWindow, &win,
+       stream), ret, fail_stream_mem);
+     mem = nullptr; // Reference given to symWindowCreate
++  fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=window_create before_sync\n", comm->rank);
++  { cudaError_t diag = cudaStreamSynchronize(stream); fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=window_create error=%d\n", comm->rank, int(diag)); CUDACHECKGOTO(diag, ret, fail_stream); }
++
+     NCCLCHECKGOTO(ncclShadowPoolToHost(&devr->shadows, win->vidmem, &winHost), ret, fail_stream_mem_win);
+     outDevComm->resourceWindow_inlined = *winHost;
+     outDevComm->ginSignalShadows = (uint64_t*)add4G((char*)winHost->lsaFlatBase + ginSignalShadowsOffset, winHost->lsaRank*winHost->stride4G);
+ 
+     CUDACHECKGOTO(cudaMemsetAsync(win->userPtr, 0, bufSizeTotal, stream), ret, fail_stream_mem_win);
++  fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=resource_memset before_sync\n", comm->rank);
++  { cudaError_t diag = cudaStreamSynchronize(stream); fprintf(stderr, "NCCL_DIAGNOSTIC rank=%d checkpoint=resource_memset error=%d\n", comm->rank, int(diag)); CUDACHECKGOTO(diag, ret, fail_stream); }
++
+   }
+ 
+   if (devr->ginEnabled) {
