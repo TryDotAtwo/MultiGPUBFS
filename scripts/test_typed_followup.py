@@ -14,6 +14,10 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_every_typed_execution_installs_archive_reader_dependency(self):
+        for mode in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate'):
+            self.assertIn('pyarrow==19.0.1', gate.oracle_dependency_packages(mode), mode)
+
     def test_stress_configs_pass_real_offline_cli_admission(self):
         binary = root / 'target/debug' / ('mgbfs.exe' if os.name == 'nt' else 'mgbfs')
         if not binary.exists():

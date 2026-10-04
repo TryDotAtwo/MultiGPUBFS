@@ -21,6 +21,11 @@ HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
 
+def oracle_dependency_packages(mode):
+    return ['pyarrow==19.0.1'] if mode in ('device_protocol_replay', 'native_rank_gate',
+        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate') else []
+
+
 def typed_rank_configs(base):
     cases = []
     for profile in ('DENSE', 'HASH_FIRST'):
@@ -286,12 +291,16 @@ def main():
              "--only-binary=:all:", "--no-cache-dir", "--require-hashes", "-r",
              str(source / "experiments/library_owner/requirements-linux-x86_64.lock")],
             "dependencies", timeout=1200)
-        if MODE in ("device_protocol_replay", "native_rank_gate", "typed_rank_gate"):
+        verifier_dependencies = oracle_dependency_packages(MODE)
+        if verifier_dependencies:
             # The full-state oracle reuses the archive reader in the Parquet
             # exporter; its module-level schemas require Arrow at import time.
             run([sys.executable, "-m", "pip", "--python", python, "install",
-                 "--only-binary=:all:", "--no-deps", "pyarrow==19.0.1"],
+                 "--only-binary=:all:", "--no-deps", *verifier_dependencies],
                 "archive-verifier-dependency", timeout=300)
+            run([python, '-c', 'from export_hf_dataset import frames'],
+                'archive-verifier-import-preflight', timeout=30,
+                cwd=source / 'scripts')
         site = subprocess.check_output([python, "-c", "import site; print(site.getsitepackages()[0])"],
                                        text=True, env=env).strip()
         site = Path(site)
