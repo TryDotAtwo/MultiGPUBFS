@@ -163,3 +163,38 @@ class UploadTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+class WrappedTransportRetryTests(unittest.TestCase):
+    def test_sdk_wrapped_network_failure_retries_same_operation(self):
+        from scripts.tail_upload import retry_upload
+        class RemoteProtocolError(Exception): pass
+        calls=[]
+        def operation():
+            calls.append('same payload')
+            if len(calls)==1:
+                try: raise RemoteProtocolError('disconnected')
+                except RemoteProtocolError as error:
+                    raise RuntimeError('Error while uploading a file to the Hub.') from error
+            return 'published'
+        with patch('scripts.tail_upload.time.sleep') as sleep:
+            self.assertEqual(retry_upload(operation),'published')
+            self.assertEqual(calls,['same payload','same payload'])
+            sleep.assert_called_once_with(1)
+
+    def test_wrapped_permanent_failure_does_not_retry(self):
+        from scripts.tail_upload import retry_upload
+        def operation():
+            try: raise ValueError('payload checksum mismatch')
+            except ValueError as error: raise RuntimeError('upload failed') from error
+        with patch('scripts.tail_upload.time.sleep') as sleep:
+            with self.assertRaises(RuntimeError):retry_upload(operation)
+            sleep.assert_not_called()
+
+    def test_implicit_context_and_cyclic_cause_are_not_transport_evidence(self):
+        from scripts.tail_upload import transient_upload_error
+        class RemoteProtocolError(Exception): pass
+        error=RuntimeError('unknown failure');error.__context__=RemoteProtocolError()
+        self.assertFalse(transient_upload_error(error))
+        error.__cause__=error
+        self.assertFalse(transient_upload_error(error))

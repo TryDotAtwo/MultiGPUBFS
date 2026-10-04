@@ -10,18 +10,35 @@ import uuid
 from pathlib import Path
 
 
+def transient_upload_error(error):
+    """HF's LFS SDK wraps network exceptions in RuntimeError with a cause."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        # A malformed payload must not be retried because an unrelated network
+        # exception happened while handling it.
+        if isinstance(error, (ValueError, TypeError, AssertionError)):
+            return False
+        code = getattr(getattr(error, 'response', None), 'status_code', None)
+        if code == 429 or (isinstance(code, int) and code >= 500):
+            return True
+        if isinstance(code, int) and 400 <= code < 500:
+            return False
+        if type(error).__name__ in {
+            'RemoteProtocolError', 'ReadTimeout', 'ConnectTimeout', 'ConnectError',
+            'ReadError', 'ConnectionError', 'Timeout', 'ChunkedEncodingError', 'SSLError'}:
+            return True
+        error = error.__cause__
+    return False
+
+
 def retry_upload(operation):
     """Retry idempotent same-path publication after bounded transport failures."""
     for attempt in range(4):
         try:
             return operation()
         except Exception as error:
-            code = getattr(getattr(error, 'response', None), 'status_code', None)
-            transient = type(error).__name__ in {
-                'RemoteProtocolError', 'ReadTimeout', 'ConnectTimeout', 'ConnectError',
-                'ReadError', 'ConnectionError', 'Timeout', 'ChunkedEncodingError', 'SSLError'}
-            transient = transient or code == 429 or (isinstance(code, int) and code >= 500)
-            if not transient or attempt == 3:
+            if not transient_upload_error(error) or attempt == 3:
                 raise
             time.sleep(2 ** attempt)
 
