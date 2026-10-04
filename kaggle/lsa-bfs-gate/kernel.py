@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "d195bab1f395bd0e2fb11aa00dc9f65d91615e66"
+SOURCE = "98ccc5882bf24200533ab7e3162511e8627952a3"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "nccl_window_processes"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
