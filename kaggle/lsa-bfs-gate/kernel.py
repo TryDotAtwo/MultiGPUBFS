@@ -14,9 +14,9 @@ import sys
 import tempfile
 import time
 
-SOURCE = "8cf73be2581c33bf68d4caf7b6b09ccace57198c"
+SOURCE = "1a00b1da7df33870cd1127c19c11b316bd3ff86c"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "typed_rank_gate"
+MODE = "cuda_posix_import"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
