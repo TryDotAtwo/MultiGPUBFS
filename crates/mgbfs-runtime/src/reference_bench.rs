@@ -540,6 +540,10 @@ fn run_pass(
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
     let prepared = (|| -> Result<PreparedPass> {
         if production {
+            crate::reference_launch::bench_warmup_for_launch(
+                std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
+                std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
+            )?;
             return prepare_production(args, rank, world);
         }
         let warmup_requested = crate::reference_launch::bench_warmup_for_launch(
@@ -775,7 +779,13 @@ fn run_pass(
     } else {
         Ok(())
     };
-    let config_digest = prepared.as_ref().map_or([0; 32], |p| p.bootstrap_digest);
+    let config_digest = prepared.as_ref().map_or([0; 32], |p| {
+        crate::benchmark::phase_digest(
+            p.bootstrap_digest,
+            warmup_completed || !is_measure,
+            is_measure,
+        )
+    });
     if control_group.agree_configuration(
         config_digest,
         prepared.is_err() || device_admission.is_err(),
@@ -1387,12 +1397,12 @@ fn run_macro_pass(
 /// the remaining arguments are group, batch, bootstrap, archive and output.
 /// This does not implement the production RunConfigV1 dispatcher.
 pub fn run(args: Vec<String>) -> Result<()> {
-    run_source(args, false)
+    run_source(args, false, false)
 }
 /// Manifest input uses the same rank admission, owner, transport and archive.
 /// This is still the benchmark contract, not the RunConfigV1 dispatcher.
 pub fn run_manifest(args: Vec<String>) -> Result<()> {
-    run_source(args, true)
+    run_source(args, true, false)
 }
 /// Typed configuration enters the same admission, cancellation, GPU pipeline
 /// and group publication as bench. Unsupported config contracts fail in the
@@ -1403,8 +1413,8 @@ pub fn run_config(
     archive: String,
     output: String,
 ) -> Result<()> {
-    run_pass(
-        &[
+    run_source(
+        vec![
             "mgbfs-run".into(),
             config,
             "unused".into(),
@@ -1412,13 +1422,11 @@ pub fn run_config(
             archive,
             output,
         ],
-        false,
-        true,
         true,
         true,
     )
 }
-fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
+fn run_source(args: Vec<String>, manifest: bool, production: bool) -> Result<()> {
     use crate::benchmark::{run_phases, Phase};
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
@@ -1446,7 +1454,7 @@ fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
             warmup && phase == crate::reference_launch::BenchPhase::Measure,
             phase == crate::reference_launch::BenchPhase::Measure,
             manifest,
-            false,
+            production,
         )
     })
 }

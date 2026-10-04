@@ -31,6 +31,16 @@ pub enum Phase {
     Measure,
 }
 
+/// Bind launch-phase agreement without changing the persistent config digest.
+pub fn phase_digest(config: [u8; 32], warmup: bool, measure: bool) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"mgbfs-launch-phase-v1\0");
+    hash.update(config);
+    hash.update([u8::from(warmup), u8::from(measure)]);
+    hash.finalize().into()
+}
+
 /// Warmup uses a separate runtime instance in the same process. Never continue
 /// into a measured run after failed warmup, including archive finalization.
 pub fn run_phases(warmup: bool, mut run: impl FnMut(Phase) -> Result<()>) -> Result<()> {

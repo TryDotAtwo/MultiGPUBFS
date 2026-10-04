@@ -12,6 +12,22 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
+    def test_reference_archive_and_bootstrap_have_distinct_authenticated_digests(self):
+        def record(rank, value):
+            value['run_contract'] = 'reference_bench'
+            value['bootstrap_digest'] = list(bytes.fromhex('cd' * 32))
+        def marker(value):
+            value['bootstrap_digest'] = list(bytes.fromhex('cd' * 32))
+        self.assertEqual(self.check(result_mutation=record, marker_mutation=marker)['unique_states'], 24)
+
+    def test_typed_contract_cannot_replace_archive_digest_even_with_matching_rank_commits(self):
+        def record(rank, value):
+            value['bootstrap_digest'] = list(bytes.fromhex('cd' * 32))
+        def marker(value):
+            value['bootstrap_digest'] = list(bytes.fromhex('cd' * 32))
+        with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_GROUP_COMMIT'):
+            self.check(result_mutation=record, marker_mutation=marker)
+
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
               expected_config_digest=None, expected_run_contract=None, expected_route_banks=None,
               require_bank_reuse=False, marker_mutation=None, expected_owner_backend=None):

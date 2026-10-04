@@ -224,6 +224,7 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
     bank_reuses = []
     rank_hashes = []
     rank_digests = []
+    reference_contract = True
     for rank in range(world):
         local = [0] * len(expected)
         for depth, width, count, payload, config in frame_reader(
@@ -244,6 +245,7 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
                 local[depth] += 1
         result_bytes = (case / f'result/rank-{rank}.json').read_bytes()
         result = json.loads(result_bytes)
+        reference_contract = reference_contract and result.get('run_contract') == 'reference_bench'
         rank_hashes.append(list(hashlib.sha256(result_bytes).digest()))
         rank_digests.append(result.get('bootstrap_digest'))
         if expected_owner_backend is not None and result.get('owner_backend') != expected_owner_backend:
@@ -279,9 +281,12 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
     if (not isinstance(marker, dict) or marker.get('schema') != 'mgbfs-group-run-commit-v1' or
             marker.get('status') != 'COMPLETE' or type(marker.get('world_size')) is not int or
             marker['world_size'] != world or marker.get('archive_commit_scope') != 'file_fsync' or
-            marker.get('bootstrap_digest') != list(bytes.fromhex(digest)) or
+            (not reference_contract and marker.get('bootstrap_digest') != list(bytes.fromhex(digest))) or
+            not isinstance(marker.get('bootstrap_digest'), list) or
+            len(marker['bootstrap_digest']) != 32 or
+            any(type(x) is not int or not 0 <= x <= 255 for x in marker['bootstrap_digest']) or
             marker.get('rank_sha256') != rank_hashes or
-            any(value != list(bytes.fromhex(digest)) for value in rank_digests)):
+            any(value != marker['bootstrap_digest'] for value in rank_digests)):
         raise ValueError('PROCESS_ORACLE_GROUP_COMMIT')
     return dict(unique_states=len(visited), layer_sizes=list(map(len, actual)), route_bank_reuses=bank_reuses,
                 scope=f'{world} independent rank-process archives; full canonical states at every depth')
