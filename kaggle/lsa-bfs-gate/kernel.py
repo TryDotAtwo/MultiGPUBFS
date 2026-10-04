@@ -14,9 +14,9 @@ import sys
 import tempfile
 import time
 
-SOURCE = "582c06565aff0c9325c29004769fe702fd4178b1"
+SOURCE = "749c691363007836969536c8629e9b30bc92e842"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "typed_rank_gate"
+MODE = "typed_followup_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
@@ -51,6 +51,26 @@ def typed_reuse_configs(base):
     return [candidate for candidate in typed_rank_configs(config)
         if candidate['completion_epoch_window'] == 3 and candidate['local_pre_dedup']
         and candidate['topology']['logical_owner_to_rank'] == [0, 1]]
+
+
+def typed_followup_cases(base):
+    """Unfiltered registration replays and full BFS traces; not performance."""
+    configs = [config for config in typed_rank_configs(base)
+        if config['completion_epoch_window'] == 3 and config['local_pre_dedup']
+        and config['topology']['logical_owner_to_rank'] == [0, 1]]
+    cases = []
+    for config in configs:
+        for repeat in range(3):
+            label = (f"initcheck-{config['frontier_profile']}-banks-"
+                     f"{config['capacities']['route_slot_count']}-repeat-{repeat}")
+            cases.append(dict(config=copy.deepcopy(config), repeat=repeat, label=label,
+                tool='initcheck', extra=['--healthy-only', '--instrument-processes', 'initcheck']))
+    for config in typed_reuse_configs(base):
+        if config['capacities']['route_slot_count'] == 3:
+            cases.append(dict(config=config, repeat=0, label='timeline-' + config['frontier_profile'],
+                tool='nsys', extra=['--healthy-only', '--unitriangular-modulus', '2',
+                    '--require-bank-reuse', '--instrument-processes', 'nsys']))
+    return cases
 
 
 def cuda_build_target(hardware):
@@ -209,7 +229,7 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('typed_rank_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
@@ -447,18 +467,19 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE == 'typed_rank_gate':
+        if MODE in ('typed_rank_gate', 'typed_followup_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
             base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
             configs = typed_rank_configs(base)
-            def replay_typed(config, label, extra):
+            def replay_typed(config, label, extra, replay_env=None):
                 snapshot = logs / (label + '-config.json')
                 snapshot.write_text(json.dumps(config, separators=(',', ':')))
+                print('START ' + label, flush=True)
                 with (logs / (label + '.log')).open('w') as output:
                     row = run_protocol_replay([python, str(source / 'scripts/replay_lsa_cancel_candidate.py'),
                         str(work), str(logs / label), '--run-config', str(snapshot), *extra],
-                        cwd=source, env=env, log=output)
+                        cwd=source, env=env if replay_env is None else replay_env, log=output)
                 detail_path = logs / label / 'summary.json'
                 detail = json.loads(detail_path.read_text()) if detail_path.exists() else {}
                 row.update(label=label, run_config_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
@@ -471,6 +492,34 @@ def main():
                     and detail.get('route_banks') == config['capacities']['route_slot_count'])
                 report['typed_runs'].append(row)
                 save()
+                print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
+                return row
+            if MODE == 'typed_followup_gate':
+                report['scope'] = 'full typed two-rank BFS: repeated unfiltered initcheck activation and raw owner/transport/retirement timelines'
+                nsys = prepare_nsys()
+                for case in typed_followup_cases(base):
+                    replay_env = dict(env)
+                    if case['tool'] == 'initcheck':
+                        replay_env.update(NCCL_DEBUG='INFO', NCCL_DEBUG_SUBSYS='INIT,ALLOC,REG')
+                    else:
+                        # Diagnostic logging must not inflate the healthy timeline.
+                        replay_env.pop('NCCL_DEBUG', None)
+                        replay_env.pop('NCCL_DEBUG_SUBSYS', None)
+                        replay_env['PATH'] = str(Path(nsys).parent) + ':' + replay_env['PATH']
+                    row = replay_typed(case['config'], case['label'], case['extra'], replay_env)
+                    row.update(tool=case['tool'], repeat=case['repeat'])
+                    if case['tool'] == 'nsys' and row['pass']:
+                        row['rank_sqlite'] = []
+                        for rank in (0, 1):
+                            prefix = logs / case['label'] / 'healthy-None' / f'rank-{rank}'
+                            database = prefix.with_suffix('.sqlite')
+                            run([nsys, 'export', '--type', 'sqlite', '--force-overwrite=true',
+                                '-o', str(database), str(prefix.with_suffix('.nsys-rep'))],
+                                case['label'] + f'-rank{rank}-export', timeout=600)
+                            row['rank_sqlite'].append(str(database.relative_to(logs)))
+                    save()
+                report['status'] = 'TYPED_FOLLOWUP_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
             selected = []
             for index, config in enumerate(configs):
                 fault_case = config['completion_epoch_window'] == 3 and config['local_pre_dedup'] and (
