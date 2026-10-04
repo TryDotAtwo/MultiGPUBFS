@@ -17,6 +17,7 @@ from pathlib import Path
 from bfs_tail_archive import atomic_json,TailArchive
 from run_tail_bfs import run
 from sweep_tail_bfs import automatic_pairs, execute
+from paired_tail import publication_records, run_pair
 
 
 class SweepPublisher:
@@ -64,7 +65,7 @@ class SweepPublisher:
                 if self.error:
                     raise RuntimeError('background sweep publication failed') from self.error
             pending = 0
-            for key, record in ledger['cases'].items():
+            for key, record in publication_records(ledger).items():
                 if not record.get('attempted', True):
                     continue
                 saved = Path(self.root)/key/'saved'
@@ -101,11 +102,12 @@ class EndUploadDiskAdmission:
     """
     def __init__(self, root):
         self.root=Path(root);self.seen=set();self.retained=0;self.largest_layer=0
-        self.fixed_layers=None
+        self.fixed_layers=None;self.repetitions=1
 
     def observe(self, ledger):
+        self.repetitions=2 if ledger.get('configuration',{}).get('base',{}).get('two_seeds') else 1
         self.fixed_layers=ledger.get('configuration',{}).get('base',{}).get('retained_layers')
-        for key,record in ledger['cases'].items():
+        for key,record in publication_records(ledger).items():
             if key in self.seen or not record.get('attempted',False):continue
             manifest=json.loads((self.root/key/'saved/manifest.json').read_text())
             self.retained+=sum(entry['bytes'] for entry in manifest['files']
@@ -120,7 +122,7 @@ class EndUploadDiskAdmission:
         # with retained packed data until verified publication can release it.
         tail=(self.fixed_layers*self.largest_layer if self.fixed_layers is not None
               else max(10_000_000_000,3*self.largest_layer))
-        return (2*self.retained+tail
+        return (2*self.retained+self.repetitions*tail
                 +2*self.largest_layer+1_000_000_000+(64<<20))
 
     def stop_reason(self):
@@ -330,7 +332,7 @@ def verify_hf(root, repo, api, token):
     from publish_tail_batch import publication_cases
     publications = publication_cases(root, ledger)
     seen_payloads = {}
-    for key, record in ledger['cases'].items():
+    for key, record in publication_records(ledger).items():
         if not record.get('attempted'): continue
         saved, manifest_path = publications[key]
         local = json.loads(manifest_path.read_text())
@@ -367,12 +369,13 @@ def verify_hf(root, repo, api, token):
         response.raise_for_status()
         if response.json() != ledger: raise ValueError('HF sweep ledger differs')
     return dict(revision=revision, files=len(work), bytes=size,
-                manifests_verified=sum(x.get('attempted',False) for x in ledger['cases'].values()),
+                manifests_verified=sum(x.get('attempted',False) for x in publication_records(ledger).values()),
                 all_checksums_verified=True, sweep_ledger_verified=True)
 
 
 def main(cancelled=None):
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--two-seeds',action='store_true')
     p.add_argument('--source',type=Path,required=True)
     p.add_argument('--runtime-env',type=Path,required=True)
     p.add_argument('--root',type=Path,required=True)
@@ -433,6 +436,11 @@ def main(cancelled=None):
     mode=args.upload_mode or base.get('upload_mode','end')
     if base.get('upload_mode',mode)!=mode:
         p.error('resume upload mode differs from saved configuration; use a new run root')
+    if args.two_seeds:
+        if mode != 'end': p.error('two-seed validation currently requires end upload mode')
+        if (args.root/'sweep.json').exists() and not base.get('two_seeds'): p.error('two-seed mode requires a new run root')
+        base['two_seeds']=True
+        atomic_json(config_path,base)
     runtime=json.loads(args.runtime_env.read_text())
     disk_admission=EndUploadDiskAdmission(args.root)
     previous_ledger=args.root/'sweep.json'
@@ -469,8 +477,12 @@ def main(cancelled=None):
         if mode=='search':
             config=dict(config,repo_id=args.repo_id,live_upload_format='parquet',
                 live_upload_prefix='tail-live/'+config['run_id'])
-        return run_adaptive(config,source,case,env,
-                            deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)
+        def one(cfg,src,destination,runtime):
+            return run_adaptive(cfg,src,destination,runtime,
+                deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)
+        if base.get('two_seeds'):
+            return run_pair(config,source,case,env,one,startup_failure_snapshot)
+        return one(config,source,case,env)
     # Each layer still writes an intermediate SSD snapshot. End mode uploads
     # at a physical-storage boundary and resumes the same immutable ledger.
     ledger=None;upload_cycles=[]

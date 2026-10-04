@@ -22,11 +22,21 @@ def case_groups(root, ledger, *, group_size=None, group_bytes=None):
         raise ValueError('positive cohort bounds required')
     group, size = [], 0
     seal_after = set(ledger.get('cohort_seal_after', []))
-    for key, record in ledger['cases'].items():
+    try:
+        from .paired_tail import publication_records
+    except ImportError:
+        from paired_tail import publication_records
+    repetition = None
+    for key, record in publication_records(ledger).items():
         if key in ('', '.', '..') or '/' in key or '\\' in key:
             raise ValueError('unsafe case key')
         if not record.get('attempted', True):
             continue
+        current = record.get('repetition', 1)
+        if group and current != repetition:
+            yield group, True
+            group, size = [], 0
+        repetition = current
         saved = Path(root)/key/'saved'
         manifest = json.loads((saved/'manifest.json').read_text())
         group.append((key, saved))
@@ -56,7 +66,11 @@ def publication_cases(root, ledger, *, group_size=None, shard_bytes=512_000_000,
     run_id = ledger['configuration']['base']['run_id']
     if not isinstance(run_id, str) or run_id in ('', '.', '..') or '/' in run_id or '\\' in run_id:
         raise ValueError('unsafe sweep run ID')
-    for key in ledger['cases']:
+    try:
+        from .paired_tail import publication_records
+    except ImportError:
+        from paired_tail import publication_records
+    for key in publication_records(ledger):
         if key in ('', '.', '..') or '/' in key or '\\' in key:
             raise ValueError('unsafe case key')
     result = {}
@@ -134,7 +148,7 @@ def merge(members, destination, prefix, *, shard_bytes=512_000_000):
             width = manifest['packing']['bytes_per_state']
             schema = pa.schema([('n', pa.uint8()), ('r', pa.uint8()),
                                 ('depth', pa.uint32()), ('ordinal', pa.uint64()),
-                                ('state', pa.binary(width))])
+                                ('state', pa.binary(width)), ('repetition', pa.uint8())])
             for entry in manifest['files']:
                 from pathlib import PurePosixPath
                 relative = PurePosixPath(entry['path'])
@@ -162,6 +176,7 @@ def merge(members, destination, prefix, *, shard_bytes=512_000_000):
                             pa.array([depth]*rows, type=pa.uint32()),
                             pa.array(range(ordinal, ordinal+rows), type=pa.uint64()),
                             pa.Array.from_buffers(pa.binary(width), rows, [None, pa.py_buffer(data)]),
+                            pa.array([manifest.get('repetition',1)]*rows, type=pa.uint8()),
                         ], schema=schema)
                         writer.write_table(chunk, row_group_size=rows)
                         spans.append(dict(case=key, depth=depth, states=rows,

@@ -47,7 +47,7 @@ def summarize(root, name, started, events, error):
     ledger_path = root/'sweep.json'
     ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
     records = ledger.get('cases', {})
-    pairs = {k: dict(status=r['status'], reason=r.get('reason'), **r.get('timing', {}))
+    pairs = {k: dict(status=r['status'], reason=r.get('reason'), comparison=r.get('comparison'), **r.get('timing', {}))
              for k, r in records.items() if r.get('attempted')}
     auto_path = root/'automatic-report.json'
     auto = json.loads(auto_path.read_text()) if auto_path.exists() else {}
@@ -104,6 +104,8 @@ def worker(args):
     command = ['run_auto_tail', '--source', str(args.source), '--runtime-env', str(args.runtime_env),
         '--root', str(root), '--repo-id', args.repo_id, '--upload-mode', mode,
         '--deadline-unix', str(args.deadline_unix)]
+    if args.two_seeds:
+        command += ['--two-seeds']
     if layers is not None:
         command += ['--retained-layers', str(layers)]
     sys.argv = command
@@ -122,6 +124,7 @@ def worker(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--two-seeds',action='store_true')
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--runtime-env', type=Path, required=True)
     parser.add_argument('--root', type=Path, required=True)
@@ -149,6 +152,8 @@ def main():
         command = [sys.executable, __file__, '--worker', name, '--source', str(args.source),
             '--runtime-env', str(args.runtime_env), '--root', str(args.root),
             '--repo-id', args.repo_id, '--deadline-unix', str(deadline)]
+        if args.two_seeds:
+            command += ['--two-seeds']
         if args.matched_pairs:
             command += ['--matched-pairs', *args.matched_pairs]
         child = subprocess.Popen(command, start_new_session=True)

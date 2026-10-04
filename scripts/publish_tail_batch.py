@@ -6,6 +6,10 @@ import math
 import time
 import tempfile
 from pathlib import Path, PurePosixPath
+try:
+    from .paired_tail import publication_records
+except ImportError:
+    from paired_tail import publication_records
 
 
 def publication_cases(root, ledger):
@@ -21,7 +25,7 @@ def publication_cases(root, ledger):
     except ImportError:
         from tail_parquet import publication_root
     result = {}
-    for key, record in ledger['cases'].items():
+    for key, record in publication_records(ledger).items():
         if key in ('', '.', '..') or '/' in key or '\\' in key:
             raise ValueError('unsafe case key')
         if record.get('attempted', True):
@@ -39,7 +43,7 @@ def plan(root, max_bytes=25_000_000_000, *, ledger=None, released_repo=None):
     payloads,manifests,total=[],[],0
     cases = publication_cases(root, ledger)
     seen = {}
-    for key,record in ledger['cases'].items():
+    for key,record in publication_records(ledger).items():
         if '/' in key or '\\' in key or key in ('','.','..'):
             raise ValueError('unsafe case key')
         if not record.get('attempted',True):continue

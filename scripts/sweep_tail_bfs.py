@@ -29,6 +29,7 @@ def automatic_pairs(n_min=2,n_max=128,r_min=1,r_max=None):
 
 def resource_stop(record):
     if record.get('status')!='INCOMPLETE' or not record.get('attempted',False):return False
+    if record.get('replicas') and not all(resource_stop(replica) for replica in record['replicas']):return False
     reason=record.get('reason','').lower()
     if 'no space left on device' in reason:return False
     if record.get('resource_classification')=='cuda_allocation_failure':return True
@@ -158,6 +159,12 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 production_search_seconds=max(searches) if len(searches)==config.get('world',2) else None,
                 automatic_phase_seconds=manifest.get('launch_config',{}).get('automatic_phase_seconds'),
                 scope='runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report')
+        if manifest.get('replicas'):
+            record['replicas']=manifest['replicas']
+            record['comparison']=manifest['comparison']
+            for replica in record['replicas']:
+                if replica['status']=='INCOMPLETE' and allocation_failure(root/replica['key'],source):
+                    replica['resource_classification']='cuda_allocation_failure'
         if record['status']=='INCOMPLETE' and allocation_failure(root/key,source):
             record['resource_classification']='cuda_allocation_failure'
         ledger['cases'][key]=record
