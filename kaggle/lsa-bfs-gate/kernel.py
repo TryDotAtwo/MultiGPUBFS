@@ -151,10 +151,17 @@ def cuda_build_target(hardware):
     return targets[hardware]
 
 
+def vmm_probe_cases():
+    return [dict(mode=mode, tool=tool, label=f'{mode}-{tool or "plain"}')
+            for mode in ('local', 'import')
+            for tool in (None, 'memcheck', 'racecheck', 'initcheck', 'synccheck')]
+
+
 def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None,
                             require_window=True):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
-    if not require_window and required_stage not in ('device_comm_only_create', 'device_comm_zero_create'):
+    if not require_window and required_stage not in (
+            'device_comm_only_create', 'device_comm_zero_create', 'vmm_local', 'vmm_import'):
         raise ValueError('WINDOWLESS_PROBE_REQUIRES_DEVICE_ONLY_STAGE')
     # Kaggle relocates the uploaded script; cwd is the pinned source checkout.
     scripts = str(Path(cwd).resolve() / 'scripts')
@@ -323,7 +330,7 @@ def main():
         (sdk / "lib64").symlink_to("lib", target_is_directory=True)
         env["PATH"] = str(sdk / "bin") + ":" + env.get("PATH", "")
         env["CUDACXX"] = str(sdk / "bin/nvcc")
-        if MODE == 'nccl_window_processes' or profiling_enabled:
+        if MODE in ('nccl_window_processes', 'cuda_posix_import') or profiling_enabled:
             # The compiler is pinned, but the instrumenter comes from the host.
             # Record actual versions; do not infer sanitizer identity from nvcc.
             report['environment_versions'] = {
@@ -441,6 +448,28 @@ def main():
             if completed.returncode != 0 or report["abort_isolation"]["passed_ranks"] != 2:
                 raise RuntimeError("NCCL_NONBLOCKING_ABORT_GATE")
             report["status"] = "COMPLETE"
+            return
+        if MODE == 'cuda_posix_import':
+            binary = work / 'cuda-posix-import'
+            run([env['CUDACXX'], '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
+                 str(source / 'experiments/cuda_posix_import.cu'), '-lcuda', '-o', str(binary)],
+                'vmm-build')
+            report['scope'] = 'CUDA VMM local/import diagnostics; no NCCL or BFS acceptance'
+            report['vmm_cases'] = []
+            for case in vmm_probe_cases():
+                command = [str(binary), case['mode']]
+                if case['tool']:
+                    command = ['compute-sanitizer', '--tool', case['tool'],
+                               '--error-exitcode', '97'] + command
+                row = run_window_process_pair(command, source, env,
+                    logs / ('vmm-' + case['label']), timeout=180,
+                    required_stage='vmm_' + case['mode'], require_window=False)
+                row.update(case)
+                row['command'] = command
+                report['vmm_cases'].append(row)
+                (logs / 'vmm-cases.json').write_text(json.dumps(report['vmm_cases'], indent=2))
+            report['status'] = ('COMPLETE' if all(c['pass'] for c in report['vmm_cases'])
+                                else 'INCOMPLETE')
             return
         if MODE in ("nccl_window_isolation", "nccl_window_nonblocking", "nccl_window_processes"):
             binary = work / "nccl-window-isolation"
