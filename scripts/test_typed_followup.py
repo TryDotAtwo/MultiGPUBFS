@@ -38,11 +38,14 @@ class FollowupTests(unittest.TestCase):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         before = json.dumps(base, sort_keys=True)
         configs = gate.typed_stress_configs(base, 3)
-        self.assertEqual(len(configs), 24)
-        self.assertEqual({(c['frontier_profile'], c['local_pre_dedup'],
+        self.assertEqual(len(configs), 72)
+        self.assertEqual({c['owner_backend'] for c in configs},
+                         {'CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'})
+        self.assertEqual({(c['owner_backend'], c['frontier_profile'], c['local_pre_dedup'],
                           tuple(c['topology']['logical_owner_to_rank']),
                           c['capacities']['route_slot_count']) for c in configs},
-            {(p, d, m, b) for p in ('DENSE', 'HASH_FIRST') for d in (False, True)
+            {(o, p, d, m, b) for o in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET')
+             for p in ('DENSE', 'HASH_FIRST') for d in (False, True)
              for m in ((0, 1), (1, 0)) for b in (2, 3, 4)})
         for config in configs:
             graph = config['graph']

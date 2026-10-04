@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-SOURCE = "749c691363007836969536c8629e9b30bc92e842"
+SOURCE = "6d9a2009010c7306e50769c8db611897c608264e"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
 MODE = "typed_followup_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
@@ -81,8 +81,16 @@ def typed_stress_configs(base, modulus):
         state_extent_descriptors=2 * records, layer_hash_records_per_arena=records,
         next_bucket_capacity_records=records, route_slot_records=48,
         pinned_archive_slots=2 * records, pinned_archive_slot_bytes=512)
-    return [candidate for candidate in typed_rank_configs(config)
-        if candidate['completion_epoch_window'] == 3]
+    cases = []
+    for candidate in typed_rank_configs(config):
+        if candidate['completion_epoch_window'] != 3:
+            continue
+        for owner in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
+            selected = copy.deepcopy(candidate)
+            selected['owner_backend'] = owner
+            selected['library_pool_bytes'] = (96 << 20) if owner == 'CUCO_RANK' else None
+            cases.append(selected)
+    return cases
 
 
 def typed_followup_cases(base):
@@ -533,7 +541,7 @@ def main():
             if MODE == 'typed_stress_gate':
                 report['scope'] = 'full typed U4/F3 state sets; all profile/pre-dedup/rank-map/source-bank combinations'
                 for config in typed_stress_configs(base, 3):
-                    label = (f"stress-{config['frontier_profile']}-pre-{int(config['local_pre_dedup'])}"
+                    label = (f"stress-{config['owner_backend']}-{config['frontier_profile']}-pre-{int(config['local_pre_dedup'])}"
                         f"-map-{''.join(map(str,config['topology']['logical_owner_to_rank']))}"
                         f"-banks-{config['capacities']['route_slot_count']}")
                     replay_typed(config, label, ['--healthy-only', '--unitriangular-modulus', '3',
