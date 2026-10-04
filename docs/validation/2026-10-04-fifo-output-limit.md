@@ -62,3 +62,15 @@ This is actual graph execution, not the older drained-completion leaf test.
 Transport, HASH_FIRST responses and retirement are outside this capture scope;
 capture does not replace the real multi-rank timeline requirement.
 The fixture is debug-only because its injection/probe hooks are debug-only.
+
+## Native CUB rank-owner coverage
+
+The same gate now runs both CUCO_RANK and CUB_SORT_MERGE, each with DENSE
+and HASH_FIRST, healthy captured owner DAG execution and five failure points.
+All 24 independent CLI processes passed in 22.12 seconds on the local GPU.
+The CUB configuration deliberately omits the library pool: an initial attempt
+was correctly rejected as REFERENCE_UNUSED_LIBRARY_POOL before search.
+Healthy outputs for all four combinations match full CPU-oracle states and
+seeded hashes. Failure cases require the precise injected error and absence
+of rank/group COMPLETE. This does not validate BMMA, multi-rank execution,
+sm75 or paired performance.
