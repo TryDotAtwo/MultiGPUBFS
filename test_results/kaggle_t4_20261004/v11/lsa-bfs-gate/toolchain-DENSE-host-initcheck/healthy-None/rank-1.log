@@ -1,0 +1,18 @@
+========= COMPUTE-SANITIZER
+MGBFS_NCCL_ASYNC_FATAL rank=1 code=1 detail=unhandled cuda error (run with NCCL_DEBUG=INFO for details)
+MGBFS_NATIVE_STATUS status=8 file=crates/mgbfs-runtime/src/distributed_native.rs line=2019
+MGBFS_NATIVE_STATUS status=2 file=crates/mgbfs-runtime/src/distributed_native.rs line=528
+MGBFS_FAILURE_TEARDOWN rank=1 stage=nccl_abort_begin
+MGBFS_FAILURE_TEARDOWN rank=1 stage=nccl_abort_end code=0
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b730 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b730 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6b0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6b0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6d0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6d0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6f0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5a3cc663b6f0 stage=stream_drain_end
+MGBFS_ARCHIVE_WORKER_FATAL device=1 error=ARCHIVE_INCOMPLETE
+{"error":"LSA_ACTIVATE_GROUP: CUDA_STATUS_8: device_comm_create: progress=9 submitted=0 terminal=1 detail=unhandled cuda error (run with NCCL_DEBUG=INFO for details)","status":"ERROR"}
+========= Target application returned an error
+========= ERROR SUMMARY: 0 errors

@@ -1,0 +1,27 @@
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0011212349999999997, write_seconds: 0.000319332, sync_seconds: 0.004191152, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x561d60d22f50 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x561d60d22f50 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x561d6404e2d0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x561d6404e2d0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x561d6404e2f0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x561d6404e2f0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x561d641380b0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x561d641380b0 stage=stream_drain_end

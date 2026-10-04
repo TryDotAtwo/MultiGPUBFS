@@ -1,0 +1,15 @@
+========= COMPUTE-SANITIZER
+MGBFS_NATIVE_STATUS status=8 file=crates/mgbfs-runtime/src/distributed_native.rs line=2019
+MGBFS_NATIVE_STATUS status=1 file=crates/mgbfs-runtime/src/distributed_native.rs line=493
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3980 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3980 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3900 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3900 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3920 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3920 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3940 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x5780097b3940 stage=stream_drain_end
+MGBFS_ARCHIVE_WORKER_FATAL device=0 error=ARCHIVE_INCOMPLETE
+{"error":"LSA_ACTIVATE_GROUP: CUDA_STATUS_8: device_comm_create: progress=7 submitted=0 terminal=0 detail=cancelled or timed out without terminal NCCL result","status":"ERROR"}
+========= Target application returned an error
+========= ERROR SUMMARY: 0 errors

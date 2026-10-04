@@ -1,0 +1,25 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+ModuleNotFoundError: No module named 'wrapt'
+Collecting libcudf-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 2))
+  Downloading libcudf_cu12-26.4.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (678.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 678.0/678.0 MB 158.1 MB/s eta 0:00:00
+Collecting librmm-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 3))
+  Downloading librmm_cu12-26.4.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (4.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.0/4.0 MB 138.5 MB/s eta 0:00:00
+Collecting cmake==3.31.6 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 4))
+  Downloading cmake-3.31.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (27.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 27.8/27.8 MB 115.6 MB/s eta 0:00:00
+Collecting ninja==1.11.1.4 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 5))
+  Downloading ninja-1.11.1.4-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl (422 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 422.8/422.8 kB 346.1 MB/s eta 0:00:00
+Collecting libkvikio-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 6))
+  Downloading libkvikio_cu12-26.4.0-py3-none-manylinux_2_28_x86_64.whl (2.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.4/2.4 MB 130.3 MB/s eta 0:00:00
+Collecting nvidia-libnvcomp-cu12==5.1.0.21 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 7))
+  Downloading nvidia_libnvcomp_cu12-5.1.0.21-py3-none-manylinux_2_28_x86_64.whl (29.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 29.0/29.0 MB 126.5 MB/s eta 0:00:00
+Collecting rapids-logger==0.2.3 (from -r /tmp/mgbfs-lsa-bfs-77c4lppr/source/experiments/library_owner/requirements-linux-x86_64.lock (line 8))
+  Downloading rapids_logger-0.2.3-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (202 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 202.0/202.0 kB 353.4 MB/s eta 0:00:00
+Installing collected packages: nvidia-libnvcomp-cu12, libkvikio-cu12, rapids-logger, ninja, cmake, librmm-cu12, libcudf-cu12
+Successfully installed cmake-3.31.6 libcudf-cu12-26.4.0 libkvikio-cu12-26.4.0 librmm-cu12-26.4.0 ninja-1.11.1.4 nvidia-libnvcomp-cu12-5.1.0.21 rapids-logger-0.2.3

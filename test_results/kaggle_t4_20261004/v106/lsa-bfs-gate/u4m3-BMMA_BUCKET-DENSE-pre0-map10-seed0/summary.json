@@ -1,0 +1,57 @@
+{
+  "scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
+  "epoch_window": 3,
+  "route_banks": 3,
+  "run_contract": "RunConfigV1",
+  "run_config_sha256": "6f940248dba32699feb48cdd97d14a6e1733b05d927084fec2038fd379cccb74",
+  "base_commit": "d3d1e2aa350c8dc3d34cad9367fc4f8e90a7ea64",
+  "cases": [
+    {
+      "name": "healthy",
+      "fault_rank": null,
+      "forced_cleanup": false,
+      "returncodes": [
+        0,
+        0
+      ],
+      "seconds": 1.7581524610000088,
+      "deadline_seconds": 45,
+      "group_complete": true,
+      "pass": true,
+      "full_state_oracle": {
+        "unique_states": 729,
+        "layer_sizes": [
+          1,
+          6,
+          20,
+          56,
+          116,
+          208,
+          268,
+          52,
+          2
+        ],
+        "route_bank_reuses": [
+          0,
+          0
+        ],
+        "scope": "2 independent rank-process archives; full canonical states at every depth"
+      }
+    }
+  ],
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "expected_config_digest": "6af232c8716dcd150794f5c70d3e31cdfbc8a1e4a94f22d24cacda2f45a1e362",
+  "reference_size": 4,
+  "reference_group": "u4m3",
+  "batch": 256,
+  "bench_warmup_requested": false,
+  "profile": "DENSE",
+  "pre_dedup": "OFF",
+  "owner_backend": "BMMA_BUCKET",
+  "rank_map": "1,0",
+  "hash_seed_hex": "00000000000000000000000000000000",
+  "owner_dag_capture_requested": false,
+  "process_instrumentation": null,
+  "case_timeout_seconds": 45,
+  "status": "DIAGNOSTIC_CASES_PASS"
+}

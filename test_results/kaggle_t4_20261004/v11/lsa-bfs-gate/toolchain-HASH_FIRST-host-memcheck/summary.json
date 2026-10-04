@@ -1,0 +1,61 @@
+{
+  "scope": "dirty candidate; hardware diagnostic, not T4 acceptance",
+  "epoch_window": 3,
+  "route_banks": 3,
+  "run_contract": "RunConfigV1",
+  "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+  "base_commit": "c221b93d739a7f0cafbc6cf79757c035dcd24677",
+  "cases": [
+    {
+      "name": "healthy",
+      "fault_rank": null,
+      "forced_cleanup": false,
+      "returncodes": [
+        0,
+        0
+      ],
+      "seconds": 12.077719850999983,
+      "deadline_seconds": 120,
+      "group_complete": true,
+      "pass": true,
+      "full_state_oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          3,
+          0
+        ],
+        "scope": "2 independent rank-process archives; full canonical states at every depth"
+      },
+      "instrumentation_clean": true
+    }
+  ],
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "expected_config_digest": "e300d4acd19dd08568d1ae3406ed13025adbd81c6b407a31137e86ae5e4282d9",
+  "reference_size": 4,
+  "reference_group": "s4",
+  "batch": 1,
+  "bench_warmup_requested": false,
+  "profile": "HASH_FIRST",
+  "pre_dedup": "ON",
+  "owner_backend": "CUCO_RANK",
+  "rank_map": "0,1",
+  "hash_seed_hex": "000000000000000000000000013527dc",
+  "owner_dag_capture_requested": false,
+  "process_instrumentation": "memcheck",
+  "process_sanitizer": {
+    "executable": "/usr/local/cuda/bin/compute-sanitizer",
+    "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+    "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+  },
+  "case_timeout_seconds": 120,
+  "status": "DIAGNOSTIC_CASES_PASS"
+}

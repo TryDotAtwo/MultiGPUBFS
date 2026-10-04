@@ -1,0 +1,25 @@
+========= COMPUTE-SANITIZER
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.00048166899999999994, write_seconds: 0.000333364, sync_seconds: 0.004148073, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdb10 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdb10 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdaf0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdaf0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdad0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558faadbdad0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x558faad7c7c0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x558faad7c7c0 stage=stream_drain_end
+========= ERROR SUMMARY: 0 errors

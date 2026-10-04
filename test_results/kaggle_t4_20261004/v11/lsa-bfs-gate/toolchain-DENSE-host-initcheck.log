@@ -1,0 +1,9 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+ModuleNotFoundError: No module named 'wrapt'
+Traceback (most recent call last):
+  File "/tmp/mgbfs-lsa-bfs-v1z1niv4/source/scripts/replay_lsa_cancel_candidate.py", line 672, in <module>
+    main()
+    ~~~~^^
+  File "/tmp/mgbfs-lsa-bfs-v1z1niv4/source/scripts/replay_lsa_cancel_candidate.py", line 598, in main
+    raise RuntimeError("CANDIDATE_CASE_FAILED: " + name)
+RuntimeError: CANDIDATE_CASE_FAILED: healthy

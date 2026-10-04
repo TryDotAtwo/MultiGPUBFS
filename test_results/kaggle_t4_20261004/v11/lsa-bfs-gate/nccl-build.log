@@ -1,0 +1,351 @@
+make -C src build BUILDDIR=/tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl
+make[1]: Entering directory '/tmp/mgbfs-lsa-bfs-v1z1niv4/nccl-source/src'
+NVCC_GENCODE is -gencode=arch=compute_75,code=sm_75
+Grabbing   include/nccl_device.h               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device.h
+Generating nccl.h.in                           > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl.h
+Grabbing   include/nccl_device/barrier.h       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/barrier.h
+Grabbing   include/nccl_device/comm.h          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/comm.h
+Grabbing   include/nccl_device/coop.h          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/coop.h
+Grabbing   include/nccl_device/core.h          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/core.h
+Grabbing   include/nccl_device/gin_barrier.h   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin_barrier.h
+Grabbing   include/nccl_device/gin.h           > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin.h
+Grabbing   include/nccl_device/ll_a2a.h        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/ll_a2a.h
+Grabbing   include/nccl_device/lsa_barrier.h   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/lsa_barrier.h
+Grabbing   include/nccl_device/net_device.h    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/net_device.h
+Grabbing   include/nccl_device/ptr.h           > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/ptr.h
+Grabbing   include/nccl_device/reduce_copy.h   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/reduce_copy.h
+Grabbing   include/nccl_device/utility.h       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/utility.h
+Grabbing   include/nccl_device/gin/gin_device_api.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gin_device_api.h
+Grabbing   include/nccl_device/gin/gin_device_common.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gin_device_common.h
+Grabbing   include/nccl_device/gin/gin_device_host_common.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gin_device_host_common.h
+Grabbing   include/nccl_device/impl/barrier__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/barrier__funcs.h
+Grabbing   include/nccl_device/impl/barrier__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/barrier__types.h
+Grabbing   include/nccl_device/impl/comm__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/comm__funcs.h
+Grabbing   include/nccl_device/impl/comm__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/comm__types.h
+Grabbing   include/nccl_device/impl/core__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/core__funcs.h
+Grabbing   include/nccl_device/impl/core__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/core__types.h
+Grabbing   include/nccl_device/impl/gin_barrier__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/gin_barrier__funcs.h
+Grabbing   include/nccl_device/impl/gin_barrier__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/gin_barrier__types.h
+Grabbing   include/nccl_device/impl/gin__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/gin__funcs.h
+Grabbing   include/nccl_device/impl/gin__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/gin__types.h
+Grabbing   include/nccl_device/impl/ll_a2a__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/ll_a2a__funcs.h
+Grabbing   include/nccl_device/impl/ll_a2a__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/ll_a2a__types.h
+Grabbing   include/nccl_device/impl/lsa_barrier__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/lsa_barrier__funcs.h
+Grabbing   include/nccl_device/impl/lsa_barrier__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/lsa_barrier__types.h
+Grabbing   include/nccl_device/impl/multimem__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/multimem__funcs.h
+Grabbing   include/nccl_device/impl/ptr__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/ptr__funcs.h
+Grabbing   include/nccl_device/impl/ptr__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/ptr__types.h
+Grabbing   include/nccl_device/impl/reduce_copy__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/reduce_copy__funcs.h
+Grabbing   include/nccl_device/impl/reduce_copy__impl.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/reduce_copy__impl.h
+Grabbing   include/nccl_device/impl/reduce_copy__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/reduce_copy__types.h
+Grabbing   include/nccl_device/impl/vector__funcs.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/vector__funcs.h
+Grabbing   include/nccl_device/impl/vector__types.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/impl/vector__types.h
+Grabbing   include/nccl_device/gin/gdaki/gin_gdaki_device_host_common.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/gin_gdaki_device_host_common.h
+Grabbing   include/nccl_device/gin/gdaki/gin_gdaki.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/gin_gdaki.h
+Grabbing   include/nccl_device/gin/proxy/gin_proxy_device_host_common.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/proxy/gin_proxy_device_host_common.h
+Grabbing   include/nccl_device/gin/proxy/gin_proxy.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/proxy/gin_proxy.h
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/doca_gpunetio_device.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/doca_gpunetio_device.h
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/common/doca_gpunetio_verbs_def.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/common/doca_gpunetio_verbs_def.h
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/common/doca_gpunetio_verbs_dev.h > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/common/doca_gpunetio_verbs_dev.h
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/device/doca_gpunetio_dev_verbs_common.cuh > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/device/doca_gpunetio_dev_verbs_common.cuh
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/device/doca_gpunetio_dev_verbs_counter.cuh > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/device/doca_gpunetio_dev_verbs_counter.cuh
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/device/doca_gpunetio_dev_verbs_cq.cuh > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/device/doca_gpunetio_dev_verbs_cq.cuh
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/device/doca_gpunetio_dev_verbs_onesided.cuh > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/device/doca_gpunetio_dev_verbs_onesided.cuh
+Grabbing   transport/net_ib/gdaki/doca-gpunetio/include/device/doca_gpunetio_dev_verbs_qp.cuh > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/include/nccl_device/gin/gdaki/doca_gpunetio/device/doca_gpunetio_dev_verbs_qp.cuh
+Compiling  misc/ibvsymbols.cc                  > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/ibvsymbols.o
+Updated  /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/include/nccl_git_version.h
+Compiling  misc/ibvwrap.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/ibvwrap.o
+Compiling  misc/ipcsocket.cc                   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/ipcsocket.o
+Compiling  misc/mlx5dvsymbols.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/mlx5dvsymbols.o
+Compiling  misc/mlx5dvwrap.cc                  > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/mlx5dvwrap.o
+Compiling  misc/nvmlwrap.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/nvmlwrap.o
+Compiling  misc/param.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/param.o
+Compiling  misc/shmutils.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/shmutils.o
+Compiling  misc/socket.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/socket.o
+Compiling  misc/strongstream.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/strongstream.o
+Compiling  misc/utils.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/utils.o
+Compiling  transport/coll_net.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/coll_net.o
+Compiling  transport/generic.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/generic.o
+Compiling  transport/net.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net.o
+Compiling  transport/net_socket.cc             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_socket.o
+Compiling  transport/nvls.cc                   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/nvls.o
+Compiling  transport/p2p.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/p2p.o
+Compiling  transport/profiler.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/profiler.o
+Compiling  transport/shm.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/shm.o
+Compiling  transport/net_ib/common.cc          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/common.o
+Compiling  transport/net_ib/connect.cc         > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/connect.o
+Compiling  transport/net_ib/gdr.cc             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdr.o
+Compiling  transport/net_ib/gin.cc             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gin.o
+Compiling  transport/net_ib/init.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/init.o
+Compiling  transport/net_ib/p2p.cc             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/p2p.o
+Compiling  transport/net_ib/p2p_resiliency.cc  > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/p2p_resiliency.o
+Compiling  transport/net_ib/reg.cc             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/reg.o
+Compiling  transport/net_ib/gdaki/gin_host_gdaki.cc > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/gin_host_gdaki.o
+Compiling  register/coll_reg.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/register/coll_reg.o
+Compiling  register/register.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/register/register.o
+Compiling  register/sendrecv_reg.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/register/sendrecv_reg.o
+Compiling  plugin/env.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/env.o
+Compiling  plugin/gin.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/gin.o
+Compiling  plugin/net.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net.o
+Compiling  plugin/plugin_open.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/plugin_open.o
+Compiling  plugin/profiler.cc                  > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler.o
+Compiling  plugin/tuner.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/tuner.o
+Compiling  plugin/net/net_v10.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v10.o
+Compiling  plugin/net/net_v11.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v11.o
+Compiling  plugin/net/net_v6.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v6.o
+Compiling  plugin/net/net_v7.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v7.o
+Compiling  plugin/net/net_v8.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v8.o
+Compiling  plugin/net/net_v9.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/net/net_v9.o
+Compiling  plugin/gin/gin_v11.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/gin/gin_v11.o
+Compiling  plugin/gin/gin_v12.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/gin/gin_v12.o
+Compiling  plugin/tuner/tuner_v2.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/tuner/tuner_v2.o
+Compiling  plugin/tuner/tuner_v3.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/tuner/tuner_v3.o
+Compiling  plugin/tuner/tuner_v4.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/tuner/tuner_v4.o
+Compiling  plugin/tuner/tuner_v5.cc            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/tuner/tuner_v5.o
+Compiling  plugin/profiler/profiler_v1.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v1.o
+Compiling  plugin/profiler/profiler_v2.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v2.o
+Compiling  plugin/profiler/profiler_v3.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v3.o
+Compiling  plugin/profiler/profiler_v4.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v4.o
+Compiling  plugin/profiler/profiler_v5.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v5.o
+Compiling  plugin/profiler/profiler_v6.cc      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/profiler/profiler_v6.o
+Compiling  plugin/env/env_v1.cc                > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/plugin/env/env_v1.o
+Compiling  nccl_device/core.cc                 > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/nccl_device/core.o
+Compiling  nccl_device/gin_barrier.cc          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/nccl_device/gin_barrier.o
+Compiling  nccl_device/gin_scratch.cc          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/nccl_device/gin_scratch.o
+Compiling  nccl_device/ll_a2a.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/nccl_device/ll_a2a.o
+Compiling  nccl_device/lsa_barrier.cc          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/nccl_device/lsa_barrier.o
+Compiling  scheduler/allgatherv_sched.cc       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/scheduler/allgatherv_sched.o
+Compiling  scheduler/symmetric_sched.cc        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/scheduler/symmetric_sched.o
+Compiling  gin/gin_host.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/gin/gin_host.o
+Compiling  gin/gin_host_proxy.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/gin/gin_host_proxy.o
+Compiling  rma/rma.cc                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/rma/rma.o
+Compiling  rma/rma_ce.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/rma/rma_ce.o
+Compiling  rma/rma_proxy.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/rma/rma_proxy.o
+Compiling  ras/client_support.cc               > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/client_support.o
+Compiling  ras/collectives.cc                  > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/collectives.o
+Compiling  ras/peers.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/peers.o
+Compiling  ras/ras.cc                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/ras.o
+Compiling  ras/rasnet.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/rasnet.o
+Compiling  os/linux.cc                         > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/os/linux.o
+Compiling  init_nvtx.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/init_nvtx.o
+Compiling  enhcompat.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/enhcompat.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_qp.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_qp.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_cq.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_cq.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_device_attr.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_device_attr.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_umem.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_umem.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_srq.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_srq.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_uar.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_uar.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_gpunetio.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_gpunetio.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_gpunetio_log.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_gpunetio_log.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_gpunetio_high_level.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_gpunetio_high_level.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_cuda_wrapper.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_cuda_wrapper.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_mlx5dv_wrapper.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_mlx5dv_wrapper.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_verbs_ibv_wrapper.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_verbs_ibv_wrapper.o
+Compiling  transport/net_ib/gdaki/doca-gpunetio/src/doca_gpunetio_gdrcopy.cpp > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport/net_ib/gdaki/doca-gpunetio/doca_gpunetio_gdrcopy.o
+make[2]: Entering directory '/tmp/mgbfs-lsa-bfs-v1z1niv4/nccl-source/src/device'
+NVCC_GENCODE is -gencode=arch=compute_75,code=sm_75
+Generating nccl.pc.in                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/lib/pkgconfig/nccl.pc
+Compiling  ras/client.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ras/client.o
+NVCC_GENCODE is -gencode=arch=compute_75,code=sm_75
+Dependencies    src/device/common.cu
+Dependencies    src/device/onerank.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_gather.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_gather_v.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/broadcast.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce.cu
+Compiling  bootstrap.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/bootstrap.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_bf16.cu
+Compiling  channel.cc                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/channel.o
+Compiling  collectives.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/collectives.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_f16.cu
+Compiling  debug.cc                            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/debug.o
+Compiling  enqueue.cc                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/enqueue.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_f32.cu
+Compiling  group.cc                            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/group.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_f64.cu
+Compiling  init.cc                             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/init.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_f8e5m2.cu
+Compiling  proxy.cc                            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/proxy.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_u32.cu
+Compiling  transport.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/transport.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_u64.cu
+Compiling  mnnvl.cc                            > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/mnnvl.o
+Compiling  allocator.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/allocator.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sum_u8.cu
+Compiling  dev_runtime.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/dev_runtime.o
+Compiling  sym_kernels.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/sym_kernels.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sumpostdiv_u32.cu
+Compiling  ce_coll.cc                          > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/ce_coll.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sumpostdiv_u64.cu
+Compiling  mem_manager.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/mem_manager.o
+Compiling  graph/connect.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/connect.o
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_sumpostdiv_u8.cu
+Compiling  graph/paths.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/paths.o
+Compiling  graph/rings.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/rings.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/sendrecv.cu
+Compiling  graph/search.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/search.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/host_table.cc
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/device_table.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_gather.cu
+Compiling  graph/topo.cc                       > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/topo.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_gather_gin.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce.cu
+Compiling  graph/trees.cc                      > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/trees.o
+Compiling  graph/tuning.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/tuning.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin.cu
+Compiling  graph/xml.cc                        > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/graph/xml.o
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter.cu
+Dependencies    /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/sym_kernels_host.cc
+Compiling       src/device/common.cu
+Compiling  misc/argcheck.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/argcheck.o
+Compiling  misc/cudawrap.cc                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/cudawrap.o
+Compiling  misc/gdrwrap.cc                     > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/gdrwrap.o
+Compiling       src/device/onerank.cu
+Compiling  misc/git_version.cc                 > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/misc/git_version.o
+Linking    ncclras                             > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/bin/ncclras
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_gather.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_gather_v.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_i32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_i64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_minmax_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_premulsum_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_prod_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sum_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sumpostdiv_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sumpostdiv_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/all_reduce_sumpostdiv_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/broadcast.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_minmax_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_premulsum_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_prod_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_i32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_i64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_minmax_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_premulsum_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_prod_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_f64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sum_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sumpostdiv_u32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sumpostdiv_u64.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/reduce_scatter_sumpostdiv_u8.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/sendrecv.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/host_table.cc
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/device_table.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_gather.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_gather_gin.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f8e4m3_RSxLDMC_AGxSTMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/all_reduce_sum_f8e5m2_RSxLDMC_AGxSTMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f8e4m3_RailA2A_LsaLDMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_gin_sum_f8e5m2_RailA2A_LsaLDMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_bf16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f16.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f32.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f8e4m3.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f8e4m3_LDMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f8e5m2.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/reduce_scatter_sum_f8e5m2_LDMC.cu
+Compiling       /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/obj/device/gensrc/symmetric/sym_kernels_host.cc
+make[2]: Leaving directory '/tmp/mgbfs-lsa-bfs-v1z1niv4/nccl-source/src/device'
+Linking    libnccl.so.2.29.7                   > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/lib/libnccl.so.2.29.7
+Archiving  libnccl_static.a                    > /tmp/mgbfs-lsa-bfs-v1z1niv4/nccl/nvidia/nccl/lib/libnccl_static.a
+make[1]: Leaving directory '/tmp/mgbfs-lsa-bfs-v1z1niv4/nccl-source/src'

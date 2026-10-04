@@ -1,0 +1,25 @@
+========= COMPUTE-SANITIZER
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_begin
+MGBFS_FAILURE_TEARDOWN device=0 stage=owner_drain_end
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.0005634549999999999, write_seconds: 0.00047392000000000007, sync_seconds: 0.004926207, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x56771361d990 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x56771361d990 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x56771377e8f0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x56771377e8f0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x56771361d930 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x56771361d930 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x56771361da60 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x56771361da60 stage=stream_drain_end
+========= RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

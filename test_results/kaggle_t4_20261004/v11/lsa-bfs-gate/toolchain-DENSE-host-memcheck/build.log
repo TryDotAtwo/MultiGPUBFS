@@ -1,0 +1,62 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded block-buffer v0.10.4
+  Downloaded cpufeatures v0.2.17
+  Downloaded keccak v0.1.6
+  Downloaded serde v1.0.217
+  Downloaded ryu v1.0.23
+  Downloaded crypto-common v0.1.7
+  Downloaded serde_json v1.0.138
+  Downloaded serde_derive v1.0.217
+  Downloaded version_check v0.9.5
+  Downloaded digest v0.10.7
+  Downloaded unicode-ident v1.0.24
+  Downloaded sha3 v0.10.8
+  Downloaded itoa v1.0.18
+  Downloaded typenum v1.20.1
+  Downloaded syn v2.0.119
+  Downloaded sha2 v0.10.8
+  Downloaded quote v1.0.47
+  Downloaded proc-macro2 v1.0.107
+  Downloaded memchr v2.8.3
+  Downloaded libc v0.2.189
+  Downloaded generic-array v0.14.7
+  Downloaded cfg-if v1.0.4
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling serde v1.0.217
+   Compiling serde_json v1.0.138
+   Compiling cfg-if v1.0.4
+   Compiling cpufeatures v0.2.17
+   Compiling keccak v0.1.6
+   Compiling itoa v1.0.18
+   Compiling syn v2.0.119
+   Compiling memchr v2.8.3
+   Compiling ryu v1.0.23
+   Compiling libc v0.2.189
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling mgbfs-cuda v0.1.0 (/tmp/mgbfs-lsa-bfs-v1z1niv4/source/crates/mgbfs-cuda)
+   Compiling sha3 v0.10.8
+   Compiling sha2 v0.10.8
+   Compiling serde_derive v1.0.217
+   Compiling mgbfs-core v0.1.0 (/tmp/mgbfs-lsa-bfs-v1z1niv4/source/crates/mgbfs-core)
+   Compiling mgbfs-runtime v0.1.0 (/tmp/mgbfs-lsa-bfs-v1z1niv4/source/crates/mgbfs-runtime)
+warning: variable does not need to be mutable
+    --> crates/mgbfs-runtime/src/reference_bench.rs:1028:10
+     |
+1028 |     let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
+     |          ----^^^
+     |          |
+     |          help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` on by default
+
+warning: `mgbfs-runtime` (lib) generated 1 warning (run `cargo fix --lib -p mgbfs-runtime` to apply 1 suggestion)
+   Compiling mgbfs-cli v0.1.0 (/tmp/mgbfs-lsa-bfs-v1z1niv4/source/crates/mgbfs-cli)
+    Finished dev [unoptimized + debuginfo] target(s) in 19.16s

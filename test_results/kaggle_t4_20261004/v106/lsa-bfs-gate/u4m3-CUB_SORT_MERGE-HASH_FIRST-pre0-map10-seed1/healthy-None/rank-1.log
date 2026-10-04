@@ -1,0 +1,9 @@
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 0.001247784, write_seconds: 0.00037081799999999986, sync_seconds: 0.004000045, sync_calls: 1 }
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13af0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13af0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13ad0 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13ad0 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13b50 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aaa13b50 stage=stream_drain_end
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aab20790 stage=stream_drain_begin
+MGBFS_FAILURE_TEARDOWN stream=0x55d3aab20790 stage=stream_drain_end

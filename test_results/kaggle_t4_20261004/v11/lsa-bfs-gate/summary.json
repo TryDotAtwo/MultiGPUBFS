@@ -1,0 +1,362 @@
+{
+  "source": "c221b93d739a7f0cafbc6cf79757c035dcd24677",
+  "status": "INCOMPLETE",
+  "scope": "full typed BFS, unchanged runtime: host versus CUDA12.9 instrumenter, no suppression",
+  "hardware_target": "T4",
+  "cuda_architecture": "sm75",
+  "t4_acceptance_eligible": true,
+  "gpus": [
+    {
+      "index": 0,
+      "name": "Tesla T4",
+      "uuid": "GPU-06cf332b-0291-7936-7d6e-3c5c9cef8c7d",
+      "total_mib": 15360,
+      "free_mib": 14912
+    },
+    {
+      "index": 1,
+      "name": "Tesla T4",
+      "uuid": "GPU-76159263-dc87-e42b-a8b4-978931df5472",
+      "total_mib": 15360,
+      "free_mib": 14912
+    }
+  ],
+  "p2p": [
+    {
+      "source": 0,
+      "target": 1,
+      "cuda_status": 0,
+      "allowed": 1
+    },
+    {
+      "source": 1,
+      "target": 0,
+      "cuda_status": 0,
+      "allowed": 1
+    }
+  ],
+  "environment_versions": {
+    "driver": "580.178.04\n580.178.04",
+    "cuda_compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_May_27_02:21:03_PDT_2025\nCuda compilation tools, release 12.9, V12.9.86\nBuild cuda_12.9.r12.9/compiler.36037853_0",
+    "compute_sanitizer": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+  },
+  "nccl_dependency": {
+    "variant": "minimum_arch_guard_posix",
+    "upstream_commit": "b91894bd5b190c874d98a017f93f5daa515b65d0",
+    "patch_sha256": "1af3a5df99c2b3b9a4f66ca4c33cf66e513e208f73480e58b4183c8f0e05b26b",
+    "architecture": "sm75",
+    "posix_patch_sha256": "e73af6f263bb0eebb22904a20251c8b5da0dec2b463fdeb3c5a9c4fbc88b3072",
+    "mnnvl_enable": "0",
+    "nvtx": 1,
+    "experimental": true,
+    "library_sha256": "70e6a74d671ea8aa9131cc7070d9e5753038799e90ab9ca7f9de764ffa7196cc"
+  },
+  "typed_runs": [
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-host-memcheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "memcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-host-racecheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "racecheck"
+    },
+    {
+      "returncode": 1,
+      "timed_out": false,
+      "label": "toolchain-DENSE-host-initcheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": null,
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": false,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "initcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-host-synccheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "synccheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-cuda129-memcheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "memcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-cuda129-racecheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "racecheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-cuda129-initcheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "initcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-DENSE-cuda129-synccheck",
+      "run_config_sha256": "11e21b2ae4b3eb15c94b3f64b5ee74030486758eb7a51c50deb6b70b5b93baaa",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "synccheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-host-memcheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "memcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-host-racecheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "racecheck"
+    },
+    {
+      "returncode": 1,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-host-initcheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": null,
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": false,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "initcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-host-synccheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/usr/local/cuda/bin/compute-sanitizer",
+        "sha256": "5cba659e1cd603aa2370e103425f184368e6ed405da90ce85743c4399c324dbc",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.1.0.0 (build 35583870) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "host",
+      "tool": "synccheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-cuda129-memcheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "memcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-cuda129-racecheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "racecheck"
+    },
+    {
+      "returncode": 1,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-cuda129-initcheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": null,
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": false,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "initcheck"
+    },
+    {
+      "returncode": 0,
+      "timed_out": false,
+      "label": "toolchain-HASH_FIRST-cuda129-synccheck",
+      "run_config_sha256": "99edd1a7fe8bb26855762b045f2fd2f53fa45db725eeeb82e51daeae730ece93",
+      "run_contract": "RunConfigV1",
+      "epoch_window": 3,
+      "route_banks": 3,
+      "replay_status": "DIAGNOSTIC_CASES_PASS",
+      "process_sanitizer": {
+        "executable": "/tmp/mgbfs-lsa-bfs-v1z1niv4/cuda-12.9/compute-sanitizer/compute-sanitizer",
+        "sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547",
+        "version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+      },
+      "pass": true,
+      "instrumenter_selection_verified": true,
+      "sanitizer_version": "cuda129",
+      "tool": "synccheck"
+    }
+  ],
+  "pinned_sanitizer_version": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)",
+  "pinned_sanitizer_executable_sha256": "979adf037f4e3434a976b7f0912b0a05ce3b062e31b2a73397a1bf1cd5f57547"
+}
