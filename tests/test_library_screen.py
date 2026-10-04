@@ -53,6 +53,20 @@ class ScreenContract(unittest.TestCase):
                             's4', 24, 2, 1, 64, 128, 67108864, 'DENSE', 'ON', {},
                             owner='CUCO_RANK', run_config=path)
                 row['rank_results'][0][key] = saved
+            config['frontier_profile'] = 'HASH_FIRST'
+            path.write_text(json.dumps(config))
+            for rank in row['rank_results']:
+                rank.update(frontier_profile='HASH_FIRST', hash_first_generation='INT_MMA_SM75')
+            with patch.object(screen, 'run_group', launch), patch.object(screen.subprocess, 'run', cli):
+                result = screen.run_case('mgbfs', root/'hash-logs', root/'hash-archive',
+                    's4', 24, 2, 1, 64, 128, 67108864, 'HASH_FIRST', 'ON', {},
+                    owner='CUCO_RANK', run_config=path)
+                self.assertEqual(result['status'], 'COMPLETE')
+                row['rank_results'][0]['hash_first_generation'] = 'SCALAR'
+                with self.assertRaisesRegex(ValueError, 'SCREEN_CONFIGURATION'):
+                    screen.run_case('mgbfs', root/'scalar-logs', root/'scalar-archive',
+                        's4', 24, 2, 1, 64, 128, 67108864, 'HASH_FIRST', 'ON', {},
+                        owner='CUCO_RANK', run_config=path)
 
     def test_profile_keeps_rank_command_and_archives_but_not_benchmark_statistics(self):
         row = self.row()
