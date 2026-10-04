@@ -40,3 +40,12 @@ unchanged. The extended gate failed before this correction and passed after it.
 Not established: end-to-end HF publication on new code, two-rank
 transport/fault gates, sm75 acceptance or a performance improvement. Existing
 typed production file-extent admission is unchanged.
+
+## Worker failure extension
+
+The same CLI gate additionally injects archive worker write and sync errors
+for both profiles. All twelve subprocess cases passed in 11.49 seconds on
+the local GPU. Each failure checks its exact injected error string rather
+than accepting any generic failure; rank and group COMPLETE must be absent.
+This exercises actual asynchronous worker failure reporting, but still does
+not establish asymmetric cancellation between two independent ranks.

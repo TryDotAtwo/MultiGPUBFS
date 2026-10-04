@@ -26,6 +26,8 @@ fn native_cli_fifo_preserves_full_layers_and_wire_budget() {
             Some("MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK"),
             Some("MGBFS_TEST_OWNER_HOST_FAULT_RANK"),
             Some("MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK"),
+            Some("MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK"),
+            Some("MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK"),
         ] {
             let nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -134,8 +136,16 @@ fn native_cli_fifo_preserves_full_layers_and_wire_budget() {
                     "false rank COMPLETE: {key}"
                 );
                 let log_text = fs::read_to_string(&log).unwrap();
+                let expected_error = match key {
+                    "MGBFS_TEST_ARCHIVE_ADMISSION_FAULT_RANK" => "TEST_INJECTED_ARCHIVE_ADMISSION_ERROR",
+                    "MGBFS_TEST_OWNER_HOST_FAULT_RANK" => "TEST_INJECTED_OWNER_HOST_ERROR",
+                    "MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK" => "TEST_INJECTED_ARCHIVE_FINISH_ERROR",
+                    "MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK" => "TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR",
+                    "MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK" => "TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR",
+                    _ => unreachable!(),
+                };
                 assert!(
-                    log_text.contains("TEST_INJECTED_"),
+                    log_text.contains(expected_error),
                     "wrong failure for {key}: {log_text}"
                 );
                 fs::remove_dir_all(&root).unwrap();
