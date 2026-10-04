@@ -23,7 +23,8 @@ NCCL_VARIANT = "minimum_arch_guard_posix"
 
 def oracle_dependency_packages(mode):
     return ['pyarrow==19.0.1'] if mode in ('device_protocol_replay', 'native_rank_gate',
-        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate') else []
+        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate',
+        'typed_sanitizer_version_gate') else []
 
 
 def typed_rank_configs(base):
@@ -163,6 +164,24 @@ def typed_warmup_cases(base):
         cases.append(dict(config=config, label='warmup-' + profile,
                           extra=['--bench-warmup', '--capacity-faults']))
     return cases
+
+
+def typed_sanitizer_version_cases(base):
+    return [dict(config=copy.deepcopy(case['config']), version=version, tool=tool,
+                 label=f"toolchain-{case['config']['frontier_profile']}-{version}-{tool}",
+                 extra=['--healthy-only', '--instrument-processes', tool])
+            for case in typed_warmup_cases(base)
+            for version in ('host', 'cuda129')
+            for tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck')]
+
+
+def sanitizer_version_environment(env, host, pinned, version):
+    if version not in ('host', 'cuda129'):
+        raise ValueError('SANITIZER_VERSION_SELECTION')
+    selected = host if version == 'host' else pinned
+    result = dict(env)
+    result['PATH'] = Path(selected).parent.as_posix() + ':' + result.get('PATH', '')
+    return result
 
 
 def vmm_probe_cases():
@@ -324,8 +343,14 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        # Resolve before adding SDK/bin: sanitizer_api includes a launcher there.
+        host_sanitizer = shutil.which('compute-sanitizer', path=env.get('PATH', ''))
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
+        if MODE == 'typed_sanitizer_version_gate':
+            # Official redistrib12.9.1, inspected tar includes the actual instrumenter.
+            components.append(('cuda_sanitizer_api', '12.9.79',
+                'e23aad21132ff58b92a22aad372a7048793400b79c625665d325d4ecec6979bf'))
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
             components.append(('cuda_nvtx', '12.9.79',
@@ -354,7 +379,7 @@ def main():
                 'driver': run(['nvidia-smi', '--query-gpu=driver_version',
                     '--format=csv,noheader'], 'driver-version').strip(),
                 'cuda_compiler': run([env['CUDACXX'], '--version'], 'nvcc-version').strip(),
-                'compute_sanitizer': run(['compute-sanitizer', '--version'],
+                'compute_sanitizer': run([host_sanitizer or 'compute-sanitizer', '--version'],
                     'compute-sanitizer-version').strip(),
             }
             save()
@@ -604,7 +629,7 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate'):
+        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
             base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
@@ -631,6 +656,20 @@ def main():
                 save()
                 print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
                 return row
+            if MODE == 'typed_sanitizer_version_gate':
+                pinned = sdk / 'compute-sanitizer/compute-sanitizer'
+                if not host_sanitizer:
+                    raise RuntimeError('HOST_SANITIZER_NOT_FOUND')
+                report['scope'] = 'full typed BFS, unchanged runtime: host versus CUDA12.9 instrumenter, no suppression'
+                report['pinned_sanitizer_version'] = run([str(pinned), '--version'], 'pinned-sanitizer-version').strip()
+                report['pinned_sanitizer_executable_sha256'] = hashlib.sha256(pinned.read_bytes()).hexdigest()
+                for case in typed_sanitizer_version_cases(base):
+                    replay_env = sanitizer_version_environment(env, host_sanitizer, str(pinned), case['version'])
+                    row = replay_typed(case['config'], case['label'], case['extra'], replay_env)
+                    row.update(sanitizer_version=case['version'], tool=case['tool'])
+                    save()
+                report['status'] = 'TYPED_SANITIZER_VERSION_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
             if MODE == 'typed_warmup_gate':
                 report['scope'] = 'typed two-rank production warmup and measured archive oracle; asymmetric failures'
                 for case in typed_warmup_cases(base):

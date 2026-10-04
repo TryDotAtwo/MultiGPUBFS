@@ -14,6 +14,25 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_version_comparison_selects_host_before_sdk_wrapper_and_does_not_mutate_base(self):
+        env = {'PATH': '/sdk/bin:/usr/bin', 'keep': 'yes'}
+        for version, prefix in (('host', '/usr/local/cuda/bin'), ('cuda129', '/sdk/compute-sanitizer')):
+            selected = gate.sanitizer_version_environment(env, '/usr/local/cuda/bin/compute-sanitizer',
+                '/sdk/compute-sanitizer/compute-sanitizer', version)
+            self.assertEqual(selected['PATH'], prefix + ':/sdk/bin:/usr/bin')
+        self.assertEqual(env, {'PATH': '/sdk/bin:/usr/bin', 'keep': 'yes'})
+
+    def test_toolchain_comparison_keeps_all_four_tools_and_both_host_and_pinned_versions(self):
+        base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
+        cases = gate.typed_sanitizer_version_cases(base)
+        self.assertEqual(len(cases), 16)
+        self.assertEqual({(c['config']['frontier_profile'], c['version'], c['tool']) for c in cases},
+            {(p, v, t) for p in ('DENSE', 'HASH_FIRST') for v in ('host', 'cuda129')
+             for t in ('memcheck', 'racecheck', 'initcheck', 'synccheck')})
+        for case in cases:
+            self.assertEqual(case['extra'], ['--healthy-only', '--instrument-processes', case['tool']])
+        self.assertIn('pyarrow==19.0.1', gate.oracle_dependency_packages('typed_sanitizer_version_gate'))
+
     def test_warmup_runs_both_profiles_with_asymmetric_archive_owner_capacity_faults(self):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         cases = gate.typed_warmup_cases(base)
