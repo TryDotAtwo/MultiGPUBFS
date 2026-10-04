@@ -63,6 +63,8 @@ def main():
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--timeout-seconds', type=int, required=True)
     parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--torchrun-executable', type=Path,
+                        help='explicit installed host torchrun launcher; added to exported PATH')
     parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90'), default='90')
     parser.add_argument('--nccl-lsa-root', type=Path,
                         help='explicit installed NCCL >=2.29 root for device-count transport')
@@ -74,6 +76,10 @@ def main():
             min(args.jobs, args.timeout_seconds) <= 0):
         parser.error('Linux Python >=3.10, full commit, positive jobs and timeout required')
     source, work = args.source.resolve(), args.work.resolve()
+    torchrun = args.torchrun_executable.resolve() if args.torchrun_executable else None
+    if torchrun is not None and (torchrun.name != 'torchrun' or not torchrun.is_file()
+                                or not os.access(torchrun, os.X_OK)):
+        parser.error('explicit executable torchrun required')
     nccl_lsa_root = args.nccl_lsa_root.resolve() if args.nccl_lsa_root else None
     if nccl_lsa_root and not all((nccl_lsa_root/p).is_file() for p in
             ('include/nccl.h', 'include/nccl_device.h', 'lib/libnccl.so.2')):
@@ -105,6 +111,8 @@ def main():
                   cuda_architectures=args.cuda_architecture,
                   scope=('compile and native graph smoke; no BFS correctness'
                          if args.graph_smoke_test else 'compile only; no hardware correctness'))
+    if torchrun is not None:
+        env['PATH'] = str(torchrun.parent)+':'+env.get('PATH','')
     report['nccl_lsa_enabled'] = nccl_lsa_root is not None
     if nccl_version:
         report['nccl_version'] = nccl_version
