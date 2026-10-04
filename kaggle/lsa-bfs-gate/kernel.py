@@ -293,7 +293,7 @@ def main():
         (sdk / "lib64").symlink_to("lib", target_is_directory=True)
         env["PATH"] = str(sdk / "bin") + ":" + env.get("PATH", "")
         env["CUDACXX"] = str(sdk / "bin/nvcc")
-        if MODE == 'nccl_window_processes':
+        if MODE == 'nccl_window_processes' or profiling_enabled:
             # The compiler is pinned, but the instrumenter comes from the host.
             # Record actual versions; do not infer sanitizer identity from nvcc.
             report['environment_versions'] = {
