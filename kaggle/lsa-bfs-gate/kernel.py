@@ -14,9 +14,9 @@ import sys
 import tempfile
 import time
 
-SOURCE = "6d9a2009010c7306e50769c8db611897c608264e"
+SOURCE = "d195bab1f395bd0e2fb11aa00dc9f65d91615e66"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "typed_followup_gate"
+MODE = "nccl_window_processes"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
 NCCL_VARIANT = "minimum_arch_guard_posix"
 
