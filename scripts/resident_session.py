@@ -81,6 +81,26 @@ class Session:
         self.world = None
         self.capacity_profiles = {}
         self.metadata = {}
+        self.memory = self.memory_thread = None
+        self.memory_samples = []
+        self.memory_lock = threading.Lock()
+
+    def memory_monitor(self):
+        if self.memory is None:
+            self.memory = subprocess.Popen(['nvidia-smi','--query-gpu=index,memory.used',
+                '--format=csv,noheader,nounits','-lms','50'],stdout=subprocess.PIPE,text=True)
+            def monitor():
+                for line in self.memory.stdout:
+                    try:
+                        index,mib=[int(x.strip()) for x in line.split(',')]
+                        with self.memory_lock:
+                            self.memory_samples.append((time.time(),str(index),mib*1024*1024))
+                    except ValueError:
+                        pass
+            self.memory_thread=threading.Thread(target=monitor,daemon=True)
+            self.memory_thread.start()
+        with self.memory_lock:self.memory_samples.clear()
+        return self.memory_samples,self.memory_lock
 
     def _start(self, command, env):
         self.world = int(env['MGBFS_BENCH_WORLD_SIZE'])
@@ -189,7 +209,14 @@ class Session:
         self.metadata.clear()
 
     def close(self):
-        self._stop()
+        try:
+            self._stop()
+        finally:
+            if self.memory is not None:
+                self.memory.terminate()
+                self.memory.wait(timeout=10)
+                self.memory_thread.join(timeout=5)
+                self.memory.stdout.close()
 
 
 @contextlib.contextmanager

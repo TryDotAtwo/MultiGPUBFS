@@ -211,7 +211,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         thread = threading.Thread(target=read_rank, daemon=True)
         thread.start()
         threads.append(thread)
-    memory = subprocess.Popen(['nvidia-smi', '--query-gpu=index,memory.used',
+    if session:
+        samples,lock=session.memory_monitor()
+    memory = None if session else subprocess.Popen(['nvidia-smi', '--query-gpu=index,memory.used',
         '--format=csv,noheader,nounits', '-lms', '50'], stdout=subprocess.PIPE, text=True)
     def monitor():
         for line in memory.stdout:
@@ -221,7 +223,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     samples.append((time.time(), str(index), mib*1024*1024))
             except ValueError:
                 pass
-    threading.Thread(target=monitor, daemon=True).start()
+    if memory is not None:threading.Thread(target=monitor, daemon=True).start()
     from resident_session import launch
     process = launch(command, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
@@ -246,6 +248,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                         with lock:
                             (begins if match[1]=='BEGIN' else ends)[key] = fields
             stopped.set()
+            messages.put(('native_job_done',))
     logthread = threading.Thread(target=log_reader, daemon=True)
     logthread.start()
     deadline = time.monotonic()+config.get('timeout_seconds',300)
@@ -340,8 +343,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
         stopped.set()
-        memory.terminate()
-        memory.wait(timeout=10)
+        if memory is not None:
+            memory.terminate()
+            memory.wait(timeout=10)
         for thread in threads:
             thread.join(timeout=5)
         for reader, thread in zip(readers, threads):
