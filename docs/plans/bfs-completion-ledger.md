@@ -1,5 +1,27 @@
 # MultiGPUBFS completion ledger
 
+## 2026-10-04 remote-only T4 evidence
+
+Kaggle matrix v106, source d3d1e2aa350c8dc3d34cad9367fc4f8e90a7ea64:
+360/360 full-state two-rank U4 cases passed, moduli 2..6, both profiles,
+three rank owners, pre-dedup ON/OFF, both maps and three seeds.
+This is not performance, macro-depth or full sanitizer acceptance.
+Root SHA256: 2f193f13c18f36b8b7e5033248b9b0abf14ef5eb478ee3251ed1c58dc2be595c.
+
+Kaggle typed v11, source c221b93d739a7f0cafbc6cf79757c035dcd24677:
+13/16 attested sanitizer runs passed. Host initcheck failed in both profiles;
+CUDA12.9 initcheck passed DENSE once but failed HASH_FIRST before BFS in
+NCCL activation. No suppression was used. The initcheck gate remains OPEN.
+Root SHA256: 1e7a6ba1c49bf1e925a9778673f522d8b1b2c99776789f4d3ea1a6f15ebfc502.
+
+All 3840 small log/JSON outputs, 9184157 bytes, are retained under
+`test_results/kaggle_t4_20261004/` with per-file SHA256 receipt.
+Receipt SHA256: f5cedaa3e62feb18f07de69bb38de0c079a78bf0ea4bb3afda55d42002d04e5b.
+No graph archives were downloaded to the user computer.
+Vast 54179932 replay uses exact source 52bb77fd8e4cf7ed4187ceeddce598ae5880af43,
+two physical T4s, P2P enabled both directions and driver 595.71.05.
+Its compilation is in progress; no new GPU acceptance result is claimed.
+
 Status: active, updated 2026-09-28. This file separates accepted requirements from
 implemented paths and measured evidence. `ARCHITECTURE_NEED.md` remains the
 architecture contract; `library-first-bfs.md` is the library experiment log.
