@@ -91,10 +91,11 @@ struct Mapping {
   size_t bytes = 0;
   bool mapped = false;
   bool reserved = false;
+  bool owns_handle = true;
   ~Mapping() {
     if (mapped) cuMemUnmap(address, bytes);
     if (reserved) cuMemAddressFree(address, bytes);
-    if (handle) cuMemRelease(handle);
+    if (handle && owns_handle) cuMemRelease(handle);
   }
   void map(int device, CUdeviceptr target = 0) {
     if (target) address = target;
@@ -114,15 +115,16 @@ struct Mapping {
 __global__ void check_values(const unsigned* own, const unsigned* peer,
                              unsigned* result, unsigned expected, unsigned peer_expected) {
   if (!blockIdx.x && !threadIdx.x)
-    *result = (own[0] == expected && peer[0] == peer_expected) ? 0u : 1u;
+    *result = (own[0] != expected ? 1u : 0u) | (peer[0] != peer_expected ? 2u : 0u);
 }
 int main(int argc, char** argv) {
-  if (argc < 2 || argc > 4) return 1;
+  if (argc < 2 || argc > 5) return 1;
   const bool local = std::strcmp(argv[1], "local") == 0;
   const bool runtime_init = argc >= 3 && std::strcmp(argv[2], "--runtime-init") == 0;
-  const bool symmetric = argc == 4 && std::strcmp(argv[3], "--symmetric") == 0;
+  const bool symmetric = argc >= 4 && std::strcmp(argv[3], "--symmetric") == 0;
+  const bool primary_alias = argc == 5 && std::strcmp(argv[4], "--primary-alias") == 0;
   if ((!local && std::strcmp(argv[1], "import") != 0) || (argc >= 3 && !runtime_init) ||
-      (argc == 4 && !symmetric)) return 1;
+      (argc >= 4 && !symmetric) || (argc == 5 && !primary_alias)) return 1;
   const char* rank_env = std::getenv("MGBFS_WINDOW_RANK");
   const char* path_env = std::getenv("MGBFS_WINDOW_BOOTSTRAP");
   if (!rank_env || !path_env || (std::strcmp(rank_env,"0") && std::strcmp(rank_env,"1"))) return 1;
@@ -164,7 +166,8 @@ int main(int argc, char** argv) {
     }
     // Reservation outlives both mappings; only mapped ranges are unmapped.
     Reservation flat;
-    Mapping own, peer;
+    // Primary is destroyed first; its borrowed handle remains owned by own.
+    Mapping own, peer, primary;
     size_t stride = 0;
     if (symmetric) {
       size_t free_bytes = 0, total_bytes = 0;
@@ -189,6 +192,15 @@ int main(int argc, char** argv) {
     if (symmetric && own.bytes > stride) throw std::runtime_error("symmetric_size");
     entering(rank, "local_create");
     driver(cuMemCreate(&own.handle, own.bytes, &prop, 0), "create");
+    if (primary_alias) {
+      // NCCL-shaped alias: original allocation VA plus symmetric local VA,
+      // both mapped to the same physical allocation. No second allocation.
+      primary.handle = own.handle;
+      primary.bytes = own.bytes;
+      primary.owns_handle = false;
+      entering(rank, "primary_alias_map");
+      primary.map(rank);
+    }
     entering(rank, "local_map");
     own.map(rank, symmetric ? flat.address + rank * stride : 0);
     const unsigned expected = runtime_init ? (100u + rank) * 0x01010101u : 100u + rank;
@@ -219,7 +231,8 @@ int main(int argc, char** argv) {
       // NCCL-shaped order: mapping/import first, then runtime async memset.
       entering(rank, "runtime_initialize_after_import");
       runtime(cudaStreamCreateWithFlags(&stream.value, cudaStreamNonBlocking), "stream_create");
-      runtime(cudaMemsetAsync(reinterpret_cast<void*>(own.address), 100 + rank,
+      // Initialize through the original VA, then read through symmetric VA.
+      runtime(cudaMemsetAsync(reinterpret_cast<void*>(primary_alias ? primary.address : own.address), 100 + rank,
                              own.bytes, stream.value), "runtime_memset");
       runtime(cudaStreamSynchronize(stream.value), "runtime_initialized");
       if (!local) barrier(connection.value); // Both exporters initialized before either read.
@@ -237,6 +250,13 @@ int main(int argc, char** argv) {
     runtime(cudaDeviceSynchronize(), "check_complete");
     unsigned result = 1;
     driver(cuMemcpyDtoH(&result, own.address + 2 * sizeof(unsigned), sizeof(result)), "result");
+    unsigned own_value = 0, peer_value = 0;
+    driver(cuMemcpyDtoH(&own_value, own.address, sizeof(own_value)), "own_sample");
+    driver(cuMemcpyDtoH(&peer_value, local ? own.address + sizeof(unsigned) : peer.address,
+                       sizeof(peer_value)), "peer_sample");
+    std::printf("rank=%d result_bits=%u own=%08x expected=%08x peer=%08x peer_expected=%08x\n",
+                rank, result, own_value, expected, peer_value, peer_expected);
+    std::fflush(stdout);
     if (result) throw std::runtime_error("value_mismatch");
     if (!local) barrier(connection.value); // No exporter release while the peer reads.
     std::printf("rank=%d stage=vmm_%s result=PASS\n", rank, local ? "local" : "import"); std::fflush(stdout);

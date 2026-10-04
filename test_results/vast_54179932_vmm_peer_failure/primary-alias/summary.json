@@ -1,0 +1,216 @@
+{
+  "scope": "two-process CUDA VMM primary plus symmetric alias, no NCCL/BFS acceptance",
+  "rows": [
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_local",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "local",
+      "tool": null,
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_local",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "local",
+      "tool": "memcheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_local",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "local",
+      "tool": "racecheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_local",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "local",
+      "tool": "initcheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_local",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "local",
+      "tool": "synccheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        2,
+        2
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "import",
+      "tool": null,
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        2,
+        2
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "import",
+      "tool": "memcheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        2,
+        2
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "import",
+      "tool": "racecheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        2,
+        2
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "import",
+      "tool": "initcheck",
+      "primary_alias": true
+    },
+    {
+      "returncodes": [
+        2,
+        2
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "vmm_import",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "import",
+      "tool": "synccheck",
+      "primary_alias": true
+    }
+  ],
+  "pass": false
+}

@@ -1,0 +1,12 @@
+========= COMPUTE-SANITIZER
+rank=1 stage=context result=ENTER
+rank=1 stage=symmetric_reserve result=ENTER
+rank=1 symmetric_stride=17179869184 virtual_bytes=34359738368
+rank=1 stage=local_create result=ENTER
+rank=1 stage=primary_alias_map result=ENTER
+rank=1 stage=local_map result=ENTER
+rank=1 stage=runtime_initialize_after_import result=ENTER
+rank=1 stage=vmm_runtime_initialized result=PASS
+rank=1 stage=check_launch result=ENTER
+rank=1 stage=vmm_local result=PASS
+========= RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

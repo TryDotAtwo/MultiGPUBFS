@@ -1,0 +1,178 @@
+From https://github.com/TryDotAtwo/MultiGPUBFS
+ * branch            52bb77fd8e4cf7ed4187ceeddce598ae5880af43 -> FETCH_HEAD
+HEAD is now at 52bb77f Schedule full matrix oracle gate on free T4 notebook
+START inventory
+0, Tesla T4, GPU-96210986-b69d-c8b6-21d9-11f27abb1334, 15360, 14913
+1, Tesla T4, GPU-372074f8-4ffe-2597-5e84-d408961e47f9, 15360, 14913
+
+START cuda_nvcc-download
+
+START cuda_nvcc-extract
+
+START cuda_cudart-download
+
+START cuda_cudart-extract
+
+START cuda_cccl-download
+
+START cuda_cccl-extract
+
+START cuda_nvrtc-download
+
+START cuda_nvrtc-extract
+
+START cuda_sanitizer_api-download
+
+START cuda_sanitizer_api-extract
+
+START cuda_nvtx-download
+
+START cuda_nvtx-extract
+
+START driver-version
+595.71.05
+595.71.05
+
+START nvcc-version
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Tue_May_27_02:21:03_PDT_2025
+Cuda compilation tools, release 12.9, V12.9.86
+Build cuda_12.9.r12.9/compiler.36037853_0
+
+START compute-sanitizer-version
+NVIDIA (R) Compute Sanitizer
+Copyright (c) 2020-2025 NVIDIA Corporation
+Version 2025.2.1.0 (build 35969825) (public-release)
+
+START venv
+
+START dependencies
+RUNNING dependencies 20s
+RUNNING dependencies 40s
+RUNNING dependencies 60s
+RUNNING dependencies 80s
+RUNNING dependencies 100s
+RUNNING dependencies 120s
+Collecting libcudf-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 2))
+  Downloading libcudf_cu12-26.4.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (678.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 678.0/678.0 MB 4.0 MB/s  0:01:32
+Collecting librmm-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 3))
+  Downloading librmm_cu12-26.4.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (4.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.0/4.0 MB 4.7 MB/s  0:00:00
+Collecting cmake==3.31.6 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 4))
+  Downloading cmake-3.31.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (27.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 27.8/27.8 MB 4.2 MB/s  0:00:06
+Collecting ninja==1.11.1.4 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 5))
+  Downloading ninja-1.11.1.4-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl (422 kB)
+Collecting libkvikio-cu12==26.4.0 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 6))
+  Downloading libkvikio_cu12-26.4.0-py3-none-manylinux_2_28_x86_64.whl (2.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.4/2.4 MB 3.4 MB/s  0:00:00
+Collecting nvidia-libnvcomp-cu12==5.1.0.21 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 7))
+  Downloading nvidia_libnvcomp_cu12-5.1.0.21-py3-none-manylinux_2_28_x86_64.whl (29.0 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 29.0/29.0 MB 4.4 MB/s  0:00:06
+Collecting rapids-logger==0.2.3 (from -r /tmp/mgbfs-lsa-bfs-yc1ykkxa/source/experiments/library_owner/requirements-linux-x86_64.lock (line 8))
+  Downloading rapids_logger-0.2.3-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (202 kB)
+Installing collected packages: nvidia-libnvcomp-cu12, libkvikio-cu12, rapids-logger, ninja, cmake, librmm-cu12, libcudf-cu12
+
+Successfully installed cmake-3.31.6 libcudf-cu12-26.4.0 libkvikio-cu12-26.4.0 librmm-cu12-26.4.0 ninja-1.11.1.4 nvidia-libnvcomp-cu12-5.1.0.21 rapids-logger-0.2.3
+
+START archive-verifier-dependency
+Collecting pyarrow==19.0.1
+  Downloading pyarrow-19.0.1-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (3.3 kB)
+Downloading pyarrow-19.0.1-cp312-cp312-manylinux_2_28_x86_64.whl (42.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 42.1/42.1 MB 13.1 MB/s  0:00:03
+Installing collected packages: pyarrow
+Successfully installed pyarrow-19.0.1
+
+START archive-verifier-import-preflight
+
+START nccl-install
+RUNNING nccl-install 20s
+RUNNING nccl-install 40s
+RUNNING nccl-install 60s
+RUNNING nccl-install 80s
+Collecting nvidia-nccl-cu12==2.29.7
+  Downloading nvidia_nccl_cu12-2.29.7-py3-none-manylinux_2_18_x86_64.whl.metadata (2.1 kB)
+Downloading nvidia_nccl_cu12-2.29.7-py3-none-manylinux_2_18_x86_64.whl (293.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 293.6/293.6 MB 3.0 MB/s  0:01:14
+Installing collected packages: nvidia-nccl-cu12
+Successfully installed nvidia-nccl-cu12-2.29.7
+
+START nccl-source
+Cloning into '/tmp/mgbfs-lsa-bfs-yc1ykkxa/nccl-source'...
+Note: switching to 'b91894bd5b190c874d98a017f93f5daa515b65d0'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+
+START nccl-patch-check
+
+START nccl-patch
+
+START nccl-posix-check
+
+START nccl-posix-patch
+
+START nccl-allocator-policy
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.397s
+
+OK
+
+START nccl-build
+RUNNING nccl-build 20s
+RUNNING nccl-build 40s
+RUNNING nccl-build 60s
+RUNNING nccl-build 80s
+RUNNING nccl-build 100s
+RUNNING nccl-build 120s
+RUNNING nccl-build 140s
+RUNNING nccl-build 160s
+RUNNING nccl-build 180s
+RUNNING nccl-build 200s
+RUNNING nccl-build 220s
+RUNNING nccl-build 240s
+RUNNING nccl-build 260s
+RUNNING nccl-build 280s
+RUNNING nccl-build 300s
+RUNNING nccl-build 320s
+RUNNING nccl-build 340s
+RUNNING nccl-build 360s
+RUNNING nccl-build 380s
+RUNNING nccl-build 400s
+RUNNING nccl-build 420s
+RUNNING nccl-build 440s
+RUNNING nccl-build 460s
+RUNNING nccl-build 480s
+RUNNING nccl-build 500s
+RUNNING nccl-build 520s
+RUNNING nccl-build 540s
+RUNNING nccl-build 560s
+RUNNING nccl-build 580s
+RUNNING nccl-build 600s
+RUNNING nccl-build 620s
+RUNNING nccl-build 640s
+RUNNING nccl-build 660s
+RUNNING nccl-build 680s
+RUNNING nccl-build 700s
+RUNNING nccl-build 720s
+RUNNING nccl-build 740s
+RUNNING nccl-build 760s
+RUNNING nccl-build 780s
+RUNNING nccl-build 800s
+RUNNING nccl-build 820s

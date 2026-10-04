@@ -1,0 +1,43 @@
+{
+  "source": "52bb77fd8e4cf7ed4187ceeddce598ae5880af43",
+  "status": "INCOMPLETE",
+  "scope": "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle",
+  "hardware_target": "T4",
+  "cuda_architecture": "sm75",
+  "t4_acceptance_eligible": true,
+  "gpus": [
+    {
+      "index": 0,
+      "name": "Tesla T4",
+      "uuid": "GPU-96210986-b69d-c8b6-21d9-11f27abb1334",
+      "total_mib": 15360,
+      "free_mib": 14913
+    },
+    {
+      "index": 1,
+      "name": "Tesla T4",
+      "uuid": "GPU-372074f8-4ffe-2597-5e84-d408961e47f9",
+      "total_mib": 15360,
+      "free_mib": 14913
+    }
+  ],
+  "p2p": [
+    {
+      "source": 0,
+      "target": 1,
+      "cuda_status": 0,
+      "allowed": 1
+    },
+    {
+      "source": 1,
+      "target": 0,
+      "cuda_status": 0,
+      "allowed": 1
+    }
+  ],
+  "environment_versions": {
+    "driver": "595.71.05\n595.71.05",
+    "cuda_compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_May_27_02:21:03_PDT_2025\nCuda compilation tools, release 12.9, V12.9.86\nBuild cuda_12.9.r12.9/compiler.36037853_0",
+    "compute_sanitizer": "NVIDIA (R) Compute Sanitizer\nCopyright (c) 2020-2025 NVIDIA Corporation\nVersion 2025.2.1.0 (build 35969825) (public-release)"
+  }
+}
