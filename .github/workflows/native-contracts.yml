@@ -49,3 +49,5 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_memory_query.cpp cuda/bounded_owner_query.cpp -o /tmp/owner-memory-query && /tmp/owner-memory-query
       - name: Verify NCCL wrapper error cleanup without GPU
         run: g++ -std=c++17 -Itests/nccl_stubs tests/nccl_transport_failure.cpp -o /tmp/nccl-transport-failure && /tmp/nccl-transport-failure
+      - name: Verify probe finalize-before-destroy lifetime
+        run: g++ -std=c++17 tests/nccl_probe_teardown.cpp -o /tmp/nccl-probe-teardown && /tmp/nccl-probe-teardown

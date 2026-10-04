@@ -1,6 +1,7 @@
 // Diagnostic only: isolate NCCL window registration from MultiGPUBFS.
 #include <cuda_runtime_api.h>
 #include <nccl.h>
+#include "nccl_probe_teardown.h"
 
 #include <array>
 #include <chrono>
@@ -147,7 +148,8 @@ int main(int argc, char** argv) {
           ncclCommAbort(comm);
           return;
         }
-        nccl = progress(ncclCommDestroy(comm));
+        nccl = nccl_probe_teardown([&]{return ncclCommFinalize(comm);},
+            progress, [&]{return ncclCommDestroy(comm);});
         if (nccl != ncclSuccess) { results[rank] = 14; return; }
         std::fprintf(stderr, "rank=%d stage=teardown_complete\n", rank);
         return;
@@ -239,7 +241,9 @@ int main(int argc, char** argv) {
         return;
       }
       ncclMemFree(memory);
-      ncclCommDestroy(comm);
+      nccl = nccl_probe_teardown([&]{return ncclCommFinalize(comm);},
+          progress, [&]{return ncclCommDestroy(comm);});
+      if(nccl!=ncclSuccess){results[rank]=14;return;}
       std::fprintf(stderr, "rank=%d stage=teardown_complete\n", rank);
     });
   }
