@@ -1,0 +1,1 @@
+Verified retained S8 archives and Parquet packages; publication pending Kaggle Secrets HTTP400. Evidence scope is the two retained S8 profiles, not a new GPU benchmark. No secret values retained. Large Parquet files remain Kaggle-side.

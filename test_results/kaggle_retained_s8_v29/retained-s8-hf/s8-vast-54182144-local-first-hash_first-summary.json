@@ -1,0 +1,1565 @@
+{
+  "schema": "RunSummaryV1",
+  "status": "COMPLETE",
+  "run_id": "s8-vast-54182144-local-first-hash_first",
+  "group_id": "S_8 LRX matrix Cayley graph over F2",
+  "group_spec": "s8",
+  "config_digest": "49f81efcba81fc8107255ecfe5ce78062c27ef6f834dd10f0bfec7f47a9a18b2",
+  "config": {
+    "schema": 1,
+    "graph": {
+      "schema": 1,
+      "rows": 8,
+      "cols": 8,
+      "modulus": 2,
+      "start": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "generators": [
+        [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]
+      ],
+      "inverse_map": [
+        1,
+        0,
+        2
+      ],
+      "expected_max_unique_states": 40320
+    },
+    "seed": [
+      220,
+      39,
+      53,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "topology": {
+      "world_size": 2,
+      "shards_per_rank": 4,
+      "buckets_per_shard": 256,
+      "logical_owner_to_rank": [
+        0,
+        1
+      ]
+    },
+    "frontier_profile": "HASH_FIRST",
+    "local_pre_dedup": true,
+    "owner_backend": "CUCO_RANK",
+    "generation_backend": "CUTLASS_U8_SM75_V1",
+    "hash_backend": "GEMM_U8_P32X4_V1",
+    "macro_depth": 1,
+    "parent_batch": 128,
+    "capacities": {
+      "state_ring_records": 65536,
+      "state_extent_descriptors": 65536,
+      "layer_hash_records_per_arena": 65536,
+      "next_bucket_capacity_records": 65536,
+      "route_slot_records": 384,
+      "route_slot_count": 3,
+      "pinned_archive_slots": 256,
+      "pinned_archive_slot_bytes": 10240,
+      "disk_extent_bytes_per_rank": 33554432,
+      "untouched_vram_reserve_bytes": 1073741824
+    },
+    "library_pool_bytes": 100663296,
+    "completion_epoch_window": 3
+  },
+  "topology": {
+    "world_size": 2,
+    "shards_per_rank": 4,
+    "buckets_per_shard": 256,
+    "logical_owner_to_rank": [
+      0,
+      1
+    ]
+  },
+  "hash": {
+    "algorithm": "GEMM_U8_P32X4_V1",
+    "seed_u128": 20260828,
+    "byte_order": "little-endian"
+  },
+  "total_unique_states": 40320,
+  "layer_sizes": [
+    1,
+    3,
+    6,
+    12,
+    23,
+    44,
+    80,
+    142,
+    247,
+    411,
+    662,
+    1019,
+    1481,
+    2059,
+    2745,
+    3465,
+    4126,
+    4633,
+    4913,
+    4777,
+    4163,
+    3079,
+    1612,
+    488,
+    94,
+    25,
+    6,
+    3,
+    1
+  ],
+  "source_commit": "52bb77f",
+  "publication_tool_commit": "1c08dc877bee62edb387b558cde01f22e958830f",
+  "raw_rank_results": [
+    {
+      "allocation_scope": "explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive",
+      "archive_commit_scope": "file_fsync",
+      "archive_enabled": true,
+      "archive_file_commit_seconds": 1.547705921,
+      "archive_state_bytes": 64,
+      "archive_wire_limit_bytes": 33554432,
+      "backend": "native_nccl_hash_first_reference_v1",
+      "batch": 128,
+      "bmma_tile_limit": 256,
+      "bootstrap_digest": [
+        73,
+        248,
+        30,
+        252,
+        186,
+        129,
+        252,
+        129,
+        7,
+        37,
+        94,
+        207,
+        229,
+        206,
+        120,
+        6,
+        44,
+        39,
+        239,
+        111,
+        131,
+        77,
+        209,
+        15,
+        11,
+        254,
+        199,
+        244,
+        122,
+        154,
+        24,
+        178
+      ],
+      "capacity_mode": "MaxPerRank",
+      "cuda_allocated_used_bytes": 374276096,
+      "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
+      "cuda_peak_observed_bytes": 374276096,
+      "declared_capacity_records": 65536,
+      "declared_state_ring_records": 65536,
+      "dense_lookahead_batches": 148,
+      "device_allocation_plan": {
+        "aligned_bytes": 107288576,
+        "payload_bytes": 107281320,
+        "planes": [
+          {
+            "name": "shared.states",
+            "payload_bytes": 4194304,
+            "reserved_bytes": 4194304
+          },
+          {
+            "name": "shared.prev",
+            "payload_bytes": 1048576,
+            "reserved_bytes": 1048576
+          },
+          {
+            "name": "shared.curr",
+            "payload_bytes": 1048576,
+            "reserved_bytes": 1048576
+          },
+          {
+            "name": "shared.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.archive_hashes",
+            "payload_bytes": 2048,
+            "reserved_bytes": 2048
+          },
+          {
+            "name": "shared.archive_states",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "shared.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.identity_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.directory",
+            "payload_bytes": 16384,
+            "reserved_bytes": 16384
+          },
+          {
+            "name": "shared.fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.jobs_gpu",
+            "payload_bytes": 65600,
+            "reserved_bytes": 65792
+          },
+          {
+            "name": "shared.control",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.ring",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.extent",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.layer_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_send",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_recv",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.library_candidates",
+            "payload_bytes": 7680,
+            "reserved_bytes": 7680
+          },
+          {
+            "name": "shared.owner_window",
+            "payload_bytes": 12,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.next_extents",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.next_extent_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_bank_1.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_bank_2.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.generators",
+            "payload_bytes": 192,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.coefficients",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "hash_first.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.parent_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.request_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.local_fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.group_fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.local_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.remote_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.sorted_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.received_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.local_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.remote_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.sorted_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.outgoing_responses",
+            "payload_bytes": 24576,
+            "reserved_bytes": 24576
+          },
+          {
+            "name": "hash_first.incoming_responses",
+            "payload_bytes": 24576,
+            "reserved_bytes": 24576
+          },
+          {
+            "name": "hash_first.materialize_keys",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.materialize_sorted",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.materialize_indices",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "hash_first.materialize_order",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "hash_first.materialize_scratch",
+            "payload_bytes": 1,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_counts",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_extents",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_controls",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_exchange_counts",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.weights",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "archive_hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.partials_s32",
+            "payload_bytes": 8192,
+            "reserved_bytes": 8192
+          },
+          {
+            "name": "archive_hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "route.sorted",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "route.refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "route.indices",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "route.selected",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "route.flags",
+            "payload_bytes": 384,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "route.scratch",
+            "payload_bytes": 767,
+            "reserved_bytes": 768
+          },
+          {
+            "name": "library.fixed_pool",
+            "payload_bytes": 100663296,
+            "reserved_bytes": 100663296
+          },
+          {
+            "name": "transport.lsa_symmetric_slot",
+            "payload_bytes": 30976,
+            "reserved_bytes": 30976
+          }
+        ],
+        "scope": "explicit_device_buffers_excludes_nccl_driver_and_pinned_archive"
+      },
+      "disk_reserved_bytes": 33554432,
+      "durable_run_commit_seconds": 1.547705921,
+      "epoch_window": 3,
+      "explicit_device_aligned_bytes": 107288576,
+      "explicit_device_payload_bytes": 107281320,
+      "frontier_profile": "HASH_FIRST",
+      "generation_variant": 1,
+      "global_capacity_records": 131072,
+      "global_state_ring_records": 131072,
+      "group": "matrix-49f81efcba81fc8107255ecfe5ce78062c27ef6f834dd10f0bfec7f47a9a18b2",
+      "hash_first_generation": "INT_MMA_SM75",
+      "hash_seed_hex": "000000000000000000000000013527dc",
+      "library_control_pinned_bytes": 264,
+      "library_pool_reserved_bytes": 100663296,
+      "library_pool_usage": {
+        "live_requested_bytes": 0,
+        "peak_requested_bytes": 8488595,
+        "reserved_bytes": 100663296,
+        "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
+      },
+      "local_layer_sizes": [
+        0,
+        2,
+        2,
+        5,
+        14,
+        22,
+        35,
+        82,
+        131,
+        215,
+        320,
+        512,
+        746,
+        1054,
+        1390,
+        1752,
+        2021,
+        2336,
+        2442,
+        2394,
+        2095,
+        1554,
+        836,
+        247,
+        44,
+        13,
+        5,
+        1,
+        1
+      ],
+      "logical_owner_to_rank": [
+        0,
+        1
+      ],
+      "materialization_capacity": 384,
+      "output_contract": "archive_and_layer_counts",
+      "owner_backend": "CUCO_RANK",
+      "per_depth_seconds": [
+        0.027348388,
+        0.022608955,
+        0.063133191,
+        0.053985314,
+        0.046381809,
+        0.047370924,
+        0.01818321,
+        0.019778031,
+        0.02129383,
+        0.025584302,
+        0.028400913,
+        0.042190524,
+        0.055027152,
+        0.049553623,
+        0.051997413,
+        0.05904694,
+        0.057790437,
+        0.070121433,
+        0.072290193,
+        0.090712433,
+        0.085160764,
+        0.078799179,
+        0.076456581,
+        0.060630045,
+        0.061713519,
+        0.07898971,
+        0.104836885,
+        0.040002003,
+        0.029624928
+      ],
+      "pinned_bytes": 2621440,
+      "pinned_bytes_scope": "archive_only",
+      "pre_dedup": "ON",
+      "rank": 0,
+      "rank_capacity_records": 65536,
+      "rank_state_ring_records": 65536,
+      "route_bank_reuses": 119,
+      "route_banks": 3,
+      "run_contract": "RunConfigV1",
+      "search_complete_seconds": 1.539059446,
+      "setup_seconds": 0.483414525,
+      "state_descriptor_capacity": 65536,
+      "status": "COMPLETE",
+      "transport_backend": "Lsa",
+      "transport_control_pinned_payload_bytes": 4,
+      "untouched_vram_reserve_bytes": 1073741824,
+      "warmup_completed": false,
+      "world_size": 2
+    },
+    {
+      "allocation_scope": "explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive",
+      "archive_commit_scope": "file_fsync",
+      "archive_enabled": true,
+      "archive_file_commit_seconds": 1.54939844,
+      "archive_state_bytes": 64,
+      "archive_wire_limit_bytes": 33554432,
+      "backend": "native_nccl_hash_first_reference_v1",
+      "batch": 128,
+      "bmma_tile_limit": 256,
+      "bootstrap_digest": [
+        73,
+        248,
+        30,
+        252,
+        186,
+        129,
+        252,
+        129,
+        7,
+        37,
+        94,
+        207,
+        229,
+        206,
+        120,
+        6,
+        44,
+        39,
+        239,
+        111,
+        131,
+        77,
+        209,
+        15,
+        11,
+        254,
+        199,
+        244,
+        122,
+        154,
+        24,
+        178
+      ],
+      "capacity_mode": "MaxPerRank",
+      "cuda_allocated_used_bytes": 374276096,
+      "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
+      "cuda_peak_observed_bytes": 374276096,
+      "declared_capacity_records": 65536,
+      "declared_state_ring_records": 65536,
+      "dense_lookahead_batches": 145,
+      "device_allocation_plan": {
+        "aligned_bytes": 107288576,
+        "payload_bytes": 107281320,
+        "planes": [
+          {
+            "name": "shared.states",
+            "payload_bytes": 4194304,
+            "reserved_bytes": 4194304
+          },
+          {
+            "name": "shared.prev",
+            "payload_bytes": 1048576,
+            "reserved_bytes": 1048576
+          },
+          {
+            "name": "shared.curr",
+            "payload_bytes": 1048576,
+            "reserved_bytes": 1048576
+          },
+          {
+            "name": "shared.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.archive_hashes",
+            "payload_bytes": 2048,
+            "reserved_bytes": 2048
+          },
+          {
+            "name": "shared.archive_states",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "shared.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.identity_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.directory",
+            "payload_bytes": 16384,
+            "reserved_bytes": 16384
+          },
+          {
+            "name": "shared.fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.jobs_gpu",
+            "payload_bytes": 65600,
+            "reserved_bytes": 65792
+          },
+          {
+            "name": "shared.control",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.ring",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.extent",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.layer_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_send",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_recv",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.library_candidates",
+            "payload_bytes": 7680,
+            "reserved_bytes": 7680
+          },
+          {
+            "name": "shared.owner_window",
+            "payload_bytes": 12,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.next_extents",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.next_extent_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_bank_1.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_1.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.children",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.child_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.sorted_hashes",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.sorted_refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "shared.route_bank_2.packed_states",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "shared.route_bank_2.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.generators",
+            "payload_bytes": 192,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.coefficients",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "hash_first.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.parent_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.request_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.local_fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.group_fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.local_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.remote_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.sorted_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.received_requests",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "hash_first.local_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.remote_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.sorted_targets",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.outgoing_responses",
+            "payload_bytes": 24576,
+            "reserved_bytes": 24576
+          },
+          {
+            "name": "hash_first.incoming_responses",
+            "payload_bytes": 24576,
+            "reserved_bytes": 24576
+          },
+          {
+            "name": "hash_first.materialize_keys",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.materialize_sorted",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "hash_first.materialize_indices",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "hash_first.materialize_order",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "hash_first.materialize_scratch",
+            "payload_bytes": 1,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_counts",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_extents",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_controls",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash_first.device_exchange_counts",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.weights",
+            "payload_bytes": 1024,
+            "reserved_bytes": 1024
+          },
+          {
+            "name": "archive_hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.partials_s32",
+            "payload_bytes": 8192,
+            "reserved_bytes": 8192
+          },
+          {
+            "name": "archive_hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "route.sorted",
+            "payload_bytes": 6144,
+            "reserved_bytes": 6144
+          },
+          {
+            "name": "route.refs",
+            "payload_bytes": 3072,
+            "reserved_bytes": 3072
+          },
+          {
+            "name": "route.indices",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "route.selected",
+            "payload_bytes": 1536,
+            "reserved_bytes": 1536
+          },
+          {
+            "name": "route.flags",
+            "payload_bytes": 384,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "route.scratch",
+            "payload_bytes": 767,
+            "reserved_bytes": 768
+          },
+          {
+            "name": "library.fixed_pool",
+            "payload_bytes": 100663296,
+            "reserved_bytes": 100663296
+          },
+          {
+            "name": "transport.lsa_symmetric_slot",
+            "payload_bytes": 30976,
+            "reserved_bytes": 30976
+          }
+        ],
+        "scope": "explicit_device_buffers_excludes_nccl_driver_and_pinned_archive"
+      },
+      "disk_reserved_bytes": 33554432,
+      "durable_run_commit_seconds": 1.54939844,
+      "epoch_window": 3,
+      "explicit_device_aligned_bytes": 107288576,
+      "explicit_device_payload_bytes": 107281320,
+      "frontier_profile": "HASH_FIRST",
+      "generation_variant": 1,
+      "global_capacity_records": 131072,
+      "global_state_ring_records": 131072,
+      "group": "matrix-49f81efcba81fc8107255ecfe5ce78062c27ef6f834dd10f0bfec7f47a9a18b2",
+      "hash_first_generation": "INT_MMA_SM75",
+      "hash_seed_hex": "000000000000000000000000013527dc",
+      "library_control_pinned_bytes": 264,
+      "library_pool_reserved_bytes": 100663296,
+      "library_pool_usage": {
+        "live_requested_bytes": 0,
+        "peak_requested_bytes": 8488883,
+        "reserved_bytes": 100663296,
+        "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
+      },
+      "local_layer_sizes": [
+        1,
+        1,
+        4,
+        7,
+        9,
+        22,
+        45,
+        60,
+        116,
+        196,
+        342,
+        507,
+        735,
+        1005,
+        1355,
+        1713,
+        2105,
+        2297,
+        2471,
+        2383,
+        2068,
+        1525,
+        776,
+        241,
+        50,
+        12,
+        1,
+        2,
+        0
+      ],
+      "logical_owner_to_rank": [
+        0,
+        1
+      ],
+      "materialization_capacity": 384,
+      "output_contract": "archive_and_layer_counts",
+      "owner_backend": "CUCO_RANK",
+      "per_depth_seconds": [
+        0.02787002,
+        0.02232926,
+        0.062578674,
+        0.054206742,
+        0.04716813,
+        0.047235501,
+        0.018953567,
+        0.018995065,
+        0.021329195,
+        0.02656515,
+        0.02756728,
+        0.041734542,
+        0.0559588,
+        0.049411822,
+        0.051967242,
+        0.059012056,
+        0.057288648,
+        0.070612203,
+        0.072657386,
+        0.090864826,
+        0.084623171,
+        0.078515718,
+        0.076304786,
+        0.061673056,
+        0.061165222,
+        0.071900104,
+        0.111152023,
+        0.040379423,
+        0.030554286
+      ],
+      "pinned_bytes": 2621440,
+      "pinned_bytes_scope": "archive_only",
+      "pre_dedup": "ON",
+      "rank": 1,
+      "rank_capacity_records": 65536,
+      "rank_state_ring_records": 65536,
+      "route_bank_reuses": 117,
+      "route_banks": 3,
+      "run_contract": "RunConfigV1",
+      "search_complete_seconds": 1.540656417,
+      "setup_seconds": 0.482644247,
+      "state_descriptor_capacity": 65536,
+      "status": "COMPLETE",
+      "transport_backend": "Lsa",
+      "transport_control_pinned_payload_bytes": 4,
+      "untouched_vram_reserve_bytes": 1073741824,
+      "warmup_completed": false,
+      "world_size": 2
+    }
+  ],
+  "cpu_oracle": {
+    "unique_states": 40320,
+    "layer_sizes": [
+      1,
+      3,
+      6,
+      12,
+      23,
+      44,
+      80,
+      142,
+      247,
+      411,
+      662,
+      1019,
+      1481,
+      2059,
+      2745,
+      3465,
+      4126,
+      4633,
+      4913,
+      4777,
+      4163,
+      3079,
+      1612,
+      488,
+      94,
+      25,
+      6,
+      3,
+      1
+    ],
+    "route_bank_reuses": [
+      119,
+      117
+    ],
+    "scope": "2 independent rank-process archives; full canonical states at every depth"
+  },
+  "provenance": {
+    "release_sha256": "589b137c665692bd43c42fd7634b90c6151003c1d17bd3816fb4e3beeb68a9ac",
+    "profiled": true,
+    "performance_claim": false,
+    "source_release": "validation-vast-54182144-20261004"
+  },
+  "layers": {}
+}

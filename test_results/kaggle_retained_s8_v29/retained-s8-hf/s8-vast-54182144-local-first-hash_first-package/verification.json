@@ -1,0 +1,9 @@
+{
+  "schema": "MGBFS_HF_VERIFY_V1",
+  "status": "PASS",
+  "unique_states": 40320,
+  "layers": 29,
+  "max_depth": 28,
+  "hash_state_pairs_verified": true,
+  "manifest_sha256": "53660d5388242866eb57aaa5ec88086504bcaa2c35517cd06e106ae38f85a8e0"
+}

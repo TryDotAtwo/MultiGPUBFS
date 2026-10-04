@@ -1,0 +1,50 @@
+{
+  "schema": "MGBFS_HF_DATASET_V1",
+  "run_id": "s8-vast-54182144-local-first-dense",
+  "group_id": "S_8 LRX matrix Cayley graph over F2",
+  "config_digest": "20340a5a0d40decee60366ec6a768a4b6bddfc64e657b22106386ce957294f95",
+  "total_unique_states": 40320,
+  "max_depth": 28,
+  "files": [
+    {
+      "path": "layers/s8-vast-54182144-local-first-dense.parquet",
+      "bytes": 8335,
+      "sha256": "4fe94ddcfd191048dfdd5d90ccfd60ffe58ebb6b01e261b7b56d6996d112f294"
+    },
+    {
+      "path": "runs/s8-vast-54182144-local-first-dense.parquet",
+      "bytes": 5823,
+      "sha256": "e81a51338e581963e30c89a9ab152c459ddb089a1e930b27c9bff63904b8d78b"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00000-part-00000.parquet",
+      "bytes": 338264,
+      "sha256": "4b625042e65d465aab7972c9e622ac63ebbf4ac127d5401c7bfa879a4afef834"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00000-part-00001.parquet",
+      "bytes": 338066,
+      "sha256": "910d46b27b1847060a23b4311089d4f4e3eb6e58efea3004bcf35ded7f164a2e"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00000-part-00002.parquet",
+      "bytes": 12818,
+      "sha256": "d82966c41e039406626bb9caf4531b2017adcfe242bc523eb5ba3c71be89a58c"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00001-part-00000.parquet",
+      "bytes": 338094,
+      "sha256": "fde01e1a76c525d19be06695547464ed4ee264ad50f5bd4af4603104d1d5c180"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00001-part-00001.parquet",
+      "bytes": 337935,
+      "sha256": "cc7253878cc7162c0723036ab356dde2152fad491233acb8c3aa475b8f9b4e99"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-dense-rank-00001-part-00002.parquet",
+      "bytes": 5444,
+      "sha256": "882dfa309798389967f1399f6dbc01a3e6e381b7af0cc71c00d4b6ee22adf1e4"
+    }
+  ]
+}

@@ -1,0 +1,234 @@
+{
+  "status": "VERIFIED_PENDING_HF_AUTH",
+  "source": "1c08dc877bee62edb387b558cde01f22e958830f",
+  "scope": "retained physical two-T4 S8 archives; no new GPU run",
+  "stage": "hf_secret_HASH_FIRST",
+  "retained_config_candidates": [
+    {
+      "path": "pinned-local-first-timeline-s8/DENSE-config.json",
+      "profile": "DENSE"
+    },
+    {
+      "path": "pinned-local-first-timeline-s8/HASH_FIRST-config.json",
+      "profile": "HASH_FIRST"
+    },
+    {
+      "path": "pinned-local-first-timeline-s8/HASH_FIRST/run-config.json",
+      "profile": "HASH_FIRST"
+    },
+    {
+      "path": "pinned-local-first-timeline-s8/DENSE/run-config.json",
+      "profile": "DENSE"
+    }
+  ],
+  "archive_sha256": "589b137c665692bd43c42fd7634b90c6151003c1d17bd3816fb4e3beeb68a9ac",
+  "runs": [],
+  "cpu_oracles": {
+    "DENSE": {
+      "unique_states": 40320,
+      "layer_sizes": [
+        1,
+        3,
+        6,
+        12,
+        23,
+        44,
+        80,
+        142,
+        247,
+        411,
+        662,
+        1019,
+        1481,
+        2059,
+        2745,
+        3465,
+        4126,
+        4633,
+        4913,
+        4777,
+        4163,
+        3079,
+        1612,
+        488,
+        94,
+        25,
+        6,
+        3,
+        1
+      ],
+      "route_bank_reuses": [
+        119,
+        117
+      ],
+      "scope": "2 independent rank-process archives; full canonical states at every depth"
+    },
+    "HASH_FIRST": {
+      "unique_states": 40320,
+      "layer_sizes": [
+        1,
+        3,
+        6,
+        12,
+        23,
+        44,
+        80,
+        142,
+        247,
+        411,
+        662,
+        1019,
+        1481,
+        2059,
+        2745,
+        3465,
+        4126,
+        4633,
+        4913,
+        4777,
+        4163,
+        3079,
+        1612,
+        488,
+        94,
+        25,
+        6,
+        3,
+        1
+      ],
+      "route_bank_reuses": [
+        119,
+        117
+      ],
+      "scope": "2 independent rank-process archives; full canonical states at every depth"
+    }
+  },
+  "verified_packages": [
+    {
+      "profile": "DENSE",
+      "run_id": "s8-vast-54182144-local-first-dense",
+      "verification": {
+        "schema": "MGBFS_HF_VERIFY_V1",
+        "status": "PASS",
+        "unique_states": 40320,
+        "layers": 29,
+        "max_depth": 28,
+        "hash_state_pairs_verified": true,
+        "manifest_sha256": "862dc367a15cb0924696cf2d2f22e036eae6f10e3ad204fd23fa32dedf981723"
+      },
+      "oracle": {
+        "unique_states": 40320,
+        "layer_sizes": [
+          1,
+          3,
+          6,
+          12,
+          23,
+          44,
+          80,
+          142,
+          247,
+          411,
+          662,
+          1019,
+          1481,
+          2059,
+          2745,
+          3465,
+          4126,
+          4633,
+          4913,
+          4777,
+          4163,
+          3079,
+          1612,
+          488,
+          94,
+          25,
+          6,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          119,
+          117
+        ],
+        "scope": "2 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "profile": "HASH_FIRST",
+      "run_id": "s8-vast-54182144-local-first-hash_first",
+      "verification": {
+        "schema": "MGBFS_HF_VERIFY_V1",
+        "status": "PASS",
+        "unique_states": 40320,
+        "layers": 29,
+        "max_depth": 28,
+        "hash_state_pairs_verified": true,
+        "manifest_sha256": "53660d5388242866eb57aaa5ec88086504bcaa2c35517cd06e106ae38f85a8e0"
+      },
+      "oracle": {
+        "unique_states": 40320,
+        "layer_sizes": [
+          1,
+          3,
+          6,
+          12,
+          23,
+          44,
+          80,
+          142,
+          247,
+          411,
+          662,
+          1019,
+          1481,
+          2059,
+          2745,
+          3465,
+          4126,
+          4633,
+          4913,
+          4777,
+          4163,
+          3079,
+          1612,
+          488,
+          94,
+          25,
+          6,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          119,
+          117
+        ],
+        "scope": "2 independent rank-process archives; full canonical states at every depth"
+      }
+    }
+  ],
+  "publication_blockers": [
+    {
+      "profile": "DENSE",
+      "stage": "KAGGLE_SECRET_ACCESS",
+      "exception_type": "ConnectionError",
+      "exception_module": "builtins",
+      "cause_type": "HTTPError",
+      "http_status": 400,
+      "reason_type": "str",
+      "errno": null
+    },
+    {
+      "profile": "HASH_FIRST",
+      "stage": "KAGGLE_SECRET_ACCESS",
+      "exception_type": "ConnectionError",
+      "exception_module": "builtins",
+      "cause_type": "HTTPError",
+      "http_status": 400,
+      "reason_type": "str",
+      "errno": null
+    }
+  ]
+}

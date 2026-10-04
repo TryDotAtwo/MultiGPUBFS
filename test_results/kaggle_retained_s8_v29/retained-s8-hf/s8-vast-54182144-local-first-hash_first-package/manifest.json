@@ -1,0 +1,50 @@
+{
+  "schema": "MGBFS_HF_DATASET_V1",
+  "run_id": "s8-vast-54182144-local-first-hash_first",
+  "group_id": "S_8 LRX matrix Cayley graph over F2",
+  "config_digest": "49f81efcba81fc8107255ecfe5ce78062c27ef6f834dd10f0bfec7f47a9a18b2",
+  "total_unique_states": 40320,
+  "max_depth": 28,
+  "files": [
+    {
+      "path": "layers/s8-vast-54182144-local-first-hash_first.parquet",
+      "bytes": 8360,
+      "sha256": "72469af6edc683ed3a5cdf92e36d549190fe64983e9a2432297ea6d4f23781bb"
+    },
+    {
+      "path": "runs/s8-vast-54182144-local-first-hash_first.parquet",
+      "bytes": 6009,
+      "sha256": "e4a215d73238e5b3e1faa007f1e2e39b9ee34ff1e530d8d25f8f4e371f24a619"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00000-part-00000.parquet",
+      "bytes": 338289,
+      "sha256": "ddcff4db99d1ebfaf726d40e13798b1b65e496ee88829587dbea801dcfca708a"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00000-part-00001.parquet",
+      "bytes": 338091,
+      "sha256": "5f5d1c9003753a4d114436276abbfdb4ab1e7d102df9c6ff1b04ceee0601123d"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00000-part-00002.parquet",
+      "bytes": 12843,
+      "sha256": "d3b6c05d1a53c0cdb76feba0831fd285d680caace2760d9706893696c334f942"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00001-part-00000.parquet",
+      "bytes": 338119,
+      "sha256": "7c4cf7e2ad9ed9f26d81a9dfd11c445f11d1929e2439635b73ef9218869f79c2"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00001-part-00001.parquet",
+      "bytes": 337960,
+      "sha256": "2822a76e09cec2dc67d8585d85f1ab1138518a3875321c99e25e4c4fa869b959"
+    },
+    {
+      "path": "states/s8-vast-54182144-local-first-hash_first-rank-00001-part-00002.parquet",
+      "bytes": 5469,
+      "sha256": "0398ce2c9f509013298a59a43c31f82d4c9438b4e12b77995ee7770b3858438a"
+    }
+  ]
+}

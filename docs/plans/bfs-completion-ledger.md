@@ -1250,3 +1250,13 @@ Exact clean pinned patch rebuilt, SHA256 95a042db1698504182c0cf0ee34c8c74dbaf5cb
 ### Exact pinned repeat gate completed
 
 Exact pinned library 340237ca761410da432e8d36fe01b2824eb86c55cab1c1670129d7d69f76c00c: all 12 panels / 48 cases PASS. Both DENSE and HASH_FIRST pass old 2025.2.1.0 initcheck and all four 2026.1.0.0 sanitizer tools with full-state archive oracle. Two fault suites include 36 asymmetric injected failures: false COMPLETE=0, forced cleanup=0, max failure duration 2.510993s. Evidence: test_results/vast_54182144_local_first/pinned-local-first-gate/. This closes the observed NCCL initcheck activation blocker on this hardware/fixture, not all-owner/macro/performance admission. Full S8 timeline is now running on the same instance; analysis pending.
+
+
+## 2026-10-04 retained S8 publication gate
+
+- Kaggle publisher v29 completed without GPU allocation. The retained release archive SHA256 matched `589b137c665692bd43c42fd7634b90c6151003c1d17bd3816fb4e3beeb68a9ac`.
+- DENSE and HASH_FIRST: each full canonical layer set matched independent CPU S8 oracle, 40,320 states and 29 layers; checksummed rank archives and group RunCommit verified. Existing Parquet verifier reported PASS including all state/hash pairs. Full configurations were retained; earlier suspected missing-config diagnosis was incorrect. Publisher seed parsing was corrected from byte reversal to numeric hex, matching runtime `{:032x}` of the little-endian seed value.
+- Parquet packages remain in Kaggle v29 outputs. HF publication is NOT completed: Kaggle Secrets endpoint returned HTTP 400 for HF_TOKEN; no HF upload performed. This is not a demonstrated invalid HF token.
+- GPU A/B attempt v107 did NOT run search: both physical T4 P2P queries returned allowed=0. Harness preflight fix independently RED/GREEN with 16/16 Python screen tests; published in 1c08dc8. This is not the full project test suite.
+- Vast 54182144 no longer exists; S8 raw trace/archives retained on GitHub release, but final tuned S10 measurements/archive were not published before lease deletion. Do not claim retained durable evidence for that tuned run. No new paid rental admitted until remaining total USD20 budget is bounded.
+- Overall objective remains OPEN: tuned paired A/B recovery, broad backend/profile gates, macro-depth integration, complete HF catalog and DB/framework stage remain required.
