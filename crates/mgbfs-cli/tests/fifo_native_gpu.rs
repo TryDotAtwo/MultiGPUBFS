@@ -16,11 +16,21 @@ mod route_archive;
 
 #[test]
 fn native_cli_fifo_preserves_full_layers_and_wire_budget() {
+    check_native_cli_fifo(&["CUCO_RANK", "CUB_SORT_MERGE"]);
+}
+
+#[test]
+#[ignore = "BMMA_BUCKET V1 requires physical sm75; run explicitly on T4"]
+fn bmma_cli_fifo_preserves_full_layers_and_wire_budget() {
+    check_native_cli_fifo(&["BMMA_BUCKET"]);
+}
+
+fn check_native_cli_fifo(owners: &[&str]) {
     let expected = mgbfs_core::matrix::MatrixGroup::unitriangular(4, 2)
         .unwrap()
         .exact_layers(64)
         .unwrap();
-    for owner in ["CUCO_RANK", "CUB_SORT_MERGE"] {
+    for &owner in owners {
         for pre in ["ON", "OFF"] {
             for profile in ["DENSE", "HASH_FIRST"] {
                 for fault in [

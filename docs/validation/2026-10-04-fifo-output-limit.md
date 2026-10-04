@@ -111,3 +111,38 @@ All eight healthy capture/FIFO runs match the full-state/hash oracle; forty
 injected failure runs retain the same bounded-exit/no-COMPLETE checks. This
 does not extend the source pin of the already running Kaggle v88, nor replace
 its two-rank acceptance. It is not a speed comparison.
+
+## Explicit BMMA hardware gate and current regression results
+
+The existing CLI/FIFO fixture has a separate, explicitly ignored sm75-only
+`bmma_cli_fifo_preserves_full_layers_and_wire_budget` entrypoint. It uses the
+same real CLI, full-state/hash archive verification, owner DAG capture and
+five failure cases as the CUCO/CUB entrypoint, with both profiles and both
+pre-dedup settings (24 independent processes). Run it explicitly on physical
+sm75 with `cargo test -p mgbfs-cli --features cuda,library-owner --test
+fifo_native_gpu bmma_cli_fifo -- --ignored --nocapture --test-threads=1`.
+It has **not** passed on T4 in this change.
+
+An initial unconditional BMMA attempt on the local RTX3070Laptop failed
+before search with `NATIVE_PLAN_CREATE_FAILED status=3`. The backend's
+existing admission policy deliberately accepts only sm75; no architecture
+check was weakened and no CUB fallback was added. The BMMA entrypoint is
+therefore separated rather than falsely counted as a local success.
+
+After extraction, the CUCO/CUB gate passed all 48 independent CLI processes
+in 45.62s; the test report has one passed entrypoint and one ignored BMMA
+entrypoint. `cargo test --workspace --exclude multigpubfs-gpu` also returned
+zero (CPU-only workspace; GPU fixtures do not execute in that command).
+Linux Docker ran the replay deadline, cleanup and protocol-supervisor suites:
+17 tests passed in 2.830s, including the real independent-process checks.
+
+The separate full `library_bfs_gpu` invocation returned failure: four tests
+passed, but `library_bfs_layers_match_full_state_oracle_in_both_profiles`
+stopped at `HASH_FIRST_TC_DEVICE_UNSUPPORTED` on sm86. Its mixed fixture
+does not complete all indexed/cuDF/Tensor combinations on this host. This is
+not a green full CUDA suite and does not close target-sm75 correctness.
+
+Kaggle v88 remains the sole active notebook, pinned to 582c065. Its live
+viewer confirms the exact source, two Tesla T4s and successful native/library
+builds after a roughly 14-minute NCCL build. Runtime test acceptance is still
+pending; the current test-only changes are not in v88's pinned source.
