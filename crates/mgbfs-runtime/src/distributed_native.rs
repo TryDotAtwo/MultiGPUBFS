@@ -1554,21 +1554,25 @@ impl DistributedNativeBfs {
         let lsa_view = if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
             // Reserve the control words before the potentially large symmetric
             // allocation, so an OOM in prepare can still be voted by all ranks.
+            error.fill(0);
             let prepared = check(unsafe { mgbfs_nccl_lsa_prepare(
                 comm.0, candidates, stride as u32,
                 error.as_mut_ptr(), error.len(),
             ) });
             vote_group_error(
-                prepared.map_err(|error| format!("LSA_PREPARE_GROUP: {error}")),
+                prepared.map_err(|status| format!("LSA_PREPARE_GROUP: {}",
+                    crate::failure::attach_native_detail(status, &error))),
                 |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
                                            failed, startup_cancel.as_deref()),
                 "LSA_PREPARE_GROUP: peer rejected LSA prepare".into(),
             ).map_err(|error| { startup_report.publish(); error })?;
+            error.fill(0);
             let activated = check(unsafe { mgbfs_nccl_lsa_activate(
                 comm.0, error.as_mut_ptr(), error.len(),
             ) });
             vote_group_error(
-                activated.map_err(|error| format!("LSA_ACTIVATE_GROUP: {error}")),
+                activated.map_err(|status| format!("LSA_ACTIVATE_GROUP: {}",
+                    crate::failure::attach_native_detail(status, &error))),
                 |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
                                            failed, startup_cancel.as_deref()),
                 "LSA_ACTIVATE_GROUP: peer rejected LSA activation".into(),

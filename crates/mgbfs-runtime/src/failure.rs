@@ -1,6 +1,14 @@
 // Preserve the historical error code string; attach origin only to the
 // diagnostic reporter. These statuses also include native C ABI codes.
 #[cfg(any(test, feature = "cuda"))]
+pub(crate) fn attach_native_detail(error: String, detail: &[i8]) -> String {
+    let bytes: Vec<u8> = detail.iter().take_while(|&&byte| byte != 0)
+        .map(|&byte| byte as u8).collect();
+    if bytes.is_empty() { error }
+    else { format!("{error}: {}", String::from_utf8_lossy(&bytes)) }
+}
+
+#[cfg(any(test, feature = "cuda"))]
 #[track_caller]
 pub(crate) fn check_native_status_with_report(
     status: i32,
@@ -23,6 +31,22 @@ pub(crate) fn check_native_status(status: i32) -> mgbfs_core::Result<()> {
 
 #[cfg(test)]
 mod native_status_tests {
+    #[test]
+    fn native_detail_preserves_status_and_stops_at_nul() {
+        let bytes = b"window_register: unhandled cuda error\0stale bytes";
+        let detail: Vec<i8> = bytes.iter().map(|&byte| byte as i8).collect();
+        assert_eq!(super::attach_native_detail("CUDA_STATUS_7".into(), &detail),
+            "CUDA_STATUS_7: window_register: unhandled cuda error");
+    }
+
+    #[test]
+    fn native_detail_is_bounded_even_without_terminator() {
+        assert_eq!(super::attach_native_detail("CUDA_STATUS_8".into(), &[120, 121]),
+            "CUDA_STATUS_8: xy");
+        assert_eq!(super::attach_native_detail("CUDA_STATUS_8".into(), &[0, 120]),
+            "CUDA_STATUS_8");
+    }
+
     #[test]
     fn failed_status_reports_origin_without_changing_error_code() {
         let mut reports = Vec::new();
