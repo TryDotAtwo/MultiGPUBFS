@@ -26,6 +26,21 @@ int main() {
   ncclUniqueId id{};
   assert(mgbfs_nccl_create(0, 2, 0, &id, &comm, nullptr, 0) == 0);
   assert(init_calls == 1 && init_blocking == 0);
+  // The registration diagnostic must preserve the terminal code, not the
+  // initial ncclInProgress submission. This exercises the production waiter.
+  ncclResult_t observed=ncclSuccess;
+  async_state=9;
+  assert(await_nccl(static_cast<Comm*>(comm),ncclInProgress,&observed)==9);
+  assert(observed==9);
+  async_state=ncclSuccess;
+  async_query_status=8;
+  assert(await_nccl(static_cast<Comm*>(comm),ncclInProgress,&observed)==8);
+  assert(observed==8);
+  async_query_status=0;
+  assert(await_nccl(static_cast<Comm*>(comm),5,&observed)==6);
+  assert(observed==5);
+  assert(await_nccl(static_cast<Comm*>(comm),ncclSuccess,&observed)==0);
+  assert(observed==ncclSuccess);
   char byte = 0;
   assert(mgbfs_nccl_poll(comm) == 0);
   async_state = ncclInProgress;

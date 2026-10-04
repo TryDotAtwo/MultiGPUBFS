@@ -10,7 +10,7 @@
 #include <atomic>
 #include <cstdlib>
 struct Comm;
-namespace { int await_nccl(Comm*,ncclResult_t); }
+namespace { int await_nccl(Comm*,ncclResult_t,ncclResult_t* = nullptr); }
 namespace { int terminal_abort(Comm*); }
 #ifdef MGBFS_NCCL_LSA
 #include <nccl_device.h>
@@ -61,8 +61,10 @@ namespace {
 // Only the rank's NCCL-calling thread enters this function or aborts `value`.
 // The sideband thread may change the atomic observed by cancel_requested,
 // but never calls NCCL or touches Comm itself.
-int await_nccl(Comm* p, ncclResult_t submitted) {
+int await_nccl(Comm* p, ncclResult_t submitted, ncclResult_t* failure) {
+  if(failure)*failure=ncclSuccess;
   if(submitted!=ncclSuccess && submitted!=ncclInProgress) {
+    if(failure)*failure=submitted;
     std::fprintf(stderr,"MGBFS_NCCL_SUBMIT_FATAL rank=%u code=%d detail=%s\n",
         p->rank,int(submitted),ncclGetErrorString(submitted));
     return 6;
@@ -76,12 +78,14 @@ int await_nccl(Comm* p, ncclResult_t submitted) {
     ncclResult_t state=ncclSuccess;
     const auto queried=p->value?ncclCommGetAsyncError(p->value,&state):ncclInvalidUsage;
     if(queried!=ncclSuccess) {
+      if(failure)*failure=queried;
       std::fprintf(stderr,"MGBFS_NCCL_QUERY_FATAL rank=%u code=%d detail=%s\n",
           p->rank,int(queried),ncclGetErrorString(queried));
       return 8;
     }
     if(state==ncclSuccess) return 0;
     if(state!=ncclInProgress) {
+      if(failure)*failure=state;
       std::fprintf(stderr,"MGBFS_NCCL_ASYNC_FATAL rank=%u code=%d detail=%s\n",
           p->rank,int(state),ncclGetErrorString(state));
       return 9;
@@ -461,15 +465,24 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
       size_t(p->candidate_capacity)*p->state_stride;
   result=ncclCommWindowRegister(p->value,p->symmetric,
       slot_bytes,&p->window,NCCL_WIN_COLL_SYMMETRIC);
-  if(const int ready=await_nccl(p,result);ready!=0){
-    lsa_error(error,error_capacity,"window_register",result);return 7;
+  ncclResult_t failure=ncclSuccess;
+  if(const int ready=await_nccl(p,result,&failure);ready!=0){
+    if(error&&error_capacity)std::snprintf(error,error_capacity,
+        "window_register: progress=%d submitted=%d terminal=%d detail=%s",
+        ready,int(result),int(failure),failure==ncclSuccess?
+        "cancelled or timed out without terminal NCCL result":ncclGetErrorString(failure));
+    return 7;
   }
   p->window_ready=true;
   ncclDevCommRequirements reqs=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
   reqs.lsaBarrierCount=lsa_copy_ctas;
   result=ncclDevCommCreate(p->value,&reqs,&p->device);
-  if(const int ready=await_nccl(p,result);ready!=0){
-    lsa_error(error,error_capacity,"device_comm_create",result);return 8;
+  if(const int ready=await_nccl(p,result,&failure);ready!=0){
+    if(error&&error_capacity)std::snprintf(error,error_capacity,
+        "device_comm_create: progress=%d submitted=%d terminal=%d detail=%s",
+        ready,int(result),int(failure),failure==ncclSuccess?
+        "cancelled or timed out without terminal NCCL result":ncclGetErrorString(failure));
+    return 8;
   }
   p->device_ready=true;
   if(p->device.lsaSize!=int(p->world))return 9;
