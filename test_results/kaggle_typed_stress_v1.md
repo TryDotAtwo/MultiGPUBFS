@@ -20,9 +20,10 @@ both ranks, group COMPLETE, no forced cleanup, and26 source-bank reuses
 per rank. Its process wall time is not search time and is not an A/B result.
 
 Main summary retained in build/kaggle-typed-stress-v1-summary-only.
-Detailed summaries and rank logs are being retained separately in
-build/kaggle-typed-stress-v1-observation; download must finish before replacing
-this notebook version. No large state archive was downloaded to this machine.
+All 72 detailed summaries and 144 rank logs are retained separately in
+build/kaggle-typed-stress-v1-observation; download completed before replacing
+this notebook version. Each downloaded summary reports729 canonical states
+and DIAGNOSTIC_CASES_PASS. No large state archive was downloaded to this machine.
 
 Still open: updated full asymmetric-failure matrix, four full-runtime
 sanitizers (especially initcheck), full-BFS timeline, paired A/B, production

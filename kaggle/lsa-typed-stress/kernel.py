@@ -21,7 +21,7 @@ def main():
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     gate.SOURCE = SOURCE
-    gate.MODE = "typed_stress_gate"
+    gate.MODE = "native_rank_gate"
     gate.main()
 
 
