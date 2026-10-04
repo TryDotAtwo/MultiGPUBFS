@@ -14,6 +14,31 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_matrix_gate_covers_moduli_profiles_owners_maps_prededup_and_frozen_seeds(self):
+        base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
+        before = json.dumps(base, sort_keys=True)
+        cases = gate.typed_matrix_cases(base)
+        observed = {(c['config']['graph']['modulus'], c['config']['frontier_profile'],
+            c['config']['owner_backend'], c['config']['local_pre_dedup'],
+            tuple(c['config']['topology']['logical_owner_to_rank']),
+            int.from_bytes(bytes(c['config']['seed']), 'little')) for c in cases}
+        expected = {(m, p, o, d, ranks, seed) for m in range(2, 7)
+            for p in ('DENSE', 'HASH_FIRST')
+            for o in ('CUB_SORT_MERGE', 'BMMA_BUCKET', 'CUCO_RANK')
+            for d in (False, True) for ranks in ((0, 1), (1, 0))
+            for seed in (0, 1, 20260828)}
+        self.assertEqual(observed, expected)
+        self.assertEqual(len(cases), 360)
+        self.assertEqual(len({c['label'] for c in cases}), 360)
+        for c in cases:
+            config = c['config']
+            self.assertEqual(config['graph']['expected_max_unique_states'], config['graph']['modulus'] ** 6)
+            self.assertEqual(config['capacities']['route_slot_records'], 1536)
+            self.assertEqual(config['capacities']['pinned_archive_slot_bytes'], 8192)
+            self.assertEqual(c['extra'], ['--healthy-only', '--unitriangular-modulus', str(config['graph']['modulus'])])
+        self.assertEqual(json.dumps(base, sort_keys=True), before)
+        self.assertIn('pyarrow==19.0.1', gate.oracle_dependency_packages('typed_matrix_gate'))
+
     def test_wrong_or_missing_actual_instrumenter_cannot_pass_version_gate(self):
         expected = '/sdk/compute-sanitizer/compute-sanitizer'
         good = {'executable': expected, 'sha256': 'a' * 64, 'version': 'Version 2025.2'}
@@ -74,7 +99,9 @@ class FollowupTests(unittest.TestCase):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         with tempfile.TemporaryDirectory(prefix='mgbfs-stress-admission-') as directory:
             path = Path(directory) / 'config.json'
-            for config in gate.typed_stress_configs(base, 3) + [c['config'] for c in gate.typed_warmup_cases(base)]:
+            for config in (gate.typed_stress_configs(base, 3)
+                    + [c['config'] for c in gate.typed_warmup_cases(base)]
+                    + [c['config'] for c in gate.typed_matrix_cases(base)]):
                 path.write_text(json.dumps(config), encoding='utf-8')
                 result = subprocess.run([str(binary), 'preflight', '--offline', str(path)],
                     capture_output=True, text=True, timeout=10)

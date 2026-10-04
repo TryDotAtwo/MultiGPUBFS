@@ -24,7 +24,7 @@ NCCL_VARIANT = "minimum_arch_guard_posix"
 def oracle_dependency_packages(mode):
     return ['pyarrow==19.0.1'] if mode in ('device_protocol_replay', 'native_rank_gate',
         'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate',
-        'typed_sanitizer_version_gate') else []
+        'typed_sanitizer_version_gate', 'typed_matrix_gate') else []
 
 
 def macro_capture_command():
@@ -98,6 +98,28 @@ def typed_stress_configs(base, modulus):
             selected['owner_backend'] = owner
             selected['library_pool_bytes'] = (96 << 20) if owner == 'CUCO_RANK' else None
             cases.append(selected)
+    return cases
+
+
+def typed_matrix_cases(base):
+    """Full U4/m=2..6 state oracle matrix through the existing rank runtime."""
+    cases = []
+    for modulus in range(2, 7):
+        for config in typed_stress_configs(base, modulus):
+            if config['capacities']['route_slot_count'] != 3:
+                continue
+            config['parent_batch'] = 256
+            config['capacities']['route_slot_records'] = 1536
+            config['capacities']['pinned_archive_slot_bytes'] = 8192
+            config['capacities']['pinned_archive_slots'] = 256
+            for seed in (0, 1, 20260828):
+                selected = copy.deepcopy(config)
+                selected['seed'] = list(seed.to_bytes(16, 'little'))
+                label = (f'u4m{modulus}-{selected["owner_backend"]}-{selected["frontier_profile"]}'
+                    f'-pre{int(selected["local_pre_dedup"])}'
+                    f'-map{"".join(map(str, selected["topology"]["logical_owner_to_rank"]))}-seed{seed}')
+                cases.append(dict(config=selected, label=label,
+                    extra=['--healthy-only', '--unitriangular-modulus', str(modulus)]))
     return cases
 
 
@@ -359,7 +381,7 @@ def main():
         sdk.mkdir()
         # Resolve before adding SDK/bin: sanitizer_api includes a launcher there.
         host_sanitizer = shutil.which('compute-sanitizer', path=env.get('PATH', ''))
-        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'typed_matrix_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
         if MODE == 'typed_sanitizer_version_gate':
             # Official redistrib12.9.1, inspected tar includes the actual instrumenter.
@@ -651,7 +673,7 @@ def main():
             report['macro_producer_capture'] = 'PASS'
             report['status'] = 'COMPLETE'
             return
-        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate'):
+        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'typed_matrix_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
             base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
@@ -679,6 +701,12 @@ def main():
                 save()
                 print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
                 return row
+            if MODE == 'typed_matrix_gate':
+                report['scope'] = 'production two-rank full-state U4 moduli2..6, profiles/owners/pre-dedup/maps/seeds; not performance or sanitizer acceptance'
+                for case in typed_matrix_cases(base):
+                    replay_typed(case['config'], case['label'], case['extra'])
+                report['status'] = 'TYPED_MATRIX_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
             if MODE == 'typed_sanitizer_version_gate':
                 pinned = sdk / 'compute-sanitizer/compute-sanitizer'
                 if not host_sanitizer:
