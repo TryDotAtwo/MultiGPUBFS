@@ -17,6 +17,7 @@ while not (root/'shutdown').exists():
  if not p.exists():time.sleep(.001);continue
  job=json.loads(p.read_text());code=int(job['env'].get('MGBFS_TEST_CODE','0'))
  for rank in [1,0]:
+  print('42',flush=True)
   print('PAYLOAD',rank,job['args'][1],flush=True)
   if code:print(json.dumps(dict(status='ERROR',rank=rank,error='MEMORY_QUERY_DONE' if job['env'].get('MGBFS_MEMORY_QUERY')=='1' else 'TEST_FAILURE')),flush=True)
   print(f'MGBFS_SESSION_DONE sequence={seq} rank={rank} code={code}',flush=True)

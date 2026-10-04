@@ -36,6 +36,11 @@ class JobProcess:
             yield line
 
     def poll(self):
+        if self.returncode is None and (self.session.process.poll() is not None
+                or not self.session.router.is_alive()):
+            self.returncode = self.session.process.returncode or 1
+            self.lines.put(None)
+            self.session.done.set()
         return self.returncode
 
     def wait(self, timeout=None):
@@ -55,9 +60,10 @@ class JobProcess:
             if remaining is not None and remaining <= 0:
                 raise subprocess.TimeoutExpired('resident query', timeout)
             try:
-                line = self.lines.get(timeout=remaining)
+                line = self.lines.get(timeout=.05 if remaining is None else min(.05, remaining))
             except queue.Empty:
-                raise subprocess.TimeoutExpired('resident query', timeout)
+                self.poll()
+                continue
             if line is None:
                 return ''.join(output), None
             output.append(line)
@@ -110,7 +116,7 @@ class Session:
                     record = json.loads(line)
                 except ValueError:
                     record = {}
-                if record.get('status') == 'ERROR' and 'rank' in record:
+                if isinstance(record,dict) and record.get('status') == 'ERROR' and 'rank' in record:
                     job.errors[record['rank']] = record.get('error')
                 match = re.search(r'MGBFS_SESSION_DONE sequence=(\d+) rank=(\d+) code=(\d+)', line)
                 if match and int(match[1]) == job.sequence:
