@@ -6,6 +6,14 @@ from scripts.publish_tail_batch import plan
 from test_tail_cohort import CohortTests
 
 class PairedTests(unittest.TestCase):
+    def test_explicit_retry_keeps_original_publication_history(self):
+        old=dict(status='INCOMPLETE',attempted=True)
+        new=dict(status='COMPLETE',publication_key='n7-m2-retry1',
+            replicas=[dict(key='n7-m2-retry1-rep2',status='COMPLETE')])
+        ledger=dict(publication_history={'n7-m2':old},cases={'n7-m2':new})
+        records=publication_records(ledger)
+        self.assertEqual(list(records),['n7-m2','n7-m2-retry1','n7-m2-retry1-rep2'])
+        self.assertEqual(records['n7-m2'],old)
     def test_resource_exhaustion_skips_second_run_without_claiming_match(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); case=root/'n7-m2'; calls=[]

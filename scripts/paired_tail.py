@@ -11,11 +11,16 @@ except ImportError:
 SEEDS = ['000000000000000000000000013527dc', '6a09e667f3bcc909bb67ae8584caa73b']
 
 def publication_records(ledger):
-    records = dict(ledger['cases'])
+    records = dict(ledger.get('publication_history', {}))
+    for key, record in ledger['cases'].items():
+        key = record.get('publication_key', key)
+        if key in records and records[key] != record:
+            raise ValueError('publication history identity collision')
+        records[key] = record
     for record in ledger['cases'].values():
         for replica in record.get('replicas', []):
             key = replica['key']
-            if key in records: raise ValueError('duplicate replica identity')
+            if key in records and records[key] != replica: raise ValueError('duplicate replica identity')
             records[key] = replica
     return records
 

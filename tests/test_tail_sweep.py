@@ -10,6 +10,26 @@ from sweep_tail_bfs import execute,pairs,automatic_pairs,unsupported_reason,reso
 
 
 class SweepTests(unittest.TestCase):
+    def test_explicit_interruption_retry_uses_fresh_case_path(self):
+        from paired_tail import publication_records
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);grid=[(4,1)];base={'run_id':'retry'}
+            def fake(config,source,case,runtime):
+                case.mkdir();path=case/'manifest.json'
+                path.write_text(json.dumps(dict(status='COMPLETE',last_completed_layer=0,stop_reason='exhausted')))
+                return path
+            ledger=execute(base,root,root,{},grid,10,fake)
+            original=dict(ledger['cases']['n4-m1'])
+            ledger['publication_history']=publication_records(ledger)
+            ledger['cases'].pop('n4-m1')
+            ledger['retry_case_keys']={'n4-m1':'n4-m1-retry1'}
+            (root/'sweep.json').write_text(json.dumps(ledger))
+            result=execute(base,root,root,{},grid,10,fake)
+            self.assertEqual(result['pending'],[])
+            self.assertEqual(result['cases']['n4-m1']['publication_key'],'n4-m1-retry1')
+            records=publication_records(result)
+            self.assertEqual(records['n4-m1'],original)
+            self.assertEqual(list(records),['n4-m1','n4-m1-retry1'])
     def test_controlled_stop_preserves_case_and_leaves_other_pairs_pending(self):
         reason=[None];calls=[]
         def fake(config,source,case,runtime):

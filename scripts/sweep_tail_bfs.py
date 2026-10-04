@@ -116,14 +116,17 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             ledger['global_stop_reason']='compute deadline exhausted'
             break
         config=copy.deepcopy(base)
-        config.update(n=n,r=m,run_id=base.get('run_id','sweep')+'-'+key,
+        case_key=ledger.get('retry_case_keys',{}).get(key,key)
+        if case_key in ('', '.', '..') or '/' in case_key or '\\' in case_key:
+            raise ValueError('unsafe retry case key')
+        config.update(n=n,r=m,run_id=base.get('run_id','sweep')+'-'+case_key,
                       timeout_seconds=remaining)
         unsupported=unsupported_reason(n,m)
         if unsupported:
             record=dict(status='INCOMPLETE',last_completed_layer=-1,reason=unsupported,
                         attempted=False,n=n,m=m)
         else:
-            case=root/key
+            case=root/case_key
             runner_started = time.monotonic()
             runner_started_unix = time.time()
             transition_before = (None if previous_runner_finished is None
@@ -167,8 +170,10 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
             for replica in record['replicas']:
                 if replica['status']=='INCOMPLETE' and allocation_failure(root/replica['key'],source):
                     replica['resource_classification']='cuda_allocation_failure'
-        if record['status']=='INCOMPLETE' and allocation_failure(root/key,source):
+        if record['status']=='INCOMPLETE' and allocation_failure(root/case_key,source):
             record['resource_classification']='cuda_allocation_failure'
+        if case_key != key:
+            record['publication_key']=case_key
         ledger['cases'][key]=record
         if resource_stop(record):
             blocked[m]=record
