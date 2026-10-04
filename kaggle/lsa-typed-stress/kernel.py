@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-SOURCE = "cb4603cd975dd71ac8402ae436fe49a70140e6d1"
+SOURCE = "38a4c256aaea3fab7b750ad84f31701cb40d2f23"
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     gate.SOURCE = SOURCE
-    gate.MODE = "native_rank_gate"
+    gate.MODE = "cuda_posix_import"
     gate.main()
 
 
