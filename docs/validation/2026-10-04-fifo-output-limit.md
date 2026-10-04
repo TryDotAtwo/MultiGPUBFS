@@ -88,3 +88,15 @@ The deadline contract failed before implementation and all 23 replay unit
 tests passed after it. These CPU tests do not establish rank cleanup on Linux,
 GPU sanitizer success or hardware readiness. Rental stop deadlines are separate
 and must cover any authorized instrumented run; this change provisions nothing.
+
+## Replay cleanup isolation
+
+The runner formerly signalled and waited on rank0 before touching rank1;
+a reaping timeout or exit/signal race could skip the second rank entirely.
+Cleanup now signals all live owned sessions first, attempts bounded reaping
+for every rank, tolerates ProcessLookupError and records any remaining errors
+as CANDIDATE_CLEANUP_FAILED. Forced cleanup is still not acceptance.
+All 26 replay CPU tests passed before the Linux-only addition; four cleanup
+tests then passed in Linux Docker, including two real independent sessions
+whose PIDs were confirmed absent after reaping. No CUDA/NCCL cancellation
+claim follows from this OS-process test. Runtime cancellation is unchanged.

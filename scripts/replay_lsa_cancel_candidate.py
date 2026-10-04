@@ -15,6 +15,25 @@ import re
 import signal
 
 
+def cleanup_rank_processes(processes):
+    """Cancel all owned sessions before bounded reaping; attempt every rank."""
+    errors = []
+    for process in processes:
+        try:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # Child exited between poll and signal; still reap it below.
+        except OSError as error:
+            errors.append(f'RANK_SIGNAL_{process.pid}: {error}')
+    for process in processes:
+        try:
+            process.wait(timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            errors.append(f'RANK_REAP_{process.pid}: {error}')
+    return errors
+
+
 def process_case_timeout(tool, requested):
     if requested is not None:
         if type(requested) is not int or not 1 <= requested <= 3600:
@@ -515,12 +534,13 @@ def main():
             report["cases"].append(row)
             save()
         finally:
-            for process in processes:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
+            cleanup_errors = cleanup_rank_processes(processes)
             for stream in streams:
                 stream.close()
+            if cleanup_errors:
+                report['cleanup_errors'] = cleanup_errors
+                save()
+                raise RuntimeError('CANDIDATE_CLEANUP_FAILED: ' + '; '.join(cleanup_errors))
         if not row["pass"]:
             raise RuntimeError("CANDIDATE_CASE_FAILED: " + name)
     if args.oracle:
