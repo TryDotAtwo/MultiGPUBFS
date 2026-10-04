@@ -141,6 +141,15 @@ def instrumentation_clean(text, tool):
     return bool(rows) and not any(int(n) for n in rows)
 
 
+def record_archive_verification(row, case, **kwargs):
+    """Keep process outcomes even when verification fails; never promote to PASS."""
+    try:
+        row['full_state_oracle'] = verify_process_archives(case, **kwargs)
+    except Exception as error:
+        row['pass'] = False
+        row['verification_error'] = dict(type=type(error).__name__, detail=str(error))
+
+
 def failure_has_no_complete(case):
     """A nonzero exit alone cannot rule out false per-rank completion."""
     result = case / 'result'
@@ -496,7 +505,7 @@ def main():
             if key is None:
                 row["pass"] &= row["group_complete"]
                 if row["pass"]:
-                    row["full_state_oracle"] = verify_process_archives(case, n=args.reference_size,
+                    record_archive_verification(row, case, n=args.reference_size,
                         modulus=args.unitriangular_modulus, expected_seed=seed_hex,
                         expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
                         expected_run_contract='RunConfigV1' if config_snapshot is not None else None,
