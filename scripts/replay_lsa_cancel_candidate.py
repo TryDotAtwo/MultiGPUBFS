@@ -131,12 +131,15 @@ def configure_owner_environment(env, backend, rank_map, run_config=None):
         env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
 
 
-def instrument_rank_command(binary, arguments, tool, report_prefix):
+def instrument_rank_command(binary, arguments, tool, report_prefix, sanitizer_binary=None):
     target = [str(binary), *arguments]
     if tool is None:
         return target
     if tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
-        return ['/usr/local/cuda/bin/compute-sanitizer', '--tool', tool,
+        selected = sanitizer_binary if sanitizer_binary is not None else '/usr/local/cuda/bin/compute-sanitizer'
+        if not isinstance(selected, str) or not selected.startswith('/'):
+            raise ValueError('SANITIZER_EXECUTABLE_MUST_BE_ABSOLUTE')
+        return [selected, '--tool', tool,
                 '--error-exitcode', '97', *target]
     if tool == 'nsys':
         return ['nsys', 'profile', '--trace=cuda,nvtx,osrt', '--sample=process-tree',
@@ -494,6 +497,15 @@ def main():
     if args.healthy_only:
         cases = cases[:1]
     report['process_instrumentation'] = args.instrument_processes
+    sanitizer_binary = env.get('MGBFS_COMPUTE_SANITIZER', '/usr/local/cuda/bin/compute-sanitizer')
+    if args.instrument_processes in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
+        # Retain the executable actually used by both rank launches, not just
+        # a PATH-dependent version printed by the notebook parent.
+        report['process_sanitizer'] = {
+            'executable': sanitizer_binary,
+            'sha256': hashlib.sha256(Path(sanitizer_binary).read_bytes()).hexdigest(),
+            'version': subprocess.check_output([sanitizer_binary, '--version'],
+                env=env, text=True, timeout=30).strip()}
     report['case_timeout_seconds'] = case_timeout
     for name, key, fault_rank in cases:
         case = output / f"{name}-{fault_rank}"
@@ -515,7 +527,8 @@ def main():
                 rank_env = rank_environment(case_env, rank)
                 command = instrument_rank_command(source / 'target/debug/mgbfs',
                     rank_arguments(case, reference_group, args.batch, config_snapshot),
-                    args.instrument_processes, case / f'rank-{rank}')
+                    args.instrument_processes, case / f'rank-{rank}',
+                    sanitizer_binary=sanitizer_binary)
                 processes.append(subprocess.Popen(command, cwd=source,
                     env=rank_env, stdout=stream, stderr=subprocess.STDOUT,
                     start_new_session=True))
@@ -622,10 +635,10 @@ def main():
         report["sanitizers"] = []
         for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
             log_path = output / (tool + ".log")
-            command = ["/usr/local/cuda/bin/compute-sanitizer", "--tool", tool,
-                "--error-exitcode", "97", binaries[0],
+            command = instrument_rank_command(binaries[0], [
                 "cuco_rank_lsa_single_fixture_for_sanitizer", "--ignored", "--exact",
-                "--nocapture", "--test-threads=1"]
+                "--nocapture", "--test-threads=1"], tool, output / tool,
+                sanitizer_binary=sanitizer_binary)
             try:
                 with log_path.open("w") as log:
                     process = subprocess.Popen(command, cwd=source, env=env,

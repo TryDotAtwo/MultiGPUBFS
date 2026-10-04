@@ -187,8 +187,15 @@ def sanitizer_version_environment(env, host, pinned, version):
         raise ValueError('SANITIZER_VERSION_SELECTION')
     selected = host if version == 'host' else pinned
     result = dict(env)
+    result['MGBFS_COMPUTE_SANITIZER'] = str(selected)
     result['PATH'] = Path(selected).parent.as_posix() + ':' + result.get('PATH', '')
     return result
+
+
+def sanitizer_selection_matches(actual, executable, sha256):
+    return (isinstance(actual, dict) and actual.get('executable') == executable
+        and actual.get('sha256') == sha256 and isinstance(actual.get('version'), str)
+        and bool(actual['version'].strip()))
 
 
 def vmm_probe_cases():
@@ -663,6 +670,7 @@ def main():
                     run_contract=detail.get('run_contract'), epoch_window=detail.get('epoch_window'),
                     route_banks=detail.get('route_banks'),
                     replay_status=detail.get('status'))
+                row['process_sanitizer'] = detail.get('process_sanitizer')
                 row['pass'] = row['returncode'] == 0 and not row['timed_out'] and (
                     detail.get('status') == 'DIAGNOSTIC_CASES_PASS' and detail.get('run_contract') == 'RunConfigV1'
                     and detail.get('epoch_window') == config['completion_epoch_window']
@@ -681,6 +689,11 @@ def main():
                 for case in typed_sanitizer_version_cases(base):
                     replay_env = sanitizer_version_environment(env, host_sanitizer, str(pinned), case['version'])
                     row = replay_typed(case['config'], case['label'], case['extra'], replay_env)
+                    selected = replay_env['MGBFS_COMPUTE_SANITIZER']
+                    row['instrumenter_selection_verified'] = sanitizer_selection_matches(
+                        row.get('process_sanitizer'), selected,
+                        hashlib.sha256(Path(selected).read_bytes()).hexdigest())
+                    row['pass'] = row['pass'] and row['instrumenter_selection_verified']
                     row.update(sanitizer_version=case['version'], tool=case['tool'])
                     save()
                 report['status'] = 'TYPED_SANITIZER_VERSION_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'

@@ -14,6 +14,14 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_wrong_or_missing_actual_instrumenter_cannot_pass_version_gate(self):
+        expected = '/sdk/compute-sanitizer/compute-sanitizer'
+        good = {'executable': expected, 'sha256': 'a' * 64, 'version': 'Version 2025.2'}
+        self.assertTrue(gate.sanitizer_selection_matches(good, expected, 'a' * 64))
+        for bad in (None, {}, dict(good, executable='/usr/local/cuda/bin/compute-sanitizer'),
+                    dict(good, sha256='b' * 64), dict(good, version='')):
+            self.assertFalse(gate.sanitizer_selection_matches(bad, expected, 'a' * 64))
+
     def test_macro_capture_gate_runs_real_lib_test_not_zero_test_filter(self):
         command = gate.macro_capture_command()
         self.assertEqual(command[:8], ['cargo', 'test', '--locked', '-p',
@@ -27,6 +35,9 @@ class FollowupTests(unittest.TestCase):
             selected = gate.sanitizer_version_environment(env, '/usr/local/cuda/bin/compute-sanitizer',
                 '/sdk/compute-sanitizer/compute-sanitizer', version)
             self.assertEqual(selected['PATH'], prefix + ':/sdk/bin:/usr/bin')
+            self.assertEqual(selected['MGBFS_COMPUTE_SANITIZER'],
+                '/usr/local/cuda/bin/compute-sanitizer' if version == 'host'
+                else '/sdk/compute-sanitizer/compute-sanitizer')
         self.assertEqual(env, {'PATH': '/sdk/bin:/usr/bin', 'keep': 'yes'})
 
     def test_toolchain_comparison_keeps_all_four_tools_and_both_host_and_pinned_versions(self):

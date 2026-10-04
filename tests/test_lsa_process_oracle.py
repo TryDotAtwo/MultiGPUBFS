@@ -12,6 +12,13 @@ from test_export_hf_dataset import frame
 
 
 class ProcessOracleTests(unittest.TestCase):
+    def test_rank_instrumentation_uses_explicit_selected_binary_not_fixed_host(self):
+        for selected in ('/sdk/compute-sanitizer/compute-sanitizer', '/usr/local/cuda/bin/compute-sanitizer'):
+            command = replay.instrument_rank_command('/bin/mgbfs', ['run', 'config.json'],
+                'initcheck', '/tmp/rank', sanitizer_binary=selected)
+            self.assertEqual(command, [selected, '--tool', 'initcheck',
+                '--error-exitcode', '97', '/bin/mgbfs', 'run', 'config.json'])
+
     def test_warmup_gate_requires_both_authenticated_ranks_to_complete_warmup(self):
         def warmed(rank, record):
             record['warmup_completed'] = True
