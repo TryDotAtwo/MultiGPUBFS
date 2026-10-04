@@ -1,0 +1,19 @@
+.............F..
+======================================================================
+FAIL: test_typed_run_uses_production_dispatch_and_checks_exact_config_digest (test_library_screen.ScreenContract.test_typed_run_uses_production_dispatch_and_checks_exact_config_digest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/mgbfs-lsa-bfs-8c8frzbt/source/tests/test_library_screen.py", line 39, in test_typed_run_uses_production_dispatch_and_checks_exact_config_digest
+    result = screen.run_case('mgbfs', root/'logs', root/'archive',
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/mgbfs-lsa-bfs-8c8frzbt/source/scripts/library_gpu_screen.py", line 79, in run_case
+    preflight = subprocess.run([str(cli), 'preflight', '--offline', str(snapshot)],
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/mgbfs-lsa-bfs-8c8frzbt/source/tests/test_library_screen.py", line 28, in cli
+    self.assertEqual(kwargs.get('env'), {}, 'PREFLIGHT_MUST_INHERIT_ENV')
+AssertionError: None != {} : PREFLIGHT_MUST_INHERIT_ENV
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.016s
+
+FAILED (failures=1)

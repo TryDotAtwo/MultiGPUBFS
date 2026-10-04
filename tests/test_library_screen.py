@@ -24,6 +24,8 @@ class ScreenContract(unittest.TestCase):
             launches.append(command)
             return row
         def cli(command, **kwargs):
+            if command[1] == 'preflight':
+                self.assertEqual(kwargs.get('env'), {}, 'PREFLIGHT_MUST_INHERIT_ENV')
             return SimpleNamespace(returncode=0, stdout=json.dumps(
                 {'status': 'CONFIG_VALIDATED', 'config_digest': 'ab' * 32,
                  'hardware_ready': False} if command[1] == 'preflight' else {'status': 'VERIFIED'}))

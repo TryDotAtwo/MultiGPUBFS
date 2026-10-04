@@ -77,7 +77,7 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         snapshot = output/'run-config.json'
         snapshot.write_text(json.dumps(config, separators=(',', ':')))
         preflight = subprocess.run([str(cli), 'preflight', '--offline', str(snapshot)],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True, timeout=30)
+            env=inherited, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True, timeout=30)
         admission = json.loads(preflight.stdout)
         digest = admission.get('config_digest')
         if (admission.get('status') != 'CONFIG_VALIDATED'

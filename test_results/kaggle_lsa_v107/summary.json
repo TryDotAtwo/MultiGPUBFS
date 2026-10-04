@@ -1,0 +1,38 @@
+{
+  "source": "7877c27086bff6dad635700f949a8bc4ba5485bc",
+  "status": "UNSUPPORTED_HOST",
+  "scope": "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle",
+  "hardware_target": "T4",
+  "cuda_architecture": "sm75",
+  "t4_acceptance_eligible": true,
+  "gpus": [
+    {
+      "index": 0,
+      "name": "Tesla T4",
+      "uuid": "GPU-22e801d8-f26c-7f03-3ea9-c193bbc83485",
+      "total_mib": 15360,
+      "free_mib": 14912
+    },
+    {
+      "index": 1,
+      "name": "Tesla T4",
+      "uuid": "GPU-a28bbae7-e30e-fde2-9ff6-36435e5065d9",
+      "total_mib": 15360,
+      "free_mib": 14912
+    }
+  ],
+  "p2p": [
+    {
+      "source": 0,
+      "target": 1,
+      "cuda_status": 0,
+      "allowed": 0
+    },
+    {
+      "source": 1,
+      "target": 0,
+      "cuda_status": 0,
+      "allowed": 0
+    }
+  ]
+}

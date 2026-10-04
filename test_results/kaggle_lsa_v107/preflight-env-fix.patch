@@ -1,0 +1,26 @@
+diff --git a/scripts/library_gpu_screen.py b/scripts/library_gpu_screen.py
+index e3b2202..6b67654 100644
+--- a/scripts/library_gpu_screen.py
++++ b/scripts/library_gpu_screen.py
+@@ -77,7 +77,7 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
+         snapshot = output/'run-config.json'
+         snapshot.write_text(json.dumps(config, separators=(',', ':')))
+         preflight = subprocess.run([str(cli), 'preflight', '--offline', str(snapshot)],
+-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True, timeout=30)
++            env=inherited, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True, timeout=30)
+         admission = json.loads(preflight.stdout)
+         digest = admission.get('config_digest')
+         if (admission.get('status') != 'CONFIG_VALIDATED'
+diff --git a/tests/test_library_screen.py b/tests/test_library_screen.py
+index 666f9dd..53194ef 100644
+--- a/tests/test_library_screen.py
++++ b/tests/test_library_screen.py
+@@ -24,6 +24,8 @@ class ScreenContract(unittest.TestCase):
+             launches.append(command)
+             return row
+         def cli(command, **kwargs):
++            if command[1] == 'preflight':
++                self.assertEqual(kwargs.get('env'), {}, 'PREFLIGHT_MUST_INHERIT_ENV')
+             return SimpleNamespace(returncode=0, stdout=json.dumps(
+                 {'status': 'CONFIG_VALIDATED', 'config_digest': 'ab' * 32,
+                  'hardware_ready': False} if command[1] == 'preflight' else {'status': 'VERIFIED'}))
