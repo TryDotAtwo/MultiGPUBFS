@@ -100,3 +100,14 @@ All 26 replay CPU tests passed before the Linux-only addition; four cleanup
 tests then passed in Linux Docker, including two real independent sessions
 whose PIDs were confirmed absent after reaping. No CUDA/NCCL cancellation
 claim follows from this OS-process test. Runtime cancellation is unchanged.
+
+## Local pre-dedup OFF/ON
+
+The CLI gate now covers both pre-dedup settings for both owners and both
+profiles: 48 independent subprocesses passed in 45.80 seconds on sm86.
+U4/F2 deliberately has duplicate inverse generators; OFF therefore exercises
+owner-side duplicate removal instead of relying on source-side suppression.
+All eight healthy capture/FIFO runs match the full-state/hash oracle; forty
+injected failure runs retain the same bounded-exit/no-COMPLETE checks. This
+does not extend the source pin of the already running Kaggle v88, nor replace
+its two-rank acceptance. It is not a speed comparison.
