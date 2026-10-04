@@ -53,6 +53,33 @@ def typed_reuse_configs(base):
         and candidate['topology']['logical_owner_to_rank'] == [0, 1]]
 
 
+def typed_stress_configs(base, modulus):
+    """Bounded full-state U4 gate; not an end-to-end performance benchmark."""
+    if type(modulus) is not int or not 2 <= modulus <= 6:
+        raise ValueError('BOUNDED_REFERENCE_UNITRIANGULAR')
+    config = copy.deepcopy(base)
+    generators, inverses = [], []
+    identity = [int(row == col) for row in range(4) for col in range(4)]
+    for row in range(3):
+        forward, inverse = identity.copy(), identity.copy()
+        forward[row * 4 + row + 1] = 1
+        inverse[row * 4 + row + 1] = modulus - 1
+        generators.append(forward)
+        inverses.append(inverse)
+    states = modulus ** 6
+    records = 1 << (states - 1).bit_length()
+    config['graph'].update(rows=4, cols=4, modulus=modulus, start=identity,
+        generators=generators + inverses, inverse_map=[3, 4, 5, 0, 1, 2],
+        expected_max_unique_states=states)
+    config['parent_batch'] = 8
+    config['capacities'].update(state_ring_records=2 * records,
+        state_extent_descriptors=2 * records, layer_hash_records_per_arena=records,
+        next_bucket_capacity_records=records, route_slot_records=48,
+        pinned_archive_slots=2 * records, pinned_archive_slot_bytes=512)
+    return [candidate for candidate in typed_rank_configs(config)
+        if candidate['completion_epoch_window'] == 3]
+
+
 def typed_followup_cases(base):
     """Unfiltered registration replays and full BFS traces; not performance."""
     configs = [config for config in typed_rank_configs(base)
@@ -229,7 +256,7 @@ def main():
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
@@ -467,7 +494,7 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
-        if MODE in ('typed_rank_gate', 'typed_followup_gate'):
+        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate'):
             report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
             report['typed_runs'] = []
             base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
@@ -494,6 +521,16 @@ def main():
                 save()
                 print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
                 return row
+            if MODE == 'typed_stress_gate':
+                report['scope'] = 'full typed U4/F3 state sets; all profile/pre-dedup/rank-map/source-bank combinations'
+                for config in typed_stress_configs(base, 3):
+                    label = (f"stress-{config['frontier_profile']}-pre-{int(config['local_pre_dedup'])}"
+                        f"-map-{''.join(map(str,config['topology']['logical_owner_to_rank']))}"
+                        f"-banks-{config['capacities']['route_slot_count']}")
+                    replay_typed(config, label, ['--healthy-only', '--unitriangular-modulus', '3',
+                        '--require-bank-reuse'])
+                report['status'] = 'TYPED_STRESS_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
             if MODE == 'typed_followup_gate':
                 report['scope'] = 'full typed two-rank BFS: repeated unfiltered initcheck activation and raw owner/transport/retirement timelines'
                 nsys = prepare_nsys()

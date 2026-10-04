@@ -11,6 +11,32 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_stress_configs_cover_inverse_closed_u4_without_tiny_capacities(self):
+        base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
+        before = json.dumps(base, sort_keys=True)
+        configs = gate.typed_stress_configs(base, 3)
+        self.assertEqual(len(configs), 24)
+        self.assertEqual({(c['frontier_profile'], c['local_pre_dedup'],
+                          tuple(c['topology']['logical_owner_to_rank']),
+                          c['capacities']['route_slot_count']) for c in configs},
+            {(p, d, m, b) for p in ('DENSE', 'HASH_FIRST') for d in (False, True)
+             for m in ((0, 1), (1, 0)) for b in (2, 3, 4)})
+        for config in configs:
+            graph = config['graph']
+            self.assertEqual(graph['modulus'], 3)
+            self.assertEqual(graph['expected_max_unique_states'], 729)
+            for index, matrix in enumerate(graph['generators']):
+                inverse = graph['generators'][graph['inverse_map'][index]]
+                product = [sum(matrix[r*4+k] * inverse[k*4+c] for k in range(4)) % 3
+                           for r in range(4) for c in range(4)]
+                self.assertEqual(product, graph['start'])
+            caps = config['capacities']
+            self.assertGreaterEqual(caps['layer_hash_records_per_arena'], 729)
+            self.assertGreaterEqual(caps['state_ring_records'], 2 * 729)
+            self.assertGreaterEqual(caps['next_bucket_capacity_records'], 729)
+            self.assertGreaterEqual(caps['route_slot_records'], config['parent_batch'] * 6)
+        self.assertEqual(json.dumps(base, sort_keys=True), before)
+
     def test_initcheck_repeats_every_profile_and_bank_without_filters(self):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         before = json.dumps(base, sort_keys=True)
