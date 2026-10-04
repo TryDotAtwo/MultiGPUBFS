@@ -1,0 +1,3063 @@
+{
+  "final": {
+    "status": "PASS",
+    "source_commit": "82256488e1d6bf46dafcdf393bd5668f7d01ce1d",
+    "started_at": 1791108215.0494485,
+    "benchmarks": [
+      {
+        "wall_seconds": 7.176288872025907,
+        "search_seconds": 2.588936589,
+        "non_search_seconds": 4.587352283025908,
+        "admission": 1.7433106396347284,
+        "cache": [
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 0
+          },
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 0
+          }
+        ],
+        "execution": {
+          "root": "/root/tail-resident-20261004-v8/session",
+          "generation": 0,
+          "sequence": 3,
+          "rank_group_pid": 78531,
+          "worker_command": [
+            "torchrun",
+            "--standalone",
+            "--nproc-per-node=2",
+            "--no-python",
+            "/root/tail-src/target/release/mgbfs",
+            "session",
+            "/root/tail-resident-20261004-v8/session/generation-0"
+          ]
+        },
+        "resource_plan": {
+          "policy": "native-warmed-admission-v2",
+          "selected_rows_per_rank": 19958400,
+          "max_rows_per_rank": 19958400,
+          "library_pool_bytes": 2687471616,
+          "probes": [
+            {
+              "rows_per_rank": 32768,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 76124672,
+                  "rank": 0,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 76124672,
+                  "rank": 1,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 65536,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 80318976,
+                  "rank": 0,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 80318976,
+                  "rank": 1,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 19958400,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 0,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 1,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            }
+          ],
+          "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+          "maximum_hardware_capacity_proven": false,
+          "resident_admission_reused": false
+        }
+      },
+      {
+        "wall_seconds": 5.017777095548809,
+        "search_seconds": 2.569363588,
+        "non_search_seconds": 2.4484135075488087,
+        "admission": 7.231999188661575e-05,
+        "cache": [
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          },
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          }
+        ],
+        "execution": {
+          "root": "/root/tail-resident-20261004-v8/session",
+          "generation": 0,
+          "sequence": 4,
+          "rank_group_pid": 78531,
+          "worker_command": [
+            "torchrun",
+            "--standalone",
+            "--nproc-per-node=2",
+            "--no-python",
+            "/root/tail-src/target/release/mgbfs",
+            "session",
+            "/root/tail-resident-20261004-v8/session/generation-0"
+          ]
+        },
+        "resource_plan": {
+          "policy": "native-warmed-admission-v2",
+          "selected_rows_per_rank": 19958400,
+          "max_rows_per_rank": 19958400,
+          "library_pool_bytes": 2687471616,
+          "probes": [
+            {
+              "rows_per_rank": 32768,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 76124672,
+                  "rank": 0,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 76124672,
+                  "rank": 1,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 65536,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 80318976,
+                  "rank": 0,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 80318976,
+                  "rank": 1,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 19958400,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 0,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 1,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            }
+          ],
+          "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+          "maximum_hardware_capacity_proven": false,
+          "resident_admission_reused": true
+        }
+      },
+      {
+        "wall_seconds": 5.036312674172223,
+        "search_seconds": 2.563430624,
+        "non_search_seconds": 2.4728820501722226,
+        "admission": 6.168987601995468e-05,
+        "cache": [
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          },
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          }
+        ],
+        "execution": {
+          "root": "/root/tail-resident-20261004-v8/session",
+          "generation": 0,
+          "sequence": 5,
+          "rank_group_pid": 78531,
+          "worker_command": [
+            "torchrun",
+            "--standalone",
+            "--nproc-per-node=2",
+            "--no-python",
+            "/root/tail-src/target/release/mgbfs",
+            "session",
+            "/root/tail-resident-20261004-v8/session/generation-0"
+          ]
+        },
+        "resource_plan": {
+          "policy": "native-warmed-admission-v2",
+          "selected_rows_per_rank": 19958400,
+          "max_rows_per_rank": 19958400,
+          "library_pool_bytes": 2687471616,
+          "probes": [
+            {
+              "rows_per_rank": 32768,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 76124672,
+                  "rank": 0,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 76124672,
+                  "rank": 1,
+                  "required_bytes": 111426304,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 65536,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 80318976,
+                  "rank": 0,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 80318976,
+                  "rank": 1,
+                  "required_bytes": 117717760,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            },
+            {
+              "rows_per_rank": 19958400,
+              "ranks": [
+                {
+                  "free_after_nccl_warmup_bytes": 12231114752,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 0,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                },
+                {
+                  "free_after_nccl_warmup_bytes": 12261392384,
+                  "library_pool_bytes": 2687471616,
+                  "rank": 1,
+                  "required_bytes": 3998013696,
+                  "reserve_bytes": 268435456,
+                  "schema": 1,
+                  "scope": "explicit_device_allocations_including_fixed_library_pool",
+                  "session_reusable_bytes": 0,
+                  "total_bytes": 12490440704,
+                  "query_to_run_margin_bytes": 67108864
+                }
+              ]
+            }
+          ],
+          "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+          "maximum_hardware_capacity_proven": false,
+          "resident_admission_reused": true
+        }
+      }
+    ],
+    "full_state_parity": "PASS",
+    "native_boundaries": [
+      [
+        "MGBFS_DEPTH_BEGIN rank=1 depth=0 count=1 unix=1791108217.190146",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=0 count=0 unix=1791108217.190683",
+        "MGBFS_DEPTH_END rank=1 depth=0 seconds=0.024451 next=1 alive=true unix=1791108217.214597",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=1 count=1 unix=1791108217.214600",
+        "MGBFS_DEPTH_END rank=0 depth=0 seconds=0.024539 next=2 alive=true unix=1791108217.215222",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=1 count=2 unix=1791108217.215224",
+        "MGBFS_DEPTH_END rank=1 depth=1 seconds=0.010420 next=1 alive=true unix=1791108217.225020",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=2 count=1 unix=1791108217.225022",
+        "MGBFS_DEPTH_END rank=0 depth=1 seconds=0.010328 next=5 alive=true unix=1791108217.225552",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=2 count=5 unix=1791108217.225554",
+        "MGBFS_DEPTH_END rank=1 depth=2 seconds=0.009499 next=6 alive=true unix=1791108217.234521",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=3 count=6 unix=1791108217.234523",
+        "MGBFS_DEPTH_END rank=0 depth=2 seconds=0.009460 next=5 alive=true unix=1791108217.235014",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=3 count=5 unix=1791108217.235016",
+        "MGBFS_DEPTH_END rank=1 depth=3 seconds=0.009427 next=10 alive=true unix=1791108217.243951",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=4 count=10 unix=1791108217.243953",
+        "MGBFS_DEPTH_END rank=0 depth=3 seconds=0.009440 next=10 alive=true unix=1791108217.244457",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=4 count=10 unix=1791108217.244459",
+        "MGBFS_DEPTH_END rank=1 depth=4 seconds=0.009514 next=13 alive=true unix=1791108217.253466",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=5 count=13 unix=1791108217.253468",
+        "MGBFS_DEPTH_END rank=0 depth=4 seconds=0.009434 next=24 alive=true unix=1791108217.253893",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=5 count=24 unix=1791108217.253895",
+        "MGBFS_DEPTH_END rank=1 depth=5 seconds=0.009485 next=32 alive=true unix=1791108217.262954",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=6 count=32 unix=1791108217.262955",
+        "MGBFS_DEPTH_END rank=0 depth=5 seconds=0.009465 next=32 alive=true unix=1791108217.263360",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=6 count=32 unix=1791108217.263362",
+        "MGBFS_DEPTH_END rank=1 depth=6 seconds=0.009505 next=64 alive=true unix=1791108217.272460",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=7 count=64 unix=1791108217.272462",
+        "MGBFS_DEPTH_END rank=0 depth=6 seconds=0.009432 next=49 alive=true unix=1791108217.272794",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=7 count=49 unix=1791108217.272796",
+        "MGBFS_DEPTH_END rank=1 depth=7 seconds=0.009654 next=116 alive=true unix=1791108217.282116",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=8 count=116 unix=1791108217.282119",
+        "MGBFS_DEPTH_END rank=0 depth=7 seconds=0.009523 next=87 alive=true unix=1791108217.282319",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=8 count=87 unix=1791108217.282321",
+        "MGBFS_DEPTH_END rank=1 depth=8 seconds=0.009599 next=175 alive=true unix=1791108217.291718",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=9 count=175 unix=1791108217.291720",
+        "MGBFS_DEPTH_END rank=0 depth=8 seconds=0.009422 next=180 alive=true unix=1791108217.291743",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=9 count=180 unix=1791108217.291745",
+        "MGBFS_DEPTH_END rank=0 depth=9 seconds=0.009405 next=287 alive=true unix=1791108217.301150",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=10 count=287 unix=1791108217.301152",
+        "MGBFS_DEPTH_END rank=1 depth=9 seconds=0.010483 next=328 alive=true unix=1791108217.302203",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=10 count=328 unix=1791108217.302205",
+        "MGBFS_DEPTH_END rank=0 depth=10 seconds=0.010482 next=534 alive=true unix=1791108217.311634",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=11 count=534 unix=1791108217.311636",
+        "MGBFS_DEPTH_END rank=1 depth=10 seconds=0.009451 next=510 alive=true unix=1791108217.311656",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=11 count=510 unix=1791108217.311658",
+        "MGBFS_DEPTH_END rank=0 depth=11 seconds=0.009603 next=887 alive=true unix=1791108217.321239",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=12 count=887 unix=1791108217.321241",
+        "MGBFS_DEPTH_END rank=1 depth=11 seconds=0.009650 next=837 alive=true unix=1791108217.321308",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=12 count=837 unix=1791108217.321311",
+        "MGBFS_DEPTH_END rank=0 depth=12 seconds=0.009473 next=1389 alive=true unix=1791108217.330714",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=13 count=1389 unix=1791108217.330716",
+        "MGBFS_DEPTH_END rank=1 depth=12 seconds=0.009462 next=1412 alive=true unix=1791108217.330772",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=13 count=1412 unix=1791108217.330774",
+        "MGBFS_DEPTH_END rank=1 depth=13 seconds=0.009606 next=2202 alive=true unix=1791108217.340381",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=14 count=2202 unix=1791108217.340383",
+        "MGBFS_DEPTH_END rank=0 depth=13 seconds=0.010614 next=2271 alive=true unix=1791108217.341330",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=14 count=2271 unix=1791108217.341332",
+        "MGBFS_DEPTH_END rank=1 depth=14 seconds=0.010578 next=3618 alive=true unix=1791108217.350960",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=15 count=3618 unix=1791108217.350962",
+        "MGBFS_DEPTH_END rank=0 depth=14 seconds=0.010647 next=3374 alive=true unix=1791108217.351979",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=15 count=3374 unix=1791108217.351982",
+        "MGBFS_DEPTH_END rank=1 depth=15 seconds=0.010593 next=5337 alive=true unix=1791108217.361555",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=16 count=5337 unix=1791108217.361557",
+        "MGBFS_DEPTH_END rank=0 depth=15 seconds=0.009836 next=5376 alive=true unix=1791108217.361818",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=16 count=5376 unix=1791108217.361821",
+        "MGBFS_DEPTH_END rank=1 depth=16 seconds=0.010582 next=8175 alive=true unix=1791108217.372140",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=17 count=8175 unix=1791108217.372141",
+        "MGBFS_DEPTH_END rank=0 depth=16 seconds=0.010869 next=7939 alive=true unix=1791108217.372690",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=17 count=7939 unix=1791108217.372692",
+        "MGBFS_DEPTH_END rank=0 depth=17 seconds=0.009879 next=12037 alive=true unix=1791108217.382572",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=18 count=12037 unix=1791108217.382576",
+        "MGBFS_DEPTH_END rank=1 depth=17 seconds=0.010588 next=11724 alive=true unix=1791108217.382730",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=18 count=11724 unix=1791108217.382732",
+        "MGBFS_DEPTH_END rank=0 depth=18 seconds=0.010707 next=17051 alive=true unix=1791108217.393283",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=19 count=17051 unix=1791108217.393286",
+        "MGBFS_DEPTH_END rank=1 depth=18 seconds=0.010692 next=17263 alive=true unix=1791108217.393424",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=19 count=17263 unix=1791108217.393425",
+        "MGBFS_DEPTH_END rank=1 depth=19 seconds=0.010587 next=24385 alive=true unix=1791108217.404012",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=20 count=24385 unix=1791108217.404014",
+        "MGBFS_DEPTH_END rank=0 depth=19 seconds=0.011681 next=24224 alive=true unix=1791108217.404967",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=20 count=24224 unix=1791108217.404969",
+        "MGBFS_DEPTH_END rank=0 depth=20 seconds=0.010950 next=33997 alive=true unix=1791108217.415919",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=21 count=33997 unix=1791108217.415921",
+        "MGBFS_DEPTH_END rank=1 depth=20 seconds=0.012950 next=33561 alive=true unix=1791108217.416964",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=21 count=33561 unix=1791108217.416967",
+        "MGBFS_DEPTH_END rank=1 depth=21 seconds=0.016376 next=46214 alive=true unix=1791108217.433342",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=22 count=46214 unix=1791108217.433345",
+        "MGBFS_DEPTH_END rank=0 depth=21 seconds=0.017465 next=45986 alive=true unix=1791108217.433386",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=22 count=45986 unix=1791108217.433388",
+        "MGBFS_DEPTH_END rank=1 depth=22 seconds=0.017297 next=61389 alive=true unix=1791108217.450641",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=23 count=61389 unix=1791108217.450643",
+        "MGBFS_DEPTH_END rank=0 depth=22 seconds=0.017840 next=62160 alive=true unix=1791108217.451229",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=23 count=62160 unix=1791108217.451231",
+        "MGBFS_DEPTH_END rank=0 depth=23 seconds=0.018369 next=81107 alive=true unix=1791108217.469599",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=24 count=81107 unix=1791108217.469602",
+        "MGBFS_DEPTH_END rank=1 depth=23 seconds=0.019066 next=81469 alive=true unix=1791108217.469709",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=24 count=81469 unix=1791108217.469711",
+        "MGBFS_DEPTH_END rank=0 depth=24 seconds=0.024055 next=105106 alive=true unix=1791108217.493656",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=25 count=105106 unix=1791108217.493658",
+        "MGBFS_DEPTH_END rank=1 depth=24 seconds=0.024275 next=105401 alive=true unix=1791108217.493986",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=25 count=105401 unix=1791108217.493988",
+        "MGBFS_DEPTH_END rank=1 depth=25 seconds=0.030199 next=133951 alive=true unix=1791108217.524187",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=26 count=133951 unix=1791108217.524189",
+        "MGBFS_DEPTH_END rank=0 depth=25 seconds=0.030952 next=134078 alive=true unix=1791108217.524610",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=26 count=134078 unix=1791108217.524612",
+        "MGBFS_DEPTH_END rank=0 depth=26 seconds=0.037465 next=167855 alive=true unix=1791108217.562077",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=27 count=167855 unix=1791108217.562079",
+        "MGBFS_DEPTH_END rank=1 depth=26 seconds=0.037896 next=166885 alive=true unix=1791108217.562085",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=27 count=166885 unix=1791108217.562087",
+        "MGBFS_DEPTH_END rank=0 depth=27 seconds=0.044591 next=206197 alive=true unix=1791108217.606670",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=28 count=206197 unix=1791108217.606673",
+        "MGBFS_DEPTH_END rank=1 depth=27 seconds=0.045600 next=205125 alive=true unix=1791108217.607687",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=28 count=205125 unix=1791108217.607689",
+        "MGBFS_DEPTH_END rank=1 depth=28 seconds=0.049166 next=249642 alive=true unix=1791108217.656856",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=29 count=249642 unix=1791108217.656858",
+        "MGBFS_DEPTH_END rank=0 depth=28 seconds=0.051199 next=248904 alive=true unix=1791108217.657872",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=29 count=248904 unix=1791108217.657874",
+        "MGBFS_DEPTH_END rank=1 depth=29 seconds=0.060151 next=296880 alive=true unix=1791108217.717010",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=30 count=296880 unix=1791108217.717011",
+        "MGBFS_DEPTH_END rank=0 depth=29 seconds=0.060181 next=297213 alive=true unix=1791108217.718055",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=30 count=297213 unix=1791108217.718057",
+        "MGBFS_DEPTH_END rank=0 depth=30 seconds=0.072041 next=348633 alive=true unix=1791108217.790099",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=31 count=348633 unix=1791108217.790101",
+        "MGBFS_DEPTH_END rank=1 depth=30 seconds=0.073188 next=347205 alive=true unix=1791108217.790199",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=31 count=347205 unix=1791108217.790201",
+        "MGBFS_DEPTH_END rank=0 depth=31 seconds=0.080256 next=401497 alive=true unix=1791108217.870358",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=32 count=401497 unix=1791108217.870361",
+        "MGBFS_DEPTH_END rank=1 depth=31 seconds=0.081173 next=402022 alive=true unix=1791108217.871375",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=32 count=402022 unix=1791108217.871377",
+        "MGBFS_DEPTH_END rank=1 depth=32 seconds=0.092873 next=456752 alive=true unix=1791108217.964251",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=33 count=456752 unix=1791108217.964254",
+        "MGBFS_DEPTH_END rank=0 depth=32 seconds=0.093893 next=456855 alive=true unix=1791108217.964254",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=33 count=456855 unix=1791108217.964259",
+        "MGBFS_DEPTH_END rank=0 depth=33 seconds=0.101685 next=509551 alive=true unix=1791108218.065943",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=34 count=509551 unix=1791108218.065946",
+        "MGBFS_DEPTH_END rank=1 depth=33 seconds=0.102715 next=510412 alive=true unix=1791108218.066969",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=34 count=510412 unix=1791108218.066972",
+        "MGBFS_DEPTH_END rank=0 depth=34 seconds=0.115133 next=559133 alive=true unix=1791108218.181079",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=35 count=559133 unix=1791108218.181081",
+        "MGBFS_DEPTH_END rank=1 depth=34 seconds=0.114296 next=561230 alive=true unix=1791108218.181268",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=35 count=561230 unix=1791108218.181272",
+        "MGBFS_DEPTH_END rank=1 depth=35 seconds=0.122969 next=605209 alive=true unix=1791108218.304241",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=36 count=605209 unix=1791108218.304245",
+        "MGBFS_DEPTH_END rank=0 depth=35 seconds=0.124134 next=606004 alive=true unix=1791108218.305215",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=36 count=606004 unix=1791108218.305218",
+        "MGBFS_DEPTH_END rank=0 depth=36 seconds=0.134697 next=641081 alive=true unix=1791108218.439915",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=37 count=641081 unix=1791108218.439918",
+        "MGBFS_DEPTH_END rank=1 depth=36 seconds=0.135973 next=643015 alive=true unix=1791108218.440217",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=37 count=643015 unix=1791108218.440221",
+        "MGBFS_DEPTH_END rank=0 depth=37 seconds=0.143007 next=668101 alive=true unix=1791108218.582926",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=38 count=668101 unix=1791108218.582929",
+        "MGBFS_DEPTH_END rank=1 depth=37 seconds=0.143751 next=667483 alive=true unix=1791108218.583972",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=38 count=667483 unix=1791108218.583975",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=39 count=680084 unix=1791108218.732274",
+        "MGBFS_DEPTH_END rank=0 depth=38 seconds=0.149347 next=681498 alive=true unix=1791108218.732275",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=39 count=681498 unix=1791108218.732279",
+        "MGBFS_DEPTH_END rank=1 depth=39 seconds=0.150707 next=677689 alive=true unix=1791108218.882981",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=40 count=677689 unix=1791108218.882984",
+        "MGBFS_DEPTH_END rank=0 depth=39 seconds=0.151715 next=676421 alive=true unix=1791108218.883993",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=40 count=676421 unix=1791108218.883996",
+        "MGBFS_DEPTH_END rank=0 depth=40 seconds=0.149628 next=655567 alive=true unix=1791108219.033624",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=41 count=655567 unix=1791108219.033627",
+        "MGBFS_DEPTH_END rank=1 depth=40 seconds=0.151640 next=653913 alive=true unix=1791108219.034625",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=41 count=653913 unix=1791108219.034627",
+        "MGBFS_DEPTH_END rank=0 depth=41 seconds=0.147400 next=612365 alive=true unix=1791108219.181027",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=42 count=612365 unix=1791108219.181031",
+        "MGBFS_DEPTH_END rank=1 depth=41 seconds=0.147307 next=612346 alive=true unix=1791108219.181934",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=42 count=612346 unix=1791108219.181937",
+        "MGBFS_DEPTH_END rank=0 depth=42 seconds=0.136786 next=547185 alive=true unix=1791108219.317817",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=43 count=547185 unix=1791108219.317820",
+        "MGBFS_DEPTH_END rank=1 depth=42 seconds=0.136890 next=546466 alive=true unix=1791108219.318828",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=43 count=546466 unix=1791108219.318830",
+        "MGBFS_DEPTH_END rank=0 depth=43 seconds=0.123664 next=456572 alive=true unix=1791108219.441484",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=44 count=456572 unix=1791108219.441488",
+        "MGBFS_DEPTH_END rank=1 depth=43 seconds=0.122724 next=457941 alive=true unix=1791108219.441553",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=44 count=457941 unix=1791108219.441556",
+        "MGBFS_DEPTH_END rank=0 depth=44 seconds=0.102433 next=341526 alive=true unix=1791108219.543921",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=45 count=341526 unix=1791108219.543925",
+        "MGBFS_DEPTH_END rank=1 depth=44 seconds=0.103257 next=340510 alive=true unix=1791108219.544813",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=45 count=340510 unix=1791108219.544815",
+        "MGBFS_DEPTH_END rank=0 depth=45 seconds=0.080722 next=209747 alive=true unix=1791108219.624646",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=46 count=209747 unix=1791108219.624649",
+        "MGBFS_DEPTH_END rank=1 depth=45 seconds=0.079963 next=208269 alive=true unix=1791108219.624778",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=46 count=208269 unix=1791108219.624780",
+        "MGBFS_DEPTH_END rank=0 depth=46 seconds=0.051518 next=97659 alive=true unix=1791108219.676167",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=47 count=97659 unix=1791108219.676170",
+        "MGBFS_DEPTH_END rank=1 depth=46 seconds=0.052394 next=97703 alive=true unix=1791108219.677174",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=47 count=97703 unix=1791108219.677176",
+        "MGBFS_DEPTH_END rank=0 depth=47 seconds=0.026478 next=36285 alive=true unix=1791108219.702649",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=48 count=36285 unix=1791108219.702651",
+        "MGBFS_DEPTH_END rank=1 depth=47 seconds=0.026461 next=36226 alive=true unix=1791108219.703638",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=48 count=36226 unix=1791108219.703640",
+        "MGBFS_DEPTH_END rank=1 depth=48 seconds=0.016531 next=11682 alive=true unix=1791108219.720170",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=49 count=11682 unix=1791108219.720173",
+        "MGBFS_DEPTH_END rank=0 depth=48 seconds=0.017588 next=11830 alive=true unix=1791108219.720238",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=49 count=11830 unix=1791108219.720241",
+        "MGBFS_DEPTH_END rank=1 depth=49 seconds=0.010529 next=3559 alive=true unix=1791108219.730701",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=50 count=3559 unix=1791108219.730703",
+        "MGBFS_DEPTH_END rank=0 depth=49 seconds=0.010708 next=3533 alive=true unix=1791108219.730949",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=50 count=3533 unix=1791108219.730951",
+        "MGBFS_DEPTH_END rank=0 depth=50 seconds=0.009607 next=998 alive=true unix=1791108219.740558",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=51 count=998 unix=1791108219.740560",
+        "MGBFS_DEPTH_END rank=1 depth=50 seconds=0.010553 next=1024 alive=true unix=1791108219.741257",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=51 count=1024 unix=1791108219.741259",
+        "MGBFS_DEPTH_END rank=0 depth=51 seconds=0.009623 next=233 alive=true unix=1791108219.750183",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=52 count=233 unix=1791108219.750185",
+        "MGBFS_DEPTH_END rank=1 depth=51 seconds=0.009538 next=224 alive=true unix=1791108219.750798",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=52 count=224 unix=1791108219.750801",
+        "MGBFS_DEPTH_END rank=0 depth=52 seconds=0.009487 next=42 alive=true unix=1791108219.759672",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=53 count=42 unix=1791108219.759674",
+        "MGBFS_DEPTH_END rank=1 depth=52 seconds=0.009461 next=24 alive=true unix=1791108219.760262",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=53 count=24 unix=1791108219.760264",
+        "MGBFS_DEPTH_END rank=0 depth=53 seconds=0.009501 next=1 alive=true unix=1791108219.769175",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=54 count=1 unix=1791108219.769177",
+        "MGBFS_DEPTH_END rank=1 depth=53 seconds=0.009388 next=2 alive=true unix=1791108219.769652",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=54 count=2 unix=1791108219.769654",
+        "MGBFS_DEPTH_END rank=0 depth=54 seconds=0.009432 next=0 alive=false unix=1791108219.778609",
+        "MGBFS_DEPTH_END rank=1 depth=54 seconds=0.009427 next=0 alive=false unix=1791108219.779081"
+      ],
+      [
+        "MGBFS_DEPTH_BEGIN rank=1 depth=0 count=1 unix=1791108222.248565",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=0 count=0 unix=1791108222.249248",
+        "MGBFS_DEPTH_END rank=1 depth=0 seconds=0.007683 next=1 alive=true unix=1791108222.256248",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=1 count=1 unix=1791108222.256251",
+        "MGBFS_DEPTH_END rank=0 depth=0 seconds=0.007531 next=2 alive=true unix=1791108222.256779",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=1 count=2 unix=1791108222.256781",
+        "MGBFS_DEPTH_END rank=1 depth=1 seconds=0.009522 next=1 alive=true unix=1791108222.265773",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=2 count=1 unix=1791108222.265775",
+        "MGBFS_DEPTH_END rank=0 depth=1 seconds=0.009528 next=5 alive=true unix=1791108222.266309",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=2 count=5 unix=1791108222.266311",
+        "MGBFS_DEPTH_END rank=1 depth=2 seconds=0.009478 next=6 alive=true unix=1791108222.275253",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=3 count=6 unix=1791108222.275255",
+        "MGBFS_DEPTH_END rank=0 depth=2 seconds=0.009485 next=5 alive=true unix=1791108222.275796",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=3 count=5 unix=1791108222.275798",
+        "MGBFS_DEPTH_END rank=0 depth=3 seconds=0.009477 next=10 alive=true unix=1791108222.285275",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=4 count=10 unix=1791108222.285277",
+        "MGBFS_DEPTH_END rank=1 depth=3 seconds=0.010625 next=10 alive=true unix=1791108222.285880",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=4 count=10 unix=1791108222.285883",
+        "MGBFS_DEPTH_END rank=0 depth=4 seconds=0.009520 next=24 alive=true unix=1791108222.294797",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=5 count=24 unix=1791108222.294799",
+        "MGBFS_DEPTH_END rank=1 depth=4 seconds=0.009544 next=13 alive=true unix=1791108222.295427",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=5 count=13 unix=1791108222.295429",
+        "MGBFS_DEPTH_END rank=0 depth=5 seconds=0.009600 next=32 alive=true unix=1791108222.304399",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=6 count=32 unix=1791108222.304401",
+        "MGBFS_DEPTH_END rank=1 depth=5 seconds=0.009587 next=32 alive=true unix=1791108222.305016",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=6 count=32 unix=1791108222.305018",
+        "MGBFS_DEPTH_END rank=0 depth=6 seconds=0.009538 next=49 alive=true unix=1791108222.313939",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=7 count=49 unix=1791108222.313941",
+        "MGBFS_DEPTH_END rank=1 depth=6 seconds=0.009559 next=64 alive=true unix=1791108222.314577",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=7 count=64 unix=1791108222.314579",
+        "MGBFS_DEPTH_END rank=0 depth=7 seconds=0.009535 next=87 alive=true unix=1791108222.323476",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=8 count=87 unix=1791108222.323478",
+        "MGBFS_DEPTH_END rank=1 depth=7 seconds=0.009470 next=116 alive=true unix=1791108222.324049",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=8 count=116 unix=1791108222.324052",
+        "MGBFS_DEPTH_END rank=0 depth=8 seconds=0.009477 next=180 alive=true unix=1791108222.332955",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=9 count=180 unix=1791108222.332957",
+        "MGBFS_DEPTH_END rank=1 depth=8 seconds=0.009381 next=175 alive=true unix=1791108222.333432",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=9 count=175 unix=1791108222.333435",
+        "MGBFS_DEPTH_END rank=0 depth=9 seconds=0.009472 next=287 alive=true unix=1791108222.342428",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=10 count=287 unix=1791108222.342431",
+        "MGBFS_DEPTH_END rank=1 depth=9 seconds=0.009445 next=328 alive=true unix=1791108222.342880",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=10 count=328 unix=1791108222.342881",
+        "MGBFS_DEPTH_END rank=0 depth=10 seconds=0.009785 next=534 alive=true unix=1791108222.352216",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=11 count=534 unix=1791108222.352219",
+        "MGBFS_DEPTH_END rank=1 depth=10 seconds=0.009412 next=510 alive=true unix=1791108222.352293",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=11 count=510 unix=1791108222.352296",
+        "MGBFS_DEPTH_END rank=0 depth=11 seconds=0.008775 next=887 alive=true unix=1791108222.360994",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=12 count=887 unix=1791108222.360998",
+        "MGBFS_DEPTH_END rank=1 depth=11 seconds=0.009497 next=837 alive=true unix=1791108222.361793",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=12 count=837 unix=1791108222.361795",
+        "MGBFS_DEPTH_END rank=0 depth=12 seconds=0.009676 next=1389 alive=true unix=1791108222.370673",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=13 count=1389 unix=1791108222.370676",
+        "MGBFS_DEPTH_END rank=1 depth=12 seconds=0.009504 next=1412 alive=true unix=1791108222.371299",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=13 count=1412 unix=1791108222.371302",
+        "MGBFS_DEPTH_END rank=0 depth=13 seconds=0.009593 next=2271 alive=true unix=1791108222.380269",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=14 count=2271 unix=1791108222.380270",
+        "MGBFS_DEPTH_END rank=1 depth=13 seconds=0.009482 next=2202 alive=true unix=1791108222.380784",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=14 count=2202 unix=1791108222.380791",
+        "MGBFS_DEPTH_END rank=1 depth=14 seconds=0.009554 next=3618 alive=true unix=1791108222.390345",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=15 count=3618 unix=1791108222.390347",
+        "MGBFS_DEPTH_END rank=0 depth=14 seconds=0.010614 next=3374 alive=true unix=1791108222.390885",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=15 count=3374 unix=1791108222.390887",
+        "MGBFS_DEPTH_END rank=1 depth=15 seconds=0.010615 next=5337 alive=true unix=1791108222.400963",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=16 count=5337 unix=1791108222.400965",
+        "MGBFS_DEPTH_END rank=0 depth=15 seconds=0.010654 next=5376 alive=true unix=1791108222.401541",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=16 count=5376 unix=1791108222.401543",
+        "MGBFS_DEPTH_END rank=0 depth=16 seconds=0.009579 next=7939 alive=true unix=1791108222.411122",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=17 count=7939 unix=1791108222.411124",
+        "MGBFS_DEPTH_END rank=1 depth=16 seconds=0.010580 next=8175 alive=true unix=1791108222.411545",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=17 count=8175 unix=1791108222.411547",
+        "MGBFS_DEPTH_END rank=1 depth=17 seconds=0.009565 next=11724 alive=true unix=1791108222.421113",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=18 count=11724 unix=1791108222.421114",
+        "MGBFS_DEPTH_END rank=0 depth=17 seconds=0.010609 next=12037 alive=true unix=1791108222.421733",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=18 count=12037 unix=1791108222.421735",
+        "MGBFS_DEPTH_END rank=1 depth=18 seconds=0.010565 next=17263 alive=true unix=1791108222.431680",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=19 count=17263 unix=1791108222.431682",
+        "MGBFS_DEPTH_END rank=0 depth=18 seconds=0.010617 next=17051 alive=true unix=1791108222.432352",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=19 count=17051 unix=1791108222.432354",
+        "MGBFS_DEPTH_END rank=0 depth=19 seconds=0.010574 next=24224 alive=true unix=1791108222.442928",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=20 count=24224 unix=1791108222.442930",
+        "MGBFS_DEPTH_END rank=1 depth=19 seconds=0.011588 next=24385 alive=true unix=1791108222.443269",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=20 count=24385 unix=1791108222.443271",
+        "MGBFS_DEPTH_END rank=1 depth=20 seconds=0.010923 next=33561 alive=true unix=1791108222.454195",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=21 count=33561 unix=1791108222.454197",
+        "MGBFS_DEPTH_END rank=0 depth=20 seconds=0.011832 next=33997 alive=true unix=1791108222.454762",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=21 count=33997 unix=1791108222.454765",
+        "MGBFS_DEPTH_END rank=0 depth=21 seconds=0.015358 next=45986 alive=true unix=1791108222.470123",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=22 count=45986 unix=1791108222.470125",
+        "MGBFS_DEPTH_END rank=1 depth=21 seconds=0.016475 next=46214 alive=true unix=1791108222.470673",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=22 count=46214 unix=1791108222.470675",
+        "MGBFS_DEPTH_END rank=0 depth=22 seconds=0.017553 next=62160 alive=true unix=1791108222.487678",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=23 count=62160 unix=1791108222.487680",
+        "MGBFS_DEPTH_END rank=1 depth=22 seconds=0.017470 next=61389 alive=true unix=1791108222.488144",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=23 count=61389 unix=1791108222.488147",
+        "MGBFS_DEPTH_END rank=0 depth=23 seconds=0.018163 next=81107 alive=true unix=1791108222.505843",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=24 count=81107 unix=1791108222.505845",
+        "MGBFS_DEPTH_END rank=1 depth=23 seconds=0.018276 next=81469 alive=true unix=1791108222.506423",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=24 count=81469 unix=1791108222.506426",
+        "MGBFS_DEPTH_END rank=0 depth=24 seconds=0.024366 next=105106 alive=true unix=1791108222.530211",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=25 count=105106 unix=1791108222.530214",
+        "MGBFS_DEPTH_END rank=1 depth=24 seconds=0.024469 next=105401 alive=true unix=1791108222.530894",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=25 count=105401 unix=1791108222.530896",
+        "MGBFS_DEPTH_END rank=0 depth=25 seconds=0.030226 next=134078 alive=true unix=1791108222.560440",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=26 count=134078 unix=1791108222.560442",
+        "MGBFS_DEPTH_END rank=1 depth=25 seconds=0.030010 next=133951 alive=true unix=1791108222.560906",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=26 count=133951 unix=1791108222.560908",
+        "MGBFS_DEPTH_END rank=1 depth=26 seconds=0.037291 next=166885 alive=true unix=1791108222.598199",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=27 count=166885 unix=1791108222.598202",
+        "MGBFS_DEPTH_END rank=0 depth=26 seconds=0.037935 next=167855 alive=true unix=1791108222.598377",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=27 count=167855 unix=1791108222.598379",
+        "MGBFS_DEPTH_END rank=1 depth=27 seconds=0.043421 next=205125 alive=true unix=1791108222.641623",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=28 count=205125 unix=1791108222.641625",
+        "MGBFS_DEPTH_END rank=0 depth=27 seconds=0.043986 next=206197 alive=true unix=1791108222.642366",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=28 count=206197 unix=1791108222.642368",
+        "MGBFS_DEPTH_END rank=1 depth=28 seconds=0.052009 next=249642 alive=true unix=1791108222.693635",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=29 count=249642 unix=1791108222.693637",
+        "MGBFS_DEPTH_END rank=0 depth=28 seconds=0.052256 next=248904 alive=true unix=1791108222.694625",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=29 count=248904 unix=1791108222.694627",
+        "MGBFS_DEPTH_END rank=0 depth=29 seconds=0.059270 next=297213 alive=true unix=1791108222.753897",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=30 count=297213 unix=1791108222.753900",
+        "MGBFS_DEPTH_END rank=1 depth=29 seconds=0.061253 next=296880 alive=true unix=1791108222.754890",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=30 count=296880 unix=1791108222.754893",
+        "MGBFS_DEPTH_END rank=0 depth=30 seconds=0.073029 next=348633 alive=true unix=1791108222.826928",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=31 count=348633 unix=1791108222.826931",
+        "MGBFS_DEPTH_END rank=1 depth=30 seconds=0.072054 next=347205 alive=true unix=1791108222.826947",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=31 count=347205 unix=1791108222.826949",
+        "MGBFS_DEPTH_END rank=1 depth=31 seconds=0.078605 next=402022 alive=true unix=1791108222.905554",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=32 count=402022 unix=1791108222.905558",
+        "MGBFS_DEPTH_END rank=0 depth=31 seconds=0.079634 next=401497 alive=true unix=1791108222.906565",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=32 count=401497 unix=1791108222.906569",
+        "MGBFS_DEPTH_END rank=0 depth=32 seconds=0.092677 next=456855 alive=true unix=1791108222.999247",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=33 count=456855 unix=1791108222.999250",
+        "MGBFS_DEPTH_END rank=1 depth=32 seconds=0.094172 next=456752 alive=true unix=1791108222.999731",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=33 count=456752 unix=1791108222.999733",
+        "MGBFS_DEPTH_END rank=0 depth=33 seconds=0.101872 next=509551 alive=true unix=1791108223.101122",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=34 count=509551 unix=1791108223.101125",
+        "MGBFS_DEPTH_END rank=1 depth=33 seconds=0.102439 next=510412 alive=true unix=1791108223.102172",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=34 count=510412 unix=1791108223.102175",
+        "MGBFS_DEPTH_END rank=0 depth=34 seconds=0.115820 next=559133 alive=true unix=1791108223.216945",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=35 count=559133 unix=1791108223.216948",
+        "MGBFS_DEPTH_END rank=1 depth=34 seconds=0.115798 next=561230 alive=true unix=1791108223.217972",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=35 count=561230 unix=1791108223.217975",
+        "MGBFS_DEPTH_END rank=1 depth=35 seconds=0.125952 next=605209 alive=true unix=1791108223.343927",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=36 count=605209 unix=1791108223.343930",
+        "MGBFS_DEPTH_END rank=0 depth=35 seconds=0.127057 next=606004 alive=true unix=1791108223.344005",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=36 count=606004 unix=1791108223.344007",
+        "MGBFS_DEPTH_END rank=1 depth=36 seconds=0.133586 next=643015 alive=true unix=1791108223.477517",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=37 count=643015 unix=1791108223.477520",
+        "MGBFS_DEPTH_END rank=0 depth=36 seconds=0.134326 next=641081 alive=true unix=1791108223.478333",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=37 count=641081 unix=1791108223.478336",
+        "MGBFS_DEPTH_END rank=0 depth=37 seconds=0.141998 next=668101 alive=true unix=1791108223.620334",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=38 count=668101 unix=1791108223.620338",
+        "MGBFS_DEPTH_END rank=1 depth=37 seconds=0.142831 next=667483 alive=true unix=1791108223.620352",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=38 count=667483 unix=1791108223.620354",
+        "MGBFS_DEPTH_END rank=0 depth=38 seconds=0.148646 next=681498 alive=true unix=1791108223.768984",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=39 count=681498 unix=1791108223.768988",
+        "MGBFS_DEPTH_END rank=1 depth=38 seconds=0.149632 next=680084 alive=true unix=1791108223.769986",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=39 count=680084 unix=1791108223.769988",
+        "MGBFS_DEPTH_END rank=0 depth=39 seconds=0.150418 next=676421 alive=true unix=1791108223.919406",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=40 count=676421 unix=1791108223.919410",
+        "MGBFS_DEPTH_END rank=1 depth=39 seconds=0.150463 next=677689 alive=true unix=1791108223.920452",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=40 count=677689 unix=1791108223.920454",
+        "MGBFS_DEPTH_END rank=1 depth=40 seconds=0.150062 next=653913 alive=true unix=1791108224.070516",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=41 count=653913 unix=1791108224.070520",
+        "MGBFS_DEPTH_END rank=0 depth=40 seconds=0.152115 next=655567 alive=true unix=1791108224.071524",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=41 count=655567 unix=1791108224.071527",
+        "MGBFS_DEPTH_END rank=0 depth=41 seconds=0.147733 next=612365 alive=true unix=1791108224.219259",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=42 count=612365 unix=1791108224.219262",
+        "MGBFS_DEPTH_END rank=1 depth=41 seconds=0.149707 next=612346 alive=true unix=1791108224.220227",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=42 count=612346 unix=1791108224.220229",
+        "MGBFS_DEPTH_END rank=1 depth=42 seconds=0.135506 next=546466 alive=true unix=1791108224.355736",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=43 count=546466 unix=1791108224.355738",
+        "MGBFS_DEPTH_END rank=0 depth=42 seconds=0.137496 next=547185 alive=true unix=1791108224.356759",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=43 count=547185 unix=1791108224.356761",
+        "MGBFS_DEPTH_END rank=0 depth=43 seconds=0.123217 next=456572 alive=true unix=1791108224.479978",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=44 count=456572 unix=1791108224.479982",
+        "MGBFS_DEPTH_END rank=1 depth=43 seconds=0.125271 next=457941 alive=true unix=1791108224.481010",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=44 count=457941 unix=1791108224.481013",
+        "MGBFS_DEPTH_END rank=1 depth=44 seconds=0.101454 next=340510 alive=true unix=1791108224.582467",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=45 count=340510 unix=1791108224.582470",
+        "MGBFS_DEPTH_END rank=0 depth=45 seconds=0.079800 next=209747 alive=true unix=1791108224.662263",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=46 count=209747 unix=1791108224.662265",
+        "MGBFS_DEPTH_END rank=1 depth=45 seconds=0.080841 next=208269 alive=true unix=1791108224.663311",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=46 count=208269 unix=1791108224.663313",
+        "MGBFS_DEPTH_END rank=0 depth=46 seconds=0.052417 next=97659 alive=true unix=1791108224.714683",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=47 count=97659 unix=1791108224.714685",
+        "MGBFS_DEPTH_END rank=1 depth=46 seconds=0.052308 next=97703 alive=true unix=1791108224.715621",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=47 count=97703 unix=1791108224.715623",
+        "MGBFS_DEPTH_END rank=0 depth=47 seconds=0.025380 next=36285 alive=true unix=1791108224.740065",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=48 count=36285 unix=1791108224.740067",
+        "MGBFS_DEPTH_END rank=1 depth=47 seconds=0.025483 next=36226 alive=true unix=1791108224.741106",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=48 count=36226 unix=1791108224.741108",
+        "MGBFS_DEPTH_END rank=1 depth=48 seconds=0.016433 next=11682 alive=true unix=1791108224.757541",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=49 count=11682 unix=1791108224.757543",
+        "MGBFS_DEPTH_END rank=0 depth=48 seconds=0.017476 next=11830 alive=true unix=1791108224.757543",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=49 count=11830 unix=1791108224.757545",
+        "MGBFS_DEPTH_END rank=1 depth=49 seconds=0.010642 next=3559 alive=true unix=1791108224.768186",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=50 count=3559 unix=1791108224.768188",
+        "MGBFS_DEPTH_END rank=0 depth=49 seconds=0.011669 next=3533 alive=true unix=1791108224.769214",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=50 count=3533 unix=1791108224.769216",
+        "MGBFS_DEPTH_END rank=0 depth=50 seconds=0.009593 next=998 alive=true unix=1791108224.778810",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=51 count=998 unix=1791108224.778812",
+        "MGBFS_DEPTH_END rank=1 depth=50 seconds=0.011663 next=1024 alive=true unix=1791108224.779850",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=51 count=1024 unix=1791108224.779853",
+        "MGBFS_DEPTH_END rank=1 depth=51 seconds=0.010643 next=224 alive=true unix=1791108224.790496",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=52 count=224 unix=1791108224.790498",
+        "MGBFS_DEPTH_END rank=0 depth=51 seconds=0.011808 next=233 alive=true unix=1791108224.790620",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=52 count=233 unix=1791108224.790622",
+        "MGBFS_DEPTH_END rank=1 depth=52 seconds=0.008448 next=24 alive=true unix=1791108224.798946",
+        "MGBFS_DEPTH_END rank=0 depth=52 seconds=0.008325 next=42 alive=true unix=1791108224.798947",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=53 count=24 unix=1791108224.798948",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=53 count=42 unix=1791108224.798949",
+        "MGBFS_DEPTH_END rank=0 depth=53 seconds=0.009475 next=1 alive=true unix=1791108224.808424",
+        "MGBFS_DEPTH_END rank=1 depth=53 seconds=0.009483 next=2 alive=true unix=1791108224.808432",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=54 count=2 unix=1791108224.808434",
+        "MGBFS_DEPTH_END rank=1 depth=54 seconds=0.009493 next=0 alive=false unix=1791108224.817927",
+        "MGBFS_DEPTH_END rank=0 depth=54 seconds=0.009532 next=0 alive=false unix=1791108224.817958"
+      ],
+      [
+        "MGBFS_DEPTH_BEGIN rank=1 depth=0 count=1 unix=1791108227.267855",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=0 count=0 unix=1791108227.268828",
+        "MGBFS_DEPTH_END rank=1 depth=0 seconds=0.007665 next=1 alive=true unix=1791108227.275520",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=1 count=1 unix=1791108227.275522",
+        "MGBFS_DEPTH_END rank=0 depth=0 seconds=0.007655 next=2 alive=true unix=1791108227.276484",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=1 count=2 unix=1791108227.276485",
+        "MGBFS_DEPTH_END rank=1 depth=1 seconds=0.009507 next=1 alive=true unix=1791108227.285029",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=2 count=1 unix=1791108227.285031",
+        "MGBFS_DEPTH_END rank=0 depth=1 seconds=0.009556 next=5 alive=true unix=1791108227.286041",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=2 count=5 unix=1791108227.286043",
+        "MGBFS_DEPTH_END rank=0 depth=2 seconds=0.008457 next=5 alive=true unix=1791108227.294501",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=3 count=5 unix=1791108227.294503",
+        "MGBFS_DEPTH_END rank=1 depth=2 seconds=0.010499 next=6 alive=true unix=1791108227.295531",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=3 count=6 unix=1791108227.295532",
+        "MGBFS_DEPTH_END rank=0 depth=3 seconds=0.009470 next=10 alive=true unix=1791108227.303973",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=4 count=10 unix=1791108227.303975",
+        "MGBFS_DEPTH_END rank=1 depth=3 seconds=0.009453 next=10 alive=true unix=1791108227.304985",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=4 count=10 unix=1791108227.304987",
+        "MGBFS_DEPTH_END rank=0 depth=4 seconds=0.009521 next=24 alive=true unix=1791108227.313496",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=5 count=24 unix=1791108227.313498",
+        "MGBFS_DEPTH_END rank=1 depth=4 seconds=0.009451 next=13 alive=true unix=1791108227.314438",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=5 count=13 unix=1791108227.314440",
+        "MGBFS_DEPTH_END rank=0 depth=5 seconds=0.009458 next=32 alive=true unix=1791108227.322956",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=6 count=32 unix=1791108227.322958",
+        "MGBFS_DEPTH_END rank=1 depth=5 seconds=0.009464 next=32 alive=true unix=1791108227.323904",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=6 count=32 unix=1791108227.323906",
+        "MGBFS_DEPTH_END rank=0 depth=6 seconds=0.010545 next=49 alive=true unix=1791108227.333503",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=7 count=49 unix=1791108227.333505",
+        "MGBFS_DEPTH_END rank=1 depth=6 seconds=0.009654 next=64 alive=true unix=1791108227.333560",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=7 count=64 unix=1791108227.333562",
+        "MGBFS_DEPTH_END rank=0 depth=7 seconds=0.009452 next=87 alive=true unix=1791108227.342957",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=8 count=87 unix=1791108227.342959",
+        "MGBFS_DEPTH_END rank=1 depth=7 seconds=0.009429 next=116 alive=true unix=1791108227.342991",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=8 count=116 unix=1791108227.342993",
+        "MGBFS_DEPTH_END rank=1 depth=8 seconds=0.009411 next=175 alive=true unix=1791108227.352404",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=9 count=175 unix=1791108227.352407",
+        "MGBFS_DEPTH_END rank=0 depth=8 seconds=0.009467 next=180 alive=true unix=1791108227.352427",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=9 count=180 unix=1791108227.352428",
+        "MGBFS_DEPTH_END rank=0 depth=9 seconds=0.009379 next=287 alive=true unix=1791108227.361808",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=10 count=287 unix=1791108227.361809",
+        "MGBFS_DEPTH_END rank=1 depth=9 seconds=0.010044 next=328 alive=true unix=1791108227.362451",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=10 count=328 unix=1791108227.362453",
+        "MGBFS_DEPTH_END rank=0 depth=10 seconds=0.009452 next=534 alive=true unix=1791108227.371262",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=11 count=534 unix=1791108227.371264",
+        "MGBFS_DEPTH_END rank=1 depth=10 seconds=0.009429 next=510 alive=true unix=1791108227.371882",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=11 count=510 unix=1791108227.371884",
+        "MGBFS_DEPTH_END rank=0 depth=11 seconds=0.009585 next=887 alive=true unix=1791108227.380849",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=12 count=887 unix=1791108227.380851",
+        "MGBFS_DEPTH_END rank=1 depth=11 seconds=0.009518 next=837 alive=true unix=1791108227.381402",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=12 count=837 unix=1791108227.381404",
+        "MGBFS_DEPTH_END rank=0 depth=12 seconds=0.009670 next=1389 alive=true unix=1791108227.390521",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=13 count=1389 unix=1791108227.390523",
+        "MGBFS_DEPTH_END rank=1 depth=12 seconds=0.009533 next=1412 alive=true unix=1791108227.390938",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=13 count=1412 unix=1791108227.390940",
+        "MGBFS_DEPTH_END rank=0 depth=13 seconds=0.009585 next=2271 alive=true unix=1791108227.400108",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=14 count=2271 unix=1791108227.400110",
+        "MGBFS_DEPTH_END rank=1 depth=13 seconds=0.009531 next=2202 alive=true unix=1791108227.400471",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=14 count=2202 unix=1791108227.400473",
+        "MGBFS_DEPTH_END rank=1 depth=14 seconds=0.009515 next=3618 alive=true unix=1791108227.409988",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=15 count=3618 unix=1791108227.409990",
+        "MGBFS_DEPTH_END rank=0 depth=14 seconds=0.010627 next=3374 alive=true unix=1791108227.410737",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=15 count=3374 unix=1791108227.410739",
+        "MGBFS_DEPTH_END rank=1 depth=15 seconds=0.010591 next=5337 alive=true unix=1791108227.420581",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=16 count=5337 unix=1791108227.420583",
+        "MGBFS_DEPTH_END rank=0 depth=15 seconds=0.010683 next=5376 alive=true unix=1791108227.421422",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=16 count=5376 unix=1791108227.421424",
+        "MGBFS_DEPTH_END rank=0 depth=16 seconds=0.009624 next=7939 alive=true unix=1791108227.431048",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=17 count=7939 unix=1791108227.431050",
+        "MGBFS_DEPTH_END rank=1 depth=16 seconds=0.010584 next=8175 alive=true unix=1791108227.431166",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=17 count=8175 unix=1791108227.431169",
+        "MGBFS_DEPTH_END rank=0 depth=17 seconds=0.010656 next=12037 alive=true unix=1791108227.441706",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=18 count=12037 unix=1791108227.441708",
+        "MGBFS_DEPTH_END rank=1 depth=17 seconds=0.010732 next=11724 alive=true unix=1791108227.441901",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=18 count=11724 unix=1791108227.441903",
+        "MGBFS_DEPTH_END rank=0 depth=18 seconds=0.010585 next=17051 alive=true unix=1791108227.452293",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=19 count=17051 unix=1791108227.452295",
+        "MGBFS_DEPTH_END rank=1 depth=18 seconds=0.010685 next=17263 alive=true unix=1791108227.452589",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=19 count=17263 unix=1791108227.452590",
+        "MGBFS_DEPTH_END rank=1 depth=19 seconds=0.010577 next=24385 alive=true unix=1791108227.463168",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=20 count=24385 unix=1791108227.463170",
+        "MGBFS_DEPTH_END rank=0 depth=19 seconds=0.011686 next=24224 alive=true unix=1791108227.463981",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=20 count=24224 unix=1791108227.463983",
+        "MGBFS_DEPTH_END rank=0 depth=20 seconds=0.010962 next=33997 alive=true unix=1791108227.474945",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=21 count=33997 unix=1791108227.474946",
+        "MGBFS_DEPTH_END rank=1 depth=20 seconds=0.012032 next=33561 alive=true unix=1791108227.475201",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=21 count=33561 unix=1791108227.475204",
+        "MGBFS_DEPTH_END rank=1 depth=21 seconds=0.015343 next=46214 alive=true unix=1791108227.490547",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=22 count=46214 unix=1791108227.490549",
+        "MGBFS_DEPTH_END rank=0 depth=21 seconds=0.016220 next=45986 alive=true unix=1791108227.491167",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=22 count=45986 unix=1791108227.491168",
+        "MGBFS_DEPTH_END rank=1 depth=22 seconds=0.017458 next=61389 alive=true unix=1791108227.508007",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=23 count=61389 unix=1791108227.508009",
+        "MGBFS_DEPTH_END rank=0 depth=22 seconds=0.017588 next=62160 alive=true unix=1791108227.508757",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=23 count=62160 unix=1791108227.508759",
+        "MGBFS_DEPTH_END rank=0 depth=23 seconds=0.018431 next=81107 alive=true unix=1791108227.527190",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=24 count=81107 unix=1791108227.527192",
+        "MGBFS_DEPTH_END rank=1 depth=23 seconds=0.019462 next=81469 alive=true unix=1791108227.527471",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=24 count=81469 unix=1791108227.527473",
+        "MGBFS_DEPTH_END rank=0 depth=24 seconds=0.024151 next=105106 alive=true unix=1791108227.551342",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=25 count=105106 unix=1791108227.551345",
+        "MGBFS_DEPTH_END rank=1 depth=24 seconds=0.024531 next=105401 alive=true unix=1791108227.552004",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=25 count=105401 unix=1791108227.552006",
+        "MGBFS_DEPTH_END rank=0 depth=25 seconds=0.030316 next=134078 alive=true unix=1791108227.581661",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=26 count=134078 unix=1791108227.581663",
+        "MGBFS_DEPTH_END rank=1 depth=25 seconds=0.029708 next=133951 alive=true unix=1791108227.581715",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=26 count=133951 unix=1791108227.581717",
+        "MGBFS_DEPTH_END rank=1 depth=26 seconds=0.037876 next=166885 alive=true unix=1791108227.619593",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=27 count=166885 unix=1791108227.619596",
+        "MGBFS_DEPTH_END rank=0 depth=26 seconds=0.038045 next=167855 alive=true unix=1791108227.619709",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=27 count=167855 unix=1791108227.619710",
+        "MGBFS_DEPTH_END rank=0 depth=27 seconds=0.042750 next=206197 alive=true unix=1791108227.662461",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=28 count=206197 unix=1791108227.662464",
+        "MGBFS_DEPTH_END rank=1 depth=27 seconds=0.043750 next=205125 alive=true unix=1791108227.663346",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=28 count=205125 unix=1791108227.663348",
+        "MGBFS_DEPTH_END rank=1 depth=28 seconds=0.051384 next=249642 alive=true unix=1791108227.714733",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=29 count=249642 unix=1791108227.714736",
+        "MGBFS_DEPTH_END rank=0 depth=28 seconds=0.053129 next=248904 alive=true unix=1791108227.715593",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=29 count=248904 unix=1791108227.715595",
+        "MGBFS_DEPTH_END rank=0 depth=29 seconds=0.057969 next=297213 alive=true unix=1791108227.773564",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=30 count=297213 unix=1791108227.773566",
+        "MGBFS_DEPTH_END rank=1 depth=29 seconds=0.059836 next=296880 alive=true unix=1791108227.774572",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=30 count=296880 unix=1791108227.774574",
+        "MGBFS_DEPTH_END rank=1 depth=30 seconds=0.072910 next=347205 alive=true unix=1791108227.847485",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=31 count=347205 unix=1791108227.847488",
+        "MGBFS_DEPTH_END rank=0 depth=30 seconds=0.074940 next=348633 alive=true unix=1791108227.848507",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=31 count=348633 unix=1791108227.848509",
+        "MGBFS_DEPTH_END rank=0 depth=31 seconds=0.079774 next=401497 alive=true unix=1791108227.928283",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=32 count=401497 unix=1791108227.928287",
+        "MGBFS_DEPTH_END rank=1 depth=31 seconds=0.081843 next=402022 alive=true unix=1791108227.929331",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=32 count=402022 unix=1791108227.929334",
+        "MGBFS_DEPTH_END rank=1 depth=32 seconds=0.092735 next=456752 alive=true unix=1791108228.022070",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=33 count=456752 unix=1791108228.022074",
+        "MGBFS_DEPTH_END rank=0 depth=32 seconds=0.094797 next=456855 alive=true unix=1791108228.023084",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=33 count=456855 unix=1791108228.023086",
+        "MGBFS_DEPTH_END rank=0 depth=33 seconds=0.101861 next=509551 alive=true unix=1791108228.124947",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=34 count=509551 unix=1791108228.124951",
+        "MGBFS_DEPTH_END rank=1 depth=33 seconds=0.103894 next=510412 alive=true unix=1791108228.125968",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=34 count=510412 unix=1791108228.125970",
+        "MGBFS_DEPTH_END rank=1 depth=34 seconds=0.113745 next=561230 alive=true unix=1791108228.239715",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=35 count=561230 unix=1791108228.239718",
+        "MGBFS_DEPTH_END rank=0 depth=34 seconds=0.115780 next=559133 alive=true unix=1791108228.240731",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=35 count=559133 unix=1791108228.240733",
+        "MGBFS_DEPTH_END rank=1 depth=35 seconds=0.129259 next=605209 alive=true unix=1791108228.368978",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=36 count=605209 unix=1791108228.368982",
+        "MGBFS_DEPTH_END rank=0 depth=35 seconds=0.128296 next=606004 alive=true unix=1791108228.369029",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=36 count=606004 unix=1791108228.369032",
+        "MGBFS_DEPTH_END rank=0 depth=36 seconds=0.136563 next=641081 alive=true unix=1791108228.505595",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=37 count=641081 unix=1791108228.505598",
+        "MGBFS_DEPTH_END rank=1 depth=36 seconds=0.136794 next=643015 alive=true unix=1791108228.505777",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=37 count=643015 unix=1791108228.505779",
+        "MGBFS_DEPTH_END rank=0 depth=37 seconds=0.142202 next=668101 alive=true unix=1791108228.647801",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=38 count=668101 unix=1791108228.647804",
+        "MGBFS_DEPTH_END rank=1 depth=37 seconds=0.142151 next=667483 alive=true unix=1791108228.647931",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=38 count=667483 unix=1791108228.647933",
+        "MGBFS_DEPTH_END rank=0 depth=38 seconds=0.146917 next=681498 alive=true unix=1791108228.794722",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=39 count=681498 unix=1791108228.794726",
+        "MGBFS_DEPTH_END rank=1 depth=38 seconds=0.146880 next=680084 alive=true unix=1791108228.794813",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=39 count=680084 unix=1791108228.794816",
+        "MGBFS_DEPTH_END rank=0 depth=39 seconds=0.148443 next=676421 alive=true unix=1791108228.943169",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=40 count=676421 unix=1791108228.943172",
+        "MGBFS_DEPTH_END rank=1 depth=39 seconds=0.149352 next=677689 alive=true unix=1791108228.944168",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=40 count=677689 unix=1791108228.944170",
+        "MGBFS_DEPTH_END rank=1 depth=40 seconds=0.147352 next=653913 alive=true unix=1791108229.091522",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=41 count=653913 unix=1791108229.091526",
+        "MGBFS_DEPTH_END rank=0 depth=40 seconds=0.149362 next=655567 alive=true unix=1791108229.092535",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=41 count=655567 unix=1791108229.092537",
+        "MGBFS_DEPTH_END rank=0 depth=41 seconds=0.147404 next=612365 alive=true unix=1791108229.239942",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=42 count=612365 unix=1791108229.239945",
+        "MGBFS_DEPTH_END rank=1 depth=41 seconds=0.149292 next=612346 alive=true unix=1791108229.240818",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=42 count=612346 unix=1791108229.240821",
+        "MGBFS_DEPTH_END rank=1 depth=42 seconds=0.134903 next=546466 alive=true unix=1791108229.375724",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=43 count=546466 unix=1791108229.375728",
+        "MGBFS_DEPTH_END rank=0 depth=42 seconds=0.136497 next=547185 alive=true unix=1791108229.376442",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=43 count=547185 unix=1791108229.376446",
+        "MGBFS_DEPTH_END rank=0 depth=43 seconds=0.121780 next=456572 alive=true unix=1791108229.498226",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=44 count=456572 unix=1791108229.498231",
+        "MGBFS_DEPTH_END rank=1 depth=43 seconds=0.123534 next=457941 alive=true unix=1791108229.499263",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=44 count=457941 unix=1791108229.499265",
+        "MGBFS_DEPTH_END rank=1 depth=44 seconds=0.101912 next=340510 alive=true unix=1791108229.601177",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=45 count=340510 unix=1791108229.601180",
+        "MGBFS_DEPTH_END rank=0 depth=44 seconds=0.103827 next=341526 alive=true unix=1791108229.602058",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=45 count=341526 unix=1791108229.602060",
+        "MGBFS_DEPTH_END rank=0 depth=45 seconds=0.078887 next=209747 alive=true unix=1791108229.680947",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=46 count=209747 unix=1791108229.680949",
+        "MGBFS_DEPTH_END rank=1 depth=45 seconds=0.080796 next=208269 alive=true unix=1791108229.681976",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=46 count=208269 unix=1791108229.681978",
+        "MGBFS_DEPTH_END rank=0 depth=46 seconds=0.050228 next=97659 alive=true unix=1791108229.731177",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=47 count=97659 unix=1791108229.731179",
+        "MGBFS_DEPTH_END rank=1 depth=46 seconds=0.049636 next=97703 alive=true unix=1791108229.731615",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=47 count=97703 unix=1791108229.731617",
+        "MGBFS_DEPTH_END rank=0 depth=47 seconds=0.025242 next=36285 alive=true unix=1791108229.756421",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=48 count=36285 unix=1791108229.756423",
+        "MGBFS_DEPTH_END rank=1 depth=47 seconds=0.025221 next=36226 alive=true unix=1791108229.756838",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=48 count=36226 unix=1791108229.756840",
+        "MGBFS_DEPTH_END rank=0 depth=48 seconds=0.016182 next=11830 alive=true unix=1791108229.772605",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=49 count=11830 unix=1791108229.772607",
+        "MGBFS_DEPTH_END rank=1 depth=48 seconds=0.016488 next=11682 alive=true unix=1791108229.773328",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=49 count=11682 unix=1791108229.773331",
+        "MGBFS_DEPTH_END rank=0 depth=49 seconds=0.010544 next=3533 alive=true unix=1791108229.783151",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=50 count=3533 unix=1791108229.783153",
+        "MGBFS_DEPTH_END rank=1 depth=49 seconds=0.010610 next=3559 alive=true unix=1791108229.783941",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=50 count=3559 unix=1791108229.783943",
+        "MGBFS_DEPTH_END rank=1 depth=50 seconds=0.009534 next=1024 alive=true unix=1791108229.793477",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=51 count=1024 unix=1791108229.793479",
+        "MGBFS_DEPTH_END rank=0 depth=50 seconds=0.010576 next=998 alive=true unix=1791108229.793730",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=51 count=998 unix=1791108229.793731",
+        "MGBFS_DEPTH_END rank=1 depth=51 seconds=0.009530 next=224 alive=true unix=1791108229.803009",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=52 count=224 unix=1791108229.803011",
+        "MGBFS_DEPTH_END rank=0 depth=51 seconds=0.009628 next=233 alive=true unix=1791108229.803360",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=52 count=233 unix=1791108229.803363",
+        "MGBFS_DEPTH_END rank=1 depth=52 seconds=0.009434 next=24 alive=true unix=1791108229.812445",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=53 count=24 unix=1791108229.812447",
+        "MGBFS_DEPTH_END rank=0 depth=52 seconds=0.009454 next=42 alive=true unix=1791108229.812817",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=53 count=42 unix=1791108229.812819",
+        "MGBFS_DEPTH_END rank=1 depth=53 seconds=0.009395 next=2 alive=true unix=1791108229.821842",
+        "MGBFS_DEPTH_BEGIN rank=1 depth=54 count=2 unix=1791108229.821845",
+        "MGBFS_DEPTH_END rank=0 depth=53 seconds=0.009431 next=1 alive=true unix=1791108229.822251",
+        "MGBFS_DEPTH_BEGIN rank=0 depth=54 count=1 unix=1791108229.822254",
+        "MGBFS_DEPTH_END rank=1 depth=54 seconds=0.009439 next=0 alive=false unix=1791108229.831283",
+        "MGBFS_DEPTH_END rank=0 depth=54 seconds=0.009445 next=0 alive=false unix=1791108229.831698"
+      ]
+    ],
+    "publications": {
+      "benchmark-v8": {
+        "cases": 3,
+        "files": 3,
+        "bytes": 369073212,
+        "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/539cd8b4f6f5ae8282f567bcead70b0c9353b634",
+        "payload_commits": 1,
+        "max_batch_bytes": 25000000000,
+        "readback": {
+          "revision": "539cd8b4f6f5ae8282f567bcead70b0c9353b634",
+          "files": 3,
+          "bytes": 369073212,
+          "manifests_verified": 3,
+          "all_checksums_verified": true,
+          "sweep_ledger_verified": true
+        }
+      },
+      "fixed-v6": {
+        "cases": 2,
+        "files": 1,
+        "bytes": 301883,
+        "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/de43028b1af1b6ee41f4e51167ae9d9bbc081cc2",
+        "payload_commits": 1,
+        "max_batch_bytes": 25000000000,
+        "readback": {
+          "revision": "de43028b1af1b6ee41f4e51167ae9d9bbc081cc2",
+          "files": 1,
+          "bytes": 301883,
+          "manifests_verified": 2,
+          "all_checksums_verified": true,
+          "sweep_ledger_verified": true
+        }
+      },
+      "pruning-v6": {
+        "cases": 3,
+        "files": 2,
+        "bytes": 23289,
+        "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/798943b13e2a40f0e77e3f6c7263ff38ae81a61b",
+        "payload_commits": 1,
+        "max_batch_bytes": 25000000000,
+        "readback": {
+          "revision": "798943b13e2a40f0e77e3f6c7263ff38ae81a61b",
+          "files": 2,
+          "bytes": 23289,
+          "manifests_verified": 3,
+          "all_checksums_verified": true,
+          "sweep_ledger_verified": true
+        }
+      }
+    },
+    "finished_at": 1791108276.957944,
+    "pair_search_gaps_seconds": [
+      2.4694838523864746,
+      2.449896812438965
+    ],
+    "extra_evidence_revision": "e31ddb5940131dd994978d0a707ab118efd02279",
+    "binary_sha256": "1eab1758457d09d3d96d08e0fd5c0be8bdcf04da6c6518fbadb6e36aedcc3081",
+    "delivery_revision": "73db62098c208dcf26cf6f8c046cd862b6e5fe15"
+  },
+  "previous_gate": {
+    "status": "PASS",
+    "source_commit": "74bd58a525b51c3a81c64347e7c0a15c7af99798",
+    "started_at": 1791107480.2886071,
+    "inventory": "0, NVIDIA GeForce RTX 3060, 11869, 595.71.05\n1, NVIDIA GeForce RTX 3060, 11898, 595.71.05\n",
+    "fixed": {
+      "direct": {
+        "ledger": {
+          "configuration": {
+            "base": {
+              "world": 2,
+              "timeout_seconds": 120,
+              "archive_format": "parquet_cohort",
+              "native_capacity_probe": false,
+              "graph_calibration": false,
+              "host_available_bytes": 8589934592,
+              "resource_plan": {
+                "max_rows_per_rank": 8192,
+                "library_pool_bytes": 67108864
+              },
+              "env": {
+                "MGBFS_TRANSPORT_BACKEND": "HOST_SIZED_NCCL",
+                "MGBFS_VRAM_RESERVE_BYTES": "268435456",
+                "MGBFS_PROFILE": "DENSE",
+                "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+                "MGBFS_PRE_DEDUP": "ON",
+                "MGBFS_CAPACITY_MODE": "max_per_rank",
+                "MGBFS_BUCKETS": "8",
+                "MGBFS_SHARDS": "4",
+                "MGBFS_JOB_BUCKETS": "2",
+                "MGBFS_CUDA_GRAPH_BATCHES": "0",
+                "MGBFS_LIBRARY_POOL_AUTOSIZE": "1"
+              },
+              "run_id": "resident-gate-direct-v5"
+            },
+            "grid": [
+              [
+                8,
+                1
+              ],
+              [
+                8,
+                2
+              ],
+              [
+                8,
+                3
+              ],
+              [
+                17,
+                16
+              ],
+              [
+                33,
+                32
+              ],
+              [
+                65,
+                64
+              ],
+              [
+                128,
+                127
+              ],
+              [
+                128,
+                1
+              ]
+            ],
+            "pruning_policy": "fixed-r-resource-stop-v3"
+          },
+          "cases": {
+            "n8-m1": {
+              "status": "COMPLETE",
+              "last_completed_layer": 28,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 1,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n8-m1/saved/snapshot-000029-12468c02099e4469bd69b220073da4db/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107206.3365474,
+                "runner_wall_seconds": 2.9618998868390918,
+                "transition_before_seconds": null,
+                "completed_layer_seconds": 0.25107,
+                "production_search_seconds": 0.246332214,
+                "automatic_phase_seconds": {
+                  "admission": 4.039984196424484e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n8-m2": {
+              "status": "COMPLETE",
+              "last_completed_layer": 25,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 2,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n8-m2/saved/snapshot-000026-05b9a33458bc4a38bebab9088bd708de/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107209.3011072,
+                "runner_wall_seconds": 2.846753554418683,
+                "transition_before_seconds": 0.002659982070326805,
+                "completed_layer_seconds": 0.219245,
+                "production_search_seconds": 0.217661635,
+                "automatic_phase_seconds": {
+                  "admission": 3.589969128370285e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n8-m3": {
+              "status": "COMPLETE",
+              "last_completed_layer": 21,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 3,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n8-m3/saved/snapshot-000022-2d43a5fbe33b44fb894001f665d51ab8/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107212.1507561,
+                "runner_wall_seconds": 2.8871636064723134,
+                "transition_before_seconds": 0.0028955210000276566,
+                "completed_layer_seconds": 0.188411,
+                "production_search_seconds": 0.186379026,
+                "automatic_phase_seconds": {
+                  "admission": 2.887006849050522e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n17-m16": {
+              "status": "COMPLETE",
+              "last_completed_layer": 8,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 17,
+              "m": 16,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n17-m16/saved/snapshot-000009-b466285944c24be583cb2259c5c3822e/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107215.0410135,
+                "runner_wall_seconds": 2.639272889122367,
+                "transition_before_seconds": 0.0030935928225517273,
+                "completed_layer_seconds": 0.089297,
+                "production_search_seconds": 0.088627695,
+                "automatic_phase_seconds": {
+                  "admission": 3.3760443329811096e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n33-m32": {
+              "status": "COMPLETE",
+              "last_completed_layer": 16,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 33,
+              "m": 32,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n33-m32/saved/snapshot-000017-a7a9bb600e9a46a8a96317eaa03e4fa4/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107217.6831684,
+                "runner_wall_seconds": 2.8070676121860743,
+                "transition_before_seconds": 0.0028823325410485268,
+                "completed_layer_seconds": 0.149411,
+                "production_search_seconds": 0.149249363,
+                "automatic_phase_seconds": {
+                  "admission": 3.455020487308502e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n65-m64": {
+              "status": "COMPLETE",
+              "last_completed_layer": 32,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 65,
+              "m": 64,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n65-m64/saved/snapshot-000033-9f9806e470904d4e8ac0383d1900ffbe/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107220.4932308,
+                "runner_wall_seconds": 2.679483658634126,
+                "transition_before_seconds": 0.002994711510837078,
+                "completed_layer_seconds": 0.272211,
+                "production_search_seconds": 0.270564757,
+                "automatic_phase_seconds": {
+                  "admission": 3.5880133509635925e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n128-m127": {
+              "status": "COMPLETE",
+              "last_completed_layer": 64,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 128,
+              "m": 127,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n128-m127/saved/snapshot-000065-668110bf5a954cc49f878e1f47ea4f1f/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107223.175975,
+                "runner_wall_seconds": 3.4233122309669852,
+                "transition_before_seconds": 0.0032606013119220734,
+                "completed_layer_seconds": 0.512709,
+                "production_search_seconds": 0.511193306,
+                "automatic_phase_seconds": {
+                  "admission": 3.544054925441742e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n128-m1": {
+              "status": "INCOMPLETE",
+              "last_completed_layer": 11,
+              "reason": "calibration layer limit",
+              "attempted": true,
+              "n": 128,
+              "m": 1,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-direct-20261004-v5/n128-m1/saved/snapshot-000012-a6c7a8a0b5bb41e7811ee90701d3cf8a/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107226.6026535,
+                "runner_wall_seconds": 3.5813183626160026,
+                "transition_before_seconds": 0.0033660223707556725,
+                "completed_layer_seconds": 0.11002,
+                "production_search_seconds": 0.108758237,
+                "automatic_phase_seconds": {
+                  "admission": 3.527011722326279e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            }
+          },
+          "pending": []
+        },
+        "oracles": {
+          "n8-m1": {
+            "status": "PASS",
+            "layers": 29,
+            "states": 40320
+          },
+          "n8-m2": {
+            "status": "PASS",
+            "layers": 26,
+            "states": 20160
+          },
+          "n8-m3": {
+            "status": "PASS",
+            "layers": 22,
+            "states": 6720
+          },
+          "n17-m16": {
+            "status": "PASS",
+            "layers": 9,
+            "states": 17
+          },
+          "n33-m32": {
+            "status": "PASS",
+            "layers": 17,
+            "states": 33
+          },
+          "n65-m64": {
+            "status": "PASS",
+            "layers": 33,
+            "states": 65
+          },
+          "n128-m127": {
+            "status": "PASS",
+            "layers": 65,
+            "states": 128
+          },
+          "n128-m1": {
+            "status": "PASS",
+            "layers": 12,
+            "states": 4405
+          }
+        },
+        "cache": {
+          "n8-m1": [],
+          "n8-m2": [],
+          "n8-m3": [],
+          "n17-m16": [],
+          "n33-m32": [],
+          "n65-m64": [],
+          "n128-m127": [],
+          "n128-m1": []
+        },
+        "publication": {
+          "cases": 8,
+          "files": 6,
+          "bytes": 512021,
+          "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/0f0018cf868f1985ba0ed2f353742d1820ae157e",
+          "payload_commits": 1,
+          "max_batch_bytes": 25000000000
+        },
+        "hf_readback": {
+          "revision": "0f0018cf868f1985ba0ed2f353742d1820ae157e",
+          "files": 6,
+          "bytes": 512021,
+          "manifests_verified": 8,
+          "all_checksums_verified": true,
+          "sweep_ledger_verified": true
+        }
+      },
+      "resident": {
+        "ledger": {
+          "configuration": {
+            "base": {
+              "world": 2,
+              "timeout_seconds": 120,
+              "archive_format": "parquet_cohort",
+              "native_capacity_probe": false,
+              "graph_calibration": false,
+              "host_available_bytes": 8589934592,
+              "resource_plan": {
+                "max_rows_per_rank": 8192,
+                "library_pool_bytes": 67108864
+              },
+              "env": {
+                "MGBFS_TRANSPORT_BACKEND": "HOST_SIZED_NCCL",
+                "MGBFS_VRAM_RESERVE_BYTES": "268435456",
+                "MGBFS_PROFILE": "DENSE",
+                "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+                "MGBFS_PRE_DEDUP": "ON",
+                "MGBFS_CAPACITY_MODE": "max_per_rank",
+                "MGBFS_BUCKETS": "8",
+                "MGBFS_SHARDS": "4",
+                "MGBFS_JOB_BUCKETS": "2",
+                "MGBFS_CUDA_GRAPH_BATCHES": "0",
+                "MGBFS_LIBRARY_POOL_AUTOSIZE": "1"
+              },
+              "run_id": "resident-gate-resident-v5"
+            },
+            "grid": [
+              [
+                8,
+                1
+              ],
+              [
+                8,
+                2
+              ],
+              [
+                8,
+                3
+              ],
+              [
+                17,
+                16
+              ],
+              [
+                33,
+                32
+              ],
+              [
+                65,
+                64
+              ],
+              [
+                128,
+                127
+              ],
+              [
+                128,
+                1
+              ]
+            ],
+            "pruning_policy": "fixed-r-resource-stop-v3"
+          },
+          "cases": {
+            "n8-m1": {
+              "status": "COMPLETE",
+              "last_completed_layer": 28,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 1,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n8-m1/saved/snapshot-000029-0e0509e16f214c6797d37ae7d1aaf904/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107235.5779023,
+                "runner_wall_seconds": 2.192018149420619,
+                "transition_before_seconds": null,
+                "completed_layer_seconds": 0.250012,
+                "production_search_seconds": 0.246677792,
+                "automatic_phase_seconds": {
+                  "admission": 5.555059760808945e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n8-m2": {
+              "status": "COMPLETE",
+              "last_completed_layer": 25,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 2,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n8-m2/saved/snapshot-000026-c6fa3b0d2e324217ba9c31978d7f93b2/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107237.773071,
+                "runner_wall_seconds": 0.35243699699640274,
+                "transition_before_seconds": 0.0031506717205047607,
+                "completed_layer_seconds": 0.200441,
+                "production_search_seconds": 0.199393043,
+                "automatic_phase_seconds": {
+                  "admission": 3.2240524888038635e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n8-m3": {
+              "status": "COMPLETE",
+              "last_completed_layer": 21,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 8,
+              "m": 3,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n8-m3/saved/snapshot-000022-cc7721fdcf2040528d0d6b5e7a6b44b1/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107238.1281667,
+                "runner_wall_seconds": 0.30938218999654055,
+                "transition_before_seconds": 0.002658592537045479,
+                "completed_layer_seconds": 0.169032,
+                "production_search_seconds": 0.168042573,
+                "automatic_phase_seconds": {
+                  "admission": 3.150012344121933e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n17-m16": {
+              "status": "COMPLETE",
+              "last_completed_layer": 8,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 17,
+              "m": 16,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n17-m16/saved/snapshot-000009-44306f32fd854f858f9ab5886a43bfe5/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107238.4402797,
+                "runner_wall_seconds": 0.13968076556921005,
+                "transition_before_seconds": 0.002730981446802616,
+                "completed_layer_seconds": 0.068242,
+                "production_search_seconds": 0.068125153,
+                "automatic_phase_seconds": {
+                  "admission": 3.2840296626091003e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n33-m32": {
+              "status": "COMPLETE",
+              "last_completed_layer": 16,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 33,
+              "m": 32,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n33-m32/saved/snapshot-000017-a48b29ff45ba4b61b1443f7b71334ef6/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107238.582681,
+                "runner_wall_seconds": 0.24430978018790483,
+                "transition_before_seconds": 0.002720431424677372,
+                "completed_layer_seconds": 0.129817,
+                "production_search_seconds": 0.12926041,
+                "automatic_phase_seconds": {
+                  "admission": 3.268010914325714e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n65-m64": {
+              "status": "COMPLETE",
+              "last_completed_layer": 32,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 65,
+              "m": 64,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n65-m64/saved/snapshot-000033-60b85b7c9b3e40f89294f24fadfc3d64/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107238.830288,
+                "runner_wall_seconds": 0.447280396707356,
+                "transition_before_seconds": 0.0032970616593956947,
+                "completed_layer_seconds": 0.254355,
+                "production_search_seconds": 0.251505535,
+                "automatic_phase_seconds": {
+                  "admission": 3.460980951786041e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n128-m127": {
+              "status": "COMPLETE",
+              "last_completed_layer": 64,
+              "reason": "graph exhausted",
+              "attempted": true,
+              "n": 128,
+              "m": 127,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n128-m127/saved/snapshot-000065-5f73f1d52433491cbdfaaf0b5ac2319c/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107239.2807987,
+                "runner_wall_seconds": 0.9020703844726086,
+                "transition_before_seconds": 0.0032305512577295303,
+                "completed_layer_seconds": 0.494465,
+                "production_search_seconds": 0.492101942,
+                "automatic_phase_seconds": {
+                  "admission": 3.6139972507953644e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            },
+            "n128-m1": {
+              "status": "INCOMPLETE",
+              "last_completed_layer": 11,
+              "reason": "calibration layer limit",
+              "attempted": true,
+              "n": 128,
+              "m": 1,
+              "manifest": "/root/tail-resident-20261004-v5/resident-fixed-resident-20261004-v5/n128-m1/saved/snapshot-000012-8008c825d8074e62986a3e3d44d41cae/manifest.json",
+              "timing": {
+                "runner_started_at_unix": 1791107240.1861014,
+                "runner_wall_seconds": 1.2040677294135094,
+                "transition_before_seconds": 0.003232192248106003,
+                "completed_layer_seconds": 0.092847,
+                "production_search_seconds": 0.091732326,
+                "automatic_phase_seconds": {
+                  "admission": 2.8570182621479034e-05,
+                  "graph_calibration": 0.0
+                },
+                "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+              }
+            }
+          },
+          "pending": []
+        },
+        "oracles": {
+          "n8-m1": {
+            "status": "PASS",
+            "layers": 29,
+            "states": 40320
+          },
+          "n8-m2": {
+            "status": "PASS",
+            "layers": 26,
+            "states": 20160
+          },
+          "n8-m3": {
+            "status": "PASS",
+            "layers": 22,
+            "states": 6720
+          },
+          "n17-m16": {
+            "status": "PASS",
+            "layers": 9,
+            "states": 17
+          },
+          "n33-m32": {
+            "status": "PASS",
+            "layers": 17,
+            "states": 33
+          },
+          "n65-m64": {
+            "status": "PASS",
+            "layers": 33,
+            "states": 65
+          },
+          "n128-m127": {
+            "status": "PASS",
+            "layers": 65,
+            "states": 128
+          },
+          "n128-m1": {
+            "status": "PASS",
+            "layers": 12,
+            "states": 4405
+          }
+        },
+        "cache": {
+          "n8-m1": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 0,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 0,
+              "pool_hits": 0
+            }
+          ],
+          "n8-m2": [
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            },
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            }
+          ],
+          "n8-m3": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "n17-m16": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "n33-m32": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "n65-m64": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "n128-m127": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "n128-m1": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ]
+        },
+        "publication": {
+          "cases": 8,
+          "files": 6,
+          "bytes": 512021,
+          "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/911bd89ee9365da0ab92299152e1154cf60ffd06",
+          "payload_commits": 1,
+          "max_batch_bytes": 25000000000
+        },
+        "hf_readback": {
+          "revision": "911bd89ee9365da0ab92299152e1154cf60ffd06",
+          "files": 6,
+          "bytes": 512021,
+          "manifests_verified": 8,
+          "all_checksums_verified": true,
+          "sweep_ledger_verified": true
+        }
+      }
+    },
+    "fixed_source_commit": "9d3c015f5f86f70fbe62d8bc281cb26fa11d5436",
+    "fixed_v6": {
+      "ledger": {
+        "configuration": {
+          "base": {
+            "world": 2,
+            "timeout_seconds": 120,
+            "archive_format": "parquet_cohort",
+            "native_capacity_probe": false,
+            "graph_calibration": false,
+            "host_available_bytes": 8589934592,
+            "resource_plan": {
+              "max_rows_per_rank": 8192,
+              "library_pool_bytes": 67108864
+            },
+            "env": {
+              "MGBFS_TRANSPORT_BACKEND": "HOST_SIZED_NCCL",
+              "MGBFS_VRAM_RESERVE_BYTES": "268435456",
+              "MGBFS_PROFILE": "DENSE",
+              "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+              "MGBFS_PRE_DEDUP": "ON",
+              "MGBFS_CAPACITY_MODE": "max_per_rank",
+              "MGBFS_BUCKETS": "8",
+              "MGBFS_SHARDS": "4",
+              "MGBFS_JOB_BUCKETS": "2",
+              "MGBFS_CUDA_GRAPH_BATCHES": "0",
+              "MGBFS_LIBRARY_POOL_AUTOSIZE": "1"
+            },
+            "run_id": "resident-fixed-v6"
+          },
+          "grid": [
+            [
+              8,
+              1
+            ],
+            [
+              8,
+              2
+            ]
+          ],
+          "pruning_policy": "fixed-r-resource-stop-v3"
+        },
+        "cases": {
+          "n8-m1": {
+            "status": "COMPLETE",
+            "last_completed_layer": 28,
+            "reason": "graph exhausted",
+            "attempted": true,
+            "n": 8,
+            "m": 1,
+            "manifest": "/root/tail-resident-20261004-v6/resident-fixed-v6/n8-m1/saved/snapshot-000029-199ffc44cdac4c53befb4703eb4d60b5/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107480.330108,
+              "runner_wall_seconds": 2.14291207306087,
+              "transition_before_seconds": null,
+              "completed_layer_seconds": 0.249549,
+              "production_search_seconds": 0.245527168,
+              "automatic_phase_seconds": {
+                "admission": 3.806035965681076e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          },
+          "n8-m2": {
+            "status": "COMPLETE",
+            "last_completed_layer": 25,
+            "reason": "graph exhausted",
+            "attempted": true,
+            "n": 8,
+            "m": 2,
+            "manifest": "/root/tail-resident-20261004-v6/resident-fixed-v6/n8-m2/saved/snapshot-000026-b00fcc2dc3dd479d864b1c1b1ee2cb12/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107482.4763536,
+              "runner_wall_seconds": 0.34707762487232685,
+              "transition_before_seconds": 0.0033336812630295753,
+              "completed_layer_seconds": 0.201461,
+              "production_search_seconds": 0.199839052,
+              "automatic_phase_seconds": {
+                "admission": 3.6199577152729034e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          }
+        },
+        "pending": []
+      },
+      "oracles": {
+        "n8-m1": {
+          "status": "PASS",
+          "layers": 29,
+          "states": 40320
+        },
+        "n8-m2": {
+          "status": "PASS",
+          "layers": 26,
+          "states": 20160
+        }
+      },
+      "cache": {
+        "n8-m1": [
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 0,
+            "pool_hits": 0
+          },
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 0,
+            "pool_hits": 0
+          }
+        ],
+        "n8-m2": [
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          },
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          }
+        ]
+      }
+    },
+    "phase": "matched-full-benchmark",
+    "automatic": {
+      "ledger": {
+        "configuration": {
+          "base": {
+            "world": 2,
+            "timeout_seconds": 120,
+            "archive_format": "parquet_cohort",
+            "native_capacity_probe": true,
+            "graph_calibration": false,
+            "host_available_bytes": 8589934592,
+            "resource_plan": {
+              "policy": "conservative-free-vram-v1",
+              "free_bytes": 12884901888,
+              "usable_bytes": 8375186227,
+              "library_pool_bytes": 2791728742,
+              "max_rows_per_rank": 2726297,
+              "bytes_per_row_allowance": 2048,
+              "maximum_hardware_capacity_proven": false
+            },
+            "env": {
+              "MGBFS_TRANSPORT_BACKEND": "HOST_SIZED_NCCL",
+              "MGBFS_VRAM_RESERVE_BYTES": "268435456",
+              "MGBFS_PROFILE": "DENSE",
+              "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+              "MGBFS_PRE_DEDUP": "ON",
+              "MGBFS_CAPACITY_MODE": "max_per_rank",
+              "MGBFS_BUCKETS": "8",
+              "MGBFS_SHARDS": "4",
+              "MGBFS_JOB_BUCKETS": "2",
+              "MGBFS_CUDA_GRAPH_BATCHES": "0",
+              "MGBFS_LIBRARY_POOL_AUTOSIZE": "1",
+              "MGBFS_CALIBRATION_LAYERS": "12"
+            },
+            "run_id": "resident-gate-automatic-v6"
+          },
+          "grid": [
+            [
+              17,
+              1
+            ],
+            [
+              17,
+              2
+            ],
+            [
+              17,
+              3
+            ]
+          ],
+          "pruning_policy": "fixed-r-resource-stop-v3"
+        },
+        "cases": {
+          "n17-m1": {
+            "status": "INCOMPLETE",
+            "last_completed_layer": 11,
+            "reason": "calibration layer limit",
+            "attempted": true,
+            "n": 17,
+            "m": 1,
+            "manifest": "/root/tail-resident-20261004-v6/resident-auto-20261004-v6/n17-m1/saved/snapshot-000012-cc8c5d0b4ed446c3b4ba850b5fabfe68/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107483.680483,
+              "runner_wall_seconds": 3.455030396580696,
+              "transition_before_seconds": null,
+              "completed_layer_seconds": 0.165127,
+              "production_search_seconds": 0.164469463,
+              "automatic_phase_seconds": {
+                "admission": 2.0447667567059398,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          },
+          "n17-m2": {
+            "status": "INCOMPLETE",
+            "last_completed_layer": 11,
+            "reason": "calibration layer limit",
+            "attempted": true,
+            "n": 17,
+            "m": 2,
+            "manifest": "/root/tail-resident-20261004-v6/resident-auto-20261004-v6/n17-m2/saved/snapshot-000012-0fa35ca79bd9421a9dd7c71f871120cf/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107487.1385577,
+              "runner_wall_seconds": 0.259257054887712,
+              "transition_before_seconds": 0.003044002689421177,
+              "completed_layer_seconds": 0.147464,
+              "production_search_seconds": 0.146427322,
+              "automatic_phase_seconds": {
+                "admission": 9.640026837587357e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          },
+          "n17-m3": {
+            "status": "INCOMPLETE",
+            "last_completed_layer": 11,
+            "reason": "calibration layer limit",
+            "attempted": true,
+            "n": 17,
+            "m": 3,
+            "manifest": "/root/tail-resident-20261004-v6/resident-auto-20261004-v6/n17-m3/saved/snapshot-000012-32bc362ab9f440c8863b971c1c1b7888/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107487.4009535,
+              "runner_wall_seconds": 0.24749387800693512,
+              "transition_before_seconds": 0.003139081411063671,
+              "completed_layer_seconds": 0.144557,
+              "production_search_seconds": 0.144456591,
+              "automatic_phase_seconds": {
+                "admission": 8.563976734876633e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          }
+        },
+        "pending": []
+      },
+      "oracles": {
+        "n17-m1": {
+          "status": "PASS",
+          "layers": 12,
+          "states": 4381
+        },
+        "n17-m2": {
+          "status": "PASS",
+          "layers": 12,
+          "states": 3621
+        },
+        "n17-m3": {
+          "status": "PASS",
+          "layers": 12,
+          "states": 3061
+        }
+      },
+      "cache": {
+        "n17-m1": [
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 0
+          },
+          {
+            "buffer_hits": 2,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 0
+          }
+        ],
+        "n17-m2": [
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          },
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          }
+        ],
+        "n17-m3": [
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          },
+          {
+            "buffer_hits": 33,
+            "cached_buffers": 31,
+            "comm_hits": 1,
+            "pool_hits": 1
+          }
+        ]
+      },
+      "publication": {
+        "cases": 3,
+        "files": 2,
+        "bytes": 108320,
+        "receipt": "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-bfs-results/commit/cf090e8dfbfdf47733466be607a5648baf91a5b9",
+        "payload_commits": 1,
+        "max_batch_bytes": 25000000000
+      },
+      "hf_readback": {
+        "revision": "cf090e8dfbfdf47733466be607a5648baf91a5b9",
+        "files": 2,
+        "bytes": 108320,
+        "manifests_verified": 3,
+        "all_checksums_verified": true,
+        "sweep_ledger_verified": true
+      }
+    },
+    "failure_recovery_generations": 2,
+    "pruning": {
+      "ledger": {
+        "configuration": {
+          "base": {
+            "world": 2,
+            "timeout_seconds": 120,
+            "archive_format": "parquet_cohort",
+            "native_capacity_probe": false,
+            "graph_calibration": false,
+            "host_available_bytes": 8589934592,
+            "resource_plan": {
+              "max_rows_per_rank": 64,
+              "library_pool_bytes": 67108864
+            },
+            "env": {
+              "MGBFS_TRANSPORT_BACKEND": "HOST_SIZED_NCCL",
+              "MGBFS_VRAM_RESERVE_BYTES": "268435456",
+              "MGBFS_PROFILE": "DENSE",
+              "MGBFS_OWNER_BACKEND": "CUCO_RANK",
+              "MGBFS_PRE_DEDUP": "ON",
+              "MGBFS_CAPACITY_MODE": "max_per_rank",
+              "MGBFS_BUCKETS": "8",
+              "MGBFS_SHARDS": "4",
+              "MGBFS_JOB_BUCKETS": "2",
+              "MGBFS_CUDA_GRAPH_BATCHES": "0",
+              "MGBFS_LIBRARY_POOL_AUTOSIZE": "1"
+            },
+            "run_id": "resident-gate-pruning-v6"
+          },
+          "grid": [
+            [
+              16,
+              1
+            ],
+            [
+              17,
+              1
+            ],
+            [
+              16,
+              15
+            ],
+            [
+              17,
+              16
+            ]
+          ],
+          "pruning_policy": "fixed-r-resource-stop-v3"
+        },
+        "cases": {
+          "n16-m1": {
+            "status": "INCOMPLETE",
+            "last_completed_layer": 7,
+            "reason": "native fatal: LIBRARY_RANK_DEPTH_FATAL_16_16,REMOTE_SEARCH_CANCELLED,ARCHIVE_INCOMPLETE",
+            "attempted": true,
+            "n": 16,
+            "m": 1,
+            "timing": {
+              "runner_started_at_unix": 1791107492.9019878,
+              "runner_wall_seconds": 2.5344706466421485,
+              "transition_before_seconds": null,
+              "completed_layer_seconds": 0.081713,
+              "production_search_seconds": null,
+              "automatic_phase_seconds": {
+                "admission": 5.0780363380908966e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          },
+          "n17-m1": {
+            "status": "INCOMPLETE",
+            "last_completed_layer": -1,
+            "reason": "skipped larger n at fixed r=1 after resource stop at n=16: native fatal: LIBRARY_RANK_DEPTH_FATAL_16_16,REMOTE_SEARCH_CANCELLED,ARCHIVE_INCOMPLETE",
+            "attempted": false,
+            "n": 17,
+            "m": 1,
+            "pruned_by": {
+              "n": 16,
+              "r": 1
+            },
+            "pruning_is_heuristic": true
+          },
+          "n16-m15": {
+            "status": "COMPLETE",
+            "last_completed_layer": 8,
+            "reason": "graph exhausted",
+            "attempted": true,
+            "n": 16,
+            "m": 15,
+            "manifest": "/root/tail-resident-20261004-v6/resident-pruning-20261004-v6/n16-m15/saved/snapshot-000009-481019f967da401c806bd1b4e2bfa776/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107495.4392169,
+              "runner_wall_seconds": 2.072051436640322,
+              "transition_before_seconds": 0.0027586426585912704,
+              "completed_layer_seconds": 0.08580399999999999,
+              "production_search_seconds": 0.085687748,
+              "automatic_phase_seconds": {
+                "admission": 3.212038427591324e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          },
+          "n17-m16": {
+            "status": "COMPLETE",
+            "last_completed_layer": 8,
+            "reason": "graph exhausted",
+            "attempted": true,
+            "n": 17,
+            "m": 16,
+            "manifest": "/root/tail-resident-20261004-v6/resident-pruning-20261004-v6/n17-m16/saved/snapshot-000009-e9881607fbfb4edabb843093fd977ff3/manifest.json",
+            "timing": {
+              "runner_started_at_unix": 1791107497.5141544,
+              "runner_wall_seconds": 0.1812281608581543,
+              "transition_before_seconds": 0.0028860019519925117,
+              "completed_layer_seconds": 0.068823,
+              "production_search_seconds": 0.068821599,
+              "automatic_phase_seconds": {
+                "admission": 3.238022327423096e-05,
+                "graph_calibration": 0.0
+              },
+              "scope": "runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report"
+            }
+          }
+        },
+        "pending": []
+      },
+      "oracles": {
+        "n16-m1": {
+          "status": "PASS",
+          "layers": 8,
+          "states": 357
+        },
+        "n16-m15": {
+          "status": "PASS",
+          "layers": 9,
+          "states": 16
+        },
+        "n17-m16": {
+          "status": "PASS",
+          "layers": 9,
+          "states": 17
+        }
+      }
+    },
+    "benchmarks": {
+      "direct": [
+        {
+          "wall_seconds": 15.804042434319854,
+          "search_seconds": 2.576625394,
+          "non_search_seconds": 13.227417040319853,
+          "admission": 7.900639558210969,
+          "cache": [],
+          "execution": null,
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": false
+          }
+        },
+        {
+          "wall_seconds": 15.881982418708503,
+          "search_seconds": 2.589048023,
+          "non_search_seconds": 13.292934395708503,
+          "admission": 7.649301063269377,
+          "cache": [],
+          "execution": null,
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": false
+          }
+        },
+        {
+          "wall_seconds": 15.936605298891664,
+          "search_seconds": 2.586754164,
+          "non_search_seconds": 13.349851134891663,
+          "admission": 7.856039272621274,
+          "cache": [],
+          "execution": null,
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": false
+          }
+        }
+      ],
+      "resident": [
+        {
+          "wall_seconds": 7.1198576260358095,
+          "search_seconds": 2.576213463,
+          "non_search_seconds": 4.543644163035809,
+          "admission": 1.6744382688775659,
+          "cache": [
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            },
+            {
+              "buffer_hits": 2,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 0
+            }
+          ],
+          "execution": {
+            "root": "/root/tail-resident-20261004-v6/session-benchmark-resident",
+            "generation": 0,
+            "sequence": 3,
+            "rank_group_pid": 49282,
+            "worker_command": [
+              "torchrun",
+              "--standalone",
+              "--nproc-per-node=2",
+              "--no-python",
+              "/root/tail-src/target/release/mgbfs",
+              "session",
+              "/root/tail-resident-20261004-v6/session-benchmark-resident/generation-0"
+            ]
+          },
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": false
+          }
+        },
+        {
+          "wall_seconds": 5.121866133995354,
+          "search_seconds": 2.567918416,
+          "non_search_seconds": 2.5539477179953542,
+          "admission": 6.943009793758392e-05,
+          "cache": [
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            },
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            }
+          ],
+          "execution": {
+            "root": "/root/tail-resident-20261004-v6/session-benchmark-resident",
+            "generation": 0,
+            "sequence": 4,
+            "rank_group_pid": 49282,
+            "worker_command": [
+              "torchrun",
+              "--standalone",
+              "--nproc-per-node=2",
+              "--no-python",
+              "/root/tail-src/target/release/mgbfs",
+              "session",
+              "/root/tail-resident-20261004-v6/session-benchmark-resident/generation-0"
+            ]
+          },
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": true
+          }
+        },
+        {
+          "wall_seconds": 5.070908999070525,
+          "search_seconds": 2.564153751,
+          "non_search_seconds": 2.506755248070525,
+          "admission": 7.249042391777039e-05,
+          "cache": [
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            },
+            {
+              "buffer_hits": 33,
+              "cached_buffers": 31,
+              "comm_hits": 1,
+              "pool_hits": 1
+            }
+          ],
+          "execution": {
+            "root": "/root/tail-resident-20261004-v6/session-benchmark-resident",
+            "generation": 0,
+            "sequence": 5,
+            "rank_group_pid": 49282,
+            "worker_command": [
+              "torchrun",
+              "--standalone",
+              "--nproc-per-node=2",
+              "--no-python",
+              "/root/tail-src/target/release/mgbfs",
+              "session",
+              "/root/tail-resident-20261004-v6/session-benchmark-resident/generation-0"
+            ]
+          },
+          "resource_plan": {
+            "policy": "native-warmed-admission-v2",
+            "selected_rows_per_rank": 19958400,
+            "max_rows_per_rank": 19958400,
+            "library_pool_bytes": 2687471616,
+            "probes": [
+              {
+                "rows_per_rank": 32768,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 76124672,
+                    "rank": 0,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 76124672,
+                    "rank": 1,
+                    "required_bytes": 111426304,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 65536,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 80318976,
+                    "rank": 0,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 80318976,
+                    "rank": 1,
+                    "required_bytes": 117717760,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              },
+              {
+                "rows_per_rank": 19958400,
+                "ranks": [
+                  {
+                    "free_after_nccl_warmup_bytes": 12231114752,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 0,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  },
+                  {
+                    "free_after_nccl_warmup_bytes": 12261392384,
+                    "library_pool_bytes": 2687471616,
+                    "rank": 1,
+                    "required_bytes": 3998013696,
+                    "reserve_bytes": 268435456,
+                    "schema": 1,
+                    "scope": "explicit_device_allocations_including_fixed_library_pool",
+                    "session_reusable_bytes": 0,
+                    "total_bytes": 12490440704,
+                    "query_to_run_margin_bytes": 67108864
+                  }
+                ]
+              }
+            ],
+            "pool_policy": "native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack",
+            "maximum_hardware_capacity_proven": false,
+            "resident_admission_reused": true
+          }
+        }
+      ]
+    },
+    "binary_sha256": "1eab1758457d09d3d96d08e0fd5c0be8bdcf04da6c6518fbadb6e36aedcc3081",
+    "finished_at": 1791107584.7008991
+  },
+  "cleanup": {
+    "id": 54131688,
+    "status": "ABSENT",
+    "at": 1791108438.696442,
+    "jobs_terminal": true,
+    "token_removed": true,
+    "absence_verified_at": 1791108447.8025076
+  }
+}
