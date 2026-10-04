@@ -294,7 +294,7 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only", "native_rank_gate") and any(
+        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only") and any(
                 row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
             report["status"] = "UNSUPPORTED_HOST"
             return
