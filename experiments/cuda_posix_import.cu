@@ -80,18 +80,28 @@ static int receive_fd(int socket, size_t expected) {
   if (bytes != expected) { close(fd); throw std::runtime_error("granularity_mismatch"); }
   return fd;
 }
+struct Reservation {
+  CUdeviceptr address = 0;
+  size_t bytes = 0;
+  ~Reservation() { if (address) cuMemAddressFree(address, bytes); }
+};
 struct Mapping {
   CUmemGenericAllocationHandle handle = 0;
   CUdeviceptr address = 0;
   size_t bytes = 0;
   bool mapped = false;
+  bool reserved = false;
   ~Mapping() {
     if (mapped) cuMemUnmap(address, bytes);
-    if (address) cuMemAddressFree(address, bytes);
+    if (reserved) cuMemAddressFree(address, bytes);
     if (handle) cuMemRelease(handle);
   }
-  void map(int device) {
-    driver(cuMemAddressReserve(&address, bytes, 0, 0, 0), "reserve");
+  void map(int device, CUdeviceptr target = 0) {
+    if (target) address = target;
+    else {
+      driver(cuMemAddressReserve(&address, bytes, 0, 0, 0), "reserve");
+      reserved = true;
+    }
     driver(cuMemMap(address, bytes, 0, handle, 0), "map");
     mapped = true;
     CUmemAccessDesc access{};
@@ -107,10 +117,12 @@ __global__ void check_values(const unsigned* own, const unsigned* peer,
     *result = (own[0] == expected && peer[0] == peer_expected) ? 0u : 1u;
 }
 int main(int argc, char** argv) {
-  if (argc != 2 && argc != 3) return 1;
+  if (argc < 2 || argc > 4) return 1;
   const bool local = std::strcmp(argv[1], "local") == 0;
-  const bool runtime_init = argc == 3 && std::strcmp(argv[2], "--runtime-init") == 0;
-  if ((!local && std::strcmp(argv[1], "import") != 0) || (argc == 3 && !runtime_init)) return 1;
+  const bool runtime_init = argc >= 3 && std::strcmp(argv[2], "--runtime-init") == 0;
+  const bool symmetric = argc == 4 && std::strcmp(argv[3], "--symmetric") == 0;
+  if ((!local && std::strcmp(argv[1], "import") != 0) || (argc >= 3 && !runtime_init) ||
+      (argc == 4 && !symmetric)) return 1;
   const char* rank_env = std::getenv("MGBFS_WINDOW_RANK");
   const char* path_env = std::getenv("MGBFS_WINDOW_BOOTSTRAP");
   if (!rank_env || !path_env || (std::strcmp(rank_env,"0") && std::strcmp(rank_env,"1"))) return 1;
@@ -150,17 +162,35 @@ int main(int argc, char** argv) {
         }
       }
     }
+    // Reservation outlives both mappings; only mapped ranges are unmapped.
+    Reservation flat;
     Mapping own, peer;
+    size_t stride = 0;
+    if (symmetric) {
+      size_t free_bytes = 0, total_bytes = 0;
+      runtime(cudaMemGetInfo(&free_bytes, &total_bytes), "memory_size");
+      constexpr size_t four_gib = size_t(1) << 32;
+      stride = ((total_bytes + four_gib - 1) / four_gib) * four_gib;
+      if (!stride || stride > SIZE_MAX / 2) throw std::runtime_error("symmetric_stride");
+      flat.bytes = 2 * stride;
+      entering(rank, "symmetric_reserve");
+      // NCCL 2.29.7 uses 512MiB alignment and a 4GiB-rounded per-rank stride.
+      driver(cuMemAddressReserve(&flat.address, flat.bytes, size_t(512) << 20, 0, 0), "symmetric_reserve");
+      std::printf("rank=%d symmetric_stride=%zu virtual_bytes=%zu\n", rank, stride, flat.bytes);
+      std::fflush(stdout);
+    }
     CUmemAllocationProp prop{};
     prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
     prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
     prop.location.id = rank;
     prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-    driver(cuMemGetAllocationGranularity(&own.bytes, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM), "granularity");
+    driver(cuMemGetAllocationGranularity(&own.bytes, &prop, symmetric ?
+           CU_MEM_ALLOC_GRANULARITY_RECOMMENDED : CU_MEM_ALLOC_GRANULARITY_MINIMUM), "granularity");
+    if (symmetric && own.bytes > stride) throw std::runtime_error("symmetric_size");
     entering(rank, "local_create");
     driver(cuMemCreate(&own.handle, own.bytes, &prop, 0), "create");
     entering(rank, "local_map");
-    own.map(rank);
+    own.map(rank, symmetric ? flat.address + rank * stride : 0);
     const unsigned expected = runtime_init ? (100u + rank) * 0x01010101u : 100u + rank;
     const unsigned peer_expected = runtime_init ? (101u - rank) * 0x01010101u : 101u - rank;
     if (!runtime_init) {
@@ -181,7 +211,7 @@ int main(int argc, char** argv) {
       driver(cuMemImportFromShareableHandle(&peer.handle, reinterpret_cast<void*>(static_cast<intptr_t>(imported.value)),
              CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR), "import");
       entering(rank, "peer_map");
-      peer.map(rank);
+      peer.map(rank, symmetric ? flat.address + (1 - rank) * stride : 0);
       barrier(connection.value);
     }
     Stream stream;

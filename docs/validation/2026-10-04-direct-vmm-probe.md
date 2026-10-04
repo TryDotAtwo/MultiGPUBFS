@@ -37,3 +37,16 @@ and the original Driver API path remain in the same 20-pair matrix.
 This isolates API/order differences, not NCCL shadow-table/address-layout
 behavior. Actual sm75 compilation with Wall/Wextra passes; 60 script tests
 OK/3 skipped. Hardware execution is not yet claimed for this variant.
+
+The expanded variant passed all20 pairs on the second notebook v6,
+including local/import initialization after mapping under all four tools.
+All40 rank logs retained. A further `--runtime-init --symmetric` variant
+now matches the inspected NCCL2.29.7 address layout: a virtual reservation
+for two rank strides, each total-VRAM rounded to4GiB, aligned512MiB, with
+recommended physical allocation granularity. Each rank maps its allocation
+into its rank-indexed range and imports the peer into the other range.
+This is virtual address space, NOT32GiB physical VRAM allocation on a T4.
+Only two granularity-sized mappings exist. Reservation lifetime extends
+past both mappings; no access crosses an unmapped gap. The 30-pair matrix
+retains earlier controls. Compilation sm75/Wall/Wextra and scripts61 pass
+(3 skips); the symmetric variant is not yet hardware-verified.

@@ -166,10 +166,11 @@ def typed_warmup_cases(base):
 
 
 def vmm_probe_cases():
-    return [dict(mode=mode, tool=tool, runtime_init=runtime_init,
-                 label=f'{mode}-{tool or "plain"}' + ('-runtime-init' if runtime_init else ''))
+    return [dict(mode=mode, tool=tool, runtime_init=runtime_init, symmetric=symmetric,
+                 label=f'{mode}-{tool or "plain"}' + ('-runtime-init' if runtime_init else '')
+                       + ('-symmetric' if symmetric else ''))
             for mode in ('local', 'import')
-            for runtime_init in (False, True)
+            for runtime_init, symmetric in ((False, False), (True, False), (True, True))
             for tool in (None, 'memcheck', 'racecheck', 'initcheck', 'synccheck')]
 
 
@@ -368,6 +369,8 @@ def main():
                 command = [str(binary), case['mode']]
                 if case['runtime_init']:
                     command.append('--runtime-init')
+                if case['symmetric']:
+                    command.append('--symmetric')
                 if case['tool']:
                     command = ['compute-sanitizer', '--tool', case['tool'],
                                '--error-exitcode', '97'] + command
