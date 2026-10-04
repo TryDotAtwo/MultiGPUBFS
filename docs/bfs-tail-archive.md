@@ -55,6 +55,14 @@ Final publication gets a reserved part of that external time window. Completed
 cohorts normally close after20 cases or2 decimal GB of packed states; graph mode
 closes each case. No publication wait is inserted inside a GPU batch or layer.
 
+The durable-tail launcher explicitly selects `MGBFS_ARCHIVE_CREDIT_MODE=wait`.
+Only an exhausted pinned archive-credit queue waits for the SSD writer, with
+20 ms cancellation checks and rank failure cancellation. Ready credits use the
+same immediate path; buffers return only after the recorded D2H event and disk
+write complete. Bare native BFS defaults to fatal exhaustion. Selecting
+`MGBFS_ARCHIVE_CREDIT_MODE=fatal` restores that policy for a tail run as well.
+This is host archive backpressure and adds no device batch synchronization.
+
 The final report verifies every
 manifest, all retained payloads, and the full ledger including skipped pairs.
 Nothing in this command downloads states to the user's computer.

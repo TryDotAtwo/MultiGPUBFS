@@ -154,6 +154,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         metadata[str(cli)+'sha'] = binary_sha
     env = dict(os.environ, **runtime_env)
     env.update(config.get('env', {}))
+    # Durable-tail runs opt into bounded SSD writer backpressure. Bare native
+    # BFS keeps its original fatal-on-exhaustion contract unless selected.
+    env.setdefault('MGBFS_ARCHIVE_CREDIT_MODE', 'wait')
     env.update(MGBFS_BENCH_WORLD_SIZE=str(world), MGBFS_RANK_MAP=','.join(map(str,range(world))),
         MGBFS_STATE_CODEC='permutation_u8', MGBFS_ARCHIVE_CODEC='permutation_u8',
         MGBFS_ARCHIVE_STREAM='1', MGBFS_BENCH_SKIP_ARCHIVE='0', MGBFS_TRACE_DEPTHS='1',

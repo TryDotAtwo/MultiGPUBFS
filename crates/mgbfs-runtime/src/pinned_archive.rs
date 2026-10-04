@@ -1,4 +1,4 @@
-//! Bounded pinned-slot disk queue. Saturation waits for writer recycle; errors cancel.
+//! Bounded pinned-slot disk queue. Waiting for disk credits is explicitly opt-in.
 use crate::archive::{Archive, ArchiveRingPlan, Extent};
 use mgbfs_core::Result;
 use mgbfs_cuda::{
@@ -65,6 +65,7 @@ pub struct PinnedArchive {
     pinned_bytes: usize,
     slots: usize,
     device: i32,
+    wait_for_credit: bool,
 }
 impl PinnedArchive {
     /// Disk extent is physically reserved by Archive::new before worker startup.
@@ -157,6 +158,7 @@ impl PinnedArchive {
             pinned_bytes,
             slots,
             device,
+            wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),
         })
     }
     pub fn pinned_bytes(&self) -> usize {
@@ -174,7 +176,11 @@ impl PinnedArchive {
         if status != 0 || current != self.device {
             return Err(format!("ARCHIVE_DEVICE_MISMATCH_{current}_{}", self.device));
         }
-        crate::archive::recv_archive_credit(&self.free,cancelled)
+        if self.wait_for_credit {
+            crate::archive::recv_archive_credit(&self.free,cancelled)
+        } else {
+            self.free.try_recv().map_err(|e|format!("ARCHIVE_PIN_RING_FATAL: {e}"))
+        }
     }
     pub(crate) fn submit(&self, slot: Slot, depth: u64, rows: u32) -> Result<()> {
         self.submit_notifying(slot, depth, rows, |_| {})
@@ -250,6 +256,18 @@ mod worker_failure_tests {
         (archive, report)
     }
     #[test]
+    fn fatal_credit_policy_does_not_wait_on_exhaustion() {
+        assert_eq!(unsafe {cudaSetDevice(0)},0);
+        let mut archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,2).unwrap();
+        archive.wait_for_credit=false;
+        let first=archive.acquire().unwrap();
+        let second=archive.acquire().unwrap();
+        let error=archive.acquire().err().unwrap();
+        assert!(error.starts_with("ARCHIVE_PIN_RING_FATAL:"));
+        archive.finish().unwrap();
+        drop(first);drop(second);
+    }
+    #[test]
     fn occupied_pinned_slots_wait_for_writer_without_losing_readers() {
         struct PausedExtent {
             entered: Option<std::sync::mpsc::Sender<()>>,
@@ -270,8 +288,9 @@ mod worker_failure_tests {
         assert_eq!(unsafe {cudaSetDevice(0)},0);
         let (notify,entered)=std::sync::mpsc::channel();
         let (release,resume)=std::sync::mpsc::channel();
-        let archive=PinnedArchive::new(PausedExtent {
+        let mut archive=PinnedArchive::new(PausedExtent {
             entered:Some(notify),release:resume},4096,4,[0;32],1,2).unwrap();
+        archive.wait_for_credit=true;
         let first=archive.acquire().unwrap();
         unsafe {std::ptr::write_bytes(first.ptr.cast::<u8>(),0,first.bytes);}
         archive.submit(first,0,1).unwrap();entered.recv().unwrap();
