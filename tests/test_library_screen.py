@@ -11,6 +11,49 @@ import library_gpu_screen as screen
 
 
 class ScreenContract(unittest.TestCase):
+    def test_typed_run_uses_production_dispatch_and_checks_exact_config_digest(self):
+        row = self.row()
+        row.update(layer_sizes=[1, 23], search_complete_seconds=1,
+                   smi_peak_mib_per_rank=[100, 100], smi_peak_mib_total=200)
+        for rank in row['rank_results']:
+            rank.update(group='matrix-' + 'ab' * 32, batch=1,
+                        run_contract='RunConfigV1', bootstrap_digest=[171] * 32,
+                        owner_backend='CUCO_RANK')
+        launches = []
+        def launch(command, out, label, env, timeout):
+            launches.append(command)
+            return row
+        def cli(command, **kwargs):
+            return SimpleNamespace(returncode=0, stdout=json.dumps(
+                {'status': 'CONFIG_VALIDATED', 'config_digest': 'ab' * 32,
+                 'hardware_ready': False} if command[1] == 'preflight' else {'status': 'VERIFIED'}))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = json.loads((Path(__file__).resolve().parents[1] / 'tests/run-s4-two-rank.json').read_text())
+            config.update(owner_backend='CUCO_RANK', library_pool_bytes=67108864)
+            path = root/'input.json'
+            path.write_text(json.dumps(config))
+            with patch.object(screen, 'run_group', launch), patch.object(screen.subprocess, 'run', cli):
+                result = screen.run_case('mgbfs', root/'logs', root/'archive',
+                    's4', 24, 2, 1, 64, 128, 67108864, 'DENSE', 'ON', {},
+                    owner='CUCO_RANK', run_config=path)
+            command = launches[0]
+            self.assertEqual(command[command.index('--no-python') + 1:][:2], ['mgbfs', 'run'])
+            self.assertNotIn('--reference', command)
+            self.assertEqual(json.loads((root/'logs/run-config.json').read_text()), config)
+            self.assertEqual(result['status'], 'COMPLETE')
+            self.assertEqual(len(result['archive_verification']), 2)
+            for index, (key, value) in enumerate((('run_contract', 'reference_bench'),
+                                                ('bootstrap_digest', [0] * 32))):
+                saved = row['rank_results'][0][key]
+                row['rank_results'][0][key] = value
+                with patch.object(screen, 'run_group', launch), patch.object(screen.subprocess, 'run', cli):
+                    with self.assertRaisesRegex(ValueError, 'SCREEN_CONFIGURATION'):
+                        screen.run_case('mgbfs', root/f'bad-logs-{index}', root/f'bad-archive-{index}',
+                            's4', 24, 2, 1, 64, 128, 67108864, 'DENSE', 'ON', {},
+                            owner='CUCO_RANK', run_config=path)
+                row['rank_results'][0][key] = saved
+
     def test_profile_keeps_rank_command_and_archives_but_not_benchmark_statistics(self):
         row = self.row()
         row.update(search_complete_seconds=1, smi_peak_mib_per_rank=[100, 100],
