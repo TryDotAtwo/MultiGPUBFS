@@ -203,7 +203,7 @@ class AutomaticPlanningTests(unittest.TestCase):
         self.assertEqual(runner.call_args.args[0]['timeout_seconds'],7200)
 
     def test_end_upload_releases_then_resumes_pending_pairs_and_background_still_streams(self):
-        for mode in ('end','background'):
+        for mode in ('end','background','graph','search'):
             with tempfile.TemporaryDirectory() as directory:
                 root=Path(directory);events=[];calls=[]
                 base=dict(resource_plan={},run_id='fixture',upload_mode=mode,cohort_group_size=1)

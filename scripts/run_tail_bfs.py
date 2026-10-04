@@ -191,7 +191,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         if publisher_api is None:
             from huggingface_hub import get_token
             token=get_token()
-        publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], token, api=publisher_api)
+        publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], token, api=publisher_api,
+            storage_format=config.get('live_upload_format','packed'),
+            prefix=config.get('live_upload_prefix'))
     messages, stopped = queue.Queue(), threading.Event()
     begins, ends, samples, native_errors, lock = {}, {}, [], [], threading.Lock()
     readers, threads, pending, receipts = [], [], {}, {}

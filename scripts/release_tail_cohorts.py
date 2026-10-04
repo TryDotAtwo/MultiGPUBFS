@@ -13,6 +13,29 @@ except ImportError:
     from verify_tail_hf import verify_payload
 
 
+def release_live_preview(case, run_id, key, repo_id, api):
+    """Remove only this case's temporary preview after final cohort readback."""
+    receipt_path=Path(case)/'upload-pins/receipt.json'
+    marker=receipt_path.parent/'preview-cleanup.json'
+    if not receipt_path.exists() or marker.exists():return
+    receipt=json.loads(receipt_path.read_text());prefix='tail-live/'+run_id+'-'+key
+    if receipt.get('remote_prefix')!=prefix:return
+    paths=receipt.get('payload_paths',[])
+    if any(not path.startswith(prefix+'/states-') or not path.endswith('.parquet')
+           or '..' in path.split('/') for path in paths):
+        raise ValueError('preview cleanup path mismatch')
+    from huggingface_hub import CommitOperationDelete
+    try:
+        from .tail_upload import retry_upload
+    except ImportError:
+        from tail_upload import retry_upload
+    result=retry_upload(lambda:api.create_commit(repo_id=repo_id,repo_type='dataset',
+        operations=[CommitOperationDelete(path_in_repo=path) for path in
+                    [*paths,prefix+'/manifest.json']],
+        commit_message='Remove temporary preview after verified final archive'))
+    atomic_json(marker,dict(repo_id=repo_id,revision=result.oid,paths=paths))
+
+
 def release(root, ledger, repo_id, api, token, *, deadline=None,
             group_size=None, group_bytes=None):
     import requests
@@ -88,5 +111,12 @@ def release(root, ledger, repo_id, api, token, *, deadline=None,
                         if not payload.resolve().is_relative_to(saved):
                             raise ValueError('unsafe saved-state release payload')
                         payload.unlink()
+                    try:
+                        release_live_preview(root/key,run_id,key,repo_id,api)
+                    except Exception as error:
+                        # The final archive is already verified; retain the
+                        # preview for a later cleanup attempt without failing it.
+                        atomic_json(root/key/'preview-cleanup-error.json',
+                            dict(error_type=type(error).__name__,reason=str(error)))
                     released.append(key)
     return dict(revision=revision, released_cases=released)

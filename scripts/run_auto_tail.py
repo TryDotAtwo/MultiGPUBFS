@@ -373,8 +373,8 @@ def main(cancelled=None):
     p.add_argument('--runtime-env',type=Path,required=True)
     p.add_argument('--root',type=Path,required=True)
     p.add_argument('--repo-id',required=True)
-    p.add_argument('--upload-mode',choices=('end','background'),default=None,
-        help='end (default): retain on SSD and upload after compute; background: publish closed cohorts while searching')
+    p.add_argument('--upload-mode',choices=('search','graph','end','background'),default=None,
+        help='search: live Parquet snapshots; graph: after each graph; end (default): SSD then upload/resume cycles; background: completed cohorts in parallel')
     p.add_argument('--deadline-unix',type=float,required=True)
     args = p.parse_args()
     if not math.isfinite(args.deadline_unix) or args.deadline_unix-time.time()<300:
@@ -401,7 +401,7 @@ def main(cancelled=None):
         runtime=json.loads(args.runtime_env.read_text())
         base=dict(world=len(inventory),run_id=args.root.name,
             upload_mode=args.upload_mode or 'end',
-            archive_format='parquet_cohort',cohort_group_size=20,cohort_group_bytes=2_000_000_000,
+            archive_format='parquet_cohort',cohort_group_size=1 if args.upload_mode=='graph' else 20,cohort_group_bytes=2_000_000_000,
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
@@ -419,7 +419,7 @@ def main(cancelled=None):
     if base.get('upload_mode',mode)!=mode:
         p.error('resume upload mode differs from saved configuration; use a new run root')
     runtime=json.loads(args.runtime_env.read_text())
-    disk_admission=EndUploadDiskAdmission(args.root) if mode=='end' else None
+    disk_admission=EndUploadDiskAdmission(args.root)
     previous_ledger=args.root/'sweep.json'
     if disk_admission and previous_ledger.exists():
         disk_admission.observe(json.loads(previous_ledger.read_text()))
@@ -434,10 +434,14 @@ def main(cancelled=None):
     publisher=SweepPublisher(args.root,args.repo_id,api,args.deadline_unix,publish_and_release)
     last_published=0
     def progress(ledger):
-        nonlocal last_published
+        nonlocal last_published,publisher
         if publisher.error:raise RuntimeError('background publication failed') from publisher.error
-        if mode=='end':
-            disk_admission.observe(ledger)
+        disk_admission.observe(ledger)
+        if mode=='end':return
+        if mode=='graph':
+            publisher.enqueue(ledger);publisher.finish()
+            publisher=SweepPublisher(args.root,args.repo_id,api,
+                args.deadline_unix,publish_and_release)
             return
         from tail_cohort import case_groups
         sealed_count = sum(len(members) for members, sealed in case_groups(args.root, ledger) if sealed)
@@ -447,6 +451,9 @@ def main(cancelled=None):
                 deadline=args.deadline_unix-publication_reserve,cancelled=cancelled):
             ledger['global_stop_reason']='publication backlog at compute deadline or cancellation'
     def adaptive(config,source,case,env):
+        if mode=='search':
+            config=dict(config,repo_id=args.repo_id,live_upload_format='parquet',
+                live_upload_prefix='tail-live/'+config['run_id'])
         return run_adaptive(config,source,case,env,
                             deadline=args.deadline_unix-publication_reserve,cancelled=cancelled)
     # Each layer still writes an intermediate SSD snapshot. End mode uploads
@@ -471,8 +478,9 @@ def main(cancelled=None):
                     stop_reason=ledger.get('global_stop_reason'),receipt=receipt))
                 atomic_json(args.root/'upload-cycles.json',upload_cycles)
                 reason=ledger.get('global_stop_reason','')
-                if (mode!='end' or not ledger['pending']
-                        or not reason.startswith('SSD admission stopped compute')
+                if (not ledger['pending']
+                        or not (reason.startswith('SSD admission stopped compute')
+                                or reason.startswith('SSD full'))
                         or (cancelled and cancelled())
                         or args.deadline_unix-time.time()<300):
                     break

@@ -27,14 +27,16 @@ def retry_upload(operation):
 
 
 class Publisher:
-    def __init__(self, root, repo_id, run_id, token=None, max_pending_bytes=25_000_000_000, *, api=None, coalesce_pending=True):
+    def __init__(self, root, repo_id, run_id, token=None, max_pending_bytes=25_000_000_000, *, api=None, coalesce_pending=True, storage_format='packed', prefix=None):
         if api is None:
             from huggingface_hub import HfApi
             if not token:
                 raise ValueError('HF write token required')
             api = HfApi(token=token)
         self.api = api
-        self.repo_id, self.prefix = repo_id, 'tail-runs/' + run_id
+        if storage_format not in ('packed','parquet'):raise ValueError('unsupported live format')
+        self.storage_format=storage_format;self.uploaded_paths=set()
+        self.repo_id, self.prefix = repo_id, prefix or 'tail-runs/' + run_id
         self.root = Path(root)
         self.root.mkdir(exist_ok=False)
         self.queue, self.error = queue.Queue(), None
@@ -99,9 +101,18 @@ class Publisher:
                 pinned, manifest, size = item
                 if self.error:
                     continue
+                publication=pinned
+                if self.storage_format=='parquet':
+                    try:
+                        from .tail_parquet import convert
+                    except ImportError:
+                        from tail_parquet import convert
+                    publication=pinned/'parquet'
+                    convert(pinned,publication)
+                    manifest=json.loads((publication/'manifest.json').read_text())
                 payloads = []
                 for entry in manifest['files']:
-                    path = pinned / entry['path']
+                    path = publication / entry['path']
                     sha = hashlib.sha256()
                     with path.open('rb') as stream:
                         for chunk in iter(lambda: stream.read(4*1024*1024), b''):
@@ -119,11 +130,13 @@ class Publisher:
                     for path, remote in payloads:
                         retry_upload(lambda: self.api.upload_file(path_or_fileobj=str(path), repo_id=self.repo_id,
                             repo_type='dataset', path_in_repo=remote))
-                receipt = retry_upload(lambda: self.api.upload_file(path_or_fileobj=str(pinned/'manifest.json'),
+                receipt = retry_upload(lambda: self.api.upload_file(path_or_fileobj=str(publication/'manifest.json'),
                     repo_id=self.repo_id, repo_type='dataset', path_in_repo=self.prefix+'/manifest.json'))
+                self.uploaded_paths.update(remote for path,remote in payloads)
                 (self.root/'receipt.json').write_text(json.dumps(dict(
                     commit_url=str(receipt), status=manifest['status'],
-                    last_completed_layer=manifest['last_completed_layer'])))
+                    last_completed_layer=manifest['last_completed_layer'],
+                    remote_prefix=self.prefix,payload_paths=sorted(self.uploaded_paths))))
                 shutil.rmtree(pinned)
             except BaseException as error:
                 self.error = error

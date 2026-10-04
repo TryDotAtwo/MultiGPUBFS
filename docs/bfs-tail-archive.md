@@ -28,17 +28,33 @@ Failed final publication still writes a local run summary and retains local
 snapshots/pinned inputs for retry. Host-credit sizing accounts for reclaimable
 clean file cache inside cgroup limits; dirty/writeback pages remain reserved.
 
-Completed cohorts publish in the background, after 20 attempted
-pairs or a target of 2 decimal GB of packed states in a closed group. Only queued ledgers are coalesced; each in-flight ledger is frozen before
-payload planning. Completed case files remain immutable on GPU-host SSD through
-publication and streamed HF checksum readback. Verified closed groups then
-release local state files, preserving metadata and durable receipts for reuse.
-Between pairs, the launcher waits for verified publication/release when final
-snapshot files still on the host exceed 10 decimal GB (a whole case may cross
-the target). No such wait runs inside a BFS batch or layer. After each traversal
-stops, its COMPLETE-capable working tail is released; immutable final snapshot
-links/copies remain for publication and retry. This avoids retaining a 10 GB
-working tail for every finished INCOMPLETE case that needs only a 1 GB suffix.
+Upload timing is independent of the table's data policy. All modes retain
+exactly the agreed statistics, provenance and bounded COMPLETE/INCOMPLETE tails;
+no paths or extra deduplication/component metrics are added.
+
+- `--upload-mode end` (default): compute onto GPU-host SSD, then publish.
+- `--upload-mode graph`: publish and verify after each graph. Cohorts contain
+  one graph, so this mode trades grouping efficiency for immediate delivery.
+- `--upload-mode background`: publish closed cohorts while the next graphs run.
+- `--upload-mode search`: coalesced live Parquet snapshots while traversing a
+  graph, followed by the normal final cohort archive. Live shard names stay
+  stable; verified final cohorts permit removal of temporary HF previews.
+
+In every mode, storage admission checks SSD space at case boundaries and
+reserves space for the next working tail/spools and final Parquet conversion.
+A storage pause publishes and reads back all staged data, frees verified closed
+groups, and resumes the pending queue in the original mode with the same warm
+rank session. Completed cases are not recalculated. A failed upload preserves
+inputs and does not release unverified state data. An open final cohort remains
+on SSD until enough cases seal it; if storage still cannot admit another case,
+the program reports that explicitly rather than looping without progress.
+
+There is no independent 120/300-second graph timeout. Traversal and archive drain
+use the external compute deadline; lease/cost cancellation remains authoritative.
+Final publication gets a reserved part of that external time window. Completed
+cohorts normally close after20 cases or2 decimal GB of packed states; graph mode
+closes each case. No publication wait is inserted inside a GPU batch or layer.
+
 The final report verifies every
 manifest, all retained payloads, and the full ledger including skipped pairs.
 Nothing in this command downloads states to the user's computer.

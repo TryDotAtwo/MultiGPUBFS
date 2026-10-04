@@ -37,6 +37,24 @@ class UploadTests(unittest.TestCase):
             self.assertEqual(depths,[0,2])
             self.assertEqual(publisher.pending,0)
 
+    def test_live_parquet_uses_stable_shards_and_payload_before_manifest(self):
+        import pyarrow.parquet as pq
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);archive=self.archive(root/'run');uploaded={};order=[]
+            class Api:
+                def upload_file(self,**kw):
+                    remote=kw['path_in_repo'];data=Path(kw['path_or_fileobj']).read_bytes()
+                    uploaded[remote]=data;order.append(remote);return 'receipt'
+            publisher=Publisher(root/'pins','fixture','run',api=Api(),
+                storage_format='parquet',prefix='tail-live/run')
+            publisher.enqueue(archive.snapshot());publisher.finish()
+            self.assertEqual(order[-1],'tail-live/run/manifest.json')
+            self.assertEqual(set(uploaded),{'tail-live/run/manifest.json','tail-live/run/states-00000.parquet'})
+            local=root/'download.parquet';local.write_bytes(uploaded['tail-live/run/states-00000.parquet'])
+            self.assertEqual(pq.read_table(local)['state'].to_pylist(),[pack_state([0,1,2])])
+            receipt=json.loads((root/'pins/receipt.json').read_text())
+            self.assertEqual(receipt['payload_paths'],['tail-live/run/states-00000.parquet'])
+
     def test_transport_retry_is_bounded(self):
         calls=[]
         RemoteProtocolError=type('RemoteProtocolError',(Exception,),{})
