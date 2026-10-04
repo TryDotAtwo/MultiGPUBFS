@@ -335,12 +335,16 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").ok().as_deref(),
         std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
     )?;
+    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     let disk_bytes = if archive_enabled {
-        ArchiveRingPlan::reference_extent_bytes(archive_width, expected_states, capacity)?
+        // FIFO staging is bounded by its consumer, not by the graph order.
+        // Keep the sequential stream offset checked without reserving the orbit.
+        if stream_archive { u64::MAX } else {
+            ArchiveRingPlan::reference_extent_bytes(archive_width, expected_states, capacity)?
+        }
     } else { 0 };
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
     let archive_slots = env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize;
-    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     selection.validate_archive_contract(archive_enabled,
         std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"))?;
     let buckets = env_u32("MGBFS_BUCKETS", 256)?;

@@ -1,6 +1,17 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 
 #[test]
+fn stream_extent_handles_large_orbits_without_physical_reservation() {
+    let mut extent = StreamExtent::new(Vec::new());
+    extent.reserve(u64::MAX).unwrap();
+    assert_eq!(extent.write_at(0, b"wide").unwrap(), 4);
+    assert!(extent.write_at(0, b"repeat").is_err());
+    assert!(extent.write_at(u64::MAX, b"overflow").is_err());
+    assert!(mgbfs_runtime::archive::ArchiveRingPlan::reference_extent_bytes(
+        128, u64::MAX, 4096).is_err());
+}
+
+#[test]
 fn stream_writer_fails_when_reader_stops_draining() {
     struct Stalled;
     impl std::io::Write for Stalled {
