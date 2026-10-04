@@ -108,6 +108,10 @@ class SweepTests(unittest.TestCase):
             self.assertIn('SSD full',v['global_stop_reason'])
 
     def test_native_layer_capacity_code_is_specific(self):
+        self.assertTrue(resource_stop(dict(status='INCOMPLETE',attempted=True,
+            reason='GROUP_STATE_RING_RETIRE_FATAL_19',resource_classification='confirmed_shard_capacity')))
+        self.assertFalse(resource_stop(dict(status='INCOMPLETE',attempted=True,
+            reason='GROUP_STATE_RING_RETIRE_FATAL_19')))
         for reason in ('native fatal: LIBRARY_RANK_DEPTH_FATAL_16_16,ARCHIVE_INCOMPLETE',
                        'LIBRARY_RANK_DEPTH_FATAL_16_0','LIBRARY_RANK_DEPTH_FATAL_0_16',
                        'GROUP_STATE_RING_RETIRE_FATAL_11','GROUP_STATE_RING_RETIRE_FATAL_12',

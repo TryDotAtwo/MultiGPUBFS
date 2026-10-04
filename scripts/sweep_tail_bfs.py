@@ -32,7 +32,7 @@ def resource_stop(record):
     if record.get('replicas') and not all(resource_stop(replica) for replica in record['replicas']):return False
     reason=record.get('reason','').lower()
     if 'no space left on device' in reason:return False
-    if record.get('resource_classification')=='cuda_allocation_failure':return True
+    if record.get('resource_classification') in ('cuda_allocation_failure','confirmed_shard_capacity'):return True
     # cuda/state_commit.cu uses sticky code 16 for layer/request capacity.
     # Other rank-depth codes and remote cancellation alone are not evidence.
     if re.search(r'\blibrary_rank_depth_fatal_(?:16_(?:0|16)|0_16)\b',reason):return True
