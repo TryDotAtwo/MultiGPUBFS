@@ -164,6 +164,14 @@ def main():
         report['requirements_sha256'] = hashlib.sha256(requirements.read_bytes()).hexdigest()
         run([*pip, 'install', '--only-binary=:all:', '--no-cache-dir', '--require-hashes',
              '--report', logs/'pip-install.json', '-r', requirements], 'dependencies')
+        runtime_requirements = source/'scripts/requirements-hf-stream.txt'
+        report['runtime_requirements_sha256'] = hashlib.sha256(runtime_requirements.read_bytes()).hexdigest()
+        run([*pip, 'install', '--only-binary=:all:', '--no-cache-dir',
+             '--report', logs/'pip-runtime-install.json', '-r', runtime_requirements], 'runtime-dependencies')
+        run([python, '-c', 'import numpy, pyarrow, huggingface_hub, requests'], 'runtime-imports')
+        if shutil.which('torchrun', path=env['PATH']) is None:
+            raise ValueError('HOST_TORCHRUN_REQUIRED')
+        report['torchrun_executable'] = shutil.which('torchrun', path=env['PATH'])
         run([*pip, 'freeze', '--all'], 'packages')
         # Explicit venv layout avoids parsing a path from merged stdout/stderr.
         sites = list((venv/'lib').glob('python*/site-packages'))
