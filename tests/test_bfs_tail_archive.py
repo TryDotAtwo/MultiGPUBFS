@@ -6,6 +6,29 @@ from scripts.bfs_tail_archive import TailArchive, pack_state, packed_width, publ
 
 
 class TailTests(unittest.TestCase):
+    def test_last_complete_and_thousand_state_incomplete(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            archive=TailArchive(Path(d)/'run',n=3,r=1,start=[0,1,2],
+                actions={'L':'left','R':'right','X':'swap'},program_commit='abc',
+                launch_config={'retention_policy':'last_complete_small_1000'},
+                sample_interval_seconds=.05)
+            for depth,count in enumerate([1,1000,1001,3000]):
+                archive.completed_layer(depth,count,[pack_state([0,1,2])*count],.1,{'0':None})
+            complete=json.loads(archive.snapshot(True,'exhausted').read_text())
+            self.assertEqual([(x['depth'],x['states']) for x in complete['files']],[(0,1),(1,1000),(3,3000)])
+            self.assertTrue(all(x['full_layer'] for x in complete['files']))
+            incomplete=json.loads(archive.snapshot(False,'resource').read_text())
+            self.assertEqual(sum(x['states'] for x in incomplete['files']),1000)
+            self.assertEqual(incomplete['files'][0]['first_state_ordinal'],2000)
+            self.assertFalse(incomplete['files'][0]['full_layer'])
+            self.assertEqual(len(incomplete['layers']),4)
+            for x in incomplete['files']:
+                data=(archive.root/x['path']).read_bytes()
+                self.assertEqual(len(data),x['bytes'])
+                self.assertEqual(hashlib.sha256(data).hexdigest(),x['sha256'])
+            archive.release_working_tail()
+
     def test_fixed_five_layers_for_both_statuses_without_byte_target(self):
         with tempfile.TemporaryDirectory() as d:
             archive=self.make(Path(d)/'run',retained_layers=5,complete_bytes=10000,incomplete_bytes=8)

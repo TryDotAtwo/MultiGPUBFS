@@ -385,9 +385,12 @@ def main(cancelled=None):
     p.add_argument('--deadline-unix',type=float,required=True)
     p.add_argument('--retained-layers',type=int,default=None,
         help='retain only this many final whole completed layers, for COMPLETE and INCOMPLETE; no byte target')
+    p.add_argument('--retention-policy',choices=('last_complete_small_1000',),default=None)
     args = p.parse_args()
     if args.retained_layers is not None and args.retained_layers <= 0:
         p.error('--retained-layers must be positive')
+    if args.retention_policy and args.retained_layers is not None:
+        p.error('choose a retention policy or fixed layers')
     if not math.isfinite(args.deadline_unix) or args.deadline_unix-time.time()<300:
         p.error('finite deadline with at least 300 seconds remaining required')
     if os.name!='posix': p.error('GPU execution requires Linux')
@@ -432,6 +435,11 @@ def main(cancelled=None):
         if 'retained_layers' not in base and (args.root/'sweep.json').exists():
             p.error('changing retention requires a new run root')
         base['retained_layers']=args.retained_layers
+        atomic_json(config_path,base)
+    if args.retention_policy:
+        if (args.root/'sweep.json').exists() and base.get('retention_policy') != args.retention_policy:
+            p.error('changing retention requires a new run root')
+        base['retention_policy']=args.retention_policy
         atomic_json(config_path,base)
     mode=args.upload_mode or base.get('upload_mode','end')
     if base.get('upload_mode',mode)!=mode:
