@@ -1,6 +1,21 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 
 #[test]
+fn fifo_limit_does_not_reserve_an_unrepresentable_full_orbit() {
+    use mgbfs_runtime::archive::ArchiveRingPlan;
+    assert_eq!(ArchiveRingPlan::reference_output_limit(128, u64::MAX, 4096, true).unwrap(), u64::MAX);
+    assert!(ArchiveRingPlan::reference_output_limit(128, u64::MAX, 4096, false).is_err());
+    assert_eq!(ArchiveRingPlan::reference_output_limit(16, 24, 64, false).unwrap(),
+        ArchiveRingPlan::reference_extent_bytes(16, 24, 64).unwrap());
+    for streaming in [false, true] {
+        for (width, states, capacity) in [(0, 24, 64), (33026, 24, 64), (16, 0, 64), (16, 24, 0)] {
+            assert_eq!(ArchiveRingPlan::reference_output_limit(width, states, capacity, streaming)
+                .unwrap_err(), "ARCHIVE_EXTENT_SHAPE");
+        }
+    }
+}
+
+#[test]
 fn stream_writer_fails_when_reader_stops_draining() {
     struct Stalled;
     impl std::io::Write for Stalled {

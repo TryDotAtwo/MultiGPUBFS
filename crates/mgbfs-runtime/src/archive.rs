@@ -81,6 +81,16 @@ mod submission_failure_tests {
     }
 }
 impl ArchiveRingPlan {
+    /// FIFO output owns no disk extent. Its bounded consumer budgets staging;
+    /// this limit only guards the sequential writer's checked wire offset.
+    pub fn reference_output_limit(width: usize, states: u64, capacity: u32,
+        streaming: bool) -> Result<u64> {
+        if !(1..=33025).contains(&width) || states == 0 || capacity == 0 {
+            return Err("ARCHIVE_EXTENT_SHAPE".into());
+        }
+        if streaming { Ok(u64::MAX) }
+        else { Self::reference_extent_bytes(width, states, capacity) }
+    }
     /// A layer capacity is not a bound on the sum of BFS layers. The reference
     /// graph order bounds all archived states and nonempty global depths;
     /// retain a larger explicitly declared layer capacity as a safe bound.

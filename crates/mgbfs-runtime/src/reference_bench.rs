@@ -511,12 +511,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").ok().as_deref(),
         std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
     )?;
+    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     let disk_bytes = if archive_enabled {
-        ArchiveRingPlan::reference_extent_bytes(archive_width, expected_states, capacity)?
+        ArchiveRingPlan::reference_output_limit(archive_width, expected_states, capacity, stream_archive)?
     } else { 0 };
     let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
     let archive_slots = env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize;
-    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
     selection.validate_archive_contract(archive_enabled,
         std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"))?;
     let buckets = env_u32("MGBFS_BUCKETS", 256)?;
@@ -800,6 +800,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+        value["archive_wire_limit_bytes"] = serde_json::json!(disk_bytes);
+        value["disk_reserved_bytes"] = serde_json::json!(if stream_archive { 0 } else { disk_bytes });
         value["output_contract"] = serde_json::json!(if archive_enabled {
             if is_measure { "archive_and_layer_counts" } else { "warmup_layer_counts" }
         } else {
@@ -977,8 +979,8 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     let description = format!("macro-reference-v1;group={group};batch={batch};capacity={capacity};future={future};K={macro_depth};pre={prededup};generation={generation_variant};seed=0x{seed_hex};archive_width={};archive_enabled={archive_enabled}", layout.width);
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let disk_bytes = if archive_enabled {
-        ArchiveRingPlan::reference_extent_bytes(
-            layout.width, graph.expected_max_unique_states, capacity)?
+        ArchiveRingPlan::reference_output_limit(
+            layout.width, graph.expected_max_unique_states, capacity, stream_archive)?
     } else {
         0
     };
@@ -1044,7 +1046,8 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
         "cuda_allocated_used_bytes": allocated,
         "cuda_peak_observed_bytes": used()?.max(allocated),
         "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
-        "pinned_bytes": pinned, "disk_reserved_bytes": disk_bytes,
+        "pinned_bytes": pinned, "disk_reserved_bytes": if stream_archive { 0 } else { disk_bytes },
+        "archive_wire_limit_bytes": disk_bytes,
         "warmup_completed": warmup_completed,
         "bootstrap_digest": digest,
         "archive_commit_scope": if !is_measure { "warmup_ephemeral" }
