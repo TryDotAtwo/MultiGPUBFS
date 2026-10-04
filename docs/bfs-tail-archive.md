@@ -209,3 +209,9 @@ For an existing Windows DPAPI-encrypted token, the saved-run publisher accepts
 Keep this file outside Git. Linux GPU runs use the standard HF_TOKEN secret
 environment or HF login cache. On this Windows host, set HF_HUB_DISABLE_XET=1
 before invoking the publisher to bypass a local Xet cache access failure.
+
+Pinned archive credit exhaustion is storage backpressure, not a graph resource
+stop. Ready slots retain the direct nonblocking path; a full queue waits for
+writer recycle with host-side group cancellation checks. No additional CUDA
+synchronization is added per batch. Writer failure/disconnection still aborts
+the graph. This does not establish LSA/Graph32 performance on B300.

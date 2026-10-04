@@ -33,6 +33,55 @@ pub(crate) fn send_archive_message<T>(
     }
 }
 
+/// Empty pinned credit queues mean storage backpressure, not graph exhaustion.
+/// The common ready-credit path has no wait; only a saturated queue blocks.
+#[cfg(any(test, feature = "cuda"))]
+pub(crate) fn recv_archive_credit<T>(
+    receiver: &std::sync::mpsc::Receiver<T>, cancelled: impl Fn() -> bool,
+) -> Result<T> {
+    use std::sync::mpsc::{TryRecvError, RecvTimeoutError};
+    match receiver.try_recv() {
+        Ok(value) => return Ok(value),
+        Err(TryRecvError::Disconnected) => return Err("ARCHIVE_CREDIT_DISCONNECTED".into()),
+        Err(TryRecvError::Empty) => {}
+    }
+    loop {
+        if cancelled() { return Err("ARCHIVE_CREDIT_CANCELLED".into()); }
+        match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
+            Ok(value) => return Ok(value),
+            Err(RecvTimeoutError::Timeout) => {},
+            Err(RecvTimeoutError::Disconnected) => return Err("ARCHIVE_CREDIT_DISCONNECTED".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod archive_credit_tests {
+    use super::recv_archive_credit;
+    #[test]
+    fn saturated_queue_waits_for_writer_recycle() {
+        let (tx,rx)=std::sync::mpsc::sync_channel(1);
+        let writer=std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            tx.send(42).unwrap();
+        });
+        assert_eq!(recv_archive_credit(&rx, || false).unwrap(),42);
+        writer.join().unwrap();
+    }
+    #[test]
+    fn waiting_credit_observes_group_cancellation_and_disconnected_writer() {
+        let (tx,rx)=std::sync::mpsc::sync_channel::<u8>(1);
+        assert_eq!(recv_archive_credit(&rx, || true).unwrap_err(),"ARCHIVE_CREDIT_CANCELLED");
+        drop(tx);
+        assert_eq!(recv_archive_credit(&rx, || false).unwrap_err(),"ARCHIVE_CREDIT_DISCONNECTED");
+    }
+    #[test]
+    fn ready_credit_retains_direct_fast_path() {
+        let (tx,rx)=std::sync::mpsc::sync_channel(1);tx.send(7).unwrap();
+        assert_eq!(recv_archive_credit(&rx, || panic!("ready path must not wait")).unwrap(),7);
+    }
+}
+
 #[cfg(test)]
 mod submission_failure_tests {
     use std::sync::{Arc, Mutex, mpsc};

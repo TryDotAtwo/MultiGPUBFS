@@ -3738,7 +3738,10 @@ impl DistributedNativeBfs {
         let mut offset = 0u64;
         while offset < count {
             let n = u64::from(archive.rows.min(self.cfg.batch)).min(count - offset) as u32;
-            let slot = archive.acquire()?;
+            let slot = archive.acquire_cancellable(||
+                self.ensure_not_cancelled().is_err() ||
+                self.failure_report.as_ref().is_some_and(|flag|
+                    flag.load(std::sync::atomic::Ordering::Acquire)==2))?;
             let copied = (|| unsafe {
                 let states = self.states.at((begin + offset) as usize * self.stride);
                 check(mgbfs_hash_run(

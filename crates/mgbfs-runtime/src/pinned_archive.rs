@@ -1,4 +1,4 @@
-//! Fixed pinned-slot disk queue. Exhaustion is fatal, never producer backpressure.
+//! Bounded pinned-slot disk queue. Saturation waits for writer recycle; errors cancel.
 use crate::archive::{Archive, ArchiveRingPlan, Extent};
 use mgbfs_core::Result;
 use mgbfs_cuda::{
@@ -166,14 +166,15 @@ impl PinnedArchive {
         self.slots
     }
     pub(crate) fn acquire(&self) -> Result<Slot> {
+        self.acquire_cancellable(|| false)
+    }
+    pub(crate) fn acquire_cancellable(&self,cancelled: impl Fn() -> bool) -> Result<Slot> {
         let mut current = -1;
         let status = unsafe { cudaGetDevice(&mut current) };
         if status != 0 || current != self.device {
             return Err(format!("ARCHIVE_DEVICE_MISMATCH_{current}_{}", self.device));
         }
-        self.free
-            .try_recv()
-            .map_err(|e| format!("ARCHIVE_PIN_RING_FATAL: {e}"))
+        crate::archive::recv_archive_credit(&self.free,cancelled)
     }
     pub(crate) fn submit(&self, slot: Slot, depth: u64, rows: u32) -> Result<()> {
         self.submit_notifying(slot, depth, rows, |_| {})
@@ -247,6 +248,40 @@ mod worker_failure_tests {
         unsafe { std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes); }
         archive.submit(slot, 0, 1).unwrap();
         (archive, report)
+    }
+    #[test]
+    fn occupied_pinned_slots_wait_for_writer_without_losing_readers() {
+        struct PausedExtent {
+            entered: Option<std::sync::mpsc::Sender<()>>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl Extent for PausedExtent {
+            fn reserve(&mut self,_:u64)->std::io::Result<()> { Ok(()) }
+            fn write_at(&mut self,offset:u64,data:&[u8])->std::io::Result<usize> {
+                if offset>=48 {
+                    if let Some(entered)=self.entered.take() {
+                        entered.send(()).unwrap();self.release.recv().unwrap();
+                    }
+                }
+                Ok(data.len())
+            }
+            fn sync(&mut self)->std::io::Result<()> { Ok(()) }
+        }
+        assert_eq!(unsafe {cudaSetDevice(0)},0);
+        let (notify,entered)=std::sync::mpsc::channel();
+        let (release,resume)=std::sync::mpsc::channel();
+        let archive=PinnedArchive::new(PausedExtent {
+            entered:Some(notify),release:resume},4096,4,[0;32],1,2).unwrap();
+        let first=archive.acquire().unwrap();
+        unsafe {std::ptr::write_bytes(first.ptr.cast::<u8>(),0,first.bytes);}
+        archive.submit(first,0,1).unwrap();entered.recv().unwrap();
+        let held=archive.acquire().unwrap();
+        let writer=std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));release.send(()).unwrap();
+        });
+        let recycled=archive.acquire().unwrap();writer.join().unwrap();
+        archive.layer(0,1).unwrap();archive.finish().unwrap();
+        drop(held);drop(recycled);
     }
     #[test]
     fn write_failure_is_published_without_a_producer_poll() {
