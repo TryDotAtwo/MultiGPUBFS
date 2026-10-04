@@ -213,7 +213,7 @@ def u_reference_layers(n, modulus):
 def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None, expected_seed=None,
                             expected_epoch_window=None, expected_config_digest=None,
                             expected_run_contract=None, expected_route_banks=None,
-                            require_bank_reuse=False):
+                            require_bank_reuse=False, expected_owner_backend=None):
     """Reuse the checksummed archive reader, then compare every state/depth."""
     if frame_reader is None:
         from export_hf_dataset import frames
@@ -246,6 +246,8 @@ def verify_process_archives(case, frame_reader=None, n=4, world=2, modulus=None,
         result = json.loads(result_bytes)
         rank_hashes.append(list(hashlib.sha256(result_bytes).digest()))
         rank_digests.append(result.get('bootstrap_digest'))
+        if expected_owner_backend is not None and result.get('owner_backend') != expected_owner_backend:
+            raise ValueError('PROCESS_ORACLE_OWNER_BACKEND')
         if expected_seed is not None and result.get('hash_seed_hex') != expected_seed:
             raise ValueError('PROCESS_ORACLE_HASH_SEED')
         if expected_epoch_window is not None and result.get('epoch_window') != expected_epoch_window:
@@ -509,7 +511,8 @@ def main():
                         modulus=args.unitriangular_modulus, expected_seed=seed_hex,
                         expected_epoch_window=epoch_window, expected_config_digest=expected_config_digest,
                         expected_run_contract='RunConfigV1' if config_snapshot is not None else None,
-                        expected_route_banks=route_banks, require_bank_reuse=args.require_bank_reuse)
+                        expected_route_banks=route_banks, require_bank_reuse=args.require_bank_reuse,
+                        expected_owner_backend=args.owner_backend)
             for stream in streams:
                 stream.flush()
             text = "\n".join((case / f"rank-{rank}.log").read_text(errors="replace")

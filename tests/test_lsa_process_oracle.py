@@ -14,7 +14,7 @@ from test_export_hf_dataset import frame
 class ProcessOracleTests(unittest.TestCase):
     def check(self, mutation=None, result_mutation=None, expected_seed=None, expected_epoch_window=None,
               expected_config_digest=None, expected_run_contract=None, expected_route_banks=None,
-              require_bank_reuse=False, marker_mutation=None):
+              require_bank_reuse=False, marker_mutation=None, expected_owner_backend=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'result').mkdir()
@@ -37,7 +37,7 @@ class ProcessOracleTests(unittest.TestCase):
                 record = dict(status='COMPLETE', local_layer_sizes=counts,
                               hash_seed_hex='00000000000000000000000000000001', epoch_window=3,
                               run_contract='RunConfigV1', route_banks=3, route_bank_reuses=2,
-                              rank=rank, world_size=2, archive_commit_scope='file_fsync',
+                              rank=rank, world_size=2, archive_commit_scope='file_fsync', owner_backend='CUCO_RANK',
                               bootstrap_digest=list(bytes.fromhex('ab' * 32)))
                 if result_mutation:
                     result_mutation(rank, record)
@@ -69,7 +69,12 @@ class ProcessOracleTests(unittest.TestCase):
             return replay.verify_process_archives(root, expected_seed=expected_seed,
                 expected_epoch_window=expected_epoch_window, expected_config_digest=expected_config_digest,
                 expected_run_contract=expected_run_contract, expected_route_banks=expected_route_banks,
-                require_bank_reuse=require_bank_reuse)
+                require_bank_reuse=require_bank_reuse, expected_owner_backend=expected_owner_backend)
+
+    def test_rank_cannot_silently_substitute_requested_owner_backend(self):
+        self.check(expected_owner_backend='CUCO_RANK')
+        with self.assertRaisesRegex(ValueError, 'PROCESS_ORACLE_OWNER_BACKEND'):
+            self.check(expected_owner_backend='BMMA_BUCKET')
 
     def test_group_commit_must_authenticate_exact_rank_results_and_scope(self):
         for key, value in [('schema', 'omit-marker'), ('schema', 'unknown'), ('status', 'INCOMPLETE'),
