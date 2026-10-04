@@ -47,7 +47,7 @@ class ExportDataset(unittest.TestCase):
             for run_id in ("s8-k1-seed0", "s10-k1-seed0"):
                 output = root / run_id
                 subprocess.run(
-                    [sys.executable, str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", run_id,
+                    [sys.executable, "-X", "utf8", str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", run_id,
                      "--summary", str(summary), "--archive", f"0={source}", "--output", str(output)],
                     check=True,
                 )
@@ -67,7 +67,7 @@ class ExportDataset(unittest.TestCase):
             )
             output = root / "dataset"
             subprocess.run(
-                [sys.executable, str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", "r1",
+                [sys.executable, "-X", "utf8", str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", "r1",
                  "--summary", str(summary), "--archive", f"0={source}", "--output", str(output)],
                 check=True,
             )
@@ -84,7 +84,7 @@ class ExportDataset(unittest.TestCase):
             self.assertEqual(manifest["max_depth"], 0)
             self.assertEqual(len(manifest["files"][0]["sha256"]), 64)
             subprocess.run(
-                [sys.executable, str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
+                [sys.executable, "-X", "utf8", str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
                  "--sort-memory-records", "1"], check=True
             )
             verification = json.loads((output / "verification.json").read_text(encoding="utf-8"))
@@ -100,7 +100,7 @@ class ExportDataset(unittest.TestCase):
             item["sha256"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
             (output / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             duplicate = subprocess.run(
-                [sys.executable, str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
+                [sys.executable, "-X", "utf8", str(ROOT / "scripts/verify_hf_dataset.py"), str(output),
                  "--sort-memory-records", "1"], capture_output=True, text=True
             )
             self.assertNotEqual(duplicate.returncode, 0)
@@ -115,7 +115,7 @@ class ExportDataset(unittest.TestCase):
             summary = root / "summary.json"
             summary.write_text('{"status":"COMPLETE"}', encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", "r1",
+                [sys.executable, "-X", "utf8", str(ROOT / "scripts/export_hf_dataset.py"), "--run-id", "r1",
                  "--summary", str(summary), "--archive", f"0={source}", "--output", str(root / "out")],
                 capture_output=True,
             )
