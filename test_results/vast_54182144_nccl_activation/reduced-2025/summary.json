@@ -1,0 +1,125 @@
+{
+  "scope": "independent NCCL activation, no BFS and no disabled resources",
+  "rows": [
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        1,
+        1
+      ],
+      "required_stage": null,
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": true,
+      "pass": true,
+      "mode": "nonblocking",
+      "tool": null
+    },
+    {
+      "returncodes": [
+        7,
+        7
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": null,
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": true,
+      "pass": false,
+      "mode": "nonblocking",
+      "tool": "initcheck"
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_only_create",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": false,
+      "pass": true,
+      "mode": "device_comm_only",
+      "tool": null
+    },
+    {
+      "returncodes": [
+        12,
+        12
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_only_create",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "device_comm_only",
+      "tool": "initcheck"
+    },
+    {
+      "returncodes": [
+        0,
+        0
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        1,
+        1
+      ],
+      "required_stage": "device_comm_create",
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": true,
+      "pass": true,
+      "mode": "device_comm",
+      "tool": null
+    },
+    {
+      "returncodes": [
+        7,
+        7
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_create",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": true,
+      "pass": false,
+      "mode": "device_comm",
+      "tool": "initcheck"
+    }
+  ]
+}

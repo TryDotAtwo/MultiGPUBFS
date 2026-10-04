@@ -1230,3 +1230,11 @@ The next harness revision writes logs during execution and terminates the
 whole launched process group on timeout, so failure stages can be examined
 without orphan contamination. Raw v18 report and initcheck log are in
 `test_results/kaggle_nonblocking_boundary_v18/lsa-bfs-gate/`.
+
+## 2026-10-04 Vast 54182144: full BFS sanitizer gate remains incomplete
+
+Runtime source 52bb77fd8e4cf7ed4187ceeddce598ae5880af43, two independent T4 processes. 16 completed full typed BFS replays: 12 PASS (both DENSE/HASH_FIRST under memcheck/racecheck/synccheck), 4 FAIL (all initcheck selections). Host and pinned executable were both actual 2025.2.1.0, not an independent-version comparison. Failure precedes BFS at NCCL activation with CUDA 719; zero reported sanitizer errors does not establish a pass.
+
+Independent existing NCCL probe, same resources and library: all three plain modes pass, all three initcheck modes fail. The same three failures recur with official CUDA 13.2.23 sanitizer component (actual instrumenter 2026.1.0.0). No filters, suppressions or resource-disabling workaround. A diagnostic-only separately linked NCCL build adds host checkpoints to locate the first failure; it is not production runtime or acceptance evidence. Original runtime library remains unchanged.
+
+Raw logs, JSON and per-file SHA256 receipt: test_results/vast_54182144_nccl_activation/. No graph archives or credentials retained here. Four-tool acceptance, paired performance A/B, multi-GPU macro depth and remaining HF/DB stages remain open.

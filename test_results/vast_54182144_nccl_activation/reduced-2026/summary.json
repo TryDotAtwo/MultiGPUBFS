@@ -1,0 +1,63 @@
+{
+  "tool": "/workspace/sanitizer-13.2/cuda_sanitizer_api-linux-x86_64-13.2.23-archive/compute-sanitizer/compute-sanitizer",
+  "sha256": "dcec87e3437d8127cc58a0b186d4830831ce18a0cd4c5846ac84eac396312172",
+  "rows": [
+    {
+      "returncodes": [
+        7,
+        7
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": null,
+      "reached_stage": [
+        1,
+        1
+      ],
+      "require_window": true,
+      "pass": false,
+      "mode": "nonblocking"
+    },
+    {
+      "returncodes": [
+        12,
+        12
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_only_create",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": false,
+      "pass": false,
+      "mode": "device_comm_only"
+    },
+    {
+      "returncodes": [
+        7,
+        7
+      ],
+      "timed_out": false,
+      "registered_ranks": [
+        0,
+        0
+      ],
+      "required_stage": "device_comm_create",
+      "reached_stage": [
+        0,
+        0
+      ],
+      "require_window": true,
+      "pass": false,
+      "mode": "device_comm"
+    }
+  ]
+}
