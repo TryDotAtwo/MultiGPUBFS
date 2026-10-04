@@ -53,7 +53,12 @@ def seal_current_cohort(root, ledger):
     if not ledger['cases']:
         return
     groups = list(case_groups(root, ledger))
-    if groups and not groups[-1][1]:
+    if ledger.get('configuration',{}).get('base',{}).get('two_seeds'):
+        boundaries=ledger.setdefault('cohort_seal_after',[])
+        for members,_ in groups:
+            key=members[-1][0]
+            if key not in boundaries:boundaries.append(key)
+    elif groups and not groups[-1][1]:
         key = groups[-1][0][-1][0]
         ledger.setdefault('cohort_seal_after', []).append(key)
 

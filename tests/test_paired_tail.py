@@ -46,9 +46,10 @@ class PairedTests(unittest.TestCase):
                 count+=1;return runner(cfg,source,path,runtime)
             result=run_pair(dict(n=7,r=2,world=1,run_id='test-n7-m2'),root,case,{},one,None)
             m=json.loads(result.read_text());self.assertEqual(calls,SEEDS);self.assertFalse(m['comparison']['matched'])
-            ledger=fixture.ledger([case.name]);ledger['cases'][case.name]['replicas']=m['replicas']
+            ledger=fixture.ledger([case.name]);ledger['configuration']['base']['two_seeds']=True;ledger['cases'][case.name]['replicas']=m['replicas']
             self.assertEqual(len(publication_records(ledger)),2)
             seal_current_cohort(root,ledger)
+            self.assertEqual(set(ledger['cohort_seal_after']),{case.name,case.name+'-rep2'})
             self.assertEqual(len(list(case_groups(root,ledger))),2)
             payloads,manifests,_=plan(root,ledger=ledger)
             self.assertEqual(len(payloads),2);self.assertEqual(len(manifests),2)
