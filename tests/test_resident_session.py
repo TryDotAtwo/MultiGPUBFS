@@ -47,7 +47,7 @@ class ResidentTests(unittest.TestCase):
                     text, _ = first.communicate(timeout=5)
                     self.assertEqual(first.returncode, 0)
                     self.assertIn('lrx17r1', text)
-                    query = session.launch(command, dict(env, MGBFS_MEMORY_QUERY='1',MGBFS_TEST_CODE='1'))
+                    query = session.launch([*command,'--search-only'], dict(env, MGBFS_MEMORY_QUERY='1',MGBFS_TEST_CODE='1'))
                     query.communicate(timeout=5)
                     second = session.launch(command, env)
                     second.communicate(timeout=5)
@@ -61,6 +61,10 @@ class ResidentTests(unittest.TestCase):
                     jobs = [json.loads(p.read_text()) for p in (root/'session/generation-0').glob('job-*.json')]
                     self.assertTrue(all(len(j['args']) == 6 for j in jobs))
                     self.assertNotIn('RANK', jobs[0]['env'])
+                    query_job=json.loads((root/'session/generation-0/job-00000001.json').read_text())
+                    next_job=json.loads((root/'session/generation-0/job-00000002.json').read_text())
+                    self.assertEqual(query_job['env']['MGBFS_SEARCH_ONLY'],'1')
+                    self.assertNotIn('MGBFS_SEARCH_ONLY',next_job['env'])
                 finally:
                     session.close()
 

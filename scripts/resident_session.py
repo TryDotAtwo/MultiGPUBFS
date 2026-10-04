@@ -152,8 +152,14 @@ class Session:
         job = JobProcess(self, self.sequence)
         self.job = job
         self.query_job = env.get('MGBFS_MEMORY_QUERY') == '1'
-        payload = dict(schema=1, sequence=self.sequence, args=['resident-bench', *args],
-            env={k:v for k,v in env.items() if k.startswith(('MGBFS_', 'NCCL_'))})
+        job_env={k:v for k,v in env.items() if k.startswith(('MGBFS_', 'NCCL_'))}
+        # Match the native CLI's explicit output-contract flag; worker jobs
+        # enter reference_bench directly instead of re-entering CLI parsing.
+        if command[-1] == '--search-only':
+            job_env.update(MGBFS_SEARCH_ONLY='1',MGBFS_BENCH_SKIP_ARCHIVE='1',MGBFS_ARCHIVE_STREAM='0')
+        else:
+            job_env.pop('MGBFS_SEARCH_ONLY',None)
+        payload = dict(schema=1, sequence=self.sequence, args=['resident-bench', *args],env=job_env)
         path = self.directory/f'job-{self.sequence:08}.json'
         temp = path.with_suffix('.tmp')
         temp.write_text(json.dumps(payload), encoding='utf-8')
