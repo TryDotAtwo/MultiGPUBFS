@@ -11,7 +11,7 @@ def summarize(database: Path) -> dict:
     with closing(sqlite3.connect(f"file:{database}?mode=ro", uri=True)) as db:
         tables = {row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        required = {"CUPTI_ACTIVITY_KIND_RUNTIME", "CUDA_CALLCHAINS", "StringIds"}
+        required = {"CUPTI_ACTIVITY_KIND_RUNTIME", "StringIds"}
         if not required <= tables:
             raise ValueError(f"NSYS_CALLCHAIN_TABLES_MISSING: {sorted(required - tables)}")
         rows = []
@@ -23,6 +23,11 @@ def summarize(database: Path) -> dict:
             if not {"nameId", "callchainId", "start", "end"} <= columns:
                 raise ValueError(f"NSYS_API_COLUMNS_{table}: {sorted(columns)}")
             where = ("names.value LIKE 'cudaStreamSynchronize%' OR "
+                     "names.value LIKE 'cudaEventSynchronize%' OR "
+                     "names.value LIKE 'cudaDeviceSynchronize%' OR "
+                     "names.value LIKE 'cuCtxSynchronize%' OR "
+                     "names.value LIKE 'cuEventSynchronize%' OR "
+                     "names.value LIKE 'cuStreamSynchronize%' OR "
                      "names.value LIKE 'cudaMemcpy%' OR "
                      "names.value LIKE 'cuMemcpy%'")
             rows.extend(db.execute(f"""
@@ -40,7 +45,7 @@ def summarize(database: Path) -> dict:
             """).fetchall())
         chains = {}
         for _, chain_id, _, _ in rows:
-            if chain_id is None or chain_id in chains:
+            if 'CUDA_CALLCHAINS' not in tables or chain_id is None or chain_id in chains:
                 continue
             chains[chain_id] = [symbol for (symbol,) in db.execute("""
                 SELECT names.value
@@ -58,6 +63,7 @@ def summarize(database: Path) -> dict:
             entry["api_duration_ns"] += duration
         return {
             "scope": "CUDA runtime sync/copy API callsites in captured window; profiler overhead applies",
+            "callchain_status": 'AVAILABLE' if 'CUDA_CALLCHAINS' in tables else 'UNAVAILABLE',
             "api_names": [{"api": name, "calls": count} for name, count in api_names],
             "rows": sorted(grouped.values(), key=lambda row: (-row["calls"], row["api"])),
         }
