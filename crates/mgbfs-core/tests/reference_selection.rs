@@ -1,14 +1,22 @@
-use mgbfs_core::config::{FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection, ReferenceTransport};
+use mgbfs_core::config::{
+    FrontierProfile, OwnerBackend, ReferenceOwner, ReferenceSelection, ReferenceTransport,
+};
 
 #[test]
 fn lsa_transport_accepts_device_count_native_and_rank_owners_only() {
     let rank = ReferenceSelection::parse("DENSE", "CUCO_RANK", "ON", false, 64, 8).unwrap();
     assert_eq!(rank.transport, ReferenceTransport::HostSizedNccl);
-    assert_eq!(rank.with_transport("NCCL_LSA").unwrap().transport, ReferenceTransport::Lsa);
+    assert_eq!(
+        rank.with_transport("NCCL_LSA").unwrap().transport,
+        ReferenceTransport::Lsa
+    );
     for profile in ["DENSE", "HASH_FIRST"] {
         for owner in ["CUB_SORT_MERGE", "BMMA_BUCKET"] {
             let native = ReferenceSelection::parse(profile, owner, "ON", false, 64, 8).unwrap();
-            assert_eq!(native.with_transport("NCCL_LSA").unwrap().transport, ReferenceTransport::Lsa);
+            assert_eq!(
+                native.with_transport("NCCL_LSA").unwrap().transport,
+                ReferenceTransport::Lsa
+            );
         }
         for owner in ["CUCO_INDEXED", "CUDF_RELATIONAL"] {
             let library = ReferenceSelection::parse(profile, owner, "ON", false, 64, 8).unwrap();
@@ -159,10 +167,12 @@ fn rank_owner_requires_fixed_pool_and_hash_first_requires_lsa() {
     assert!(selected.with_library_pool(None, true).is_err());
     assert!(selected.with_library_pool(Some("67108864"), false).is_err());
     assert!(selected.with_library_pool(Some("67108864"), true).is_ok());
-    let hash_first = ReferenceSelection::parse("HASH_FIRST", "CUCO_RANK", "ON", false, 64, 8)
-        .unwrap();
+    let hash_first =
+        ReferenceSelection::parse("HASH_FIRST", "CUCO_RANK", "ON", false, 64, 8).unwrap();
     assert_eq!(hash_first.materialization_capacity, Some(64));
-    assert_eq!(hash_first.with_transport("NCCL_LSA").unwrap().transport,
-        mgbfs_core::config::ReferenceTransport::Lsa);
+    assert_eq!(
+        hash_first.with_transport("NCCL_LSA").unwrap().transport,
+        mgbfs_core::config::ReferenceTransport::Lsa
+    );
     assert!(hash_first.with_transport("HOST_SIZED_NCCL").is_err());
 }

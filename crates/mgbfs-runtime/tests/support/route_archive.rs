@@ -14,7 +14,9 @@ impl Extent for MemoryExtent {
             .copy_from_slice(bytes);
         Ok(bytes.len())
     }
-    fn sync(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn sync(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub fn assert_layers(bytes: &[u8], expected: &[Vec<Vec<u8>>], seed: [u8; 16]) {
@@ -24,21 +26,28 @@ pub fn assert_layers(bytes: &[u8], expected: &[Vec<Vec<u8>>], seed: [u8; 16]) {
     let mut actual = vec![Vec::new(); expected.len()];
     let mut offset = 48;
     loop {
-        let word = |at| u64::from_le_bytes(bytes[offset + at..offset + at + 8]
-            .try_into().unwrap()) as usize;
+        let word = |at| {
+            u64::from_le_bytes(bytes[offset + at..offset + at + 8].try_into().unwrap()) as usize
+        };
         let (kind, depth, count, size) = (word(8), word(16), word(24), word(32));
-        if kind == 3 { break; }
+        if kind == 3 {
+            break;
+        }
         if kind == 1 {
             let payload = &bytes[offset + 80..offset + 80 + size];
             for row in 0..count {
                 let state = &payload[row * width..(row + 1) * width];
-                assert_eq!(hash.hash(state).unwrap().to_le_bytes(),
-                    payload[count * width + row * 16..count * width + (row + 1) * 16]);
+                assert_eq!(
+                    hash.hash(state).unwrap().to_le_bytes(),
+                    payload[count * width + row * 16..count * width + (row + 1) * 16]
+                );
                 actual[depth].push(state.to_vec());
             }
         }
         offset += 112 + size;
     }
-    for layer in &mut actual { layer.sort(); }
+    for layer in &mut actual {
+        layer.sort();
+    }
     assert_eq!(actual, expected);
 }

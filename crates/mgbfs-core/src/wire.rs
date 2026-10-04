@@ -174,10 +174,15 @@ pub fn encode_macro_header(
     max_weight: u32,
     stride: u64,
 ) -> Result<[u8; 64]> {
-    if !matches!(header.kind, FrameKind::MacroDense | FrameKind::MacroHashFirst)
-        || max_weight == 0
+    if !matches!(
+        header.kind,
+        FrameKind::MacroDense | FrameKind::MacroHashFirst
+    ) || max_weight == 0
         || header.depth <= source_depth
-        || header.depth > source_depth.checked_add(max_weight).ok_or("WIRE_MACRO_TARGET_DEPTH")?
+        || header.depth
+            > source_depth
+                .checked_add(max_weight)
+                .ok_or("WIRE_MACRO_TARGET_DEPTH")?
     {
         return Err("WIRE_MACRO_TARGET_DEPTH".into());
     }
@@ -193,24 +198,36 @@ pub fn decode_macro_header(
     expected: &ExpectedFrame,
     max_weight: u32,
 ) -> Result<FrameHeader> {
-    if bytes.len() != 64 ||
-        !matches!(expected.kind, FrameKind::MacroDense | FrameKind::MacroHashFirst) ||
-        max_weight == 0
+    if bytes.len() != 64
+        || !matches!(
+            expected.kind,
+            FrameKind::MacroDense | FrameKind::MacroHashFirst
+        )
+        || max_weight == 0
     {
         return Err("WIRE_MACRO_HEADER".into());
     }
     let source_depth = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     let target_depth = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
-    if u64::from(source_depth) != u64::from(expected.depth) ||
-        target_depth <= source_depth ||
-        target_depth > source_depth.checked_add(max_weight).ok_or("WIRE_MACRO_TARGET_DEPTH")?
+    if u64::from(source_depth) != u64::from(expected.depth)
+        || target_depth <= source_depth
+        || target_depth
+            > source_depth
+                .checked_add(max_weight)
+                .ok_or("WIRE_MACRO_TARGET_DEPTH")?
     {
         return Err("WIRE_MACRO_TARGET_DEPTH".into());
     }
     let mut normalized = [0u8; 64];
     normalized.copy_from_slice(bytes);
     normalized[12..16].fill(0);
-    FrameHeader::decode(&normalized, &ExpectedFrame { depth: target_depth, ..*expected })
+    FrameHeader::decode(
+        &normalized,
+        &ExpectedFrame {
+            depth: target_depth,
+            ..*expected
+        },
+    )
 }
 pub fn validate_payload(payload: &[u8], layout: &PayloadLayout) -> Result<()> {
     if payload.len() as u64 != layout.bytes || layout.planes.len() > 3 {
@@ -249,7 +266,10 @@ pub fn validate_macro_candidate_payload(
     state_stride: u64,
     max_weight: u32,
 ) -> Result<()> {
-    if !matches!(header.kind, FrameKind::MacroDense | FrameKind::MacroHashFirst) {
+    if !matches!(
+        header.kind,
+        FrameKind::MacroDense | FrameKind::MacroHashFirst
+    ) {
         return Err("WIRE_MACRO_KIND".into());
     }
     let layout = payload_layout(header.kind, header.count, state_stride)?;

@@ -2,10 +2,16 @@
 // diagnostic reporter. These statuses also include native C ABI codes.
 #[cfg(any(test, feature = "cuda"))]
 pub(crate) fn attach_native_detail(error: String, detail: &[i8]) -> String {
-    let bytes: Vec<u8> = detail.iter().take_while(|&&byte| byte != 0)
-        .map(|&byte| byte as u8).collect();
-    if bytes.is_empty() { error }
-    else { format!("{error}: {}", String::from_utf8_lossy(&bytes)) }
+    let bytes: Vec<u8> = detail
+        .iter()
+        .take_while(|&&byte| byte != 0)
+        .map(|&byte| byte as u8)
+        .collect();
+    if bytes.is_empty() {
+        error
+    } else {
+        format!("{error}: {}", String::from_utf8_lossy(&bytes))
+    }
 }
 
 #[cfg(any(test, feature = "cuda"))]
@@ -14,7 +20,9 @@ pub(crate) fn check_native_status_with_report(
     status: i32,
     report: impl FnOnce(i32, &'static std::panic::Location<'static>),
 ) -> mgbfs_core::Result<()> {
-    if status == 0 { return Ok(()); }
+    if status == 0 {
+        return Ok(());
+    }
     report(status, std::panic::Location::caller());
     Err(format!("CUDA_STATUS_{status}"))
 }
@@ -24,8 +32,12 @@ pub(crate) fn check_native_status_with_report(
 pub(crate) fn check_native_status(status: i32) -> mgbfs_core::Result<()> {
     check_native_status_with_report(status, |status, origin| {
         use std::io::Write;
-        let _ = writeln!(std::io::stderr().lock(),
-            "MGBFS_NATIVE_STATUS status={status} file={} line={}", origin.file(), origin.line());
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "MGBFS_NATIVE_STATUS status={status} file={} line={}",
+            origin.file(),
+            origin.line()
+        );
     })
 }
 
@@ -35,16 +47,22 @@ mod native_status_tests {
     fn native_detail_preserves_status_and_stops_at_nul() {
         let bytes = b"window_register: unhandled cuda error\0stale bytes";
         let detail: Vec<i8> = bytes.iter().map(|&byte| byte as i8).collect();
-        assert_eq!(super::attach_native_detail("CUDA_STATUS_7".into(), &detail),
-            "CUDA_STATUS_7: window_register: unhandled cuda error");
+        assert_eq!(
+            super::attach_native_detail("CUDA_STATUS_7".into(), &detail),
+            "CUDA_STATUS_7: window_register: unhandled cuda error"
+        );
     }
 
     #[test]
     fn native_detail_is_bounded_even_without_terminator() {
-        assert_eq!(super::attach_native_detail("CUDA_STATUS_8".into(), &[120, 121]),
-            "CUDA_STATUS_8: xy");
-        assert_eq!(super::attach_native_detail("CUDA_STATUS_8".into(), &[0, 120]),
-            "CUDA_STATUS_8");
+        assert_eq!(
+            super::attach_native_detail("CUDA_STATUS_8".into(), &[120, 121]),
+            "CUDA_STATUS_8: xy"
+        );
+        assert_eq!(
+            super::attach_native_detail("CUDA_STATUS_8".into(), &[0, 120]),
+            "CUDA_STATUS_8"
+        );
     }
 
     #[test]
@@ -61,7 +79,8 @@ mod native_status_tests {
     fn healthy_status_does_not_invoke_reporter() {
         assert!(super::check_native_status_with_report(0, |_, _| {
             panic!("healthy path must not report or format a failure")
-        }).is_ok());
+        })
+        .is_ok());
     }
 }
 
@@ -75,9 +94,14 @@ pub(crate) struct FailureReportGuard {
 #[cfg(any(test, feature = "cuda"))]
 impl FailureReportGuard {
     pub(crate) fn new(report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>) -> Self {
-        Self { report, armed: true }
+        Self {
+            report,
+            armed: true,
+        }
     }
-    pub(crate) fn disarm(&mut self) { self.armed = false; }
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+    }
     /// Notify before propagating an error when a later-declared resource
     /// would otherwise be destroyed before this guard.
     pub(crate) fn publish(&self) {
@@ -98,12 +122,17 @@ impl Drop for FailureReportGuard {
 #[cfg(test)]
 mod constructor_report_tests {
     use super::FailureReportGuard;
-    use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
+    use std::sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    };
     #[test]
     fn constructor_error_is_reported_before_communicator_cleanup() {
         struct Cleanup(Arc<AtomicU8>);
         impl Drop for Cleanup {
-            fn drop(&mut self) { assert_eq!(self.0.load(Ordering::Acquire), 2); }
+            fn drop(&mut self) {
+                assert_eq!(self.0.load(Ordering::Acquire), 2);
+            }
         }
         let report = Arc::new(AtomicU8::new(0));
         let failed = || -> Result<(), ()> {
@@ -126,13 +155,18 @@ mod constructor_report_tests {
     fn explicit_notification_precedes_later_resource_cleanup() {
         struct Cleanup(Arc<AtomicU8>);
         impl Drop for Cleanup {
-            fn drop(&mut self) { assert_eq!(self.0.load(Ordering::Acquire), 2); }
+            fn drop(&mut self) {
+                assert_eq!(self.0.load(Ordering::Acquire), 2);
+            }
         }
         let report = Arc::new(AtomicU8::new(0));
         let failed = || -> Result<(), ()> {
             let notification = FailureReportGuard::new(Some(report.clone()));
             let _later_resource = Cleanup(report.clone());
-            Err(()).map_err(|error| { notification.publish(); error })
+            Err(()).map_err(|error| {
+                notification.publish();
+                error
+            })
         };
         assert!(failed().is_err());
     }

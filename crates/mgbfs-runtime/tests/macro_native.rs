@@ -89,7 +89,8 @@ fn native_macro_compact_permutation_layers_equal_full_state_oracle() {
             .unwrap()
             .into_iter()
             .map(|layer| {
-                let mut encoded: Vec<_> = layer.into_iter()
+                let mut encoded: Vec<_> = layer
+                    .into_iter()
                     .map(|state| mgbfs_core::matrix::encode_permutation_matrix(&state, n).unwrap())
                     .collect();
                 encoded.sort();
@@ -110,15 +111,21 @@ fn native_macro_compact_permutation_layers_equal_full_state_oracle() {
                         generation_variant: 5,
                         untouched_vram_reserve_bytes: 0,
                     },
-                ).unwrap();
+                )
+                .unwrap();
                 let mut actual = Vec::new();
                 loop {
                     let mut layer = bfs.snapshot().unwrap();
                     layer.sort();
                     actual.push(layer);
-                    if !bfs.advance().unwrap() { break; }
+                    if !bfs.advance().unwrap() {
+                        break;
+                    }
                 }
-                assert_eq!(actual, expected, "S{n} compact K={macro_depth} pre={prededup}");
+                assert_eq!(
+                    actual, expected,
+                    "S{n} compact K={macro_depth} pre={prededup}"
+                );
             }
         }
     }

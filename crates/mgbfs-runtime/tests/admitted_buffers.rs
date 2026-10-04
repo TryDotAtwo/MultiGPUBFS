@@ -59,19 +59,39 @@ fn weighted_consumer_leases_future_depth_frame_from_current_source_ticket() {
     let mut d = AdmittedBuffers::new(1, 0, 2, vec![None], [2048; 4], 1).unwrap();
     let source = d.reserve(Plane::Candidate, 0).unwrap().unwrap();
     d.ready(source, &[2048]).unwrap();
-    let launch = (0..64).find_map(|_| match d.poll().unwrap() {
-        Some(BufferEvent::Launch(l)) => Some(l), _ => None,
-    }).unwrap();
-    let header = FrameHeader { kind: FrameKind::MacroDense, run_tag: 7,
-        sequence: launch.key.epoch, batch: launch.key.generation,
-        depth: 2, source: 0, destination: 0, count: 17 };
+    let launch = (0..64)
+        .find_map(|_| match d.poll().unwrap() {
+            Some(BufferEvent::Launch(l)) => Some(l),
+            _ => None,
+        })
+        .unwrap();
+    let header = FrameHeader {
+        kind: FrameKind::MacroDense,
+        run_tag: 7,
+        sequence: launch.key.epoch,
+        batch: launch.key.generation,
+        depth: 2,
+        source: 0,
+        destination: 0,
+        count: 17,
+    };
     let mut prefix = [0u8; 256];
     prefix[..64].copy_from_slice(&encode_macro_header(header, 0, 3, 32).unwrap());
     d.submit(launch, || Ok(())).unwrap();
     d.transfer_complete(launch).unwrap();
-    let (consumer, input) = d.macro_dense_consumer(launch, &prefix, 7, 32, 17, 3).unwrap().unwrap();
+    let (consumer, input) = d
+        .macro_dense_consumer(launch, &prefix, 7, 32, 17, 3)
+        .unwrap()
+        .unwrap();
     assert_eq!((input.rows, input.target_depth), (17, 2));
-    assert_eq!((input.hash_offset, input.macro_ref_offset, input.state_offset), (256, 768, 1280));
+    assert_eq!(
+        (
+            input.hash_offset,
+            input.macro_ref_offset,
+            input.state_offset
+        ),
+        (256, 768, 1280)
+    );
     d.seal(launch).unwrap();
     assert!(!d.drained(launch).unwrap());
     d.complete(consumer).unwrap();
@@ -292,7 +312,10 @@ fn macro_finalize_ack_requires_settled_history_and_free_reuse_slot() {
     missing.macro_seed_ready().unwrap();
     missing.close_source().unwrap();
     assert!((0..64).any(|_| matches!(missing.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
-    assert_eq!(missing.finalized(true).unwrap_err(), "MACRO_HISTORY_NOT_SETTLED");
+    assert_eq!(
+        missing.finalized(true).unwrap_err(),
+        "MACRO_HISTORY_NOT_SETTLED"
+    );
 
     let mut d = AdmittedBuffers::new(1, 0, 1, vec![None], [16; 4], 1).unwrap();
     d.enable_macro_history(1).unwrap();
@@ -331,16 +354,28 @@ fn macro_completion_waits_for_recorded_work_without_poisoning_control() {
     d.macro_seed_ready().unwrap();
     d.close_source().unwrap();
     assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
-    assert!(!d.macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(false)).unwrap());
-    assert!(d.macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(true)).unwrap());
+    assert!(!d
+        .macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(false))
+        .unwrap());
+    assert!(d
+        .macro_complete_if_ready(MacroCompletion::Settled(1), || Ok(true))
+        .unwrap());
     d.finalized(true).unwrap();
     assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Publish(_)))));
     assert_eq!(d.macro_history_slot_depth(1).unwrap(), Some(1));
-    assert!(!d.macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(false)).unwrap());
-    assert!(d.macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(true)).unwrap());
+    assert!(!d
+        .macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(false))
+        .unwrap());
+    assert!(d
+        .macro_complete_if_ready(MacroCompletion::ArchiveCopied(0), || Ok(true))
+        .unwrap());
     assert_eq!(d.macro_hold_history_reader(1).unwrap(), 1);
-    assert!(!d.macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(false)).unwrap());
-    assert!(d.macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(true)).unwrap());
+    assert!(!d
+        .macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(false))
+        .unwrap());
+    assert!(d
+        .macro_complete_if_ready(MacroCompletion::ReaderReleased(1), || Ok(true))
+        .unwrap());
     d.close_source().unwrap();
     assert!((0..64).any(|_| matches!(d.poll().unwrap(), Some(BufferEvent::Finalize(_)))));
     d.macro_settled(2).unwrap();

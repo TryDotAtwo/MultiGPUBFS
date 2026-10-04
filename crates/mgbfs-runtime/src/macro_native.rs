@@ -27,7 +27,11 @@ mod producer_capture_tests {
     extern "C" {
         fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
         fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
-        fn cudaGraphInstantiateWithFlags(exec: *mut *mut c_void, graph: *mut c_void, flags: u64) -> i32;
+        fn cudaGraphInstantiateWithFlags(
+            exec: *mut *mut c_void,
+            graph: *mut c_void,
+            flags: u64,
+        ) -> i32;
         fn cudaGraphLaunch(exec: *mut c_void, stream: *mut c_void) -> i32;
         fn cudaGraphExecDestroy(exec: *mut c_void) -> i32;
         fn cudaGraphDestroy(graph: *mut c_void) -> i32;
@@ -35,11 +39,20 @@ mod producer_capture_tests {
     #[test]
     fn macro_produce_captures_and_runs_without_host_count_readback() {
         let graph = MatrixGroup::symmetric_permutation_matrices(4).unwrap();
-        let mut bfs = MacroNativeBfs::new(&graph, [0; 16], MacroNativeConfig {
-            macro_depth: 2, batch: 1, layer_capacity: 64,
-            future_capacity_per_depth: 128, prededup: true,
-            generation_variant: 1, untouched_vram_reserve_bytes: 0,
-        }).unwrap();
+        let mut bfs = MacroNativeBfs::new(
+            &graph,
+            [0; 16],
+            MacroNativeConfig {
+                macro_depth: 2,
+                batch: 1,
+                layer_capacity: 64,
+                future_capacity_per_depth: 128,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve_bytes: 0,
+            },
+        )
+        .unwrap();
         assert!(bfs.advance().unwrap()); // Three parents: both producer banks are reused.
         unsafe {
             assert_eq!(cudaStreamSynchronize(bfs.stream.0), 0);
@@ -52,7 +65,9 @@ mod producer_capture_tests {
             let mut captured = std::ptr::null_mut();
             let end = cudaStreamEndCapture(bfs.stream.0, &mut captured);
             if produced.is_err() || end != 0 {
-                if !captured.is_null() { cudaGraphDestroy(captured); }
+                if !captured.is_null() {
+                    cudaGraphDestroy(captured);
+                }
                 panic!("real macro producer cannot capture: produce={produced:?}, end={end}");
             }
             let mut exec = std::ptr::null_mut();
@@ -68,9 +83,12 @@ mod producer_capture_tests {
             if slot.depth.is_some() {
                 let device = slot.state.one::<FrontierState>().unwrap();
                 assert_eq!(device.fatal, 0);
-                assert!(device.count <= slot.count_bound,
+                assert!(
+                    device.count <= slot.count_bound,
                     "future live count {} exceeds scheduled merge bound {}",
-                    device.count, slot.count_bound);
+                    device.count,
+                    slot.count_bound
+                );
             }
         }
         let count = bfs.settle_depth(2).unwrap();
@@ -245,12 +263,21 @@ impl MacroNativeBfs {
     pub fn new(graph: &MatrixGroup, seed: [u8; 16], cfg: MacroNativeConfig) -> Result<Self> {
         graph.validate()?;
         let layout = MacroStateLayout::derive(graph, cfg.generation_variant)?;
-        if cfg.batch == 0 { return Err("MACRO_NATIVE_CONFIG".into()); }
-        let macros = MacroGeneratorSet::compile_bounded(graph, cfg.macro_depth,
-            (i32::MAX as u32 / cfg.batch) as usize)
-            .map_err(|error| if error == "MACRO_TRANSITION_BUDGET" {
+        if cfg.batch == 0 {
+            return Err("MACRO_NATIVE_CONFIG".into());
+        }
+        let macros = MacroGeneratorSet::compile_bounded(
+            graph,
+            cfg.macro_depth,
+            (i32::MAX as u32 / cfg.batch) as usize,
+        )
+        .map_err(|error| {
+            if error == "MACRO_TRANSITION_BUDGET" {
                 "MACRO_NATIVE_CONFIG".into()
-            } else { error })?;
+            } else {
+                error
+            }
+        })?;
         let moves = u32::try_from(macros.transitions.len()).map_err(|_| "MACRO_MOVES")?;
         let candidates = cfg
             .batch
@@ -775,7 +802,9 @@ impl MacroNativeBfs {
                 }
                 slot.depth = Some(target);
                 let old_bound = slot.count_bound;
-                let next_bound = old_bound.checked_add(count).ok_or("COUNT_OVERFLOW")?
+                let next_bound = old_bound
+                    .checked_add(count)
+                    .ok_or("COUNT_OVERFLOW")?
                     .min(self.cfg.future_capacity_per_depth);
                 unsafe {
                     check(mgbfs_route_run(
@@ -820,8 +849,14 @@ impl MacroNativeBfs {
         check(unsafe {
             cudaStreamWaitEvent(self.stream.0, self.archive_done[self.current_bank ^ 1].0, 0)
         })?;
-        check(unsafe { cudaMemsetAsync(self.next_state.ptr, 0,
-            std::mem::size_of::<FrontierState>(), self.stream.0) })?;
+        check(unsafe {
+            cudaMemsetAsync(
+                self.next_state.ptr,
+                0,
+                std::mem::size_of::<FrontierState>(),
+                self.stream.0,
+            )
+        })?;
         let slot_index = (target % self.effective_depth) as usize;
         let slot = &self.future[slot_index];
         if slot.depth.is_some() && slot.depth != Some(target) {
@@ -889,13 +924,25 @@ impl MacroNativeBfs {
                 self.stream.0,
             ))?;
         }
-        check(unsafe { cudaMemcpyAsync(
-            self.history_counts_gpu.at(history_slot * std::mem::size_of::<u32>()),
-            self.next_state.ptr, std::mem::size_of::<u32>(), 3, self.stream.0,
-        ) })?;
+        check(unsafe {
+            cudaMemcpyAsync(
+                self.history_counts_gpu
+                    .at(history_slot * std::mem::size_of::<u32>()),
+                self.next_state.ptr,
+                std::mem::size_of::<u32>(),
+                3,
+                self.stream.0,
+            )
+        })?;
         if self.future[slot_index].depth == Some(target) {
-            check(unsafe { cudaMemsetAsync(self.future[slot_index].state.ptr, 0,
-                std::mem::size_of::<FrontierState>(), self.stream.0) })?;
+            check(unsafe {
+                cudaMemsetAsync(
+                    self.future[slot_index].state.ptr,
+                    0,
+                    std::mem::size_of::<FrontierState>(),
+                    self.stream.0,
+                )
+            })?;
             self.future[slot_index].depth = None;
             self.future[slot_index].count_bound = 0;
         }

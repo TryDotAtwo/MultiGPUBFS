@@ -45,7 +45,11 @@ impl MacroGeneratorSet {
     /// Admission budget counts distinct nonidentity operators, not words.
     /// Stop before retaining an operator that cannot fit the producer slot.
     /// No upper bound on requested depth is introduced.
-    pub fn compile_bounded(graph: &MatrixGroup, requested_depth: u32, max_transitions: usize) -> Result<Self> {
+    pub fn compile_bounded(
+        graph: &MatrixGroup,
+        requested_depth: u32,
+        max_transitions: usize,
+    ) -> Result<Self> {
         graph.validate()?;
         if requested_depth == 0 {
             return Err("MACRO_DEPTH_ZERO".into());

@@ -83,12 +83,24 @@ pub mod ffi {
         /// Requires successful SM75 admission on the same current device.
         /// Same shapes/lifetimes as legacy tc; no per-batch hardware query.
         pub fn mgbfs_generate_hash_only_tc_admitted(
-            n: u32, moves: u32, modulus: u32, stride: u32, parent_capacity: u32,
-            candidate_capacity: u32, source: u32, parent_begin: u64,
-            parents: *const u8, generators: *const u8, coefficients: *const u32,
-            offsets: *const u32, parent_count: *const u32, hashes: *mut u32,
-            origins: *mut RegenerateOrigin, candidate_count: *mut u32,
-            fatal: *mut u32, stream: *mut c_void,
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            stride: u32,
+            parent_capacity: u32,
+            candidate_capacity: u32,
+            source: u32,
+            parent_begin: u64,
+            parents: *const u8,
+            generators: *const u8,
+            coefficients: *const u32,
+            offsets: *const u32,
+            parent_count: *const u32,
+            hashes: *mut u32,
+            origins: *mut RegenerateOrigin,
+            candidate_count: *mut u32,
+            fatal: *mut u32,
+            stream: *mut c_void,
         ) -> i32;
         /// Same pointer/lifetime contract as mgbfs_generate_hash_only.
         pub fn mgbfs_generate_hash_only_tc(
@@ -426,8 +438,13 @@ pub mod ffi {
             context: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_create_with_cancel(
-            rank: u32, world: u32, device: u32, id128: *const c_void,
-            out: *mut *mut c_void, error: *mut c_char, error_capacity: usize,
+            rank: u32,
+            world: u32,
+            device: u32,
+            id128: *const c_void,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
             probe: Option<extern "C" fn(*mut c_void) -> i32>,
             context: *mut c_void,
         ) -> i32;
@@ -486,10 +503,14 @@ pub mod ffi {
             states: *mut *const c_void,
         ) -> i32;
         pub fn mgbfs_nccl_lsa_cancel_word(comm: *mut c_void, word: *mut *mut u32) -> i32;
-        pub fn mgbfs_owner_lsa_fatal_gate(comm: *mut c_void,
+        pub fn mgbfs_owner_lsa_fatal_gate(
+            comm: *mut c_void,
             ring: *mut crate::native_owner::Ring,
             owner: *mut crate::native_owner::Control,
-            send: *mut u32, receive: *mut u32, stream: *mut c_void) -> i32;
+            send: *mut u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_all_gather_u32(
             comm: *mut c_void,
             send: *const u32,

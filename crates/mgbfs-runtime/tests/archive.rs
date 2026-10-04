@@ -3,14 +3,22 @@ use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 #[test]
 fn fifo_limit_does_not_reserve_an_unrepresentable_full_orbit() {
     use mgbfs_runtime::archive::ArchiveRingPlan;
-    assert_eq!(ArchiveRingPlan::reference_output_limit(128, u64::MAX, 4096, true).unwrap(), u64::MAX);
+    assert_eq!(
+        ArchiveRingPlan::reference_output_limit(128, u64::MAX, 4096, true).unwrap(),
+        u64::MAX
+    );
     assert!(ArchiveRingPlan::reference_output_limit(128, u64::MAX, 4096, false).is_err());
-    assert_eq!(ArchiveRingPlan::reference_output_limit(16, 24, 64, false).unwrap(),
-        ArchiveRingPlan::reference_extent_bytes(16, 24, 64).unwrap());
+    assert_eq!(
+        ArchiveRingPlan::reference_output_limit(16, 24, 64, false).unwrap(),
+        ArchiveRingPlan::reference_extent_bytes(16, 24, 64).unwrap()
+    );
     for streaming in [false, true] {
         for (width, states, capacity) in [(0, 24, 64), (33026, 24, 64), (16, 0, 64), (16, 24, 0)] {
-            assert_eq!(ArchiveRingPlan::reference_output_limit(width, states, capacity, streaming)
-                .unwrap_err(), "ARCHIVE_EXTENT_SHAPE");
+            assert_eq!(
+                ArchiveRingPlan::reference_output_limit(width, states, capacity, streaming)
+                    .unwrap_err(),
+                "ARCHIVE_EXTENT_SHAPE"
+            );
         }
     }
 }
@@ -22,14 +30,18 @@ fn stream_writer_fails_when_reader_stops_draining() {
         fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
             Err(std::io::ErrorKind::WouldBlock.into())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut extent = StreamExtent::with_stall_timeout(
-        Stalled, std::time::Duration::from_millis(20));
+    let mut extent =
+        StreamExtent::with_stall_timeout(Stalled, std::time::Duration::from_millis(20));
     extent.reserve(1).unwrap();
     let started = std::time::Instant::now();
-    assert_eq!(extent.write_at(0, b"x").unwrap_err().kind(),
-        std::io::ErrorKind::TimedOut);
+    assert_eq!(
+        extent.write_at(0, b"x").unwrap_err().kind(),
+        std::io::ErrorKind::TimedOut
+    );
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
 }
 
@@ -65,17 +77,29 @@ fn reference_archive_budget_covers_more_total_states_than_one_layer() {
     use mgbfs_runtime::archive::ArchiveRingPlan;
     // A 24-state graph may have a largest rank-local layer of only four.
     // Its run archive still needs room for up to 24 accepted records.
-    assert_eq!(ArchiveRingPlan::reference_extent_bytes(4, 24, 4).unwrap(), 6016);
+    assert_eq!(
+        ArchiveRingPlan::reference_extent_bytes(4, 24, 4).unwrap(),
+        6016
+    );
 }
 #[cfg(target_os = "linux")]
 #[test]
 fn fifo_open_reports_missing_consumer_within_its_deadline() {
     use mgbfs_runtime::archive::create_archive_extent_with_timeout;
-    use std::{ffi::CString, os::unix::ffi::OsStrExt, time::{Duration, Instant}};
-    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    use std::{
+        ffi::CString,
+        os::unix::ffi::OsStrExt,
+        time::{Duration, Instant},
+    };
+    extern "C" {
+        fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
     let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("mgbfs-archive-fifo-{}-{nonce}", std::process::id()));
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("mgbfs-archive-fifo-{}-{nonce}", std::process::id()));
     let name = CString::new(path.as_os_str().as_bytes()).unwrap();
     assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
     let started = Instant::now();
@@ -89,10 +113,17 @@ fn fifo_open_reports_missing_consumer_within_its_deadline() {
 fn fifo_open_streams_to_the_archive_consumer() {
     use mgbfs_runtime::archive::create_archive_extent_with_timeout;
     use std::{ffi::CString, io::Read, os::unix::ffi::OsStrExt, time::Duration};
-    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    extern "C" {
+        fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
     let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("mgbfs-archive-reader-{}-{nonce}", std::process::id()));
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "mgbfs-archive-reader-{}-{nonce}",
+        std::process::id()
+    ));
     let name = CString::new(path.as_os_str().as_bytes()).unwrap();
     assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
     let reader_path = path.clone();
@@ -102,7 +133,8 @@ fn fifo_open_streams_to_the_archive_consumer() {
         file.read_exact(&mut bytes).unwrap();
         bytes
     });
-    let mut writer = create_archive_extent_with_timeout(&path, true, Duration::from_secs(2)).unwrap();
+    let mut writer =
+        create_archive_extent_with_timeout(&path, true, Duration::from_secs(2)).unwrap();
     writer.reserve(3).unwrap();
     assert_eq!(writer.write_at(0, b"abc").unwrap(), 3);
     writer.sync().unwrap();
@@ -114,13 +146,23 @@ fn fifo_open_streams_to_the_archive_consumer() {
 #[test]
 fn connected_fifo_reader_that_never_drains_times_out() {
     use mgbfs_runtime::archive::create_archive_extent_with_timeout;
-    use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc,
-              time::{Duration, Instant}};
-    extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+    use std::{
+        ffi::CString,
+        os::unix::ffi::OsStrExt,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    extern "C" {
+        fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
     let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "mgbfs-archive-stalled-{}-{nonce}", std::process::id()));
+        "mgbfs-archive-stalled-{}-{nonce}",
+        std::process::id()
+    ));
     let name = CString::new(path.as_os_str().as_bytes()).unwrap();
     assert_eq!(unsafe { mkfifo(name.as_ptr(), 0o600) }, 0);
     let reader_path = path.clone();
@@ -131,8 +173,8 @@ fn connected_fifo_reader_that_never_drains_times_out() {
         ready_tx.send(()).unwrap();
         release_rx.recv().unwrap();
     });
-    let mut writer = create_archive_extent_with_timeout(&path, true,
-        Duration::from_millis(50)).unwrap();
+    let mut writer =
+        create_archive_extent_with_timeout(&path, true, Duration::from_millis(50)).unwrap();
     ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let payload = vec![1u8; 8 * 1024 * 1024];
     writer.reserve(payload.len() as u64).unwrap();

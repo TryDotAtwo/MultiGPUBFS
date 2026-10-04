@@ -35,10 +35,12 @@ pub(crate) fn send_archive_message<T>(
 
 #[cfg(test)]
 mod submission_failure_tests {
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{mpsc, Arc, Mutex};
     struct ReaderLease(Arc<Mutex<Vec<&'static str>>>);
     impl Drop for ReaderLease {
-        fn drop(&mut self) { self.0.lock().unwrap().push("reader_cleanup"); }
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("reader_cleanup");
+        }
     }
     #[test]
     fn full_descriptor_ring_reports_before_reader_cleanup() {
@@ -46,7 +48,8 @@ mod submission_failure_tests {
         let (tx, _rx) = mpsc::sync_channel(0);
         let error = super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
             order.lock().unwrap().push("group_failure");
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert!(error.starts_with("ARCHIVE_DESCRIPTOR_RING_FATAL:"));
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
@@ -55,17 +58,24 @@ mod submission_failure_tests {
         let order = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::sync_channel(1);
         drop(rx);
-        assert!(super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
-            order.lock().unwrap().push("group_failure");
-        }).is_err());
+        assert!(
+            super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
+                order.lock().unwrap().push("group_failure");
+            })
+            .is_err()
+        );
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
     #[test]
     fn closed_archive_reports_before_reader_cleanup() {
         let order = Arc::new(Mutex::new(Vec::new()));
-        assert_eq!(super::send_archive_message(None, ReaderLease(order.clone()), |_| {
-            order.lock().unwrap().push("group_failure");
-        }).unwrap_err(), "ARCHIVE_CLOSED");
+        assert_eq!(
+            super::send_archive_message(None, ReaderLease(order.clone()), |_| {
+                order.lock().unwrap().push("group_failure");
+            })
+            .unwrap_err(),
+            "ARCHIVE_CLOSED"
+        );
         assert_eq!(*order.lock().unwrap(), ["group_failure", "reader_cleanup"]);
     }
     #[test]
@@ -74,7 +84,8 @@ mod submission_failure_tests {
         let (tx, rx) = mpsc::sync_channel(1);
         super::send_archive_message(Some(&tx), ReaderLease(order.clone()), |_| {
             panic!("healthy submission must not cancel the rank group");
-        }).unwrap();
+        })
+        .unwrap();
         assert!(order.lock().unwrap().is_empty());
         drop(rx.recv().unwrap());
         assert_eq!(*order.lock().unwrap(), ["reader_cleanup"]);
@@ -83,13 +94,20 @@ mod submission_failure_tests {
 impl ArchiveRingPlan {
     /// FIFO output owns no disk extent. Its bounded consumer budgets staging;
     /// this limit only guards the sequential writer's checked wire offset.
-    pub fn reference_output_limit(width: usize, states: u64, capacity: u32,
-        streaming: bool) -> Result<u64> {
+    pub fn reference_output_limit(
+        width: usize,
+        states: u64,
+        capacity: u32,
+        streaming: bool,
+    ) -> Result<u64> {
         if !(1..=33025).contains(&width) || states == 0 || capacity == 0 {
             return Err("ARCHIVE_EXTENT_SHAPE".into());
         }
-        if streaming { Ok(u64::MAX) }
-        else { Self::reference_extent_bytes(width, states, capacity) }
+        if streaming {
+            Ok(u64::MAX)
+        } else {
+            Self::reference_extent_bytes(width, states, capacity)
+        }
     }
     /// A layer capacity is not a bound on the sum of BFS layers. The reference
     /// graph order bounds all archived states and nonempty global depths;
@@ -212,9 +230,11 @@ impl<W: Write> Extent for StreamExtent<W> {
                 "stream offset or capacity violation",
             ));
         }
-        let deadline = Instant::now().checked_add(self.stall_timeout).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream write deadline")
-        })?;
+        let deadline = Instant::now()
+            .checked_add(self.stall_timeout)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream write deadline")
+            })?;
         let mut written = 0;
         while written < bytes.len() {
             match self.writer.write(&bytes[written..]) {
@@ -224,7 +244,9 @@ impl<W: Write> Extent for StreamExtent<W> {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_STALLED"));
+                            std::io::ErrorKind::TimedOut,
+                            "FIFO_CONSUMER_STALLED",
+                        ));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
@@ -320,19 +342,30 @@ pub fn create_archive_extent_with_timeout(
             "stream archive target is not a FIFO",
         ));
     }
-    let deadline = std::time::Instant::now().checked_add(timeout).ok_or_else(||
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "FIFO_OPEN_DEADLINE"))?;
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "FIFO_OPEN_DEADLINE")
+        })?;
     loop {
         let result = std::fs::OpenOptions::new()
-            .write(true).custom_flags(libc::O_NONBLOCK).open(path);
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path);
         match result {
-            Ok(writer) => return Ok(Box::new(StreamExtent::with_stall_timeout(
-                writer, timeout.min(std::time::Duration::from_secs(30))))),
+            Ok(writer) => {
+                return Ok(Box::new(StreamExtent::with_stall_timeout(
+                    writer,
+                    timeout.min(std::time::Duration::from_secs(30)),
+                )))
+            }
             Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
                 let left = deadline.saturating_duration_since(std::time::Instant::now());
                 if left.is_zero() {
                     return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_TIMEOUT"));
+                        std::io::ErrorKind::TimedOut,
+                        "FIFO_CONSUMER_TIMEOUT",
+                    ));
                 }
                 std::thread::sleep(left.min(std::time::Duration::from_millis(10)));
             }

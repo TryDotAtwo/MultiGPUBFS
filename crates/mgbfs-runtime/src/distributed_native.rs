@@ -1,6 +1,8 @@
 //! Native 1/2/4/8-rank NCCL BFS reference. Torchrun supplies only rank env.
 use crate::event_generation::NativeEvent;
-use crate::failure::{check_native_status as check, process_owner_pair, vote_group_error, OwnerFailurePolicy};
+use crate::failure::{
+    check_native_status as check, process_owner_pair, vote_group_error, OwnerFailurePolicy,
+};
 use crate::jobs::{split, JobSpan};
 #[cfg(feature = "library-owner")]
 use crate::library_native::{finalize_shards, ControlTransfer, LibraryShard};
@@ -20,7 +22,8 @@ use std::ffi::{c_void, CStr};
 extern "C" {
     fn cudaStreamBeginCapture(stream: *mut c_void, mode: i32) -> i32;
     fn cudaStreamEndCapture(stream: *mut c_void, graph: *mut *mut c_void) -> i32;
-    fn cudaGraphInstantiateWithFlags(exec: *mut *mut c_void, graph: *mut c_void, flags: u64) -> i32;
+    fn cudaGraphInstantiateWithFlags(exec: *mut *mut c_void, graph: *mut c_void, flags: u64)
+        -> i32;
     fn cudaGraphLaunch(exec: *mut c_void, stream: *mut c_void) -> i32;
     fn cudaGraphExecDestroy(exec: *mut c_void) -> i32;
     fn cudaGraphDestroy(graph: *mut c_void) -> i32;
@@ -38,10 +41,16 @@ struct OwnerCaptureProbe {
 #[cfg(debug_assertions)]
 impl OwnerCaptureProbe {
     fn begin(stream: *mut c_void) -> Result<Option<Self>> {
-        if std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_none() { return Ok(None); }
+        if std::env::var_os("MGBFS_TEST_OWNER_DAG_CAPTURE").is_none() {
+            return Ok(None);
+        }
         check(unsafe { cudaStreamBeginCapture(stream, 1) })?;
-        Ok(Some(Self { stream, capturing: true,
-            graph: std::ptr::null_mut(), executable: std::ptr::null_mut() }))
+        Ok(Some(Self {
+            stream,
+            capturing: true,
+            graph: std::ptr::null_mut(),
+            executable: std::ptr::null_mut(),
+        }))
     }
     fn launch(mut self) -> Result<()> {
         let status = unsafe { cudaStreamEndCapture(self.stream, &mut self.graph) };
@@ -57,9 +66,15 @@ impl OwnerCaptureProbe {
 impl Drop for OwnerCaptureProbe {
     fn drop(&mut self) {
         unsafe {
-            if self.capturing { cudaStreamEndCapture(self.stream, &mut self.graph); }
-            if !self.executable.is_null() { cudaGraphExecDestroy(self.executable); }
-            if !self.graph.is_null() { cudaGraphDestroy(self.graph); }
+            if self.capturing {
+                cudaStreamEndCapture(self.stream, &mut self.graph);
+            }
+            if !self.executable.is_null() {
+                cudaGraphExecDestroy(self.executable);
+            }
+            if !self.graph.is_null() {
+                cudaGraphDestroy(self.graph);
+            }
         }
     }
 }
@@ -69,28 +84,47 @@ impl Drop for OwnerCaptureProbe {
 struct TraceRange(bool);
 impl TraceRange {
     fn new(enabled: bool, label: &'static [u8]) -> Self {
-        if enabled { unsafe { mgbfs_trace_range_push(label.as_ptr().cast()) }; }
+        if enabled {
+            unsafe { mgbfs_trace_range_push(label.as_ptr().cast()) };
+        }
         Self(enabled)
     }
 }
 impl Drop for TraceRange {
     fn drop(&mut self) {
-        if self.0 { unsafe { mgbfs_trace_range_pop() }; }
+        if self.0 {
+            unsafe { mgbfs_trace_range_pop() };
+        }
     }
 }
 
 extern "C" fn nccl_cancel_probe(context: *mut c_void) -> i32 {
-    if context.is_null() { return 1; }
+    if context.is_null() {
+        return 1;
+    }
     let flag = unsafe { &*context.cast::<std::sync::atomic::AtomicBool>() };
     i32::from(flag.load(std::sync::atomic::Ordering::Acquire))
 }
 extern "C" fn nccl_retirement_probe(context: *mut c_void, publish: i32) -> i32 {
-    if context.is_null() { return -1; }
+    if context.is_null() {
+        return -1;
+    }
     let state = unsafe { &*context.cast::<crate::bootstrap::SearchRetirement>() };
-    if publish < 0 { state.failed.store(true, std::sync::atomic::Ordering::Release); }
-    if publish > 0 { state.local.store(true, std::sync::atomic::Ordering::Release); }
-    if state.failed.load(std::sync::atomic::Ordering::Acquire) { -1 }
-    else { i32::from(state.group.load(std::sync::atomic::Ordering::Acquire)) }
+    if publish < 0 {
+        state
+            .failed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    if publish > 0 {
+        state
+            .local
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    if state.failed.load(std::sync::atomic::Ordering::Acquire) {
+        -1
+    } else {
+        i32::from(state.group.load(std::sync::atomic::Ordering::Acquire))
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -158,15 +192,28 @@ unsafe fn create_rank_owner(
     world: u32,
     stream: *mut c_void,
 ) -> Result<RankHandle> {
-    let old: Vec<_> = library.previous.iter()
-        .map(|range| history_view(previous, library.plane_words, range)).collect();
-    let now: Vec<_> = library.current.iter()
-        .map(|range| history_view(current, library.plane_words, range)).collect();
+    let old: Vec<_> = library
+        .previous
+        .iter()
+        .map(|range| history_view(previous, library.plane_words, range))
+        .collect();
+    let now: Vec<_> = library
+        .current
+        .iter()
+        .map(|range| history_view(current, library.plane_words, range))
+        .collect();
     let capacities = vec![library.capacity; shards as usize];
     let mut rank = std::ptr::null_mut();
     check(mgbfs_library_rank_create_cuco_v1(
-        old.as_ptr(), now.as_ptr(), capacities.as_ptr(), shards, incoming,
-        library.logical_owner, world, stream, &mut rank,
+        old.as_ptr(),
+        now.as_ptr(),
+        capacities.as_ptr(),
+        shards,
+        incoming,
+        library.logical_owner,
+        world,
+        stream,
+        &mut rank,
     ))?;
     if rank.is_null() {
         return Err("LIBRARY_RANK_CREATE_NULL".into());
@@ -187,10 +234,16 @@ unsafe fn finalize_rank_owner(
     check(cudaStreamSynchronize(stream))?;
     let mut counts = vec![0u32; library.previous.len()];
     if !library.rank_accepted.is_null() {
-        check(cudaMemcpy(counts.as_mut_ptr().cast(), library.rank_accepted.cast(),
-            counts.len() * 4, 2))?;
+        check(cudaMemcpy(
+            counts.as_mut_ptr().cast(),
+            library.rank_accepted.cast(),
+            counts.len() * 4,
+            2,
+        ))?;
     }
-    let total = counts.iter().try_fold(0u32, |sum, &n| sum.checked_add(n))
+    let total = counts
+        .iter()
+        .try_fold(0u32, |sum, &n| sum.checked_add(n))
         .ok_or("LIBRARY_RANK_FINALIZE_OVERFLOW")?;
     if total > destination.rows {
         return Err("LIBRARY_RANK_FINALIZE_CAPACITY".into());
@@ -198,9 +251,16 @@ unsafe fn finalize_rank_owner(
     check(mgbfs_library_rank_seal_v1(library.rank))?;
     let mut offset = 0u32;
     for (shard, &rows) in counts.iter().enumerate() {
-        let mut keys = KeysV1 { words: [std::ptr::null(); 4], rows: 0, reserved: 0 };
+        let mut keys = KeysV1 {
+            words: [std::ptr::null(); 4],
+            rows: 0,
+            reserved: 0,
+        };
         check(mgbfs_library_rank_export_shard_v1(
-            library.rank, shard as u32, rows, &mut keys,
+            library.rank,
+            shard as u32,
+            rows,
+            &mut keys,
         ))?;
         if keys.rows != rows {
             return Err("LIBRARY_RANK_EXPORT_COUNT".into());
@@ -208,8 +268,14 @@ unsafe fn finalize_rank_owner(
         for plane in 0..4 {
             if rows != 0 {
                 check(cudaMemcpyAsync(
-                    destination.words[plane].cast_mut().add(offset as usize).cast(),
-                    keys.words[plane].cast(), rows as usize * 4, 3, stream,
+                    destination.words[plane]
+                        .cast_mut()
+                        .add(offset as usize)
+                        .cast(),
+                    keys.words[plane].cast(),
+                    rows as usize * 4,
+                    3,
+                    stream,
                 ))?;
             }
         }
@@ -277,7 +343,7 @@ fn wait_nccl_stream(
             0 => return Ok(()),
             600 => {
                 match unsafe { mgbfs_nccl_poll(comm) } {
-                    0 | 4 => {},
+                    0 | 4 => {}
                     _ => return Err("NCCL_ASYNC_FAILURE".into()),
                 }
                 if std::time::Instant::now() >= deadline {
@@ -345,14 +411,20 @@ struct CancelMirror {
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl CancelMirror {
-    unsafe fn new(token: std::sync::Arc<std::sync::atomic::AtomicBool>, word: *mut u32) -> Result<Self> {
-        if word.is_null() || word as usize % std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0 {
+    unsafe fn new(
+        token: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        word: *mut u32,
+    ) -> Result<Self> {
+        if word.is_null()
+            || word as usize % std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0
+        {
             return Err("LSA_CANCEL_WORD_ALIGNMENT".into());
         }
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_stop = stop.clone();
         let address = word as usize;
-        let worker = std::thread::Builder::new().name("mgbfs-cancel-mirror".into())
+        let worker = std::thread::Builder::new()
+            .name("mgbfs-cancel-mirror".into())
             .spawn(move || {
                 while !worker_stop.load(std::sync::atomic::Ordering::Acquire) {
                     if token.load(std::sync::atomic::Ordering::Acquire) {
@@ -362,14 +434,20 @@ impl CancelMirror {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
-            }).map_err(|e| format!("LSA_CANCEL_MIRROR_THREAD: {e}"))?;
-        Ok(Self { stop, worker: Some(worker) })
+            })
+            .map_err(|e| format!("LSA_CANCEL_MIRROR_THREAD: {e}"))?;
+        Ok(Self {
+            stop,
+            worker: Some(worker),
+        })
     }
 }
 impl Drop for CancelMirror {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 fn admit_device_group(
@@ -403,11 +481,18 @@ fn admit_device_group(
     }
     Ok(())
 }
-fn setup_failure_vote(comm: *mut c_void, stream: *mut c_void,
-                      send: &Buffer, recv: &Buffer, failed: bool,
-                      cancelled: Option<&std::sync::atomic::AtomicBool>) -> Result<bool> {
+fn setup_failure_vote(
+    comm: *mut c_void,
+    stream: *mut c_void,
+    send: &Buffer,
+    recv: &Buffer,
+    failed: bool,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<bool> {
     send.put_u32(u32::from(failed))?;
-    check(unsafe { mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream) })?;
+    check(unsafe {
+        mgbfs_nccl_all_reduce_max_u32(comm, send.ptr.cast(), recv.ptr.cast(), stream)
+    })?;
     wait_nccl_stream(comm, stream, cancelled)?;
     Ok(recv.one::<u32>()? != 0)
 }
@@ -494,7 +579,9 @@ impl Plan {
                 .into_owned();
             return Err(if message.is_empty() {
                 format!("NATIVE_PLAN_CREATE_FAILED status={status}")
-            } else { message });
+            } else {
+                message
+            });
         }
         Ok(Self(p, drop))
     }
@@ -513,73 +600,133 @@ mod plan_error_tests {
         let mut id = [0u8; 128];
         assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
         let cfg = DistributedConfig {
-            route_banks: 4, epoch_window: 3,
-            rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+            route_banks: 4,
+            epoch_window: 3,
+            rank: 0,
+            world: 1,
+            logical_owner_to_rank: vec![0, 0],
             transport: mgbfs_core::config::ReferenceTransport::Lsa,
-            batch: 1, layer_capacity: 64, state_ring_capacity: 128,
-            state_descriptor_capacity: 128, buckets: 8, shards: 2,
-            job_buckets: 2, bucket_capacity: 32, prededup: true,
-            generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            batch: 1,
+            layer_capacity: 64,
+            state_ring_capacity: 128,
+            state_descriptor_capacity: 128,
+            buckets: 8,
+            shards: 2,
+            job_buckets: 2,
+            bucket_capacity: 32,
+            prededup: true,
+            generation_variant: 1,
+            untouched_vram_reserve: 1 << 30,
         };
         let mut bfs = DistributedNativeBfs::new_reference_with_owner(
-            &graph, [42;16], id, cfg, None, OwnerBackend::CubSortMerge, 256,
-        ).unwrap();
+            &graph,
+            [42; 16],
+            id,
+            cfg,
+            None,
+            OwnerBackend::CubSortMerge,
+            256,
+        )
+        .unwrap();
         assert!(bfs.advance().unwrap()); // Exercise actual registered LSA readers.
         let status = unsafe { mgbfs_nccl_abort(bfs.comm.0) };
         bfs.failed = true;
-        assert_eq!(status, 0, "one-rank reader drain must not require a nonexistent peer");
-        assert_eq!(unsafe { mgbfs_nccl_abort(bfs.comm.0) }, 0,
-            "already completed terminal abort must be idempotent");
+        assert_eq!(
+            status, 0,
+            "one-rank reader drain must not require a nonexistent peer"
+        );
+        assert_eq!(
+            unsafe { mgbfs_nccl_abort(bfs.comm.0) },
+            0,
+            "already completed terminal abort must be idempotent"
+        );
     }
     #[test]
     fn invalid_epoch_window_is_rejected_before_device_or_communicator_admission() {
         let graph = MatrixGroup::unitriangular(3, 2).unwrap();
         for (epoch_window, state_descriptor_capacity, expected_error) in [
-            (0, 16, "EPOCH_WINDOW_CONFIG"), (1, 16, "EPOCH_WINDOW_CONFIG"),
+            (0, 16, "EPOCH_WINDOW_CONFIG"),
+            (1, 16, "EPOCH_WINDOW_CONFIG"),
             (2, 0, "STATE_DESCRIPTOR_CAPACITY"),
         ] {
             let cfg = DistributedConfig {
                 route_banks: 2,
                 epoch_window,
-                rank: 0, world: 1, logical_owner_to_rank: vec![0],
+                rank: 0,
+                world: 1,
+                logical_owner_to_rank: vec![0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity,
-                buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
-                prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
+                batch: 2,
+                layer_capacity: 8,
+                state_ring_capacity: 16,
+                state_descriptor_capacity,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: 8,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve: 1 << 30,
             };
-            match DistributedNativeBfs::new(&graph, [0;16], [0;128], cfg) {
+            match DistributedNativeBfs::new(&graph, [0; 16], [0; 128], cfg) {
                 Ok(_) => panic!("invalid credit window admitted"),
                 Err(error) => assert_eq!(error, expected_error),
             }
         }
     }
     extern "C" {
-        fn mgbfs_nccl_lsa_fatal_vote(comm: *mut c_void, send: *const u32,
-            receive: *mut u32, stream: *mut c_void) -> i32;
+        fn mgbfs_nccl_lsa_fatal_vote(
+            comm: *mut c_void,
+            send: *const u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
     }
 
     #[test]
     fn tensor_hash_first_rejects_unsupported_device_at_construction() {
-        extern "C" { fn cudaDeviceGetAttribute(out: *mut i32, attribute: i32, device: i32) -> i32; }
+        extern "C" {
+            fn cudaDeviceGetAttribute(out: *mut i32, attribute: i32, device: i32) -> i32;
+        }
         let (mut major, mut minor) = (0, 0);
         assert_eq!(unsafe { cudaDeviceGetAttribute(&mut major, 75, 0) }, 0);
         assert_eq!(unsafe { cudaDeviceGetAttribute(&mut minor, 76, 0) }, 0);
-        if (major, minor) == (7, 5) { return; } // Unsupported-device fixture only.
+        if (major, minor) == (7, 5) {
+            return;
+        } // Unsupported-device fixture only.
         let graph = MatrixGroup::unitriangular(3, 2).unwrap();
         let mut id = [0u8; 128];
         assert_eq!(unsafe { mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
         let cfg = DistributedConfig {
             route_banks: 2,
             epoch_window: 2,
-            rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+            rank: 0,
+            world: 1,
+            logical_owner_to_rank: vec![0, 0],
             transport: mgbfs_core::config::ReferenceTransport::Lsa,
-            batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
-            buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
-            prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
+            batch: 2,
+            layer_capacity: 8,
+            state_ring_capacity: 16,
+            state_descriptor_capacity: 16,
+            buckets: 8,
+            shards: 2,
+            job_buckets: 2,
+            bucket_capacity: 8,
+            prededup: true,
+            generation_variant: 1,
+            untouched_vram_reserve: 1 << 30,
         };
         match DistributedNativeBfs::new_reference_with_owner_and_cancel(
-            &graph, [0; 16], id, cfg, Some(8), OwnerBackend::CubSortMerge,
-            256, true, None, None,
+            &graph,
+            [0; 16],
+            id,
+            cfg,
+            Some(8),
+            OwnerBackend::CubSortMerge,
+            256,
+            true,
+            None,
+            None,
         ) {
             Ok(_) => panic!("unsupported Tensor backend was admitted until first batch"),
             Err(error) => assert_eq!(error, "HASH_FIRST_TC_DEVICE_UNSUPPORTED"),
@@ -597,36 +744,82 @@ mod plan_error_tests {
             let cfg = DistributedConfig {
                 route_banks: 2,
                 epoch_window: 2,
-                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                rank: 0,
+                world: 1,
+                logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 2, layer_capacity: 8, state_ring_capacity: 16, state_descriptor_capacity: 16,
-                buckets: 8, shards: 2, job_buckets: 2, bucket_capacity: 8,
-                prededup: true, generation_variant: 1, untouched_vram_reserve: 1 << 30,
+                batch: 2,
+                layer_capacity: 8,
+                state_ring_capacity: 16,
+                state_descriptor_capacity: 16,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: 8,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve: 1 << 30,
             };
             let bfs = DistributedNativeBfs::new_reference_with_owner(
-                &graph, [0; 16], id, cfg, None, OwnerBackend::CubSortMerge, 256,
-            ).unwrap();
+                &graph,
+                [0; 16],
+                id,
+                cfg,
+                None,
+                OwnerBackend::CubSortMerge,
+                256,
+            )
+            .unwrap();
             // Generic reductions can be nonzero without an owner failure.
             bfs.collective_send.put_u32(3).unwrap();
-            check(unsafe { mgbfs_nccl_lsa_fatal_vote(
-                bfs.comm.0, bfs.collective_send.ptr.cast(),
-                bfs.collective_recv.ptr.cast(), bfs.stream.0,
-            ) }).unwrap();
+            check(unsafe {
+                mgbfs_nccl_lsa_fatal_vote(
+                    bfs.comm.0,
+                    bfs.collective_send.ptr.cast(),
+                    bfs.collective_recv.ptr.cast(),
+                    bfs.stream.0,
+                )
+            })
+            .unwrap();
             check(unsafe { cudaStreamSynchronize(bfs.stream.0) }).unwrap();
-            assert!(bfs.ensure_not_cancelled().is_ok(), "non-owner vote cancelled admission");
-            bfs.ring.put(&[Ring { fatal: ring_fatal, capacity: 16, ..Ring::default() }]).unwrap();
-            bfs.control.put(&[Control { error: owner_error, ..Control::default() }]).unwrap();
-            check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                bfs.comm.0, bfs.ring.ptr.cast(), bfs.control.ptr.cast(),
-                bfs.collective_send.ptr.cast(), bfs.collective_recv.ptr.cast(), bfs.stream.0,
-            ) }).unwrap();
+            assert!(
+                bfs.ensure_not_cancelled().is_ok(),
+                "non-owner vote cancelled admission"
+            );
+            bfs.ring
+                .put(&[Ring {
+                    fatal: ring_fatal,
+                    capacity: 16,
+                    ..Ring::default()
+                }])
+                .unwrap();
+            bfs.control
+                .put(&[Control {
+                    error: owner_error,
+                    ..Control::default()
+                }])
+                .unwrap();
+            check(unsafe {
+                mgbfs_owner_lsa_fatal_gate(
+                    bfs.comm.0,
+                    bfs.ring.ptr.cast(),
+                    bfs.control.ptr.cast(),
+                    bfs.collective_send.ptr.cast(),
+                    bfs.collective_recv.ptr.cast(),
+                    bfs.stream.0,
+                )
+            })
+            .unwrap();
             // Test-only drain stands for observing a completed epoch credit.
             check(unsafe { cudaStreamSynchronize(bfs.stream.0) }).unwrap();
             let admitted = bfs.ensure_not_cancelled();
             if ring_fatal == 0 && owner_error == 0 {
                 assert!(admitted.is_ok(), "healthy epoch rejected: {admitted:?}");
             } else {
-                assert!(admitted.is_err(), "completed fatal epoch reopened batch admission");
+                assert!(
+                    admitted.is_err(),
+                    "completed fatal epoch reopened batch admission"
+                );
             }
         }
     }
@@ -652,9 +845,19 @@ impl Drop for Stream {
         }
         unsafe {
             let trace = std::env::var_os("MGBFS_TRACE_FAILURE_TEARDOWN").is_some();
-            if trace { eprintln!("MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_begin",self.0); }
+            if trace {
+                eprintln!(
+                    "MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_begin",
+                    self.0
+                );
+            }
             cudaStreamSynchronize(self.0);
-            if trace { eprintln!("MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_end",self.0); }
+            if trace {
+                eprintln!(
+                    "MGBFS_FAILURE_TEARDOWN stream={:?} stage=stream_drain_end",
+                    self.0
+                );
+            }
             cudaStreamDestroy(self.0);
         }
     }
@@ -791,11 +994,15 @@ impl HashFirstStorage {
             pending_counts: [0; 2],
             pending_extents: [Vec::with_capacity(2), Vec::with_capacity(2)],
             device: if ledger.allocations.iter().any(|a| a.name == "device_counts") {
-                Some(HashFirstDevice { counts: b("device_counts")?,
-                    extents: b("device_extents")?, controls: b("device_controls")?,
+                Some(HashFirstDevice {
+                    counts: b("device_counts")?,
+                    extents: b("device_extents")?,
+                    controls: b("device_controls")?,
                     exchange_counts: b("device_exchange_counts")?,
-                    })
-            } else { None },
+                })
+            } else {
+                None
+            },
             ledger,
         })
     }
@@ -880,85 +1087,208 @@ pub struct DistributedNativeBfs {
 }
 impl DistributedNativeBfs {
     fn rank_owner_mode(&self) -> bool {
-        if self.native_rank.is_some() { return true; }
+        if self.native_rank.is_some() {
+            return true;
+        }
         #[cfg(feature = "library-owner")]
-        if self.library_owner.as_ref().is_some_and(|owner| owner.rank_mode) { return true; }
+        if self
+            .library_owner
+            .as_ref()
+            .is_some_and(|owner| owner.rank_mode)
+        {
+            return true;
+        }
         false
     }
     fn commit_rank_native_batch(
-        &mut self, states: *const u8, hashes: *const c_void,
-        begin: *const u32, rows: *const u32, source_rows: *const u32, group: usize,
+        &mut self,
+        states: *const u8,
+        hashes: *const c_void,
+        begin: *const u32,
+        rows: *const u32,
+        source_rows: *const u32,
+        group: usize,
     ) -> Result<()> {
         let owner = self.owner.as_ref().ok_or("NATIVE_OWNER_MISSING")?;
         let rank = self.native_rank.as_ref().ok_or("NATIVE_RANK_MISSING")?;
         #[cfg(debug_assertions)]
         let capture = OwnerCaptureProbe::begin(self.stream.0)?;
-        let logical_owner = self.cfg.logical_owner_to_rank.iter()
-            .position(|&r| r == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
+        let logical_owner = self
+            .cfg
+            .logical_owner_to_rank
+            .iter()
+            .position(|&r| r == self.cfg.rank)
+            .ok_or("OWNER_MAP")? as u32;
         let s = self.stream.0;
         let extent = self.extent.ptr.cast::<Extent>();
         let selected_count = unsafe { self.control.at(8).cast::<u32>() };
         unsafe {
-            check(mgbfs_bounded_owner_rank_compare(owner.plan.0, self.jobs_gpu.ptr.cast(),
-                self.cfg.buckets, hashes, begin, rows, source_rows,
-                self.prev.ptr, rank.previous.ptr.cast(), self.prev_count.into(),
-                self.curr.ptr, rank.current.ptr.cast(), self.current_count.into(),
-                owner.accepted.ptr, owner.lengths.ptr.cast(), logical_owner,
-                self.cfg.world, self.cfg.buckets/self.cfg.shards, self.depth,
-                owner.counts.ptr.cast(), self.control.ptr.cast(), self.ring.ptr.cast(), s))?;
-            check(mgbfs_bounded_owner_rank_metadata(owner.counts.ptr.cast(),
-                owner.lengths.ptr.cast(), self.cfg.buckets, self.cfg.shards,
-                self.cfg.bucket_capacity, rank.survivors.ptr.cast(), rank.accepted.ptr.cast(),
-                rank.capacities.ptr.cast(), rank.offsets.ptr.cast(), self.control.ptr.cast(), s))?;
-            check(mgbfs_state_reserve_rank_batch(self.ring.ptr.cast(), self.control.ptr.cast(),
-                extent, rank.survivors.ptr.cast(), rank.accepted.ptr.cast(),
-                rank.capacities.ptr.cast(), self.cfg.shards, rank.offsets.ptr.cast(),
-                self.layer_count.ptr.cast(), self.cfg.layer_capacity,
+            check(mgbfs_bounded_owner_rank_compare(
+                owner.plan.0,
+                self.jobs_gpu.ptr.cast(),
+                self.cfg.buckets,
+                hashes,
+                begin,
+                rows,
+                source_rows,
+                self.prev.ptr,
+                rank.previous.ptr.cast(),
+                self.prev_count.into(),
+                self.curr.ptr,
+                rank.current.ptr.cast(),
+                self.current_count.into(),
+                owner.accepted.ptr,
+                owner.lengths.ptr.cast(),
+                logical_owner,
+                self.cfg.world,
+                self.cfg.buckets / self.cfg.shards,
+                self.depth,
+                owner.counts.ptr.cast(),
+                self.control.ptr.cast(),
+                self.ring.ptr.cast(),
+                s,
+            ))?;
+            check(mgbfs_bounded_owner_rank_metadata(
+                owner.counts.ptr.cast(),
+                owner.lengths.ptr.cast(),
+                self.cfg.buckets,
+                self.cfg.shards,
+                self.cfg.bucket_capacity,
+                rank.survivors.ptr.cast(),
+                rank.accepted.ptr.cast(),
+                rank.capacities.ptr.cast(),
+                rank.offsets.ptr.cast(),
+                self.control.ptr.cast(),
+                s,
+            ))?;
+            check(mgbfs_state_reserve_rank_batch(
+                self.ring.ptr.cast(),
+                self.control.ptr.cast(),
+                extent,
+                rank.survivors.ptr.cast(),
+                rank.accepted.ptr.cast(),
+                rank.capacities.ptr.cast(),
+                self.cfg.shards,
+                rank.offsets.ptr.cast(),
+                self.layer_count.ptr.cast(),
+                self.cfg.layer_capacity,
                 self.hash_first.as_ref().map_or(0, |h| h.capacity),
-                u32::from(self.hash_first.is_some()), s))?;
-            check(mgbfs_bounded_owner_rank_commit(owner.plan.0, self.jobs_gpu.ptr.cast(),
-                self.cfg.buckets, hashes, owner.accepted.ptr, owner.lengths.ptr.cast(),
-                owner.counts.ptr.cast(), self.control.ptr.cast(),
-                std::ptr::addr_of!((*extent).granted_rows), owner.selected.ptr.cast(), s))?;
+                u32::from(self.hash_first.is_some()),
+                s,
+            ))?;
+            check(mgbfs_bounded_owner_rank_commit(
+                owner.plan.0,
+                self.jobs_gpu.ptr.cast(),
+                self.cfg.buckets,
+                hashes,
+                owner.accepted.ptr,
+                owner.lengths.ptr.cast(),
+                owner.counts.ptr.cast(),
+                self.control.ptr.cast(),
+                std::ptr::addr_of!((*extent).granted_rows),
+                owner.selected.ptr.cast(),
+                s,
+            ))?;
             if let Some(h) = self.hash_first.as_ref() {
                 let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
-                check(mgbfs_state_build_rank_requests(states.cast(), source_rows,
-                    self.candidates, owner.selected.ptr.cast(), selected_count, h.capacity,
-                    h.requests[group].ptr.cast(), h.targets[group].ptr.cast(),
-                    d.counts.at(group*4).cast(), self.ring.ptr.cast(), self.control.ptr.cast(), extent, s))?;
-                check(cudaMemcpyAsync(d.extents.at(group*std::mem::size_of::<Extent>()),
-                    extent.cast(), std::mem::size_of::<Extent>(), 3, s))?;
-                check(cudaMemcpyAsync(d.controls.at(group*std::mem::size_of::<Control>()),
-                    self.control.ptr, std::mem::size_of::<Control>(), 3, s))?;
+                check(mgbfs_state_build_rank_requests(
+                    states.cast(),
+                    source_rows,
+                    self.candidates,
+                    owner.selected.ptr.cast(),
+                    selected_count,
+                    h.capacity,
+                    h.requests[group].ptr.cast(),
+                    h.targets[group].ptr.cast(),
+                    d.counts.at(group * 4).cast(),
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    extent,
+                    s,
+                ))?;
+                check(cudaMemcpyAsync(
+                    d.extents.at(group * std::mem::size_of::<Extent>()),
+                    extent.cast(),
+                    std::mem::size_of::<Extent>(),
+                    3,
+                    s,
+                ))?;
+                check(cudaMemcpyAsync(
+                    d.controls.at(group * std::mem::size_of::<Control>()),
+                    self.control.ptr,
+                    std::mem::size_of::<Control>(),
+                    3,
+                    s,
+                ))?;
             } else {
-                check(mgbfs_state_materialize_rank_batch(states, source_rows,
-                    self.candidates, owner.selected.ptr.cast(), selected_count,
-                    self.candidates, self.stride as u32, self.states.ptr.cast(),
-                    self.ring.ptr.cast(), self.control.ptr.cast(), extent, s))?;
-                check(mgbfs_state_publish_next_extent(self.ring.ptr.cast(), self.control.ptr.cast(),
-                    extent, self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
-                    self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(), 2, s))?;
+                check(mgbfs_state_materialize_rank_batch(
+                    states,
+                    source_rows,
+                    self.candidates,
+                    owner.selected.ptr.cast(),
+                    selected_count,
+                    self.candidates,
+                    self.stride as u32,
+                    self.states.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    extent,
+                    s,
+                ))?;
+                check(mgbfs_state_publish_next_extent(
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    extent,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr
+                        .cast(),
+                    self.next_extents
+                        .as_ref()
+                        .ok_or("NEXT_EXTENTS_MISSING")?
+                        .ptr
+                        .cast(),
+                    2,
+                    s,
+                ))?;
             }
         }
         #[cfg(debug_assertions)]
-        if let Some(capture) = capture { capture.launch()?; }
+        if let Some(capture) = capture {
+            capture.launch()?;
+        }
         Ok(())
     }
     /// Requested host-pinned payload; CUDA's page/registration overhead is not
     /// part of this byte-exact payload and is measured separately.
     pub fn transport_control_pinned_payload_bytes(&self) -> u64 {
-        if self.lsa_view.is_some() { 4 } else { 0 }
+        if self.lsa_view.is_some() {
+            4
+        } else {
+            0
+        }
     }
     pub fn abort_group(&mut self) {
         if !self.failed {
             self.failed = true;
-            unsafe { mgbfs_nccl_abort(self.comm.0); }
+            unsafe {
+                mgbfs_nccl_abort(self.comm.0);
+            }
         }
     }
-    pub fn set_cancel_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
+    pub fn set_cancel_token(
+        &mut self,
+        token: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()> {
         self.cancel_mirror = None;
-        check(unsafe { mgbfs_nccl_bind_cancel(self.comm.0, Some(nccl_cancel_probe),
-            std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
+        check(unsafe {
+            mgbfs_nccl_bind_cancel(
+                self.comm.0,
+                Some(nccl_cancel_probe),
+                std::sync::Arc::as_ptr(&token).cast_mut().cast(),
+            )
+        })?;
         self.cancel_requested = Some(token.clone());
         if self.lsa_view.is_some() {
             let mut word = std::ptr::null_mut();
@@ -970,9 +1300,17 @@ impl DistributedNativeBfs {
     pub fn set_failure_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicU8>) {
         self.failure_report = Some(token);
     }
-    pub fn set_retirement_token(&mut self, token: std::sync::Arc<crate::bootstrap::SearchRetirement>) -> Result<()> {
-        check(unsafe { mgbfs_nccl_bind_retirement(self.comm.0, Some(nccl_retirement_probe),
-            std::sync::Arc::as_ptr(&token).cast_mut().cast()) })?;
+    pub fn set_retirement_token(
+        &mut self,
+        token: std::sync::Arc<crate::bootstrap::SearchRetirement>,
+    ) -> Result<()> {
+        check(unsafe {
+            mgbfs_nccl_bind_retirement(
+                self.comm.0,
+                Some(nccl_retirement_probe),
+                std::sync::Arc::as_ptr(&token).cast_mut().cast(),
+            )
+        })?;
         self.retirement = Some(token);
         Ok(())
     }
@@ -980,14 +1318,23 @@ impl DistributedNativeBfs {
         if let Some(view) = self.lsa_view.as_ref() {
             let stopped = unsafe { &*view.terminal }.load(std::sync::atomic::Ordering::Acquire);
             if stopped != 0 {
-                return Err(if stopped & 2 != 0 { "GROUP_OWNER_OR_PRE_OWNER_FATAL:LSA_DEVICE_LOGICAL_FATAL" }
-                    else { "LSA_TRANSPORT_CANCELLED" }.into());
+                return Err(if stopped & 2 != 0 {
+                    "GROUP_OWNER_OR_PRE_OWNER_FATAL:LSA_DEVICE_LOGICAL_FATAL"
+                } else {
+                    "LSA_TRANSPORT_CANCELLED"
+                }
+                .into());
             }
         }
-        if self.cancel_requested.as_ref().is_some_and(|flag|
-            flag.load(std::sync::atomic::Ordering::Acquire)) {
+        if self
+            .cancel_requested
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+        {
             Err("REMOTE_SEARCH_CANCELLED".into())
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     }
     // A stream containing NCCL or LSA work must not trap the dispatcher in
     // cudaStreamSynchronize: only this dispatcher is allowed to abort its
@@ -1006,7 +1353,7 @@ impl DistributedNativeBfs {
                 0 => return self.ensure_not_cancelled(),
                 600 => {
                     match unsafe { mgbfs_nccl_poll(self.comm.0) } {
-                        0 | 4 => {},
+                        0 | 4 => {}
                         _ => return Err("EPOCH_NCCL_ASYNC_FAILURE".into()),
                     }
                     if std::time::Instant::now() >= deadline {
@@ -1076,22 +1423,39 @@ impl DistributedNativeBfs {
         tensor_generation: bool,
         library_owner: ReferenceOwner,
     ) -> Result<Self> {
-        Self::new_library_reference_with_owner_and_cancel(graph, seed, id, cfg,
-            materialization_capacity, pool_bytes, tensor_generation, library_owner, None, None)
+        Self::new_library_reference_with_owner_and_cancel(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            pool_bytes,
+            tensor_generation,
+            library_owner,
+            None,
+            None,
+        )
     }
     #[cfg(feature = "library-owner")]
     pub fn new_library_reference_with_owner_and_cancel(
-        graph: &MatrixGroup, seed: [u8; 16], id: [u8; 128],
-        cfg: DistributedConfig, materialization_capacity: Option<u32>,
-        pool_bytes: u64, tensor_generation: bool, library_owner: ReferenceOwner,
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        pool_bytes: u64,
+        tensor_generation: bool,
+        library_owner: ReferenceOwner,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         if matches!(library_owner, ReferenceOwner::Native(_)) {
             return Err("REFERENCE_LIBRARY_OWNER".into());
         }
-        if matches!(library_owner, ReferenceOwner::CucoRank) && materialization_capacity.is_some()
-            && cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa {
+        if matches!(library_owner, ReferenceOwner::CucoRank)
+            && materialization_capacity.is_some()
+            && cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa
+        {
             return Err("REFERENCE_CUCO_RANK_DENSE_ONLY".into());
         }
         if tensor_generation && materialization_capacity.is_none() {
@@ -1182,13 +1546,28 @@ impl DistributedNativeBfs {
         owner: OwnerBackend,
         tile_limit: u32,
     ) -> Result<Self> {
-        Self::new_reference_with_owner_and_cancel(graph, seed, id, cfg,
-            materialization_capacity, owner, tile_limit, false, None, None)
+        Self::new_reference_with_owner_and_cancel(
+            graph,
+            seed,
+            id,
+            cfg,
+            materialization_capacity,
+            owner,
+            tile_limit,
+            false,
+            None,
+            None,
+        )
     }
     pub fn new_reference_with_owner_and_cancel(
-        graph: &MatrixGroup, seed: [u8; 16], id: [u8; 128],
-        cfg: DistributedConfig, materialization_capacity: Option<u32>,
-        owner: OwnerBackend, tile_limit: u32, tensor_generation: bool,
+        graph: &MatrixGroup,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        materialization_capacity: Option<u32>,
+        owner: OwnerBackend,
+        tile_limit: u32,
+        tensor_generation: bool,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
@@ -1246,13 +1625,17 @@ impl DistributedNativeBfs {
         owner: ReferenceOwner,
         pool_bytes: Option<u64>,
     ) -> Result<Self> {
-        Self::new_lrx_multiset_reference_and_cancel(word_graph, seed, id, cfg,
-            owner, pool_bytes, None, None)
+        Self::new_lrx_multiset_reference_and_cancel(
+            word_graph, seed, id, cfg, owner, pool_bytes, None, None,
+        )
     }
     pub fn new_lrx_multiset_reference_and_cancel(
         word_graph: &mgbfs_core::lrx_multiset::LrxMultiset,
-        seed: [u8; 16], id: [u8; 128], cfg: DistributedConfig,
-        owner: ReferenceOwner, pool_bytes: Option<u64>,
+        seed: [u8; 16],
+        id: [u8; 128],
+        cfg: DistributedConfig,
+        owner: ReferenceOwner,
+        pool_bytes: Option<u64>,
         startup_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
@@ -1260,15 +1643,29 @@ impl DistributedNativeBfs {
             return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
         }
         let (native, library) = match (owner, pool_bytes) {
-            (ReferenceOwner::Native(OwnerBackend::CubSortMerge), None) =>
-                (OwnerBackend::CubSortMerge, None),
-            (ReferenceOwner::CucoIndexed, Some(bytes)) =>
-                (OwnerBackend::CubSortMerge, Some((bytes, owner))),
+            (ReferenceOwner::Native(OwnerBackend::CubSortMerge), None) => {
+                (OwnerBackend::CubSortMerge, None)
+            }
+            (ReferenceOwner::CucoIndexed, Some(bytes)) => {
+                (OwnerBackend::CubSortMerge, Some((bytes, owner)))
+            }
             _ => return Err("LRX_MULTISET_OWNER_CONFIG".into()),
         };
         let graph = word_graph.position_group()?;
-        Self::new_profile(&graph, seed, id, cfg, None, native, 256, false,
-            library, Some(word_graph.start()), startup_cancel, startup_failure)
+        Self::new_profile(
+            &graph,
+            seed,
+            id,
+            cfg,
+            None,
+            native,
+            256,
+            false,
+            library,
+            Some(word_graph.start()),
+            startup_cancel,
+            startup_failure,
+        )
     }
     fn new_profile(
         graph: &MatrixGroup,
@@ -1285,9 +1682,15 @@ impl DistributedNativeBfs {
         startup_failure: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let library_pool_bytes = library_options.map(|(bytes, _)| bytes);
-        if !(2..=4).contains(&cfg.route_banks) { return Err("ROUTE_BANK_CONFIG".into()); }
-        if cfg.epoch_window < 2 { return Err("EPOCH_WINDOW_CONFIG".into()); }
-        if cfg.state_descriptor_capacity == 0 { return Err("STATE_DESCRIPTOR_CAPACITY".into()); }
+        if !(2..=4).contains(&cfg.route_banks) {
+            return Err("ROUTE_BANK_CONFIG".into());
+        }
+        if cfg.epoch_window < 2 {
+            return Err("EPOCH_WINDOW_CONFIG".into());
+        }
+        if cfg.state_descriptor_capacity == 0 {
+            return Err("STATE_DESCRIPTOR_CAPACITY".into());
+        }
         let epoch_window = cfg.epoch_window;
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa
             && (cfg.world == 0
@@ -1364,7 +1767,8 @@ impl DistributedNativeBfs {
                 return Err("COMPACT_REQUIRES_PERMUTATION_GROUP".into());
             }
             if let Some(start) = compact_start {
-                if start.len() != graph.rows || start.iter().any(|&x| usize::from(x) >= graph.rows) {
+                if start.len() != graph.rows || start.iter().any(|&x| usize::from(x) >= graph.rows)
+                {
                     return Err("LRX_MULTISET_STATE".into());
                 }
                 start.to_vec()
@@ -1410,7 +1814,8 @@ impl DistributedNativeBfs {
         } else {
             crate::distributed_memory::shared_buffers(shared_shape)?
         };
-        let shared_memory = crate::distributed_memory::with_route_banks(&shared_memory, cfg.route_banks)?;
+        let shared_memory =
+            crate::distributed_memory::with_route_banks(&shared_memory, cfg.route_banks)?;
         let mut owned_memory = mgbfs_core::memory::AllocationLedger::new(u64::MAX, 0)?;
         for a in &shared_memory.allocations {
             owned_memory.add(&format!("shared.{}", a.name), a.payload_bytes, 1, 256)?;
@@ -1431,8 +1836,18 @@ impl DistributedNativeBfs {
             )?;
             if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
                 l.add("device_counts", 2, 4, 256)?;
-                l.add("device_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
-                l.add("device_controls", 2, std::mem::size_of::<Control>() as u64, 256)?;
+                l.add(
+                    "device_extents",
+                    2,
+                    std::mem::size_of::<Extent>() as u64,
+                    256,
+                )?;
+                l.add(
+                    "device_controls",
+                    2,
+                    std::mem::size_of::<Control>() as u64,
+                    256,
+                )?;
                 l.add("device_exchange_counts", cfg.world.into(), 4, 256)?;
             }
             for a in &l.allocations {
@@ -1487,8 +1902,8 @@ impl DistributedNativeBfs {
             )?;
         }
         if cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa {
-            let slot = crate::distributed_memory::lsa_symmetric_slot_bytes(
-                candidates, stride as u32)?;
+            let slot =
+                crate::distributed_memory::lsa_symmetric_slot_bytes(candidates, stride as u32)?;
             owned_memory.add("transport.lsa_symmetric_slot", slot, 1, 256)?;
         }
         let mut raw = std::ptr::null_mut();
@@ -1503,11 +1918,15 @@ impl DistributedNativeBfs {
         let exchange_stream = Stream(raw_exchange);
         let exchange_done = Event::new()?;
         let mut epoch_completed = Vec::new();
-        epoch_completed.try_reserve_exact(epoch_window)
+        epoch_completed
+            .try_reserve_exact(epoch_window)
             .map_err(|_| "EPOCH_EVENT_CAPACITY")?;
-        for _ in 0..epoch_window { epoch_completed.push(Event::new()?); }
+        for _ in 0..epoch_window {
+            epoch_completed.push(Event::new()?);
+        }
         let mut epoch_outstanding = std::collections::VecDeque::new();
-        epoch_outstanding.try_reserve_exact(epoch_window)
+        epoch_outstanding
+            .try_reserve_exact(epoch_window)
             .map_err(|_| "EPOCH_CREDIT_CAPACITY")?;
         let mut raw_archive = std::ptr::null_mut();
         check(unsafe { cudaStreamCreateWithFlags(&mut raw_archive, 1) })?;
@@ -1523,9 +1942,14 @@ impl DistributedNativeBfs {
                 &mut comm,
                 error.as_mut_ptr(),
                 512,
-                startup_cancel.as_ref().map(|_| nccl_cancel_probe as extern "C" fn(*mut c_void) -> i32),
-                startup_cancel.as_ref().map_or(std::ptr::null_mut(), |token|
-                    std::sync::Arc::as_ptr(token).cast_mut().cast()),
+                startup_cancel
+                    .as_ref()
+                    .map(|_| nccl_cancel_probe as extern "C" fn(*mut c_void) -> i32),
+                startup_cancel
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |token| {
+                        std::sync::Arc::as_ptr(token).cast_mut().cast()
+                    }),
             )
         } != 0
         {
@@ -1539,7 +1963,10 @@ impl DistributedNativeBfs {
         let mut startup_report = crate::failure::FailureReportGuard::new(startup_failure);
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_CONSTRUCTOR_FAULT_RANK")
-            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(cfg.rank) {
+            .ok()
+            .and_then(|rank| rank.parse::<u32>().ok())
+            == Some(cfg.rank)
+        {
             return Err("TEST_INJECTED_CONSTRUCTOR_ERROR".into());
         }
         admit_device_group(
@@ -1555,433 +1982,527 @@ impl DistributedNativeBfs {
             // Reserve the control words before the potentially large symmetric
             // allocation, so an OOM in prepare can still be voted by all ranks.
             error.fill(0);
-            let prepared = check(unsafe { mgbfs_nccl_lsa_prepare(
-                comm.0, candidates, stride as u32,
-                error.as_mut_ptr(), error.len(),
-            ) });
+            let prepared = check(unsafe {
+                mgbfs_nccl_lsa_prepare(
+                    comm.0,
+                    candidates,
+                    stride as u32,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            });
             vote_group_error(
-                prepared.map_err(|status| format!("LSA_PREPARE_GROUP: {}",
-                    crate::failure::attach_native_detail(status, &error))),
-                |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                           failed, startup_cancel.as_deref()),
+                prepared.map_err(|status| {
+                    format!(
+                        "LSA_PREPARE_GROUP: {}",
+                        crate::failure::attach_native_detail(status, &error)
+                    )
+                }),
+                |failed| {
+                    setup_failure_vote(
+                        comm.0,
+                        raw,
+                        &setup_send,
+                        &setup_recv,
+                        failed,
+                        startup_cancel.as_deref(),
+                    )
+                },
                 "LSA_PREPARE_GROUP: peer rejected LSA prepare".into(),
-            ).map_err(|error| { startup_report.publish(); error })?;
+            )
+            .map_err(|error| {
+                startup_report.publish();
+                error
+            })?;
             error.fill(0);
-            let activated = check(unsafe { mgbfs_nccl_lsa_activate(
-                comm.0, error.as_mut_ptr(), error.len(),
-            ) });
+            let activated =
+                check(unsafe { mgbfs_nccl_lsa_activate(comm.0, error.as_mut_ptr(), error.len()) });
             vote_group_error(
-                activated.map_err(|status| format!("LSA_ACTIVATE_GROUP: {}",
-                    crate::failure::attach_native_detail(status, &error))),
-                |failed| setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                                           failed, startup_cancel.as_deref()),
+                activated.map_err(|status| {
+                    format!(
+                        "LSA_ACTIVATE_GROUP: {}",
+                        crate::failure::attach_native_detail(status, &error)
+                    )
+                }),
+                |failed| {
+                    setup_failure_vote(
+                        comm.0,
+                        raw,
+                        &setup_send,
+                        &setup_recv,
+                        failed,
+                        startup_cancel.as_deref(),
+                    )
+                },
                 "LSA_ACTIVATE_GROUP: peer rejected LSA activation".into(),
-            ).map_err(|error| { startup_report.publish(); error })?;
-            let (mut count, mut fatal, mut hashes, mut states) =
-                (std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null());
-            check(unsafe { mgbfs_nccl_lsa_view(
-                comm.0, &mut count, &mut fatal, &mut hashes, &mut states,
-            ) })?;
+            )
+            .map_err(|error| {
+                startup_report.publish();
+                error
+            })?;
+            let (mut count, mut fatal, mut hashes, mut states) = (
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+            );
+            check(unsafe {
+                mgbfs_nccl_lsa_view(comm.0, &mut count, &mut fatal, &mut hashes, &mut states)
+            })?;
             let mut terminal = std::ptr::null_mut();
             check(unsafe { mgbfs_nccl_lsa_cancel_word(comm.0, &mut terminal) })?;
-            if terminal.is_null() || terminal as usize %
-                std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0 {
+            if terminal.is_null()
+                || terminal as usize % std::mem::align_of::<std::sync::atomic::AtomicU32>() != 0
+            {
                 return Err("LSA_CANCEL_WORD_ALIGNMENT".into());
             }
-            Some(LsaView { count, fatal, hashes, states: states.cast(), terminal: terminal.cast() })
+            Some(LsaView {
+                count,
+                fatal,
+                hashes,
+                states: states.cast(),
+                terminal: terminal.cast(),
+            })
         } else {
             None
         };
         let local_result = (|| -> Result<Self> {
-        let contract = GemmHash::from_seed(width, seed)?;
-        let limbs = contract.limbs();
-        let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();
-        let weights = vec![1u32; moves as usize];
-        let generate = if materialization_capacity.is_some() {
-            None
-        } else {
-            Some(Plan::new(mgbfs_generate_destroy, |out, e| unsafe {
-                mgbfs_generate_create_macro_variant(
-                    graph.rows as u32,
-                    moves,
-                    graph.modulus as u32,
-                    cfg.batch,
-                    matrices.as_ptr(),
-                    weights.as_ptr(),
-                    cfg.generation_variant,
-                    out,
-                    e,
-                    512,
-                )
-            })?)
-        };
-        let hash = if materialization_capacity.is_some() {
-            None
-        } else {
-            Some(Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
+            let contract = GemmHash::from_seed(width, seed)?;
+            let limbs = contract.limbs();
+            let matrices: Vec<u8> = graph.generators.iter().flatten().copied().collect();
+            let weights = vec![1u32; moves as usize];
+            let generate = if materialization_capacity.is_some() {
+                None
+            } else {
+                Some(Plan::new(mgbfs_generate_destroy, |out, e| unsafe {
+                    mgbfs_generate_create_macro_variant(
+                        graph.rows as u32,
+                        moves,
+                        graph.modulus as u32,
+                        cfg.batch,
+                        matrices.as_ptr(),
+                        weights.as_ptr(),
+                        cfg.generation_variant,
+                        out,
+                        e,
+                        512,
+                    )
+                })?)
+            };
+            let hash = if materialization_capacity.is_some() {
+                None
+            } else {
+                Some(Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
+                    mgbfs_hash_create(
+                        width as u32,
+                        candidates,
+                        limbs.as_ptr(),
+                        contract.offsets.as_ptr(),
+                        out,
+                        e,
+                        512,
+                    )
+                })?)
+            };
+            let hash_first = materialization_capacity
+                .zip(hash_first_ledger)
+                .map(|(capacity, ledger)| {
+                    HashFirstStorage::new(
+                        graph,
+                        &contract,
+                        capacity,
+                        stride,
+                        cfg.layer_capacity,
+                        raw,
+                        ledger,
+                    )
+                })
+                .transpose()?;
+            let route = Plan::new(mgbfs_route_destroy, |out, e| unsafe {
+                mgbfs_route_create(candidates, out, e, 512)
+            })?;
+            let archive_hash = Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
                 mgbfs_hash_create(
                     width as u32,
-                    candidates,
+                    cfg.batch,
                     limbs.as_ptr(),
                     contract.offsets.as_ptr(),
                     out,
                     e,
                     512,
                 )
-            })?)
-        };
-        let hash_first = materialization_capacity
-            .zip(hash_first_ledger)
-            .map(|(capacity, ledger)| {
-                HashFirstStorage::new(
-                    graph,
-                    &contract,
-                    capacity,
-                    stride,
-                    cfg.layer_capacity,
-                    raw,
-                    ledger,
-                )
-            })
-            .transpose()?;
-        let route = Plan::new(mgbfs_route_destroy, |out, e| unsafe {
-            mgbfs_route_create(candidates, out, e, 512)
-        })?;
-        let archive_hash = Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
-            mgbfs_hash_create(
-                width as u32,
-                cfg.batch,
-                limbs.as_ptr(),
-                contract.offsets.as_ptr(),
-                out,
-                e,
-                512,
-            )
-        })?;
-        let owner = if library_pool_bytes.is_some() {
-            None
-        } else {
-            Some(Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
-                match owner_backend {
-                    OwnerBackend::CubSortMerge => mgbfs_bounded_owner_create(
-                        candidates,
-                        cfg.job_buckets,
-                        cfg.bucket_capacity,
-                        out,
-                    ),
-                    OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
-                        candidates,
-                        cfg.job_buckets,
-                        cfg.bucket_capacity,
-                        1,
-                        candidates,
-                        tile_limit,
-                        out,
-                    ),
-                }
-            })?)
-        };
-        let b = |name: &str| {
-            let entry = shared_memory
-                .allocations
-                .iter()
-                .find(|a| a.name == name)
-                .ok_or("MISSING_SHARED_ALLOCATION")?;
-            Buffer::new(
-                usize::try_from(entry.payload_bytes).map_err(|_| "BYTE_OVERFLOW")?,
-                raw,
-            )
-        };
-        let (next_extents, next_extent_count) = if library_pool_bytes.is_some() || native_rank_mode {
-            (Some(b("next_extents")?), Some(b("next_extent_count")?))
-        } else {
-            (None, None)
-        };
-        let states = b("states")?;
-        let prev = b("prev")?;
-        let curr = b("curr")?;
-        let start_hash = contract.hash(&start_state)?;
-        let start_owner = crate::topology::hash_owner(cfg.world, start_hash.0[3])?;
-        let start_rank = cfg.logical_owner_to_rank[start_owner];
-        let current_count = (start_rank == cfg.rank) as u32;
-        if current_count == 1 {
-            let mut start = vec![0u8; stride];
-            start[..width].copy_from_slice(&start_state);
-            states.put(&start)?;
-            curr.put(&[start_hash.to_le_bytes()])?;
-        }
-        let identity_refs = b("identity_refs")?;
-        identity_refs.put(&(0..u64::from(candidates)).collect::<Vec<_>>())?;
-        let archive_done = [Event::new()?, Event::new()?];
-        check(unsafe { cudaEventRecord(archive_done[0].0, raw) })?;
-        check(unsafe { cudaEventRecord(archive_done[1].0, raw) })?;
-        check(unsafe { cudaStreamSynchronize(raw) })?;
-        let buckets = cfg.buckets as usize;
-        let slots = buckets + 1;
-        let directory = b("directory")?;
-        let fatal = b("fatal")?;
-        let route_count = b("route_count")?;
-        route_count.put_u32(current_count)?;
-        check(unsafe {
-            rank_directory(
-                cfg.world,
-                curr.ptr,
-                route_count.ptr.cast(),
-                cfg.layer_capacity,
-                cfg.buckets,
-                cfg.logical_owner_to_rank
-                    .iter()
-                    .position(|&r| r == cfg.rank)
-                    .ok_or("OWNER_MAP")? as u32,
-                directory.ptr.cast(),
-                fatal.ptr.cast(),
-                raw,
-            )
-        })?;
-        check(unsafe { cudaStreamSynchronize(raw) })?;
-        if fatal.one::<u32>()? != 0 {
-            return Err("INITIAL_DIRECTORY_FATAL".into());
-        }
-        let mut curr_dir = vec![Range::default(); buckets];
-        directory.read(&mut curr_dir)?;
-        let mut front = Vec::with_capacity(2);
-        if current_count != 0 {
-            front.push(Extent {
-                count: 1,
-                granted_rows: 1,
-                ready: 1,
-                padding: [0, 0, 0],
-                ..Extent::default()
-            });
-        }
-        let ring = b("ring")?;
-        ring.put(&[Ring {
-            tail: u64::from(current_count),
-            descriptor_tail: u64::from(current_count),
-            capacity: u64::from(cfg.state_ring_capacity),
-            descriptor_capacity: u64::from(cfg.state_descriptor_capacity),
-            ..Ring::default()
-        }])?;
-        let mut route_banks = Vec::new();
-        route_banks.try_reserve_exact(cfg.route_banks).map_err(|_| "ROUTE_BANK_HOST_CAPACITY")?;
-        let mut initial_count = Some(route_count);
-        for index in 0..cfg.route_banks {
-            let name = |field: &str| if index == 0 { field.to_owned() }
-                else { format!("route_bank_{index}.{field}") };
-            route_banks.push(RouteBank {
-                children: b(&name("children"))?,
-                child_hashes: b(&name("child_hashes"))?,
-                sorted_hashes: b(&name("sorted_hashes"))?,
-                sorted_refs: b(&name("sorted_refs"))?,
-                route_count: if index == 0 { initial_count.take().ok_or("ROUTE_INITIAL_COUNT")? }
-                    else { b(&name("route_count"))? },
-                packed_states: b(&name("packed_states"))?,
-                owner_counts: b(&name("owner_counts"))?,
-                generation_control: b(&name("generation_control"))?,
-                generation_done: NativeEvent::new()?, last_reader: Event::new()?,
-            });
-        }
-        let mut prefetched = std::collections::VecDeque::new();
-        prefetched.try_reserve_exact(cfg.route_banks).map_err(|_| "ROUTE_PREFETCH_HOST_CAPACITY")?;
-        let mut result = Self {
-            #[cfg(feature = "library-owner")]
-            library_owner: None,
-            cfg: cfg.clone(),
-            width,
-            stride,
-            permutation_n,
-            moves,
-            candidates,
-            depth: 0,
-            current_count,
-            prev_count: 0,
-            failed: false,
-            cancel_requested: startup_cancel.clone(),
-            cancel_mirror: None,
-            failure_report: None,
-            retirement: None,
-            // Keep the setup-vote stream alive outside the fallible local
-            // result. An error here must not destroy it before peers vote.
-            stream: Stream(std::ptr::null_mut()),
-            generation_stream,
-            pack_done,
-            generation_sequence: 0,
-            dense_lookahead: 0,
-            route_bank_reuses: 0,
-            exchange_stream,
-            exchange_done,
-            owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
-                .then(Event::new).transpose()?,
-            epoch_completed,
-            epoch_outstanding,
-            archive_stream,
-            archive_done,
-            archived_depth: None,
-            // NCCL ownership transfers only after every rank accepts the
-            // complete local allocation/owner setup below.
-            comm: Comm(std::ptr::null_mut(), false),
-            lsa_view,
-            generate,
-            hash,
-            hash_first,
-            hash_first_tensor_generation,
-            archive_hash,
-            route,
-            owner: owner
-                .map(|plan| -> Result<BoundedOwnerStorage> {
-                    Ok(BoundedOwnerStorage {
-                        plan,
-                        accepted: b("accepted")?,
-                        lengths: b("lengths")?,
-                        counts: b("counts")?,
-                        selected: b("selected")?,
-                    })
-                })
-                .transpose()?,
-            states,
-            prev,
-            curr,
-            route_banks,
-            active_route_bank: 0,
-            prefetched,
-            archive_hashes: b("archive_hashes")?,
-            archive_states: b("archive_states")?,
-            owner_window: if library_pool_bytes.is_some() || native_rank_mode { Some(b("owner_window")?) } else { None },
-            native_rank: if native_rank_mode { Some(NativeRankStorage {
-                previous: b("rank_prev_directory")?, current: b("rank_curr_directory")?,
-                survivors: b("rank_shard_counts")?, accepted: b("rank_shard_accepted")?,
-                capacities: b("rank_shard_capacities")?, offsets: b("rank_shard_offsets")?,
-            }) } else { None },
-            recv_states: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
-                .then(|| b("recv_states")).transpose()?,
-            recv_hashes: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
-                .then(|| b("recv_hashes")).transpose()?,
-            recv_count: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
-                .then(|| b("recv_count")).transpose()?,
-            identity_refs,
-            directory,
-            fatal,
-            jobs_gpu: b("jobs_gpu")?,
-            control: b("control")?,
-            ring,
-            extent: b("extent")?,
-            next_extents,
-            next_extent_count,
-            layer_count: b("layer_count")?,
-            incoming_dir: vec![Range::default(); buckets],
-            prev_dir: vec![Range::default(); buckets],
-            curr_dir,
-            descriptors: vec![BucketJob::default(); slots],
-            spans: vec![JobSpan::default(); slots],
-            dense_results: vec![Extent::default(); slots],
-            front,
-            next: Vec::with_capacity(2),
-            collective_send: b("collective_send")?,
-            collective_recv: b("collective_recv")?,
-            shared_memory,
-            owned_memory,
-        };
-        #[cfg(feature = "library-owner")]
-        if let Some(pool_bytes) = library_pool_bytes {
-            let plane_words =
-                (mgbfs_core::library_memory::CandidateSoaLayout::plan(cfg.layer_capacity.into())?
-                    .plane_stride_bytes
-                    / 4) as usize;
-            // Initial directory was built from the one AoS start key. Rewrite
-            // it in-place as SoA before any library view starts borrowing it.
-            if current_count != 0 {
-                for plane in 0..4 {
-                    unsafe {
-                        check(cudaMemcpyAsync(
-                            result.curr.at(plane * plane_words * 4),
-                            (&start_hash.0[plane] as *const u32).cast(),
-                            4,
-                            1,
-                            raw,
-                        ))?;
-                    }
-                }
-                check(unsafe { cudaStreamSynchronize(raw) })?;
-            }
-            let scratch = Buffer::new(
-                mgbfs_core::library_memory::CandidateSoaLayout::plan(candidates.into())?
-                    .allocation_bytes as usize,
-                raw,
-            )?;
-            let control_transfer = unsafe { ControlTransfer::new(raw)? };
-            let mut pool = std::ptr::null_mut();
-            check(unsafe {
-                mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
             })?;
-            let per_shard = cfg.buckets / cfg.shards;
-            let capacity = u32::try_from(
-                (u64::from(per_shard) * u64::from(cfg.bucket_capacity))
-                    .min(cfg.layer_capacity.into()),
-            )
-            .map_err(|_| "LIBRARY_SHARD_CAPACITY")?;
-            let mut library = LibraryOwnerStorage {
-                control_transfer,
-                shards: Vec::with_capacity(cfg.shards as usize),
-                scratch,
-                previous: vec![0..0; cfg.shards as usize],
-                current: Vec::with_capacity(cfg.shards as usize),
-                capacity,
-                plane_words,
-                epoch: 0,
-                closed: false,
-                pool,
-                cuco_workspace: std::ptr::null_mut(),
-                rank: std::ptr::null_mut(),
-                rank_mode: matches!(library_options, Some((_, ReferenceOwner::CucoRank))),
-                rank_accepted: std::ptr::null(),
-                logical_owner: cfg.logical_owner_to_rank.iter()
-                    .position(|&r| r == cfg.rank).ok_or("OWNER_MAP")? as u32,
-            };
-            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
-                check(unsafe {
-                    mgbfs_library_cuco_workspace_create_v1(
-                        candidates,
-                        raw,
-                        &mut library.cuco_workspace,
-                    )
-                })?;
-            }
-            for directories in result.curr_dir.chunks(per_shard as usize) {
-                let first = directories[0].begin as u32;
-                let last = directories.last().unwrap();
-                library
-                    .current
-                    .push(first..(last.begin + last.count) as u32);
-            }
-            if library.rank_mode {
-                library.rank = unsafe { create_rank_owner(
-                    &library, &result.prev, &result.curr, cfg.shards, candidates,
-                    cfg.world, raw,
-                )? };
+            let owner = if library_pool_bytes.is_some() {
+                None
             } else {
-                for shard in 0..cfg.shards as usize {
-                    unsafe {
-                        library.shards.push(LibraryShard::new_window_with_workspace(
-                            history_view(&result.prev, plane_words, &library.previous[shard]),
-                            history_view(&result.curr, plane_words, &library.current[shard]),
-                            capacity,
-                            if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
-                                Some(candidates)
-                            } else {
-                                None
-                            },
-                            library.cuco_workspace,
+                Some(Plan::new(mgbfs_bounded_owner_destroy, |out, _| unsafe {
+                    match owner_backend {
+                        OwnerBackend::CubSortMerge => mgbfs_bounded_owner_create(
+                            candidates,
+                            cfg.job_buckets,
+                            cfg.bucket_capacity,
+                            out,
+                        ),
+                        OwnerBackend::BmmaBucket => mgbfs_bounded_owner_create_backend(
+                            candidates,
+                            cfg.job_buckets,
+                            cfg.bucket_capacity,
+                            1,
+                            candidates,
+                            tile_limit,
+                            out,
+                        ),
+                    }
+                })?)
+            };
+            let b = |name: &str| {
+                let entry = shared_memory
+                    .allocations
+                    .iter()
+                    .find(|a| a.name == name)
+                    .ok_or("MISSING_SHARED_ALLOCATION")?;
+                Buffer::new(
+                    usize::try_from(entry.payload_bytes).map_err(|_| "BYTE_OVERFLOW")?,
+                    raw,
+                )
+            };
+            let (next_extents, next_extent_count) =
+                if library_pool_bytes.is_some() || native_rank_mode {
+                    (Some(b("next_extents")?), Some(b("next_extent_count")?))
+                } else {
+                    (None, None)
+                };
+            let states = b("states")?;
+            let prev = b("prev")?;
+            let curr = b("curr")?;
+            let start_hash = contract.hash(&start_state)?;
+            let start_owner = crate::topology::hash_owner(cfg.world, start_hash.0[3])?;
+            let start_rank = cfg.logical_owner_to_rank[start_owner];
+            let current_count = (start_rank == cfg.rank) as u32;
+            if current_count == 1 {
+                let mut start = vec![0u8; stride];
+                start[..width].copy_from_slice(&start_state);
+                states.put(&start)?;
+                curr.put(&[start_hash.to_le_bytes()])?;
+            }
+            let identity_refs = b("identity_refs")?;
+            identity_refs.put(&(0..u64::from(candidates)).collect::<Vec<_>>())?;
+            let archive_done = [Event::new()?, Event::new()?];
+            check(unsafe { cudaEventRecord(archive_done[0].0, raw) })?;
+            check(unsafe { cudaEventRecord(archive_done[1].0, raw) })?;
+            check(unsafe { cudaStreamSynchronize(raw) })?;
+            let buckets = cfg.buckets as usize;
+            let slots = buckets + 1;
+            let directory = b("directory")?;
+            let fatal = b("fatal")?;
+            let route_count = b("route_count")?;
+            route_count.put_u32(current_count)?;
+            check(unsafe {
+                rank_directory(
+                    cfg.world,
+                    curr.ptr,
+                    route_count.ptr.cast(),
+                    cfg.layer_capacity,
+                    cfg.buckets,
+                    cfg.logical_owner_to_rank
+                        .iter()
+                        .position(|&r| r == cfg.rank)
+                        .ok_or("OWNER_MAP")? as u32,
+                    directory.ptr.cast(),
+                    fatal.ptr.cast(),
+                    raw,
+                )
+            })?;
+            check(unsafe { cudaStreamSynchronize(raw) })?;
+            if fatal.one::<u32>()? != 0 {
+                return Err("INITIAL_DIRECTORY_FATAL".into());
+            }
+            let mut curr_dir = vec![Range::default(); buckets];
+            directory.read(&mut curr_dir)?;
+            let mut front = Vec::with_capacity(2);
+            if current_count != 0 {
+                front.push(Extent {
+                    count: 1,
+                    granted_rows: 1,
+                    ready: 1,
+                    padding: [0, 0, 0],
+                    ..Extent::default()
+                });
+            }
+            let ring = b("ring")?;
+            ring.put(&[Ring {
+                tail: u64::from(current_count),
+                descriptor_tail: u64::from(current_count),
+                capacity: u64::from(cfg.state_ring_capacity),
+                descriptor_capacity: u64::from(cfg.state_descriptor_capacity),
+                ..Ring::default()
+            }])?;
+            let mut route_banks = Vec::new();
+            route_banks
+                .try_reserve_exact(cfg.route_banks)
+                .map_err(|_| "ROUTE_BANK_HOST_CAPACITY")?;
+            let mut initial_count = Some(route_count);
+            for index in 0..cfg.route_banks {
+                let name = |field: &str| {
+                    if index == 0 {
+                        field.to_owned()
+                    } else {
+                        format!("route_bank_{index}.{field}")
+                    }
+                };
+                route_banks.push(RouteBank {
+                    children: b(&name("children"))?,
+                    child_hashes: b(&name("child_hashes"))?,
+                    sorted_hashes: b(&name("sorted_hashes"))?,
+                    sorted_refs: b(&name("sorted_refs"))?,
+                    route_count: if index == 0 {
+                        initial_count.take().ok_or("ROUTE_INITIAL_COUNT")?
+                    } else {
+                        b(&name("route_count"))?
+                    },
+                    packed_states: b(&name("packed_states"))?,
+                    owner_counts: b(&name("owner_counts"))?,
+                    generation_control: b(&name("generation_control"))?,
+                    generation_done: NativeEvent::new()?,
+                    last_reader: Event::new()?,
+                });
+            }
+            let mut prefetched = std::collections::VecDeque::new();
+            prefetched
+                .try_reserve_exact(cfg.route_banks)
+                .map_err(|_| "ROUTE_PREFETCH_HOST_CAPACITY")?;
+            let mut result = Self {
+                #[cfg(feature = "library-owner")]
+                library_owner: None,
+                cfg: cfg.clone(),
+                width,
+                stride,
+                permutation_n,
+                moves,
+                candidates,
+                depth: 0,
+                current_count,
+                prev_count: 0,
+                failed: false,
+                cancel_requested: startup_cancel.clone(),
+                cancel_mirror: None,
+                failure_report: None,
+                retirement: None,
+                // Keep the setup-vote stream alive outside the fallible local
+                // result. An error here must not destroy it before peers vote.
+                stream: Stream(std::ptr::null_mut()),
+                generation_stream,
+                pack_done,
+                generation_sequence: 0,
+                dense_lookahead: 0,
+                route_bank_reuses: 0,
+                exchange_stream,
+                exchange_done,
+                owner_consumed: (cfg.transport == mgbfs_core::config::ReferenceTransport::Lsa)
+                    .then(Event::new)
+                    .transpose()?,
+                epoch_completed,
+                epoch_outstanding,
+                archive_stream,
+                archive_done,
+                archived_depth: None,
+                // NCCL ownership transfers only after every rank accepts the
+                // complete local allocation/owner setup below.
+                comm: Comm(std::ptr::null_mut(), false),
+                lsa_view,
+                generate,
+                hash,
+                hash_first,
+                hash_first_tensor_generation,
+                archive_hash,
+                route,
+                owner: owner
+                    .map(|plan| -> Result<BoundedOwnerStorage> {
+                        Ok(BoundedOwnerStorage {
+                            plan,
+                            accepted: b("accepted")?,
+                            lengths: b("lengths")?,
+                            counts: b("counts")?,
+                            selected: b("selected")?,
+                        })
+                    })
+                    .transpose()?,
+                states,
+                prev,
+                curr,
+                route_banks,
+                active_route_bank: 0,
+                prefetched,
+                archive_hashes: b("archive_hashes")?,
+                archive_states: b("archive_states")?,
+                owner_window: if library_pool_bytes.is_some() || native_rank_mode {
+                    Some(b("owner_window")?)
+                } else {
+                    None
+                },
+                native_rank: if native_rank_mode {
+                    Some(NativeRankStorage {
+                        previous: b("rank_prev_directory")?,
+                        current: b("rank_curr_directory")?,
+                        survivors: b("rank_shard_counts")?,
+                        accepted: b("rank_shard_accepted")?,
+                        capacities: b("rank_shard_capacities")?,
+                        offsets: b("rank_shard_offsets")?,
+                    })
+                } else {
+                    None
+                },
+                recv_states: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                    .then(|| b("recv_states"))
+                    .transpose()?,
+                recv_hashes: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                    .then(|| b("recv_hashes"))
+                    .transpose()?,
+                recv_count: (cfg.transport != mgbfs_core::config::ReferenceTransport::Lsa)
+                    .then(|| b("recv_count"))
+                    .transpose()?,
+                identity_refs,
+                directory,
+                fatal,
+                jobs_gpu: b("jobs_gpu")?,
+                control: b("control")?,
+                ring,
+                extent: b("extent")?,
+                next_extents,
+                next_extent_count,
+                layer_count: b("layer_count")?,
+                incoming_dir: vec![Range::default(); buckets],
+                prev_dir: vec![Range::default(); buckets],
+                curr_dir,
+                descriptors: vec![BucketJob::default(); slots],
+                spans: vec![JobSpan::default(); slots],
+                dense_results: vec![Extent::default(); slots],
+                front,
+                next: Vec::with_capacity(2),
+                collective_send: b("collective_send")?,
+                collective_recv: b("collective_recv")?,
+                shared_memory,
+                owned_memory,
+            };
+            #[cfg(feature = "library-owner")]
+            if let Some(pool_bytes) = library_pool_bytes {
+                let plane_words = (mgbfs_core::library_memory::CandidateSoaLayout::plan(
+                    cfg.layer_capacity.into(),
+                )?
+                .plane_stride_bytes
+                    / 4) as usize;
+                // Initial directory was built from the one AoS start key. Rewrite
+                // it in-place as SoA before any library view starts borrowing it.
+                if current_count != 0 {
+                    for plane in 0..4 {
+                        unsafe {
+                            check(cudaMemcpyAsync(
+                                result.curr.at(plane * plane_words * 4),
+                                (&start_hash.0[plane] as *const u32).cast(),
+                                4,
+                                1,
+                                raw,
+                            ))?;
+                        }
+                    }
+                    check(unsafe { cudaStreamSynchronize(raw) })?;
+                }
+                let scratch = Buffer::new(
+                    mgbfs_core::library_memory::CandidateSoaLayout::plan(candidates.into())?
+                        .allocation_bytes as usize,
+                    raw,
+                )?;
+                let control_transfer = unsafe { ControlTransfer::new(raw)? };
+                let mut pool = std::ptr::null_mut();
+                check(unsafe {
+                    mgbfs_library_pool_create_v1(pool_bytes, cfg.untouched_vram_reserve, &mut pool)
+                })?;
+                let per_shard = cfg.buckets / cfg.shards;
+                let capacity = u32::try_from(
+                    (u64::from(per_shard) * u64::from(cfg.bucket_capacity))
+                        .min(cfg.layer_capacity.into()),
+                )
+                .map_err(|_| "LIBRARY_SHARD_CAPACITY")?;
+                let mut library = LibraryOwnerStorage {
+                    control_transfer,
+                    shards: Vec::with_capacity(cfg.shards as usize),
+                    scratch,
+                    previous: vec![0..0; cfg.shards as usize],
+                    current: Vec::with_capacity(cfg.shards as usize),
+                    capacity,
+                    plane_words,
+                    epoch: 0,
+                    closed: false,
+                    pool,
+                    cuco_workspace: std::ptr::null_mut(),
+                    rank: std::ptr::null_mut(),
+                    rank_mode: matches!(library_options, Some((_, ReferenceOwner::CucoRank))),
+                    rank_accepted: std::ptr::null(),
+                    logical_owner: cfg
+                        .logical_owner_to_rank
+                        .iter()
+                        .position(|&r| r == cfg.rank)
+                        .ok_or("OWNER_MAP")? as u32,
+                };
+                if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed))) {
+                    check(unsafe {
+                        mgbfs_library_cuco_workspace_create_v1(
+                            candidates,
                             raw,
-                        )?);
+                            &mut library.cuco_workspace,
+                        )
+                    })?;
+                }
+                for directories in result.curr_dir.chunks(per_shard as usize) {
+                    let first = directories[0].begin as u32;
+                    let last = directories.last().unwrap();
+                    library
+                        .current
+                        .push(first..(last.begin + last.count) as u32);
+                }
+                if library.rank_mode {
+                    library.rank = unsafe {
+                        create_rank_owner(
+                            &library,
+                            &result.prev,
+                            &result.curr,
+                            cfg.shards,
+                            candidates,
+                            cfg.world,
+                            raw,
+                        )?
+                    };
+                } else {
+                    for shard in 0..cfg.shards as usize {
+                        unsafe {
+                            library.shards.push(LibraryShard::new_window_with_workspace(
+                                history_view(&result.prev, plane_words, &library.previous[shard]),
+                                history_view(&result.curr, plane_words, &library.current[shard]),
+                                capacity,
+                                if matches!(library_options, Some((_, ReferenceOwner::CucoIndexed)))
+                                {
+                                    Some(candidates)
+                                } else {
+                                    None
+                                },
+                                library.cuco_workspace,
+                                raw,
+                            )?);
+                        }
                     }
                 }
+                result.library_owner = Some(library);
             }
-            result.library_owner = Some(library);
-        }
-        Ok(result)
+            Ok(result)
         })();
-        let group_failed = match setup_failure_vote(comm.0, raw, &setup_send, &setup_recv,
-                              local_result.is_err(), startup_cancel.as_deref()) {
+        let group_failed = match setup_failure_vote(
+            comm.0,
+            raw,
+            &setup_send,
+            &setup_recv,
+            local_result.is_err(),
+            startup_cancel.as_deref(),
+        ) {
             Ok(failed) => failed,
             Err(error) => {
                 // Notify peers before dropping any resources held by local_result.
@@ -1991,7 +2512,9 @@ impl DistributedNativeBfs {
         };
         if group_failed {
             startup_report.publish();
-            return Err(local_result.err().unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
+            return Err(local_result
+                .err()
+                .unwrap_or_else(|| "REMOTE_CONSTRUCTOR_FATAL".into()));
         }
         let mut result = local_result?;
         result.stream = stream;
@@ -1999,18 +2522,26 @@ impl DistributedNativeBfs {
         result.comm.1 = false;
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_CONSTRUCTOR_LATE_FAULT_RANK")
-            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(result.cfg.rank) {
+            .ok()
+            .and_then(|rank| rank.parse::<u32>().ok())
+            == Some(result.cfg.rank)
+        {
             startup_report.publish();
             return Err("TEST_INJECTED_CONSTRUCTOR_LATE_ERROR".into());
         }
         if let Some(token) = startup_cancel {
-            result.set_cancel_token(token)
-                .map_err(|error| { startup_report.publish(); error })?;
+            result.set_cancel_token(token).map_err(|error| {
+                startup_report.publish();
+                error
+            })?;
         }
         startup_report.disarm();
         #[cfg(debug_assertions)]
         if std::env::var("MGBFS_TEST_OWNER_CAPACITY_RANK")
-            .ok().and_then(|rank| rank.parse::<u32>().ok()) == Some(result.cfg.rank) {
+            .ok()
+            .and_then(|rank| rank.parse::<u32>().ok())
+            == Some(result.cfg.rank)
+        {
             // Test the real device reservation limit after common bootstrap
             // and preallocation. No environment lookup in the batch hot path.
             result.cfg.layer_capacity = result.cfg.layer_capacity.min(2);
@@ -2044,14 +2575,20 @@ impl DistributedNativeBfs {
     pub fn epoch_window(&self) -> usize {
         self.epoch_completed.len()
     }
-    pub fn route_bank_count(&self) -> usize { self.route_banks.len() }
+    pub fn route_bank_count(&self) -> usize {
+        self.route_banks.len()
+    }
     /// Repeated bank admissions within a depth, not a GPU-overlap measurement.
-    pub fn route_bank_reuses(&self) -> u64 { self.route_bank_reuses }
+    pub fn route_bank_reuses(&self) -> u64 {
+        self.route_bank_reuses
+    }
     pub fn state_descriptor_capacity(&self) -> u32 {
         self.cfg.state_descriptor_capacity
     }
     fn enqueue_frontier_generation(&mut self, batch: ParentBatch, bank: usize) -> Result<u64> {
-        if bank >= self.route_banks.len() { return Err("GENERATION_ROUTE_BANK".into()); }
+        if bank >= self.route_banks.len() {
+            return Err("GENERATION_ROUTE_BANK".into());
+        }
         let sequence = self
             .generation_sequence
             .checked_add(1)
@@ -2062,34 +2599,53 @@ impl DistributedNativeBfs {
         unsafe {
             if let Some(h) = self.hash_first.as_ref() {
                 h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
-                check(mgbfs_device_store_u32(h.parent_count.ptr.cast(), batch.count, s))?;
+                check(mgbfs_device_store_u32(
+                    h.parent_count.ptr.cast(),
+                    batch.count,
+                    s,
+                ))?;
                 let generate = if self.hash_first_tensor_generation {
                     mgbfs_generate_hash_only_tc_admitted
-                } else { mgbfs_generate_hash_only };
-                check(generate(h.n, self.moves, h.modulus, self.stride as u32,
-                    self.cfg.batch, self.candidates, self.cfg.rank, batch.sequence,
+                } else {
+                    mgbfs_generate_hash_only
+                };
+                check(generate(
+                    h.n,
+                    self.moves,
+                    h.modulus,
+                    self.stride as u32,
+                    self.cfg.batch,
+                    self.candidates,
+                    self.cfg.rank,
+                    batch.sequence,
                     self.states.at(batch.begin as usize * self.stride).cast(),
-                    h.generators.ptr.cast(), h.coefficients.ptr.cast(), h.offsets.ptr.cast(),
-                    h.parent_count.ptr.cast(), self.route_banks[bank].child_hashes.ptr.cast(), self.route_banks[bank].children.ptr.cast(),
+                    h.generators.ptr.cast(),
+                    h.coefficients.ptr.cast(),
+                    h.offsets.ptr.cast(),
+                    h.parent_count.ptr.cast(),
+                    self.route_banks[bank].child_hashes.ptr.cast(),
+                    self.route_banks[bank].children.ptr.cast(),
                     // Producer count must not overwrite the current owner's
                     // routed-count before its selected origins are committed.
                     self.route_banks[bank].generation_control.at(4).cast(),
-                    self.route_banks[bank].generation_control.ptr.cast(), s))?;
+                    self.route_banks[bank].generation_control.ptr.cast(),
+                    s,
+                ))?;
             } else {
-            check(mgbfs_generate_run(
-                self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
-                self.states.at(batch.begin as usize * self.stride).cast(),
-                self.route_banks[bank].children.ptr.cast(),
-                batch.count,
-                s,
-            ))?;
-            check(mgbfs_hash_run(
-                self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
-                self.route_banks[bank].children.ptr.cast(),
-                self.route_banks[bank].child_hashes.ptr.cast(),
-                batch.count * self.moves,
-                s,
-            ))?;
+                check(mgbfs_generate_run(
+                    self.generate.as_ref().ok_or("DENSE_GENERATOR_MISSING")?.0,
+                    self.states.at(batch.begin as usize * self.stride).cast(),
+                    self.route_banks[bank].children.ptr.cast(),
+                    batch.count,
+                    s,
+                ))?;
+                check(mgbfs_hash_run(
+                    self.hash.as_ref().ok_or("DENSE_HASH_MISSING")?.0,
+                    self.route_banks[bank].children.ptr.cast(),
+                    self.route_banks[bank].child_hashes.ptr.cast(),
+                    batch.count * self.moves,
+                    s,
+                ))?;
             }
             self.route_banks[bank].generation_done.record(sequence, s)?;
         }
@@ -2098,18 +2654,31 @@ impl DistributedNativeBfs {
     }
     /// One producer admission, using only the immutable frontier directory
     /// obtained at FinalizeDepth. No device count or event completion readback.
-    fn enqueue_route_prefetch(&mut self, cursor: &mut ParentCursor, produced: &mut usize) -> Result<bool> {
-        if self.prefetched.len() == self.route_banks.len() { return Err("ROUTE_PREFETCH_CAPACITY".into()); }
-        let Some(batch) = cursor.take(&self.front, self.cfg.batch)? else { return Ok(false); };
+    fn enqueue_route_prefetch(
+        &mut self,
+        cursor: &mut ParentCursor,
+        produced: &mut usize,
+    ) -> Result<bool> {
+        if self.prefetched.len() == self.route_banks.len() {
+            return Err("ROUTE_PREFETCH_CAPACITY".into());
+        }
+        let Some(batch) = cursor.take(&self.front, self.cfg.batch)? else {
+            return Ok(false);
+        };
         let bank = *produced % self.route_banks.len();
         let sequence = self.enqueue_frontier_generation(batch, bank)?;
         if *produced >= self.route_banks.len() {
-            self.route_bank_reuses = self.route_bank_reuses.checked_add(1)
+            self.route_bank_reuses = self
+                .route_bank_reuses
+                .checked_add(1)
                 .ok_or("ROUTE_BANK_REUSE_COUNTER_OVERFLOW")?;
         }
         self.prefetched.push_back((batch, sequence, bank));
         if *produced != 0 {
-            self.dense_lookahead = self.dense_lookahead.checked_add(1).ok_or("GENERATION_COUNTER_OVERFLOW")?;
+            self.dense_lookahead = self
+                .dense_lookahead
+                .checked_add(1)
+                .ok_or("GENERATION_COUNTER_OVERFLOW")?;
         }
         *produced = produced.checked_add(1).ok_or("GENERATION_ROUTE_SEQUENCE")?;
         Ok(true)
@@ -2161,83 +2730,165 @@ impl DistributedNativeBfs {
         if library.rank.is_null() || !library.rank_mode {
             return Err("LIBRARY_RANK_NOT_OPEN".into());
         }
-        library.epoch = library.epoch.checked_add(1).ok_or("LIBRARY_EPOCH_OVERFLOW")?;
+        library.epoch = library
+            .epoch
+            .checked_add(1)
+            .ok_or("LIBRARY_EPOCH_OVERFLOW")?;
         let epoch = library.epoch;
         #[cfg(debug_assertions)]
         let capture = OwnerCaptureProbe::begin(stream)?;
         let mut candidates = CandidatesV1 {
-            keys: KeysV1 { words: [std::ptr::null(); 4], rows: 0, reserved: 0 },
+            keys: KeysV1 {
+                words: [std::ptr::null(); 4],
+                rows: 0,
+                reserved: 0,
+            },
             source_indices: std::ptr::null(),
         };
         unsafe {
             check(mgbfs_library_candidates_from_aos_window_v1(
-                source_hashes, begin, rows, self.candidates, self.candidates,
-                library.scratch.ptr, library.scratch.bytes as u64,
-                self.ring.ptr.cast(), self.control.ptr.cast(), stream, &mut candidates,
+                source_hashes,
+                begin,
+                rows,
+                self.candidates,
+                self.candidates,
+                library.scratch.ptr,
+                library.scratch.bytes as u64,
+                self.ring.ptr.cast(),
+                self.control.ptr.cast(),
+                stream,
+                &mut candidates,
             ))?;
         }
         let mut batch = RankDeviceBatchV1 {
-            high_words: std::ptr::null(), valid_rows: std::ptr::null(),
-            selected: std::ptr::null(), selected_count: std::ptr::null(),
-            source_indices: std::ptr::null(), accepted_counts: std::ptr::null(),
-            accepted_capacities: std::ptr::null(), shard_counts: std::ptr::null_mut(),
+            high_words: std::ptr::null(),
+            valid_rows: std::ptr::null(),
+            selected: std::ptr::null(),
+            selected_count: std::ptr::null(),
+            source_indices: std::ptr::null(),
+            accepted_counts: std::ptr::null(),
+            accepted_capacities: std::ptr::null(),
+            shard_counts: std::ptr::null_mut(),
             shard_offsets: std::ptr::null_mut(),
         };
         unsafe {
             check(mgbfs_library_rank_compare_v1(
-                library.rank, epoch, candidates, rows,
-                self.control.ptr.cast(), self.ring.ptr.cast(), &mut batch,
+                library.rank,
+                epoch,
+                candidates,
+                rows,
+                self.control.ptr.cast(),
+                self.ring.ptr.cast(),
+                &mut batch,
             ))?;
             check(mgbfs_owner_shard_counts(
-                batch.high_words, batch.valid_rows, batch.selected,
-                batch.selected_count, self.candidates, library.logical_owner,
-                self.cfg.world, self.cfg.shards, batch.shard_counts,
-                batch.shard_offsets, self.ring.ptr.cast(), self.control.ptr.cast(), stream,
+                batch.high_words,
+                batch.valid_rows,
+                batch.selected,
+                batch.selected_count,
+                self.candidates,
+                library.logical_owner,
+                self.cfg.world,
+                self.cfg.shards,
+                batch.shard_counts,
+                batch.shard_offsets,
+                self.ring.ptr.cast(),
+                self.control.ptr.cast(),
+                stream,
             ))?;
             check(mgbfs_state_reserve_rank_batch(
-                self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
-                batch.shard_counts, batch.accepted_counts, batch.accepted_capacities,
-                self.cfg.shards, batch.shard_offsets, self.layer_count.ptr.cast(),
+                self.ring.ptr.cast(),
+                self.control.ptr.cast(),
+                self.extent.ptr.cast(),
+                batch.shard_counts,
+                batch.accepted_counts,
+                batch.accepted_capacities,
+                self.cfg.shards,
+                batch.shard_offsets,
+                self.layer_count.ptr.cast(),
                 self.cfg.layer_capacity,
                 self.hash_first.as_ref().map_or(0, |h| h.capacity),
-                u32::from(self.hash_first.is_some()), stream,
+                u32::from(self.hash_first.is_some()),
+                stream,
             ))?;
             check(mgbfs_library_rank_commit_v1(
-                library.rank, epoch, self.control.ptr.cast(), self.ring.ptr.cast(),
+                library.rank,
+                epoch,
+                self.control.ptr.cast(),
+                self.ring.ptr.cast(),
                 self.extent.ptr.cast(),
             ))?;
             if let Some(h) = self.hash_first.as_ref() {
                 let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
                 check(mgbfs_state_build_rank_requests(
-                    source_states.cast(), source_rows, self.candidates,
-                    batch.source_indices, batch.selected_count, h.capacity,
-                    h.requests[source_group].ptr.cast(), h.targets[source_group].ptr.cast(),
+                    source_states.cast(),
+                    source_rows,
+                    self.candidates,
+                    batch.source_indices,
+                    batch.selected_count,
+                    h.capacity,
+                    h.requests[source_group].ptr.cast(),
+                    h.targets[source_group].ptr.cast(),
                     d.counts.at(source_group * 4).cast(),
-                    self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(), stream,
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    stream,
                 ))?;
-                check(cudaMemcpyAsync(d.extents.at(source_group * std::mem::size_of::<Extent>()),
-                    self.extent.ptr, std::mem::size_of::<Extent>(), 3, stream))?;
-                check(cudaMemcpyAsync(d.controls.at(source_group * std::mem::size_of::<Control>()),
-                    self.control.ptr, std::mem::size_of::<Control>(), 3, stream))?;
+                check(cudaMemcpyAsync(
+                    d.extents.at(source_group * std::mem::size_of::<Extent>()),
+                    self.extent.ptr,
+                    std::mem::size_of::<Extent>(),
+                    3,
+                    stream,
+                ))?;
+                check(cudaMemcpyAsync(
+                    d.controls.at(source_group * std::mem::size_of::<Control>()),
+                    self.control.ptr,
+                    std::mem::size_of::<Control>(),
+                    3,
+                    stream,
+                ))?;
             } else {
-              check(mgbfs_state_materialize_rank_batch(
-                source_states, source_rows, self.candidates, batch.source_indices,
-                batch.selected_count, self.candidates, self.stride as u32,
-                self.states.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(),
-                self.extent.ptr.cast(), stream,
-              ))?;
-              check(mgbfs_state_publish_next_extent(
-                self.ring.ptr.cast(), self.control.ptr.cast(), self.extent.ptr.cast(),
-                self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
-                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(),
-                2, stream,
-              ))?;
+                check(mgbfs_state_materialize_rank_batch(
+                    source_states,
+                    source_rows,
+                    self.candidates,
+                    batch.source_indices,
+                    batch.selected_count,
+                    self.candidates,
+                    self.stride as u32,
+                    self.states.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    stream,
+                ))?;
+                check(mgbfs_state_publish_next_extent(
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.extent.ptr.cast(),
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr
+                        .cast(),
+                    self.next_extents
+                        .as_ref()
+                        .ok_or("NEXT_EXTENTS_MISSING")?
+                        .ptr
+                        .cast(),
+                    2,
+                    stream,
+                ))?;
             }
         }
         library.rank_accepted = batch.accepted_counts;
         check(unsafe { mgbfs_library_rank_complete_v1(library.rank, epoch) })?;
         #[cfg(debug_assertions)]
-        if let Some(capture) = capture { capture.launch()?; }
+        if let Some(capture) = capture {
+            capture.launch()?;
+        }
         Ok(())
     }
     #[cfg(feature = "library-owner")]
@@ -2248,16 +2899,25 @@ impl DistributedNativeBfs {
         rows: u32,
         source_group: usize,
     ) -> Result<()> {
-        if self.library_owner.as_ref().is_some_and(|library| library.rank_mode) {
+        if self
+            .library_owner
+            .as_ref()
+            .is_some_and(|library| library.rank_mode)
+        {
             return Err("RANK_OWNER_REQUIRES_DEVICE_WINDOW".into());
         }
         let s = self.stream.0;
-        self.route_banks[self.active_route_bank].route_count.put_u32(rows)?;
+        self.route_banks[self.active_route_bank]
+            .route_count
+            .put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
                 source_hashes,
-                self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                self.route_banks[self.active_route_bank]
+                    .route_count
+                    .ptr
+                    .cast(),
                 self.candidates,
                 self.cfg.buckets,
                 self.cfg
@@ -2466,12 +3126,17 @@ impl DistributedNativeBfs {
             owner.selected.ptr,
         );
         let s = self.stream.0;
-        self.route_banks[self.active_route_bank].route_count.put_u32(rows)?;
+        self.route_banks[self.active_route_bank]
+            .route_count
+            .put_u32(rows)?;
         unsafe {
             check(rank_directory(
                 self.cfg.world,
                 source_hashes,
-                self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                self.route_banks[self.active_route_bank]
+                    .route_count
+                    .ptr
+                    .cast(),
                 self.candidates,
                 self.cfg.buckets,
                 self.cfg
@@ -2753,13 +3418,19 @@ impl DistributedNativeBfs {
                         self.collective_send.ptr,
                         4,
                         self.cfg.rank ^ round,
-                        self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                        self.recv_count
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr,
                         4,
                         s,
                     )
                 })?;
                 check(unsafe { cudaStreamSynchronize(s) })?;
-                let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                let received = self
+                    .recv_count
+                    .as_ref()
+                    .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
                     .one::<u32>()?;
                 if self.all_max(u32::from(received > h.capacity))? != 0 {
                     return Err("HASH_FIRST_REMOTE_REQUEST_CAPACITY".into());
@@ -2773,8 +3444,12 @@ impl DistributedNativeBfs {
                             capacity: h.capacity,
                             outgoing_count: count,
                             incoming_count: received,
-                            incoming_count_device: self.recv_count.as_ref()
-                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),
+                            incoming_count_device: self
+                                .recv_count
+                                .as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                .ptr
+                                .cast(),
                             outgoing_requests: h.sorted_requests.ptr.cast(),
                             incoming_requests: h.received_requests.ptr.cast(),
                             outgoing_responses: h.outgoing_responses.ptr.cast(),
@@ -2852,85 +3527,208 @@ impl DistributedNativeBfs {
     }
     /// Same bounded epoch protocol as DENSE; request counts, committed extents
     /// and response publication stay device resident until FinalizeDepth.
-    fn materialize_hash_first_device(&mut self, parent: Option<Extent>, offset: u64,
-        parents: u32, round: u32) -> Result<()> {
+    fn materialize_hash_first_device(
+        &mut self,
+        parent: Option<Extent>,
+        offset: u64,
+        parents: u32,
+        round: u32,
+    ) -> Result<()> {
         let h = self.hash_first.as_ref().ok_or("HASH_FIRST_STORAGE")?;
         let d = h.device.as_ref().ok_or("HASH_FIRST_DEVICE_STORAGE")?;
         let view = self.lsa_view.ok_or("HASH_FIRST_LSA_STORAGE")?;
         let s = self.stream.0;
-        let (begin, physical) = parent.map(|e| (e.sequence + offset, e.begin + offset))
+        let (begin, physical) = parent
+            .map(|e| (e.sequence + offset, e.begin + offset))
             .unwrap_or((0, 0));
         // The scheduler retains one local owner round with world=1. There is
         // no remote source or receive lease in that case.
-        let peer = if self.cfg.world == 1 { self.cfg.rank } else { self.cfg.rank ^ round };
-        let logical_peer = self.cfg.logical_owner_to_rank.iter()
-            .position(|&rank| rank == peer).ok_or("OWNER_MAP")?;
-        let gate = || -> Result<()> { check(unsafe { mgbfs_owner_lsa_fatal_gate(
-            self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-            self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-        ) }) };
-        let import = |word| -> Result<()> { check(unsafe { mgbfs_owner_import_transport_fatal(
-            word, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-        ) }) };
+        let peer = if self.cfg.world == 1 {
+            self.cfg.rank
+        } else {
+            self.cfg.rank ^ round
+        };
+        let logical_peer = self
+            .cfg
+            .logical_owner_to_rank
+            .iter()
+            .position(|&rank| rank == peer)
+            .ok_or("OWNER_MAP")?;
+        let gate = || -> Result<()> {
+            check(unsafe {
+                mgbfs_owner_lsa_fatal_gate(
+                    self.comm.0,
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    self.collective_send.ptr.cast(),
+                    self.collective_recv.ptr.cast(),
+                    s,
+                )
+            })
+        };
+        let import = |word| -> Result<()> {
+            check(unsafe {
+                mgbfs_owner_import_transport_fatal(
+                    word,
+                    self.ring.ptr.cast(),
+                    self.control.ptr.cast(),
+                    s,
+                )
+            })
+        };
         let peer_counts = |count: *const u32| -> Result<()> {
             unsafe {
-                check(cudaMemsetAsync(d.exchange_counts.ptr, 0, self.cfg.world as usize * 4, s))?;
-                check(cudaMemcpyAsync(d.exchange_counts.at(logical_peer * 4), count.cast(), 4, 3, s))
+                check(cudaMemsetAsync(
+                    d.exchange_counts.ptr,
+                    0,
+                    self.cfg.world as usize * 4,
+                    s,
+                ))?;
+                check(cudaMemcpyAsync(
+                    d.exchange_counts.at(logical_peer * 4),
+                    count.cast(),
+                    4,
+                    3,
+                    s,
+                ))
             }
         };
         for group in usize::from(round > 1)..self.cfg.world.min(2) as usize {
             let count = unsafe { d.counts.at(group * 4).cast::<u32>() };
-            let extent = unsafe { d.extents.at(group * std::mem::size_of::<Extent>()).cast::<Extent>() };
-            let control = unsafe { d.controls.at(group * std::mem::size_of::<Control>()).cast::<Control>() };
+            let extent = unsafe {
+                d.extents
+                    .at(group * std::mem::size_of::<Extent>())
+                    .cast::<Extent>()
+            };
+            let control = unsafe {
+                d.controls
+                    .at(group * std::mem::size_of::<Control>())
+                    .cast::<Control>()
+            };
             unsafe {
-                check(mgbfs_materialize_sort_origins(h.materialize.0,
+                check(mgbfs_materialize_sort_origins(
+                    h.materialize.0,
                     if group == 0 { self.cfg.rank } else { peer },
-                    h.requests[group].ptr.cast(), h.targets[group].ptr.cast(), count,
-                    h.sorted_requests.ptr.cast(), h.sorted_targets.ptr.cast(),
-                    h.local_fatal.ptr.cast(), s))?;
+                    h.requests[group].ptr.cast(),
+                    h.targets[group].ptr.cast(),
+                    count,
+                    h.sorted_requests.ptr.cast(),
+                    h.sorted_targets.ptr.cast(),
+                    h.local_fatal.ptr.cast(),
+                    s,
+                ))?;
             }
             import(h.local_fatal.ptr.cast())?;
             gate()?;
-            let origins = if group == 0 { h.sorted_requests.ptr.cast() } else {
+            let origins = if group == 0 {
+                h.sorted_requests.ptr.cast()
+            } else {
                 peer_counts(count)?;
-                check(unsafe { mgbfs_nccl_lsa_exchange_rows(self.comm.0, std::ptr::null(),
-                    h.sorted_requests.ptr, d.exchange_counts.ptr.cast(),
-                    self.collective_recv.ptr.cast(), logical_peer as u32, peer, 16, s) })?;
+                check(unsafe {
+                    mgbfs_nccl_lsa_exchange_rows(
+                        self.comm.0,
+                        std::ptr::null(),
+                        h.sorted_requests.ptr,
+                        d.exchange_counts.ptr.cast(),
+                        self.collective_recv.ptr.cast(),
+                        logical_peer as u32,
+                        peer,
+                        16,
+                        s,
+                    )
+                })?;
                 import(view.fatal)?;
                 gate()?;
                 view.states.cast()
             };
-            let regenerate_count = if group == 0 { count as *const u32 } else { view.count };
+            let regenerate_count = if group == 0 {
+                count as *const u32
+            } else {
+                view.count
+            };
             unsafe {
-                check(mgbfs_regenerate_selected(h.n, self.moves, h.modulus,
-                    self.stride as u32, h.capacity, self.cfg.rank, begin, parents,
+                check(mgbfs_regenerate_selected(
+                    h.n,
+                    self.moves,
+                    h.modulus,
+                    self.stride as u32,
+                    h.capacity,
+                    self.cfg.rank,
+                    begin,
+                    parents,
                     self.states.at(physical as usize * self.stride).cast(),
-                    h.generators.ptr.cast(), origins, regenerate_count,
-                    h.outgoing_responses.ptr.cast(), h.local_fatal.ptr.cast(), s))?;
+                    h.generators.ptr.cast(),
+                    origins,
+                    regenerate_count,
+                    h.outgoing_responses.ptr.cast(),
+                    h.local_fatal.ptr.cast(),
+                    s,
+                ))?;
             }
             import(h.local_fatal.ptr.cast())?;
             gate()?;
-            let responses = if group == 0 { h.outgoing_responses.ptr as *const u8 } else {
+            let responses = if group == 0 {
+                h.outgoing_responses.ptr as *const u8
+            } else {
                 // Snapshot the request count into the disjoint preallocated
                 // count array before the response exchange overwrites the view.
                 peer_counts(view.count)?;
-                check(unsafe { mgbfs_nccl_lsa_exchange_rows(self.comm.0, std::ptr::null(),
-                    h.outgoing_responses.ptr, d.exchange_counts.ptr.cast(),
-                    self.collective_recv.ptr.cast(), logical_peer as u32, peer,
-                    self.stride as u32, s) })?;
+                check(unsafe {
+                    mgbfs_nccl_lsa_exchange_rows(
+                        self.comm.0,
+                        std::ptr::null(),
+                        h.outgoing_responses.ptr,
+                        d.exchange_counts.ptr.cast(),
+                        self.collective_recv.ptr.cast(),
+                        logical_peer as u32,
+                        peer,
+                        self.stride as u32,
+                        s,
+                    )
+                })?;
                 import(view.fatal)?;
-                check(unsafe { mgbfs_state_validate_response_count(count, view.count,
-                    self.ring.ptr.cast(), self.control.ptr.cast(), s) })?;
+                check(unsafe {
+                    mgbfs_state_validate_response_count(
+                        count,
+                        view.count,
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        s,
+                    )
+                })?;
                 gate()?;
                 view.states
             };
             unsafe {
-                check(mgbfs_state_apply_responses(h.materialize.0, responses,
-                    h.sorted_targets.ptr.cast(), count, self.collective_recv.ptr.cast(),
-                    self.states.ptr.cast(), self.ring.ptr.cast(), control, extent, s))?;
-                check(mgbfs_state_publish_next_extent(self.ring.ptr.cast(), control, extent,
-                    self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr.cast(),
-                    self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?.ptr.cast(), 2, s))?;
+                check(mgbfs_state_apply_responses(
+                    h.materialize.0,
+                    responses,
+                    h.sorted_targets.ptr.cast(),
+                    count,
+                    self.collective_recv.ptr.cast(),
+                    self.states.ptr.cast(),
+                    self.ring.ptr.cast(),
+                    control,
+                    extent,
+                    s,
+                ))?;
+                check(mgbfs_state_publish_next_extent(
+                    self.ring.ptr.cast(),
+                    control,
+                    extent,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr
+                        .cast(),
+                    self.next_extents
+                        .as_ref()
+                        .ok_or("NEXT_EXTENTS_MISSING")?
+                        .ptr
+                        .cast(),
+                    2,
+                    s,
+                ))?;
             }
             gate()?;
         }
@@ -3026,8 +3824,13 @@ impl DistributedNativeBfs {
             check(cudaMemsetAsync(self.layer_count.ptr, 0, 4, s))?;
             if self.rank_owner_mode() {
                 check(cudaMemsetAsync(
-                    self.next_extent_count.as_ref().ok_or("NEXT_EXTENT_COUNT_MISSING")?.ptr,
-                    0, 4, s,
+                    self.next_extent_count
+                        .as_ref()
+                        .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                        .ptr,
+                    0,
+                    4,
+                    s,
                 ))?;
             }
         }
@@ -3035,16 +3838,31 @@ impl DistributedNativeBfs {
         if let Some(library) = self.library_owner.as_mut() {
             if library.closed {
                 if library.rank_mode {
-                    library.rank = unsafe { create_rank_owner(
-                        library, &self.prev, &self.curr, self.cfg.shards,
-                        self.candidates, self.cfg.world, s,
-                    )? };
+                    library.rank = unsafe {
+                        create_rank_owner(
+                            library,
+                            &self.prev,
+                            &self.curr,
+                            self.cfg.shards,
+                            self.candidates,
+                            self.cfg.world,
+                            s,
+                        )?
+                    };
                 } else {
                     for shard in 0..library.shards.len() {
                         unsafe {
                             library.shards[shard].reopen_window(
-                                history_view(&self.prev, library.plane_words, &library.previous[shard]),
-                                history_view(&self.curr, library.plane_words, &library.current[shard]),
+                                history_view(
+                                    &self.prev,
+                                    library.plane_words,
+                                    &library.previous[shard],
+                                ),
+                                history_view(
+                                    &self.curr,
+                                    library.plane_words,
+                                    &library.current[shard],
+                                ),
                                 library.capacity,
                             )?;
                         }
@@ -3066,13 +3884,20 @@ impl DistributedNativeBfs {
         }
         let scheduled_rounds = self.all_max(local_rounds?)?;
         let mut cursor = ParentCursor::default();
-        if !self.prefetched.is_empty() { return Err("ROUTE_PREFETCH_DEPTH_LEAK".into()); }
+        if !self.prefetched.is_empty() {
+            return Err("ROUTE_PREFETCH_DEPTH_LEAK".into());
+        }
         let mut producer_cursor = ParentCursor::default();
         let mut produced = 0usize;
-        let pipelined_generation = self.hash_first.as_ref().map_or(true, |h| h.device.is_some());
+        let pipelined_generation = self
+            .hash_first
+            .as_ref()
+            .map_or(true, |h| h.device.is_some());
         if pipelined_generation {
             for _ in 0..self.route_banks.len() {
-                if !self.enqueue_route_prefetch(&mut producer_cursor, &mut produced)? { break; }
+                if !self.enqueue_route_prefetch(&mut producer_cursor, &mut produced)? {
+                    break;
+                }
             }
         }
         let mut archive_released = [false; 2];
@@ -3128,11 +3953,19 @@ impl DistributedNativeBfs {
                     // Host/API failure may prevent any further GPU submission.
                     // Return to the sole dispatcher's notification + abort path
                     // before issuing a collective or waiting for GPU progress.
-                    if let Some(error) = error { return Err(error); }
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    if let Some(error) = error {
+                        return Err(error);
+                    }
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=archive_vote_queued", self.cfg.rank, self.depth);
                     }
@@ -3141,25 +3974,50 @@ impl DistributedNativeBfs {
                 }
             }
             if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generate_begin",
+                    self.cfg.rank, self.depth
+                );
             }
             if self.hash_first.as_ref().is_some_and(|h| h.device.is_some()) && work.is_some() {
                 let batch = work.ok_or("GENERATION_BATCH_MISSING")?;
                 let sequence = match self.prefetched.pop_front() {
-                    Some((expected, sequence, bank)) if expected == batch && bank == self.active_route_bank => sequence,
+                    Some((expected, sequence, bank))
+                        if expected == batch && bank == self.active_route_bank =>
+                    {
+                        sequence
+                    }
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
                     None => return Err("GENERATION_BATCH_MISSING".into()),
                 };
-                unsafe { self.route_banks[self.active_route_bank].generation_done.wait(sequence, s)?; }
+                unsafe {
+                    self.route_banks[self.active_route_bank]
+                        .generation_done
+                        .wait(sequence, s)?;
+                }
                 generation = Some(sequence);
-                let fatal = self.route_banks[self.active_route_bank].generation_control.ptr.cast();
-                check(unsafe { mgbfs_owner_import_transport_fatal(
-                    fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                ) })?;
-                check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                    self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                    self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                ) })?;
+                let fatal = self.route_banks[self.active_route_bank]
+                    .generation_control
+                    .ptr
+                    .cast();
+                check(unsafe {
+                    mgbfs_owner_import_transport_fatal(
+                        fatal,
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        s,
+                    )
+                })?;
+                check(unsafe {
+                    mgbfs_owner_lsa_fatal_gate(
+                        self.comm.0,
+                        self.ring.ptr.cast(),
+                        self.control.ptr.cast(),
+                        self.collective_send.ptr.cast(),
+                        self.collective_recv.ptr.cast(),
+                        s,
+                    )
+                })?;
             } else if let Some(h) = self.hash_first.as_ref() {
                 h.parent_count.put_u32(parents)?;
                 let (begin, physical) = parent
@@ -3185,9 +4043,15 @@ impl DistributedNativeBfs {
                         h.coefficients.ptr.cast(),
                         h.offsets.ptr.cast(),
                         h.parent_count.ptr.cast(),
-                        self.route_banks[self.active_route_bank].child_hashes.ptr.cast(),
+                        self.route_banks[self.active_route_bank]
+                            .child_hashes
+                            .ptr
+                            .cast(),
                         self.route_banks[self.active_route_bank].children.ptr.cast(),
-                        self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                        self.route_banks[self.active_route_bank]
+                            .route_count
+                            .ptr
+                            .cast(),
                         h.local_fatal.ptr.cast(),
                         s,
                     ))?;
@@ -3196,24 +4060,41 @@ impl DistributedNativeBfs {
                     }
                 }
                 if device_epoch {
-                    check(unsafe { mgbfs_owner_import_transport_fatal(
-                        h.local_fatal.ptr.cast(), self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                    ) })?;
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_import_transport_fatal(
+                            h.local_fatal.ptr.cast(),
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            s,
+                        )
+                    })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 } else if self.all_max(h.local_fatal.one::<u32>()?)? != 0 {
                     return Err("HASH_FIRST_GENERATION_FATAL".into());
                 }
             } else if let Some(batch) = work {
                 let sequence = match self.prefetched.pop_front() {
-                    Some((expected, sequence, bank)) if expected == batch && bank == self.active_route_bank => sequence,
+                    Some((expected, sequence, bank))
+                        if expected == batch && bank == self.active_route_bank =>
+                    {
+                        sequence
+                    }
                     Some(_) => return Err("GENERATION_BATCH_IDENTITY".into()),
                     None => return Err("GENERATION_BATCH_MISSING".into()),
                 };
                 unsafe {
-                    self.route_banks[self.active_route_bank].generation_done.wait(sequence, s)?;
+                    self.route_banks[self.active_route_bank]
+                        .generation_done
+                        .wait(sequence, s)?;
                 }
                 generation = Some(sequence);
             }
@@ -3221,19 +4102,31 @@ impl DistributedNativeBfs {
                 check(unsafe { cudaStreamSynchronize(s) })?;
             }
             if trace_route {
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=generation_end",
+                    self.cfg.rank, self.depth
+                );
             }
             unsafe {
                 if trace_route {
-                    eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_begin", self.cfg.rank, self.depth);
+                    eprintln!(
+                        "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_begin",
+                        self.cfg.rank, self.depth
+                    );
                 }
                 check(mgbfs_route_run(
                     self.route.0,
                     self.route_banks[self.active_route_bank].child_hashes.ptr,
                     self.identity_refs.ptr.cast(),
                     self.route_banks[self.active_route_bank].sorted_hashes.ptr,
-                    self.route_banks[self.active_route_bank].sorted_refs.ptr.cast(),
-                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                    self.route_banks[self.active_route_bank]
+                        .sorted_refs
+                        .ptr
+                        .cast(),
+                    self.route_banks[self.active_route_bank]
+                        .route_count
+                        .ptr
+                        .cast(),
                     candidate_count,
                     self.cfg.prededup as i32,
                     s,
@@ -3252,22 +4145,49 @@ impl DistributedNativeBfs {
                     self.route_banks[self.active_route_bank].children.ptr.cast(),
                     candidate_count,
                     self.route_banks[self.active_route_bank].sorted_hashes.ptr,
-                    self.route_banks[self.active_route_bank].sorted_refs.ptr.cast(),
-                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
-                    self.route_banks[self.active_route_bank].packed_states.ptr.cast(),
-                    self.route_banks[self.active_route_bank].owner_counts.ptr.cast(),
+                    self.route_banks[self.active_route_bank]
+                        .sorted_refs
+                        .ptr
+                        .cast(),
+                    self.route_banks[self.active_route_bank]
+                        .route_count
+                        .ptr
+                        .cast(),
+                    self.route_banks[self.active_route_bank]
+                        .packed_states
+                        .ptr
+                        .cast(),
+                    self.route_banks[self.active_route_bank]
+                        .owner_counts
+                        .ptr
+                        .cast(),
                     s,
                 )
             })?;
             if self.rank_owner_mode() {
                 let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
-                let logical_owner = self.cfg.logical_owner_to_rank.iter()
-                    .position(|&rank| rank == self.cfg.rank).ok_or("OWNER_MAP")? as u32;
+                let logical_owner = self
+                    .cfg
+                    .logical_owner_to_rank
+                    .iter()
+                    .position(|&rank| rank == self.cfg.rank)
+                    .ok_or("OWNER_MAP")? as u32;
                 check(unsafe {
                     mgbfs_owner_window_from_counts(
-                        self.cfg.world, self.candidates, logical_owner,
-                        self.route_banks[self.active_route_bank].owner_counts.ptr.cast(), self.route_banks[self.active_route_bank].route_count.ptr.cast(),
-                        window.ptr.cast(), window.at(4).cast(), s,
+                        self.cfg.world,
+                        self.candidates,
+                        logical_owner,
+                        self.route_banks[self.active_route_bank]
+                            .owner_counts
+                            .ptr
+                            .cast(),
+                        self.route_banks[self.active_route_bank]
+                            .route_count
+                            .ptr
+                            .cast(),
+                        window.ptr.cast(),
+                        window.at(4).cast(),
+                        s,
                     )
                 })?;
             }
@@ -3277,20 +4197,28 @@ impl DistributedNativeBfs {
                 self.wait_comm_stream(s)?;
             }
             let host_ranges = if self.lsa_view.is_none() {
-                let routed = self.route_banks[self.active_route_bank].route_count.one::<u32>()?;
+                let routed = self.route_banks[self.active_route_bank]
+                    .route_count
+                    .one::<u32>()?;
                 let mut owner_counts = [0u32; 8];
-                self.route_banks[self.active_route_bank].owner_counts.read(&mut owner_counts[..self.cfg.world as usize])?;
+                self.route_banks[self.active_route_bank]
+                    .owner_counts
+                    .read(&mut owner_counts[..self.cfg.world as usize])?;
                 if crate::route_count::packed_count(
                     candidate_count,
                     &owner_counts[..self.cfg.world as usize],
-                )? != routed {
+                )? != routed
+                {
                     return Err("EXCHANGE_COUNT_MISMATCH".into());
                 }
-                Some((routed, crate::route_count::packed_rank_ranges(
-                    self.candidates,
-                    &owner_counts[..self.cfg.world as usize],
-                    &self.cfg.logical_owner_to_rank[..self.cfg.world as usize],
-                )?))
+                Some((
+                    routed,
+                    crate::route_count::packed_rank_ranges(
+                        self.candidates,
+                        &owner_counts[..self.cfg.world as usize],
+                        &self.cfg.logical_owner_to_rank[..self.cfg.world as usize],
+                    )?,
+                ))
             } else {
                 // LSA consumes the device counts and checks their sum/capacity
                 // before copying. No D2H count is needed for this route.
@@ -3298,10 +4226,14 @@ impl DistributedNativeBfs {
             };
             if trace_route {
                 eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=route_end routed={:?}", self.cfg.rank, self.depth, host_ranges.as_ref().map(|(rows, _)| rows));
-                eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end", self.cfg.rank, self.depth);
+                eprintln!(
+                    "MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} stage=pack_end",
+                    self.cfg.rank, self.depth
+                );
             }
             let world = self.cfg.world;
-            let (local_offset, local_rows) = host_ranges.as_ref()
+            let (local_offset, local_rows) = host_ranges
+                .as_ref()
                 .map_or((0, 0), |(_, ranges)| ranges[self.cfg.rank as usize]);
             // The same bounded receive slot serves every XOR peer round.
             // All ranks enter even when their parent batch or payload is empty.
@@ -3315,36 +4247,54 @@ impl DistributedNativeBfs {
                 } else {
                     crate::route_count::exchange_peer(world, self.cfg.rank, round)?
                 };
-                let (remote_offset, remote_rows) = host_ranges.as_ref()
+                let (remote_offset, remote_rows) = host_ranges
+                    .as_ref()
                     .map_or((0, 0), |(_, ranges)| ranges[exchange_peer as usize]);
                 let lsa = self.lsa_view;
                 let rank_mode = self.rank_owner_mode();
                 let received = if self.cfg.world == 1 {
                     0
                 } else if lsa.is_some() {
-                    let logical_owner = self.cfg.logical_owner_to_rank
-                        .iter().position(|&rank| rank == exchange_peer)
+                    let logical_owner = self
+                        .cfg
+                        .logical_owner_to_rank
+                        .iter()
+                        .position(|&rank| rank == exchange_peer)
                         .ok_or("OWNER_MAP")? as u32;
-                    check(unsafe { cudaStreamWaitEvent(
-                        self.exchange_stream.0, self.pack_done.0, 0,
-                    ) })?;
+                    check(unsafe {
+                        cudaStreamWaitEvent(self.exchange_stream.0, self.pack_done.0, 0)
+                    })?;
                     if lsa_owner_recorded {
-                        check(unsafe { cudaStreamWaitEvent(
-                            self.exchange_stream.0,
-                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0,
-                            0,
-                        ) })?;
+                        check(unsafe {
+                            cudaStreamWaitEvent(
+                                self.exchange_stream.0,
+                                self.owner_consumed
+                                    .as_ref()
+                                    .ok_or("LSA_OWNER_EVENT_MISSING")?
+                                    .0,
+                                0,
+                            )
+                        })?;
                     }
                     check(unsafe {
                         mgbfs_nccl_lsa_exchange_rows(
-                            self.comm.0, self.route_banks[self.active_route_bank].sorted_hashes.ptr,
-                            self.route_banks[self.active_route_bank].packed_states.ptr, self.route_banks[self.active_route_bank].owner_counts.ptr.cast(),
+                            self.comm.0,
+                            self.route_banks[self.active_route_bank].sorted_hashes.ptr,
+                            self.route_banks[self.active_route_bank].packed_states.ptr,
+                            self.route_banks[self.active_route_bank]
+                                .owner_counts
+                                .ptr
+                                .cast(),
                             self.collective_recv.ptr.cast(),
-                            logical_owner, exchange_peer, packet_stride as u32,
+                            logical_owner,
+                            exchange_peer,
+                            packet_stride as u32,
                             self.exchange_stream.0,
                         )
                     })?;
-                    check(unsafe { cudaEventRecord(self.exchange_done.0, self.exchange_stream.0) })?;
+                    check(unsafe {
+                        cudaEventRecord(self.exchange_done.0, self.exchange_stream.0)
+                    })?;
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=lsa_exchange_queued", self.cfg.rank, self.depth);
                     }
@@ -3356,22 +4306,32 @@ impl DistributedNativeBfs {
                     // The count is a launch argument, not a borrowed host
                     // slice. Publish it on the consuming stream so the NCCL
                     // size exchange follows the store without a host drain.
-                    check(unsafe { mgbfs_device_store_u32(
-                        self.collective_send.ptr.cast(), remote_rows, communication,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_device_store_u32(
+                            self.collective_send.ptr.cast(),
+                            remote_rows,
+                            communication,
+                        )
+                    })?;
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
                             self.collective_send.ptr,
                             4,
                             exchange_peer,
-                            self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                            self.recv_count
+                                .as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                .ptr,
                             4,
                             communication,
                         )
                     })?;
                     self.wait_comm_stream(communication)?;
-                    let received = self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                    let received = self
+                        .recv_count
+                        .as_ref()
+                        .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
                         .one::<u32>()?;
                     if received > self.candidates {
                         return Err("EXCHANGE_CAPACITY".into());
@@ -3379,10 +4339,15 @@ impl DistributedNativeBfs {
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
-                            self.route_banks[self.active_route_bank].sorted_hashes.at(remote_offset as usize * 16),
+                            self.route_banks[self.active_route_bank]
+                                .sorted_hashes
+                                .at(remote_offset as usize * 16),
                             u64::from(remote_rows) * 16,
                             exchange_peer,
-                            self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                            self.recv_hashes
+                                .as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                .ptr,
                             u64::from(received) * 16,
                             communication,
                         )
@@ -3390,11 +4355,15 @@ impl DistributedNativeBfs {
                     check(unsafe {
                         mgbfs_nccl_send_recv(
                             self.comm.0,
-                            self.route_banks[self.active_route_bank].packed_states
+                            self.route_banks[self.active_route_bank]
+                                .packed_states
                                 .at(remote_offset as usize * packet_stride),
                             u64::from(remote_rows) * packet_stride as u64,
                             exchange_peer,
-                            self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
+                            self.recv_states
+                                .as_ref()
+                                .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                                .ptr,
                             u64::from(received) * packet_stride as u64,
                             communication,
                         )
@@ -3435,9 +4404,14 @@ impl DistributedNativeBfs {
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
                     }
                     if let Some(view) = lsa {
-                        check(unsafe { mgbfs_owner_import_transport_fatal(
-                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_import_transport_fatal(
+                                view.fatal,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                s,
+                            )
+                        })?;
                     }
                     if trace_route {
                         eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=retire_import_queued", self.cfg.rank, self.depth);
@@ -3446,10 +4420,16 @@ impl DistributedNativeBfs {
                         // The common result poisons ring/control on-device before
                         // any rank can commit this owner epoch. Host/API errors
                         // use the cancellation sideband instead of a batch vote.
-                        check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                            self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                            self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_lsa_fatal_gate(
+                                self.comm.0,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                self.collective_send.ptr.cast(),
+                                self.collective_recv.ptr.cast(),
+                                s,
+                            )
+                        })?;
                         if trace_route {
                             eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=preowner_vote_queued", self.cfg.rank, self.depth);
                         }
@@ -3460,14 +4440,25 @@ impl DistributedNativeBfs {
                 if round != 1 || self.hash_first.is_some() {
                     if let Some(view) = lsa {
                         check(unsafe { cudaStreamWaitEvent(s, self.exchange_done.0, 0) })?;
-                        check(unsafe { mgbfs_owner_import_transport_fatal(
-                            view.fatal, self.ring.ptr.cast(), self.control.ptr.cast(), s,
-                        ) })?;
+                        check(unsafe {
+                            mgbfs_owner_import_transport_fatal(
+                                view.fatal,
+                                self.ring.ptr.cast(),
+                                self.control.ptr.cast(),
+                                s,
+                            )
+                        })?;
                         if device_epoch {
-                            check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                                self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                                self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                            ) })?;
+                            check(unsafe {
+                                mgbfs_owner_lsa_fatal_gate(
+                                    self.comm.0,
+                                    self.ring.ptr.cast(),
+                                    self.control.ptr.cast(),
+                                    self.collective_send.ptr.cast(),
+                                    self.collective_recv.ptr.cast(),
+                                    s,
+                                )
+                            })?;
                         } else if self.all_max_ring_fatal()? != 0 {
                             return Err("GROUP_LSA_TRANSPORT_FATAL".into());
                         }
@@ -3476,29 +4467,51 @@ impl DistributedNativeBfs {
                     }
                 }
                 let local_states: *const u8 = unsafe {
-                    self.route_banks[self.active_route_bank].packed_states
+                    self.route_banks[self.active_route_bank]
+                        .packed_states
                         .at(local_offset as usize * packet_stride)
                         .cast()
                 };
                 let local_hashes: *const c_void = unsafe {
-                    self.route_banks[self.active_route_bank].sorted_hashes.at(local_offset as usize * 16)
+                    self.route_banks[self.active_route_bank]
+                        .sorted_hashes
+                        .at(local_offset as usize * 16)
                 };
-                let (remote_states, remote_hashes, remote_count):
-                    (*const u8, *const c_void, *const u32) = if let Some(view) = lsa {
-                        (view.states, view.hashes, view.count)
-                    } else {
-                        (self.recv_states.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast(),
-                         self.recv_hashes.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr,
-                         self.recv_count.as_ref().ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?.ptr.cast())
-                    };
+                let (remote_states, remote_hashes, remote_count): (
+                    *const u8,
+                    *const c_void,
+                    *const u32,
+                ) = if let Some(view) = lsa {
+                    (view.states, view.hashes, view.count)
+                } else {
+                    (
+                        self.recv_states
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr
+                            .cast(),
+                        self.recv_hashes
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr,
+                        self.recv_count
+                            .as_ref()
+                            .ok_or("LEGACY_RECEIVE_BUFFER_MISSING")?
+                            .ptr
+                            .cast(),
+                    )
+                };
                 let remote_ready = self.exchange_done.0;
                 let world = self.cfg.world;
                 if trace_route {
                     eprintln!("MGBFS_ROUTE_TRACE rank={} depth={} batch={batch_index} round={round} stage=owner_begin received={received}", self.cfg.rank, self.depth);
                 }
                 let mut batch_error = process_owner_pair(
-                    if device_epoch { OwnerFailurePolicy::CancelGroup }
-                    else { OwnerFailurePolicy::CollectiveVote },
+                    if device_epoch {
+                        OwnerFailurePolicy::CancelGroup
+                    } else {
+                        OwnerFailurePolicy::CollectiveVote
+                    },
                     (
                         0,
                         (
@@ -3507,10 +4520,7 @@ impl DistributedNativeBfs {
                             if round == 1 { local_rows } else { 0 },
                         ),
                     ),
-                    (
-                        1,
-                        (remote_states, remote_hashes, received),
-                    ),
+                    (1, (remote_states, remote_hashes, received)),
                     |(group, (states, hashes, rows))| {
                         if rank_mode {
                             if !crate::route_count::rank_owner_group_active(world, round, group)? {
@@ -3520,29 +4530,54 @@ impl DistributedNativeBfs {
                             // Multi-rank injection remains on the first remote
                             // owner job. World=1 has no such job, so exercise
                             // the same host-error cancellation on its local job.
-                            if round == 1 && ((group == 1 && scheduled_rounds > 1)
-                                || (world == 1 && group == 0))
+                            if round == 1
+                                && ((group == 1 && scheduled_rounds > 1)
+                                    || (world == 1 && group == 0))
                                 && TEST_OWNER_HOST_FAULT.with(|flag| flag.replace(false))
                             {
                                 return Err("TEST_INJECTED_OWNER_HOST_ERROR".into());
                             }
-                            let window = self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
+                            let window =
+                                self.owner_window.as_ref().ok_or("OWNER_WINDOW_MISSING")?;
                             let (states, hashes, begin, rows, source_rows) = if group == 0 {
-                                (self.route_banks[self.active_route_bank].packed_states.ptr as *const u8,
-                                 self.route_banks[self.active_route_bank].sorted_hashes.ptr as *const c_void,
-                                 window.ptr as *const u32,
-                                 unsafe { window.at(4) } as *const u32,
-                                 self.route_banks[self.active_route_bank].route_count.ptr as *const u32)
+                                (
+                                    self.route_banks[self.active_route_bank].packed_states.ptr
+                                        as *const u8,
+                                    self.route_banks[self.active_route_bank].sorted_hashes.ptr
+                                        as *const c_void,
+                                    window.ptr as *const u32,
+                                    unsafe { window.at(4) } as *const u32,
+                                    self.route_banks[self.active_route_bank].route_count.ptr
+                                        as *const u32,
+                                )
                             } else {
-                                (remote_states, remote_hashes,
-                                 unsafe { window.at(8) } as *const u32,
-                                 remote_count, remote_count)
+                                (
+                                    remote_states,
+                                    remote_hashes,
+                                    unsafe { window.at(8) } as *const u32,
+                                    remote_count,
+                                    remote_count,
+                                )
                             };
                             if self.native_rank.is_some() {
-                                return self.commit_rank_native_batch(states, hashes, begin, rows, source_rows, group);
+                                return self.commit_rank_native_batch(
+                                    states,
+                                    hashes,
+                                    begin,
+                                    rows,
+                                    source_rows,
+                                    group,
+                                );
                             }
                             #[cfg(feature = "library-owner")]
-                            return self.commit_rank_library_batch(states, hashes, begin, rows, source_rows, group);
+                            return self.commit_rank_library_batch(
+                                states,
+                                hashes,
+                                begin,
+                                rows,
+                                source_rows,
+                                group,
+                            );
                             #[cfg(not(feature = "library-owner"))]
                             return Err("RANK_OWNER_BACKEND_MISSING".into());
                         }
@@ -3566,20 +4601,33 @@ impl DistributedNativeBfs {
                     // A host/API error is not a device logical fatal: this rank
                     // may be unable to issue the next collective. Outer advance
                     // publishes cancellation before serialized communicator abort.
-                    if let Some(error) = batch_error { return Err(error); }
+                    if let Some(error) = batch_error {
+                        return Err(error);
+                    }
                     // All ranks issue the post-owner vote, including an empty
                     // peer round. Its device result predicates the next LSA
                     // rendezvous without returning a count to the host.
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 }
-                if lsa.is_some() && self.hash_first.is_none() && (batch_error.is_none() || device_epoch) {
+                if lsa.is_some()
+                    && self.hash_first.is_none()
+                    && (batch_error.is_none() || device_epoch)
+                {
                     // Every rank waits for its own receive-slot consumer before
                     // entering the next all-rank LSA barrier. A record failure
                     // must participate in the existing group error vote.
-                    let recorded = self.owner_consumed.as_ref()
+                    let recorded = self
+                        .owner_consumed
+                        .as_ref()
                         .ok_or_else(|| "LSA_OWNER_EVENT_MISSING".to_string())
                         .and_then(|event| check(unsafe { cudaEventRecord(event.0, s) }));
                     match recorded {
@@ -3603,9 +4651,15 @@ impl DistributedNativeBfs {
                 if self.hash_first.is_some() {
                     self.materialize_hash_first(parent, extent_offset, parents, round)?;
                     if lsa.is_some() {
-                        check(unsafe { cudaEventRecord(
-                            self.owner_consumed.as_ref().ok_or("LSA_OWNER_EVENT_MISSING")?.0, s,
-                        ) })?;
+                        check(unsafe {
+                            cudaEventRecord(
+                                self.owner_consumed
+                                    .as_ref()
+                                    .ok_or("LSA_OWNER_EVENT_MISSING")?
+                                    .0,
+                                s,
+                            )
+                        })?;
                         lsa_owner_recorded = true;
                     }
                 }
@@ -3636,10 +4690,16 @@ impl DistributedNativeBfs {
                     })?;
                 }
                 if device_epoch {
-                    check(unsafe { mgbfs_owner_lsa_fatal_gate(
-                        self.comm.0, self.ring.ptr.cast(), self.control.ptr.cast(),
-                        self.collective_send.ptr.cast(), self.collective_recv.ptr.cast(), s,
-                    ) })?;
+                    check(unsafe {
+                        mgbfs_owner_lsa_fatal_gate(
+                            self.comm.0,
+                            self.ring.ptr.cast(),
+                            self.control.ptr.cast(),
+                            self.collective_send.ptr.cast(),
+                            self.collective_recv.ptr.cast(),
+                            s,
+                        )
+                    })?;
                 } else if self.all_max_ring_fatal()? != 0 {
                     return Err("HASH_FIRST_RETIRE_FATAL".into());
                 }
@@ -3650,9 +4710,13 @@ impl DistributedNativeBfs {
                 // Reuse is a GPU dependency, not a host snapshot of counts.
                 let bank = &mut self.route_banks[self.active_route_bank];
                 check(unsafe { cudaEventRecord(bank.last_reader.0, s) })?;
-                unsafe { bank.generation_done.retire_after_device_barrier(
-                    sequence, self.generation_stream.0, bank.last_reader.0,
-                )?; }
+                unsafe {
+                    bank.generation_done.retire_after_device_barrier(
+                        sequence,
+                        self.generation_stream.0,
+                        bank.last_reader.0,
+                    )?;
+                }
                 self.enqueue_route_prefetch(&mut producer_cursor, &mut produced)?;
             }
             if device_epoch {
@@ -3666,7 +4730,9 @@ impl DistributedNativeBfs {
             }
         }
         let _finalize_range = TraceRange::new(trace_ranges, b"mgbfs.FinalizeDepth\0");
-        if !self.prefetched.is_empty() { return Err("ROUTE_PREFETCH_FINALIZE_LEAK".into()); }
+        if !self.prefetched.is_empty() {
+            return Err("ROUTE_PREFETCH_FINALIZE_LEAK".into());
+        }
         while device_epoch && !self.epoch_outstanding.is_empty() {
             let slot = *self.epoch_outstanding.front().ok_or("EPOCH_CREDIT_EMPTY")?;
             self.wait_epoch_credit(slot)?;
@@ -3691,7 +4757,10 @@ impl DistributedNativeBfs {
                     self.prev.ptr,
                     self.cfg.layer_capacity,
                     self.directory.ptr.cast(),
-                    self.route_banks[self.active_route_bank].route_count.ptr.cast(),
+                    self.route_banks[self.active_route_bank]
+                        .route_count
+                        .ptr
+                        .cast(),
                     self.fatal.ptr.cast(),
                     s,
                 ))?;
@@ -3704,26 +4773,38 @@ impl DistributedNativeBfs {
                 let control = self.control.one::<Control>()?;
                 let ring = self.ring.one::<Ring>()?;
                 if control.error != 0 || ring.fatal != 0 {
-                    return Err(format!("LIBRARY_RANK_DEPTH_FATAL_{}_{}", control.error, ring.fatal));
+                    return Err(format!(
+                        "LIBRARY_RANK_DEPTH_FATAL_{}_{}",
+                        control.error, ring.fatal
+                    ));
                 }
-                let count = self.next_extent_count.as_ref()
-                    .ok_or("NEXT_EXTENT_COUNT_MISSING")?.one::<u32>()? as usize;
+                let count = self
+                    .next_extent_count
+                    .as_ref()
+                    .ok_or("NEXT_EXTENT_COUNT_MISSING")?
+                    .one::<u32>()? as usize;
                 if count > 2 || !self.next.is_empty() {
                     return Err("NEXT_EXTENT_CAPACITY".into());
                 }
                 let mut extents = vec![Extent::default(); count];
-                self.next_extents.as_ref().ok_or("NEXT_EXTENTS_MISSING")?
+                self.next_extents
+                    .as_ref()
+                    .ok_or("NEXT_EXTENTS_MISSING")?
                     .read(&mut extents)?;
-                if extents.iter().any(|e| e.ready != 1 || e.count == 0 ||
-                    e.granted_rows as u64 != e.count) ||
-                    extents.iter().map(|e| e.count).sum::<u64>() !=
-                        u64::from(self.layer_count.one::<u32>()?) {
+                if extents
+                    .iter()
+                    .any(|e| e.ready != 1 || e.count == 0 || e.granted_rows as u64 != e.count)
+                    || extents.iter().map(|e| e.count).sum::<u64>()
+                        != u64::from(self.layer_count.one::<u32>()?)
+                {
                     return Err("NEXT_EXTENT_MISMATCH".into());
                 }
                 Ok(extents)
             })();
             if self.all_max(u32::from(ready.is_err()))? != 0 {
-                return Err(ready.err().unwrap_or_else(|| "REMOTE_NEXT_EXTENT_FATAL".into()));
+                return Err(ready
+                    .err()
+                    .unwrap_or_else(|| "REMOTE_NEXT_EXTENT_FATAL".into()));
             }
             self.next.extend(ready?);
         }
@@ -3745,12 +4826,16 @@ impl DistributedNativeBfs {
             std::mem::swap(&mut library.previous, &mut library.current);
             // Finalization reads this word through the synchronous host
             // snapshot immediately below, outside the producer stream.
-            self.route_banks[self.active_route_bank].route_count.put(&[count])?;
+            self.route_banks[self.active_route_bank]
+                .route_count
+                .put(&[count])?;
         }
         if self.fatal.one::<u32>()? != 0 {
             return Err("FINALIZE_FATAL".into());
         }
-        let count = self.route_banks[self.active_route_bank].route_count.one::<u32>()?;
+        let count = self.route_banks[self.active_route_bank]
+            .route_count
+            .one::<u32>()?;
         if self.layer_count.one::<u32>()? != count {
             return Err("LAYER_COUNT_MISMATCH".into());
         }
@@ -3796,7 +4881,9 @@ impl DistributedNativeBfs {
     ) -> Result<()> {
         let compact_permutation = self.permutation_n == u32::try_from(archive.width).ok();
         let _archive_range = TraceRange::new(
-            std::env::var_os("MGBFS_TRACE_RANGES").is_some(), b"mgbfs.archive_d2h\0");
+            std::env::var_os("MGBFS_TRACE_RANGES").is_some(),
+            b"mgbfs.archive_d2h\0",
+        );
         let s = self.archive_stream.0;
         let mut offset = 0u64;
         while offset < count {
@@ -3857,8 +4944,13 @@ impl DistributedNativeBfs {
                 eprintln!("MGBFS_RUNTIME_FATAL rank={} error={error}", self.cfg.rank);
             }
             crate::failure::report_and_abort_on_error(
-                copied, &mut self.failed, self.failure_report.as_deref(),
-                || unsafe { mgbfs_nccl_abort(comm); }, || unsafe {
+                copied,
+                &mut self.failed,
+                self.failure_report.as_deref(),
+                || unsafe {
+                    mgbfs_nccl_abort(comm);
+                },
+                || unsafe {
                     cudaStreamSynchronize(s);
                 },
             )?;
@@ -3871,7 +4963,9 @@ impl DistributedNativeBfs {
                 if let Some(report) = failure_report {
                     report.store(2, std::sync::atomic::Ordering::Release);
                 }
-                unsafe { mgbfs_nccl_abort(comm); }
+                unsafe {
+                    mgbfs_nccl_abort(comm);
+                }
             })?;
             offset += u64::from(n);
         }

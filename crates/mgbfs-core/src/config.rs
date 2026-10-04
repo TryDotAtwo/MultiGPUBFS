@@ -55,10 +55,20 @@ pub struct ReferenceSelection {
 impl ReferenceSelection {
     pub fn with_transport(mut self, transport: &str) -> Result<Self> {
         self.transport = match transport {
-            "HOST_SIZED_NCCL" if !(self.owner == ReferenceOwner::CucoRank
-                && self.profile == FrontierProfile::HashFirst) => ReferenceTransport::HostSizedNccl,
-            "NCCL_LSA" if matches!(self.owner, ReferenceOwner::CucoRank | ReferenceOwner::Native(_)) =>
-                ReferenceTransport::Lsa,
+            "HOST_SIZED_NCCL"
+                if !(self.owner == ReferenceOwner::CucoRank
+                    && self.profile == FrontierProfile::HashFirst) =>
+            {
+                ReferenceTransport::HostSizedNccl
+            }
+            "NCCL_LSA"
+                if matches!(
+                    self.owner,
+                    ReferenceOwner::CucoRank | ReferenceOwner::Native(_)
+                ) =>
+            {
+                ReferenceTransport::Lsa
+            }
             _ => return Err("REFERENCE_TRANSPORT_BACKEND".into()),
         };
         Ok(self)
@@ -85,7 +95,9 @@ impl ReferenceSelection {
                     return Err("REFERENCE_UNUSED_LIBRARY_POOL".into());
                 }
             }
-            ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
+            ReferenceOwner::CudfRelational
+            | ReferenceOwner::CucoIndexed
+            | ReferenceOwner::CucoRank => {
                 if !available {
                     return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
                 }
@@ -243,7 +255,10 @@ pub struct RunConfigV1 {
     pub hash_backend: HashBackend,
     #[serde(default = "default_macro_depth")]
     pub macro_depth: u32,
-    #[serde(default = "default_epoch_window", skip_serializing_if = "is_default_epoch_window")]
+    #[serde(
+        default = "default_epoch_window",
+        skip_serializing_if = "is_default_epoch_window"
+    )]
     pub completion_epoch_window: u32,
     pub parent_batch: u64,
     pub capacities: Capacities,
@@ -255,25 +270,36 @@ impl RunConfigV1 {
         }
         self.graph.validate()?;
         self.topology.validate()?;
-        if self.completion_epoch_window < 2 { return Err("CONFIG_EPOCH_WINDOW".into()); }
+        if self.completion_epoch_window < 2 {
+            return Err("CONFIG_EPOCH_WINDOW".into());
+        }
         match (self.owner_backend, self.library_pool_bytes) {
             (RunOwnerBackend::CucoRank, None) => return Err("CONFIG_LIBRARY_POOL_REQUIRED".into()),
-            (RunOwnerBackend::CucoRank, Some(bytes)) if bytes == 0 || bytes % 256 != 0 =>
-                return Err("CONFIG_LIBRARY_POOL_ALIGNMENT".into()),
-            (RunOwnerBackend::CucoRank, Some(_)) => {},
+            (RunOwnerBackend::CucoRank, Some(bytes)) if bytes == 0 || bytes % 256 != 0 => {
+                return Err("CONFIG_LIBRARY_POOL_ALIGNMENT".into())
+            }
+            (RunOwnerBackend::CucoRank, Some(_)) => {}
             (_, Some(_)) => return Err("CONFIG_UNUSED_LIBRARY_POOL".into()),
-            (_, None) => {},
+            (_, None) => {}
         }
         let c = &self.capacities;
-        if self.parent_batch == 0 { return Err("ROUTE_SLOT_CAPACITY".into()); }
-        let operator_budget = usize::try_from(c.route_slot_records / self.parent_batch)
-            .unwrap_or(usize::MAX);
-        let macro_generators =
-            crate::macro_generators::MacroGeneratorSet::compile_bounded(
-                &self.graph, self.macro_depth, operator_budget)
-                .map_err(|error| if error == "MACRO_TRANSITION_BUDGET" {
-                    "ROUTE_SLOT_CAPACITY".into()
-                } else { error })?;
+        if self.parent_batch == 0 {
+            return Err("ROUTE_SLOT_CAPACITY".into());
+        }
+        let operator_budget =
+            usize::try_from(c.route_slot_records / self.parent_batch).unwrap_or(usize::MAX);
+        let macro_generators = crate::macro_generators::MacroGeneratorSet::compile_bounded(
+            &self.graph,
+            self.macro_depth,
+            operator_budget,
+        )
+        .map_err(|error| {
+            if error == "MACRO_TRANSITION_BUDGET" {
+                "ROUTE_SLOT_CAPACITY".into()
+            } else {
+                error
+            }
+        })?;
         let generated = self
             .parent_batch
             .checked_mul(macro_generators.transitions.len() as u64)
@@ -296,8 +322,12 @@ impl RunConfigV1 {
             (c.state_ring_records, self.graph.start.len() as u64),
             (c.state_extent_descriptors, 64),
             (c.layer_hash_records_per_arena, 16),
-            (c.route_slot_records, 32u64.checked_mul(u64::from(c.route_slot_count))
-                .ok_or("BYTE_OVERFLOW")?),
+            (
+                c.route_slot_records,
+                32u64
+                    .checked_mul(u64::from(c.route_slot_count))
+                    .ok_or("BYTE_OVERFLOW")?,
+            ),
             (c.pinned_archive_slot_bytes, c.pinned_archive_slots as u64),
         ] {
             count.checked_mul(stride).ok_or("BYTE_OVERFLOW")?;
@@ -354,5 +384,9 @@ fn default_macro_depth() -> u32 {
     1
 }
 
-fn default_epoch_window() -> u32 { 2 }
-fn is_default_epoch_window(value: &u32) -> bool { *value == 2 }
+fn default_epoch_window() -> u32 {
+    2
+}
+fn is_default_epoch_window(value: &u32) -> bool {
+    *value == 2
+}

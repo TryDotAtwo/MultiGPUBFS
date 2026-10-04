@@ -95,12 +95,18 @@ impl MacroDenseRead {
         if pool_base.is_null() || fatal.is_null() {
             return Err("MACRO_REF_VALIDATE_POINTER".into());
         }
-        let offset = usize::try_from(self.macro_ref_offset)
-            .map_err(|_| "MACRO_REF_VALIDATE_OFFSET")?;
+        let offset =
+            usize::try_from(self.macro_ref_offset).map_err(|_| "MACRO_REF_VALIDATE_OFFSET")?;
         let ptr = pool_base.add(offset);
         let status = mgbfs_cuda::ffi::mgbfs_macro_validate_refs(
-            ptr.cast(), self.rows, self.source_depth, self.target_depth,
-            max_weight, max_state_ref, fatal, stream,
+            ptr.cast(),
+            self.rows,
+            self.source_depth,
+            self.target_depth,
+            max_weight,
+            max_state_ref,
+            fatal,
+            stream,
         );
         if status != 0 {
             return Err(format!("MACRO_REF_VALIDATE_ENQUEUE_{status}"));
@@ -135,23 +141,33 @@ impl MacroDenseRead {
         fatal: *mut u32,
         stream: *mut std::ffi::c_void,
     ) -> Result<()> {
-        if pool_base.is_null() || future_plan.is_null() || future_states.is_null()
-            || future_hashes.is_null() || future_state.is_null()
-            || identity_refs.is_null() || incoming_count.is_null() {
+        if pool_base.is_null()
+            || future_plan.is_null()
+            || future_states.is_null()
+            || future_hashes.is_null()
+            || future_state.is_null()
+            || identity_refs.is_null()
+            || incoming_count.is_null()
+        {
             return Err("MACRO_FUTURE_POINTER".into());
         }
-        self.enqueue_ref_validation(
-            pool_base, max_weight, max_state_ref, fatal, stream,
-        )?;
-        let hash_offset = usize::try_from(self.hash_offset)
-            .map_err(|_| "MACRO_FUTURE_OFFSET")?;
-        let state_offset = usize::try_from(self.state_offset)
-            .map_err(|_| "MACRO_FUTURE_OFFSET")?;
+        self.enqueue_ref_validation(pool_base, max_weight, max_state_ref, fatal, stream)?;
+        let hash_offset = usize::try_from(self.hash_offset).map_err(|_| "MACRO_FUTURE_OFFSET")?;
+        let state_offset = usize::try_from(self.state_offset).map_err(|_| "MACRO_FUTURE_OFFSET")?;
         let status = mgbfs_cuda::ffi::mgbfs_future_merge_run_bounded_checked(
-            future_plan, future_states, future_hashes, future_state,
-            old_count_bound, pool_base.add(state_offset), self.rows,
-            pool_base.add(hash_offset).cast(), identity_refs, incoming_count,
-            self.rows, fatal, stream,
+            future_plan,
+            future_states,
+            future_hashes,
+            future_state,
+            old_count_bound,
+            pool_base.add(state_offset),
+            self.rows,
+            pool_base.add(hash_offset).cast(),
+            identity_refs,
+            incoming_count,
+            self.rows,
+            fatal,
+            stream,
         );
         if status != 0 {
             return Err(format!("MACRO_FUTURE_ENQUEUE_{status}"));
@@ -262,17 +278,26 @@ impl AdmittedBuffers {
     /// GPU StateReady/hash publish event, before opening source offers.
     pub fn enable_macro_history(&mut self, max_weight: u32) -> Result<()> {
         self.apply(|s| {
-            if s.depth != 0 || s.source_closed || s.macro_history.is_some() ||
-                s.pools.iter().any(|p| p.descriptions.iter().any(|d| d.handle.is_some())) {
+            if s.depth != 0
+                || s.source_closed
+                || s.macro_history.is_some()
+                || s.pools
+                    .iter()
+                    .any(|p| p.descriptions.iter().any(|d| d.handle.is_some()))
+            {
                 return Err("MACRO_HISTORY_SETUP_PHASE".into());
             }
-            s.macro_history = Some(crate::macro_history_window::MacroHistoryWindow::new(max_weight)?);
+            s.macro_history = Some(crate::macro_history_window::MacroHistoryWindow::new(
+                max_weight,
+            )?);
             Ok(())
         })
     }
     pub fn macro_seed_ready(&mut self) -> Result<()> {
         self.apply(|s| {
-            if s.depth != 0 || s.source_closed { return Err("MACRO_HISTORY_SEED_PHASE".into()); }
+            if s.depth != 0 || s.source_closed {
+                return Err("MACRO_HISTORY_SEED_PHASE".into());
+            }
             let history = s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?;
             history.settled(0)?;
             history.publish(0)?;
@@ -282,17 +307,32 @@ impl AdmittedBuffers {
     /// Caller observed the hash archive D2H completion event; disk durability
     /// is tracked independently by the archive subsystem.
     pub fn macro_archive_copied(&mut self, depth: u32) -> Result<()> {
-        self.apply(|s| s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.archive_copied(depth))
+        self.apply(|s| {
+            s.macro_history
+                .as_mut()
+                .ok_or("MACRO_HISTORY_DISABLED")?
+                .archive_copied(depth)
+        })
     }
     pub fn macro_hold_history_reader(&mut self, depth: u32) -> Result<usize> {
         self.apply(|s| {
-            if s.macro_finalized { return Err("MACRO_HISTORY_ADMISSION_CLOSED".into()); }
-            s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.hold_reader(depth)
+            if s.macro_finalized {
+                return Err("MACRO_HISTORY_ADMISSION_CLOSED".into());
+            }
+            s.macro_history
+                .as_mut()
+                .ok_or("MACRO_HISTORY_DISABLED")?
+                .hold_reader(depth)
         })
     }
     /// Caller observed the owner compare completion event for this reader.
     pub fn macro_release_history_reader(&mut self, depth: u32) -> Result<()> {
-        self.apply(|s| s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.release_reader(depth))
+        self.apply(|s| {
+            s.macro_history
+                .as_mut()
+                .ok_or("MACRO_HISTORY_DISABLED")?
+                .release_reader(depth)
+        })
     }
     /// Caller observed local settlement completion for the next depth after
     /// the globally admitted FinalizeDepth command and all owner jobs drained.
@@ -301,7 +341,10 @@ impl AdmittedBuffers {
             if !s.finalizing || s.depth.checked_add(1) != Some(u64::from(target_depth)) {
                 return Err("MACRO_HISTORY_SETTLE_PHASE".into());
             }
-            s.macro_history.as_mut().ok_or("MACRO_HISTORY_DISABLED")?.settled(target_depth)
+            s.macro_history
+                .as_mut()
+                .ok_or("MACRO_HISTORY_DISABLED")?
+                .settled(target_depth)
         })
     }
     /// Poll a previously recorded CUDA completion event without blocking the
@@ -331,7 +374,10 @@ impl AdmittedBuffers {
         })
     }
     pub fn macro_history_slot_depth(&self, slot: usize) -> Result<Option<u32>> {
-        self.macro_history.as_ref().ok_or("MACRO_HISTORY_DISABLED")?.slot_depth(slot)
+        self.macro_history
+            .as_ref()
+            .ok_or("MACRO_HISTORY_DISABLED")?
+            .slot_depth(slot)
     }
     fn apply<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         if self.pump.is_none() {
@@ -498,7 +544,9 @@ impl AdmittedBuffers {
                 }
                 Action::Publish => {
                     if let Some(history) = &mut s.macro_history {
-                        history.publish(u32::try_from(f.depth).map_err(|_| "MACRO_HISTORY_DEPTH_OVERFLOW")?)?;
+                        history.publish(
+                            u32::try_from(f.depth).map_err(|_| "MACRO_HISTORY_DEPTH_OVERFLOW")?,
+                        )?;
                     }
                     s.next_submission = f.epoch.checked_add(1).ok_or("BUFFER_SEQUENCE")?;
                     s.depth = f.depth;
@@ -625,9 +673,17 @@ impl AdmittedBuffers {
                 return Err("BUFFER_TRANSFER_PENDING".into());
             }
             let Some(header) = crate::dense_frames::decode_macro_prefix(
-                prefix, l.key, run_tag, rank, world, stride,
-                max_records, view.bytes, max_weight,
-            )? else {
+                prefix,
+                l.key,
+                run_tag,
+                rank,
+                world,
+                stride,
+                max_records,
+                view.bytes,
+                max_weight,
+            )?
+            else {
                 return Ok(None);
             };
             let layout = mgbfs_core::wire::payload_layout(
@@ -635,7 +691,8 @@ impl AdmittedBuffers {
                 header.count,
                 u64::from(stride),
             )?;
-            let hash_offset = view.offset
+            let hash_offset = view
+                .offset
                 .checked_add(crate::dense_frames::DENSE_FRAME_PREFIX_BYTES)
                 .ok_or("MACRO_READ_OFFSET")?;
             let macro_ref_offset = hash_offset
@@ -647,22 +704,30 @@ impl AdmittedBuffers {
             let end = state_offset
                 .checked_add(layout.planes[2].bytes)
                 .ok_or("MACRO_READ_OFFSET")?;
-            if end > view.offset.checked_add(view.bytes).ok_or("MACRO_READ_OFFSET")? {
+            if end
+                > view
+                    .offset
+                    .checked_add(view.bytes)
+                    .ok_or("MACRO_READ_OFFSET")?
+            {
                 return Err("MACRO_READ_CAPACITY".into());
             }
             let consumer = BufferConsumer {
                 plane: l.key.plane,
                 token: p.receive.consumer(a.bank)?,
             };
-            Ok(Some((consumer, MacroDenseRead {
-                source_pool: view.source_pool,
-                rows: header.count,
-                source_depth: u32::try_from(l.key.depth).map_err(|_| "MACRO_READ_DEPTH")?,
-                target_depth: header.depth,
-                hash_offset,
-                macro_ref_offset,
-                state_offset,
-            })))
+            Ok(Some((
+                consumer,
+                MacroDenseRead {
+                    source_pool: view.source_pool,
+                    rows: header.count,
+                    source_depth: u32::try_from(l.key.depth).map_err(|_| "MACRO_READ_DEPTH")?,
+                    target_depth: header.depth,
+                    hash_offset,
+                    macro_ref_offset,
+                    state_offset,
+                },
+            )))
         })
     }
     /// Copy the immutable per-destination byte counts for native scatter into
@@ -888,7 +953,9 @@ impl AdmittedBuffers {
                     && p.descriptions.iter().all(|d| d.handle.is_none())
             });
             if let Some(history) = &s.macro_history {
-                let target = s.depth.checked_add(1)
+                let target = s
+                    .depth
+                    .checked_add(1)
                     .and_then(|d| u32::try_from(d).ok())
                     .ok_or("MACRO_HISTORY_DEPTH_OVERFLOW")?;
                 history.can_publish(target)?;

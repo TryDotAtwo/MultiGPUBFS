@@ -10,7 +10,9 @@ mod route_archive;
 // tested in separate processes, not by sharing that resource in this binary.
 static GPU_FIXTURE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn gpu_fixture() -> std::sync::MutexGuard<'static, ()> {
-    GPU_FIXTURE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    GPU_FIXTURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[test]
@@ -25,21 +27,40 @@ fn cuco_lsa_route_bank_capacity_failure_latches_after_reuse() {
         for hash_first in [false, true] {
             eprintln!("ROUTE_BANK_CAPACITY banks={banks} hash_first={hash_first} phase=create");
             let mut id = [0u8; 128];
-            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            assert_eq!(
+                unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                0
+            );
             let cfg = DistributedConfig {
-                route_banks: banks, epoch_window: 3,
-                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                route_banks: banks,
+                epoch_window: 3,
+                rank: 0,
+                world: 1,
+                logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 1, layer_capacity: 8, state_ring_capacity: 256,
-                state_descriptor_capacity: 256, buckets: 8, shards: 2,
-                job_buckets: 2, bucket_capacity: 32, prededup: true,
-                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+                batch: 1,
+                layer_capacity: 8,
+                state_ring_capacity: 256,
+                state_descriptor_capacity: 256,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: 32,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve: 1 << 30,
             };
             let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
-                &graph, [42; 16], id, cfg,
+                &graph,
+                [42; 16],
+                id,
+                cfg,
                 hash_first.then_some(graph.generators.len() as u32),
-                64 << 20, false, mgbfs_core::config::ReferenceOwner::CucoRank,
-            ).unwrap();
+                64 << 20,
+                false,
+                mgbfs_core::config::ReferenceOwner::CucoRank,
+            )
+            .unwrap();
             for depth in 0..3 {
                 let mut actual = bfs.snapshot().unwrap();
                 actual.sort();
@@ -47,10 +68,17 @@ fn cuco_lsa_route_bank_capacity_failure_latches_after_reuse() {
                 assert!(bfs.advance().unwrap());
             }
             assert_eq!(bfs.snapshot().unwrap().len(), 8);
-            let error = bfs.advance().expect_err("overfull next frontier was admitted");
-            assert!(error.starts_with("GROUP_OWNER_OR_PRE_OWNER_FATAL"),
-                "unexpected failure instead of device capacity fatal: {error}");
-            assert!(bfs.route_bank_reuses() > 0, "failure did not exercise source-bank reuse");
+            let error = bfs
+                .advance()
+                .expect_err("overfull next frontier was admitted");
+            assert!(
+                error.starts_with("GROUP_OWNER_OR_PRE_OWNER_FATAL"),
+                "unexpected failure instead of device capacity fatal: {error}"
+            );
+            assert!(
+                bfs.route_bank_reuses() > 0,
+                "failure did not exercise source-bank reuse"
+            );
             assert_eq!(bfs.advance().unwrap_err(), "DISTRIBUTED_FAILED");
             eprintln!("ROUTE_BANK_CAPACITY banks={banks} hash_first={hash_first} phase=failed error={error}");
         }
@@ -66,21 +94,41 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
         for hash_first in [false, true] {
             eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=create_begin");
             let mut id = [0u8; 128];
-            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            assert_eq!(
+                unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                0
+            );
             let cfg = DistributedConfig {
-                route_banks: banks, epoch_window: 3,
-                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                route_banks: banks,
+                epoch_window: 3,
+                rank: 0,
+                world: 1,
+                logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 1, layer_capacity: 64, state_ring_capacity: 256,
-                state_descriptor_capacity: 256, buckets: 8, shards: 2,
-                job_buckets: 2, bucket_capacity: 32, prededup: true,
-                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+                batch: 1,
+                layer_capacity: 64,
+                state_ring_capacity: 256,
+                state_descriptor_capacity: 256,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: 32,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve: 1 << 30,
             };
             let materialization = hash_first.then_some(graph.generators.len() as u32);
             let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
-                &graph, [42; 16], id, cfg, materialization, 64 << 20, false,
+                &graph,
+                [42; 16],
+                id,
+                cfg,
+                materialization,
+                64 << 20,
+                false,
                 mgbfs_core::config::ReferenceOwner::CucoRank,
-            ).unwrap();
+            )
+            .unwrap();
             eprintln!("ROUTE_BANK_GATE banks={banks} hash_first={hash_first} phase=create_done");
             assert_eq!(bfs.route_bank_count(), banks);
             assert_eq!(bfs.epoch_window(), 3);
@@ -89,12 +137,24 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
             let archive_bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let mut archive = mgbfs_runtime::pinned_archive::PinnedArchive::new(
                 route_archive::MemoryExtent(archive_bytes.clone()),
-                100_000, 16, [0; 32], 3, 128).unwrap();
+                100_000,
+                16,
+                [0; 32],
+                3,
+                128,
+            )
+            .unwrap();
             for (depth, wanted) in expected.iter().enumerate() {
                 let mut actual = bfs.snapshot().unwrap();
                 actual.sort();
-                assert_eq!(&actual, wanted, "banks={banks} hash_first={hash_first} depth={depth}");
-                assert_eq!(bfs.advance_archived(&mut archive).unwrap(), depth + 1 < expected.len());
+                assert_eq!(
+                    &actual, wanted,
+                    "banks={banks} hash_first={hash_first} depth={depth}"
+                );
+                assert_eq!(
+                    bfs.advance_archived(&mut archive).unwrap(),
+                    depth + 1 < expected.len()
+                );
                 // Batch=1: the first N parents use distinct banks; every
                 // remaining parent must reuse one bank at this depth.
                 expected_reuses += wanted.len().saturating_sub(banks) as u64;
@@ -104,8 +164,10 @@ fn cuco_lsa_route_banks_preserve_full_states_and_reuse_across_depths() {
             archive.finish().unwrap();
             route_archive::assert_layers(&archive_bytes.lock().unwrap(), &expected, [42; 16]);
             assert!(bfs.dense_lookahead_batches() > banks as u64);
-            assert!(bfs.route_bank_reuses() > 0,
-                "fixture did not reuse a physical bank within a depth");
+            assert!(
+                bfs.route_bank_reuses() > 0,
+                "fixture did not reuse a physical bank within a depth"
+            );
         }
     }
 }
@@ -116,7 +178,10 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let expected = graph.exact_layers(64).unwrap();
     let mut id = [0u8; 128];
-    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
     let cfg = DistributedConfig {
         route_banks: 2,
         epoch_window: 2,
@@ -126,7 +191,8 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
         transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
         batch: 7,
         layer_capacity: 64,
-        state_ring_capacity: 128, state_descriptor_capacity: 128,
+        state_ring_capacity: 128,
+        state_descriptor_capacity: 128,
         buckets: 8,
         shards: 2,
         job_buckets: 2,
@@ -136,9 +202,16 @@ fn cuco_rank_dense_layers_match_full_state_oracle() {
         untouched_vram_reserve: 1 << 30,
     };
     let mut bfs = DistributedNativeBfs::new_library_reference_with_owner(
-        &graph, [0; 16], id, cfg, None, 64 << 20, false,
+        &graph,
+        [0; 16],
+        id,
+        cfg,
+        None,
+        64 << 20,
+        false,
         mgbfs_core::config::ReferenceOwner::CucoRank,
-    ).unwrap();
+    )
+    .unwrap();
     for (depth, wanted) in expected.iter().enumerate() {
         let mut actual = bfs.snapshot().unwrap();
         actual.sort();
@@ -152,7 +225,10 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
     let _fixture = gpu_fixture();
     let graph = MatrixGroup::unitriangular(4, 2).unwrap();
     let mut id = [0u8; 128];
-    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
     let mut cfg = DistributedConfig {
         route_banks: 2,
         epoch_window: 2,
@@ -162,7 +238,8 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
         transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
         batch: 7,
         layer_capacity: 2,
-        state_ring_capacity: 128, state_descriptor_capacity: 128,
+        state_ring_capacity: 128,
+        state_descriptor_capacity: 128,
         buckets: 8,
         shards: 2,
         job_buckets: 2,
@@ -172,18 +249,35 @@ fn cuco_rank_capacity_failure_releases_pool_after_gpu_work() {
         untouched_vram_reserve: 1 << 30,
     };
     let mut failed = DistributedNativeBfs::new_library_reference_with_owner(
-        &graph, [0; 16], id, cfg.clone(), None, 64 << 20, false,
+        &graph,
+        [0; 16],
+        id,
+        cfg.clone(),
+        None,
+        64 << 20,
+        false,
         mgbfs_core::config::ReferenceOwner::CucoRank,
-    ).unwrap();
+    )
+    .unwrap();
     let error = failed.advance().unwrap_err();
     assert!(error.contains("LIBRARY_RANK_DEPTH_FATAL_"), "{error}");
     drop(failed);
     cfg.layer_capacity = 64;
-    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
     let mut recovered = DistributedNativeBfs::new_library_reference_with_owner(
-        &graph, [0; 16], id, cfg, None, 64 << 20, false,
+        &graph,
+        [0; 16],
+        id,
+        cfg,
+        None,
+        64 << 20,
+        false,
         mgbfs_core::config::ReferenceOwner::CucoRank,
-    ).unwrap();
+    )
+    .unwrap();
     assert!(recovered.advance().unwrap());
 }
 
@@ -214,7 +308,8 @@ fn library_bfs_layers_match_full_state_oracle_in_both_profiles() {
                     transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
                     batch: 7,
                     layer_capacity: 64,
-                    state_ring_capacity: 128, state_descriptor_capacity: 128,
+                    state_ring_capacity: 128,
+                    state_descriptor_capacity: 128,
                     buckets: 8,
                     shards: 2,
                     job_buckets: 2,

@@ -1,7 +1,7 @@
 //! Native single-rank DENSE executor. States never leave GPU except explicit
 //! snapshots/archive callbacks. Host dispatch consumes only bucket metadata.
-use crate::jobs::{split, JobSpan};
 use crate::failure::check_native_status as check;
+use crate::jobs::{split, JobSpan};
 use mgbfs_core::{hash::GemmHash, matrix::MatrixGroup, Result};
 use mgbfs_cuda::{ffi::*, native_owner::*};
 use std::ffi::{c_void, CStr};

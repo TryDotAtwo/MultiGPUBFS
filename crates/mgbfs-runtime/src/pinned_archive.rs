@@ -74,8 +74,12 @@ impl PinnedArchive {
         Self::new_with_failure_report(extent, disk_bytes, width, config_digest, rows, slots, None)
     }
     pub(crate) fn new_with_failure_report<E: Extent + Send + 'static>(
-        extent: E, disk_bytes: u64, width: usize, config_digest: [u8; 32],
-        rows: u32, slots: usize,
+        extent: E,
+        disk_bytes: u64,
+        width: usize,
+        config_digest: [u8; 32],
+        rows: u32,
+        slots: usize,
         failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let plan = ArchiveRingPlan::new(width, rows, slots)?;
@@ -120,7 +124,8 @@ impl PinnedArchive {
                             let n = count as usize * (width + 16);
                             let bytes =
                                 unsafe { std::slice::from_raw_parts(slot.ptr.cast::<u8>(), n) };
-                            archive.records_wire(depth, u64::from(count), bytes)
+                            archive
+                                .records_wire(depth, u64::from(count), bytes)
                                 .map_err(&on_error)?;
                             // Receiver may have been dropped following another fatal error.
                             free_tx.try_send(slot).map_err(|rejected| {
@@ -129,8 +134,9 @@ impl PinnedArchive {
                                 error
                             })?;
                         }
-                        Message::Layer(depth, count) => archive.layer_commit(depth, count)
-                            .map_err(&on_error)?,
+                        Message::Layer(depth, count) => {
+                            archive.layer_commit(depth, count).map_err(&on_error)?
+                        }
                         Message::Complete => {
                             archive.run_commit().map_err(&on_error)?;
                             eprintln!("MGBFS_ARCHIVE_TIMINGS {:?}", archive.timings);
@@ -171,14 +177,20 @@ impl PinnedArchive {
     /// Rejected slots still own live D2H readers. Publish/abort the rank group
     /// before dropping them; the notification does not permit buffer reuse.
     pub(crate) fn submit_notifying(
-        &self, slot: Slot, depth: u64, rows: u32, on_failure: impl FnOnce(&str),
+        &self,
+        slot: Slot,
+        depth: u64,
+        rows: u32,
+        on_failure: impl FnOnce(&str),
     ) -> Result<()> {
         if rows == 0 || rows > self.rows || rows as usize * (self.width + 16) > slot.bytes {
             on_failure("ARCHIVE_SLOT_SHAPE");
             return Err("ARCHIVE_SLOT_SHAPE".into());
         }
         crate::archive::send_archive_message(
-            self.tx.as_ref(), Message::Records(slot, depth, rows), on_failure,
+            self.tx.as_ref(),
+            Message::Records(slot, depth, rows),
+            on_failure,
         )
     }
     fn send(&self, message: Message) -> Result<()> {
@@ -212,29 +224,56 @@ impl Drop for PinnedArchive {
 #[cfg(test)]
 mod worker_failure_tests {
     use super::*;
-    use std::{sync::{Arc, atomic::{AtomicU8, Ordering}}, time::{Duration, Instant}};
-    struct FaultExtent { write_fault: bool, sync_fault: bool }
+    use std::{
+        sync::{
+            atomic::{AtomicU8, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    };
+    struct FaultExtent {
+        write_fault: bool,
+        sync_fault: bool,
+    }
     impl Extent for FaultExtent {
-        fn reserve(&mut self, _: u64) -> std::io::Result<()> { Ok(()) }
+        fn reserve(&mut self, _: u64) -> std::io::Result<()> {
+            Ok(())
+        }
         fn write_at(&mut self, offset: u64, data: &[u8]) -> std::io::Result<usize> {
             if self.write_fault && offset >= 48 {
                 Err(std::io::Error::other("INJECTED_ARCHIVE_WRITE"))
-            } else { Ok(data.len()) }
+            } else {
+                Ok(data.len())
+            }
         }
         fn sync(&mut self) -> std::io::Result<()> {
-            if self.sync_fault { Err(std::io::Error::other("INJECTED_ARCHIVE_SYNC")) }
-            else { Ok(()) }
+            if self.sync_fault {
+                Err(std::io::Error::other("INJECTED_ARCHIVE_SYNC"))
+            } else {
+                Ok(())
+            }
         }
     }
     fn archive(write_fault: bool, sync_fault: bool) -> (PinnedArchive, Arc<AtomicU8>) {
         assert_eq!(unsafe { cudaSetDevice(0) }, 0);
         let report = Arc::new(AtomicU8::new(0));
         let archive = PinnedArchive::new_with_failure_report(
-            FaultExtent { write_fault, sync_fault }, 4096, 4, [0; 32], 1, 2,
+            FaultExtent {
+                write_fault,
+                sync_fault,
+            },
+            4096,
+            4,
+            [0; 32],
+            1,
+            2,
             Some(report.clone()),
-        ).unwrap();
+        )
+        .unwrap();
         let slot = archive.acquire().unwrap();
-        unsafe { std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes); }
+        unsafe {
+            std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes);
+        }
         archive.submit(slot, 0, 1).unwrap();
         (archive, report)
     }
@@ -246,14 +285,23 @@ mod worker_failure_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let published = report.load(Ordering::Acquire);
-        assert!(archive.finish().unwrap_err().contains("INJECTED_ARCHIVE_WRITE"));
-        assert_eq!(published, 2, "worker failure was not published before finish");
+        assert!(archive
+            .finish()
+            .unwrap_err()
+            .contains("INJECTED_ARCHIVE_WRITE"));
+        assert_eq!(
+            published, 2,
+            "worker failure was not published before finish"
+        );
     }
     #[test]
     fn final_sync_failure_is_published_and_never_returns_complete() {
         let (archive, report) = archive(false, true);
         archive.layer(0, 1).unwrap();
-        assert!(archive.finish().unwrap_err().contains("INJECTED_ARCHIVE_SYNC"));
+        assert!(archive
+            .finish()
+            .unwrap_err()
+            .contains("INJECTED_ARCHIVE_SYNC"));
         assert_eq!(report.load(Ordering::Acquire), 2);
     }
     #[test]

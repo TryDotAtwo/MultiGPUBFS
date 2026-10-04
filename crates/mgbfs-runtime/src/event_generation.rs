@@ -73,12 +73,18 @@ impl NativeEvent {
     /// have recorded that completion event after all reads of the protected
     /// buffer, and must not let other consumers outlive it.
     pub unsafe fn retire_after_device_barrier(
-        &mut self, generation: u64, producer_stream: *mut std::ffi::c_void,
+        &mut self,
+        generation: u64,
+        producer_stream: *mut std::ffi::c_void,
         consumer_done: *mut std::ffi::c_void,
     ) -> Result<()> {
         self.generation.retire_after_device_barrier(generation, || {
             let status = mgbfs_cuda::ffi::cudaStreamWaitEvent(producer_stream, consumer_done, 0);
-            if status == 0 { Ok(()) } else { Err(format!("CUDA_REUSE_WAIT_{status}")) }
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(format!("CUDA_REUSE_WAIT_{status}"))
+            }
         })
     }
 }
@@ -164,7 +170,9 @@ impl EventGeneration {
     /// The caller submits a producer-stream wait on the completion of every
     /// consumer before re-recording the event or overwriting its buffer.
     pub fn retire_after_device_barrier(
-        &mut self, generation: u64, submit: impl FnOnce() -> Result<()>,
+        &mut self,
+        generation: u64,
+        submit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         self.apply(|s| {
             if s.active != Some(generation) || !s.consumer_waited {

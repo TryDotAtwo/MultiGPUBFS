@@ -150,18 +150,32 @@ impl MacroExchangeMemoryPlan {
             return Err("MACRO_EXCHANGE_SHAPE".into());
         }
         let rows = u64::from(input.candidate_capacity);
-        let record_bytes = input.state_stride.checked_add(32).ok_or("MACRO_EXCHANGE_BYTES")?;
-        let payload = rows.checked_mul(record_bytes).ok_or("MACRO_EXCHANGE_BYTES")?;
+        let record_bytes = input
+            .state_stride
+            .checked_add(32)
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
+        let payload = rows
+            .checked_mul(record_bytes)
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
         // Each of three 16-byte-aligned planes pads by at most 240 bytes;
         // the versioned frame prefix adds 256 more. Empty peers send no frame.
         const FRAME_OVERHEAD: u64 = 256 + 3 * 240;
         let send_frame = payload
-            .checked_add(u64::from(input.world).checked_mul(FRAME_OVERHEAD).ok_or("MACRO_EXCHANGE_BYTES")?)
+            .checked_add(
+                u64::from(input.world)
+                    .checked_mul(FRAME_OVERHEAD)
+                    .ok_or("MACRO_EXCHANGE_BYTES")?,
+            )
             .ok_or("MACRO_EXCHANGE_BYTES")?;
-        let receive_frame = payload.checked_add(FRAME_OVERHEAD).ok_or("MACRO_EXCHANGE_BYTES")?;
-        let owners = u64::from(input.world).checked_mul(4).ok_or("MACRO_EXCHANGE_BYTES")?;
+        let receive_frame = payload
+            .checked_add(FRAME_OVERHEAD)
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
+        let owners = u64::from(input.world)
+            .checked_mul(4)
+            .ok_or("MACRO_EXCHANGE_BYTES")?;
         let count_exchange = 8u64; // one u32 sent, one u32 received
-        let slot_bytes = send_frame.checked_add(receive_frame)
+        let slot_bytes = send_frame
+            .checked_add(receive_frame)
             .and_then(|sum| sum.checked_add(owners))
             .and_then(|sum| sum.checked_add(count_exchange))
             .ok_or("MACRO_EXCHANGE_BYTES")?;

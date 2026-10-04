@@ -3,14 +3,25 @@ use mgbfs_runtime::benchmark::{library_backend_label, run_phases, Phase};
 
 #[test]
 fn reference_record_labels_rank_owner_without_native_or_indexed_alias() {
-    assert_eq!(library_backend_label(ReferenceOwner::CucoRank, FrontierProfile::Dense),
-        Some("library_nccl_dense_cuco_rank_v1"));
-    assert_eq!(library_backend_label(ReferenceOwner::CucoIndexed, FrontierProfile::Dense),
-        Some("library_nccl_dense_cuco_v1"));
-    assert_eq!(library_backend_label(ReferenceOwner::CucoIndexed, FrontierProfile::HashFirst),
-        Some("library_nccl_hash_first_cuco_v1"));
-    assert_eq!(library_backend_label(ReferenceOwner::Native(OwnerBackend::CubSortMerge),
-        FrontierProfile::Dense), None);
+    assert_eq!(
+        library_backend_label(ReferenceOwner::CucoRank, FrontierProfile::Dense),
+        Some("library_nccl_dense_cuco_rank_v1")
+    );
+    assert_eq!(
+        library_backend_label(ReferenceOwner::CucoIndexed, FrontierProfile::Dense),
+        Some("library_nccl_dense_cuco_v1")
+    );
+    assert_eq!(
+        library_backend_label(ReferenceOwner::CucoIndexed, FrontierProfile::HashFirst),
+        Some("library_nccl_hash_first_cuco_v1")
+    );
+    assert_eq!(
+        library_backend_label(
+            ReferenceOwner::Native(OwnerBackend::CubSortMerge),
+            FrontierProfile::Dense
+        ),
+        None
+    );
 }
 
 #[test]

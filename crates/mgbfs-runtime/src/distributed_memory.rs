@@ -36,7 +36,11 @@ pub fn device_admission(required: u64, reserve: u64, free: u64) -> Result<()> {
 /// Hash128 plane, and one fixed-stride state plane. NCCL allocator overhead
 /// remains outside this exact payload request.
 pub fn lsa_symmetric_slot_bytes(candidates: u32, packet_stride: u32) -> Result<u64> {
-    if candidates == 0 || candidates > i32::MAX as u32 || packet_stride == 0 || packet_stride % 16 != 0 {
+    if candidates == 0
+        || candidates > i32::MAX as u32
+        || packet_stride == 0
+        || packet_stride % 16 != 0
+    {
         return Err("LSA_SLOT_SHAPE".into());
     }
     u64::from(candidates)
@@ -132,18 +136,35 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
 /// remain separate resources; completion credits do not multiply either.
 /// All names in bank zero retain the existing allocation-query ABI.
 pub fn with_route_banks(base: &AllocationLedger, banks: usize) -> Result<AllocationLedger> {
-    if !(2..=4).contains(&banks) { return Err("ROUTE_BANK_CONFIG".into()); }
+    if !(2..=4).contains(&banks) {
+        return Err("ROUTE_BANK_CONFIG".into());
+    }
     let mut result = AllocationLedger::new(u64::MAX, 0)?;
     for allocation in &base.allocations {
         result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
     }
     result.add("generation_control", 2, 4, 256)?;
     for bank in 1..banks {
-        for name in ["children", "child_hashes", "sorted_hashes", "sorted_refs",
-            "packed_states", "route_count", "owner_counts"] {
-            let allocation = base.allocations.iter().find(|a| a.name == name)
+        for name in [
+            "children",
+            "child_hashes",
+            "sorted_hashes",
+            "sorted_refs",
+            "packed_states",
+            "route_count",
+            "owner_counts",
+        ] {
+            let allocation = base
+                .allocations
+                .iter()
+                .find(|a| a.name == name)
                 .ok_or("ROUTE_BANK_ALLOCATION_MISSING")?;
-            result.add(&format!("route_bank_{bank}.{name}"), allocation.payload_bytes, 1, 256)?;
+            result.add(
+                &format!("route_bank_{bank}.{name}"),
+                allocation.payload_bytes,
+                1,
+                256,
+            )?;
         }
         result.add(&format!("route_bank_{bank}.generation_control"), 2, 4, 256)?;
     }
@@ -179,37 +200,52 @@ pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> 
 /// Native LSA rank transaction. Keep merged scratch at job_buckets*K;
 /// only metadata scales with the number of buckets. No duplicate receive slot.
 pub fn native_rank_shared_buffers(s: SharedBufferShape, shards: u32) -> Result<AllocationLedger> {
-    if shards == 0 || s.buckets % u64::from(shards) != 0 ||
-        (s.buckets/u64::from(shards)).checked_mul(s.bucket_capacity)
-            .map_or(true, |n| n > u32::MAX as u64) {
+    if shards == 0
+        || s.buckets % u64::from(shards) != 0
+        || (s.buckets / u64::from(shards))
+            .checked_mul(s.bucket_capacity)
+            .map_or(true, |n| n > u32::MAX as u64)
+    {
         return Err("NATIVE_RANK_SHAPE".into());
     }
     let base = shared_buffers(s)?;
     let mut result = AllocationLedger::new(u64::MAX, 0)?;
     for allocation in base.allocations {
-        if ["counts", "recv_states", "recv_hashes", "recv_count"].contains(&allocation.name.as_str()) {
+        if ["counts", "recv_states", "recv_hashes", "recv_count"]
+            .contains(&allocation.name.as_str())
+        {
             continue;
         }
         result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
     }
-    result.add("counts", s.buckets, std::mem::size_of::<Counts>() as u64, 256)?;
+    result.add(
+        "counts",
+        s.buckets,
+        std::mem::size_of::<Counts>() as u64,
+        256,
+    )?;
     result.add("owner_window", 3, 4, 256)?;
     result.add("next_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
     result.add("next_extent_count", 1, 4, 256)?;
     for name in ["rank_prev_directory", "rank_curr_directory"] {
         result.add(name, s.buckets, std::mem::size_of::<Range>() as u64, 256)?;
     }
-    for name in ["rank_shard_counts", "rank_shard_accepted", "rank_shard_capacities"] {
+    for name in [
+        "rank_shard_counts",
+        "rank_shard_accepted",
+        "rank_shard_capacities",
+    ] {
         result.add(name, u64::from(shards), 4, 256)?;
     }
-    result.add("rank_shard_offsets", u64::from(shards)+1, 4, 256)?;
+    result.add("rank_shard_offsets", u64::from(shards) + 1, 4, 256)?;
     Ok(result)
 }
 
 /// LSA owns the receive count/hash/state planes in its symmetric slot;
 /// the host-sized NCCL buffers must not be allocated a second time.
 pub fn library_shared_buffers_for_transport(
-    s: SharedBufferShape, lsa: bool,
+    s: SharedBufferShape,
+    lsa: bool,
 ) -> Result<AllocationLedger> {
     let base = library_shared_buffers(s)?;
     if !lsa {

@@ -132,43 +132,99 @@ fn macro_candidate_ref_freezes_source_depth_weight_and_absolute_state_ref() {
 
 #[test]
 fn macro_candidate_frames_have_explicit_metadata_plane_and_target_depth() {
-    for (kind, bytes) in [(FrameKind::MacroDense, 1792), (FrameKind::MacroHashFirst, 1536)] {
+    for (kind, bytes) in [
+        (FrameKind::MacroDense, 1792),
+        (FrameKind::MacroHashFirst, 1536),
+    ] {
         let layout = payload_layout(kind, 17, 32).unwrap();
         assert_eq!(layout.bytes, bytes);
         assert_eq!(layout.planes.len(), 3);
-        let frame = FrameHeader { kind, depth: 7, ..header() };
+        let frame = FrameHeader {
+            kind,
+            depth: 7,
+            ..header()
+        };
         let mut expected = expected();
         expected.kind = kind;
         expected.depth = 7;
         expected.max_payload = bytes;
-        assert_eq!(FrameHeader::decode(&frame.encode(32).unwrap(), &expected).unwrap(), frame);
+        assert_eq!(
+            FrameHeader::decode(&frame.encode(32).unwrap(), &expected).unwrap(),
+            frame
+        );
     }
-    let reference = MacroCandidateRef { source_depth: 3, weight: 4, state_ref: 9 };
-    assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 7).unwrap(), reference);
-    assert_eq!(MacroCandidateRef::decode_at(&reference.encode(), 4, 8).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
+    let reference = MacroCandidateRef {
+        source_depth: 3,
+        weight: 4,
+        state_ref: 9,
+    };
+    assert_eq!(
+        MacroCandidateRef::decode_at(&reference.encode(), 4, 7).unwrap(),
+        reference
+    );
+    assert_eq!(
+        MacroCandidateRef::decode_at(&reference.encode(), 4, 8).unwrap_err(),
+        "WIRE_MACRO_TARGET_DEPTH"
+    );
 }
 
 #[test]
 fn macro_frame_payload_rejects_a_mismatched_or_unbounded_weight_before_owner_commit() {
-    let frame = FrameHeader { kind: FrameKind::MacroDense, depth: 7, count: 2, ..header() };
+    let frame = FrameHeader {
+        kind: FrameKind::MacroDense,
+        depth: 7,
+        count: 2,
+        ..header()
+    };
     let layout = payload_layout(frame.kind, frame.count, 32).unwrap();
     let mut payload = vec![0; layout.bytes as usize];
     let refs = layout.planes[1].offset as usize;
-    let first = MacroCandidateRef { source_depth: 3, weight: 4, state_ref: 10 };
-    let second = MacroCandidateRef { source_depth: 5, weight: 2, state_ref: 11 };
+    let first = MacroCandidateRef {
+        source_depth: 3,
+        weight: 4,
+        state_ref: 10,
+    };
+    let second = MacroCandidateRef {
+        source_depth: 5,
+        weight: 2,
+        state_ref: 11,
+    };
     payload[refs..refs + 16].copy_from_slice(&first.encode());
     payload[refs + 16..refs + 32].copy_from_slice(&second.encode());
     validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap();
-    payload[refs + 16..refs + 32].copy_from_slice(&MacroCandidateRef { weight: 1, ..second }.encode());
-    assert_eq!(validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
-    payload[refs + 16..refs + 32].copy_from_slice(&MacroCandidateRef { weight: 5, ..second }.encode());
-    assert_eq!(validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(), "WIRE_MACRO_WEIGHT");
+    payload[refs + 16..refs + 32].copy_from_slice(
+        &MacroCandidateRef {
+            weight: 1,
+            ..second
+        }
+        .encode(),
+    );
+    assert_eq!(
+        validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(),
+        "WIRE_MACRO_TARGET_DEPTH"
+    );
+    payload[refs + 16..refs + 32].copy_from_slice(
+        &MacroCandidateRef {
+            weight: 5,
+            ..second
+        }
+        .encode(),
+    );
+    assert_eq!(
+        validate_macro_candidate_payload(&payload, &frame, 32, 4).unwrap_err(),
+        "WIRE_MACRO_WEIGHT"
+    );
     assert!(validate_macro_candidate_payload(&payload, &header(), 32, 4).is_err());
 }
 
 #[test]
 fn macro_header_binds_source_ticket_depth_and_future_target_without_changing_unit_frames() {
-    let frame = FrameHeader { kind: FrameKind::MacroDense, depth: 7, count: 1, ..header() };
+    let frame = FrameHeader {
+        kind: FrameKind::MacroDense,
+        depth: 7,
+        count: 1,
+        ..header()
+    };
     let encoded = encode_macro_header(frame, 3, 4, 16).unwrap();
     assert_eq!(&encoded[12..16], &3u32.to_le_bytes());
     let mut expected = expected();
@@ -177,7 +233,10 @@ fn macro_header_binds_source_ticket_depth_and_future_target_without_changing_uni
     expected.max_records = 1;
     expected.max_payload = 768;
     assert_eq!(decode_macro_header(&encoded, &expected, 4).unwrap(), frame);
-    assert_eq!(decode_macro_header(&encoded, &expected, 3).unwrap_err(), "WIRE_MACRO_TARGET_DEPTH");
+    assert_eq!(
+        decode_macro_header(&encoded, &expected, 3).unwrap_err(),
+        "WIRE_MACRO_TARGET_DEPTH"
+    );
     expected.depth = 2;
     assert!(decode_macro_header(&encoded, &expected, 4).is_err());
     assert!(FrameHeader::decode(&encoded, &expected).is_err());

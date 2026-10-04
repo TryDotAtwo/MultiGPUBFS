@@ -164,24 +164,55 @@ mod calls {
         ) -> i32;
         pub fn mgbfs_bounded_owner_destroy(plan: *mut c_void);
         pub fn mgbfs_bounded_owner_rank_compare(
-            plan: *mut c_void, jobs: *mut BucketJob, buckets: u32,
-            input: *const c_void, begin: *const u32, rows: *const u32,
-            source_rows: *const u32, prev: *const c_void, prev_ranges: *const Range,
-            pn: u64, curr: *const c_void, curr_ranges: *const Range, cn: u64,
-            accepted: *const c_void, lengths: *const u32, logical_owner: u32,
-            world: u32, per_shard: u32, generation: u32, counts: *mut Counts,
-            control: *mut Control, ring: *mut Ring, stream: *mut c_void,
+            plan: *mut c_void,
+            jobs: *mut BucketJob,
+            buckets: u32,
+            input: *const c_void,
+            begin: *const u32,
+            rows: *const u32,
+            source_rows: *const u32,
+            prev: *const c_void,
+            prev_ranges: *const Range,
+            pn: u64,
+            curr: *const c_void,
+            curr_ranges: *const Range,
+            cn: u64,
+            accepted: *const c_void,
+            lengths: *const u32,
+            logical_owner: u32,
+            world: u32,
+            per_shard: u32,
+            generation: u32,
+            counts: *mut Counts,
+            control: *mut Control,
+            ring: *mut Ring,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_bounded_owner_rank_metadata(
-            counts: *const Counts, lengths: *const u32, buckets: u32, shards: u32,
-            k: u32, live: *mut u32, old: *mut u32, caps: *mut u32,
-            offsets: *mut u32, control: *const Control, stream: *mut c_void,
+            counts: *const Counts,
+            lengths: *const u32,
+            buckets: u32,
+            shards: u32,
+            k: u32,
+            live: *mut u32,
+            old: *mut u32,
+            caps: *mut u32,
+            offsets: *mut u32,
+            control: *const Control,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_bounded_owner_rank_commit(
-            plan: *mut c_void, jobs: *const BucketJob, buckets: u32,
-            input: *const c_void, accepted: *mut c_void, lengths: *mut u32,
-            counts: *const Counts, control: *mut Control, grant: *const u32,
-            selected: *mut u32, stream: *mut c_void,
+            plan: *mut c_void,
+            jobs: *const BucketJob,
+            buckets: u32,
+            input: *const c_void,
+            accepted: *mut c_void,
+            lengths: *mut u32,
+            counts: *const Counts,
+            control: *mut Control,
+            grant: *const u32,
+            selected: *mut u32,
+            stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_bounded_owner_compare(
             plan: *mut c_void,
@@ -344,16 +375,27 @@ mod calls {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_state_build_rank_requests(
-            origins: *const crate::ffi::RegenerateOrigin, source_rows: *const u32,
-            source_capacity: u32, source_indices: *const u32,
-            selected_count: *const u32, request_capacity: u32,
-            requests: *mut crate::ffi::RegenerateOrigin, targets: *mut u64,
-            request_count: *mut u32, ring: *mut Ring, owner: *mut Control,
-            extent: *mut Extent, stream: *mut c_void,
+            origins: *const crate::ffi::RegenerateOrigin,
+            source_rows: *const u32,
+            source_capacity: u32,
+            source_indices: *const u32,
+            selected_count: *const u32,
+            request_capacity: u32,
+            requests: *mut crate::ffi::RegenerateOrigin,
+            targets: *mut u64,
+            request_count: *mut u32,
+            ring: *mut Ring,
+            owner: *mut Control,
+            extent: *mut Extent,
+            stream: *mut c_void,
         ) -> i32;
-        pub fn mgbfs_state_validate_response_count(expected: *const u32,
-            received: *const u32, ring: *mut Ring, owner: *mut Control,
-            stream: *mut c_void) -> i32;
+        pub fn mgbfs_state_validate_response_count(
+            expected: *const u32,
+            received: *const u32,
+            ring: *mut Ring,
+            owner: *mut Control,
+            stream: *mut c_void,
+        ) -> i32;
         /// Sort and validate complete target coverage before dense publication.
         pub fn mgbfs_state_apply_responses(
             plan: *mut c_void,
@@ -449,6 +491,6 @@ mod calls {
     }
 }
 #[cfg(feature = "cuda")]
-pub use calls::*;
-#[cfg(feature = "cuda")]
 pub use crate::ffi::cudaMemcpyAsync;
+#[cfg(feature = "cuda")]
+pub use calls::*;

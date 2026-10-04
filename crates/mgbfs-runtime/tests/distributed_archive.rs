@@ -22,31 +22,63 @@ fn native_lsa_route_banks_preserve_full_state_layers_on_one_gpu() {
     for banks in [2, 3, 4] {
         for hash_first in [false, true] {
             let mut id = [0u8; 128];
-            assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+            assert_eq!(
+                unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+                0
+            );
             let cfg = DistributedConfig {
-                route_banks: banks, epoch_window: 3,
-                rank: 0, world: 1, logical_owner_to_rank: vec![0, 0],
+                route_banks: banks,
+                epoch_window: 3,
+                rank: 0,
+                world: 1,
+                logical_owner_to_rank: vec![0, 0],
                 transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                batch: 1, layer_capacity: 64, state_ring_capacity: 256,
-                state_descriptor_capacity: 256, buckets: 8, shards: 2,
-                job_buckets: 2, bucket_capacity: 32, prededup: true,
-                generation_variant: 1, untouched_vram_reserve: 1 << 30,
+                batch: 1,
+                layer_capacity: 64,
+                state_ring_capacity: 256,
+                state_descriptor_capacity: 256,
+                buckets: 8,
+                shards: 2,
+                job_buckets: 2,
+                bucket_capacity: 32,
+                prededup: true,
+                generation_variant: 1,
+                untouched_vram_reserve: 1 << 30,
             };
             let materialization = hash_first.then_some(graph.generators.len() as u32);
             let mut bfs = DistributedNativeBfs::new_reference_with_owner(
-                &graph, [42; 16], id, cfg, materialization,
-                mgbfs_core::config::OwnerBackend::CubSortMerge, 256,
-            ).unwrap();
+                &graph,
+                [42; 16],
+                id,
+                cfg,
+                materialization,
+                mgbfs_core::config::OwnerBackend::CubSortMerge,
+                256,
+            )
+            .unwrap();
             assert_eq!(bfs.route_bank_count(), banks);
             assert_eq!(bfs.epoch_window(), 3);
             let archive_bytes = Arc::new(Mutex::new(Vec::new()));
-            let mut archive = PinnedArchive::new(route_archive::MemoryExtent(archive_bytes.clone()),
-                100_000, 16, [0; 32], 3, 128).unwrap();
+            let mut archive = PinnedArchive::new(
+                route_archive::MemoryExtent(archive_bytes.clone()),
+                100_000,
+                16,
+                [0; 32],
+                3,
+                128,
+            )
+            .unwrap();
             for (depth, wanted) in expected.iter().enumerate() {
                 let mut actual = bfs.snapshot().unwrap();
                 actual.sort();
-                assert_eq!(&actual, wanted, "banks={banks} hash_first={hash_first} depth={depth}");
-                assert_eq!(bfs.advance_archived(&mut archive).unwrap(), depth + 1 < expected.len());
+                assert_eq!(
+                    &actual, wanted,
+                    "banks={banks} hash_first={hash_first} depth={depth}"
+                );
+                assert_eq!(
+                    bfs.advance_archived(&mut archive).unwrap(),
+                    depth + 1 < expected.len()
+                );
             }
             archive.finish().unwrap();
             route_archive::assert_layers(&archive_bytes.lock().unwrap(), &expected, [42; 16]);
@@ -75,7 +107,8 @@ fn one_rank_vram_rejection_aborts_both_before_runtime_allocation() {
                     transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
                     batch: 7,
                     layer_capacity: 27,
-                    state_ring_capacity: 54, state_descriptor_capacity: 54,
+                    state_ring_capacity: 54,
+                    state_descriptor_capacity: 54,
                     buckets: 8,
                     shards: 2,
                     job_buckets: 2,
@@ -510,7 +543,8 @@ fn owner_capacity_failure_is_group_terminal_and_archives_stay_incomplete() {
                         transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
                         batch: 7,
                         layer_capacity: 27,
-                        state_ring_capacity: if request_limited { 27 } else { 1 }, state_descriptor_capacity: if request_limited { 27 } else { 1 },
+                        state_ring_capacity: if request_limited { 27 } else { 1 },
+                        state_descriptor_capacity: if request_limited { 27 } else { 1 },
                         buckets: 8,
                         shards: 2,
                         job_buckets: 2,
@@ -757,7 +791,8 @@ fn archive_fixture_batch(
                     transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
                     batch,
                     layer_capacity: capacity,
-                    state_ring_capacity: capacity, state_descriptor_capacity: capacity,
+                    state_ring_capacity: capacity,
+                    state_descriptor_capacity: capacity,
                     buckets: 8,
                     shards: 2,
                     job_buckets: 2,

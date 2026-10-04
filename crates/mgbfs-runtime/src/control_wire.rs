@@ -221,11 +221,9 @@ impl ControlFrame {
                 self.plane == Plane::None
                     && self.fatal_code <= 1
                     && if self.depth == 0 {
-                        self.epoch < 4
-                            || (self.epoch == 4 && self.slot == NO_SLOT)
+                        self.epoch < 4 || (self.epoch == 4 && self.slot == NO_SLOT)
                     } else {
-                        self.slot == NO_SLOT && self.epoch == 0
-                            && matches!(self.depth, 1..=7)
+                        self.slot == NO_SLOT && self.epoch == 0 && matches!(self.depth, 1..=7)
                     }
             }
             Action::OfferBytes | Action::TicketBytes | Action::Admitted | Action::Launch => {

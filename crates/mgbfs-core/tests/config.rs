@@ -30,13 +30,23 @@ fn production_epoch_window_is_bounded_and_part_of_run_identity() {
 
 #[test]
 fn legacy_native_config_keeps_its_frozen_digest_without_a_pool_field() {
-    let config: RunConfigV1 = serde_json::from_str(
-        include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+    let config: RunConfigV1 =
+        serde_json::from_str(include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
     // Independently SHA256'd compact pre-CUCO fixture, in its declared wire order.
-    let digest = config.digest().unwrap().iter().map(|x| format!("{x:02x}"))
+    let digest = config
+        .digest()
+        .unwrap()
+        .iter()
+        .map(|x| format!("{x:02x}"))
         .collect::<String>();
-    assert_eq!(digest, "dd509823ba8d382ee8de7ca80e6aa483d4dfa17cc053a13eba601b4bbb38ea3c");
-    assert!(serde_json::to_value(&config).unwrap().get("library_pool_bytes").is_none());
+    assert_eq!(
+        digest,
+        "dd509823ba8d382ee8de7ca80e6aa483d4dfa17cc053a13eba601b4bbb38ea3c"
+    );
+    assert!(serde_json::to_value(&config)
+        .unwrap()
+        .get("library_pool_bytes")
+        .is_none());
     let mut cuco = config;
     cuco.owner_backend = mgbfs_core::config::RunOwnerBackend::CucoRank;
     cuco.library_pool_bytes = Some(64 << 20);
@@ -50,13 +60,22 @@ fn production_cuco_requires_explicit_aligned_pool_budget() {
     let mut wire = serde_json::to_value(RunConfigV1::fixture(5).unwrap()).unwrap();
     wire["owner_backend"] = serde_json::json!("CUCO_RANK");
     let decode = |value| serde_json::from_value::<RunConfigV1>(value).unwrap();
-    assert_eq!(decode(wire.clone()).validate().unwrap_err(), "CONFIG_LIBRARY_POOL_REQUIRED");
+    assert_eq!(
+        decode(wire.clone()).validate().unwrap_err(),
+        "CONFIG_LIBRARY_POOL_REQUIRED"
+    );
     wire["library_pool_bytes"] = serde_json::json!(257);
-    assert_eq!(decode(wire.clone()).validate().unwrap_err(), "CONFIG_LIBRARY_POOL_ALIGNMENT");
+    assert_eq!(
+        decode(wire.clone()).validate().unwrap_err(),
+        "CONFIG_LIBRARY_POOL_ALIGNMENT"
+    );
     wire["library_pool_bytes"] = serde_json::json!(67108864);
     decode(wire.clone()).validate().unwrap();
     wire["owner_backend"] = serde_json::json!("CUB_SORT_MERGE");
-    assert_eq!(decode(wire).validate().unwrap_err(), "CONFIG_UNUSED_LIBRARY_POOL");
+    assert_eq!(
+        decode(wire).validate().unwrap_err(),
+        "CONFIG_UNUSED_LIBRARY_POOL"
+    );
 }
 
 #[test]

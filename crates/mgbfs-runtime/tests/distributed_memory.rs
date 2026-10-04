@@ -5,15 +5,32 @@ fn route_banks_reserve_distinct_payload_and_device_control_ranges() {
     use mgbfs_runtime::distributed_memory::with_route_banks;
     let base = shared_buffers(shape()).unwrap();
     let ledger = with_route_banks(&base, 3).unwrap();
-    let bytes = |name: &str| ledger.allocations.iter()
-        .find(|a| a.name == name).unwrap().payload_bytes;
+    let bytes = |name: &str| {
+        ledger
+            .allocations
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap()
+            .payload_bytes
+    };
     // 21 candidates with 16-byte packets. Each bank has the entire
     // raw/sorted/packed storage, not just a descriptor or completion credit.
     for bank in 0..3 {
-        let prefix = if bank == 0 { String::new() } else { format!("route_bank_{bank}.") };
-        for (name, expected) in [("children", 336), ("child_hashes", 336),
-            ("sorted_hashes", 336), ("sorted_refs", 168), ("packed_states", 336),
-            ("route_count", 4), ("owner_counts", 32), ("generation_control", 8)] {
+        let prefix = if bank == 0 {
+            String::new()
+        } else {
+            format!("route_bank_{bank}.")
+        };
+        for (name, expected) in [
+            ("children", 336),
+            ("child_hashes", 336),
+            ("sorted_hashes", 336),
+            ("sorted_refs", 168),
+            ("packed_states", 336),
+            ("route_count", 4),
+            ("owner_counts", 32),
+            ("generation_control", 8),
+        ] {
             assert_eq!(bytes(&format!("{prefix}{name}")), expected);
         }
     }
@@ -41,8 +58,18 @@ fn native_rank_metadata_covers_all_buckets_without_duplicate_receive_storage() {
     use mgbfs_runtime::distributed_memory::native_rank_shared_buffers;
     let s = shape();
     let ledger = native_rank_shared_buffers(s, 2).unwrap();
-    let bytes = |name: &str| ledger.allocations.iter().find(|a| a.name == name).unwrap().payload_bytes;
-    assert_eq!(bytes("counts"), s.buckets * std::mem::size_of::<mgbfs_cuda::native_owner::Counts>() as u64);
+    let bytes = |name: &str| {
+        ledger
+            .allocations
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap()
+            .payload_bytes
+    };
+    assert_eq!(
+        bytes("counts"),
+        s.buckets * std::mem::size_of::<mgbfs_cuda::native_owner::Counts>() as u64
+    );
     assert_eq!(bytes("rank_prev_directory"), s.buckets * 16);
     assert_eq!(bytes("rank_curr_directory"), s.buckets * 16);
     assert_eq!(bytes("rank_shard_offsets"), 3 * 4);
@@ -52,7 +79,7 @@ fn native_rank_metadata_covers_all_buckets_without_duplicate_receive_storage() {
         assert!(!ledger.allocations.iter().any(|a| a.name == name));
     }
     // The existing leaf query, not the bucket count, still sizes merged scratch.
-    assert_eq!(bytes("accepted"), s.buckets*s.bucket_capacity*16);
+    assert_eq!(bytes("accepted"), s.buckets * s.bucket_capacity * 16);
 }
 
 #[test]
@@ -65,7 +92,7 @@ fn native_rank_aggregate_capacity_and_shards_are_checked_before_allocation() {
     assert!(native_rank_shared_buffers(s, 2).is_err());
     // Capacity counters are per shard, not a fictitious global u32 arena.
     // Byte planning only: this does not allocate the large shape on a GPU.
-    s.bucket_capacity = (u32::MAX as u64)/4;
+    s.bucket_capacity = (u32::MAX as u64) / 4;
     assert!(native_rank_shared_buffers(s, 2).is_ok());
 }
 
@@ -109,7 +136,10 @@ fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     assert_eq!(bytes("curr"), 2048);
     assert_eq!(bytes("library_candidates"), 1280);
     assert_eq!(bytes("states"), 4096);
-    assert_eq!(bytes("next_extents"), 2 * std::mem::size_of::<mgbfs_cuda::native_owner::Extent>() as u64);
+    assert_eq!(
+        bytes("next_extents"),
+        2 * std::mem::size_of::<mgbfs_cuda::native_owner::Extent>() as u64
+    );
     assert_eq!(bytes("next_extent_count"), 4);
     assert_eq!(bytes("owner_window"), 3 * std::mem::size_of::<u32>() as u64);
     for legacy in ["accepted", "lengths", "counts", "selected"] {

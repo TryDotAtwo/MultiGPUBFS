@@ -25,7 +25,9 @@ fn test_fault_rank(name: &str, rank: u32, world: u32) -> Result<bool> {
     match std::env::var(name) {
         Ok(value) => {
             let selected: u32 = value.parse().map_err(|_| format!("{name}_INVALID"))?;
-            if selected >= world { return Err(format!("{name}_OUT_OF_RANGE")); }
+            if selected >= world {
+                return Err(format!("{name}_OUT_OF_RANGE"));
+            }
             Ok(selected == rank)
         }
         Err(std::env::VarError::NotPresent) => Ok(false),
@@ -53,14 +55,21 @@ mod env_tests {
     fn optional_u32_rejects_invalid_value_without_panicking() {
         assert_eq!(parse_u32_config("MGBFS_SHARDS", None, 64).unwrap(), 64);
         assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("8"), 64).unwrap(), 8);
-        assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("bad"), 64).unwrap_err(), "ENV_MGBFS_SHARDS");
-        assert_eq!(parse_u32_config("MGBFS_SHARDS", Some("4294967296"), 64).unwrap_err(), "ENV_MGBFS_SHARDS");
+        assert_eq!(
+            parse_u32_config("MGBFS_SHARDS", Some("bad"), 64).unwrap_err(),
+            "ENV_MGBFS_SHARDS"
+        );
+        assert_eq!(
+            parse_u32_config("MGBFS_SHARDS", Some("4294967296"), 64).unwrap_err(),
+            "ENV_MGBFS_SHARDS"
+        );
     }
 }
 #[cfg(debug_assertions)]
 fn archive_fault_extent(
     extent: Box<dyn crate::archive::Extent + Send>,
-    write_fault: bool, sync_fault: bool,
+    write_fault: bool,
+    sync_fault: bool,
 ) -> Box<dyn crate::archive::Extent + Send> {
     // Test-only disk boundary: real reservation/header writes still happen.
     // Fail records in the worker, not an artificial producer-side check.
@@ -75,20 +84,30 @@ fn archive_fault_extent(
         }
         fn write_at(&mut self, offset: u64, bytes: &[u8]) -> std::io::Result<usize> {
             if self.write_fault && offset >= 48 {
-                return Err(std::io::Error::other("TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR"));
+                return Err(std::io::Error::other(
+                    "TEST_INJECTED_ARCHIVE_WORKER_WRITE_ERROR",
+                ));
             }
             self.inner.write_at(offset, bytes)
         }
         fn sync(&mut self) -> std::io::Result<()> {
             if self.sync_fault {
-                return Err(std::io::Error::other("TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR"));
+                return Err(std::io::Error::other(
+                    "TEST_INJECTED_ARCHIVE_WORKER_SYNC_ERROR",
+                ));
             }
             self.inner.sync()
         }
     }
     if write_fault || sync_fault {
-        Box::new(FaultExtent { inner: extent, write_fault, sync_fault })
-    } else { extent }
+        Box::new(FaultExtent {
+            inner: extent,
+            write_fault,
+            sync_fault,
+        })
+    } else {
+        extent
+    }
 }
 #[cfg(all(test, debug_assertions, target_os = "linux"))]
 mod archive_fault_tests {
@@ -96,15 +115,26 @@ mod archive_fault_tests {
     use crate::archive::{Archive, FileExtent};
 
     fn exercise(write_fault: bool, sync_fault: bool) -> (bool, bool) {
-        let path = std::env::temp_dir().join(format!("mgbfs-archive-fault-{}-{}",
-            std::process::id(), std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = std::env::temp_dir().join(format!(
+            "mgbfs-archive-fault-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let extent = FileExtent::create_new(&path).unwrap();
         let mut archive = Archive::new_run_durable(
             archive_fault_extent(Box::new(extent), write_fault, sync_fault),
-            4096, 4, [0; 32]).unwrap();
+            4096,
+            4,
+            [0; 32],
+        )
+        .unwrap();
         let write_ok = archive.records(0, &[0; 4], &[[0; 4]]).is_ok();
-        if write_ok { archive.layer_commit(0, 1).unwrap(); }
+        if write_ok {
+            archive.layer_commit(0, 1).unwrap();
+        }
         let finish_ok = archive.run_commit().is_ok();
         drop(archive);
         std::fs::remove_file(path).unwrap();
@@ -224,80 +254,145 @@ struct PreparedPass {
     bootstrap_digest: [u8; 32],
 }
 fn prepare_production(args: &[String], rank: u32, world: u32) -> Result<PreparedPass> {
-    use mgbfs_core::config::{FrontierProfile, RunConfigV1, ReferenceTransport};
+    use mgbfs_core::config::{FrontierProfile, ReferenceTransport, RunConfigV1};
     let file = std::fs::File::open(&args[1]).map_err(|e| format!("CONFIG_OPEN: {e}"))?;
     let config: RunConfigV1 = serde_json::from_reader(std::io::BufReader::new(file))
         .map_err(|e| format!("CONFIG_PARSE: {e}"))?;
     let digest = config.digest()?;
-    if config.topology.world_size != world { return Err("RUN_TOPOLOGY_MISMATCH".into()); }
+    if config.topology.world_size != world {
+        return Err("RUN_TOPOLOGY_MISMATCH".into());
+    }
     // Named unsupported contracts, not coerced benchmark defaults. Multi-rank
     // weighted settlement remains separate; physical source banks are explicit.
-    if config.macro_depth != 1 { return Err("RUN_MACRO_DISPATCH_UNAVAILABLE".into()); }
-    if !(2..=4).contains(&config.capacities.route_slot_count) { return Err("RUN_ROUTE_BANK_COUNT_UNAVAILABLE".into()); }
+    if config.macro_depth != 1 {
+        return Err("RUN_MACRO_DISPATCH_UNAVAILABLE".into());
+    }
+    if !(2..=4).contains(&config.capacities.route_slot_count) {
+        return Err("RUN_ROUTE_BANK_COUNT_UNAVAILABLE".into());
+    }
     let narrow = |value: u64| -> Result<u32> {
         let value = u32::try_from(value).map_err(|_| "RUN_CAPACITY_ABI")?;
-        if value == 0 || value > i32::MAX as u32 { return Err("RUN_CAPACITY_ABI".into()); }
+        if value == 0 || value > i32::MAX as u32 {
+            return Err("RUN_CAPACITY_ABI".into());
+        }
         Ok(value)
     };
     let batch = narrow(config.parent_batch)?;
     let capacity = narrow(config.capacities.layer_hash_records_per_arena)?;
     let future = narrow(config.capacities.state_ring_records)?;
-    let candidates = batch.checked_mul(config.graph.generators.len() as u32)
+    let candidates = batch
+        .checked_mul(config.graph.generators.len() as u32)
         .ok_or("RUN_CANDIDATE_OVERFLOW")?;
     let slots = narrow(config.capacities.route_slot_records)?;
-    if slots != candidates { return Err("RUN_ROUTE_RECORD_COUNT_UNAVAILABLE".into()); }
-    let buckets = config.topology.shards_per_rank.checked_mul(config.topology.buckets_per_shard)
-        .and_then(|x| x.checked_mul(world)).ok_or("RUN_TOPOLOGY_OVERFLOW")?;
-    let shards = config.topology.shards_per_rank.checked_mul(world).ok_or("RUN_TOPOLOGY_OVERFLOW")?;
+    if slots != candidates {
+        return Err("RUN_ROUTE_RECORD_COUNT_UNAVAILABLE".into());
+    }
+    let buckets = config
+        .topology
+        .shards_per_rank
+        .checked_mul(config.topology.buckets_per_shard)
+        .and_then(|x| x.checked_mul(world))
+        .ok_or("RUN_TOPOLOGY_OVERFLOW")?;
+    let shards = config
+        .topology
+        .shards_per_rank
+        .checked_mul(world)
+        .ok_or("RUN_TOPOLOGY_OVERFLOW")?;
     let width = config.graph.start.len();
     let slot_stride = (width as u64).checked_add(16).ok_or("RUN_ARCHIVE_BYTES")?;
     if config.capacities.pinned_archive_slot_bytes % slot_stride != 0 {
         return Err("RUN_PINNED_SLOT_ALIGNMENT".into());
     }
     let archive_rows = narrow(config.capacities.pinned_archive_slot_bytes / slot_stride)?;
-    if archive_rows < batch { return Err("RUN_PINNED_SLOT_BATCH_CAPACITY".into()); }
+    if archive_rows < batch {
+        return Err("RUN_PINNED_SLOT_BATCH_CAPACITY".into());
+    }
     let profile = match config.frontier_profile {
-        FrontierProfile::Dense => "DENSE", FrontierProfile::HashFirst => "HASH_FIRST",
-    }.to_owned();
+        FrontierProfile::Dense => "DENSE",
+        FrontierProfile::HashFirst => "HASH_FIRST",
+    }
+    .to_owned();
     let pre = if config.local_pre_dedup { "ON" } else { "OFF" }.to_owned();
     let owner = match config.owner_backend {
         mgbfs_core::config::RunOwnerBackend::CubSortMerge => "CUB_SORT_MERGE",
         mgbfs_core::config::RunOwnerBackend::BmmaBucket => "BMMA_BUCKET",
         mgbfs_core::config::RunOwnerBackend::CucoRank => "CUCO_RANK",
-    }.to_owned();
+    }
+    .to_owned();
     let hash_first_generation = if config.frontier_profile == FrontierProfile::HashFirst {
         "INT_MMA_SM75"
-    } else { "SCALAR" }.to_owned();
+    } else {
+        "SCALAR"
+    }
+    .to_owned();
     let selection = ReferenceSelection::parse(&profile, &owner, &pre, false, candidates, 256)?
-        .with_hash_first_generation(&hash_first_generation)?.with_transport("NCCL_LSA")?;
+        .with_hash_first_generation(&hash_first_generation)?
+        .with_transport("NCCL_LSA")?;
     let pool = config.library_pool_bytes.map(|bytes| bytes.to_string());
-    let selection = selection.with_library_pool(pool.as_deref(), cfg!(feature = "library-owner"))?;
+    let selection =
+        selection.with_library_pool(pool.as_deref(), cfg!(feature = "library-owner"))?;
     let cfg = DistributedConfig {
         route_banks: config.capacities.route_slot_count as usize,
         epoch_window: usize::try_from(config.completion_epoch_window)
-            .map_err(|_| "RUN_EPOCH_WINDOW_ABI")?, rank, world,
-        logical_owner_to_rank: if world == 1 { vec![0, 0] } else { config.topology.logical_owner_to_rank.clone() },
-        transport: ReferenceTransport::Lsa, batch, layer_capacity: capacity,
+            .map_err(|_| "RUN_EPOCH_WINDOW_ABI")?,
+        rank,
+        world,
+        logical_owner_to_rank: if world == 1 {
+            vec![0, 0]
+        } else {
+            config.topology.logical_owner_to_rank.clone()
+        },
+        transport: ReferenceTransport::Lsa,
+        batch,
+        layer_capacity: capacity,
         state_ring_capacity: future,
         state_descriptor_capacity: narrow(config.capacities.state_extent_descriptors)?,
-        buckets, shards, job_buckets: config.topology.buckets_per_shard.min(4),
+        buckets,
+        shards,
+        job_buckets: config.topology.buckets_per_shard.min(4),
         bucket_capacity: narrow(config.capacities.next_bucket_capacity_records)?,
-        prededup: config.local_pre_dedup, generation_variant: 1,
+        prededup: config.local_pre_dedup,
+        generation_variant: 1,
         untouched_vram_reserve: config.capacities.untouched_vram_reserve_bytes,
     };
-    let group = format!("matrix-{}", digest.iter().map(|x| format!("{x:02x}")).collect::<String>());
+    let group = format!(
+        "matrix-{}",
+        digest
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>()
+    );
     Ok(PreparedPass {
-        multiset: None, group, n: config.graph.rows, graph: config.graph,
-        batch, declared_capacity: capacity, declared_future: future, mode: CapacityMode::MaxPerRank,
+        multiset: None,
+        group,
+        n: config.graph.rows,
+        graph: config.graph,
+        batch,
+        declared_capacity: capacity,
+        declared_future: future,
+        mode: CapacityMode::MaxPerRank,
         global_capacity: u64::from(capacity) * u64::from(world),
-        global_future: u64::from(future) * u64::from(world), capacity, future,
-        compact_states: false, archive_width: width, profile, owner, pre,
-        seed: config.seed, seed_hex: format!("{:032x}", u128::from_le_bytes(config.seed)),
-        hash_first_generation, selection, digest,
-        archive_path: format!("{}-rank-{rank}.mgbfsar1", args[4]), archive_enabled: true,
-        disk_bytes: config.capacities.disk_extent_bytes_per_rank, archive_rows,
-        archive_slots: config.capacities.pinned_archive_slots as usize, stream_archive: false,
-        cfg, bootstrap_digest: digest,
+        global_future: u64::from(future) * u64::from(world),
+        capacity,
+        future,
+        compact_states: false,
+        archive_width: width,
+        profile,
+        owner,
+        pre,
+        seed: config.seed,
+        seed_hex: format!("{:032x}", u128::from_le_bytes(config.seed)),
+        hash_first_generation,
+        selection,
+        digest,
+        archive_path: format!("{}-rank-{rank}.mgbfsar1", args[4]),
+        archive_enabled: true,
+        disk_bytes: config.capacities.disk_extent_bytes_per_rank,
+        archive_rows,
+        archive_slots: config.capacities.pinned_archive_slots as usize,
+        stream_archive: false,
+        cfg,
+        bootstrap_digest: digest,
     })
 }
 #[cfg(test)]
@@ -306,8 +401,8 @@ mod production_tests {
     #[test]
     fn typed_route_banks_are_independent_of_completion_credits() {
         for banks in [2, 3, 4] {
-            let mut config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
-                include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+            let mut config: mgbfs_core::config::RunConfigV1 =
+                serde_json::from_str(include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
             config.capacities.route_slot_count = banks;
             config.completion_epoch_window = 3;
             let prepared = prepare(config).unwrap();
@@ -319,14 +414,17 @@ mod production_tests {
     #[test]
     #[cfg(feature = "library-owner")]
     fn typed_cuco_uses_the_declared_pool_and_existing_rank_owner() {
-        let mut config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
-            include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+        let mut config: mgbfs_core::config::RunConfigV1 =
+            serde_json::from_str(include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
         config.owner_backend = mgbfs_core::config::RunOwnerBackend::CucoRank;
         config.library_pool_bytes = Some(96 << 20);
         config.completion_epoch_window = 3;
         let prepared = prepare(config).unwrap();
         assert_eq!(prepared.owner, "CUCO_RANK");
-        assert_eq!(prepared.selection.owner, mgbfs_core::config::ReferenceOwner::CucoRank);
+        assert_eq!(
+            prepared.selection.owner,
+            mgbfs_core::config::ReferenceOwner::CucoRank
+        );
         assert_eq!(prepared.selection.library_pool_bytes, Some(96 << 20));
         assert_eq!(prepared.cfg.epoch_window, 3);
         assert_eq!(prepared.cfg.state_ring_capacity, 128);
@@ -334,21 +432,44 @@ mod production_tests {
     }
     #[test]
     fn physical_gate_fixture_has_the_independent_s4_layers() {
-        let config: mgbfs_core::config::RunConfigV1 = serde_json::from_str(
-            include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
+        let config: mgbfs_core::config::RunConfigV1 =
+            serde_json::from_str(include_str!("../../../tests/run-s4-two-rank.json")).unwrap();
         config.validate().unwrap();
         assert_eq!(u128::from_le_bytes(config.seed), 20260828);
-        assert_eq!(config.graph.exact_layers(24).unwrap().iter().map(Vec::len)
-            .collect::<Vec<_>>(), vec![1, 3, 5, 6, 5, 3, 1]);
+        assert_eq!(
+            config
+                .graph
+                .exact_layers(24)
+                .unwrap()
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![1, 3, 5, 6, 5, 3, 1]
+        );
         assert!(prepare(config).unwrap().archive_enabled);
     }
     fn prepare(config: mgbfs_core::config::RunConfigV1) -> Result<PreparedPass> {
-        let path = std::env::temp_dir().join(format!("mgbfs-production-{}-{}",
-            std::process::id(), std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = std::env::temp_dir().join(format!(
+            "mgbfs-production-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-        let result = prepare_production(&["run".into(), path.to_str().unwrap().into(),
-            "unused".into(), "bootstrap".into(), "archive".into(), "output".into()], 1, 2);
+        let result = prepare_production(
+            &[
+                "run".into(),
+                path.to_str().unwrap().into(),
+                "unused".into(),
+                "bootstrap".into(),
+                "archive".into(),
+                "output".into(),
+            ],
+            1,
+            2,
+        );
         std::fs::remove_file(path).unwrap();
         result
     }
@@ -365,25 +486,42 @@ mod production_tests {
         assert_eq!(prepared.bootstrap_digest, expected);
         assert_eq!(prepared.seed, config.seed);
         assert_eq!(prepared.cfg.state_descriptor_capacity, 321);
-        assert_eq!(prepared.cfg.state_ring_capacity as u64, config.capacities.state_ring_records);
+        assert_eq!(
+            prepared.cfg.state_ring_capacity as u64,
+            config.capacities.state_ring_records
+        );
         assert_eq!(prepared.cfg.logical_owner_to_rank, vec![1, 0]);
-        assert_eq!(prepared.disk_bytes, config.capacities.disk_extent_bytes_per_rank);
-        assert_eq!(u64::from(prepared.archive_rows) * (prepared.archive_width as u64 + 16),
-            config.capacities.pinned_archive_slot_bytes);
+        assert_eq!(
+            prepared.disk_bytes,
+            config.capacities.disk_extent_bytes_per_rank
+        );
+        assert_eq!(
+            u64::from(prepared.archive_rows) * (prepared.archive_width as u64 + 16),
+            config.capacities.pinned_archive_slot_bytes
+        );
         assert!(prepared.archive_enabled);
     }
     #[test]
     fn typed_run_does_not_coerce_unimplemented_contracts() {
         let mut config = mgbfs_core::config::RunConfigV1::fixture(3).unwrap();
         config.capacities.route_slot_count = 5;
-        assert_eq!(prepare(config.clone()).err().unwrap(), "RUN_ROUTE_BANK_COUNT_UNAVAILABLE");
+        assert_eq!(
+            prepare(config.clone()).err().unwrap(),
+            "RUN_ROUTE_BANK_COUNT_UNAVAILABLE"
+        );
         let mut config = config;
         config.capacities.route_slot_count = 2;
         config.capacities.pinned_archive_slot_bytes -= 1;
         assert_eq!(prepare(config).err().unwrap(), "RUN_PINNED_SLOT_ALIGNMENT");
     }
 }
-fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool, production: bool) -> Result<()> {
+fn run_pass(
+    args: &[String],
+    warmup_completed: bool,
+    is_measure: bool,
+    manifest: bool,
+    production: bool,
+) -> Result<()> {
     if args.len() != 6 {
         return Err("ARGS_group_batch_bootstrap_archive_prefix_output_dir".into());
     }
@@ -401,204 +539,283 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     // instead of leaving its peer in a stale-config bootstrap timeout.
     let mut control_group = bootstrap(Path::new(&args[3]), rank, world, [0; 32])?;
     let prepared = (|| -> Result<PreparedPass> {
-    if production { return prepare_production(args, rank, world); }
-    let warmup_requested = crate::reference_launch::bench_warmup_for_launch(
-        std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
-        std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
-    )?;
-    crate::reference_launch::macro_depth_from_env(world)?;
-    let multiset = if !manifest && args[1].starts_with("lrx") {
-        Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
-    } else { None };
-    let (group, graph) = if let Some(word) = &multiset {
-        (word.label(), word.position_group()?)
-    } else if manifest {
-        crate::reference_launch::load_matrix_manifest(Path::new(&args[1]))?
-    } else { MatrixGroup::from_reference_label(&args[1])? };
-    let expected_states = multiset.as_ref().map_or(graph.expected_max_unique_states, |x| x.order());
-    let n = graph.rows;
-    let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
-    let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
-        Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
-        Err(std::env::VarError::NotPresent) => u32::try_from(expected_states)
-            .map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
-        Err(_) => return Err("CAPACITY".into()),
-    };
-    let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity)?;
-    let mode = capacity_mode()?;
-    let capacity_plan = cluster_capacity_plan(mode, u64::from(declared_capacity), world)?;
-    let future_plan = cluster_capacity_plan(mode, u64::from(declared_future), world)?;
-    let capacity = u32::try_from(capacity_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
-    let future = u32::try_from(future_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
-    let rank_map = crate::topology::reference_rank_map(
-        world,
-        std::env::var("MGBFS_RANK_MAP").ok().as_deref(),
-    )?;
-    // Archive config identity is cluster-wide.  Rank is already carried by the
-    // stream frames; including it here prevents otherwise compatible rank
-    // archives from being atomically combined.
-    let compact_states = match std::env::var("MGBFS_STATE_CODEC").as_deref() {
-        Ok("permutation_u8") => true,
-        Ok("matrix_u8") | Err(_) => false,
-        _ => return Err("STATE_CODEC".into()),
-    };
-    if manifest && compact_states { return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into()); }
-    let archive_width = match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
-        Ok("permutation_u8") => n,
-        Err(_) if compact_states => n,
-        Ok("matrix_u8") | Err(_) => graph.start.len(),
-        _ => return Err("ARCHIVE_CODEC".into()),
-    };
-    if compact_states && archive_width != n {
-        return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
-    }
-    if manifest && archive_width != graph.start.len() {
-        return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into());
-    }
-    if group.starts_with('u') && (compact_states || archive_width != graph.start.len()) {
-        return Err("UNITRIANGULAR_REQUIRES_MATRIX_CODEC".into());
-    }
-    let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
-    let owner = std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
-    let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
-    let seed = match std::env::var("MGBFS_HASH_SEED_HEX") {
-        Ok(value) => mgbfs_core::hash::parse_seed_hex(&value)?,
-        Err(std::env::VarError::NotPresent) => 20260828u128.to_le_bytes(),
-        Err(_) => return Err("HASH_SEED_HEX_32".into()),
-    };
-    let seed_hex = format!("{:032x}", u128::from_le_bytes(seed));
-    let hash_first_generation =
-        std::env::var("MGBFS_HASH_FIRST_GENERATION").unwrap_or_else(|_| "SCALAR".into());
-    let selection = ReferenceSelection::parse(
-        &profile,
-        &owner,
-        &pre,
-        compact_states,
-        env_u32(
-            "MGBFS_MATERIALIZATION_CAPACITY",
-            batch
-                .checked_mul(graph.generators.len() as u32)
-                .ok_or("CANDIDATE_OVERFLOW")?,
-        )?,
-        env_u32("MGBFS_BMMA_TILE_LIMIT", 256)?,
-    )?
-    .with_hash_first_generation(&hash_first_generation)?
-    .with_transport(&std::env::var("MGBFS_TRANSPORT_BACKEND")
-        .unwrap_or_else(|_| "HOST_SIZED_NCCL".into()))?
-    .with_library_pool(
-        std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
-        cfg!(feature = "library-owner"),
-    )?;
-    if selection.tensor_generation {
-        // This preparation result is agreed by the existing control channel
-        // before archive/pinned admission or communicator creation.
-        crate::failure::check_native_status(unsafe { cudaSetDevice(local as i32) })?;
-        match unsafe { mgbfs_cuda::ffi::mgbfs_hash_first_tc_validate_device() } {
-            0 => (),
-            3 => return Err("HASH_FIRST_TC_DEVICE_UNSUPPORTED".into()),
-            status => return Err(format!("HASH_FIRST_TC_DEVICE_QUERY_{status}")),
+        if production {
+            return prepare_production(args, rank, world);
         }
-    }
-    if multiset.is_some() && (!compact_states || profile != "DENSE" || selection.tensor_generation) {
-        return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
-    }
-    let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=0x{seed_hex};archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
-    let description = format!("{description};compact_states={compact_states}");
-    let description = format!("{description};reference_selection={selection:?}");
-    let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
-    let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
-    let archive_enabled = crate::reference_launch::bench_archive_for_launch(
-        std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").ok().as_deref(),
-        std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
-    )?;
-    let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
-    let disk_bytes = if archive_enabled {
-        ArchiveRingPlan::reference_output_limit(archive_width, expected_states, capacity, stream_archive)?
-    } else { 0 };
-    let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
-    let archive_slots = env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize;
-    selection.validate_archive_contract(archive_enabled,
-        std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"))?;
-    let buckets = env_u32("MGBFS_BUCKETS", 256)?;
-    let shards = env_u32("MGBFS_SHARDS", 64)?;
-    let (local_buckets, _) =
-        crate::topology::reference_owner_geometry(world, rank, &rank_map, buckets, shards)?;
-    let default_bucket_capacity =
-        crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
-    let cfg = DistributedConfig {
-        route_banks: env_u32("MGBFS_ROUTE_BANKS", 2)? as usize,
-        epoch_window: match std::env::var("MGBFS_EPOCH_WINDOW") {
-            Ok(value) => crate::reference_launch::epoch_window_for_launch(Some(&value))?,
-            Err(std::env::VarError::NotPresent) =>
-                crate::reference_launch::epoch_window_for_launch(None)?,
-            Err(_) => return Err("ENV_MGBFS_EPOCH_WINDOW".into()),
-        },
-        untouched_vram_reserve: 1 << 30,
-        rank,
-        world,
-        logical_owner_to_rank: rank_map,
-        transport: selection.transport,
-        batch,
-        layer_capacity: capacity,
-        state_ring_capacity: future,
-        state_descriptor_capacity: env_u32("MGBFS_STATE_DESCRIPTOR_CAPACITY", future)?,
-        buckets,
-        shards,
-        job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4)?,
-        bucket_capacity: env_u32("MGBFS_BUCKET_CAPACITY", default_bucket_capacity)?,
-        prededup: selection.prededup,
-        generation_variant: if compact_states { 5 } else { 1 },
-    };
-    // Reference launch agreement includes geometry and archive settings omitted
-    // by the older archive digest. Rank-local capacities are derived from the
-    // shared declared capacity and rank map, not compared as equal across ranks.
-    let bootstrap_description = serde_json::json!({
-        "schema": "reference-bootstrap-v1", "archive_digest": digest,
-        "world": world, "buckets": cfg.buckets, "shards": cfg.shards,
-        "job_buckets": cfg.job_buckets,
-        "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
-        "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
-        "epoch_window": cfg.epoch_window,
-        "route_banks": cfg.route_banks,
-        "state_descriptor_capacity": cfg.state_descriptor_capacity,
-        "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
-        "stream_archive": stream_archive, "archive_enabled": archive_enabled,
-        "warmup_requested": warmup_requested,
-        "transport": format!("{:?}", cfg.transport),
-    });
-    let bootstrap_digest: [u8; 32] =
-        Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
-            .into();
-    Ok(PreparedPass {
-        multiset, group, graph, n, batch, declared_capacity, declared_future,
-        mode, global_capacity: capacity_plan.global_records,
-        global_future: future_plan.global_records, capacity, future,
-        compact_states, archive_width, profile, owner, pre, seed, seed_hex,
-        hash_first_generation, selection, digest, archive_path, archive_enabled,
-        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
-        bootstrap_digest,
-    })
+        let warmup_requested = crate::reference_launch::bench_warmup_for_launch(
+            std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
+            std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
+        )?;
+        crate::reference_launch::macro_depth_from_env(world)?;
+        let multiset = if !manifest && args[1].starts_with("lrx") {
+            Some(mgbfs_core::lrx_multiset::LrxMultiset::from_label(&args[1])?)
+        } else {
+            None
+        };
+        let (group, graph) = if let Some(word) = &multiset {
+            (word.label(), word.position_group()?)
+        } else if manifest {
+            crate::reference_launch::load_matrix_manifest(Path::new(&args[1]))?
+        } else {
+            MatrixGroup::from_reference_label(&args[1])?
+        };
+        let expected_states = multiset
+            .as_ref()
+            .map_or(graph.expected_max_unique_states, |x| x.order());
+        let n = graph.rows;
+        let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
+        let declared_capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
+            Ok(value) => value.parse::<u32>().map_err(|_| "CAPACITY")?,
+            Err(std::env::VarError::NotPresent) => {
+                u32::try_from(expected_states).map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?
+            }
+            Err(_) => return Err("CAPACITY".into()),
+        };
+        let declared_future = env_u32("MGBFS_FUTURE_CAPACITY", declared_capacity)?;
+        let mode = capacity_mode()?;
+        let capacity_plan = cluster_capacity_plan(mode, u64::from(declared_capacity), world)?;
+        let future_plan = cluster_capacity_plan(mode, u64::from(declared_future), world)?;
+        let capacity = u32::try_from(capacity_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
+        let future = u32::try_from(future_plan.rank_records(rank)?).map_err(|_| "CAPACITY")?;
+        let rank_map = crate::topology::reference_rank_map(
+            world,
+            std::env::var("MGBFS_RANK_MAP").ok().as_deref(),
+        )?;
+        // Archive config identity is cluster-wide.  Rank is already carried by the
+        // stream frames; including it here prevents otherwise compatible rank
+        // archives from being atomically combined.
+        let compact_states = match std::env::var("MGBFS_STATE_CODEC").as_deref() {
+            Ok("permutation_u8") => true,
+            Ok("matrix_u8") | Err(_) => false,
+            _ => return Err("STATE_CODEC".into()),
+        };
+        if manifest && compact_states {
+            return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into());
+        }
+        let archive_width = match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
+            Ok("permutation_u8") => n,
+            Err(_) if compact_states => n,
+            Ok("matrix_u8") | Err(_) => graph.start.len(),
+            _ => return Err("ARCHIVE_CODEC".into()),
+        };
+        if compact_states && archive_width != n {
+            return Err("COMPACT_STATE_REQUIRES_COMPACT_ARCHIVE".into());
+        }
+        if manifest && archive_width != graph.start.len() {
+            return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into());
+        }
+        if group.starts_with('u') && (compact_states || archive_width != graph.start.len()) {
+            return Err("UNITRIANGULAR_REQUIRES_MATRIX_CODEC".into());
+        }
+        let profile = std::env::var("MGBFS_PROFILE").unwrap_or_else(|_| "DENSE".into());
+        let owner =
+            std::env::var("MGBFS_OWNER_BACKEND").unwrap_or_else(|_| "CUB_SORT_MERGE".into());
+        let pre = std::env::var("MGBFS_PRE_DEDUP").unwrap_or_else(|_| "ON".into());
+        let seed = match std::env::var("MGBFS_HASH_SEED_HEX") {
+            Ok(value) => mgbfs_core::hash::parse_seed_hex(&value)?,
+            Err(std::env::VarError::NotPresent) => 20260828u128.to_le_bytes(),
+            Err(_) => return Err("HASH_SEED_HEX_32".into()),
+        };
+        let seed_hex = format!("{:032x}", u128::from_le_bytes(seed));
+        let hash_first_generation =
+            std::env::var("MGBFS_HASH_FIRST_GENERATION").unwrap_or_else(|_| "SCALAR".into());
+        let selection = ReferenceSelection::parse(
+            &profile,
+            &owner,
+            &pre,
+            compact_states,
+            env_u32(
+                "MGBFS_MATERIALIZATION_CAPACITY",
+                batch
+                    .checked_mul(graph.generators.len() as u32)
+                    .ok_or("CANDIDATE_OVERFLOW")?,
+            )?,
+            env_u32("MGBFS_BMMA_TILE_LIMIT", 256)?,
+        )?
+        .with_hash_first_generation(&hash_first_generation)?
+        .with_transport(
+            &std::env::var("MGBFS_TRANSPORT_BACKEND").unwrap_or_else(|_| "HOST_SIZED_NCCL".into()),
+        )?
+        .with_library_pool(
+            std::env::var("MGBFS_LIBRARY_POOL_BYTES").ok().as_deref(),
+            cfg!(feature = "library-owner"),
+        )?;
+        if selection.tensor_generation {
+            // This preparation result is agreed by the existing control channel
+            // before archive/pinned admission or communicator creation.
+            crate::failure::check_native_status(unsafe { cudaSetDevice(local as i32) })?;
+            match unsafe { mgbfs_cuda::ffi::mgbfs_hash_first_tc_validate_device() } {
+                0 => (),
+                3 => return Err("HASH_FIRST_TC_DEVICE_UNSUPPORTED".into()),
+                status => return Err(format!("HASH_FIRST_TC_DEVICE_QUERY_{status}")),
+            }
+        }
+        if multiset.is_some()
+            && (!compact_states || profile != "DENSE" || selection.tensor_generation)
+        {
+            return Err("LRX_MULTISET_REQUIRES_COMPACT_DENSE".into());
+        }
+        let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=0x{seed_hex};archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
+        let description = format!("{description};compact_states={compact_states}");
+        let description = format!("{description};reference_selection={selection:?}");
+        let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
+        let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
+        let archive_enabled = crate::reference_launch::bench_archive_for_launch(
+            std::env::var("MGBFS_BENCH_SKIP_ARCHIVE").ok().as_deref(),
+            std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
+        )?;
+        let stream_archive = std::env::var("MGBFS_ARCHIVE_STREAM").as_deref() == Ok("1");
+        let disk_bytes = if archive_enabled {
+            ArchiveRingPlan::reference_output_limit(
+                archive_width,
+                expected_states,
+                capacity,
+                stream_archive,
+            )?
+        } else {
+            0
+        };
+        let archive_rows = env_u32("MGBFS_ARCHIVE_ROWS", batch)?;
+        let archive_slots = env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize;
+        selection.validate_archive_contract(
+            archive_enabled,
+            std::env::var("MGBFS_SEARCH_ONLY").as_deref() == Ok("1"),
+        )?;
+        let buckets = env_u32("MGBFS_BUCKETS", 256)?;
+        let shards = env_u32("MGBFS_SHARDS", 64)?;
+        let (local_buckets, _) =
+            crate::topology::reference_owner_geometry(world, rank, &rank_map, buckets, shards)?;
+        let default_bucket_capacity =
+            crate::topology::reference_bucket_capacity(capacity, local_buckets, 4096)?;
+        let cfg = DistributedConfig {
+            route_banks: env_u32("MGBFS_ROUTE_BANKS", 2)? as usize,
+            epoch_window: match std::env::var("MGBFS_EPOCH_WINDOW") {
+                Ok(value) => crate::reference_launch::epoch_window_for_launch(Some(&value))?,
+                Err(std::env::VarError::NotPresent) => {
+                    crate::reference_launch::epoch_window_for_launch(None)?
+                }
+                Err(_) => return Err("ENV_MGBFS_EPOCH_WINDOW".into()),
+            },
+            untouched_vram_reserve: 1 << 30,
+            rank,
+            world,
+            logical_owner_to_rank: rank_map,
+            transport: selection.transport,
+            batch,
+            layer_capacity: capacity,
+            state_ring_capacity: future,
+            state_descriptor_capacity: env_u32("MGBFS_STATE_DESCRIPTOR_CAPACITY", future)?,
+            buckets,
+            shards,
+            job_buckets: env_u32("MGBFS_JOB_BUCKETS", 4)?,
+            bucket_capacity: env_u32("MGBFS_BUCKET_CAPACITY", default_bucket_capacity)?,
+            prededup: selection.prededup,
+            generation_variant: if compact_states { 5 } else { 1 },
+        };
+        // Reference launch agreement includes geometry and archive settings omitted
+        // by the older archive digest. Rank-local capacities are derived from the
+        // shared declared capacity and rank map, not compared as equal across ranks.
+        let bootstrap_description = serde_json::json!({
+            "schema": "reference-bootstrap-v1", "archive_digest": digest,
+            "world": world, "buckets": cfg.buckets, "shards": cfg.shards,
+            "job_buckets": cfg.job_buckets,
+            "bucket_capacity_override": std::env::var("MGBFS_BUCKET_CAPACITY").ok(),
+            "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
+            "epoch_window": cfg.epoch_window,
+            "route_banks": cfg.route_banks,
+            "state_descriptor_capacity": cfg.state_descriptor_capacity,
+            "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
+            "stream_archive": stream_archive, "archive_enabled": archive_enabled,
+            "warmup_requested": warmup_requested,
+            "transport": format!("{:?}", cfg.transport),
+        });
+        let bootstrap_digest: [u8; 32] =
+            Sha256::digest(serde_json::to_vec(&bootstrap_description).map_err(|e| e.to_string())?)
+                .into();
+        Ok(PreparedPass {
+            multiset,
+            group,
+            graph,
+            n,
+            batch,
+            declared_capacity,
+            declared_future,
+            mode,
+            global_capacity: capacity_plan.global_records,
+            global_future: future_plan.global_records,
+            capacity,
+            future,
+            compact_states,
+            archive_width,
+            profile,
+            owner,
+            pre,
+            seed,
+            seed_hex,
+            hash_first_generation,
+            selection,
+            digest,
+            archive_path,
+            archive_enabled,
+            disk_bytes,
+            archive_rows,
+            archive_slots,
+            stream_archive,
+            cfg,
+            bootstrap_digest,
+        })
     })();
     let device_admission = if prepared.is_ok() {
         let code = unsafe { cudaSetDevice(local as i32) };
-        if code == 0 { Ok(()) } else { Err("CUDA_SET_DEVICE".to_string()) }
+        if code == 0 {
+            Ok(())
+        } else {
+            Err("CUDA_SET_DEVICE".to_string())
+        }
     } else {
         Ok(())
     };
     let config_digest = prepared.as_ref().map_or([0; 32], |p| p.bootstrap_digest);
     if control_group.agree_configuration(
-        config_digest, prepared.is_err() || device_admission.is_err(),
+        config_digest,
+        prepared.is_err() || device_admission.is_err(),
         Duration::from_secs(60),
     )? {
-        return Err(prepared.err().or_else(|| device_admission.err())
+        return Err(prepared
+            .err()
+            .or_else(|| device_admission.err())
             .unwrap_or_else(|| "REMOTE_CONFIGURATION_FATAL".into()));
     }
     let PreparedPass {
-        multiset, group, graph, n, batch, declared_capacity, declared_future,
-        mode, global_capacity, global_future, capacity, future, compact_states,
-        archive_width, profile, owner, pre, seed, seed_hex,
-        hash_first_generation, selection, digest, archive_path, archive_enabled,
-        disk_bytes, archive_rows, archive_slots, stream_archive, cfg,
+        multiset,
+        group,
+        graph,
+        n,
+        batch,
+        declared_capacity,
+        declared_future,
+        mode,
+        global_capacity,
+        global_future,
+        capacity,
+        future,
+        compact_states,
+        archive_width,
+        profile,
+        owner,
+        pre,
+        seed,
+        seed_hex,
+        hash_first_generation,
+        selection,
+        digest,
+        archive_path,
+        archive_enabled,
+        disk_bytes,
+        archive_rows,
+        archive_slots,
+        stream_archive,
+        cfg,
         bootstrap_digest,
     } = prepared?;
     // Keep control sockets alive throughout this reference run. Dispatching GPU
@@ -614,144 +831,189 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
         }
         if archive_enabled {
             #[cfg(debug_assertions)]
-            let write_fault = test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK", rank, world)?;
+            let write_fault =
+                test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_WRITE_FAULT_RANK", rank, world)?;
             #[cfg(debug_assertions)]
-            let sync_fault = test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK", rank, world)?;
+            let sync_fault =
+                test_fault_rank("MGBFS_TEST_ARCHIVE_WORKER_SYNC_FAULT_RANK", rank, world)?;
             create_archive_extent(Path::new(&archive_path), stream_archive)
                 .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))
                 .and_then(|extent| {
                     #[cfg(debug_assertions)]
                     let extent = archive_fault_extent(extent, write_fault, sync_fault);
                     PinnedArchive::new_with_failure_report(
-                    extent, disk_bytes, archive_width, digest, archive_rows,
-                    archive_slots, Some(search_failure.clone()),
+                        extent,
+                        disk_bytes,
+                        archive_width,
+                        digest,
+                        archive_rows,
+                        archive_slots,
+                        Some(search_failure.clone()),
                     )
                 })
                 .map(Some)
-        } else { Ok(None) }
+        } else {
+            Ok(None)
+        }
     })();
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveAdmission,
         archive_setup.is_err() || search_failure.load(std::sync::atomic::Ordering::Acquire) == 2,
         Duration::from_secs(600),
     )? {
-        return Err(archive_setup.err().unwrap_or_else(|| "REMOTE_ARCHIVE_ADMISSION_FATAL".into()));
+        return Err(archive_setup
+            .err()
+            .unwrap_or_else(|| "REMOTE_ARCHIVE_ADMISSION_FATAL".into()));
     }
     let mut archive = archive_setup?;
     let pinned = archive.as_ref().map_or(0, |a| a.pinned_bytes());
-    let sideband = control_group.start_search_sideband_with_report(
-        Duration::from_secs(7200), search_failure)?;
+    let sideband = control_group
+        .start_search_sideband_with_report(Duration::from_secs(7200), search_failure)?;
     let mut search_result = (|| -> Result<_> {
-    #[cfg(debug_assertions)]
-    if test_fault_rank("MGBFS_TEST_NCCL_STARTUP_FAULT_RANK", rank, world)? {
-        return Err("TEST_INJECTED_NCCL_STARTUP_ERROR".into());
-    }
-    let setup = Instant::now();
-    let mut bfs = if let Some(word) = &multiset {
-        DistributedNativeBfs::new_lrx_multiset_reference_and_cancel(word, seed,
-            id, cfg.clone(), selection.owner, selection.library_pool_bytes,
-            Some(sideband.cancel_token()), Some(sideband.failure_token()))?
-    } else { match selection.owner {
-        ReferenceOwner::CudfRelational | ReferenceOwner::CucoIndexed | ReferenceOwner::CucoRank => {
-            #[cfg(feature = "library-owner")]
-            {
-                DistributedNativeBfs::new_library_reference_with_owner_and_cancel(
-                    &graph,
-                    seed,
-                    id,
-                    cfg.clone(),
-                    selection.materialization_capacity,
-                    selection
-                        .library_pool_bytes
-                        .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?,
-                    selection.tensor_generation,
-                    selection.owner,
-                    Some(sideband.cancel_token()),
-                    Some(sideband.failure_token()),
-                )?
-            }
-            #[cfg(not(feature = "library-owner"))]
-            {
-                return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
-            }
+        #[cfg(debug_assertions)]
+        if test_fault_rank("MGBFS_TEST_NCCL_STARTUP_FAULT_RANK", rank, world)? {
+            return Err("TEST_INJECTED_NCCL_STARTUP_ERROR".into());
         }
-        ReferenceOwner::Native(owner) => {
-            DistributedNativeBfs::new_reference_with_owner_and_cancel(
-                &graph, seed, id, cfg.clone(), selection.materialization_capacity,
-                owner, selection.tile_limit, selection.tensor_generation,
-                Some(sideband.cancel_token()), Some(sideband.failure_token()))?
-        }
-    }};
-    bfs.set_cancel_token(sideband.cancel_token())?;
-    bfs.set_failure_token(sideband.failure_token());
-    bfs.set_retirement_token(sideband.retirement_token())?;
-    #[cfg(debug_assertions)]
-    if test_fault_rank("MGBFS_TEST_OWNER_HOST_FAULT_RANK", rank, world)? {
-        crate::distributed_native::inject_owner_host_error_once_for_test();
-    }
-    let allocated = used()?;
-    let setup_seconds = setup.elapsed().as_secs_f64();
-    let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
-    let profile_window = if is_measure { profiler_window_start()? } else { false };
-    let start = Instant::now();
-    let mut layers = Vec::new();
-    let mut times = Vec::new();
-    loop {
-        if sideband.cancel_requested() {
-            return Err("REMOTE_SEARCH_CANCELLED".into());
-        }
-        let tick = Instant::now();
-        let depth = bfs.depth();
-        let count = bfs.frontier_len();
-        layers.push(count);
-        if trace {
-            eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
-        }
-        let advance = if let Some(archive) = archive.as_mut() {
-            bfs.advance_archived(archive)
+        let setup = Instant::now();
+        let mut bfs = if let Some(word) = &multiset {
+            DistributedNativeBfs::new_lrx_multiset_reference_and_cancel(
+                word,
+                seed,
+                id,
+                cfg.clone(),
+                selection.owner,
+                selection.library_pool_bytes,
+                Some(sideband.cancel_token()),
+                Some(sideband.failure_token()),
+            )?
         } else {
-            bfs.advance()
+            match selection.owner {
+                ReferenceOwner::CudfRelational
+                | ReferenceOwner::CucoIndexed
+                | ReferenceOwner::CucoRank => {
+                    #[cfg(feature = "library-owner")]
+                    {
+                        DistributedNativeBfs::new_library_reference_with_owner_and_cancel(
+                            &graph,
+                            seed,
+                            id,
+                            cfg.clone(),
+                            selection.materialization_capacity,
+                            selection
+                                .library_pool_bytes
+                                .ok_or("REFERENCE_LIBRARY_POOL_REQUIRED")?,
+                            selection.tensor_generation,
+                            selection.owner,
+                            Some(sideband.cancel_token()),
+                            Some(sideband.failure_token()),
+                        )?
+                    }
+                    #[cfg(not(feature = "library-owner"))]
+                    {
+                        return Err("REFERENCE_LIBRARY_NOT_COMPILED".into());
+                    }
+                }
+                ReferenceOwner::Native(owner) => {
+                    DistributedNativeBfs::new_reference_with_owner_and_cancel(
+                        &graph,
+                        seed,
+                        id,
+                        cfg.clone(),
+                        selection.materialization_capacity,
+                        owner,
+                        selection.tile_limit,
+                        selection.tensor_generation,
+                        Some(sideband.cancel_token()),
+                        Some(sideband.failure_token()),
+                    )?
+                }
+            }
         };
-        // Publish a local search failure before `bfs` is dropped and its
-        // communicator is aborted. Peers need the sideband cancellation even
-        // when their own GPU path has not yet observed the NCCL error.
-        if advance.is_err() { sideband.report_failure(); }
-        let alive = advance?;
-        if trace && archive_enabled {
-            eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
+        bfs.set_cancel_token(sideband.cancel_token())?;
+        bfs.set_failure_token(sideband.failure_token());
+        bfs.set_retirement_token(sideband.retirement_token())?;
+        #[cfg(debug_assertions)]
+        if test_fault_rank("MGBFS_TEST_OWNER_HOST_FAULT_RANK", rank, world)? {
+            crate::distributed_native::inject_owner_host_error_once_for_test();
         }
-        let elapsed = tick.elapsed().as_secs_f64();
-        times.push(elapsed);
-        if trace {
-            eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive}",bfs.frontier_len());
+        let allocated = used()?;
+        let setup_seconds = setup.elapsed().as_secs_f64();
+        let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
+        let profile_window = if is_measure {
+            profiler_window_start()?
+        } else {
+            false
+        };
+        let start = Instant::now();
+        let mut layers = Vec::new();
+        let mut times = Vec::new();
+        loop {
+            if sideband.cancel_requested() {
+                return Err("REMOTE_SEARCH_CANCELLED".into());
+            }
+            let tick = Instant::now();
+            let depth = bfs.depth();
+            let count = bfs.frontier_len();
+            layers.push(count);
+            if trace {
+                eprintln!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count}");
+            }
+            let advance = if let Some(archive) = archive.as_mut() {
+                bfs.advance_archived(archive)
+            } else {
+                bfs.advance()
+            };
+            // Publish a local search failure before `bfs` is dropped and its
+            // communicator is aborted. Peers need the sideband cancellation even
+            // when their own GPU path has not yet observed the NCCL error.
+            if advance.is_err() {
+                sideband.report_failure();
+            }
+            let alive = advance?;
+            if trace && archive_enabled {
+                eprintln!("MGBFS_ARCHIVE_SUBMITTED rank={rank} depth={depth} count={count}");
+            }
+            let elapsed = tick.elapsed().as_secs_f64();
+            times.push(elapsed);
+            if trace {
+                eprintln!("MGBFS_DEPTH_END rank={rank} depth={depth} seconds={elapsed:.6} next={} alive={alive}",bfs.frontier_len());
+            }
+            if !alive {
+                break;
+            }
         }
-        if !alive {
-            break;
-        }
-    }
-    let search = start.elapsed().as_secs_f64();
-    profiler_window_stop(profile_window)?;
-    Ok((bfs, allocated, setup_seconds, search, layers, times, start))
+        let search = start.elapsed().as_secs_f64();
+        profiler_window_stop(profile_window)?;
+        Ok((bfs, allocated, setup_seconds, search, layers, times, start))
     })();
     if search_result.is_err() {
         sideband.report_failure();
         // The failed closure no longer owns a BFS: its abort/drop has returned.
         // Constructor errors can also arrive here before a transport reader exists.
         sideband.report_retired();
+    } else {
+        sideband.report_success();
     }
-    else { sideband.report_success(); }
     let remote_failed = match sideband.finish_with_cleanup(&mut control_group, || {
-        if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
+        if let Ok((bfs, ..)) = &mut search_result {
+            bfs.abort_group();
+        }
     }) {
         Ok(failed) => failed,
         Err(error) => {
-            if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
+            if let Ok((bfs, ..)) = &mut search_result {
+                bfs.abort_group();
+            }
             return Err(error);
         }
     };
     if remote_failed {
-        if let Ok((bfs, ..)) = &mut search_result { bfs.abort_group(); }
-        return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
+        if let Ok((bfs, ..)) = &mut search_result {
+            bfs.abort_group();
+        }
+        return Err(search_result
+            .err()
+            .unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
     let (mut bfs, allocated, setup_seconds, search, layers, times, start) = search_result?;
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
@@ -759,142 +1021,165 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
     let archive_commit = archive_commit.and_then(|()| {
         if test_fault_rank("MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK", rank, world)? {
             Err("TEST_INJECTED_ARCHIVE_FINISH_ERROR".into())
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     });
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::ArchiveCommitted,
-        archive_commit.is_err(), Duration::from_secs(7200),
+        archive_commit.is_err(),
+        Duration::from_secs(7200),
     )? {
-        return Err(archive_commit.err().unwrap_or_else(|| "REMOTE_ARCHIVE_COMMIT_FATAL".into()));
+        return Err(archive_commit
+            .err()
+            .unwrap_or_else(|| "REMOTE_ARCHIVE_COMMIT_FATAL".into()));
     }
     archive_commit?;
     let durable = start.elapsed().as_secs_f64();
     let output = (|| -> Result<()> {
-    std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
-    let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{global_capacity},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{global_future},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));
-    // Keep the existing timing schema, but never label HASH_FIRST as DENSE.
-    let record = if selection.materialization_capacity.is_some() {
-        record.replace(
-            "native_nccl_dense_ring_v2",
-            "native_nccl_hash_first_reference_v1",
-        )
-    } else {
-        record
-    };
-    let record = format!("{},\"frontier_profile\":\"{profile}\",\"owner_backend\":\"{owner}\",\"pre_dedup\":\"{pre}\",\"generation_variant\":{},\"materialization_capacity\":{},\"bmma_tile_limit\":{}}}",
+        std::fs::create_dir_all(&args[5]).map_err(|e| e.to_string())?;
+        let record=format!("{{\"status\":\"COMPLETE\",\"backend\":\"native_nccl_dense_ring_v2\",\"rank\":{rank},\"group\":\"s{n}\",\"batch\":{batch},\"capacity_mode\":\"{mode:?}\",\"archive_enabled\":{archive_enabled},\"archive_state_bytes\":{archive_width},\"declared_capacity_records\":{declared_capacity},\"global_capacity_records\":{global_capacity},\"rank_capacity_records\":{capacity},\"declared_state_ring_records\":{declared_future},\"global_state_ring_records\":{global_future},\"rank_state_ring_records\":{future},\"search_complete_seconds\":{search},\"durable_run_commit_seconds\":{durable},\"setup_seconds\":{setup_seconds},\"local_layer_sizes\":{layers:?},\"per_depth_seconds\":{times:?},\"cuda_allocated_used_bytes\":{allocated},\"cuda_peak_observed_bytes\":{},\"pinned_bytes\":{pinned},\"disk_reserved_bytes\":{disk_bytes}}}",used()?.max(allocated));
+        // Keep the existing timing schema, but never label HASH_FIRST as DENSE.
+        let record = if selection.materialization_capacity.is_some() {
+            record.replace(
+                "native_nccl_dense_ring_v2",
+                "native_nccl_hash_first_reference_v1",
+            )
+        } else {
+            record
+        };
+        let record = format!("{},\"frontier_profile\":\"{profile}\",\"owner_backend\":\"{owner}\",\"pre_dedup\":\"{pre}\",\"generation_variant\":{},\"materialization_capacity\":{},\"bmma_tile_limit\":{}}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?,
         if compact_states { 5 } else { 1 },
         selection.materialization_capacity.unwrap_or(0), selection.tile_limit);
-    let record = format!(
+        let record = format!(
         "{},\"world_size\":{world},\"hash_first_generation\":\"{hash_first_generation}\",\"warmup_completed\":{warmup_completed}}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?
     );
-    let owned_payload: u64 = bfs
-        .owned_memory()
-        .allocations
-        .iter()
-        .map(|a| a.payload_bytes)
-        .sum();
-    let record=format!("{},\"explicit_device_payload_bytes\":{owned_payload},\"explicit_device_aligned_bytes\":{},\"untouched_vram_reserve_bytes\":{},\"allocation_scope\":\"explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive\"}}",
+        let owned_payload: u64 = bfs
+            .owned_memory()
+            .allocations
+            .iter()
+            .map(|a| a.payload_bytes)
+            .sum();
+        let record=format!("{},\"explicit_device_payload_bytes\":{owned_payload},\"explicit_device_aligned_bytes\":{},\"untouched_vram_reserve_bytes\":{},\"allocation_scope\":\"explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive\"}}",
         record.strip_suffix('}').ok_or("RECORD_FORMAT")?,bfs.owned_memory().total(),cfg.untouched_vram_reserve);
-    crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
-        let mut value: serde_json::Value =
-            serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
-        value["archive_wire_limit_bytes"] = serde_json::json!(disk_bytes);
-        value["disk_reserved_bytes"] = serde_json::json!(if stream_archive { 0 } else { disk_bytes });
-        value["output_contract"] = serde_json::json!(if archive_enabled {
-            if is_measure { "archive_and_layer_counts" } else { "warmup_layer_counts" }
-        } else {
-            "search_only_layer_counts"
-        });
-        value["transport_control_pinned_payload_bytes"] =
-            serde_json::json!(bfs.transport_control_pinned_payload_bytes());
-        value["pinned_bytes_scope"] = serde_json::json!("archive_only");
-        if !archive_enabled || stream_archive || !is_measure {
-            value["durable_run_commit_seconds"] = serde_json::Value::Null;
-        }
-        // Legacy consumers use durable_run_commit_seconds, but this timestamp
-        // precedes rank-result fsync and group marker publication. State the
-        // actual boundary explicitly without changing the old field's shape.
-        value["archive_file_commit_seconds"] = if archive_enabled && !stream_archive && is_measure {
-            serde_json::json!(durable)
-        } else {
-            serde_json::Value::Null
-        };
-        if stream_archive && archive_enabled {
-            value["stream_handoff_seconds"] = serde_json::json!(durable);
-        }
-        value["archive_commit_scope"] = serde_json::json!(if !is_measure {
-            "warmup_ephemeral"
-        } else if !archive_enabled {
-            "search_only"
-        } else if stream_archive {
-            "fifo_flush"
-        } else {
-            "file_fsync"
-        });
-        value["device_allocation_plan"] =
-            crate::distributed_memory::allocation_report(bfs.owned_memory());
-        value["hash_seed_hex"] = serde_json::json!(seed_hex);
-        value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
-        value["logical_owner_to_rank"] = serde_json::json!(cfg.logical_owner_to_rank);
-        value["transport_backend"] = serde_json::json!(format!("{:?}", cfg.transport));
-        value["group"] = serde_json::json!(group);
-        if let Some(word) = &multiset {
-            value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
-            value["start_state"] = serde_json::json!(word.start());
-            value["expected_unique_states"] = serde_json::json!(word.order());
-            value["generators"] = serde_json::json!(["L", "R", "X"]);
-        }
-        value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
-        value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
-        value["epoch_window"] = serde_json::json!(bfs.epoch_window());
-        value["route_banks"] = serde_json::json!(bfs.route_bank_count());
-        value["route_bank_reuses"] = serde_json::json!(bfs.route_bank_reuses());
-        value["run_contract"] = serde_json::json!(if production { "RunConfigV1" } else { "reference_bench" });
-        value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
-        value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
-        #[cfg(feature = "library-owner")]
-        if let Some(usage) = bfs.library_pool_usage()? {
-            value["library_control_pinned_bytes"] =
-                serde_json::json!(mgbfs_cuda::library_owner::CONTROL_TRANSFER_PINNED_BYTES);
-            value["library_pool_usage"] = serde_json::json!({
-                "reserved_bytes": usage.reserved_bytes,
-                "live_requested_bytes": usage.live_bytes,
-                "peak_requested_bytes": usage.peak_bytes,
-                "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
+        crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
+            let mut value: serde_json::Value =
+                serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+            value["archive_wire_limit_bytes"] = serde_json::json!(disk_bytes);
+            value["disk_reserved_bytes"] =
+                serde_json::json!(if stream_archive { 0 } else { disk_bytes });
+            value["output_contract"] = serde_json::json!(if archive_enabled {
+                if is_measure {
+                    "archive_and_layer_counts"
+                } else {
+                    "warmup_layer_counts"
+                }
+            } else {
+                "search_only_layer_counts"
             });
+            value["transport_control_pinned_payload_bytes"] =
+                serde_json::json!(bfs.transport_control_pinned_payload_bytes());
+            value["pinned_bytes_scope"] = serde_json::json!("archive_only");
+            if !archive_enabled || stream_archive || !is_measure {
+                value["durable_run_commit_seconds"] = serde_json::Value::Null;
+            }
+            // Legacy consumers use durable_run_commit_seconds, but this timestamp
+            // precedes rank-result fsync and group marker publication. State the
+            // actual boundary explicitly without changing the old field's shape.
+            value["archive_file_commit_seconds"] =
+                if archive_enabled && !stream_archive && is_measure {
+                    serde_json::json!(durable)
+                } else {
+                    serde_json::Value::Null
+                };
+            if stream_archive && archive_enabled {
+                value["stream_handoff_seconds"] = serde_json::json!(durable);
+            }
+            value["archive_commit_scope"] = serde_json::json!(if !is_measure {
+                "warmup_ephemeral"
+            } else if !archive_enabled {
+                "search_only"
+            } else if stream_archive {
+                "fifo_flush"
+            } else {
+                "file_fsync"
+            });
+            value["device_allocation_plan"] =
+                crate::distributed_memory::allocation_report(bfs.owned_memory());
+            value["hash_seed_hex"] = serde_json::json!(seed_hex);
+            value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
+            value["logical_owner_to_rank"] = serde_json::json!(cfg.logical_owner_to_rank);
+            value["transport_backend"] = serde_json::json!(format!("{:?}", cfg.transport));
+            value["group"] = serde_json::json!(group);
+            if let Some(word) = &multiset {
+                value["graph_kind"] = serde_json::json!("lrx_multiset_schreier");
+                value["start_state"] = serde_json::json!(word.start());
+                value["expected_unique_states"] = serde_json::json!(word.order());
+                value["generators"] = serde_json::json!(["L", "R", "X"]);
+            }
+            value["cuda_memory_sampling"] = serde_json::json!("setup_and_final_only_not_full_peak");
+            value["dense_lookahead_batches"] = serde_json::json!(bfs.dense_lookahead_batches());
+            value["epoch_window"] = serde_json::json!(bfs.epoch_window());
+            value["route_banks"] = serde_json::json!(bfs.route_bank_count());
+            value["route_bank_reuses"] = serde_json::json!(bfs.route_bank_reuses());
+            value["run_contract"] = serde_json::json!(if production {
+                "RunConfigV1"
+            } else {
+                "reference_bench"
+            });
+            value["state_descriptor_capacity"] = serde_json::json!(bfs.state_descriptor_capacity());
+            value["library_pool_reserved_bytes"] = serde_json::json!(selection.library_pool_bytes);
+            #[cfg(feature = "library-owner")]
+            if let Some(usage) = bfs.library_pool_usage()? {
+                value["library_control_pinned_bytes"] =
+                    serde_json::json!(mgbfs_cuda::library_owner::CONTROL_TRANSFER_PINNED_BYTES);
+                value["library_pool_usage"] = serde_json::json!({
+                    "reserved_bytes": usage.reserved_bytes,
+                    "live_requested_bytes": usage.live_bytes,
+                    "peak_requested_bytes": usage.peak_bytes,
+                    "scope": "since_pool_creation_suballocations_not_full_vram_not_fragmentation_bound"
+                });
+            }
+            if let Some(label) =
+                crate::benchmark::library_backend_label(selection.owner, selection.profile)
+            {
+                value["backend"] = serde_json::json!(label);
+            }
+            serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
+        })?;
+        if !is_measure && archive_enabled {
+            // Warmup has no durable archive contract. Release its file while the
+            // control group is alive so any local failure reaches every rank.
+            std::fs::remove_file(&archive_path)
+                .map_err(|e| format!("WARMUP_ARCHIVE_RELEASE: {e}"))?;
         }
-        if let Some(label) = crate::benchmark::library_backend_label(
-            selection.owner, selection.profile,
-        ) {
-            value["backend"] = serde_json::json!(label);
-        }
-        serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
-    })?;
-    if !is_measure && archive_enabled {
-        // Warmup has no durable archive contract. Release its file while the
-        // control group is alive so any local failure reaches every rank.
-        std::fs::remove_file(&archive_path)
-            .map_err(|e| format!("WARMUP_ARCHIVE_RELEASE: {e}"))?;
-    }
-    Ok(())
+        Ok(())
     })();
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::OutputWritten,
-        output.is_err(), Duration::from_secs(60),
+        output.is_err(),
+        Duration::from_secs(60),
     )? {
-        return Err(output.err().unwrap_or_else(|| "REMOTE_OUTPUT_WRITE_FATAL".into()));
+        return Err(output
+            .err()
+            .unwrap_or_else(|| "REMOTE_OUTPUT_WRITE_FATAL".into()));
     }
     output?;
     let publication = if rank == 0 && is_measure {
         crate::group_commit::write_group_commit(Path::new(&args[5]), world, bootstrap_digest)
-    } else { Ok(()) };
+    } else {
+        Ok(())
+    };
     if control_group.agree_boundary(
         crate::bootstrap::BoundaryPhase::GroupPublished,
-        publication.is_err(), Duration::from_secs(60),
+        publication.is_err(),
+        Duration::from_secs(60),
     )? {
-        return Err(publication.err().unwrap_or_else(|| "REMOTE_GROUP_PUBLICATION_FATAL".into()));
+        return Err(publication
+            .err()
+            .unwrap_or_else(|| "REMOTE_GROUP_PUBLICATION_FATAL".into()));
     }
     publication?;
     Ok(())
@@ -902,7 +1187,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest:
 
 /// The existing weighted CUDA backend is single-rank. It remains separate
 /// from the unit-cost NCCL runtime until distributed weighted settlement exists.
-fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, manifest: bool) -> Result<()> {
+fn run_macro_pass(
+    args: &[String],
+    warmup_completed: bool,
+    is_measure: bool,
+    manifest: bool,
+) -> Result<()> {
     crate::reference_launch::bench_warmup_for_launch(
         std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
         std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
@@ -920,8 +1210,12 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     if macro_depth <= 1 {
         return Err("MACRO_DEPTH".into());
     }
-    if std::env::var("MGBFS_PROFILE").as_deref().is_ok_and(|x| x != "DENSE")
-        || std::env::var("MGBFS_OWNER_BACKEND").as_deref().is_ok_and(|x| x != "CUB_SORT_MERGE")
+    if std::env::var("MGBFS_PROFILE")
+        .as_deref()
+        .is_ok_and(|x| x != "DENSE")
+        || std::env::var("MGBFS_OWNER_BACKEND")
+            .as_deref()
+            .is_ok_and(|x| x != "CUB_SORT_MERGE")
     {
         return Err("MACRO_REFERENCE_DENSE_CUB_ONLY".into());
     }
@@ -930,12 +1224,16 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     }
     let (group, graph) = if manifest {
         crate::reference_launch::load_matrix_manifest(Path::new(&args[1]))?
-    } else { MatrixGroup::from_reference_label(&args[1])? };
+    } else {
+        MatrixGroup::from_reference_label(&args[1])?
+    };
     let batch: u32 = args[2].parse().map_err(|_| "BATCH")?;
     let capacity = match std::env::var("MGBFS_BENCH_CAPACITY") {
         Ok(value) => value.parse().map_err(|_| "CAPACITY")?,
-        Err(std::env::VarError::NotPresent) => graph.expected_max_unique_states
-            .try_into().map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
+        Err(std::env::VarError::NotPresent) => graph
+            .expected_max_unique_states
+            .try_into()
+            .map_err(|_| "CAPACITY_EXPLICIT_REQUIRED")?,
         Err(_) => return Err("CAPACITY".into()),
     };
     let future = env_u32("MGBFS_FUTURE_CAPACITY", capacity)?;
@@ -945,7 +1243,9 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
         _ => return Err("STATE_CODEC".into()),
     };
     let generation_variant = if compact { 5 } else { 1 };
-    if manifest && compact { return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into()); }
+    if manifest && compact {
+        return Err("MATRIX_MANIFEST_REQUIRES_MATRIX_CODEC".into());
+    }
     let layout = MacroStateLayout::derive(&graph, generation_variant)?;
     match std::env::var("MGBFS_ARCHIVE_CODEC").as_deref() {
         Ok("permutation_u8") if compact => (),
@@ -980,7 +1280,11 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let disk_bytes = if archive_enabled {
         ArchiveRingPlan::reference_output_limit(
-            layout.width, graph.expected_max_unique_states, capacity, stream_archive)?
+            layout.width,
+            graph.expected_max_unique_states,
+            capacity,
+            stream_archive,
+        )?
     } else {
         0
     };
@@ -989,7 +1293,11 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
         let extent = create_archive_extent(Path::new(&archive_path), stream_archive)
             .map_err(|e| format!("ARCHIVE_EXTENT: {e}"))?;
         Some(PinnedArchive::new(
-            extent, disk_bytes, layout.width, digest, archive_rows,
+            extent,
+            disk_bytes,
+            layout.width,
+            digest,
+            archive_rows,
             env_u32("MGBFS_ARCHIVE_SLOTS", 64)? as usize,
         )?)
     } else {
@@ -1000,7 +1308,11 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     let mut bfs = MacroNativeBfs::new(&graph, seed, cfg)?;
     let setup_seconds = setup_start.elapsed().as_secs_f64();
     let allocated = used()?;
-    let profile_window = if is_measure { profiler_window_start()? } else { false };
+    let profile_window = if is_measure {
+        profiler_window_start()?
+    } else {
+        false
+    };
     let start = Instant::now();
     let mut layers = Vec::new();
     let mut times = Vec::new();
@@ -1023,7 +1335,9 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
     let archive_commit = archive_commit.and_then(|()| {
         if test_fault_rank("MGBFS_TEST_ARCHIVE_FINISH_FAULT_RANK", rank, world)? {
             Err("TEST_INJECTED_ARCHIVE_FINISH_ERROR".into())
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     });
     archive_commit?;
     let durable = start.elapsed().as_secs_f64();
@@ -1055,8 +1369,11 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool, man
             else if stream_archive { "fifo_flush" } else { "file_fsync" },
     });
     let output = Path::new(&args[5]);
-    crate::group_commit::write_rank_result(output, 0,
-        &serde_json::to_vec(&record).map_err(|e| e.to_string())?)?;
+    crate::group_commit::write_rank_result(
+        output,
+        0,
+        &serde_json::to_vec(&record).map_err(|e| e.to_string())?,
+    )?;
     if !is_measure && archive_enabled {
         std::fs::remove_file(&archive_path)
             .map_err(|error| format!("WARMUP_ARCHIVE_RELEASE: {error}"))?;
@@ -1080,9 +1397,26 @@ pub fn run_manifest(args: Vec<String>) -> Result<()> {
 /// Typed configuration enters the same admission, cancellation, GPU pipeline
 /// and group publication as bench. Unsupported config contracts fail in the
 /// cross-rank preparation vote, before communicator/archive construction.
-pub fn run_config(config: String, bootstrap: String, archive: String, output: String) -> Result<()> {
-    run_pass(&["mgbfs-run".into(), config, "unused".into(), bootstrap, archive, output],
-        false, true, true, true)
+pub fn run_config(
+    config: String,
+    bootstrap: String,
+    archive: String,
+    output: String,
+) -> Result<()> {
+    run_pass(
+        &[
+            "mgbfs-run".into(),
+            config,
+            "unused".into(),
+            bootstrap,
+            archive,
+            output,
+        ],
+        false,
+        true,
+        true,
+        true,
+    )
 }
 fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
     use crate::benchmark::{run_phases, Phase};
@@ -1094,7 +1428,8 @@ fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
     let warmup = crate::reference_launch::bench_warmup_for_launch(
         std::env::var("MGBFS_BENCH_WARMUP").ok().as_deref(),
         std::env::var("MGBFS_ARCHIVE_STREAM").ok().as_deref(),
-    ).unwrap_or(false);
+    )
+    .unwrap_or(false);
     run_phases(warmup, |phase| {
         let phase = if phase == Phase::Measure {
             crate::reference_launch::BenchPhase::Measure
@@ -1102,9 +1437,16 @@ fn run_source(args: Vec<String>, manifest: bool) -> Result<()> {
             crate::reference_launch::BenchPhase::Warmup
         };
         let paths = crate::reference_launch::bench_phase_paths(
-            &args.iter().map(String::as_str).collect::<Vec<_>>(), warmup, phase,
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+            warmup,
+            phase,
         )?;
-        run_pass(&paths, warmup && phase == crate::reference_launch::BenchPhase::Measure,
-            phase == crate::reference_launch::BenchPhase::Measure, manifest, false)
+        run_pass(
+            &paths,
+            warmup && phase == crate::reference_launch::BenchPhase::Measure,
+            phase == crate::reference_launch::BenchPhase::Measure,
+            manifest,
+            false,
+        )
     })
 }

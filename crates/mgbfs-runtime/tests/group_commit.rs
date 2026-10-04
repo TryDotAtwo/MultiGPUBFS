@@ -29,10 +29,12 @@ fn group_commit_requires_every_matching_rank_result() {
     ));
     std::fs::create_dir(&root).unwrap();
     let config = [7u8; 32];
-    let rank = |id| format!(
+    let rank = |id| {
+        format!(
         "{{\"status\":\"COMPLETE\",\"rank\":{id},\"world_size\":2,\"archive_commit_scope\":\"file_fsync\",\"bootstrap_digest\":{}}}",
         serde_json::to_string(&config).unwrap()
-    );
+    )
+    };
     std::fs::write(root.join("rank-0.json"), rank(0)).unwrap();
     assert!(write_group_commit(&root, 2, config).is_err());
     assert!(!root.join("group-complete.json").exists());
