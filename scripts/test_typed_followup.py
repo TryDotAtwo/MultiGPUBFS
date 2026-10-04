@@ -1,7 +1,10 @@
 """Check selection of full-runtime follow-up cases, not GPU correctness."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 root = Path(__file__).resolve().parents[1]
@@ -11,6 +14,22 @@ spec.loader.exec_module(gate)
 
 
 class FollowupTests(unittest.TestCase):
+    def test_stress_configs_pass_real_offline_cli_admission(self):
+        binary = root / 'target/debug' / ('mgbfs.exe' if os.name == 'nt' else 'mgbfs')
+        if not binary.exists():
+            self.skipTest('build mgbfs-cli before real offline admission check')
+        base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
+        with tempfile.TemporaryDirectory(prefix='mgbfs-stress-admission-') as directory:
+            path = Path(directory) / 'config.json'
+            for config in gate.typed_stress_configs(base, 3):
+                path.write_text(json.dumps(config), encoding='utf-8')
+                result = subprocess.run([str(binary), 'preflight', '--offline', str(path)],
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['status'], 'CONFIG_VALIDATED')
+                self.assertFalse(report['hardware_ready'])
+
     def test_stress_configs_cover_inverse_closed_u4_without_tiny_capacities(self):
         base = json.loads((root / 'tests/run-s4-two-rank.json').read_text())
         before = json.dumps(base, sort_keys=True)
