@@ -6,6 +6,22 @@ from scripts.publish_tail_batch import plan
 from test_tail_cohort import CohortTests
 
 class PairedTests(unittest.TestCase):
+    def test_resource_exhaustion_skips_second_run_without_claiming_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); case=root/'n7-m2'; calls=[]
+            def runner(cfg, source, path, runtime):
+                calls.append(cfg['repetition'])
+                (path/'saved').mkdir(parents=True)
+                manifest=dict(status='INCOMPLETE', last_completed_layer=0,
+                    stop_reason='cuda out of memory', layers=[dict(depth=0, states=1)])
+                target=path/'saved/manifest.json'
+                target.write_text(json.dumps(manifest)); return target
+            result=run_pair(dict(n=7,r=2,world=1,run_id='test'),root,case,{},runner,None)
+            manifest=json.loads(result.read_text())
+            self.assertEqual(calls,[1])
+            self.assertIsNone(manifest['comparison']['matched'])
+            self.assertTrue(manifest['comparison']['second_run_skipped'])
+            self.assertFalse((root/'n7-m2-rep2').exists())
     def test_comparison_excludes_timing_but_detects_counts_status_and_missing(self):
         a=dict(status='COMPLETE',last_completed_layer=0,layers=[dict(depth=0,states=2,seconds=1)])
         b=copy.deepcopy(a);b['layers'][0]['seconds']=9

@@ -60,6 +60,26 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
         manifest['repetition'] = index+1
         manifest['hash_seed_hex'] = SEEDS[index]
         manifests.append(manifest)
+        if index == 0:
+            try:
+                from .sweep_tail_bfs import resource_stop, allocation_failure
+            except ImportError:
+                from sweep_tail_bfs import resource_stop, allocation_failure
+            first = dict(status=manifest['status'], attempted=True,
+                         reason=manifest.get('stop_reason', ''))
+            if allocation_failure(path, source):
+                first['resource_classification'] = 'cuda_allocation_failure'
+            if resource_stop(first):
+                comparison = dict(matched=None, differences=[],
+                    status='NOT_COMPARED', second_run_skipped=True,
+                    skip_reason='first_run_resource_exhausted',
+                    complete_graph_verified=False, runs=timings,
+                    scope='Only one run: confirmed resource exhaustion; no comparison performed.')
+                manifest['comparison'] = comparison
+                manifest['replicas'] = []
+                atomic_json(path/'saved/manifest.json', manifest)
+                atomic_json(case/'comparison.json', comparison)
+                return path/'saved/manifest.json'
     comparison = compare_tables(*manifests, seeds_ok)
     comparison['runs'] = timings
     replica = dict(key=paths[1].name, n=config['n'], m=config['r'], attempted=True,

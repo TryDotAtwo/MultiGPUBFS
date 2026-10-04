@@ -159,6 +159,8 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 production_search_seconds=max(searches) if len(searches)==config.get('world',2) else None,
                 automatic_phase_seconds=manifest.get('launch_config',{}).get('automatic_phase_seconds'),
                 scope='runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report')
+        if 'comparison' in manifest:
+            record['comparison']=manifest['comparison']
         if manifest.get('replicas'):
             record['replicas']=manifest['replicas']
             record['comparison']=manifest['comparison']

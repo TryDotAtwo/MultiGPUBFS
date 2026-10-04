@@ -2,6 +2,7 @@
 #include "state_index.h"
 #include <cuda_runtime.h>
 #include <climits>
+#include <cstdio>
 static_assert(sizeof(MgbfsStateRingControl)==64&&sizeof(MgbfsStateExtent)==64);
 namespace {
 __device__ void fatal(MgbfsStateRingControl* r,MgbfsOwnerControl* o,unsigned code){
@@ -41,8 +42,18 @@ __global__ void reserve_rank_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o
  uint64_t total=0;
  for(uint32_t i=0;i<shards;++i){
    uint32_t n=survivors[i];
-   if(accepted[i]>capacities[i]||n>capacities[i]-accepted[i]||
-      total>UINT32_MAX-n){fatal(r,o,19);return;}
+   if(accepted[i]>capacities[i]){
+     printf("MGBFS_RANK_RESERVE_STOP kind=invalid_accepted shard=%u accepted=%u capacity=%u incoming=%u\n",i,accepted[i],capacities[i],n);
+     fatal(r,o,19);return;
+   }
+   if(n>capacities[i]-accepted[i]){
+     printf("MGBFS_RANK_RESERVE_STOP kind=shard_capacity shard=%u accepted=%u capacity=%u incoming=%u\n",i,accepted[i],capacities[i],n);
+     fatal(r,o,16);return;
+   }
+   if(total>UINT32_MAX-n){
+     printf("MGBFS_RANK_RESERVE_STOP kind=batch_count_overflow shard=%u total=%llu incoming=%u\n",i,(unsigned long long)total,n);
+     fatal(r,o,19);return;
+   }
    total+=n;
  }
  if(*layer>layer_capacity||total>layer_capacity-*layer||

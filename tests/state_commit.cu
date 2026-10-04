@@ -55,16 +55,20 @@ static void rank_batch_reservation(unsigned mode){
   if(mode==6){o.error=23;}
   if(mode==7){r.head=0;r.capacity=8;} // wrap plus live rows exceed capacity
   if(mode==8){hash_first=1;request_cap=3;}
+  if(mode==9)a[2]=5; // corrupt accepted metadata, distinct from exhaustion
+  if(mode==10){s={UINT32_MAX,1,0};a={0,0,0};c={UINT32_MAX,UINT32_MAX,UINT32_MAX};}
   ring.put({r});owner.put({o});survivors.put(s);accepted.put(a);capacities.put(c);layer.put({2});
   offsets.put({99,99,99,99});
   req(mgbfs_state_reserve_rank_batch(ring.p,owner.p,extent.p,survivors.p,accepted.p,
       capacities.p,3,offsets.p,layer.p,layer_cap,request_cap,hash_first,nullptr)==0,
       "rank batch enqueue");
   ck(cudaDeviceSynchronize());auto rr=ring.get()[0];auto oo=owner.get()[0];auto e=extent.get()[0];
-  if((mode>=1&&mode<=4)||mode==6||mode==7){
+  if((mode>=1&&mode<=4)||mode==6||mode==7||mode==9||mode==10){
     req(rr.tail==r.tail&&rr.descriptor_tail==r.descriptor_tail&&layer.get()[0]==2,
         "rank batch partial mutation");
     req(e.count==0&&e.granted_rows==0&&oo.error,"rank batch failure not atomic");
+    if(mode==1)req(oo.error==16&&rr.fatal==16,"shard exhaustion must be resource capacity");
+    if(mode==9||mode==10)req(oo.error==19&&rr.fatal==19,"invalid metadata/overflow must not be resource capacity");
   }else if(mode==5){
     req(!oo.error&&e.count==0&&rr.tail==r.tail&&layer.get()[0]==2,
         "empty rank batch changed ring");
@@ -311,5 +315,5 @@ static void full_layers(unsigned modulus){
   }
   mgbfs_bounded_owner_destroy(plan);
 }
-int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();retire_value_prefix();retire_fatal_vote_word();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<9;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
+int main(){try{materialization(false);materialization(true);materialization(false,true);materialization(true,true);for(unsigned m=0;m<4;++m)rank_batch_materialization(m);retire_prefix();retire_value_prefix();retire_fatal_vote_word();for(unsigned m=0;m<6;++m)reservation(m);for(unsigned m=0;m<11;++m)rank_batch_reservation(m);next_extent_publication();for(unsigned m=0;m<7;++m)shard_count_directory(m);full_layers(2);full_layers(3);std::puts("STATE_COMMIT_PASS");return 0;}
 catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}
