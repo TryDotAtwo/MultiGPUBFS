@@ -46,6 +46,9 @@ int main() {
   // Terminal admission must therefore depend on state, not only a null handle.
   auto* terminal = static_cast<Comm*>(comm);
   terminal->terminal_started = true;
+  // Failed retirement may retain a non-null handle. A progress waiter must
+  // not treat that retained communicator as available for another operation.
+  assert(await_nccl(terminal, ncclSuccess, &observed) != 0);
   uint32_t terminal_word = 0;
   const uint64_t terminal_sizes[] = {0, 1};
   group_depth = send_calls = recv_calls = end_calls = 0;

@@ -63,6 +63,9 @@ namespace {
 // but never calls NCCL or touches Comm itself.
 int await_nccl(Comm* p, ncclResult_t submitted, ncclResult_t* failure) {
   if(failure)*failure=ncclSuccess;
+  // A failed external-reader retirement keeps the handle alive deliberately.
+  // It does not authorize querying or progressing new communicator work.
+  if(!p || !p->value || p->terminal_started)return 13;
   if(submitted!=ncclSuccess && submitted!=ncclInProgress) {
     if(failure)*failure=submitted;
     std::fprintf(stderr,"MGBFS_NCCL_SUBMIT_FATAL rank=%u code=%d detail=%s\n",
@@ -430,7 +433,7 @@ void lsa_error(char* error,size_t capacity,const char* where,ncclResult_t code){
 extern "C" int mgbfs_nccl_lsa_prepare(void* raw,uint32_t cap,uint32_t stride,
     char* error,size_t error_capacity){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->value||p->symmetric||p->window_ready||p->device_ready||!cap||cap>INT_MAX||
+  if(!p||!p->value||p->terminal_started||p->symmetric||p->window_ready||p->device_ready||!cap||cap>INT_MAX||
      !stride||(stride&15u)||!p->world||p->world>8)return 1;
   int version=0;
   if(ncclGetVersion(&version)!=ncclSuccess||version<22900)return 2;
@@ -459,7 +462,7 @@ extern "C" int mgbfs_nccl_lsa_prepare(void* raw,uint32_t cap,uint32_t stride,
 }
 extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capacity){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->value||!p->symmetric||p->window_ready||p->device_ready)return 1;
+  if(!p||!p->value||p->terminal_started||!p->symmetric||p->window_ready||p->device_ready)return 1;
   auto result=ncclSuccess;
   const size_t slot_bytes=p->states_offset+
       size_t(p->candidate_capacity)*p->state_stride;
