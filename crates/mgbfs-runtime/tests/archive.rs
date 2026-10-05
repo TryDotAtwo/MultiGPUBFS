@@ -382,3 +382,15 @@ fn capacity_and_record_shape_are_checked_before_writing() {
     assert_eq!(a.extent.writes, before);
     assert!(!a.is_complete());
 }
+
+#[test]
+fn full_state_only_has_no_sample_limit_or_replacement_phase() {
+    let mut a = Archive::new_state_only(Disk::default(), 8192, 3, [0;32]).unwrap();
+    a.records_wire(0, 1001, &vec![1;3003]).unwrap();
+    a.layer_commit(0,1001).unwrap();
+    assert!(a.replace_last_layer().is_err());
+    a.run_commit().unwrap();
+    assert_eq!(&a.extent.bytes[..8], b"MGBFSAS3");
+    verify(&a.extent.bytes).unwrap();
+    assert_eq!(a.extent.syncs,1);
+}

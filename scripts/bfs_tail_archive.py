@@ -54,10 +54,12 @@ class TailArchive:
     """
     def __init__(self, root, *, n, r, start, actions, program_commit,
                  launch_config, sample_interval_seconds,
-                 complete_bytes=10 * GB, incomplete_bytes=GB, retained_layers=None):
+                 complete_bytes=10 * GB, incomplete_bytes=GB, retained_layers=None,
+                 snapshot_each_layer=True):
         retained_layers = launch_config.get('retained_layers') if retained_layers is None else retained_layers
         if retained_layers is not None and (type(retained_layers) is not int or retained_layers <= 0):
             raise ValueError('positive fixed layer count required')
+        self.snapshot_each_layer = bool(snapshot_each_layer)
         self.retained_layers = retained_layers
         self.compact_policy = launch_config.get('retention_policy') == 'last_complete_small_1000'
         self.width = packed_width(n, max(start, default=0) + 1)
@@ -115,9 +117,10 @@ class TailArchive:
                 if size != count * self.width:
                     raise ValueError("layer count mismatch")
                 stream.flush()
-                os.fsync(stream.fileno())
+                if self.snapshot_each_layer:
+                    os.fsync(stream.fileno())
             os.replace(temp, path)
-            if os.name == 'posix':
+            if self.snapshot_each_layer and os.name == 'posix':
                 directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
                 try:
                     os.fsync(directory)
@@ -128,21 +131,73 @@ class TailArchive:
             raise
         entry = dict(depth=depth, states=count, full_layer=True,
                      bytes=size, sha256=digest.hexdigest(), path=path.relative_to(self.root).as_posix())
-        self.retained.append(entry)
-        self.manifest["layers"].append(dict(depth=depth, states=count, seconds=seconds,
-                                          vram_peak_bytes=dict(vram_peak_bytes)))
-        self.manifest["last_completed_layer"] = depth
-        # Keep at least three entire layers AND enough bytes, until graph start.
+        self._commit_layer(depth, count, [entry], seconds, vram_peak_bytes)
+
+    def completed_parts(self, depth, parts, seconds, vram_peak_bytes):
+        """Adopt immutable rank files with sequential ordinals, without recopying.
+
+        Each part is (count, path, verified packed checksum). Readers have closed
+        these files before handoff. This method runs on the host writer only.
+        """
+        if self.closed or depth != len(self.manifest['layers']):
+            raise ValueError('noncontiguous depth or closed archive')
+        if seconds < 0 or not math.isfinite(seconds) or not vram_peak_bytes:
+            raise ValueError('invalid layer observations')
+        if any(v is not None and (type(v) is not int or v < 0) for v in vram_peak_bytes.values()):
+            raise ValueError('invalid VRAM observation')
+        parts=list(parts)
+        total=0
+        checked=[]
+        for rank,(count,source,digest) in enumerate(parts):
+            source=Path(source)
+            if type(count) is not int or count < 0 or source.is_symlink():
+                raise ValueError('invalid rank part')
+            if source.stat().st_size != count*self.width:
+                raise ValueError('rank part size mismatch')
+            if len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):
+                raise ValueError('invalid rank checksum')
+            target=self.tail/f'layer-{depth:06d}-rank-{rank:04d}.bin'
+            if target.exists():raise ValueError('rank target already exists')
+            checked.append((count,source,target,digest,total))
+            total+=count
+        moved=[]
+        try:
+            for count,source,target,digest,ordinal in checked:
+                os.rename(source,target)
+                moved.append((source,target))
+                if self.snapshot_each_layer:
+                    with target.open('r+b') as stream:os.fsync(stream.fileno())
+        except BaseException:
+            for source,target in reversed(moved):os.rename(target,source)
+            raise
+        entries=[dict(depth=depth,states=count,full_layer=count==total,
+            layer_complete=True,first_state_ordinal=ordinal,bytes=count*self.width,
+            sha256=digest,path=target.relative_to(self.root).as_posix())
+            for count,source,target,digest,ordinal in checked]
+        self._commit_layer(depth,total,entries,seconds,vram_peak_bytes)
+
+    def _commit_layer(self, depth, count, entries, seconds, vram_peak_bytes):
+        self.retained.extend(entries)
+        self.manifest['layers'].append(dict(depth=depth,states=count,seconds=seconds,
+                                           vram_peak_bytes=dict(vram_peak_bytes)))
+        self.manifest['last_completed_layer']=depth
+        # Trim whole depths even when a layer consists of several rank files.
         if self.compact_policy:
-            obsolete = [x for x in self.retained[:-1] if x['states'] > 1000]
-            self.retained = [x for x in self.retained if x not in obsolete]
-            for old in obsolete:
-                (self.root / old['path']).unlink()
-        while (not self.compact_policy and (len(self.retained) > self.retained_layers if self.retained_layers is not None
-               else len(self.retained) > 3 and sum(x["bytes"] for x in self.retained[1:]) >= self.complete_bytes)):
-            old = self.retained.pop(0)
-            (self.root / old["path"]).unlink()
-        self.snapshot()
+            obsolete=[x for x in self.retained if x['depth']<depth and
+                      self.manifest['layers'][x['depth']]['states']>1000]
+            self.retained=[x for x in self.retained if x not in obsolete]
+            for old in obsolete:(self.root/old['path']).unlink()
+        while not self.compact_policy and self.retained:
+            depths=sorted({x['depth'] for x in self.retained})
+            oldest=depths[0]
+            excess=(len(depths)>self.retained_layers if self.retained_layers is not None
+                    else len(depths)>3 and sum(x['bytes'] for x in self.retained
+                                             if x['depth']!=oldest)>=self.complete_bytes)
+            if not excess:break
+            obsolete=[x for x in self.retained if x['depth']==oldest]
+            self.retained=[x for x in self.retained if x['depth']!=oldest]
+            for old in obsolete:(self.root/old['path']).unlink()
+        if self.snapshot_each_layer:self.snapshot()
 
     def release_working_tail(self):
         """Final-only cleanup: committed snapshots retain their own links/copies.
@@ -171,6 +226,12 @@ class TailArchive:
         """
         if self.closed:
             raise ValueError("archive working tail already released")
+        # Final-only runs keep layer metadata in RAM and defer file durability
+        # until sealing. Every linked payload is durable before its manifest.
+        if not self.snapshot_each_layer:
+            for entry in self.retained:
+                with (self.root / entry['path']).open('r+b') as source:
+                    os.fsync(source.fileno())
         generation = self.root / f"snapshot-{len(self.manifest['layers']):06d}-{uuid.uuid4().hex}"
         # Repeated calls (e.g. final stop reason) reuse verified immutable files.
         generation.mkdir(exist_ok=True)

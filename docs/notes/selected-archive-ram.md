@@ -124,3 +124,32 @@ remote credential were removed and API absence was confirmed.
 Graph32 was rejected because this rental used ordinary NCCL without admitted
 NCCL_LSA device-count owners. LSA/Graph32 and memory-saturated B300 performance
 remain separate acceptance gates.
+
+
+## Sweep I/O follow-up, 2026-10-05 (CPU/type-check evidence only)
+
+Full-export policies now use MGBFSAS3 state-only frames. AS2 remains the bounded
+selected protocol and AR1 remains readable. Internal search hashes are unchanged;
+only unused archive hash generation and its 16 bytes/state transfer are omitted.
+All launcher policies use four ~8 MiB pinned slots/rank, rounded to 64 KiB and
+reused by resident sessions. State-only copy geometry is independent of compute
+batch size. Python descriptor handoff is bounded and cancellation-aware.
+
+Full layers are kept as closed rank parts. The host writer adopts them by rename
+and records their global ordinal ranges instead of reading and rewriting a merged
+layer. Retention trims complete depths, including all parts of a depth. Final
+Parquet cohort conversion still aggregates them into large shared shards; this
+does not introduce more HF payload files. Checksums are computed incrementally by
+background FIFO readers while packing, then reused during adoption.
+
+Final-only launches retain layer metadata in RAM and defer intermediate fsync and
+snapshot construction until sealing; live publication retains durable snapshots.
+This changes recovery boundaries: a final-only process crash before sealing does
+not promise a usable intermediate manifest. It does not change successful final
+manifest durability or checksum verification before publication.
+
+Validation: 16 Rust archive tests and 111 Python tail tests passed; Linux-target
+CUDA/library-owner cargo check passed. New tests cover AS3 layers over 1000 rows,
+legacy compatibility, rank-part inode adoption, ordinals, whole-depth retention,
+final-only metadata/durability boundaries and final snapshot survival after working
+tail cleanup. No GPU timing or Graph32 acceptance claim is made for this patch.

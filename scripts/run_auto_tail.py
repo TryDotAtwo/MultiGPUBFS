@@ -173,25 +173,16 @@ def pair_config(base, n, r):
         MGBFS_FUTURE_CAPACITY=str(capacity*2), MGBFS_BUCKET_CAPACITY=str(capacity),
         MGBFS_LIBRARY_POOL_BYTES=str(pool))
     cfg['batch'] = min(32768, capacity)
-    # Use the existing batch-sized native scratch instead of emitting four
-    # small archive frames per full batch. Pinned bytes still share the same
-    # bounded host budget; no additional device allocation is introduced.
-    if cfg.get('retention_policy') == 'last_complete_small_1000':
-        rows=max(1000,8*1024*1024//n)
-        slots=4
-        host=base.get('host_available_bytes',8<<30)
-        if host < base.get('world',2)*slots*(8<<20) + (64<<20):
-            raise ValueError('insufficient host selected archive memory')
-        cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots),
-                          MGBFS_ARCHIVE_SELECTION='last_complete_small_1000')
-        return cfg
-    rows=cfg['batch']
+    # The same rounded pinned geometry is reused across every pair and policy.
+    rows=max(1000,8*1024*1024//n)
+    slots=4
     host=base.get('host_available_bytes',8<<30)
-    host_slots=(host//4)//(base.get('world',2)*(n+16)*rows)
-    target_slots=(order+rows-1)//rows+2
-    slots=min(8192,host_slots,max(64,target_slots))
-    if slots<64:raise ValueError('insufficient host archive credit memory')
-    cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots))
+    if host < base.get('world',2)*slots*(8<<20) + (64<<20):
+        raise ValueError('insufficient host archive memory')
+    selection=('last_complete_small_1000' if cfg.get('retention_policy') ==
+               'last_complete_small_1000' else 'all_states')
+    cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots),
+                      MGBFS_ARCHIVE_SELECTION=selection)
     return cfg
 
 
@@ -500,8 +491,8 @@ def main(cancelled=None):
         if base.get('two_seeds'):
             return run_pair(config,source,case,env,one,startup_failure_snapshot)
         return one(config,source,case,env)
-    # Each layer still writes an intermediate SSD snapshot. End mode uploads
-    # at a physical-storage boundary and resumes the same immutable ledger.
+    # End mode seals per-graph payloads without intermediate layer snapshots,
+    # uploads at a storage boundary, then resumes the same immutable ledger.
     ledger=None;upload_cycles=[]
     try:
         from resident_session import resident

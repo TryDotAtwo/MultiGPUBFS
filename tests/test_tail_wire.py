@@ -36,6 +36,32 @@ class WireTests(unittest.TestCase):
             self.assertEqual(receipt['states'],2)
             self.assertEqual(layers,[(0,2,pack_state([0,1,2])+pack_state([2,0,1]))])
 
+    def test_full_state_only_large_layer(self):
+        count=1001
+        header=b'MGBFSAS3'+struct.pack('<Q',3)+bytes(32)
+        chain=hashlib.sha256(header).digest();out=bytearray(header)
+        for seq,(kind,depth,rows,payload) in enumerate([
+            (1,0,count,bytes([0,1,2])*count),(2,0,count,b''),(3,1,count,b'')]):
+            frame=b'MGBFSFR1'+struct.pack('<QQQQQ',kind,depth,rows,len(payload),seq)+chain
+            chain=hashlib.sha256(frame+payload).digest();out.extend(frame+payload+chain)
+        with tempfile.TemporaryDirectory() as root:
+            layers=[]
+            receipt=consume(io.BytesIO(out),root,3,
+                lambda depth,rows,path,digest:layers.append(path.read_bytes()))
+            self.assertEqual(receipt['states'],count)
+            self.assertEqual(layers,[pack_state([0,1,2])*count])
+
+    def test_background_packed_digest_handoff(self):
+        with tempfile.TemporaryDirectory() as root:
+            observed=[]
+            consume(io.BytesIO(wire()),root,3,None,
+                    on_packed_layer=lambda depth,count,path,config,digest:
+                    observed.append((count,config,digest,path.read_bytes())))
+            count,config,digest,data=observed[0]
+            self.assertEqual(count,2)
+            self.assertEqual(config,bytes(32).hex())
+            self.assertEqual(digest,hashlib.sha256(data).hexdigest())
+
     def test_corruption_never_commits_layer(self):
         with tempfile.TemporaryDirectory() as root:
             layers=[]

@@ -51,6 +51,49 @@ class TailTests(unittest.TestCase):
                            program_commit='abc', launch_config={'world': 2},
                            sample_interval_seconds=.1, **kw)
 
+    def test_final_only_keeps_metadata_in_ram_until_seal(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            archive=self.make(Path(d)/'run',snapshot_each_layer=False)
+            with patch('scripts.bfs_tail_archive.os.fsync') as sync:
+                archive.completed_layer(0,1,[pack_state([0,1,2])],.2,{'0':100})
+                self.assertEqual(sync.call_count,0)
+                self.assertEqual(list(archive.root.glob('snapshot-*')),[])
+                self.assertEqual(archive.manifest['last_completed_layer'],0)
+                stored=json.loads((archive.root/'manifest.json').read_text())
+                self.assertEqual(stored['last_completed_layer'],-1)
+                final=json.loads(archive.snapshot(True,'exhausted').read_text())
+                self.assertGreater(sync.call_count,0)
+                self.assertEqual(final['last_completed_layer'],0)
+                self.assertEqual(final['files'][0]['states'],1)
+
+    def test_rank_parts_are_adopted_without_recopy_and_trimmed_by_depth(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            archive=self.make(root/'run',retained_layers=3,snapshot_each_layer=False)
+            for depth in range(5):
+                parts=[]
+                for rank,count in enumerate((2,3)):
+                    path=root/f'input-{depth}-{rank}'
+                    data=pack_state([0,1,2])*count;path.write_bytes(data)
+                    inode=path.stat().st_ino
+                    parts.append((count,path,hashlib.sha256(data).hexdigest()))
+                archive.completed_parts(depth,parts,.2,{'0':100,'1':120})
+                self.assertTrue(all(not part[1].exists() for part in parts))
+                self.assertEqual((archive.tail/f'layer-{depth:06d}-rank-0001.bin').stat().st_ino,inode)
+            self.assertEqual({x['depth'] for x in archive.retained},{2,3,4})
+            self.assertEqual(len(archive.retained),6)
+            final=json.loads(archive.snapshot(True,'exhausted').read_text())
+            self.assertEqual(len(final['layers']),5)
+            for depth in (2,3,4):
+                entries=[x for x in final['files'] if x['depth']==depth]
+                self.assertEqual([x['first_state_ordinal'] for x in entries],[0,2])
+                self.assertEqual(sum(x['states'] for x in entries),5)
+                self.assertTrue(all(x['layer_complete'] for x in entries))
+            archive.release_working_tail()
+            self.assertTrue(all((archive.root/x['path']).exists() for x in final['files']))
+
     def test_packing(self):
         self.assertEqual(pack_state([1, 2, 3]), bytes.fromhex('2103000000000000'))
         self.assertEqual(packed_width(17, 16), 16)

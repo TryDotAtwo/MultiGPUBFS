@@ -68,6 +68,7 @@ pub struct PinnedArchive {
     device: i32,
     wait_for_credit: bool,
     pub(crate) selected: bool,
+    pub(crate) state_only: bool,
 }
 impl PinnedArchive {
     /// Disk extent is physically reserved by Archive::new before worker startup.
@@ -87,8 +88,9 @@ impl PinnedArchive {
         failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
         let selected = std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000");
+        let state_only = selected || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("all_states");
         let mut plan = ArchiveRingPlan::new(width, rows, slots)?;
-        if selected {
+        if state_only {
             let raw = width.checked_mul(rows as usize).ok_or("ARCHIVE_PIN_OVERFLOW")?;
             // Stable geometry across graph degrees lets resident sessions
             // reuse the same host allocation instead of pinning every pair.
@@ -102,7 +104,7 @@ impl PinnedArchive {
         // Fail disk reservation/header validation before pinning host RAM.
         let mut archive = if selected {
             Archive::new_selected(extent, disk_bytes, width, config_digest)?
-        } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
+        } else if state_only { Archive::new_state_only(extent, disk_bytes, width, config_digest)? } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
         let (free_tx, free) = mpsc::sync_channel(slots);
         for _ in 0..slots {
             free_tx
@@ -137,7 +139,7 @@ impl PinnedArchive {
                             if status != 0 {
                                 return Err(on_error(format!("ARCHIVE_D2H_{status}")));
                             }
-                            let n = count as usize * (width + if selected { 0 } else { 16 });
+                            let n = count as usize * (width + if state_only { 0 } else { 16 });
                             let bytes =
                                 unsafe { std::slice::from_raw_parts(slot.ptr.cast::<u8>(), n) };
                             archive.records_wire(depth, u64::from(count), bytes)
@@ -172,6 +174,7 @@ impl PinnedArchive {
             pinned_bytes,
             slots,
             selected,
+            state_only,
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),
         })
@@ -205,7 +208,7 @@ impl PinnedArchive {
     pub(crate) fn submit_notifying(
         &self, slot: Slot, depth: u64, rows: u32, on_failure: impl FnOnce(&str),
     ) -> Result<()> {
-        if rows == 0 || rows > self.rows || rows as usize * (self.width + if self.selected { 0 } else { 16 }) > slot.bytes {
+        if rows == 0 || rows > self.rows || rows as usize * (self.width + if self.state_only { 0 } else { 16 }) > slot.bytes {
             on_failure("ARCHIVE_SLOT_SHAPE");
             return Err("ARCHIVE_SLOT_SHAPE".into());
         }

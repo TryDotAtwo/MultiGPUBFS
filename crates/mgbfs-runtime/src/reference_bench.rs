@@ -335,7 +335,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
     let archive_selection = std::env::var("MGBFS_ARCHIVE_SELECTION").ok();
-    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000") {
+    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000" && mode != "all_states") {
         return Err("ENV_MGBFS_ARCHIVE_SELECTION".into());
     }
     if archive_selection.is_some() && !compact_states {
@@ -682,6 +682,10 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
             value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts");
             value["archive_wire_format"] = serde_json::json!("MGBFSAS2");
             value["archive_prefix_limit_per_rank"] = serde_json::json!(1000);
+            value["archive_per_state_hashes"] = serde_json::json!(false);
+        }
+        if std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("all_states") {
+            value["archive_wire_format"] = serde_json::json!("MGBFSAS3");
             value["archive_per_state_hashes"] = serde_json::json!(false);
         }
         if !archive_enabled || stream_archive || !is_measure {

@@ -3777,7 +3777,7 @@ impl DistributedNativeBfs {
             // The compact u8 state plane can copy large contiguous blocks
             // independently of the compute batch. Matrix conversion still
             // uses its batch-sized device scratch buffer.
-            let rows = if archive.selected && self.width == archive.width {
+            let rows = if archive.state_only && self.width == archive.width {
                 archive.rows
             } else { archive.rows.min(self.cfg.batch) };
             let n = u64::from(rows).min(count - offset) as u32;
@@ -3787,7 +3787,7 @@ impl DistributedNativeBfs {
                     flag.load(std::sync::atomic::Ordering::Acquire)==2))?;
             let copied = (|| unsafe {
                 let states = self.states.at((begin + offset) as usize * self.stride);
-                if !archive.selected { check(mgbfs_hash_run(
+                if !archive.state_only { check(mgbfs_hash_run(
                     self.archive_hash.0,
                     states.cast(),
                     self.archive_hashes.ptr.cast(),
@@ -3823,7 +3823,7 @@ impl DistributedNativeBfs {
                         s,
                     ))?;
                 }
-                if !archive.selected { check(cudaMemcpyAsync(
+                if !archive.state_only { check(cudaMemcpyAsync(
                     slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
                     self.archive_hashes.ptr,
                     n as usize * 16,

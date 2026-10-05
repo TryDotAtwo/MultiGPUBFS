@@ -32,7 +32,7 @@ def pack_batch(raw, count, n, bits_per_symbol=4):
     return result.tobytes()
 
 
-def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per_symbol=4):
+def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per_symbol=4, on_packed_layer=None):
     """Callback only after checksummed layer commit; returns run receipt.
 
     Incomplete final layer is removed on EOF/error. Root belongs to one rank.
@@ -41,10 +41,12 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     header = read_exact(stream, 48)
-    if header[:8] != b'MGBFSAR1' or struct.unpack_from('<Q', header, 8)[0] != n:
+    state_only = header[:8] == b'MGBFSAS3'
+    if header[:8] not in (b'MGBFSAR1', b'MGBFSAS3') or struct.unpack_from('<Q', header, 8)[0] != n:
         raise ValueError('archive width/header mismatch')
     config = header[16:48].hex()
     chain = hashlib.sha256(header).digest()
+    packed_digest = hashlib.sha256()
     seq = depth = rows = total = 0
     path = None
     output = None
@@ -61,12 +63,14 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
             if read_exact(stream, 32) != chain:
                 raise ValueError('archive checksum')
             if kind == 1:
-                if count == 0 or size != count * (n + 16):
+                if count == 0 or size != count * (n if state_only else n + 16):
                     raise ValueError('record shape')
                 if output is None:
                     path = root / f'layer-{depth:06d}.bin'
                     output = path.open('xb')
-                output.write(pack_batch(payload[:count*n], count, n, bits_per_symbol))
+                packed=pack_batch(payload[:count*n], count, n, bits_per_symbol)
+                output.write(packed)
+                packed_digest.update(packed)
                 rows += count
             elif kind == 2:
                 if size != 0 or count != rows:
@@ -76,7 +80,11 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
                     output = path.open('xb')
                 output.close()
                 output = None
-                on_layer(depth, rows, path, config)
+                if on_packed_layer is None:
+                    on_layer(depth, rows, path, config)
+                else:
+                    on_packed_layer(depth, rows, path, config, packed_digest.hexdigest())
+                packed_digest = hashlib.sha256()
                 path = None
                 total += rows
                 rows = 0

@@ -164,7 +164,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                    MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
                    MGBFS_ARCHIVE_SLOTS='4')
     else:
-        env.pop('MGBFS_ARCHIVE_SELECTION', None)
+        env.update(MGBFS_ARCHIVE_SELECTION='all_states',
+                   MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
+                   MGBFS_ARCHIVE_SLOTS='4')
     # Durable-tail runs opt into bounded SSD writer backpressure. Bare native
     # BFS keeps its original fatal-on-exhaustion contract unless selected.
     env.setdefault('MGBFS_ARCHIVE_CREDIT_MODE', 'wait')
@@ -194,7 +196,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         from selected_tail import SelectedTailArchive
     archive = (SelectedTailArchive if selected else TailArchive)(root/'saved', n=n, r=r, start=start,
         actions=dict(L='cyclic left rotation', R='cyclic right rotation', X='swap positions 0 and 1'),
-        program_commit=commit, launch_config=saved, sample_interval_seconds=.05)
+        program_commit=commit, launch_config=saved, sample_interval_seconds=.05,
+        snapshot_each_layer=bool(config.get('repo_id')))
     archive.manifest['vram_observation'] = dict(
         source='separate nvidia-smi monitor', timestamp='host receipt time',
         window='earliest rank BEGIN to latest rank END',
@@ -210,7 +213,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], token, api=publisher_api,
             storage_format=config.get('live_upload_format','packed'),
             prefix=config.get('live_upload_prefix'))
-    messages = queue.Queue(maxsize=world*4 if selected else 0)
+    messages = queue.Queue(maxsize=world*4)
     stopped, consumer_closed = threading.Event(), threading.Event()
     def emit(message):
         while not consumer_closed.is_set():
@@ -235,9 +238,10 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                             ('replacement' if replacement else 'layer',rank,depth,count,data,digest)),
                         bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
                 else:
-                    receipt = consume(reader, root/f'spool-{rank}', n,
-                        lambda depth,count,path,digest: emit(('layer',rank,depth,count,path,digest)),
-                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
+                    receipt = consume(reader, root/f'spool-{rank}', n, None,
+                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'],
+                        on_packed_layer=lambda depth,count,path,config,digest: emit(
+                            ('layer',rank,depth,count,path,config,digest)))
                 emit(('receipt',rank,receipt))
             except BaseException as error:
                 emit(('error',rank,str(error)))
@@ -318,8 +322,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                 if message[0] == 'receipt':
                     receipts[message[1]] = message[2]
                 elif message[0] == 'layer':
-                    _,rank,depth,count,path,digest = message
-                    pending.setdefault(depth,{})[rank] = (count,path,digest)
+                    _,rank,depth,count,path,digest,*packed_digest = message
+                    pending.setdefault(depth,{})[rank] = (count,path,digest,*packed_digest)
                 elif message[0] == 'replacement':
                     _,rank,at,count,path,digest = message
                     if rank in replacements:
@@ -345,10 +349,8 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     archive.selected_layer(depth, sum(counts), data, seconds, peaks)
                     selected_latest = (depth, counts, data)
                 else:
-                    archive.completed_layer(depth, sum(p[0] for p in parts.values()),
-                        chunks([parts[rank][1] for rank in range(world)]), seconds, peaks)
-                    for _,path,_ in parts.values():
-                        path.unlink()
+                    archive.completed_parts(depth,[(parts[rank][0],parts[rank][1],parts[rank][3])
+                        for rank in range(world)],seconds,peaks)
                 del pending[depth]
                 if publisher:
                     # Pin immediately in this writer thread before next snapshot cleanup.

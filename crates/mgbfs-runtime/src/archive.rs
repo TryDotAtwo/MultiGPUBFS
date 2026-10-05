@@ -395,6 +395,7 @@ pub struct Archive<E: Extent> {
     complete: bool,
     sync_layers: bool,
     state_only: bool,
+    selected_samples: bool,
     last_layer_records: u64,
     replaced: bool,
     replacement_closed: bool,
@@ -402,9 +403,9 @@ pub struct Archive<E: Extent> {
 }
 impl<E: Extent> Archive<E> {
     pub fn new(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
-        Self::new_encoded(extent, capacity, state_bytes, config, false)
+        Self::new_encoded(extent, capacity, state_bytes, config, false, false)
     }
-    fn new_encoded(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32], state_only: bool) -> Result<Self> {
+    fn new_encoded(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32], state_only: bool, selected_samples: bool) -> Result<Self> {
         if state_bytes == 0 || state_bytes > 33025 || capacity < 48 {
             return Err("ARCHIVE_SHAPE_OR_CAPACITY".into());
         }
@@ -412,7 +413,7 @@ impl<E: Extent> Archive<E> {
             .reserve(capacity)
             .map_err(|e| format!("ARCHIVE_RESERVE: {e}"))?;
         let mut header = Vec::with_capacity(48);
-        header.extend_from_slice(if state_only { b"MGBFSAS2" } else { b"MGBFSAR1" });
+        header.extend_from_slice(if selected_samples { b"MGBFSAS2" } else if state_only { b"MGBFSAS3" } else { b"MGBFSAR1" });
         header.extend_from_slice(&(state_bytes as u64).to_le_bytes());
         header.extend_from_slice(&config);
         let chain = Sha256::digest(&header).into();
@@ -430,6 +431,7 @@ impl<E: Extent> Archive<E> {
             complete: false,
             sync_layers: true,
             state_only,
+            selected_samples,
             last_layer_records: 0,
             replaced: false,
             replacement_closed: false,
@@ -452,13 +454,19 @@ impl<E: Extent> Archive<E> {
     /// Selective stream: bounded samples, followed by a replacement of the
     /// terminal layer. No per-state hash plane or intermediate disk contract.
     pub fn new_selected(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
-        let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true)?;
+        let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true, true)?;
+        archive.sync_layers = false;
+        Ok(archive)
+    }
+    /// Full state-only stream; hashing remains a CPU worker responsibility.
+    pub fn new_state_only(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+        let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true, false)?;
         archive.sync_layers = false;
         Ok(archive)
     }
     pub fn replace_last_layer(&mut self) -> Result<()> {
         self.live()?;
-        if !self.state_only || self.depth == 0 || self.layer_records != 0 || self.replaced {
+        if !self.selected_samples || self.depth == 0 || self.layer_records != 0 || self.replaced {
             return Err("ARCHIVE_REPLACEMENT_PHASE".into());
         }
         self.frame(4, self.depth - 1, 0, &[])?;
@@ -601,7 +609,7 @@ impl<E: Extent> Archive<E> {
     /// No allocation or payload copy; intended for preallocated pinned slots.
     pub fn records_wire(&mut self, depth: u64, count: u64, payload: &[u8]) -> Result<()> {
         self.live()?;
-        if self.replacement_closed || (self.state_only && !self.replaced &&
+        if self.replacement_closed || (self.selected_samples && !self.replaced &&
                 self.layer_records.checked_add(count).map_or(true, |n| n > 1000)) {
             return Err("ARCHIVE_SELECTED_RECORD_PHASE".into());
         }
@@ -677,7 +685,8 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
     let mut header = [0u8; 48];
     read(reader, &mut header, "ARCHIVE_HEADER")?;
     let selected = &header[..8] == b"MGBFSAS2";
-    if !selected && &header[..8] != b"MGBFSAR1" {
+    let state_only = selected || &header[..8] == b"MGBFSAS3";
+    if !state_only && &header[..8] != b"MGBFSAR1" {
         return Err("ARCHIVE_HEADER".into());
     }
     let width = word(&header, 8);
@@ -720,7 +729,7 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
         }
         match kind {
             1 => {
-                if records == 0 || records.checked_mul(width + if selected { 0 } else { 16 }) != Some(size) {
+                if records == 0 || records.checked_mul(width + if state_only { 0 } else { 16 }) != Some(size) {
                     return Err("ARCHIVE_RECORD_SHAPE".into());
                 }
                 count = count.checked_add(records).ok_or("ARCHIVE_COUNT")?;
