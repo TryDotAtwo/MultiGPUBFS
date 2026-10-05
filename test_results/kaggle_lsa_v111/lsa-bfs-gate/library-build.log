@@ -1,0 +1,8 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+ModuleNotFoundError: No module named 'wrapt'
+[1/6] Building CUDA object CMakeFiles/mgbfs_library_owner.dir/layout.cu.o
+[2/6] Building CXX object CMakeFiles/mgbfs_library_owner.dir/control_transfer.cpp.o
+[3/6] Building CXX object CMakeFiles/mgbfs_library_owner.dir/owner_abi.cpp.o
+[4/6] Building CUDA object CMakeFiles/mgbfs_library_owner.dir/cuco_owner_abi.cu.o
+[5/6] Building CUDA object CMakeFiles/mgbfs_library_owner.dir/cuco_rank_batch.cu.o
+[6/6] Linking CXX shared library libmgbfs_library_owner.so

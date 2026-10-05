@@ -1,0 +1,6 @@
+Collecting nvidia-nccl-cu12==2.29.7
+  Downloading nvidia_nccl_cu12-2.29.7-py3-none-manylinux_2_18_x86_64.whl.metadata (2.1 kB)
+Downloading nvidia_nccl_cu12-2.29.7-py3-none-manylinux_2_18_x86_64.whl (293.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 293.6/293.6 MB 6.6 MB/s eta 0:00:00
+Installing collected packages: nvidia-nccl-cu12
+Successfully installed nvidia-nccl-cu12-2.29.7
