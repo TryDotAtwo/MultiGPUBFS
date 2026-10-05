@@ -170,6 +170,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     ram=plan(config,n,world)
     config=dict(config,archive_ram_slots=ram['slots_per_rank'],archive_ram_plan=ram)
     archive_slots=ram['slots_per_rank']
+    env['MGBFS_ARCHIVE_INITIAL_SLOTS']=str(ram['initial_slots_per_rank'])
     selected = config.get('retention_policy') == 'last_complete_small_1000'
     if selected:
         if env.get('MGBFS_STATE_CODEC', 'permutation_u8') != 'permutation_u8':
@@ -177,11 +178,11 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         # Generously admitted sequential pinned slots per rank. Copy geometry is
         # independent of the compute batch, and allocated before search.
         env.update(MGBFS_ARCHIVE_SELECTION='last_complete_small_1000',
-                   MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
+                   MGBFS_ARCHIVE_ROWS=str(ram['rows_per_slot']),
                    MGBFS_ARCHIVE_SLOTS=str(archive_slots))
     else:
         env.update(MGBFS_ARCHIVE_SELECTION='all_states',
-                   MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
+                   MGBFS_ARCHIVE_ROWS=str(ram['rows_per_slot']),
                    MGBFS_ARCHIVE_SLOTS=str(archive_slots))
     # Durable-tail runs opt into bounded SSD writer backpressure. Bare native
     # BFS keeps its original fatal-on-exhaustion contract unless selected.

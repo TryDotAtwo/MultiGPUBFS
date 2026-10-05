@@ -616,6 +616,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err(search_result.err().unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
     let (mut bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped) = search_result?;
+    let archive_ram_ring = archive.as_ref().map(PinnedArchive::ring_stats);
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     #[cfg(debug_assertions)]
     let archive_commit = archive_commit.and_then(|()| {
@@ -662,6 +663,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     crate::group_commit::write_rank_result(Path::new(&args[5]), rank, &{
         let mut value: serde_json::Value =
             serde_json::from_str(&record).map_err(|e| format!("RECORD_JSON: {e}"))?;
+        value["archive_ram_ring"] = serde_json::json!(archive_ram_ring);
         value["calibration_layers"] = serde_json::json!(calibration_layers);
         if calibration_stopped {
             value["status"] = serde_json::json!("INCOMPLETE");
@@ -904,6 +906,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
+    let archive_ram_ring = archive.as_ref().map(PinnedArchive::ring_stats);
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     #[cfg(debug_assertions)]
     let archive_commit = archive_commit.and_then(|()| {
@@ -917,6 +920,7 @@ fn run_macro_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> 
     let record = serde_json::json!({
         "status": "COMPLETE", "backend": "macro_native_single_rank_v1",
         "rank": 0, "world_size": 1, "group": group, "batch": batch,
+        "archive_ram_ring": archive_ram_ring,
         "macro_depth": macro_depth, "frontier_profile": "DENSE",
         "owner_backend": "CUB_SORT_MERGE", "pre_dedup": if prededup { "ON" } else { "OFF" },
         "hash_seed_hex": seed_hex, "generation_variant": generation_variant,

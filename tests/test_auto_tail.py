@@ -284,7 +284,7 @@ class AutomaticPlanningTests(unittest.TestCase):
             self.assertLessEqual(size+cfg['archive_ram_plan']['workspace_reserve_bytes'],base['host_available_bytes']*3//4)
             self.assertGreater(int(e['MGBFS_ARCHIVE_SLOTS']),4)
             self.assertTrue(cfg['archive_ram_plan']['host_limited'])
-        roomy=dict(base,host_available_bytes=64<<30)
+        roomy=dict(base,host_available_bytes=64<<30,archive_storage_mode="ram")
         ram=pair_config(roomy,12,5)['archive_ram_plan']
         self.assertEqual(ram['total_pinned_bytes'],24<<30)
         self.assertFalse(ram['host_limited'])

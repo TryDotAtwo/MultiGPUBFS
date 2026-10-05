@@ -65,6 +65,8 @@ enum Message {
 pub struct PinnedArchive {
     tx: Option<SyncSender<Message>>,
     free: Receiver<Slot>,
+    reserve: std::cell::RefCell<Vec<Slot>>,
+    initial_slots: usize,
     worker: Option<JoinHandle<Result<()>>>,
     pub(crate) width: usize,
     pub(crate) rows: u32,
@@ -103,6 +105,13 @@ impl PinnedArchive {
                 .ok_or("ARCHIVE_PIN_OVERFLOW")?;
             plan.pinned_bytes = plan.slot_bytes.checked_mul(slots).ok_or("ARCHIVE_PIN_OVERFLOW")?;
         }
+        let initial_slots = match std::env::var("MGBFS_ARCHIVE_INITIAL_SLOTS") {
+            Ok(value) => value.parse::<usize>().map_err(|_| "ARCHIVE_INITIAL_SLOTS")?,
+            Err(std::env::VarError::NotPresent) => slots,
+            Err(_) => return Err("ARCHIVE_INITIAL_SLOTS".into()),
+        };
+        if initial_slots < 2 || initial_slots > slots { return Err("ARCHIVE_INITIAL_SLOTS".into()); }
+        let mut reserve = Vec::with_capacity(slots-initial_slots);
         let bytes = plan.slot_bytes;
         crate::session_cache::prepare_pinned(bytes, slots);
         let pinned_bytes = plan.pinned_bytes;
@@ -121,9 +130,9 @@ impl PinnedArchive {
                 Slot::new(bytes,allocation.as_ref().ok_or("ARCHIVE_CACHE_COUNT")?.clone(),
                           (index-cached).checked_mul(bytes).ok_or("ARCHIVE_PIN_OVERFLOW")?)?
             };
-            free_tx
-                .try_send(slot)
-                .map_err(|_| "ARCHIVE_INIT_QUEUE")?;
+            if index < initial_slots {
+                free_tx.try_send(slot).map_err(|_| "ARCHIVE_INIT_QUEUE")?;
+            } else { reserve.push(slot); }
         }
         let mut device = 0;
         let status = unsafe { cudaGetDevice(&mut device) };
@@ -182,6 +191,8 @@ impl PinnedArchive {
         Ok(Self {
             tx: Some(tx),
             free,
+            reserve: std::cell::RefCell::new(reserve),
+            initial_slots,
             worker: Some(worker),
             width,
             rows,
@@ -192,6 +203,11 @@ impl PinnedArchive {
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),
         })
+    }
+    pub fn ring_stats(&self) -> serde_json::Value {
+        serde_json::json!({"initial_slots":self.initial_slots,"maximum_slots":self.slots,
+            "activated_slots":self.slots-self.reserve.borrow().len(),
+            "pinned_bytes":self.pinned_bytes})
     }
     pub fn pinned_bytes(&self) -> usize {
         self.pinned_bytes
@@ -208,6 +224,14 @@ impl PinnedArchive {
         if status != 0 || current != self.device {
             return Err(format!("ARCHIVE_DEVICE_MISMATCH_{current}_{}", self.device));
         }
+        match self.free.try_recv() {
+            Ok(slot) => return Ok(slot),
+            Err(mpsc::TryRecvError::Disconnected) => return Err("ARCHIVE_PIN_RING_FATAL: disconnected".into()),
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        if cancelled() { return Err("ARCHIVE_CREDIT_CANCELLED".into()); }
+        // Cold pressure path: all allocation and event creation happened at startup.
+        if let Some(slot) = self.reserve.borrow_mut().pop() { return Ok(slot); }
         if self.wait_for_credit {
             crate::archive::recv_archive_credit(&self.free,cancelled)
         } else {
@@ -308,6 +332,27 @@ mod worker_failure_tests {
         crate::session_cache::prepare_pinned(bytes,3);
         assert_eq!(crate::session_cache::pinned_count(bytes),0);
         assert!(allocation.upgrade().is_none());
+    }
+    #[test]
+    fn exhausted_credits_activate_preallocated_reserve() {
+        assert_eq!(unsafe {cudaSetDevice(0)},0);
+        let mut archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,4).unwrap();
+        archive.wait_for_credit=false;
+        let reserve_a=archive.acquire().unwrap();
+        let reserve_b=archive.acquire().unwrap();
+        archive.reserve.borrow_mut().extend([reserve_a,reserve_b]);
+        archive.initial_slots=2;
+        let first=archive.acquire().unwrap();
+        let second=archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"],2);
+        let third=archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"],3);
+        let fourth=archive.acquire().unwrap();
+        assert_eq!(archive.ring_stats()["activated_slots"],4);
+        for slot in [&second,&third,&fourth] {assert!(Arc::ptr_eq(&first.allocation,&slot.allocation));}
+        assert!(archive.acquire().is_err());
+        archive.layer(0,0).unwrap();archive.finish().unwrap();
+        drop((first,second,third,fourth));
     }
     #[test]
     fn fatal_credit_policy_does_not_wait_on_exhaustion() {

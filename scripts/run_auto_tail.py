@@ -182,6 +182,7 @@ def pair_config(base, n, r):
     selection=('last_complete_small_1000' if cfg.get('retention_policy') ==
                'last_complete_small_1000' else 'all_states')
     cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots),
+                      MGBFS_ARCHIVE_INITIAL_SLOTS=str(ram['initial_slots_per_rank']),
                       MGBFS_ARCHIVE_SELECTION=selection)
     return cfg
 
