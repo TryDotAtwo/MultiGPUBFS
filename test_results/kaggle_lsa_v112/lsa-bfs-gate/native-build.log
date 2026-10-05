@@ -1,0 +1,21 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+ModuleNotFoundError: No module named 'wrapt'
+[1/19] Building CXX object CMakeFiles/mgbfs_cuda.dir/allocation_shape.cpp.o
+[2/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/hash.cu.o
+[3/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/generate.cu.o
+[4/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/route.cu.o
+[5/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/owner.cu.o
+[6/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/macro_settle.cu.o
+[7/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/future_merge.cu.o
+[8/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/exchange_pack.cu.o
+[9/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/materialize.cu.o
+[10/19] Building CXX object CMakeFiles/mgbfs_cuda.dir/bounded_owner_query.cpp.o
+[11/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/bounded_owner.cu.o
+[12/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/archive_pack.cu.o
+[13/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/state_commit.cu.o
+[14/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/directories.cu.o
+[15/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/regenerate.cu.o
+[16/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/hash_first_generate.cu.o
+[17/19] Building CXX object CMakeFiles/mgbfs_cuda.dir/profile_ranges.cpp.o
+[18/19] Building CUDA object CMakeFiles/mgbfs_cuda.dir/nccl_transport.cpp.o
+[19/19] Linking CXX shared library libmgbfs_cuda.so

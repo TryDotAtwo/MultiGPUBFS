@@ -1,0 +1,69 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded cfg-if v1.0.4
+  Downloaded digest v0.10.7
+  Downloaded keccak v0.1.6
+  Downloaded crypto-common v0.1.7
+  Downloaded cpufeatures v0.2.17
+  Downloaded itoa v1.0.18
+  Downloaded generic-array v0.14.7
+  Downloaded block-buffer v0.10.4
+  Downloaded version_check v0.9.5
+  Downloaded quote v1.0.47
+  Downloaded unicode-ident v1.0.24
+  Downloaded typenum v1.20.1
+  Downloaded sha2 v0.10.8
+  Downloaded syn v2.0.119
+  Downloaded sha3 v0.10.8
+  Downloaded serde_json v1.0.138
+  Downloaded serde_derive v1.0.217
+  Downloaded serde v1.0.217
+  Downloaded ryu v1.0.23
+  Downloaded proc-macro2 v1.0.107
+  Downloaded memchr v2.8.3
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling typenum v1.20.1
+   Compiling quote v1.0.47
+   Compiling generic-array v0.14.7
+   Compiling serde v1.0.217
+   Compiling serde_json v1.0.138
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling keccak v0.1.6
+   Compiling syn v2.0.119
+   Compiling cpufeatures v0.2.17
+   Compiling memchr v2.8.3
+   Compiling ryu v1.0.23
+   Compiling mgbfs-cuda v0.1.0 (/tmp/mgbfs-lsa-bfs-iz5fhhel/old-source/crates/mgbfs-cuda)
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.8
+   Compiling sha3 v0.10.8
+   Compiling serde_derive v1.0.217
+   Compiling mgbfs-core v0.1.0 (/tmp/mgbfs-lsa-bfs-iz5fhhel/old-source/crates/mgbfs-core)
+   Compiling mgbfs-runtime v0.1.0 (/tmp/mgbfs-lsa-bfs-iz5fhhel/old-source/crates/mgbfs-runtime)
+warning: unused imports: `archive::FileExtent`, `pinned_archive::PinnedArchive`
+ --> crates/mgbfs-runtime/examples/distributed_bench.rs:3:21
+  |
+3 | use mgbfs_runtime::{archive::FileExtent,distributed_native::{DistributedConfig,DistributedNativeBfs},pinned_archive::PinnedArchive};
+  |                     ^^^^^^^^^^^^^^^^^^^                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Sha256`
+ --> crates/mgbfs-runtime/examples/distributed_bench.rs:4:19
+  |
+4 | use sha2::{Digest,Sha256};
+  |                   ^^^^^^
+
+warning: unused import: `Digest`
+ --> crates/mgbfs-runtime/examples/distributed_bench.rs:4:12
+  |
+4 | use sha2::{Digest,Sha256};
+  |            ^^^^^^
+
+warning: `mgbfs-runtime` (example "distributed_bench") generated 3 warnings (run `cargo fix --example "distributed_bench"` to apply 2 suggestions)
+    Finished release [optimized] target(s) in 22.42s

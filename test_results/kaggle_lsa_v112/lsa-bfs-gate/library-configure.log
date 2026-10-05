@@ -1,0 +1,43 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+ModuleNotFoundError: No module named 'wrapt'
+-- The CXX compiler identification is GNU 11.4.0
+-- The CUDA compiler identification is NVIDIA 12.9.86 with host compiler GNU 11.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /tmp/mgbfs-lsa-bfs-iz5fhhel/cuda-12.9/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Found CUDAToolkit: /tmp/mgbfs-lsa-bfs-iz5fhhel/cuda-12.9/include (found version "12.9.86")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Found nvcomp: (Version:5.1.0.21
+               CMakePackageDir:/tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/nvidia/libnvcomp/lib64/cmake/nvcomp
+               IncludeDir:/tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/nvidia/libnvcomp/include
+               LibraryDir:/tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/nvidia/libnvcomp/lib64
+               ComponentsFound:[nvcomp;nvcomp_cpu])
+-- Found rapids_logger: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/rapids_logger/lib64/cmake/rapids_logger/rapids_logger-config.cmake (found version "0.2.3")
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Found Thrust: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/rapids/cmake/thrust/thrust-config.cmake (found suitable exact version "3.3.0.0")
+-- Found CUB: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/rapids/cmake/cub/cub-config.cmake (found suitable exact version "3.3.0.0")
+-- Found libcudacxx: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/rapids/cmake/libcudacxx/libcudacxx-config.cmake (found suitable exact version "3.3.0.0")
+-- Found CCCL: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/rapids/cmake/cccl/cccl-config.cmake (found version "3.3.0.0")
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Found rmm: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/librmm/lib64/cmake/rmm/rmm-config.cmake (found version "26.04.0")
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Found cuco: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/cmake/cuco/cuco-config.cmake (found version "0.0.1")
+-- Found cudf: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/libcudf/lib64/cmake/cudf/cudf-config.cmake (found suitable exact version "26.04.0")
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- Found rmm: /tmp/mgbfs-lsa-bfs-iz5fhhel/venv/lib/python3.12/site-packages/librmm/lib64/cmake/rmm/rmm-config.cmake (found suitable exact version "26.04.0")
+-- Configuring done (5.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/mgbfs-lsa-bfs-iz5fhhel/library-build

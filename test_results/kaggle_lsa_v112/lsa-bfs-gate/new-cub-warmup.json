@@ -1,0 +1,1313 @@
+{
+  "label": "new-cub-warmup",
+  "command": [
+    "torchrun",
+    "--standalone",
+    "--nproc-per-node=2",
+    "--no-python",
+    "/tmp/mgbfs-lsa-bfs-iz5fhhel/source/target/release/examples/distributed_bench",
+    "s10",
+    "262144",
+    "/tmp/mgbfs-lsa-bfs-iz5fhhel/new-cub-warmup-bootstrap",
+    "/tmp/mgbfs-lsa-bfs-iz5fhhel/new-cub-warmup-archive",
+    "{RANK_OUT}"
+  ],
+  "status": "COMPLETE",
+  "exit_code": 0,
+  "group_commit": {
+    "archive_commit_scope": "search_only",
+    "bootstrap_digest": [
+      105,
+      180,
+      174,
+      55,
+      64,
+      125,
+      164,
+      236,
+      199,
+      145,
+      3,
+      20,
+      100,
+      22,
+      123,
+      66,
+      132,
+      84,
+      77,
+      5,
+      253,
+      183,
+      229,
+      46,
+      37,
+      30,
+      236,
+      85,
+      94,
+      134,
+      99,
+      82
+    ],
+    "rank_sha256": [
+      [
+        175,
+        147,
+        202,
+        103,
+        13,
+        222,
+        96,
+        87,
+        235,
+        21,
+        141,
+        134,
+        47,
+        29,
+        253,
+        151,
+        72,
+        237,
+        76,
+        210,
+        135,
+        59,
+        203,
+        171,
+        4,
+        15,
+        39,
+        158,
+        176,
+        76,
+        170,
+        161
+      ],
+      [
+        52,
+        88,
+        210,
+        141,
+        119,
+        2,
+        165,
+        32,
+        92,
+        109,
+        164,
+        204,
+        27,
+        161,
+        115,
+        18,
+        77,
+        22,
+        88,
+        222,
+        104,
+        52,
+        91,
+        167,
+        197,
+        90,
+        33,
+        85,
+        135,
+        178,
+        141,
+        106
+      ]
+    ],
+    "schema": "mgbfs-group-run-commit-v1",
+    "status": "COMPLETE",
+    "world_size": 2
+  },
+  "world_size": 2,
+  "backend": "native_nccl_dense_ring_v2",
+  "rank_results": [
+    {
+      "allocation_scope": "explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive",
+      "archive_commit_scope": "search_only",
+      "archive_enabled": false,
+      "archive_file_commit_seconds": null,
+      "archive_state_bytes": 100,
+      "archive_wire_limit_bytes": 0,
+      "backend": "native_nccl_dense_ring_v2",
+      "batch": 262144,
+      "bmma_tile_limit": 256,
+      "bootstrap_digest": [
+        105,
+        180,
+        174,
+        55,
+        64,
+        125,
+        164,
+        236,
+        199,
+        145,
+        3,
+        20,
+        100,
+        22,
+        123,
+        66,
+        132,
+        84,
+        77,
+        5,
+        253,
+        183,
+        229,
+        46,
+        37,
+        30,
+        236,
+        85,
+        94,
+        134,
+        99,
+        82
+      ],
+      "capacity_mode": "MaxPerRank",
+      "cuda_allocated_used_bytes": 2026831872,
+      "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
+      "cuda_peak_observed_bytes": 2026831872,
+      "declared_capacity_records": 3628800,
+      "declared_state_ring_records": 3628800,
+      "dense_lookahead_batches": 0,
+      "device_allocation_plan": {
+        "aligned_bytes": 1824865536,
+        "payload_bytes": 1824860603,
+        "planes": [
+          {
+            "name": "shared.states",
+            "payload_bytes": 406425600,
+            "reserved_bytes": 406425600
+          },
+          {
+            "name": "shared.prev",
+            "payload_bytes": 58060800,
+            "reserved_bytes": 58060800
+          },
+          {
+            "name": "shared.curr",
+            "payload_bytes": 58060800,
+            "reserved_bytes": 58060800
+          },
+          {
+            "name": "shared.accepted",
+            "payload_bytes": 66449408,
+            "reserved_bytes": 66449408
+          },
+          {
+            "name": "shared.lengths",
+            "payload_bytes": 512,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "shared.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.archive_hashes",
+            "payload_bytes": 4194304,
+            "reserved_bytes": 4194304
+          },
+          {
+            "name": "shared.archive_states",
+            "payload_bytes": 2621440,
+            "reserved_bytes": 2621440
+          },
+          {
+            "name": "shared.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.recv_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.recv_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.recv_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.identity_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.directory",
+            "payload_bytes": 2048,
+            "reserved_bytes": 2048
+          },
+          {
+            "name": "shared.fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.jobs_gpu",
+            "payload_bytes": 8256,
+            "reserved_bytes": 8448
+          },
+          {
+            "name": "shared.counts",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.control",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.selected",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "shared.ring",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.extent",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.layer_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_send",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_recv",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_1.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_1.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_1.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_bank_1.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_1.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_2.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_2.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_2.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_bank_2.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_2.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "generation.generators",
+            "payload_bytes": 512,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "generation.packed_parents",
+            "payload_bytes": 41943040,
+            "reserved_bytes": 41943040
+          },
+          {
+            "name": "generation.products_s32",
+            "payload_bytes": 335544320,
+            "reserved_bytes": 335544320
+          },
+          {
+            "name": "generation.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "hash.weights",
+            "payload_bytes": 1792,
+            "reserved_bytes": 1792
+          },
+          {
+            "name": "hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash.partials_s32",
+            "payload_bytes": 50331648,
+            "reserved_bytes": 50331648
+          },
+          {
+            "name": "hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "archive_hash.weights",
+            "payload_bytes": 1792,
+            "reserved_bytes": 1792
+          },
+          {
+            "name": "archive_hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.partials_s32",
+            "payload_bytes": 16777216,
+            "reserved_bytes": 16777216
+          },
+          {
+            "name": "archive_hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "route.sorted",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "route.refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "route.indices",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "route.selected",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "route.flags",
+            "payload_bytes": 786432,
+            "reserved_bytes": 786432
+          },
+          {
+            "name": "route.scratch",
+            "payload_bytes": 19521023,
+            "reserved_bytes": 19521024
+          },
+          {
+            "name": "owner.flags",
+            "payload_bytes": 786432,
+            "reserved_bytes": 786432
+          },
+          {
+            "name": "owner.indices",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "owner.merged",
+            "payload_bytes": 2076544,
+            "reserved_bytes": 2076672
+          },
+          {
+            "name": "owner.refinement_errors",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          }
+        ],
+        "scope": "explicit_device_buffers_excludes_nccl_driver_and_pinned_archive"
+      },
+      "disk_reserved_bytes": 0,
+      "durable_run_commit_seconds": null,
+      "epoch_window": 3,
+      "explicit_device_aligned_bytes": 1824865536,
+      "explicit_device_payload_bytes": 1824860603,
+      "frontier_profile": "DENSE",
+      "generation_variant": 1,
+      "global_capacity_records": 7257600,
+      "global_state_ring_records": 7257600,
+      "group": "s10",
+      "hash_first_generation": "SCALAR",
+      "hash_seed_hex": "000000000000000000000000013527dc",
+      "library_pool_reserved_bytes": null,
+      "local_layer_sizes": [
+        1,
+        3,
+        5,
+        5,
+        10,
+        27,
+        36,
+        81,
+        142,
+        263,
+        453,
+        788,
+        1335,
+        2245,
+        3547,
+        5475,
+        8459,
+        12313,
+        17459,
+        24512,
+        33179,
+        43612,
+        55836,
+        70022,
+        85707,
+        102353,
+        118705,
+        133300,
+        145301,
+        154329,
+        158380,
+        155438,
+        145457,
+        127425,
+        100086,
+        64439,
+        30866,
+        10237,
+        2559,
+        552,
+        149,
+        50,
+        13,
+        4,
+        2,
+        1
+      ],
+      "logical_owner_to_rank": [
+        0,
+        1
+      ],
+      "materialization_capacity": 0,
+      "output_contract": "search_only_layer_counts",
+      "owner_backend": "CUB_SORT_MERGE",
+      "per_depth_seconds": [
+        0.08794093,
+        0.007640935,
+        0.006479295,
+        0.008036941,
+        0.009221576,
+        0.011080961,
+        0.011893001,
+        0.014680414,
+        0.013671851,
+        0.016914204,
+        0.015322629,
+        0.016352288,
+        0.015447218,
+        0.015607646,
+        0.015469485,
+        0.015490325,
+        0.016791251,
+        0.016071755,
+        0.019139389,
+        0.018245164,
+        0.012980454,
+        0.016319514,
+        0.017537939,
+        0.018799713,
+        0.01899059,
+        0.021305633,
+        0.023054959,
+        0.024241166,
+        0.024653234,
+        0.024728673,
+        0.021724322,
+        0.022627696,
+        0.020554732,
+        0.020554894,
+        0.018165395,
+        0.015394897,
+        0.014435754,
+        0.011751731,
+        0.011955274,
+        0.011834271,
+        0.01070199,
+        0.010968038,
+        0.00775752,
+        0.005463071,
+        0.005217718,
+        0.005716685
+      ],
+      "pinned_bytes": 0,
+      "pinned_bytes_scope": "archive_only",
+      "pre_dedup": "ON",
+      "rank": 0,
+      "rank_capacity_records": 3628800,
+      "rank_state_ring_records": 3628800,
+      "route_bank_reuses": 0,
+      "route_banks": 3,
+      "run_contract": "reference_bench",
+      "search_complete_seconds": 0.768947551,
+      "setup_seconds": 0.603842627,
+      "state_descriptor_capacity": 3628800,
+      "status": "COMPLETE",
+      "transport_backend": "HostSizedNccl",
+      "transport_control_pinned_payload_bytes": 0,
+      "untouched_vram_reserve_bytes": 1073741824,
+      "warmup_completed": false,
+      "world_size": 2
+    },
+    {
+      "allocation_scope": "explicit_runtime_and_library_device_buffers_excludes_nccl_driver_and_pinned_archive",
+      "archive_commit_scope": "search_only",
+      "archive_enabled": false,
+      "archive_file_commit_seconds": null,
+      "archive_state_bytes": 100,
+      "archive_wire_limit_bytes": 0,
+      "backend": "native_nccl_dense_ring_v2",
+      "batch": 262144,
+      "bmma_tile_limit": 256,
+      "bootstrap_digest": [
+        105,
+        180,
+        174,
+        55,
+        64,
+        125,
+        164,
+        236,
+        199,
+        145,
+        3,
+        20,
+        100,
+        22,
+        123,
+        66,
+        132,
+        84,
+        77,
+        5,
+        253,
+        183,
+        229,
+        46,
+        37,
+        30,
+        236,
+        85,
+        94,
+        134,
+        99,
+        82
+      ],
+      "capacity_mode": "MaxPerRank",
+      "cuda_allocated_used_bytes": 2026831872,
+      "cuda_memory_sampling": "setup_and_final_only_not_full_peak",
+      "cuda_peak_observed_bytes": 2026831872,
+      "declared_capacity_records": 3628800,
+      "declared_state_ring_records": 3628800,
+      "dense_lookahead_batches": 0,
+      "device_allocation_plan": {
+        "aligned_bytes": 1824865536,
+        "payload_bytes": 1824860603,
+        "planes": [
+          {
+            "name": "shared.states",
+            "payload_bytes": 406425600,
+            "reserved_bytes": 406425600
+          },
+          {
+            "name": "shared.prev",
+            "payload_bytes": 58060800,
+            "reserved_bytes": 58060800
+          },
+          {
+            "name": "shared.curr",
+            "payload_bytes": 58060800,
+            "reserved_bytes": 58060800
+          },
+          {
+            "name": "shared.accepted",
+            "payload_bytes": 66449408,
+            "reserved_bytes": 66449408
+          },
+          {
+            "name": "shared.lengths",
+            "payload_bytes": 512,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "shared.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.archive_hashes",
+            "payload_bytes": 4194304,
+            "reserved_bytes": 4194304
+          },
+          {
+            "name": "shared.archive_states",
+            "payload_bytes": 2621440,
+            "reserved_bytes": 2621440
+          },
+          {
+            "name": "shared.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.recv_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.recv_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.recv_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.identity_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.directory",
+            "payload_bytes": 2048,
+            "reserved_bytes": 2048
+          },
+          {
+            "name": "shared.fatal",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.jobs_gpu",
+            "payload_bytes": 8256,
+            "reserved_bytes": 8448
+          },
+          {
+            "name": "shared.counts",
+            "payload_bytes": 128,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.control",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.selected",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "shared.ring",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.extent",
+            "payload_bytes": 64,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.layer_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_send",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.collective_recv",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_1.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_1.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_1.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_bank_1.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_1.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_1.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.children",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_2.child_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_2.sorted_hashes",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "shared.route_bank_2.sorted_refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "shared.route_bank_2.packed_states",
+            "payload_bytes": 88080384,
+            "reserved_bytes": 88080384
+          },
+          {
+            "name": "shared.route_bank_2.route_count",
+            "payload_bytes": 4,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.owner_counts",
+            "payload_bytes": 32,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "shared.route_bank_2.generation_control",
+            "payload_bytes": 8,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "generation.generators",
+            "payload_bytes": 512,
+            "reserved_bytes": 512
+          },
+          {
+            "name": "generation.packed_parents",
+            "payload_bytes": 41943040,
+            "reserved_bytes": 41943040
+          },
+          {
+            "name": "generation.products_s32",
+            "payload_bytes": 335544320,
+            "reserved_bytes": 335544320
+          },
+          {
+            "name": "generation.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "hash.weights",
+            "payload_bytes": 1792,
+            "reserved_bytes": 1792
+          },
+          {
+            "name": "hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "hash.partials_s32",
+            "payload_bytes": 50331648,
+            "reserved_bytes": 50331648
+          },
+          {
+            "name": "hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "archive_hash.weights",
+            "payload_bytes": 1792,
+            "reserved_bytes": 1792
+          },
+          {
+            "name": "archive_hash.offsets",
+            "payload_bytes": 16,
+            "reserved_bytes": 256
+          },
+          {
+            "name": "archive_hash.partials_s32",
+            "payload_bytes": 16777216,
+            "reserved_bytes": 16777216
+          },
+          {
+            "name": "archive_hash.workspace",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          },
+          {
+            "name": "route.sorted",
+            "payload_bytes": 12582912,
+            "reserved_bytes": 12582912
+          },
+          {
+            "name": "route.refs",
+            "payload_bytes": 6291456,
+            "reserved_bytes": 6291456
+          },
+          {
+            "name": "route.indices",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "route.selected",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "route.flags",
+            "payload_bytes": 786432,
+            "reserved_bytes": 786432
+          },
+          {
+            "name": "route.scratch",
+            "payload_bytes": 19521023,
+            "reserved_bytes": 19521024
+          },
+          {
+            "name": "owner.flags",
+            "payload_bytes": 786432,
+            "reserved_bytes": 786432
+          },
+          {
+            "name": "owner.indices",
+            "payload_bytes": 3145728,
+            "reserved_bytes": 3145728
+          },
+          {
+            "name": "owner.merged",
+            "payload_bytes": 2076544,
+            "reserved_bytes": 2076672
+          },
+          {
+            "name": "owner.refinement_errors",
+            "payload_bytes": 0,
+            "reserved_bytes": 0
+          }
+        ],
+        "scope": "explicit_device_buffers_excludes_nccl_driver_and_pinned_archive"
+      },
+      "disk_reserved_bytes": 0,
+      "durable_run_commit_seconds": null,
+      "epoch_window": 3,
+      "explicit_device_aligned_bytes": 1824865536,
+      "explicit_device_payload_bytes": 1824860603,
+      "frontier_profile": "DENSE",
+      "generation_variant": 1,
+      "global_capacity_records": 7257600,
+      "global_state_ring_records": 7257600,
+      "group": "s10",
+      "hash_first_generation": "SCALAR",
+      "hash_seed_hex": "000000000000000000000000013527dc",
+      "library_pool_reserved_bytes": null,
+      "local_layer_sizes": [
+        0,
+        0,
+        1,
+        7,
+        14,
+        20,
+        51,
+        80,
+        155,
+        265,
+        474,
+        823,
+        1391,
+        2247,
+        3637,
+        5634,
+        8292,
+        12311,
+        17646,
+        24206,
+        32975,
+        43761,
+        56160,
+        70366,
+        85950,
+        101860,
+        117724,
+        132976,
+        145970,
+        154502,
+        157778,
+        155386,
+        145380,
+        126949,
+        99477,
+        64695,
+        30852,
+        10230,
+        2624,
+        564,
+        153,
+        42,
+        8,
+        2,
+        1,
+        0
+      ],
+      "logical_owner_to_rank": [
+        0,
+        1
+      ],
+      "materialization_capacity": 0,
+      "output_contract": "search_only_layer_counts",
+      "owner_backend": "CUB_SORT_MERGE",
+      "per_depth_seconds": [
+        0.086588902,
+        0.007556741,
+        0.008405675,
+        0.007846268,
+        0.009043459,
+        0.011048024,
+        0.012000907,
+        0.0133822,
+        0.015471843,
+        0.015677705,
+        0.015740504,
+        0.015798207,
+        0.015809467,
+        0.01593348,
+        0.014772862,
+        0.01595736,
+        0.016093959,
+        0.017589127,
+        0.017217756,
+        0.018158711,
+        0.014433906,
+        0.01658987,
+        0.015817394,
+        0.02028916,
+        0.019461656,
+        0.020493544,
+        0.023481533,
+        0.024269412,
+        0.024834813,
+        0.023400909,
+        0.023156905,
+        0.021662989,
+        0.020967913,
+        0.020820441,
+        0.017091239,
+        0.016337399,
+        0.014080646,
+        0.01231561,
+        0.011815498,
+        0.011674019,
+        0.011339831,
+        0.010501902,
+        0.007568938,
+        0.005139268,
+        0.005943791,
+        0.005524074
+      ],
+      "pinned_bytes": 0,
+      "pinned_bytes_scope": "archive_only",
+      "pre_dedup": "ON",
+      "rank": 1,
+      "rank_capacity_records": 3628800,
+      "rank_state_ring_records": 3628800,
+      "route_bank_reuses": 0,
+      "route_banks": 3,
+      "run_contract": "reference_bench",
+      "search_complete_seconds": 0.769124798,
+      "setup_seconds": 0.603810289,
+      "state_descriptor_capacity": 3628800,
+      "status": "COMPLETE",
+      "transport_backend": "HostSizedNccl",
+      "transport_control_pinned_payload_bytes": 0,
+      "untouched_vram_reserve_bytes": 1073741824,
+      "warmup_completed": false,
+      "world_size": 2
+    }
+  ],
+  "search_complete_seconds": 0.769124798,
+  "durable_run_commit_seconds": null,
+  "archive_file_commit_seconds": null,
+  "group": "s10",
+  "batch": 262144,
+  "frontier_profile": "DENSE",
+  "owner_backend": "CUB_SORT_MERGE",
+  "pre_dedup": "ON",
+  "transport_backend": "HostSizedNccl",
+  "capacity_mode": "MaxPerRank",
+  "global_capacity_records": 7257600,
+  "global_state_ring_records": 7257600,
+  "archive_enabled": false,
+  "archive_state_bytes": 100,
+  "generation_variant": 1,
+  "hash_first_generation": "SCALAR",
+  "warmup_completed": false,
+  "library_pool_reserved_bytes": null,
+  "hash_seed_hex": "000000000000000000000000013527dc",
+  "bootstrap_digest": [
+    105,
+    180,
+    174,
+    55,
+    64,
+    125,
+    164,
+    236,
+    199,
+    145,
+    3,
+    20,
+    100,
+    22,
+    123,
+    66,
+    132,
+    84,
+    77,
+    5,
+    253,
+    183,
+    229,
+    46,
+    37,
+    30,
+    236,
+    85,
+    94,
+    134,
+    99,
+    82
+  ],
+  "logical_owner_to_rank": [
+    0,
+    1
+  ],
+  "epoch_window": 3,
+  "state_descriptor_capacity": 3628800,
+  "output_contract": "search_only_layer_counts",
+  "archive_commit_scope": "search_only",
+  "run_contract": "reference_bench",
+  "layer_sizes": [
+    1,
+    3,
+    6,
+    12,
+    24,
+    47,
+    87,
+    161,
+    297,
+    528,
+    927,
+    1611,
+    2726,
+    4492,
+    7184,
+    11109,
+    16751,
+    24624,
+    35105,
+    48718,
+    66154,
+    87373,
+    111996,
+    140388,
+    171657,
+    204213,
+    236429,
+    266276,
+    291271,
+    308831,
+    316158,
+    310824,
+    290837,
+    254374,
+    199563,
+    129134,
+    61718,
+    20467,
+    5183,
+    1116,
+    302,
+    92,
+    21,
+    6,
+    3,
+    1
+  ],
+  "smi_peak_mib_per_rank": [
+    1933.0,
+    1933.0
+  ],
+  "smi_peak_mib_total": 3866.0,
+  "smi_memory_complete": true
+}

@@ -1,0 +1,59 @@
+{
+  "status": "RAW_RECONCILED",
+  "rows": 18,
+  "measured_rows": 15,
+  "independent_rank_records": 36,
+  "layers": 46,
+  "states": 3628800,
+  "archive_disabled": true,
+  "scope": "historical layer-count agreement; not independent full-state S10 oracle or LSA performance admission",
+  "old_source": "4ef9ce1d16c8cef62fc610cd6d36e32e673e623b",
+  "new_source": "8a43bc87292e28c48b27ebb69e648fe77c95290f",
+  "comparisons": {
+    "old": {
+      "samples_seconds": [
+        0.425925089,
+        0.426848958,
+        0.439093879,
+        0.452554218,
+        0.436200881
+      ],
+      "median_seconds": 0.436200881,
+      "mad_seconds": 0.009351922999999984,
+      "peak_mib_per_rank": [
+        3431.0,
+        3431.0
+      ]
+    },
+    "new-cub": {
+      "samples_seconds": [
+        0.757385386,
+        0.782674613,
+        0.790287611,
+        0.782539053,
+        0.76204786
+      ],
+      "median_seconds": 0.782539053,
+      "mad_seconds": 0.007748557999999961,
+      "peak_mib_per_rank": [
+        1933.0,
+        1933.0
+      ]
+    },
+    "new-cuco": {
+      "samples_seconds": [
+        0.613666664,
+        0.621287775,
+        0.631134973,
+        0.634246467,
+        0.643032966
+      ],
+      "median_seconds": 0.631134973,
+      "mad_seconds": 0.009847198000000001,
+      "peak_mib_per_rank": [
+        2387.0,
+        2387.0
+      ]
+    }
+  }
+}
