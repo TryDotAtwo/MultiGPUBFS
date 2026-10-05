@@ -59,6 +59,19 @@ HF readback verified 28 manifests, 20 Parquet payloads, 870,821 bytes, all paylo
 
 Local validation: 113 tail tests and six CPU tests pass; 16 Rust archive tests and the Linux CUDA/library-owner compile check passed for the RAM/AS3 implementation.
 
+## Partial whole-sweep timing (live observation)
+
+At remote Unix time 1791194979.529407, the old `81f8a2f` compact/end-upload sweep had classified 3,023 pairs: 238 COMPLETE, 26 attempted INCOMPLETE, and 2,759 skipped by fixed-r resource pruning. This is not the final full-sweep result and does not measure the new expanding host ring.
+
+| Backend | Complete pairs | Both-seed search, s | Complete pair runners, s | Other work inside complete runners, s | Recorded transitions across attempted pairs, s |
+|---|---:|---:|---:|---:|---:|
+| GPU | 94 | 2,659.256 | 2,799.952 | 140.696 | 9.710 |
+| CPU exact packed | 144 | 3.493 | 22.264 | 18.772 | 9.193 |
+
+The complete GPU search fraction is 94.975% of measured complete pair runners. Native search includes archive backpressure; other runner time includes admission/setup/local save/comparison. Transition time is separate and the GPU transition column includes all 120 attempted GPU pairs, including resource stops. Failed GPU runs contributed another 1,012.100 seconds of committed first-run layer prefixes, but their failed-layer work is unmeasured by that prefix statistic. HF publication/readback, cold startup, and unrecorded pruning time are excluded. Aggregate both-seed times come from each pair's comparison records, not the first-seed timing field.
+
+The new Rust archive integration and credit/descriptor CPU tests passed on the rental: 19 + 3 + 4 tests. New native runtime and Graph32 smoke binaries built successfully with LSA enabled and pinned NCCL headers/library. GPU execution remains queued behind the current sweep: shared allocation/reserve tests, three matched repetitions of compact and full-five retention on `(12,1)` and `(12,5)`, then Graph32 primitive smoke and independently CPU-oracle-checked LSA startup. Compiled-off LSA rejection from the existing sweep is not a hardware capability result.
+
 ## Remaining evidence
 
 Follow-up implementation after the measured panel (GPU validation pending): full-state retention defaults to a RAM/SSD hybrid with RAM targeting one quarter of aggregate VRAM and SSD handling closed packed parts; the SSD target is accounting, not a physical reservation. An explicit RAM mode targets aggregate VRAM. RAM admission is bounded by 75% of available host RAM with reader/OS reserves. Compact retention instead uses 32 MiB per rank, with 1 MiB slots. Full-state ranks use reusable 8 MiB slots in one shared pinned allocation. Initially 64 full-state slots are active per rank; exhausted free credits activate additional preallocated slots up to the admitted maximum, after which the producer waits. Activation does not allocate memory or create CUDA events. Final rank reports record initial, maximum and activated slot counts; exact cache geometry is required so retaining a subset cannot keep an oversized physical allocation. CPU reader output/shift arenas are also preallocated, and frame SHA-256 no longer concatenates the payload. Unit and Linux-target compile checks pass; these changes are not running in the existing `81f8a2f` sweep and their GPU timing is not yet claimed.
