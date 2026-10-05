@@ -1,0 +1,352 @@
+{
+  "source": "8a43bc87292e28c48b27ebb69e648fe77c95290f",
+  "status": "COMPLETE",
+  "scope": "one physical T4, RunConfigV1 full-state S4 archives, not multi-rank admission or performance",
+  "hardware_target": "T4",
+  "cuda_architecture": "sm75",
+  "t4_acceptance_eligible": true,
+  "gpus": [
+    {
+      "index": 0,
+      "name": "Tesla T4",
+      "uuid": "GPU-a8e1d4c3-f177-554a-ce6f-f2680a223c9a",
+      "total_mib": 15360,
+      "free_mib": 14912
+    },
+    {
+      "index": 1,
+      "name": "Tesla T4",
+      "uuid": "GPU-b75410a1-5a2e-51f9-2868-6fb36e3fee4e",
+      "total_mib": 15360,
+      "free_mib": 14912
+    }
+  ],
+  "p2p": [
+    {
+      "source": 0,
+      "target": 1,
+      "cuda_status": 0,
+      "allowed": 1
+    },
+    {
+      "source": 1,
+      "target": 0,
+      "cuda_status": 0,
+      "allowed": 1
+    }
+  ],
+  "nccl_dependency": {
+    "variant": "minimum_arch_guard_posix",
+    "upstream_commit": "b91894bd5b190c874d98a017f93f5daa515b65d0",
+    "patch_sha256": "1af3a5df99c2b3b9a4f66ca4c33cf66e513e208f73480e58b4183c8f0e05b26b",
+    "architecture": "sm75",
+    "posix_patch_sha256": "e73af6f263bb0eebb22904a20251c8b5da0dec2b463fdeb3c5a9c4fbc88b3072",
+    "local_first_map_patch_sha256": "95a042db1698504182c0cf0ee34c8c74dbaf5cb376d1aeeae93d464b0378b5b1",
+    "mnnvl_enable": "0",
+    "nvtx": 1,
+    "experimental": true,
+    "library_sha256": "bedc81fb335aee679f5e594c5f8d82b397bddcbb742b09e73fb08faf7ec14b93"
+  },
+  "single_rank_runs": [
+    {
+      "label": "one-rank-CUB_SORT_MERGE-DENSE-pre0",
+      "owner": "CUB_SORT_MERGE",
+      "profile": "DENSE",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUB_SORT_MERGE-DENSE-pre1",
+      "owner": "CUB_SORT_MERGE",
+      "profile": "DENSE",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUB_SORT_MERGE-HASH_FIRST-pre0",
+      "owner": "CUB_SORT_MERGE",
+      "profile": "HASH_FIRST",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUB_SORT_MERGE-HASH_FIRST-pre1",
+      "owner": "CUB_SORT_MERGE",
+      "profile": "HASH_FIRST",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-BMMA_BUCKET-DENSE-pre0",
+      "owner": "BMMA_BUCKET",
+      "profile": "DENSE",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-BMMA_BUCKET-DENSE-pre1",
+      "owner": "BMMA_BUCKET",
+      "profile": "DENSE",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-BMMA_BUCKET-HASH_FIRST-pre0",
+      "owner": "BMMA_BUCKET",
+      "profile": "HASH_FIRST",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-BMMA_BUCKET-HASH_FIRST-pre1",
+      "owner": "BMMA_BUCKET",
+      "profile": "HASH_FIRST",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUCO_RANK-DENSE-pre0",
+      "owner": "CUCO_RANK",
+      "profile": "DENSE",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUCO_RANK-DENSE-pre1",
+      "owner": "CUCO_RANK",
+      "profile": "DENSE",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUCO_RANK-HASH_FIRST-pre0",
+      "owner": "CUCO_RANK",
+      "profile": "HASH_FIRST",
+      "pre_dedup": false,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    },
+    {
+      "label": "one-rank-CUCO_RANK-HASH_FIRST-pre1",
+      "owner": "CUCO_RANK",
+      "profile": "HASH_FIRST",
+      "pre_dedup": true,
+      "pass": true,
+      "preflight_code": 0,
+      "exit_code": 0,
+      "oracle": {
+        "unique_states": 24,
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "route_bank_reuses": [
+          7
+        ],
+        "scope": "1 independent rank-process archives; full canonical states at every depth"
+      }
+    }
+  ]
+}

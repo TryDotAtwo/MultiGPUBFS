@@ -1,0 +1,1 @@
+{"config_digest":"fcf284fd4c0463b58b45c77dbd72f9210c48d81a78baf5dd187179227338d00e","hardware_ready":false,"scope":"offline_config_only","status":"CONFIG_VALIDATED","unchecked":["device_and_build_queries","free_vram","pinned_ram","disk_extents","runtime_backend_support"]}

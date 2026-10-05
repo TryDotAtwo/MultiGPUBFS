@@ -1,0 +1,1 @@
+MGBFS_ARCHIVE_TIMINGS ArchiveTimings { checksum_seconds: 5.4622000000000007e-5, write_seconds: 0.0003381140000000001, sync_seconds: 0.003576165, sync_calls: 1 }
