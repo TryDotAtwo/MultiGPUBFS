@@ -162,11 +162,20 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                     if seconds is None:seconds=native.get('search_prefix_seconds')
                     if type(seconds) in (int,float) and math.isfinite(seconds) and seconds >= 0:
                         searches.append(seconds)
+            cpu_backend = manifest.get('execution_backend') == 'CPU_EXACT_PACKED'
+            if cpu_backend:
+                try:
+                    cpu = json.loads((case/'result/cpu.json').read_text())
+                    seconds = cpu.get('search_complete_seconds')
+                    if seconds is None: seconds = cpu.get('search_prefix_seconds')
+                    searches = [seconds] if type(seconds) in (int,float) and math.isfinite(seconds) and seconds>=0 else []
+                except (OSError,ValueError): searches = []
             record['timing'] = dict(runner_started_at_unix=runner_started_unix,
                 runner_wall_seconds=previous_runner_finished-runner_started,
                 transition_before_seconds=transition_before,
                 completed_layer_seconds=sum(layer['seconds'] for layer in manifest.get('layers',[])),
-                production_search_seconds=max(searches) if len(searches)==config.get('world',2) else None,
+                production_search_seconds=max(searches) if len(searches)==(1 if cpu_backend else config.get('world',2)) else None,
+                execution_backend='CPU_EXACT_PACKED' if cpu_backend else 'GPU',
                 automatic_phase_seconds=manifest.get('launch_config',{}).get('automatic_phase_seconds'),
                 scope='runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report')
         if 'comparison' in manifest:

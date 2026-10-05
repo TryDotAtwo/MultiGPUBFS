@@ -257,6 +257,9 @@ def startup_failure_snapshot(config, source, case, reason):
 
 def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
     """Admission and optional matched calibration happen before the real BFS."""
+    from cpu_small_bfs import eligible, run as run_cpu
+    if eligible(config):
+        return run_cpu(config,source,case,runtime,deadline=deadline,cancelled=cancelled)
     adaptive_started=time.monotonic()
     try:
         cfg=(tune_pair(config,source,case,runtime,deadline=deadline,cancelled=cancelled)
@@ -415,7 +418,8 @@ def main(cancelled=None):
         runtime=json.loads(args.runtime_env.read_text())
         base=dict(world=len(inventory),run_id=args.root.name,
             upload_mode=args.upload_mode or 'end',
-            archive_format='parquet_cohort',cohort_group_size=1 if args.upload_mode=='graph' else 20,cohort_group_bytes=2_000_000_000,
+            archive_format='parquet_cohort',cohort_group_size=1 if args.upload_mode=='graph' else 2048,cohort_group_bytes=2_000_000_000,
+            small_graph_cpu_max_states=65536,
             native_capacity_probe=True,
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(

@@ -57,11 +57,20 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
             try: native.append(json.loads((path/'result'/f'rank-{rank}.json').read_text()))
             except (OSError, ValueError): pass
         verified = len(native)==config['world'] and all(x.get('hash_seed_hex')==SEEDS[index] for x in native)
+        cpu = None
+        if manifest.get('execution_backend') == 'CPU_EXACT_PACKED':
+            try: cpu = json.loads((path/'result/cpu.json').read_text())
+            except (OSError,ValueError): pass
+            verified = bool(cpu and cpu.get('execution_backend')=='CPU_EXACT_PACKED'
+                and cpu.get('hash_seed_hex')==SEEDS[index] and cpu.get('status')==manifest['status'])
         seeds_ok = seeds_ok and verified
         searches = [x.get('search_complete_seconds', x.get('search_prefix_seconds')) for x in native]
-        timings.append(dict(repetition=index+1, seed_hex=SEEDS[index], native_seed_verified=verified,
+        if cpu: searches = [cpu.get('search_complete_seconds') if cpu['status']=='COMPLETE' else cpu.get('search_prefix_seconds')]
+        timings.append(dict(repetition=index+1, seed_hex=SEEDS[index], seed_verified=verified,
+            native_seed_verified=verified if not cpu else None,
+            execution_backend='CPU_EXACT_PACKED' if cpu else 'GPU',
             runner_wall_seconds=time.monotonic()-at,
-            production_search_seconds=max(searches) if len(searches)==config['world'] and all(type(x) in (int,float) for x in searches) else None))
+            production_search_seconds=max(searches) if len(searches)==(1 if cpu else config['world']) and all(type(x) in (int,float) for x in searches) else None))
         manifest['repetition'] = index+1
         manifest['hash_seed_hex'] = SEEDS[index]
         manifests.append(manifest)
