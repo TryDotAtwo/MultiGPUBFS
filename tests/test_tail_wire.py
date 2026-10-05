@@ -23,6 +23,15 @@ def wire(corrupt=False, truncate=False):
 
 
 class WireTests(unittest.TestCase):
+    def test_block_packing_all_widths_and_padding(self):
+        for n in range(1,129):
+            for bits in (4,8):
+                states=[[(i+row*3)%min(1<<bits,128) for i in range(n)] for row in range(7)]
+                raw=bytes(x for state in states for x in state)
+                width=((n*bits+63)//64)*8
+                expected=b''.join(sum(x<<(i*bits) for i,x in enumerate(state)).to_bytes(width,'little') for state in states)
+                self.assertEqual(pack_batch(raw,len(states),n,bits),expected)
+
     def test_vector_pack_matches_scalar(self):
         for n in (1,15,16,17,32):
             state = [i%16 for i in range(n)]

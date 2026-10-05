@@ -16,6 +16,12 @@ def read_exact(stream, size):
     return b''.join(chunks)
 
 
+def frame_digest(frame, payload):
+    digest = hashlib.sha256(frame)
+    digest.update(payload)
+    return digest.digest()
+
+
 def pack_batch(raw, count, n, bits_per_symbol=4):
     if not 1 <= n <= 128 or len(raw) != count * n or bits_per_symbol not in (4,8):
         raise ValueError('word shape')
@@ -27,8 +33,15 @@ def pack_batch(raw, count, n, bits_per_symbol=4):
     if bits_per_symbol == 8:
         result[:, :n] = symbols
     else:
-        for i in range(n):
-            result[:, i // 2] |= symbols[:, i] << (4 * (i % 2))
+        pairs = n//2
+        if pairs:
+            # One sequential matrix operation instead of n strided passes.
+            # Temporary storage is bounded by half the admitted input frame.
+            np.bitwise_or(symbols[:, :2*pairs:2],
+                          np.left_shift(symbols[:, 1:2*pairs:2],4),
+                          out=result[:, :pairs])
+        if n%2:
+            result[:, pairs] = symbols[:, -1]
     return result.tobytes()
 
 
@@ -59,7 +72,7 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
             if size > max_frame_bytes:
                 raise ValueError('frame memory bound')
             payload = read_exact(stream, size)
-            chain = hashlib.sha256(frame + payload).digest()
+            chain = frame_digest(frame, payload)
             if read_exact(stream, 32) != chain:
                 raise ValueError('archive checksum')
             if kind == 1:
@@ -128,7 +141,7 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
                     or frame[48:] != chain or size > max_frame_bytes):
                 raise ValueError('selected archive chain/order')
             payload = read_exact(stream, size)
-            chain = hashlib.sha256(frame+payload).digest()
+            chain = frame_digest(frame,payload)
             if read_exact(stream, 32) != chain:
                 raise ValueError('selected archive checksum')
             if kind == 1:
