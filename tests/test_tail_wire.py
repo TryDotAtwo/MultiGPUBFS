@@ -4,7 +4,8 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
-from scripts.tail_wire import consume, pack_batch
+from unittest.mock import patch
+from scripts.tail_wire import consume, pack_batch, PackBuffer
 from scripts.bfs_tail_archive import pack_state
 
 
@@ -23,6 +24,29 @@ def wire(corrupt=False, truncate=False):
 
 
 class WireTests(unittest.TestCase):
+    def test_reusable_packing_arena_has_no_frame_allocations_or_stale_padding(self):
+        for n,bits in [(3,4),(17,4),(33,8),(128,8)]:
+            arena=PackBuffer(n,bits,7)
+            address=arena.output.__array_interface__['data'][0]
+            for count,value in [(7,15),(1,0),(5,3),(0,0)]:
+                raw=bytes([value]*(count*n))
+                expected=pack_batch(raw,count,n,bits)
+                with patch('scripts.tail_wire.np.zeros',side_effect=AssertionError('frame allocation')), \
+                     patch('scripts.tail_wire.np.empty',side_effect=AssertionError('frame allocation')):
+                    packed=bytes(arena.pack(raw,count))
+                self.assertEqual(packed,expected)
+                self.assertEqual(address,arena.output.__array_interface__['data'][0])
+            with self.assertRaises(ValueError):arena.pack(bytes(8*n),8)
+
+    def test_reader_uses_admitted_packing_arena_and_rejects_oversize_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            layers=[]
+            consume(io.BytesIO(wire()),directory,3,lambda d,c,p,*a:layers.append(p.read_bytes()),packing_rows=2)
+            self.assertEqual(layers,[pack_batch(bytes([0,1,2,2,0,1]),2,3)])
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):consume(io.BytesIO(wire()),directory,3,lambda *a:None,packing_rows=1)
+            self.assertEqual(list(Path(directory).glob('*.bin')),[])
+
     def test_block_packing_all_widths_and_padding(self):
         for n in range(1,129):
             for bits in (4,8):

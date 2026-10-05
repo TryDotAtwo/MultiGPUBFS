@@ -281,8 +281,20 @@ class AutomaticPlanningTests(unittest.TestCase):
             slot=((n*int(e['MGBFS_ARCHIVE_ROWS'])+65535)//65536)*65536
             self.assertEqual(slot,8<<20)
             size=2*slot*int(e['MGBFS_ARCHIVE_SLOTS'])
-            self.assertLessEqual(size,base['host_available_bytes']//4)
-            self.assertEqual(int(e['MGBFS_ARCHIVE_SLOTS']),4)
+            self.assertLessEqual(size+cfg['archive_ram_plan']['workspace_reserve_bytes'],base['host_available_bytes']*3//4)
+            self.assertGreater(int(e['MGBFS_ARCHIVE_SLOTS']),4)
+            self.assertTrue(cfg['archive_ram_plan']['host_limited'])
+        roomy=dict(base,host_available_bytes=64<<30)
+        ram=pair_config(roomy,12,5)['archive_ram_plan']
+        self.assertEqual(ram['total_pinned_bytes'],24<<30)
+        self.assertFalse(ram['host_limited'])
+        base['archive_ram_slots']=16
+        self.assertEqual(pair_config(base,12,5)['env']['MGBFS_ARCHIVE_SLOTS'],'16')
+        for value in [True,1,65537,4.0]:
+            base['archive_ram_slots']=value
+            with self.assertRaises(ValueError):pair_config(base,12,5)
+        base.update(archive_ram_slots=16,host_available_bytes=128<<20)
+        with self.assertRaises(ValueError):pair_config(base,12,5)
 
     def test_background_keeps_inflight_and_freezes_latest_queued_ledger(self):
         started=threading.Event();release=threading.Event();seen=[]

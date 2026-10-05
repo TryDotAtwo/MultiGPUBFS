@@ -1,12 +1,11 @@
 //! Only resident-session jobs use this rank-local, shape-bounded cache.
 use std::{cell::RefCell, ffi::c_void};
 use mgbfs_cuda::ffi::*;
-use mgbfs_cuda::native_owner::cudaFreeHost;
 struct Cache {
     enabled: bool,
     shape: String,
     buffers: Vec<(*mut c_void, usize)>,
-    pinned: Vec<(*mut c_void, usize, *mut c_void)>,
+    pinned: Vec<(*mut c_void, usize, *mut c_void, std::sync::Arc<crate::pinned_archive::HostBlock>)>,
     comm: *mut c_void,
     buffer_hits: u64,
     comm_hits: u64,
@@ -37,32 +36,42 @@ impl Cache {
 impl Drop for Cache {
     fn drop(&mut self) {
         self.release_storage();
-        for (ptr, _, event) in self.pinned.drain(..) { unsafe { cudaEventDestroy(event);cudaFreeHost(ptr); } }
+        for (_, _, event, _) in self.pinned.drain(..) { unsafe { cudaEventDestroy(event); } }
         if !self.comm.is_null() { unsafe { mgbfs_nccl_destroy(self.comm); } }
     }
 }
 pub fn prepare_pinned(bytes: usize, slots: usize) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
+        // A subset of slots still retains its entire shared allocation. Only
+        // reuse an exact geometry; otherwise release the whole pool so the
+        // advertised bounded host budget is also the physical allocation.
+        if c.pinned.len()!=slots || c.pinned.iter().any(|(_,n,_,_)|*n!=bytes) {
+            for (_,_,event,_) in c.pinned.drain(..) {unsafe {cudaEventDestroy(event);}}
+            return;
+        }
         let mut keep = Vec::new();
-        for (ptr, n, event) in c.pinned.drain(..) {
-            if n == bytes && keep.len() < slots { keep.push((ptr,n,event)); }
-            else { unsafe { cudaEventDestroy(event);cudaFreeHost(ptr); } }
+        for (ptr, n, event, allocation) in c.pinned.drain(..) {
+            if n == bytes && keep.len() < slots { keep.push((ptr,n,event,allocation)); }
+            else { unsafe { cudaEventDestroy(event); } }
         }
         c.pinned = keep;
     });
 }
-pub fn pinned_take(bytes: usize) -> Option<(*mut c_void,*mut c_void)> {
+pub fn pinned_count(bytes: usize) -> usize {
+    CACHE.with(|c|c.borrow().pinned.iter().filter(|(_,n,_,_)|*n==bytes).count())
+}
+pub fn pinned_take(bytes: usize) -> Option<(*mut c_void,*mut c_void,std::sync::Arc<crate::pinned_archive::HostBlock>)> {
     CACHE.with(|c| {
         let mut c=c.borrow_mut();
-        let i=c.pinned.iter().position(|(_,n,_)| *n==bytes)?;
-        let (ptr,_,event)=c.pinned.swap_remove(i);Some((ptr,event))
+        let i=c.pinned.iter().position(|(_,n,_,_)| *n==bytes)?;
+        let (ptr,_,event,allocation)=c.pinned.swap_remove(i);Some((ptr,event,allocation))
     })
 }
-pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void) -> bool {
+pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void, allocation: std::sync::Arc<crate::pinned_archive::HostBlock>) -> bool {
     CACHE.with(|c| {
         let mut c=c.borrow_mut();if !c.enabled { return false; }
-        c.pinned.push((ptr,bytes,event));true
+        c.pinned.push((ptr,bytes,event,allocation));true
     })
 }
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }

@@ -154,19 +154,35 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         metadata[str(cli)+'sha'] = binary_sha
     env = dict(os.environ, **runtime_env)
     env.update(config.get('env', {}))
+    from archive_ram import plan
+    if 'host_available_bytes' not in config:
+        from streamed_bfs_launcher import available_host_bytes
+        if 'archive_host_available_bytes' not in metadata:
+            metadata['archive_host_available_bytes']=available_host_bytes()
+        config=dict(config,host_available_bytes=metadata['archive_host_available_bytes'])
+    if not config.get('gpu_inventory') and not config.get('resource_plan',{}).get('free_bytes'):
+        if 'archive_gpu_inventory' not in metadata:
+            sizes=subprocess.check_output(['nvidia-smi','--query-gpu=memory.total',
+                '--format=csv,noheader,nounits'],text=True).splitlines()
+            if len(sizes)!=world:raise ValueError('archive GPU inventory/topology')
+            metadata['archive_gpu_inventory']=[dict(total_bytes=int(x.strip())*(1<<20)) for x in sizes]
+        config=dict(config,gpu_inventory=metadata['archive_gpu_inventory'])
+    ram=plan(config,n,world)
+    config=dict(config,archive_ram_slots=ram['slots_per_rank'],archive_ram_plan=ram)
+    archive_slots=ram['slots_per_rank']
     selected = config.get('retention_policy') == 'last_complete_small_1000'
     if selected:
         if env.get('MGBFS_STATE_CODEC', 'permutation_u8') != 'permutation_u8':
             raise ValueError('selected archive requires compact state plane')
-        # Four large sequential pinned slots per rank. Copy geometry is
+        # Generously admitted sequential pinned slots per rank. Copy geometry is
         # independent of the compute batch, and allocated before search.
         env.update(MGBFS_ARCHIVE_SELECTION='last_complete_small_1000',
                    MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
-                   MGBFS_ARCHIVE_SLOTS='4')
+                   MGBFS_ARCHIVE_SLOTS=str(archive_slots))
     else:
         env.update(MGBFS_ARCHIVE_SELECTION='all_states',
                    MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
-                   MGBFS_ARCHIVE_SLOTS='4')
+                   MGBFS_ARCHIVE_SLOTS=str(archive_slots))
     # Durable-tail runs opt into bounded SSD writer backpressure. Bare native
     # BFS keeps its original fatal-on-exhaustion contract unless selected.
     env.setdefault('MGBFS_ARCHIVE_CREDIT_MODE', 'wait')
@@ -237,11 +253,13 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                         lambda depth,count,data,digest,replacement: emit(
                             ('replacement' if replacement else 'layer',rank,depth,count,data,digest)),
                         bits_per_symbol=archive.manifest['packing']['bits_per_symbol'],
+                        packing_rows=int(env['MGBFS_ARCHIVE_ROWS']),
                         on_packed_layer=lambda depth,count,path,config,digest: emit(
                             ('replacement',rank,depth,count,path,config,digest)))
                 else:
                     receipt = consume(reader, root/f'spool-{rank}', n, None,
                         bits_per_symbol=archive.manifest['packing']['bits_per_symbol'],
+                        packing_rows=int(env['MGBFS_ARCHIVE_ROWS']),
                         on_packed_layer=lambda depth,count,path,config,digest: emit(
                             ('layer',rank,depth,count,path,config,digest)))
                 emit(('receipt',rank,receipt))

@@ -61,6 +61,8 @@ Local validation: 113 tail tests and six CPU tests pass; 16 Rust archive tests a
 
 ## Remaining evidence
 
+Follow-up implementation after the measured panel (GPU validation pending): a host-ring planner targets aggregate GPU VRAM, bounded by 75% of available host RAM with explicit reader/OS reserves. Each rank pins one shared contiguous allocation, partitioned into reusable 8 MiB slots; exact cache geometry is required so retaining a subset cannot keep an oversized physical allocation. CPU reader output/shift arenas are also preallocated, and frame SHA-256 no longer concatenates the payload. Unit and Linux-target compile checks pass; these changes are not running in the existing `81f8a2f` sweep and their GPU timing is not yet claimed.
+
 - Full automatic sweep totals, search time versus pair transitions/archive/publication, and its HF readback are pending.
 - The native-time increase in the largest matched archive case needs a pool/backpressure measurement.
 - Plain NCCL fallback is used on these RTX cards. Startup LSA capability failed with CUDA_STATUS_7; Graph32/LSA performance is not validated here or on B300.

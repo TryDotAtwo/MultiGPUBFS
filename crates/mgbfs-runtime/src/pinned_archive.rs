@@ -11,33 +11,39 @@ use std::{
     thread::JoinHandle,
 };
 
+pub(crate) struct HostBlock { ptr: *mut c_void }
+// Disjoint Slot ranges are exclusively owned; the block only owns allocation.
+unsafe impl Send for HostBlock {}
+unsafe impl Sync for HostBlock {}
+impl HostBlock {
+    fn new(bytes: usize) -> Result<std::sync::Arc<Self>> {
+        let mut ptr=std::ptr::null_mut();
+        let status=unsafe {cudaHostAlloc(&mut ptr,bytes,0)};
+        if status!=0 {return Err(format!("ARCHIVE_PIN_ALLOC_{status}"));}
+        Ok(std::sync::Arc::new(Self {ptr}))
+    }
+}
+impl Drop for HostBlock {
+    fn drop(&mut self) {unsafe {cudaFreeHost(self.ptr);}}
+}
 pub(crate) struct Slot {
     pub ptr: *mut c_void,
     pub bytes: usize,
     pub ready: *mut c_void,
+    allocation: std::sync::Arc<HostBlock>,
 }
 // Exclusive ownership moves between the GPU producer and disk worker. The
 // Worker waits for the recorded D2H event before reading, returns after write.
 unsafe impl Send for Slot {}
 impl Slot {
-    fn new(bytes: usize) -> Result<Self> {
-        if let Some((ptr, ready)) = crate::session_cache::pinned_take(bytes) {
-            return Ok(Self {ptr,bytes,ready});
-        }
-        let mut ptr = std::ptr::null_mut();
-        let status = unsafe { cudaHostAlloc(&mut ptr, bytes, 0) };
-        if status != 0 {
-            return Err(format!("ARCHIVE_PIN_ALLOC_{status}"));
-        }
+    fn new(bytes: usize, allocation: std::sync::Arc<HostBlock>, offset: usize) -> Result<Self> {
+        let ptr=unsafe {allocation.ptr.cast::<u8>().add(offset).cast::<c_void>()};
         let mut ready = std::ptr::null_mut();
         let status = unsafe { cudaEventCreateWithFlags(&mut ready, 2) };
         if status != 0 {
-            unsafe {
-                cudaFreeHost(ptr);
-            }
             return Err(format!("ARCHIVE_EVENT_ALLOC_{status}"));
         }
-        Ok(Self { ptr, bytes, ready })
+        Ok(Self { ptr, bytes, ready, allocation })
     }
 }
 impl Drop for Slot {
@@ -45,9 +51,8 @@ impl Drop for Slot {
         unsafe {
             // Also protects queued slots dropped after a disk/queue failure.
             if cudaEventSynchronize(self.ready) == 0 &&
-                crate::session_cache::pinned_put(self.ptr,self.bytes,self.ready) { return; }
+                crate::session_cache::pinned_put(self.ptr,self.bytes,self.ready,self.allocation.clone()) { return; }
             cudaEventDestroy(self.ready);
-            cudaFreeHost(self.ptr);
         }
     }
 }
@@ -106,9 +111,18 @@ impl PinnedArchive {
             Archive::new_selected(extent, disk_bytes, width, config_digest)?
         } else if state_only { Archive::new_state_only(extent, disk_bytes, width, config_digest)? } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
         let (free_tx, free) = mpsc::sync_channel(slots);
-        for _ in 0..slots {
+        let cached=crate::session_cache::pinned_count(bytes).min(slots);
+        let missing=slots-cached;
+        let allocation=if missing>0 {Some(HostBlock::new(bytes.checked_mul(missing).ok_or("ARCHIVE_PIN_OVERFLOW")?)?)} else {None};
+        for index in 0..slots {
+            let slot=if let Some((ptr,ready,allocation))=crate::session_cache::pinned_take(bytes) {
+                Slot {ptr,bytes,ready,allocation}
+            } else {
+                Slot::new(bytes,allocation.as_ref().ok_or("ARCHIVE_CACHE_COUNT")?.clone(),
+                          (index-cached).checked_mul(bytes).ok_or("ARCHIVE_PIN_OVERFLOW")?)?
+            };
             free_tx
-                .try_send(Slot::new(bytes)?)
+                .try_send(slot)
                 .map_err(|_| "ARCHIVE_INIT_QUEUE")?;
         }
         let mut device = 0;
@@ -275,6 +289,25 @@ mod worker_failure_tests {
         unsafe { std::ptr::write_bytes(slot.ptr.cast::<u8>(), 0, slot.bytes); }
         archive.submit(slot, 0, 1).unwrap();
         (archive, report)
+    }
+    #[test]
+    fn pinned_slots_share_one_block_and_geometry_change_releases_it() {
+        assert_eq!(unsafe {cudaSetDevice(0)},0);
+        crate::session_cache::enable();
+        let archive=PinnedArchive::new(FaultExtent {write_fault:false,sync_fault:false},4096,4,[0;32],1,2).unwrap();
+        let first=archive.acquire().unwrap();
+        let second=archive.acquire().unwrap();
+        assert!(Arc::ptr_eq(&first.allocation,&second.allocation));
+        assert_eq!((second.ptr as usize).abs_diff(first.ptr as usize),first.bytes);
+        let allocation=Arc::downgrade(&first.allocation);
+        let bytes=first.bytes;
+        drop(first);drop(second);
+        archive.layer(0,0).unwrap();archive.finish().unwrap();
+        assert_eq!(crate::session_cache::pinned_count(bytes),2);
+        assert!(allocation.upgrade().is_some());
+        crate::session_cache::prepare_pinned(bytes,3);
+        assert_eq!(crate::session_cache::pinned_count(bytes),0);
+        assert!(allocation.upgrade().is_none());
     }
     #[test]
     fn fatal_credit_policy_does_not_wait_on_exhaustion() {

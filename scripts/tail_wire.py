@@ -22,30 +22,44 @@ def frame_digest(frame, payload):
     return digest.digest()
 
 
+class PackBuffer:
+    """One preallocated per-reader packing arena; returned views are borrowed.
+
+    The caller finishes its write/checksum before packing the next frame.
+    Padding stays zero because degree and symbol width are fixed per reader.
+    """
+    def __init__(self, n, bits, rows):
+        if not 1<=n<=128 or bits not in (4,8) or type(rows) is not int or rows<0:
+            raise ValueError('word shape')
+        self.n,self.bits,self.rows=n,bits,rows
+        self.output=np.zeros((rows,((n*bits+63)//64)*8),dtype=np.uint8)
+        self.shifted=np.empty((rows,n//2),dtype=np.uint8) if bits==4 else None
+
+    def pack(self, raw, count):
+        n,bits=self.n,self.bits
+        if type(count) is not int or not 0<=count<=self.rows or len(raw)!=count*n:
+            raise ValueError('word shape/packing arena bound')
+        symbols=np.frombuffer(raw,dtype=np.uint8).reshape(count,n)
+        if bits==4 and int(symbols.max(initial=0))>=16:
+            raise ValueError('alphabet exceeds four bits')
+        result=self.output[:count]
+        if bits==8:
+            result[:,:n]=symbols
+        else:
+            pairs=n//2
+            if pairs:
+                high=self.shifted[:count]
+                np.left_shift(symbols[:,1:2*pairs:2],4,out=high)
+                np.bitwise_or(symbols[:,:2*pairs:2],high,out=result[:,:pairs])
+            if n%2:result[:,pairs]=symbols[:,-1]
+        return memoryview(result.reshape(-1))
+
+
 def pack_batch(raw, count, n, bits_per_symbol=4):
-    if not 1 <= n <= 128 or len(raw) != count * n or bits_per_symbol not in (4,8):
-        raise ValueError('word shape')
-    symbols = np.frombuffer(raw, dtype=np.uint8).reshape(count, n)
-    if np.any(symbols >= 1 << bits_per_symbol):
-        raise ValueError('alphabet exceeds four bits')
-    width = ((n*bits_per_symbol+63)//64)*8
-    result = np.zeros((count, width), dtype=np.uint8)
-    if bits_per_symbol == 8:
-        result[:, :n] = symbols
-    else:
-        pairs = n//2
-        if pairs:
-            # One sequential matrix operation instead of n strided passes.
-            # Temporary storage is bounded by half the admitted input frame.
-            np.bitwise_or(symbols[:, :2*pairs:2],
-                          np.left_shift(symbols[:, 1:2*pairs:2],4),
-                          out=result[:, :pairs])
-        if n%2:
-            result[:, pairs] = symbols[:, -1]
-    return result.tobytes()
+    return bytes(PackBuffer(n,bits_per_symbol,count).pack(raw,count))
 
 
-def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per_symbol=4, on_packed_layer=None):
+def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per_symbol=4, on_packed_layer=None, packing_rows=None):
     """Callback only after checksummed layer commit; returns run receipt.
 
     Incomplete final layer is removed on EOF/error. Root belongs to one rank.
@@ -60,6 +74,7 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
     config = header[16:48].hex()
     chain = hashlib.sha256(header).digest()
     packed_digest = hashlib.sha256()
+    packer=PackBuffer(n,bits_per_symbol,packing_rows) if packing_rows is not None else None
     seq = depth = rows = total = 0
     path = None
     output = None
@@ -81,7 +96,8 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
                 if output is None:
                     path = root / f'layer-{depth:06d}.bin'
                     output = path.open('xb')
-                packed=pack_batch(payload[:count*n], count, n, bits_per_symbol)
+                symbols=memoryview(payload)[:count*n]
+                packed=packer.pack(symbols,count) if packer else pack_batch(symbols,count,n,bits_per_symbol)
                 output.write(packed)
                 packed_digest.update(packed)
                 rows += count
@@ -117,7 +133,7 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
 
 
 def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
-                     max_frame_bytes=64*1024*1024, on_packed_layer=None):
+                     max_frame_bytes=64*1024*1024, on_packed_layer=None, packing_rows=None):
     """Only a terminal replacement touches SSD. Samples stay bounded in RAM.
 
     on_layer(depth, rows, bytes_or_path, config_digest, replacement).
@@ -132,6 +148,7 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
     replacement = replaced = False
     buffer = bytearray(); path = output = None
     packed_digest = hashlib.sha256()
+    packer=PackBuffer(n,bits_per_symbol,packing_rows) if packing_rows is not None else None
     try:
         while True:
             frame = read_exact(stream, 80)
@@ -147,7 +164,7 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
             if kind == 1:
                 if not count or size != count*n or (not replacement and rows+count > 1000):
                     raise ValueError('selected record shape')
-                packed = pack_batch(payload, count, n, bits_per_symbol)
+                packed = packer.pack(payload,count) if packer else pack_batch(payload,count,n,bits_per_symbol)
                 if replacement:
                     if output is None:
                         root.mkdir(parents=True, exist_ok=True)

@@ -174,11 +174,11 @@ def pair_config(base, n, r):
         MGBFS_LIBRARY_POOL_BYTES=str(pool))
     cfg['batch'] = min(32768, capacity)
     # The same rounded pinned geometry is reused across every pair and policy.
-    rows=max(1000,8*1024*1024//n)
-    slots=4
-    host=base.get('host_available_bytes',8<<30)
-    if host < base.get('world',2)*slots*(8<<20) + (64<<20):
-        raise ValueError('insufficient host archive memory')
+    from archive_ram import plan
+    ram=plan(base,n,base.get('world',2))
+    rows,slots=ram['rows_per_slot'],ram['slots_per_rank']
+    cfg['archive_ram_slots']=slots
+    cfg['archive_ram_plan']=ram
     selection=('last_complete_small_1000' if cfg.get('retention_policy') ==
                'last_complete_small_1000' else 'all_states')
     cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots),
@@ -408,12 +408,12 @@ def main(cancelled=None):
     if config_path.exists():
         base=json.loads(config_path.read_text())
     else:
-        lines=subprocess.check_output(['nvidia-smi','--query-gpu=index,name,memory.free',
+        lines=subprocess.check_output(['nvidia-smi','--query-gpu=index,name,memory.free,memory.total',
             '--format=csv,noheader,nounits'],text=True).splitlines()
         inventory=[]
         for line in lines:
-            index,name,free=line.split(',')
-            inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2))
+            index,name,free,total=line.split(',')
+            inventory.append(dict(index=int(index),name=name.strip(),free_bytes=int(free)*1024**2,total_bytes=int(total)*1024**2))
         from streamed_bfs_launcher import available_host_bytes
         runtime=json.loads(args.runtime_env.read_text())
         base=dict(world=len(inventory),run_id=args.root.name,
