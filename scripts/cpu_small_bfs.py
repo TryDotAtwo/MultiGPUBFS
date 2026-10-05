@@ -78,6 +78,7 @@ def exact_search(n, r, seed_hex, on_layer, *, deadline=None, cancelled=None):
 
 
 def eligible(config):
+    orbit_layout(config['n'],config['r'])
     limit = config.get('small_graph_cpu_max_states', 0)
     if type(limit) is not int or limit < 0:
         raise ValueError('invalid small-graph CPU routing threshold')
@@ -87,6 +88,8 @@ def eligible(config):
 def run(config, source, root, runtime_env, *, cancelled=None, deadline=None,
         program_commit=None, publisher_api=None):
     n, r, world = config['n'], config['r'], config.get('world', 2)
+    if world not in (1,2,4,8):
+        raise ValueError('graph/topology')
     orbit = orbit_layout(n, r)
     layout = state_layout(n, n-r+1)
     order = math.factorial(n)//math.factorial(r)

@@ -4,7 +4,7 @@ import unittest
 import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from scripts.cpu_small_bfs import exact_search, eligible, run
+from scripts.cpu_small_bfs import exact_search, eligible, run, transitions
 from scripts.paired_tail import SEEDS, run_pair
 from scripts.state_layout import state_layout
 
@@ -25,6 +25,14 @@ def oracle(n, r):
 
 
 class SmallCpuTests(unittest.TestCase):
+    def test_transitions_across_uint64_and_eight_bit_symbols(self):
+        for n in [17,33,64,128]:
+            bits=state_layout(n,n)['bits_per_symbol']
+            state=tuple(range(n)); packed=sum(x<<(i*bits) for i,x in enumerate(state))
+            expected=[state[1:]+state[:1],state[-1:]+state[:-1],(state[1],state[0])+state[2:]]
+            actual=[tuple((w>>(i*bits))&((1<<bits)-1) for i in range(n)) for w in transitions(packed,n,bits)]
+            self.assertEqual(actual,expected)
+
     def test_exact_states_both_seeds_and_wide_layouts(self):
         for n,r in [(2,1),(4,1),(8,1),(17,16),(33,32),(128,127),(33,31)]:
             expected = oracle(n,r)
@@ -56,11 +64,24 @@ class SmallCpuTests(unittest.TestCase):
             self.assertEqual(manifest['status'],'COMPLETE')
             self.assertEqual(manifest['layers'][-1]['states'],1)
             self.assertEqual(manifest['execution_backend'],'CPU_EXACT_PACKED')
+            calls=[0]
+            def cancel():
+                calls[0]+=1
+                return 'stop' if calls[0]>=20 else None
             path=run(cfg,Path(__file__).parents[1],Path(temporary)/'partial',{},
-                     program_commit='test',cancelled=lambda:'stop')
+                     program_commit='test',cancelled=cancel)
             manifest=json.loads(path.read_text())
             self.assertEqual(manifest['status'],'INCOMPLETE')
-            self.assertLessEqual(sum(f['states'] for f in manifest.get('state_files',[])),1000)
+            self.assertGreater(sum(f['states'] for f in manifest['files']),0)
+            self.assertLessEqual(sum(f['states'] for f in manifest['files']),1000)
+            expected=oracle(8,1)
+            for f in manifest['files']:
+                data=(Path(temporary)/'partial/saved'/f['path']).read_bytes()
+                width=manifest['packing']['bytes_per_state'];bits=manifest['packing']['bits_per_symbol']
+                words=[int.from_bytes(data[i:i+width],'little') for i in range(0,len(data),width)]
+                states={tuple((word>>(i*bits))&((1<<bits)-1) for i in range(8)) for word in words}
+                self.assertEqual(len(states),f['states'])
+                self.assertLessEqual(states,expected[f['depth']])
 
     def test_two_seed_evidence_is_cpu_and_not_fabricated_rank_reports(self):
         with tempfile.TemporaryDirectory() as temporary:
