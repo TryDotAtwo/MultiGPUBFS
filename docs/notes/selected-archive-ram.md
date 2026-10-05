@@ -98,3 +98,29 @@ native trace remains the available diagnostic record, not a durability receipt.
 
 No GPU instance was created, no state payload was downloaded, and no HF write
 was performed to validate this code change.
+
+
+## Bounded GPU evidence, 2026-10-05
+
+Production source `6dd0e21` passed bounded tests on two RTX 3060 cards.
+See [the measured report](../../BFS_2x3060_REPORT_2026-10-05.md).
+Independent word oracles verified retained COMPLETE states. A capacity stop
+exported 1000 distinct states from a completed frontier of 5478 states.
+A slow RAM consumer retained correct layer counts and produced no intermediate
+state payload files at 43 layer callbacks. Eight-bit symbols and aligned words
+were checked at n=17,33,128 with intentionally bounded incomplete searches.
+
+The post-retirement terminal export branch was forced on four small graphs by
+lowering its threshold in an isolated test-only build. Exported states matched
+independent word oracles. This is not natural terminal-frontier coverage over
+1000 states or a large-copy throughput measurement.
+
+The automatic test attempted 82 pairs:79 COMPLETE with both seeds matched,
+two capacity failures with the second run skipped, and one deadline stop.
+It pruned 230 pairs;7943 remained unrun. HF readback verified 162 manifests and
+nine shared Parquet payloads. This was not an exhaustive sweep. The rental and
+remote credential were removed and API absence was confirmed.
+
+Graph32 was rejected because this rental used ordinary NCCL without admitted
+NCCL_LSA device-count owners. LSA/Graph32 and memory-saturated B300 performance
+remain separate acceptance gates.
