@@ -205,8 +205,8 @@ class TailArchive:
                 checksum = digest.hexdigest()
             selected.append(dict(entry, path=target.relative_to(self.root).as_posix(),
                                  states=take // self.width, bytes=take,
-                                 full_layer=take == entry["bytes"],
-                                 first_state_ordinal=offset // self.width,
+                                 full_layer=entry['full_layer'] and take == entry["bytes"],
+                                 first_state_ordinal=entry.get('first_state_ordinal', 0) + offset // self.width,
                                  sha256=checksum))
             remaining -= take
         manifest = dict(self.manifest, status="COMPLETE" if complete else "INCOMPLETE",

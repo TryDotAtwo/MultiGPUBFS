@@ -237,6 +237,9 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         return Err("TOPOLOGY".into());
     }
     if world == 1 && crate::reference_launch::macro_depth_from_env(world)? {
+        if std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000") {
+            return Err("SELECTED_ARCHIVE_REQUIRES_UNIT_DEPTH".into());
+        }
         return run_macro_pass(args, warmup_completed, is_measure);
     }
     // Rendezvous by launch identity first. Config digest is agreed over the
@@ -331,6 +334,14 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
     let description=format!("distributed-native-ring-v2;{group};batch={batch};capacity_mode={mode:?};declared_capacity={declared_capacity};declared_ring={declared_future};global_capacity={};global_ring={};map={rank_map:?};seed=0x{seed_hex};archive_width={archive_width}", capacity_plan.global_records, future_plan.global_records);
     let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
+    let archive_selection = std::env::var("MGBFS_ARCHIVE_SELECTION").ok();
+    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000") {
+        return Err("ENV_MGBFS_ARCHIVE_SELECTION".into());
+    }
+    if archive_selection.is_some() && !compact_states {
+        return Err("SELECTED_ARCHIVE_REQUIRES_COMPACT_STATES".into());
+    }
+    let description = format!("{description};archive_selection={archive_selection:?}");
     let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
     let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
     let archive_enabled = crate::reference_launch::bench_archive_for_launch(
@@ -385,6 +396,7 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         "reserve": cfg.untouched_vram_reserve, "archive_rows": archive_rows,
         "archive_slots": std::env::var("MGBFS_ARCHIVE_SLOTS").ok(),
         "stream_archive": stream_archive, "archive_enabled": archive_enabled,
+        "archive_selection": archive_selection,
         "warmup_requested": warmup_requested,
         "calibration_layers": calibration_layers,
         "transport": format!("{:?}", cfg.transport),
@@ -542,7 +554,8 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
                 .map_err(|e| e.to_string())?;
         }
         let advance = if let Some(archive) = archive.as_mut() {
-            bfs.advance_archived(archive)
+            if archive.selected { bfs.advance_selected(archive) }
+            else { bfs.advance_archived(archive) }
         } else {
             bfs.advance()
         };
@@ -665,6 +678,12 @@ fn run_pass(args: &[String], warmup_completed: bool, is_measure: bool) -> Result
         value["transport_control_pinned_payload_bytes"] =
             serde_json::json!(bfs.transport_control_pinned_payload_bytes());
         value["pinned_bytes_scope"] = serde_json::json!("archive_only");
+        if std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000") {
+            value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts");
+            value["archive_wire_format"] = serde_json::json!("MGBFSAS2");
+            value["archive_prefix_limit_per_rank"] = serde_json::json!(1000);
+            value["archive_per_state_hashes"] = serde_json::json!(false);
+        }
         if !archive_enabled || stream_archive || !is_measure {
             value["durable_run_commit_seconds"] = serde_json::Value::Null;
         }

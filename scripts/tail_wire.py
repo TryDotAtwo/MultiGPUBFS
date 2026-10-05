@@ -93,3 +93,75 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
             output.close()
         if path:
             path.unlink(missing_ok=True)
+
+
+def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
+                     max_frame_bytes=64*1024*1024):
+    """Only a terminal replacement touches SSD. Samples stay bounded in RAM.
+
+    on_layer(depth, rows, bytes_or_path, config_digest, replacement).
+    The GPU producer sends canonical symbols; packing/checksums run here.
+    """
+    root = Path(root)
+    header = read_exact(stream, 48)
+    if header[:8] != b'MGBFSAS2' or struct.unpack_from('<Q', header, 8)[0] != n:
+        raise ValueError('selected archive header')
+    config = header[16:48].hex(); chain = hashlib.sha256(header).digest()
+    seq = depth = rows = total = previous_rows = 0
+    replacement = replaced = False
+    buffer = bytearray(); path = output = None
+    try:
+        while True:
+            frame = read_exact(stream, 80)
+            kind, at, count, size, sequence = struct.unpack_from('<QQQQQ', frame, 8)
+            expected = depth-1 if kind == 4 else depth
+            if (frame[:8] != b'MGBFSFR1' or at != expected or sequence != seq
+                    or frame[48:] != chain or size > max_frame_bytes):
+                raise ValueError('selected archive chain/order')
+            payload = read_exact(stream, size)
+            chain = hashlib.sha256(frame+payload).digest()
+            if read_exact(stream, 32) != chain:
+                raise ValueError('selected archive checksum')
+            if kind == 1:
+                if not count or size != count*n or (not replacement and rows+count > 1000):
+                    raise ValueError('selected record shape')
+                packed = pack_batch(payload, count, n, bits_per_symbol)
+                if replacement:
+                    if output is None:
+                        root.mkdir(parents=True, exist_ok=True)
+                        path = root/f'layer-{depth:06d}.bin'; output = path.open('xb')
+                    output.write(packed)
+                else:
+                    buffer.extend(packed)
+                rows += count
+            elif kind == 2:
+                if size or count != rows:
+                    raise ValueError('selected layer count')
+                if replacement:
+                    if output is None:
+                        raise ValueError('empty terminal replacement')
+                    output.close(); output = None
+                    on_layer(depth, rows, path, config, True); path = None
+                else:
+                    on_layer(depth, rows, bytes(buffer), config, False); buffer.clear()
+                total += rows; previous_rows = rows; rows = 0; depth += 1
+            elif kind == 4:
+                if size or count or rows or not depth or replaced:
+                    raise ValueError('selected replacement phase')
+                replacement = replaced = True; depth -= 1; total -= previous_rows
+            elif kind == 3:
+                if size or rows or not depth or count != total:
+                    raise ValueError('selected run count')
+                return dict(depths=depth, states=total, config_digest=config,
+                            selected=True, terminal_replaced=replaced)
+            else:
+                raise ValueError('selected frame kind')
+            if replacement and kind == 2:
+                # A terminal replacement must be followed by RunCommit only.
+                replacement = False
+            elif replaced and not replacement and kind != 3:
+                raise ValueError('records after terminal replacement')
+            seq += 1
+    finally:
+        if output: output.close()
+        if path: path.unlink(missing_ok=True)

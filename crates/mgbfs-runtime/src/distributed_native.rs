@@ -2826,7 +2826,44 @@ impl DistributedNativeBfs {
             }
         })
     }
-    /// Archive each bounded parent slice before retiring its StateRing range.
+    /// Compact export never streams large intermediate layers. A bounded
+    /// prefix is copied before retirement for recoverable incomplete output.
+    /// On exhaustion, no accepted future states have overwritten the physical
+    /// source ranges; export them before this BFS can be dropped or reused.
+    pub fn advance_selected(&mut self, archive: &mut crate::pinned_archive::PinnedArchive) -> Result<bool> {
+        if !archive.selected || self.front.len() > 2 || self.failed ||
+                self.front.iter().map(|e| e.count).sum::<u64>() != u64::from(self.current_count) {
+            return Err("SELECTED_ARCHIVE_FRONTIER_CONTRACT".into());
+        }
+        let depth = self.depth;
+        let count = self.current_count;
+        let mut view = [Extent::default(); 2];
+        let len = self.front.len();
+        view[..len].copy_from_slice(&self.front);
+        let mut remaining = u64::from(count.min(1000));
+        for (index, extent) in view[..len].iter().enumerate() {
+            let take = remaining.min(extent.count);
+            if take != 0 { self.archive_range(archive, extent.begin, take, index)?; }
+            remaining -= take;
+        }
+        archive.layer(u64::from(depth), u64::from(count.min(1000)))?;
+        self.archived_depth = Some(depth);
+        let alive = self.advance()?;
+        if !alive && count > 1000 {
+            archive.replace_last_layer()?;
+            let advanced_depth = self.depth;
+            self.depth = depth;
+            let copied = (|| {
+                for (index, extent) in view[..len].iter().enumerate() {
+                    self.archive_range(archive, extent.begin, extent.count, index)?;
+                }
+                archive.layer(u64::from(depth), u64::from(count))
+            })();
+            self.depth = advanced_depth;
+            copied?;
+        }
+        Ok(alive)
+    }
     pub fn advance_archived(
         &mut self,
         archive: &mut crate::pinned_archive::PinnedArchive,
@@ -3737,20 +3774,26 @@ impl DistributedNativeBfs {
         let s = self.archive_stream.0;
         let mut offset = 0u64;
         while offset < count {
-            let n = u64::from(archive.rows.min(self.cfg.batch)).min(count - offset) as u32;
+            // The compact u8 state plane can copy large contiguous blocks
+            // independently of the compute batch. Matrix conversion still
+            // uses its batch-sized device scratch buffer.
+            let rows = if archive.selected && self.width == archive.width {
+                archive.rows
+            } else { archive.rows.min(self.cfg.batch) };
+            let n = u64::from(rows).min(count - offset) as u32;
             let slot = archive.acquire_cancellable(||
                 self.ensure_not_cancelled().is_err() ||
                 self.failure_report.as_ref().is_some_and(|flag|
                     flag.load(std::sync::atomic::Ordering::Acquire)==2))?;
             let copied = (|| unsafe {
                 let states = self.states.at((begin + offset) as usize * self.stride);
-                check(mgbfs_hash_run(
+                if !archive.selected { check(mgbfs_hash_run(
                     self.archive_hash.0,
                     states.cast(),
                     self.archive_hashes.ptr.cast(),
                     n,
                     s,
-                ))?;
+                ))?; }
                 if compact_permutation && self.width != archive.width {
                     check(mgbfs_archive_pack_permutation_u8(
                         archive.width as u32,
@@ -3780,13 +3823,13 @@ impl DistributedNativeBfs {
                         s,
                     ))?;
                 }
-                check(cudaMemcpyAsync(
+                if !archive.selected { check(cudaMemcpyAsync(
                     slot.ptr.cast::<u8>().add(n as usize * archive.width).cast(),
                     self.archive_hashes.ptr,
                     n as usize * 16,
                     2,
                     s,
-                ))?;
+                ))?; }
                 check(cudaEventRecord(slot.ready, s))
             })();
             // Publish cancellation before draining D2H: peers must not wait for

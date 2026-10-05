@@ -1,0 +1,100 @@
+# Compact archive: bounded RAM samples and terminal export
+
+The `last_complete_small_1000` launcher now selects the `MGBFSAS2` native
+stream. Other retention modes continue using the existing `MGBFSAR1` path.
+This change is implemented and CPU/type checked; GPU execution and speed
+measurements are still required before a production readiness claim.
+
+## Source lifetime
+
+`retire_dense_prefix_impl` advances StateRing head, allowing subsequently
+accepted future records to overwrite consumed source ranges. Previous/current
+deduplication planes are not a promise that all previous/current state bytes
+remain intact. Incomplete output therefore takes a bounded prefix before this
+retirement. It does not read a failed CUDA runtime to recover those bytes.
+
+On successful global exhaustion the next layer has zero accepted records on
+every rank. Accepted materialization has consequently not overwritten the
+source state arena. `advance_selected` saves its at-most-two physical extents
+before advancement and exports their bytes immediately after this existing
+global exhaustion result, before BFS destruction or another graph starts.
+Logical retirement is not treated as a generally valid read lease: this late
+read is allowed only on the zero-next-layer success branch. Live errors never
+use the late-read branch. No extra full frontier is retained in VRAM.
+
+The GPU gate must confirm this physical-lifetime argument for CUCO_RANK,
+physical wrap, empty ranks, both seeds and supported transports. CUDA
+Graph-32 must be included in its own acceptance gate before being enabled.
+
+## Transfer and host ownership
+
+- Four preallocated pinned slots per rank, normally 8 MiB each. Slots are
+  rounded to 64 KiB so changing `n` does not force different cached host buffer
+  sizes. Eight ranks use approximately 256 MiB of this pinned pool.
+- Canonical u8 states copy directly in large sequential blocks. Archive block
+  size is independent of compute batch size; no new per-batch synchronization
+  or allocation is introduced. Matrix conversion retains its batch limit, but
+  the compact launcher explicitly requires the compact state representation.
+- Intermediate copies contain at most 1000 states per rank. The host selects
+  the first at-most-1000 records globally, in rank order. A small global layer
+  with at most 1000 records is retained whole. The temporary per-rank samples
+  are not a claim that 8000 records are published for INCOMPLETE.
+- The compute stream's existing retirement dependency waits for the prefix
+  D2H event. The worker waits for slot completion, hashes the transport frame
+  on the CPU and writes it sequentially to the FIFO. No per-state Hash128
+  calculation/copy is performed for this stream.
+- The host descriptor queue is bounded and cancellable. Intermediate samples
+  and statistics remain in host RAM; no rank spool or combined layer file is
+  written for a large intermediate layer.
+
+The pinned queue is bounded. Ordinary host metadata and selected small layers
+accumulate for the current graph, outside the native batch hot path. This is
+not a claim that all host metadata is preallocated or that arbitrarily long
+graphs have a constant total host-memory footprint.
+
+## Wire format and publication
+
+`MGBFSAS2` has the existing 48-byte header and checksummed sequential frames,
+but Records contain state bytes only, without the unused Hash128 plane.
+Intermediate Layer counts describe the transmitted prefix, not the full BFS
+layer. Full layer counts/timings come from native depth trace and reports.
+
+After the last sample LayerCommit, kind 4 replaces that layer on success;
+full terminal Records and LayerCommit follow, then RunCommit. The reader and
+verifier require replacement of only the latest layer, at most once. The
+replacement resets transmitted totals instead of counting the prefix twice.
+A local terminal layer with <=1000 rows already has a full sample and requires
+no replacement. Global terminal layers spanning multiple such ranks use the
+complete rank samples, not their truncated global INCOMPLETE prefix.
+
+Only terminal replacement payloads create rank spool files, written by the
+reader thread. After search, finalization constructs selected packed files,
+hashes them and performs durability sync. This still reads terminal rank
+spools once to assemble the final file: it removes intermediate SSD traffic,
+not every final-output disk pass. Existing Parquet/HF publication and checksum
+verification remain unchanged. Old archive modes are not claimed to have
+received this optimization.
+
+COMPLETE stores the final whole layer and all earlier whole layers with
+<=1000 rows. INCOMPLETE materializes only the newest committed prefix, at most
+1000 records total. Statistics use the existing all-rank completed-advance
+boundary; an expansion that fails partway does not invent a completed timing.
+Snapshots are sealed after the search, not fsynced after every intermediate
+layer. Process/controller failure can lose RAM-only intermediate metadata;
+native trace remains the available diagnostic record, not a durability receipt.
+
+## Local verification
+
+- Rust archive codec tests: selected replacement, bounded samples, empty rank,
+  corruption/truncation and compatibility with old archive encoding.
+- Python selected stream/retention tests: no intermediate state files, terminal
+  streaming, corruption cleanup, 8-rank global 1000-record limit, missing final
+  payload rejection, full small-layer retention and independent L/R/X oracle.
+- Existing launcher failure, two-seed, sweep, archive, Parquet and publication
+  tests pass.
+- `cargo check -p mgbfs-cli --features cuda,library-owner --target
+  x86_64-unknown-linux-gnu` passes. This checks Linux Rust code and types; it is
+  not a CUDA link test, a kernel execution test or a hardware benchmark.
+
+No GPU instance was created, no state payload was downloaded, and no HF write
+was performed to validate this code change.

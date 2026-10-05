@@ -55,6 +55,7 @@ enum Message {
     Records(Slot, u64, u32),
     Layer(u64, u64),
     Complete,
+    ReplaceLast,
 }
 pub struct PinnedArchive {
     tx: Option<SyncSender<Message>>,
@@ -66,6 +67,7 @@ pub struct PinnedArchive {
     slots: usize,
     device: i32,
     wait_for_credit: bool,
+    pub(crate) selected: bool,
 }
 impl PinnedArchive {
     /// Disk extent is physically reserved by Archive::new before worker startup.
@@ -84,12 +86,23 @@ impl PinnedArchive {
         rows: u32, slots: usize,
         failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
-        let plan = ArchiveRingPlan::new(width, rows, slots)?;
+        let selected = std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000");
+        let mut plan = ArchiveRingPlan::new(width, rows, slots)?;
+        if selected {
+            let raw = width.checked_mul(rows as usize).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+            // Stable geometry across graph degrees lets resident sessions
+            // reuse the same host allocation instead of pinning every pair.
+            plan.slot_bytes = raw.checked_add((65536 - raw % 65536) % 65536)
+                .ok_or("ARCHIVE_PIN_OVERFLOW")?;
+            plan.pinned_bytes = plan.slot_bytes.checked_mul(slots).ok_or("ARCHIVE_PIN_OVERFLOW")?;
+        }
         let bytes = plan.slot_bytes;
         crate::session_cache::prepare_pinned(bytes, slots);
         let pinned_bytes = plan.pinned_bytes;
         // Fail disk reservation/header validation before pinning host RAM.
-        let mut archive = Archive::new_run_durable(extent, disk_bytes, width, config_digest)?;
+        let mut archive = if selected {
+            Archive::new_selected(extent, disk_bytes, width, config_digest)?
+        } else { Archive::new_run_durable(extent, disk_bytes, width, config_digest)? };
         let (free_tx, free) = mpsc::sync_channel(slots);
         for _ in 0..slots {
             free_tx
@@ -124,7 +137,7 @@ impl PinnedArchive {
                             if status != 0 {
                                 return Err(on_error(format!("ARCHIVE_D2H_{status}")));
                             }
-                            let n = count as usize * (width + 16);
+                            let n = count as usize * (width + if selected { 0 } else { 16 });
                             let bytes =
                                 unsafe { std::slice::from_raw_parts(slot.ptr.cast::<u8>(), n) };
                             archive.records_wire(depth, u64::from(count), bytes)
@@ -138,6 +151,7 @@ impl PinnedArchive {
                         }
                         Message::Layer(depth, count) => archive.layer_commit(depth, count)
                             .map_err(&on_error)?,
+                        Message::ReplaceLast => archive.replace_last_layer().map_err(&on_error)?,
                         Message::Complete => {
                             archive.run_commit().map_err(&on_error)?;
                             eprintln!("MGBFS_ARCHIVE_TIMINGS {:?}", archive.timings);
@@ -157,6 +171,7 @@ impl PinnedArchive {
             rows,
             pinned_bytes,
             slots,
+            selected,
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),
         })
@@ -190,7 +205,7 @@ impl PinnedArchive {
     pub(crate) fn submit_notifying(
         &self, slot: Slot, depth: u64, rows: u32, on_failure: impl FnOnce(&str),
     ) -> Result<()> {
-        if rows == 0 || rows > self.rows || rows as usize * (self.width + 16) > slot.bytes {
+        if rows == 0 || rows > self.rows || rows as usize * (self.width + if self.selected { 0 } else { 16 }) > slot.bytes {
             on_failure("ARCHIVE_SLOT_SHAPE");
             return Err("ARCHIVE_SLOT_SHAPE".into());
         }
@@ -203,6 +218,9 @@ impl PinnedArchive {
     }
     pub(crate) fn layer(&self, depth: u64, count: u64) -> Result<()> {
         self.send(Message::Layer(depth, count))
+    }
+    pub(crate) fn replace_last_layer(&self) -> Result<()> {
+        self.send(Message::ReplaceLast)
     }
     /// Call only after search exhaustion. Waiting here is durability, not BFS backpressure.
     pub fn finish(mut self) -> Result<()> {

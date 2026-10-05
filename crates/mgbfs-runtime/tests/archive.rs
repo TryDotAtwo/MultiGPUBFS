@@ -1,6 +1,42 @@
 use mgbfs_runtime::archive::{verify, Archive, Extent, StreamExtent};
 
 #[test]
+fn selected_stream_replaces_only_terminal_prefix_and_omits_hash_plane() {
+    let writer = SharedWriter::default();
+    let readable = writer.clone();
+    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0;32]).unwrap();
+    a.records_wire(0, 1, &[0,1,2]).unwrap();
+    a.layer_commit(0, 1).unwrap();
+    a.records_wire(1, 1000, &vec![1;3000]).unwrap();
+    a.layer_commit(1,1000).unwrap();
+    a.replace_last_layer().unwrap();
+    a.records_wire(1,3000,&vec![2;9000]).unwrap();
+    a.layer_commit(1,3000).unwrap();
+    assert!(a.replace_last_layer().is_err());
+    assert!(a.records_wire(2,1,&[0,1,2]).is_err());
+    a.run_commit().unwrap();
+    let bytes=readable.0.lock().unwrap().clone();
+    assert_eq!(&bytes[..8],b"MGBFSAS2");
+    verify(&bytes).unwrap();
+    assert!(verify(&bytes[..bytes.len()-1]).is_err());
+    let mut damaged=bytes;damaged[150]^=1;
+    assert!(verify(&damaged).is_err());
+}
+
+#[test]
+fn selected_empty_rank_and_bounded_intermediate_records() {
+    let writer = SharedWriter::default();
+    let readable = writer.clone();
+    let mut a = Archive::new_selected(StreamExtent::new(writer), u64::MAX, 3, [0;32]).unwrap();
+    assert!(a.replace_last_layer().is_err());
+    assert!(a.records_wire(0,1001,&vec![0;3003]).is_err());
+    a.layer_commit(0,0).unwrap();
+    a.layer_commit(1,0).unwrap();
+    a.run_commit().unwrap();
+    verify(&readable.0.lock().unwrap()).unwrap();
+}
+
+#[test]
 fn stream_extent_handles_large_orbits_without_physical_reservation() {
     let mut extent = StreamExtent::new(Vec::new());
     extent.reserve(u64::MAX).unwrap();

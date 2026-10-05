@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from bfs_tail_archive import TailArchive, atomic_json
-from tail_wire import consume
+from tail_wire import consume, consume_selected
 
 
 class FifoReader:
@@ -154,6 +154,17 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         metadata[str(cli)+'sha'] = binary_sha
     env = dict(os.environ, **runtime_env)
     env.update(config.get('env', {}))
+    selected = config.get('retention_policy') == 'last_complete_small_1000'
+    if selected:
+        if env.get('MGBFS_STATE_CODEC', 'permutation_u8') != 'permutation_u8':
+            raise ValueError('selected archive requires compact state plane')
+        # Four large sequential pinned slots per rank. Copy geometry is
+        # independent of the compute batch, and allocated before search.
+        env.update(MGBFS_ARCHIVE_SELECTION='last_complete_small_1000',
+                   MGBFS_ARCHIVE_ROWS=str(max(1000, 8*1024*1024//n)),
+                   MGBFS_ARCHIVE_SLOTS='4')
+    else:
+        env.pop('MGBFS_ARCHIVE_SELECTION', None)
     # Durable-tail runs opt into bounded SSD writer backpressure. Bare native
     # BFS keeps its original fatal-on-exhaustion contract unless selected.
     env.setdefault('MGBFS_ARCHIVE_CREDIT_MODE', 'wait')
@@ -179,7 +190,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         runtime_paths=runtime_env,
         gpu_inventory=inventory,
         runtime_configuration={k:v for k,v in env.items() if k.startswith(('MGBFS_', 'NCCL_'))})
-    archive = TailArchive(root/'saved', n=n, r=r, start=start,
+    if selected:
+        from selected_tail import SelectedTailArchive
+    archive = (SelectedTailArchive if selected else TailArchive)(root/'saved', n=n, r=r, start=start,
         actions=dict(L='cyclic left rotation', R='cyclic right rotation', X='swap positions 0 and 1'),
         program_commit=commit, launch_config=saved, sample_interval_seconds=.05)
     archive.manifest['vram_observation'] = dict(
@@ -197,9 +210,18 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         publisher = Publisher(root/'upload-pins', config['repo_id'], config['run_id'], token, api=publisher_api,
             storage_format=config.get('live_upload_format','packed'),
             prefix=config.get('live_upload_prefix'))
-    messages, stopped = queue.Queue(), threading.Event()
+    messages = queue.Queue(maxsize=world*4 if selected else 0)
+    stopped, consumer_closed = threading.Event(), threading.Event()
+    def emit(message):
+        while not consumer_closed.is_set():
+            try:
+                messages.put(message, timeout=.05)
+                return
+            except queue.Full:
+                pass
     begins, ends, samples, native_errors, lock = {}, {}, [], [], threading.Lock()
     readers, threads, pending, receipts = [], [], {}, {}
+    replacements, selected_latest = {}, None
     for rank in range(world):
         fifo = root/f'archive-rank-{rank}.mgbfsar1'
         os.mkfifo(fifo)
@@ -207,12 +229,18 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         readers.append(reader)
         def read_rank(rank=rank, reader=reader):
             try:
-                receipt = consume(reader, root/f'spool-{rank}', n,
-                    lambda depth,count,path,digest: messages.put(('layer',rank,depth,count,path,digest)),
-                    bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
-                messages.put(('receipt',rank,receipt))
+                if selected:
+                    receipt = consume_selected(reader, root/f'spool-{rank}', n,
+                        lambda depth,count,data,digest,replacement: emit(
+                            ('replacement' if replacement else 'layer',rank,depth,count,data,digest)),
+                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
+                else:
+                    receipt = consume(reader, root/f'spool-{rank}', n,
+                        lambda depth,count,path,digest: emit(('layer',rank,depth,count,path,digest)),
+                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
+                emit(('receipt',rank,receipt))
             except BaseException as error:
-                messages.put(('error',rank,str(error)))
+                emit(('error',rank,str(error)))
         thread = threading.Thread(target=read_rank, daemon=True)
         thread.start()
         threads.append(thread)
@@ -253,7 +281,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                         with lock:
                             (begins if match[1]=='BEGIN' else ends)[key] = fields
             stopped.set()
-            messages.put(('native_job_done',))
+            emit(('native_job_done',))
     logthread = threading.Thread(target=log_reader, daemon=True)
     logthread.start()
     deadline = time.monotonic()+config.get('timeout_seconds',300)
@@ -292,6 +320,11 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                 elif message[0] == 'layer':
                     _,rank,depth,count,path,digest = message
                     pending.setdefault(depth,{})[rank] = (count,path,digest)
+                elif message[0] == 'replacement':
+                    _,rank,at,count,path,digest = message
+                    if rank in replacements:
+                        raise ValueError('duplicate terminal replacement')
+                    replacements[rank] = (at,count,path,digest)
             depth = archive.manifest['last_completed_layer']+1
             parts = pending.get(depth,{})
             with lock:
@@ -304,10 +337,18 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             if ready:
                 if len({p[2] for p in parts.values()}) != 1:
                     raise ValueError('rank configuration mismatch')
-                archive.completed_layer(depth, sum(p[0] for p in parts.values()),
-                    chunks([parts[rank][1] for rank in range(world)]), seconds, peaks)
-                for _,path,_ in parts.values():
-                    path.unlink()
+                if selected:
+                    counts = [int(begins[rank,depth]['count']) for rank in range(world)]
+                    if any(parts[rank][0] != min(counts[rank],1000) for rank in range(world)):
+                        raise ValueError('selected prefix count differs from native layer')
+                    data = [parts[rank][1] for rank in range(world)]
+                    archive.selected_layer(depth, sum(counts), data, seconds, peaks)
+                    selected_latest = (depth, counts, data)
+                else:
+                    archive.completed_layer(depth, sum(p[0] for p in parts.values()),
+                        chunks([parts[rank][1] for rank in range(world)]), seconds, peaks)
+                    for _,path,_ in parts.values():
+                        path.unlink()
                 del pending[depth]
                 if publisher:
                     # Pin immediately in this writer thread before next snapshot cleanup.
@@ -337,12 +378,27 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     actual_counts = [sum(row) for row in zip(*(report['local_layer_sizes'] for report in reports))]
                     if actual_counts != [layer['states'] for layer in archive.manifest['layers']]:
                         raise ValueError('archived counts differ from native reports')
+                    if selected and traversal_complete and selected_latest is not None:
+                        at, counts, data = selected_latest
+                        final_parts = []
+                        for rank,count in enumerate(counts):
+                            if count > 1000:
+                                replacement = replacements.get(rank)
+                                if replacement is None or replacement[:2] != (at,count) or replacement[3] != receipts[rank]['config_digest']:
+                                    raise ValueError('complete terminal replacement missing or mismatched')
+                                final_parts.append(replacement[2])
+                            else:
+                                if rank in replacements:
+                                    raise ValueError('unexpected small terminal replacement')
+                                final_parts.append(data[rank])
+                        archive.terminal(at, final_parts)
                     break
         final = archive.snapshot(traversal_complete, reason)
     except BaseException as error:
         failure, reason = error, str(error)
         final = archive.snapshot(False, reason)
     finally:
+        consumer_closed.set()
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
             try:

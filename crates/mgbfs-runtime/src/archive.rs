@@ -394,10 +394,17 @@ pub struct Archive<E: Extent> {
     poisoned: bool,
     complete: bool,
     sync_layers: bool,
+    state_only: bool,
+    last_layer_records: u64,
+    replaced: bool,
+    replacement_closed: bool,
     pub timings: ArchiveTimings,
 }
 impl<E: Extent> Archive<E> {
-    pub fn new(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+    pub fn new(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+        Self::new_encoded(extent, capacity, state_bytes, config, false)
+    }
+    fn new_encoded(mut extent: E, capacity: u64, state_bytes: usize, config: [u8; 32], state_only: bool) -> Result<Self> {
         if state_bytes == 0 || state_bytes > 33025 || capacity < 48 {
             return Err("ARCHIVE_SHAPE_OR_CAPACITY".into());
         }
@@ -405,7 +412,7 @@ impl<E: Extent> Archive<E> {
             .reserve(capacity)
             .map_err(|e| format!("ARCHIVE_RESERVE: {e}"))?;
         let mut header = Vec::with_capacity(48);
-        header.extend_from_slice(b"MGBFSAR1");
+        header.extend_from_slice(if state_only { b"MGBFSAS2" } else { b"MGBFSAR1" });
         header.extend_from_slice(&(state_bytes as u64).to_le_bytes());
         header.extend_from_slice(&config);
         let chain = Sha256::digest(&header).into();
@@ -422,6 +429,10 @@ impl<E: Extent> Archive<E> {
             poisoned: false,
             complete: false,
             sync_layers: true,
+            state_only,
+            last_layer_records: 0,
+            replaced: false,
+            replacement_closed: false,
             timings: ArchiveTimings::default(),
         };
         a.write(&header)?;
@@ -437,6 +448,24 @@ impl<E: Extent> Archive<E> {
         let mut archive = Self::new(extent, capacity, state_bytes, config)?;
         archive.sync_layers = false;
         Ok(archive)
+    }
+    /// Selective stream: bounded samples, followed by a replacement of the
+    /// terminal layer. No per-state hash plane or intermediate disk contract.
+    pub fn new_selected(extent: E, capacity: u64, state_bytes: usize, config: [u8; 32]) -> Result<Self> {
+        let mut archive = Self::new_encoded(extent, capacity, state_bytes, config, true)?;
+        archive.sync_layers = false;
+        Ok(archive)
+    }
+    pub fn replace_last_layer(&mut self) -> Result<()> {
+        self.live()?;
+        if !self.state_only || self.depth == 0 || self.layer_records != 0 || self.replaced {
+            return Err("ARCHIVE_REPLACEMENT_PHASE".into());
+        }
+        self.frame(4, self.depth - 1, 0, &[])?;
+        self.depth -= 1;
+        self.total = self.total.checked_sub(self.last_layer_records).ok_or("ARCHIVE_REPLACEMENT_COUNT")?;
+        self.replaced = true;
+        Ok(())
     }
     fn live(&self) -> Result<()> {
         if self.poisoned || self.complete {
@@ -522,6 +551,9 @@ impl<E: Extent> Archive<E> {
     }
     pub fn records(&mut self, depth: u64, states: &[u8], hashes: &[[u32; 4]]) -> Result<()> {
         self.live()?;
+        if self.state_only {
+            return Err("SELECTED_ARCHIVE_REQUIRES_STATE_ONLY_WIRE".into());
+        }
         if depth != self.depth
             || hashes.is_empty()
             || hashes.len().checked_mul(self.width) != Some(states.len())
@@ -569,9 +601,13 @@ impl<E: Extent> Archive<E> {
     /// No allocation or payload copy; intended for preallocated pinned slots.
     pub fn records_wire(&mut self, depth: u64, count: u64, payload: &[u8]) -> Result<()> {
         self.live()?;
+        if self.replacement_closed || (self.state_only && !self.replaced &&
+                self.layer_records.checked_add(count).map_or(true, |n| n > 1000)) {
+            return Err("ARCHIVE_SELECTED_RECORD_PHASE".into());
+        }
         if depth != self.depth
             || count == 0
-            || count.checked_mul(self.width as u64 + 16) != Some(payload.len() as u64)
+            || count.checked_mul(self.width as u64 + if self.state_only { 0 } else { 16 }) != Some(payload.len() as u64)
         {
             return Err("ARCHIVE_RECORD_SHAPE_OR_DEPTH".into());
         }
@@ -585,7 +621,7 @@ impl<E: Extent> Archive<E> {
     }
     pub fn layer_commit(&mut self, depth: u64, expected_records: u64) -> Result<()> {
         self.live()?;
-        if depth != self.depth || expected_records != self.layer_records {
+        if self.replacement_closed || depth != self.depth || expected_records != self.layer_records {
             return Err("ARCHIVE_LAYER_COUNT_OR_DEPTH".into());
         }
         let total = self
@@ -598,8 +634,10 @@ impl<E: Extent> Archive<E> {
             self.sync()?;
         }
         self.total = total;
+        self.last_layer_records = expected_records;
         self.depth = next;
         self.layer_records = 0;
+        if self.replaced { self.replacement_closed = true; }
         Ok(())
     }
     /// Caller may invoke only after global FinalizeDepth proves exhaustion.
@@ -638,7 +676,8 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
     }
     let mut header = [0u8; 48];
     read(reader, &mut header, "ARCHIVE_HEADER")?;
-    if &header[..8] != b"MGBFSAR1" {
+    let selected = &header[..8] == b"MGBFSAS2";
+    if !selected && &header[..8] != b"MGBFSAR1" {
         return Err("ARCHIVE_HEADER".into());
     }
     let width = word(&header, 8);
@@ -647,6 +686,7 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
     }
     let mut chain: [u8; 32] = Sha256::digest(header).into();
     let (mut sequence, mut depth, mut count, mut total) = (0u64, 0u64, 0u64, 0u64);
+    let (mut previous_count, mut replaced, mut replacement_closed) = (0u64, false, false);
     let mut buffer = [0u8; 65536];
     loop {
         let mut frame = [0u8; 80];
@@ -655,13 +695,14 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
         if &h[..8] != b"MGBFSFR1"
             || h[48..80] != chain
             || word(h, 40) != sequence
-            || word(h, 16) != depth
+            || Some(word(h, 16)) != (if word(h, 8) == 4 { depth.checked_sub(1) } else { Some(depth) })
         {
             return Err("ARCHIVE_CHAIN".into());
         }
         let kind = word(h, 8);
         let records = word(h, 24);
         let size = word(h, 32);
+        if replacement_closed && kind != 3 { return Err("ARCHIVE_REPLACEMENT_PHASE".into()); }
         let mut sha = Sha256::new();
         sha.update(h);
         let mut remaining = size;
@@ -679,24 +720,35 @@ pub fn verify_reader(reader: &mut impl std::io::Read) -> Result<()> {
         }
         match kind {
             1 => {
-                if records == 0 || records.checked_mul(width + 16) != Some(size) {
+                if records == 0 || records.checked_mul(width + if selected { 0 } else { 16 }) != Some(size) {
                     return Err("ARCHIVE_RECORD_SHAPE".into());
                 }
                 count = count.checked_add(records).ok_or("ARCHIVE_COUNT")?;
+                if selected && !replaced && count > 1000 { return Err("ARCHIVE_SELECTED_RECORD_PHASE".into()); }
             }
             2 => {
                 if size != 0 || records != count {
                     return Err("ARCHIVE_LAYER_COUNT".into());
                 }
                 total = total.checked_add(count).ok_or("ARCHIVE_COUNT")?;
+                previous_count = count;
                 count = 0;
                 depth = depth.checked_add(1).ok_or("ARCHIVE_DEPTH")?;
+                if replaced { replacement_closed = true; }
             }
             3 => {
                 if size != 0 || depth == 0 || count != 0 || records != total {
                     return Err("ARCHIVE_RUN_COUNT".into());
                 }
                 return Ok(());
+            }
+            4 => {
+                if !selected || replaced || size != 0 || records != 0 || count != 0 || depth == 0 {
+                    return Err("ARCHIVE_REPLACEMENT_PHASE".into());
+                }
+                depth -= 1;
+                total = total.checked_sub(previous_count).ok_or("ARCHIVE_COUNT")?;
+                replaced = true;
             }
             _ => return Err("ARCHIVE_FRAME_KIND".into()),
         }

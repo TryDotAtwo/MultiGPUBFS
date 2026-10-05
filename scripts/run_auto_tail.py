@@ -176,6 +176,15 @@ def pair_config(base, n, r):
     # Use the existing batch-sized native scratch instead of emitting four
     # small archive frames per full batch. Pinned bytes still share the same
     # bounded host budget; no additional device allocation is introduced.
+    if cfg.get('retention_policy') == 'last_complete_small_1000':
+        rows=max(1000,8*1024*1024//n)
+        slots=4
+        host=base.get('host_available_bytes',8<<30)
+        if host < base.get('world',2)*slots*(8<<20) + (64<<20):
+            raise ValueError('insufficient host selected archive memory')
+        cfg['env'].update(MGBFS_ARCHIVE_ROWS=str(rows),MGBFS_ARCHIVE_SLOTS=str(slots),
+                          MGBFS_ARCHIVE_SELECTION='last_complete_small_1000')
+        return cfg
     rows=cfg['batch']
     host=base.get('host_available_bytes',8<<30)
     host_slots=(host//4)//(base.get('world',2)*(n+16)*rows)
