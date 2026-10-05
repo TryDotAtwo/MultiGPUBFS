@@ -57,34 +57,49 @@ class SelectedTailArchive(TailArchive):
                 if self.terminal_parts is None:
                     raise ValueError('complete terminal payload missing')
                 selected[depth] = self.terminal_parts
-            created = []
+            created, moved = [], []
             retained_before = len(self.retained)
             try:
                 for at, payload in sorted(selected.items()):
-                    target = self.tail/f'layer-{at:06d}.bin'
-                    digest = hashlib.sha256(); size = 0
-                    with target.open('xb') as out:
-                        created.append(target)
-                        sources = payload if isinstance(payload, list) else [payload]
-                        for source in sources:
-                            if isinstance(source, bytes):
-                                out.write(source); digest.update(source); size += len(source)
-                            else:
-                                with Path(source).open('rb') as stream:
-                                    for chunk in iter(lambda: stream.read(8*1024*1024), b''):
-                                        out.write(chunk); digest.update(chunk); size += len(chunk)
-                        out.flush(); os.fsync(out.fileno())
-                    original = self.manifest['layers'][at]['states']
-                    if size % self.width or size > original*self.width or (
-                            complete and at == depth and size != original*self.width):
+                    original=self.manifest['layers'][at]['states']
+                    sources=payload if isinstance(payload,list) else [payload]
+                    planned=[];ordinal=0
+                    for rank,source in enumerate(sources):
+                        if isinstance(source,bytes):
+                            size=len(source);digest=hashlib.sha256(source).hexdigest()
+                        elif isinstance(source,tuple):
+                            path,count,digest=source;path=Path(path);size=path.stat().st_size
+                            if path.is_symlink() or size!=count*self.width or len(digest)!=64:
+                                raise ValueError('selected terminal descriptor shape')
+                            source=(path,count,digest)
+                        else:
+                            path=Path(source);size=path.stat().st_size
+                            with path.open('rb') as stream:
+                                digest=hashlib.file_digest(stream,'sha256').hexdigest()
+                            source=(path,size//self.width,digest)
+                        if size%self.width:raise ValueError('selected final payload shape')
+                        planned.append((rank,source,size,digest,ordinal));ordinal+=size//self.width
+                    if ordinal>original or (complete and at==depth and ordinal!=original):
                         raise ValueError('selected final payload shape')
-                    self.retained.append(dict(depth=at, states=size//self.width,
-                        full_layer=size == original*self.width, bytes=size,
-                        first_state_ordinal=0, sha256=digest.hexdigest(),
-                        path=target.relative_to(self.root).as_posix()))
+                    for rank,source,size,digest,ordinal in planned:
+                        suffix=f'-rank-{rank:04d}' if isinstance(payload,list) else ''
+                        target=self.tail/f'layer-{at:06d}{suffix}.bin'
+                        if target.exists():raise FileExistsError(target)
+                        if isinstance(source,bytes):
+                            with target.open('xb') as out:
+                                created.append(target);out.write(source)
+                                out.flush();os.fsync(out.fileno())
+                        else:
+                            path,_,_=source
+                            os.rename(path,target);moved.append((path,target))
+                            with target.open('r+b') as stream:os.fsync(stream.fileno())
+                        self.retained.append(dict(depth=at,states=size//self.width,
+                            full_layer=size==original*self.width,layer_complete=complete,
+                            bytes=size,first_state_ordinal=ordinal,sha256=digest,
+                            path=target.relative_to(self.root).as_posix()))
             except Exception:
-                for target in created:
-                    target.unlink(missing_ok=True)
+                for target in created:target.unlink(missing_ok=True)
+                for source,target in reversed(moved):os.rename(target,source)
                 del self.retained[retained_before:]
                 raise
             self.materialized = True

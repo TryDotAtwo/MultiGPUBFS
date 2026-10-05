@@ -153,3 +153,24 @@ CUDA/library-owner cargo check passed. New tests cover AS3 layers over 1000 rows
 legacy compatibility, rank-part inode adoption, ordinals, whole-depth retention,
 final-only metadata/durability boundaries and final snapshot survival after working
 tail cleanup. No GPU timing or Graph32 acceptance claim is made for this patch.
+
+
+Selected terminal replacement files now use the same adoption path: background
+packing supplies a packed checksum descriptor, and final sealing adopts large
+rank parts without merging or rereading them. Small RAM payloads are written once.
+Rollback restores adopted source paths before the INCOMPLETE prefix fallback.
+The independent word oracle accepts complete segmented layers and counts each
+file separately. 113 Python tail tests passed for the combined follow-up.
+
+Resource-pruned pairs now checkpoint the reproducible skip decisions in groups
+of 64 instead of fsyncing the growing ledger per skipped pair. Attempted graph
+results still checkpoint immediately; the final ledger includes every decision.
+
+A synthetic Windows CPU/SSD benchmark (32 MiB input, four layers, two rank parts,
+three alternating repeats, final durability included) measured median 0.130750 s
+for merge/per-layer snapshots versus 0.052283 s for adoption/final-only snapshots.
+Input creation and independent final SHA readback were outside timing. This is
+not a GPU/BFS throughput measurement or a B300 prediction.
+
+The user authorized a new Vast two-GPU validation with a separate USD 10 ceiling.
+No result from that rental is implied by the CPU/type-check evidence above.

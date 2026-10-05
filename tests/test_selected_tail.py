@@ -132,6 +132,22 @@ class SelectedTests(unittest.TestCase):
             for f in m['files']:
                 self.assertEqual(hashlib.sha256((a.root/f['path']).read_bytes()).hexdigest(),f['sha256'])
 
+    def test_terminal_descriptors_adopt_files_without_reading_or_recopy(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as root:
+            a=archive(Path(root)/'saved');state=pack_state([0,1,2])
+            a.selected_layer(0,3000,[state*1000],.1,{'0':None,'1':None})
+            path=Path(root)/'terminal';data=state*2500;path.write_bytes(data)
+            inode=path.stat().st_ino
+            a.terminal(0,[(path,2500,hashlib.sha256(data).hexdigest()),state*500])
+            with patch('scripts.selected_tail.hashlib.file_digest',side_effect=AssertionError('unexpected reread')):
+                manifest=json.loads(a.snapshot(True).read_text())
+            self.assertFalse(path.exists())
+            self.assertEqual([x['first_state_ordinal'] for x in manifest['files']],[0,2500])
+            self.assertEqual(sum(x['states'] for x in manifest['files']),3000)
+            self.assertEqual((a.root/manifest['files'][0]['path']).stat().st_ino,inode)
+            self.assertTrue(all(x['layer_complete'] for x in manifest['files']))
+
     def test_invalid_terminal_rolls_back_and_allows_incomplete_snapshot(self):
         with tempfile.TemporaryDirectory() as root:
             a=archive(Path(root)/'saved'); state=pack_state([0,1,2])

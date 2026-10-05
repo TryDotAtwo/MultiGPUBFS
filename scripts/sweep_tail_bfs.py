@@ -90,6 +90,7 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
     atomic_json(ledger_path,ledger)
     deadline=time.monotonic()+deadline_seconds
     previous_runner_finished = None
+    prune_checkpoint_count = 0
     blocked={}
     for record in ledger['cases'].values():
         if resource_stop(record):
@@ -109,7 +110,13 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 reason=f"skipped larger n at fixed r={m} after resource stop at n={stop['n']}: {stop['reason']}",
                 attempted=False,n=n,m=m,pruned_by=dict(n=stop['n'],r=m),
                 pruning_is_heuristic=True)
-            atomic_json(ledger_path,ledger)
+            # These decisions are reproducible from the already durable failing
+            # graph. Batch checkpoints instead of fsyncing the growing ledger
+            # for every skipped pair; attempted graphs still commit immediately.
+            prune_checkpoint_count += 1
+            if prune_checkpoint_count >= 64:
+                atomic_json(ledger_path,ledger)
+                prune_checkpoint_count = 0
             continue
         remaining=deadline-time.monotonic()
         if remaining<=0:

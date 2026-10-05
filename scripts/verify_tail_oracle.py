@@ -25,11 +25,12 @@ def verify(root):
     width = manifest['packing']['bytes_per_state']
     bits = manifest['packing'].get('bits_per_symbol',4)
     for entry in manifest['files']:
-        if not entry['full_layer']:
+        if not entry['full_layer'] and not entry.get('layer_complete',False):
             raise ValueError('partial layer in complete archive')
         data = (root/entry['path']).read_bytes()
         if len(data)!=entry['bytes'] or hashlib.sha256(data).hexdigest()!=entry['sha256']:
             raise ValueError('checksum/size')
+        file_rows=0
         for offset in range(0,len(data),width):
             value = int.from_bytes(data[offset:offset+width],'little')
             if value >> (bits*n):
@@ -38,7 +39,8 @@ def verify(root):
             if state in actual[entry['depth']]:
                 raise ValueError('duplicate state')
             actual[entry['depth']].add(state)
-        if len(actual[entry['depth']])!=entry['states']:
+            file_rows+=1
+        if file_rows!=entry['states']:
             raise ValueError('file row count')
     if actual!=expected or [layer['states'] for layer in manifest['layers']]!=list(map(len,expected)):
         raise ValueError('full layer word sets differ')

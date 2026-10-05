@@ -236,7 +236,9 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     receipt = consume_selected(reader, root/f'spool-{rank}', n,
                         lambda depth,count,data,digest,replacement: emit(
                             ('replacement' if replacement else 'layer',rank,depth,count,data,digest)),
-                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'])
+                        bits_per_symbol=archive.manifest['packing']['bits_per_symbol'],
+                        on_packed_layer=lambda depth,count,path,config,digest: emit(
+                            ('replacement',rank,depth,count,path,config,digest)))
                 else:
                     receipt = consume(reader, root/f'spool-{rank}', n, None,
                         bits_per_symbol=archive.manifest['packing']['bits_per_symbol'],
@@ -325,10 +327,10 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     _,rank,depth,count,path,digest,*packed_digest = message
                     pending.setdefault(depth,{})[rank] = (count,path,digest,*packed_digest)
                 elif message[0] == 'replacement':
-                    _,rank,at,count,path,digest = message
+                    _,rank,at,count,path,digest,*packed_digest = message
                     if rank in replacements:
                         raise ValueError('duplicate terminal replacement')
-                    replacements[rank] = (at,count,path,digest)
+                    replacements[rank] = (at,count,path,digest,*packed_digest)
             depth = archive.manifest['last_completed_layer']+1
             parts = pending.get(depth,{})
             with lock:
@@ -388,7 +390,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                                 replacement = replacements.get(rank)
                                 if replacement is None or replacement[:2] != (at,count) or replacement[3] != receipts[rank]['config_digest']:
                                     raise ValueError('complete terminal replacement missing or mismatched')
-                                final_parts.append(replacement[2])
+                                final_parts.append((replacement[2],count,replacement[4]))
                             else:
                                 if rank in replacements:
                                     raise ValueError('unexpected small terminal replacement')

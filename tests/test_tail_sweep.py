@@ -77,6 +77,25 @@ class SweepTests(unittest.TestCase):
             execute(base,root,root,{},grid,10,fake)
             self.assertEqual(len(calls),4)
 
+    def test_pruning_batches_checkpoints_without_losing_final_decisions(self):
+        from unittest.mock import patch
+        import sweep_tail_bfs
+        calls=[]
+        def fake(config,source,case,runtime):
+            calls.append((config['n'],config['r']));case.mkdir()
+            path=case/'manifest.json'
+            path.write_text(json.dumps(dict(status='INCOMPLETE',last_completed_layer=0,
+                stop_reason='CUDA_ERROR_OUT_OF_MEMORY')))
+            return path
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);grid=[(n,1) for n in range(4,129)]
+            with patch.object(sweep_tail_bfs,'atomic_json',wraps=sweep_tail_bfs.atomic_json) as checkpoints:
+                ledger=execute({},root,root,{},grid,10,fake)
+            self.assertEqual(calls,[(4,1)])
+            self.assertEqual(len(ledger['cases']),125)
+            self.assertEqual(json.loads((root/'sweep.json').read_text())['cases'],ledger['cases'])
+            self.assertLess(checkpoints.call_count,10)
+
     def test_upload_and_worker_io_errors_do_not_prune(self):
         for reason in ('HF HTTP 429','ConnectionError','ARCHIVE_WORKER_FATAL WRITE','search deadline',
                 'GROUP_STATE_RING_RETIRE_FATAL','ARCHIVE_PIN_RING_FATAL: receiving on an empty channel',

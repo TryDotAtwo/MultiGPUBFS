@@ -104,7 +104,7 @@ def consume(stream, root, n, on_layer, *, max_frame_bytes=64*1024*1024, bits_per
 
 
 def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
-                     max_frame_bytes=64*1024*1024):
+                     max_frame_bytes=64*1024*1024, on_packed_layer=None):
     """Only a terminal replacement touches SSD. Samples stay bounded in RAM.
 
     on_layer(depth, rows, bytes_or_path, config_digest, replacement).
@@ -118,6 +118,7 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
     seq = depth = rows = total = previous_rows = 0
     replacement = replaced = False
     buffer = bytearray(); path = output = None
+    packed_digest = hashlib.sha256()
     try:
         while True:
             frame = read_exact(stream, 80)
@@ -139,6 +140,7 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
                         root.mkdir(parents=True, exist_ok=True)
                         path = root/f'layer-{depth:06d}.bin'; output = path.open('xb')
                     output.write(packed)
+                    packed_digest.update(packed)
                 else:
                     buffer.extend(packed)
                 rows += count
@@ -149,7 +151,11 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
                     if output is None:
                         raise ValueError('empty terminal replacement')
                     output.close(); output = None
-                    on_layer(depth, rows, path, config, True); path = None
+                    if on_packed_layer is None:
+                        on_layer(depth, rows, path, config, True)
+                    else:
+                        on_packed_layer(depth, rows, path, config, packed_digest.hexdigest())
+                    path = None
                 else:
                     on_layer(depth, rows, bytes(buffer), config, False); buffer.clear()
                 total += rows; previous_rows = rows; rows = 0; depth += 1
