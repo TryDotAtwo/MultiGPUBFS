@@ -641,3 +641,24 @@ extern "C" int mgbfs_nccl_all_reduce_sum_u64(void* raw,const uint64_t* send,uint
  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
  return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint64,ncclSum,p->value,static_cast<cudaStream_t>(raw_stream)));
 }
+
+// One matched group exchanges all peer lanes. Source/receive slices are indexed
+// by destination/source rank respectively; every rank agrees on lane extents.
+extern "C" int mgbfs_nccl_exchange_triplets(void* raw,uint32_t rank,uint32_t world,
+ const void* counts,uint64_t count_bytes,const void* records,uint64_t record_bytes,
+ const void* states,uint64_t state_bytes,void* recv_counts,void* recv_records,void* recv_states,void* raw_stream){
+ auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||p->rank!=rank||p->world!=world||!world||world>128)return 1;
+ const void* send[]={counts,records,states};void* recv[]={recv_counts,recv_records,recv_states};const uint64_t bytes[]={count_bytes,record_bytes,state_bytes};
+ for(unsigned lane=0;lane<3;lane++)if((bytes[lane]&&(!send[lane]||!recv[lane]))||bytes[lane]>SIZE_MAX/world)return 1;
+ if(world==1)return 0;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+ if(ncclGroupStart()!=ncclSuccess)return 2;int status=0;auto stream=static_cast<cudaStream_t>(raw_stream);
+ for(uint32_t peer=0;peer<world&&!status;peer++){if(peer==rank)continue;
+  for(unsigned lane=0;lane<3&&!status;lane++){
+   auto sent=ncclSend((bytes[lane]?static_cast<const unsigned char*>(send[lane])+peer*bytes[lane]:send[lane]),size_t(bytes[lane]),ncclUint8,int(peer),p->value,stream);
+   if(sent!=ncclSuccess&&sent!=ncclInProgress){status=3;break;}
+   auto received=ncclRecv((bytes[lane]?static_cast<unsigned char*>(recv[lane])+peer*bytes[lane]:recv[lane]),size_t(bytes[lane]),ncclUint8,int(peer),p->value,stream);
+   if(received!=ncclSuccess&&received!=ncclInProgress)status=4;
+  }
+ }
+ const auto end=ncclGroupEnd();const int settled=(end==ncclSuccess||end==ncclInProgress)?await_nccl(p,end):5;return status?status:settled;
+}

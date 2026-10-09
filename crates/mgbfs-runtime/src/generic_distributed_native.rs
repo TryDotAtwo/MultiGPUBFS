@@ -71,15 +71,11 @@ impl GenericDistributedBfs{
    check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,b.control.at(8),self.control.at(0),stream)})?;
    let mut fatal=0u32;check(unsafe{cudaMemcpyAsync((&mut fatal as *mut u32).cast(),self.control.ptr,4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
-   // Deterministic pair schedule avoids deadlock for arbitrary non-power-of-two worlds.
-   for left in 0..p.world{for right in left+1..p.world{if self.rank!=left&&self.rank!=right{continue;}let peer=if self.rank==left{right}else{left} as usize;
-    check(unsafe{mgbfs_nccl_send_recv_triplet(self.comm,bank.counts.at::<c_void>(peer*shards*4),(shards*4) as u64,bank.records.at::<c_void>(peer*shards*q*32),(shards*q*32) as u64,bank.states.at::<c_void>(peer*shards*q*width*state_bytes),(shards*q*width*state_bytes) as u64,peer as u32,self.inbox.counts.at(peer*shards*4),self.inbox.records.at(peer*shards*q*32),self.inbox.states.at(peer*shards*q*width*state_bytes),stream)})?;
-   }}
+   // A single matched NCCL group submits all peer lanes without host count reads.
+   check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*width*state_bytes) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
-    for source in 0..p.world as usize{let (bank,queue)=if source==self.rank as usize{(bank,self.rank as usize*shards+shard)}else{(&self.inbox,source*shards+shard)};
-     check(unsafe{mgbfs_generic_accept_storage(p.state_bytes,p.elements,bank.states.at(queue*q*width*state_bytes),p.queue_capacity,bank.records.at(queue*q*32),bank.counts.at(queue*4),p.queue_capacity,b.slots.at(shard*p.slots_per_shard as usize*8),p.slots_per_shard,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;
-    }
+    check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.at(shard*p.slots_per_shard as usize*8),p.slots_per_shard,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;
     check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;check(unsafe{cudaStreamWaitEvent(stream,self.done[shard].ptr,0)})?;
    }
    // This dependency retires all inbox and immutable source leases before reuse.

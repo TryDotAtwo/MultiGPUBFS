@@ -11,6 +11,7 @@ impl GenericDistributedMemoryPlan {
  pub fn with_storage(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64,state_bytes:u32)->Result<Self>{
   if ![1,8].contains(&state_bytes)||elements==0||!(1..=128).contains(&world)||!(1..=4096).contains(&shards)||capacity==0||capacity>(1<<28)||batch==0||batch>capacity||generators==0 {return Err("GENERIC_DISTRIBUTED_SHAPE".into());}
   let queue_capacity=batch.checked_mul(generators).filter(|v|*v<0x80000000).ok_or("GENERIC_QUEUE_INDEX_RANGE")?;
+  if u64::from(queue_capacity)*u64::from(world)>=0x7fffffff{return Err("GENERIC_QUEUE_INDEX_RANGE".into());}
   // Each shard can retain the whole local arena: correctness does not depend
   // on hash balance, even for forced collisions. Tune this only with spill.
   let slots_per_shard=capacity.checked_mul(2).and_then(u32::checked_next_power_of_two).ok_or("GENERIC_SHARD_SLOTS")?;

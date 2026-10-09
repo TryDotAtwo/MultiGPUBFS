@@ -142,3 +142,43 @@ extern "C" int mgbfs_generic_accept_u8(uint32_t elements,const uint8_t* incoming
  accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
  return int(cudaGetLastError());
 }
+
+// All source inboxes for one shard share one exclusive owner launch. Pending
+// origins identify source+row in immutable banks, so exact equality remains
+// independent of thread scheduling and full hash collisions.
+template<class State> struct IncomingAllAction {
+ uint32_t elements,count,stride,generators,rank,world,shard,shards;
+ const State* local;const State* remote;const GenericRouteRecord* local_meta;const GenericRouteRecord* remote_meta;
+ const uint32_t* local_counts;const uint32_t* remote_counts;
+ __device__ uint32_t source(uint32_t child)const{return child/stride;}
+ __device__ uint64_t queue(uint32_t child)const{return uint64_t(source(child))*shards+shard;}
+ __device__ bool valid(uint32_t child,uint32_t* error)const{
+  const uint32_t* counts=source(child)==rank?local_counts:remote_counts;
+  uint32_t actual=counts[queue(child)];if(actual>stride){atomicOr(error,32u);return false;}return child%stride<actual;
+ }
+ __device__ int64_t value(uint32_t child,uint32_t e)const{
+  const State* states=source(child)==rank?local:remote;
+  return states[queue(child)*uint64_t(elements)*stride+uint64_t(e)*stride+child%stride];
+ }
+ __device__ uint64_t hash(uint32_t child,uint64_t,uint32_t)const{
+  const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;return meta[queue(child)*stride+child%stride].hash;
+ }
+};
+template<class State> int accept_all(uint32_t elements,const State* local,const State* remote,
+ const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,const uint32_t* local_counts,const uint32_t* remote_counts,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,uint64_t* slots,uint32_t slot_capacity,
+ State* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream){
+ if(!elements||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!stride||uint64_t(world)*stride>=0x7fffffffULL||
+  !slot_capacity||(slot_capacity&(slot_capacity-1))||!visited_capacity||visited_capacity>=0x80000000U||!future_capacity||
+  !local||!remote||!local_meta||!remote_meta||!local_counts||!remote_counts||!slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
+ IncomingAllAction<State> action{elements,world*stride,stride,1,rank,world,shard,shards,local,remote,local_meta,remote_meta,local_counts,remote_counts};
+ accept_candidates<<<grid(uint64_t(world)*stride),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);return int(cudaGetLastError());
+}
+extern "C" int mgbfs_generic_accept_all_i64(uint32_t elements,const int64_t* local,const int64_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
+ uint32_t* future_count,uint32_t* error,void* stream){return accept_all(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream);}
+extern "C" int mgbfs_generic_accept_all_u8(uint32_t elements,const uint8_t* local,const uint8_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint32_t slot_capacity,uint8_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
+ uint32_t* future_count,uint32_t* error,void* stream){return accept_all(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream);}

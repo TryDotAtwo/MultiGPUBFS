@@ -50,3 +50,15 @@ int mgbfs_generic_accept_u8(uint32_t elements,const uint8_t* incoming,uint32_t s
 #ifdef __cplusplus
 }
 #endif
+
+// One exclusive owner launch scans all source inboxes for a shard.
+extern "C" {
+int mgbfs_generic_accept_all_i64(uint32_t elements,const int64_t* local,const int64_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
+ uint32_t* future_count,uint32_t* error,void* stream);
+int mgbfs_generic_accept_all_u8(uint32_t elements,const uint8_t* local,const uint8_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint32_t slot_capacity,uint8_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
+ uint32_t* future_count,uint32_t* error,void* stream);
+}

@@ -1,7 +1,11 @@
-import json,os,subprocess,time,traceback
+import json,os,subprocess,time,traceback,hashlib
 from pathlib import Path
 from multigpubfs import GraphDefinition,run_graph
-r=Path('/root/universal/compact-distributed-gate');r.mkdir(exist_ok=True)
+r=Path(os.environ.get('MGBFS_GATE_ROOT','/root/universal/compact-distributed-gate'));r.mkdir(exist_ok=True)
+identity={name:hashlib.sha256(Path(path).read_bytes()).hexdigest() for name,path in [('cli','/root/universal/src/target/release/mgbfs'),('example','/root/universal/src/target/release/examples/generic_distributed_gate'),('cuda','/root/universal/native-generic/libmgbfs_cuda.so')]}
+identity_path=r/'native-identity.json'
+if identity_path.exists():assert json.loads(identity_path.read_text())==identity,'VALIDATION_ARTIFACT_REUSE_MISMATCH'
+else:identity_path.write_text(json.dumps(identity))
 env=dict(os.environ);checks=[]
 g=GraphDefinition.permutation([[1,2,3,0],[1,0,2,3]],[0,255,128,0]);oracle=g.exact_layers(24)
 def ranks(g,name,codec,bits,shards,capacity):
@@ -53,5 +57,5 @@ for index,g in enumerate(fixtures):
   states=json.loads((out/'states.json').read_text());assert sorted(states['current'])==expected[-1];assert sorted(states['previous_small'])==expected[-2]
   codec=report.get('state_bytes',report.get('plan',{}).get('state_bytes'));assert codec==(1 if index==0 else 8),(codec,report)
   checks.append({'case':f'public-{index}-{selection}','state_bytes':codec,'all_layer_counts_and_terminal_states_exact':True})
-receipt={'status':'VERIFIED_COMPACT_STORAGE_ONE_TWO_GPU','checks':checks,'resource_current_previous_exact':True,'scope':'storage codec and exact hash/equality/routing semantics only; throughput and specialized key-first dispatch pending'}
+receipt={'status':'VERIFIED_COMPACT_STORAGE_ONE_TWO_GPU','native_identity':identity,'checks':checks,'resource_current_previous_exact':True,'scope':'storage codec and exact hash/equality/routing semantics only; throughput and specialized key-first dispatch pending'}
 (r/'verification.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt))
