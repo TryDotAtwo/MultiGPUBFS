@@ -5,6 +5,11 @@ No CPU successor generation/dedup. Only bounded committed snapshots are read.
 import hashlib,json,math,os,re,select,struct,subprocess,threading,time,uuid
 from pathlib import Path
 
+def exact_specialized_supported():
+ # Legacy owners compare Hash128 fingerprints only. A small oracle does not
+ # prove injectivity for arbitrary graphs; exact public launch must fail closed.
+ return False
+
 def match_lrx(graph):
  if graph.action['kind']!='permutation' or not 2<=graph.state_elements<=128:return None
  n=graph.state_elements;expected={tuple(list(range(1,n))+[0]),tuple([n-1]+list(range(n-1))),tuple([1,0]+list(range(2,n)))}
