@@ -29,3 +29,17 @@ int mgbfs_generic_regenerate_routes_i64(uint32_t kind,uint32_t elements,uint32_t
 #ifdef __cplusplus
 }
 #endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Fixed-capacity request launch with device count: no count readback between
+ * routing, source regeneration and destination acceptance. */
+int mgbfs_generic_regenerate_routes_count_i64(uint32_t kind,uint32_t elements,uint32_t rows,uint32_t cols,uint32_t generators,
+ const int64_t* parents,uint32_t parent_count,uint32_t parent_stride,const uint32_t* permutations,
+ const int64_t* matrices,const uint32_t* moduli,uint32_t source,uint64_t parent_begin,
+ const struct GenericRouteRecord* requests,uint32_t request_capacity,const uint32_t* device_count,
+ int64_t* output,uint32_t output_stride,uint32_t* error,void* stream);
+#ifdef __cplusplus
+}
+#endif

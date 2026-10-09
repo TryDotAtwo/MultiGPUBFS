@@ -36,9 +36,11 @@ extern "C" int mgbfs_generic_route_i64(uint32_t kind,uint32_t elements,uint32_t 
 }
 
 __global__ void regenerate_routes(Action action,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,
- uint32_t count,int64_t* output,uint32_t stride,uint32_t* error){
+ uint32_t count,const uint32_t* device_count,int64_t* output,uint32_t stride,uint32_t* error){
  for(uint64_t at=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;at<uint64_t(count)*action.elements;at+=uint64_t(blockDim.x)*gridDim.x){
-  uint32_t element=at/count,row=at%count;GenericRouteRecord origin=requests[row];
+  uint32_t element=at/count,row=at%count;
+  uint32_t actual=device_count?*device_count:count;if(actual>count){atomicOr(error,4u);continue;}if(row>=actual)continue;
+  GenericRouteRecord origin=requests[row];
   if(origin.source!=source||origin.parent<begin||origin.parent-begin>=action.count||origin.generator>=action.generators||origin.reserved){atomicOr(error,2u);continue;}
   uint32_t child=uint32_t(origin.parent-begin)*action.generators+origin.generator;
   output[uint64_t(element)*stride+row]=action.value(child,element);
@@ -53,6 +55,19 @@ extern "C" int mgbfs_generic_regenerate_routes_i64(uint32_t kind,uint32_t elemen
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!request_count)return 0;uint64_t blocks=(uint64_t(request_count)*elements+255)/256;
  Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
- regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,output,output_stride,error);
+ regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,nullptr,output,output_stride,error);
+ return int(cudaGetLastError());
+}
+
+extern "C" int mgbfs_generic_regenerate_routes_count_i64(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const int64_t* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,uint32_t request_count,const uint32_t* device_count,
+ int64_t* output,uint32_t output_stride,uint32_t* error,void* stream){
+ if(kind>1||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||source>=128||
+  request_count>output_stride||begin>UINT64_MAX-count||!parents||!requests||!device_count||!output||!error||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
+ if(!request_count)return 0;uint64_t blocks=(uint64_t(request_count)*elements+255)/256;
+ Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
+ regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,device_count,output,output_stride,error);
  return int(cudaGetLastError());
 }

@@ -9,3 +9,24 @@ extern "C" int mgbfs_generic_expand_i64(uint32_t kind,uint32_t elements,uint32_t
  uint32_t* future_count,uint64_t seed,uint32_t hash_bits,uint32_t* error,void* stream);
 extern "C" int mgbfs_generic_gather_i64(uint32_t elements,const int64_t* source,uint32_t source_stride,
  const uint32_t* indices,uint32_t count,int64_t* output,uint32_t output_stride,void* stream);
+
+/* Exact destination dedup of regenerated state planes. Metadata hashes must
+ * be from the agreed graph/seed and the same ordered regeneration requests.
+ * Each shard table has one exclusive consumer lease. A/B buffers overlap
+ * source work with owner work; never run concurrent consumers on one table.
+ * Different shard tables are independent and may execute concurrently.
+ * count is device-resident, bound is the preallocated queue capacity.
+ * Error=32 rejects count overflow; other bits match generic_expand.
+ * Future is invalid on any error; immutable incoming banks stay leased until
+ * stream completion so pending-origin comparisons cannot observe reuse. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct GenericRouteRecord;
+int mgbfs_generic_accept_i64(uint32_t elements,const int64_t* incoming,uint32_t stride,
+ const struct GenericRouteRecord* metadata,const uint32_t* received,uint32_t bound,uint64_t* slots,
+ uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,uint32_t* visited_count,
+ uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream);
+#ifdef __cplusplus
+}
+#endif

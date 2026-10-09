@@ -52,3 +52,21 @@ extern "C" {
   source:u32,parent_begin:u64,requests:*const GenericRouteRecord,request_count:u32,output:*mut i64,
   output_stride:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
 }
+
+#[cfg(feature="cuda")]
+extern "C" {
+ /// The descriptor and payload order must agree. One exclusive consumer
+ /// lease per shard table; A/B producer overlap never reuses leased input.
+ pub fn mgbfs_generic_accept_i64(elements:u32,incoming:*const i64,stride:u32,
+  metadata:*const GenericRouteRecord,received:*const u32,bound:u32,slots:*mut u64,
+  slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,
+  future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+}
+
+#[cfg(feature="cuda")]
+extern "C" {
+ pub fn mgbfs_generic_regenerate_routes_count_i64(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,
+  parents:*const i64,parent_count:u32,parent_stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
+  source:u32,parent_begin:u64,requests:*const GenericRouteRecord,request_capacity:u32,device_count:*const u32,
+  output:*mut i64,output_stride:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+}

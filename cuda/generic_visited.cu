@@ -5,6 +5,7 @@
 
 static constexpr uint64_t EMPTY=~uint64_t(0);
 #include "generic_action.cuh"
+#include "generic_route.h"
 __global__ void seed_table(uint32_t elements,const int64_t* states,uint32_t stride,uint32_t count,uint64_t* slots,
  uint32_t capacity,uint64_t seed,uint32_t bits,uint32_t* error){
  for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<count;row+=blockDim.x*gridDim.x){
@@ -14,11 +15,13 @@ __global__ void seed_table(uint32_t elements,const int64_t* states,uint32_t stri
   if(!done)atomicOr(error,1u);
  }
 }
-__global__ void expand(Action action,uint64_t* slots,uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,
+template<class Candidate>
+__global__ void accept_candidates(Candidate action,uint64_t* slots,uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,
  uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint64_t seed,uint32_t bits,uint32_t* error){
  const uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
   if(atomicAdd(error,0u))return;
+  if(!action.valid(child,error))continue;
   const uint64_t hash=action.hash(child,seed,bits),prefix=hash&0xffffffff00000000ULL;
   const uint64_t pending=prefix|0x80000000ULL|child;uint32_t slot=hash&(slot_capacity-1);bool done=false;
   for(uint32_t probe=0;probe<slot_capacity;probe++,slot=(slot+1)&(slot_capacity-1)){
@@ -74,11 +77,32 @@ extern "C" int mgbfs_generic_expand_i64(uint32_t kind,uint32_t elements,uint32_t
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!count)return 0;
  Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
- expand<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error);
+ accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_gather_i64(uint32_t elements,const int64_t* source,uint32_t stride,const uint32_t* indices,
  uint32_t count,int64_t* output,uint32_t output_stride,void* stream){
  if(!elements||count>output_stride||(!source&&count)||(!indices&&count)||(!output&&count))return int(cudaErrorInvalidValue);
  if(!count)return 0;gather<<<grid(uint64_t(elements)*count),256,0,static_cast<cudaStream_t>(stream)>>>(elements,source,stride,indices,count,output,output_stride);return int(cudaGetLastError());
+}
+
+struct IncomingAction {
+ uint32_t elements,count,stride,generators=1;const int64_t* states;
+ const GenericRouteRecord* metadata;const uint32_t* received;
+ __device__ bool valid(uint32_t row,uint32_t* error)const{
+  uint32_t actual=*received;if(actual>count){atomicOr(error,32u);return false;}return row<actual;
+ }
+ __device__ int64_t value(uint32_t row,uint32_t element)const{return states[uint64_t(element)*stride+row];}
+ __device__ uint64_t hash(uint32_t row,uint64_t,uint32_t)const{return metadata[row].hash;}
+};
+extern "C" int mgbfs_generic_accept_i64(uint32_t elements,const int64_t* incoming,uint32_t stride,
+ const GenericRouteRecord* metadata,const uint32_t* received,uint32_t bound,uint64_t* slots,
+ uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,uint32_t* visited_count,
+ uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream){
+ if(!elements||!bound||bound>stride||bound>=0x7fffffffU||!slot_capacity||(slot_capacity&(slot_capacity-1))||
+  !visited_capacity||visited_capacity>=0x80000000U||!future_capacity||!incoming||!metadata||!received||
+  !slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
+ IncomingAction action{elements,bound,stride,1,incoming,metadata,received};
+ accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
+ return int(cudaGetLastError());
 }
