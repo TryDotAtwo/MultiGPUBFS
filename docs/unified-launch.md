@@ -29,7 +29,7 @@ Specialized SHARD_AB remains available through its existing native configuration
 
 Memory admission reads actual free VRAM, reserves headroom, and accounts for
 the selected history layout, one shared shard-overflow table, row-position maps, routing banks, receive buffers, and control/owner metadata. A finite
-mathematical state-space bound avoids VRAM-sized allocations for small graphs.
+mathematical state-space bound avoids VRAM-sized allocations for small graphs. Cyclic permutation actions with inverse/identity/duplicate aliases use exact label periods of the start vector; other permutation actions use the conservative multiset bound.
 Automatic multi-device placement uses independent admitted capacities and
 weighted hash intervals; explicit capacity overrides retain common capacity.
 

@@ -31,3 +31,9 @@ The isolated atomic-load change produced no acceleration in three paired runs: m
 - A development artifact with external CUDA/NCCL dependencies is not a universal precompiled binary for every architecture.
 
 This audit proves the listed bounded implemented behavior. It does not establish the broader claim that all graphs on arbitrary hardware are already maximally optimized; further transport/algorithm selection work and any later hardware acceptance must retain these boundaries.
+
+## Cyclic action admission follow-up
+
+For generators consisting of one permutation and its inverse/identity/duplicate aliases, startup admission computes the least common multiple of label periods on that permutation's disjoint cycles. This is the exact start-orbit cardinality, capped at the arena index limit; unrelated generator sets keep the conservative multiset bound. The calculation visits definition entries, not BFS states, and does not enter the hot path.576 independently enumerated small cyclic fixtures matched the metadata result. The existing logical1/2/8/128 allocation contracts also passed.
+
+Actual one/twoRTX3060 automatic launches passed17-state wide inverse rotation,2-state100-element periodic directed rotation,15-state mixed-cycle aliases and noncyclic720-state fallback. Capacities were no larger than the verified orbit cardinalities and planned buffers stayed below1MB. The single-device retained-history report now exposes its own actual memory plan and device list, preserving existing fields. `cyclic-bound-gpu-v2/verification.json` is the GPU receipt. New package publication and source delivery must be verified separately.
