@@ -39,6 +39,17 @@ impl MacroGeneratorSet {
     /// Enumerate the ball of transition matrices in shortlex order. The first
     /// discovery of a matrix is therefore its deterministic shortest word.
     pub fn compile(graph: &MatrixGroup, requested_depth: u32) -> Result<Self> {
+        Self::compile_bounded(graph, requested_depth, u16::MAX as usize)
+    }
+
+    /// Admission budget counts distinct nonidentity operators, not words.
+    /// Stop before retaining an operator that cannot fit the producer slot.
+    /// No upper bound on requested depth is introduced.
+    pub fn compile_bounded(
+        graph: &MatrixGroup,
+        requested_depth: u32,
+        max_transitions: usize,
+    ) -> Result<Self> {
         graph.validate()?;
         if requested_depth == 0 {
             return Err("MACRO_DEPTH_ZERO".into());
@@ -66,6 +77,9 @@ impl MacroGeneratorSet {
                     }
                     if transitions.len() >= u16::MAX as usize {
                         return Err("MACRO_GENERATOR_ABI_CAPACITY".into());
+                    }
+                    if transitions.len() >= max_transitions {
+                        return Err("MACRO_TRANSITION_BUDGET".into());
                     }
                     let mut child_word = word.clone();
                     child_word.push(movement as u16);

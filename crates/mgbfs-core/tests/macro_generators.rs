@@ -1,5 +1,23 @@
 use mgbfs_core::{config::RunConfigV1, macro_generators::MacroGeneratorSet, matrix::MatrixGroup};
 
+#[test]
+fn bounded_compilation_preserves_shortlex_and_rejects_one_more_operator() {
+    let graph = MatrixGroup::symmetric_permutation_matrices(4).unwrap();
+    let expected = MacroGeneratorSet::compile(&graph, 2).unwrap();
+    assert_eq!(
+        MacroGeneratorSet::compile_bounded(&graph, 2, expected.transitions.len()).unwrap(),
+        expected
+    );
+    assert_eq!(
+        MacroGeneratorSet::compile_bounded(&graph, 2, expected.transitions.len() - 1).unwrap_err(),
+        "MACRO_TRANSITION_BUDGET"
+    );
+    assert_eq!(
+        MacroGeneratorSet::compile_bounded(&graph, 10, 0).unwrap_err(),
+        "MACRO_TRANSITION_BUDGET"
+    );
+}
+
 fn hex(bytes: [u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

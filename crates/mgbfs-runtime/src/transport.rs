@@ -102,7 +102,10 @@ impl Transport {
         counts: Vec<u64>,
     ) -> Result<()> {
         let k = index(kind)?;
-        let maximum = self.depth.checked_add(self.lookahead).ok_or("DEPTH_OVERFLOW")?;
+        let maximum = self
+            .depth
+            .checked_add(self.lookahead)
+            .ok_or("DEPTH_OVERFLOW")?;
         if target_depth > maximum {
             return Err("FUTURE_DEPTH_EXCEEDS_WINDOW".into());
         }

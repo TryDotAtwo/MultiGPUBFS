@@ -99,18 +99,36 @@ fn archive_admission_failure_reaches_both_ranks_before_nccl_setup() {
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
         let mut group = rendezvous(
-            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
             || panic!("peer cannot create NCCL ID"),
-        ).unwrap();
-        group.agree_boundary(BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3))
+        )
+        .unwrap();
+        group.agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3),
+        )
     });
     let mut coordinator = rendezvous(
-        &path, 0, 2, record().identity, Duration::from_secs(3),
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
         || Ok([23; 128]),
-    ).unwrap();
-    assert!(coordinator.agree_boundary(
-        BoundaryPhase::ArchiveAdmission, true, Duration::from_secs(3)
-    ).unwrap());
+    )
+    .unwrap();
+    assert!(coordinator
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            true,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     assert!(peer.join().unwrap().unwrap());
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();
@@ -129,20 +147,37 @@ fn configuration_agreement_rejects_asymmetric_error_and_digest_mismatch() {
             "mgbfs-config-agreement-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("bootstrap");
         let peer_path = path.clone();
         let peer = std::thread::spawn(move || {
-            let mut group = rendezvous(&peer_path, 1, 2, record().identity,
-                Duration::from_secs(3), || panic!("peer cannot create NCCL ID")).unwrap();
+            let mut group = rendezvous(
+                &peer_path,
+                1,
+                2,
+                record().identity,
+                Duration::from_secs(3),
+                || panic!("peer cannot create NCCL ID"),
+            )
+            .unwrap();
             group.agree_configuration(right, right_failed, Duration::from_secs(3))
         });
-        let mut coordinator = rendezvous(&path, 0, 2, record().identity,
-            Duration::from_secs(3), || Ok([23; 128])).unwrap();
-        assert!(coordinator.agree_configuration(left, left_failed,
-            Duration::from_secs(3)).unwrap());
+        let mut coordinator = rendezvous(
+            &path,
+            0,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || Ok([23; 128]),
+        )
+        .unwrap();
+        assert!(coordinator
+            .agree_configuration(left, left_failed, Duration::from_secs(3))
+            .unwrap());
         assert!(peer.join().unwrap().unwrap());
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(root).unwrap();
@@ -166,7 +201,11 @@ fn boundary_agreement_preserves_phase_order_and_success() {
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
         let mut group = rendezvous(
-            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
             || panic!("peer cannot create NCCL ID"),
         ).unwrap();
         for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
@@ -176,7 +215,11 @@ fn boundary_agreement_preserves_phase_order_and_success() {
         assert!(group.agree_boundary(BoundaryPhase::SessionReuse, true, Duration::from_secs(3)).unwrap());
     });
     let mut coordinator = rendezvous(
-        &path, 0, 2, record().identity, Duration::from_secs(3),
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
         || Ok([23; 128]),
     ).unwrap();
     for phase in [BoundaryPhase::ArchiveAdmission, BoundaryPhase::ArchiveCommitted,
@@ -195,44 +238,88 @@ fn search_sideband_reports_asymmetric_failure_and_preserves_healthy_boundary() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use std::time::Duration;
     let root = std::env::temp_dir().join(format!(
-        "mgbfs-search-sideband-{}-{}", std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .unwrap().as_nanos()
+        "mgbfs-search-sideband-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("bootstrap");
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
-        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
-            Duration::from_secs(3), || panic!("peer cannot create ID")).unwrap();
-        assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-        assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-            Duration::from_secs(3)).unwrap());
+        let mut group = rendezvous(
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || panic!("peer cannot create ID"),
+        )
+        .unwrap();
+        assert!(!group
+            .agree_configuration([7; 32], false, Duration::from_secs(3))
+            .unwrap());
+        assert!(!group
+            .agree_boundary(
+                BoundaryPhase::ArchiveAdmission,
+                false,
+                Duration::from_secs(3)
+            )
+            .unwrap());
         let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
         sideband.report_success();
         assert!(!sideband.finish(&mut group).unwrap());
-        assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
-            Duration::from_secs(3)).unwrap());
+        assert!(!group
+            .agree_boundary(
+                BoundaryPhase::ArchiveCommitted,
+                false,
+                Duration::from_secs(3)
+            )
+            .unwrap());
         let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
         sideband.report_failure();
         sideband.report_retired();
         assert!(sideband.finish(&mut group).unwrap());
     });
-    let mut group = rendezvous(&path, 0, 2, record().identity,
-        Duration::from_secs(3), || Ok([23; 128])).unwrap();
-    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-        Duration::from_secs(3)).unwrap());
+    let mut group = rendezvous(
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    assert!(!group
+        .agree_configuration([7; 32], false, Duration::from_secs(3))
+        .unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     sideband.report_success();
     assert!(!sideband.finish(&mut group).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
-        Duration::from_secs(3)).unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveCommitted,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     let cancellation = sideband.cancel_token();
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while !cancellation.load(std::sync::atomic::Ordering::Acquire) {
-        assert!(std::time::Instant::now() < deadline, "remote cancellation was not delivered");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "remote cancellation was not delivered"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     sideband.report_retired();
@@ -247,23 +334,45 @@ fn single_rank_search_sideband_waits_for_local_outcome() {
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use std::time::Duration;
     let root = std::env::temp_dir().join(format!(
-        "mgbfs-search-one-{}-{}", std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .unwrap().as_nanos()
+        "mgbfs-search-one-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("bootstrap");
-    let mut group = rendezvous(&path, 0, 1, record().identity,
-        Duration::from_secs(3), || Ok([23; 128])).unwrap();
-    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-        Duration::from_secs(3)).unwrap());
+    let mut group = rendezvous(
+        &path,
+        0,
+        1,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    assert!(!group
+        .agree_configuration([7; 32], false, Duration::from_secs(3))
+        .unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     sideband.report_failure();
     sideband.report_retired();
     assert!(sideband.finish(&mut group).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveCommitted, false,
-        Duration::from_secs(3)).unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveCommitted,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     sideband.report_success();
     assert!(!sideband.finish(&mut group).unwrap());
@@ -324,19 +433,38 @@ fn failure_notification_does_not_authorize_window_release_before_all_readers_ret
     use mgbfs_runtime::bootstrap::{rendezvous, BoundaryPhase};
     use std::sync::atomic::Ordering;
     use std::time::Duration;
-    let root = std::env::temp_dir().join(format!("mgbfs-retirement-{}-{}",
-        std::process::id(), std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let root = std::env::temp_dir().join(format!(
+        "mgbfs-retirement-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("bootstrap");
     let peer_path = path.clone();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let peer = std::thread::spawn(move || {
-        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
-            Duration::from_secs(3), || panic!("peer cannot create ID")).unwrap();
-        assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-        assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-            Duration::from_secs(3)).unwrap());
+        let mut group = rendezvous(
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || panic!("peer cannot create ID"),
+        )
+        .unwrap();
+        assert!(!group
+            .agree_configuration([7; 32], false, Duration::from_secs(3))
+            .unwrap());
+        assert!(!group
+            .agree_boundary(
+                BoundaryPhase::ArchiveAdmission,
+                false,
+                Duration::from_secs(3)
+            )
+            .unwrap());
         let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
         let retirement = sideband.retirement_token();
         sideband.report_failure();
@@ -344,11 +472,25 @@ fn failure_notification_does_not_authorize_window_release_before_all_readers_ret
         ready_tx.send(retirement).unwrap();
         assert!(sideband.finish(&mut group).unwrap());
     });
-    let mut group = rendezvous(&path, 0, 2, record().identity,
-        Duration::from_secs(3), || Ok([23; 128])).unwrap();
-    assert!(!group.agree_configuration([7; 32], false, Duration::from_secs(3)).unwrap());
-    assert!(!group.agree_boundary(BoundaryPhase::ArchiveAdmission, false,
-        Duration::from_secs(3)).unwrap());
+    let mut group = rendezvous(
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    assert!(!group
+        .agree_configuration([7; 32], false, Duration::from_secs(3))
+        .unwrap());
+    assert!(!group
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     let sideband = group.start_search_sideband(Duration::from_secs(3)).unwrap();
     let remote = ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -361,9 +503,11 @@ fn failure_notification_does_not_authorize_window_release_before_all_readers_ret
     assert!(!remote.group.load(Ordering::Acquire));
     assert!(!sideband.retirement_token().group.load(Ordering::Acquire));
     let local = sideband.retirement_token();
-    assert!(sideband.finish_with_cleanup(&mut group, || {
-        local.local.store(true, Ordering::Release);
-    }).unwrap());
+    assert!(sideband
+        .finish_with_cleanup(&mut group, || {
+            local.local.store(true, Ordering::Release);
+        })
+        .unwrap());
     peer.join().unwrap();
     assert!(remote.group.load(Ordering::Acquire));
     std::fs::remove_file(path).unwrap();
@@ -378,32 +522,62 @@ fn group_publication_failure_is_reported_to_both_ranks() {
         "mgbfs-publication-agreement-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("bootstrap");
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
-        let mut group = rendezvous(&peer_path, 1, 2, record().identity,
-            Duration::from_secs(3), || panic!("peer cannot create NCCL ID")).unwrap();
-        for phase in [BoundaryPhase::ArchiveAdmission,
-            BoundaryPhase::ArchiveCommitted, BoundaryPhase::OutputWritten] {
-            assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+        let mut group = rendezvous(
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
+            || panic!("peer cannot create NCCL ID"),
+        )
+        .unwrap();
+        for phase in [
+            BoundaryPhase::ArchiveAdmission,
+            BoundaryPhase::ArchiveCommitted,
+            BoundaryPhase::OutputWritten,
+        ] {
+            assert!(!group
+                .agree_boundary(phase, false, Duration::from_secs(3))
+                .unwrap());
         }
-        group.agree_boundary(BoundaryPhase::GroupPublished, false,
-            Duration::from_secs(3))
+        group.agree_boundary(BoundaryPhase::GroupPublished, false, Duration::from_secs(3))
     });
-    let mut group = rendezvous(&path, 0, 2, record().identity,
-        Duration::from_secs(3), || Ok([23; 128])).unwrap();
-    for phase in [BoundaryPhase::ArchiveAdmission,
-        BoundaryPhase::ArchiveCommitted, BoundaryPhase::OutputWritten] {
-        assert!(!group.agree_boundary(phase, false, Duration::from_secs(3)).unwrap());
+    let mut group = rendezvous(
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
+        || Ok([23; 128]),
+    )
+    .unwrap();
+    for phase in [
+        BoundaryPhase::ArchiveAdmission,
+        BoundaryPhase::ArchiveCommitted,
+        BoundaryPhase::OutputWritten,
+    ] {
+        assert!(!group
+            .agree_boundary(phase, false, Duration::from_secs(3))
+            .unwrap());
     }
     let publication = mgbfs_runtime::group_commit::write_group_commit(&root, 2, [7; 32]);
     assert!(publication.is_err());
     assert!(!root.join("group-complete.json").exists());
-    assert!(group.agree_boundary(BoundaryPhase::GroupPublished, publication.is_err(),
-        Duration::from_secs(3)).unwrap());
+    assert!(group
+        .agree_boundary(
+            BoundaryPhase::GroupPublished,
+            publication.is_err(),
+            Duration::from_secs(3)
+        )
+        .unwrap());
     assert!(peer.join().unwrap().unwrap());
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();
@@ -427,21 +601,39 @@ fn startup_boundary_leaves_control_connection_admissible_to_dispatcher() {
     let peer_path = path.clone();
     let peer = std::thread::spawn(move || {
         let mut group = rendezvous(
-            &peer_path, 1, 2, record().identity, Duration::from_secs(3),
+            &peer_path,
+            1,
+            2,
+            record().identity,
+            Duration::from_secs(3),
             || panic!("peer cannot create NCCL ID"),
-        ).unwrap();
-        assert!(!group.agree_boundary(
-            BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3)
-        ).unwrap());
+        )
+        .unwrap();
+        assert!(!group
+            .agree_boundary(
+                BoundaryPhase::ArchiveAdmission,
+                false,
+                Duration::from_secs(3)
+            )
+            .unwrap());
         ControlPump::new(2, 1, 2, std::mem::take(&mut group.peers)).unwrap();
     });
     let mut coordinator = rendezvous(
-        &path, 0, 2, record().identity, Duration::from_secs(3),
+        &path,
+        0,
+        2,
+        record().identity,
+        Duration::from_secs(3),
         || Ok([23; 128]),
-    ).unwrap();
-    assert!(!coordinator.agree_boundary(
-        BoundaryPhase::ArchiveAdmission, false, Duration::from_secs(3)
-    ).unwrap());
+    )
+    .unwrap();
+    assert!(!coordinator
+        .agree_boundary(
+            BoundaryPhase::ArchiveAdmission,
+            false,
+            Duration::from_secs(3)
+        )
+        .unwrap());
     ControlPump::new(2, 0, 2, std::mem::take(&mut coordinator.peers)).unwrap();
     peer.join().unwrap();
     std::fs::remove_file(path).unwrap();

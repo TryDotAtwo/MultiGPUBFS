@@ -1,0 +1,22 @@
+diff --git a/src/allocator.cc b/src/allocator.cc
+--- a/src/allocator.cc
++++ b/src/allocator.cc
+@@ -11,6 +11,9 @@
+ #include "nvtx.h"
+ #include "utils.h"
+ 
++// Explicit single-node deployments need no FABRIC/IMEX handle. Honor the
++// existing MNNVL opt-out before issuing an otherwise forbidden driver probe.
++int64_t ncclParamMNNVLEnable();
+ NCCL_API(ncclResult_t, ncclMemAlloc, void **ptr, size_t size);
+ ncclResult_t  ncclMemAlloc(void **ptr, size_t size) {
+   NCCL_NVTX3_FUNC_RANGE;
+@@ -41,7 +44,7 @@ ncclResult_t  ncclMemAlloc(void **ptr, size_t size) {
+     // Query device to see if FABRIC handle support is available
+     flag = 0;
+     (void) CUPFN(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, currentDev));
+-    if (flag) requestedHandleTypes |= CU_MEM_HANDLE_TYPE_FABRIC;
++    if (flag && ncclParamMNNVLEnable() != 0) requestedHandleTypes |= CU_MEM_HANDLE_TYPE_FABRIC;
+ #endif
+     memprop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+     memprop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;

@@ -1,11 +1,13 @@
 #include "mgbfs_cuda.h"
 #include <cuda_runtime.h>
+#include <cuda/atomic>
 #include "dense_frame_layout.h"
 #include "owner_partition.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 namespace {
 __global__ void device_store_u32(uint32_t* destination,uint32_t value) {
   if (blockIdx.x == 0 && threadIdx.x == 0) *destination = value;
@@ -15,6 +17,30 @@ __global__ void import_transport_fatal(const uint32_t* transport_fatal,
   if (blockIdx.x == 0 && threadIdx.x == 0 && *transport_fatal != 0) {
     atomicCAS(&ring->fatal, 0u, 22u);
     atomicCAS(&owner->error, 0u, 22u);
+  }
+}
+__global__ void combined_owner_fatal(const MgbfsStateRingControl* ring,
+    const MgbfsOwnerControl* owner,uint32_t* send){
+  if(blockIdx.x==0&&threadIdx.x==0)*send=(ring->fatal!=0||owner->error!=0);
+}
+__global__ void publish_owner_terminal(const uint32_t* receive,uint32_t* terminal){
+  if(blockIdx.x==0&&threadIdx.x==0&&*receive!=0){
+    cuda::atomic_ref<uint32_t,cuda::thread_scope_system> word(*terminal);
+    word.fetch_or(2u,cuda::memory_order_release);
+  }
+}
+// HOST failure propagation uses the existing mapped signal and TCP sideband.
+// Healthy epochs do not need a communicator-wide collective. Logical failure
+// first closes local device admission, then notifies the sole host dispatcher.
+__global__ void publish_local_owner_terminal(MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner,uint32_t* receive,uint32_t* terminal){
+  if(blockIdx.x!=0||threadIdx.x!=0)return;
+  *receive=(ring->fatal!=0||owner->error!=0);
+  if(*receive){
+    ring->fatal=ring->fatal?ring->fatal:1u;
+    owner->error=owner->error?owner->error:1u;
+    cuda::atomic_ref<uint32_t,cuda::thread_scope_system> word(*terminal);
+    word.fetch_or(2u,cuda::memory_order_release);
   }
 }
 struct alignas(16) Key { uint32_t w[4]; };
@@ -253,20 +279,49 @@ extern "C" int mgbfs_owner_import_transport_fatal(
       transport_fatal,ring,owner);
   return cudaGetLastError()==cudaSuccess?0:2;
 }
+namespace {
+// Diagnostic host-only checkpoint. The sole NCCL dispatcher writes it;
+// the existing cancellation mirror may take an atomic read-only snapshot.
+std::atomic<uint32_t> owner_gate_stage{0};
+struct OwnerGateCheckpoint {
+  bool enabled;
+  OwnerGateCheckpoint():enabled(std::getenv("MGBFS_FAILURE_STAGE_QUIET")!=nullptr) {}
+  void set(uint32_t stage) {if(enabled)owner_gate_stage.store(stage,std::memory_order_release);}
+  ~OwnerGateCheckpoint(){set(0);}
+};
+}
+extern "C" uint32_t mgbfs_owner_fatal_gate_stage_snapshot(){
+  return owner_gate_stage.load(std::memory_order_acquire);
+}
 static int owner_fatal_gate(bool lsa,void* comm,
     MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     uint32_t* send,uint32_t* receive,void* stream) {
   if(!comm||!ring||!owner||!send||!receive)return 1;
+  OwnerGateCheckpoint checkpoint;
   if(lsa)return mgbfs_nccl_lsa_owner_fatal_vote(comm,ring,owner,receive,stream);
   static const bool trace=std::getenv("MGBFS_TRACE_NCCL_GATE")!=nullptr;
   if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=ring_vote_begin\n",comm);
-  int status=mgbfs_state_ring_fatal_vote_word(ring,send,stream);
+  checkpoint.set(1);
+  combined_owner_fatal<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(ring,owner,send);
+  checkpoint.set(2);
+  int status=cudaGetLastError()==cudaSuccess?0:2;
   if(status)return status;
   if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=nccl_vote_begin\n",comm);
+  checkpoint.set(3);
   status=mgbfs_nccl_all_reduce_max_u32(comm,send,receive,stream);
   if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=nccl_vote_end status=%d\n",comm,status);
   if(status)return status;
+  checkpoint.set(4);
   status=mgbfs_owner_import_transport_fatal(receive,ring,owner,stream);
+  if(status)return status;
+  uint32_t* host=nullptr;uint32_t* terminal=nullptr;
+  checkpoint.set(5);
+  status=mgbfs_nccl_cancel_words(comm,&host,&terminal);
+  if(status)return status;
+  checkpoint.set(6);
+  publish_owner_terminal<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(receive,terminal);
+  checkpoint.set(7);
+  status=cudaGetLastError()==cudaSuccess?0:2;
   if(trace)std::fprintf(stderr,"MGBFS_GATE_TRACE comm=%p stage=import_end status=%d\n",comm,status);
   return status;
 }
@@ -279,4 +334,18 @@ extern "C" int mgbfs_owner_lsa_fatal_gate(void* comm,
     MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     uint32_t* send,uint32_t* receive,void* stream){
   return owner_fatal_gate(true,comm,ring,owner,send,receive,stream);
+}
+
+extern "C" int mgbfs_exchange_count_device_n(uint32_t world,uint32_t capacity,const void* hashes,const uint32_t* count,uint32_t* owner_counts,void* stream){
+ if(!world||(world&(world-1))||world>8||!capacity||!hashes||!count||!owner_counts)return 1;
+ split_n_device<<<1,8,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const uint32_t*>(hashes),count,capacity,world,owner_counts);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_owner_local_fatal_gate(void* comm,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,uint32_t* receive,void* stream){
+  if(!comm||!ring||!owner||!receive)return 1;
+  uint32_t* host=nullptr;uint32_t* terminal=nullptr;
+  const int status=mgbfs_nccl_cancel_words(comm,&host,&terminal);
+  if(status)return status;
+  publish_local_owner_terminal<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(ring,owner,receive,terminal);
+  return cudaGetLastError()==cudaSuccess?0:2;
 }

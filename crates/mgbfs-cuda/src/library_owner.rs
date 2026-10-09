@@ -136,6 +136,26 @@ extern "C" {
     ) -> i32;
     /// Requires the creating device/resource and a drained owner stream.
     pub fn mgbfs_library_rank_destroy_v1(rank_owner: RankHandle) -> i32;
+    pub fn mgbfs_library_rank_create_weighted_cuco_v1(
+        capacities: *const u32,
+        shards: u32,
+        incoming: u32,
+        logical_owner: u32,
+        world: u32,
+        settled_capacity: u32,
+        stream: *mut c_void,
+        output: *mut RankHandle,
+    ) -> i32;
+    pub fn mgbfs_library_rank_export_sorted_refs_v1(
+        rank_owner: RankHandle,
+        keys: *mut c_void,
+        refs: *mut u64,
+        count: *mut u32,
+        capacity: u32,
+        ring: *mut crate::native_owner::Ring,
+        control: *mut crate::native_owner::Control,
+    ) -> i32;
+    pub fn mgbfs_library_rank_reset_weighted_v1(rank_owner: RankHandle) -> i32;
     pub fn mgbfs_control_transfer_create_v1(stream: *mut c_void, out: *mut *mut c_void) -> i32;
     pub fn mgbfs_control_transfer_destroy_v1(handle: *mut c_void) -> i32;
     pub fn mgbfs_control_transfer_upload_v1(

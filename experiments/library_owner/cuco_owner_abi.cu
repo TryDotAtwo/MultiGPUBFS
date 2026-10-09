@@ -91,11 +91,11 @@ struct RankHandle {
   RankHandle(std::vector<MgbfsLibraryKeysV1> previous,
       std::vector<MgbfsLibraryKeysV1> current,std::vector<uint32_t> capacities,
       uint32_t incoming,uint32_t logical_owner,uint32_t world,
-      rmm::cuda_stream_view stream)
+      rmm::cuda_stream_view stream,bool retain_refs=false,uint32_t settled_capacity=0)
       : device(current_device()),resource(rmm::mr::get_current_device_resource_ref()),
         stream(stream),
         batch(std::move(previous),std::move(current),std::move(capacities),
-            incoming,logical_owner,world,stream,resource) {}
+            incoming,logical_owner,world,stream,resource,retain_refs,settled_capacity) {}
   static int current_device(){
     int id=-1;
     mgbfs::cuco_owner_detail::check(cudaGetDevice(&id));
@@ -186,6 +186,43 @@ extern "C" int mgbfs_library_rank_destroy_v1(void* handle){
     mgbfs::cuco_owner_detail::check(cudaStreamSynchronize(h->stream.value()));
     if(trace)std::fprintf(stderr,"MGBFS_FAILURE_TEARDOWN device=%d stage=owner_drain_end\n",h->device);
     delete h;
+    return 0;
+  } catch (...) {return -1;}
+}
+
+/* Weighted target tables never borrow mutable settled history. Their accepted
+ * membership survives batches and is reset only after the caller's last-reader
+ * event. The shared settlement owns original-depth history filtering. */
+extern "C" int mgbfs_library_rank_create_weighted_cuco_v1(
+    const uint32_t* capacities,uint32_t shards,uint32_t incoming,
+    uint32_t logical_owner,uint32_t world,uint32_t settled_capacity,
+    void* stream,void** output){
+  if(!output)return -1;
+  *output=nullptr;
+  if(!capacities||!shards||shards>256||!settled_capacity)return -1;
+  try {
+    std::vector<MgbfsLibraryKeysV1> empty(shards);
+    std::vector<uint32_t> caps(capacities,capacities+shards);
+    *output=new RankHandle(empty,empty,std::move(caps),incoming,logical_owner,world,
+        rmm::cuda_stream_view{static_cast<cudaStream_t>(stream)},true,settled_capacity);
+    return 0;
+  } catch (...) {return -1;}
+}
+extern "C" int mgbfs_library_rank_export_sorted_refs_v1(void* handle,
+    void* keys,uint64_t* refs,uint32_t* count,uint32_t capacity,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
+  if(!handle)return -1;
+  try {
+    auto* h=static_cast<RankHandle*>(handle);
+    h->check();h->batch.export_sorted(keys,refs,count,capacity,ring,owner);
+    return 0;
+  } catch (...) {return -1;}
+}
+extern "C" int mgbfs_library_rank_reset_weighted_v1(void* handle){
+  if(!handle)return -1;
+  try {
+    auto* h=static_cast<RankHandle*>(handle);
+    h->check();h->batch.reset_empty_history();
     return 0;
   } catch (...) {return -1;}
 }

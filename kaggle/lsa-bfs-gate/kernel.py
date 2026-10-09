@@ -1,6 +1,7 @@
 """Exact-source, two-T4 CUCO_RANK/LSA full-state BFS correctness gate."""
 import hashlib
 import ctypes
+import copy
 import importlib.util
 import json
 import os
@@ -13,16 +14,229 @@ import sys
 import tempfile
 import time
 
-SOURCE = "81158d1501b3fde249e38916af0dc392d527a135"
+SOURCE = "d3d1e2aa350c8dc3d34cad9367fc4f8e90a7ea64"
 CUCO = "532795b81e72e3fe4ce2b26eb0c5abc8abb1e2b4"
-MODE = "rounds_gate"
+MODE = "typed_matrix_gate"
 HARDWARE = "T4"  # A4000 is an explicit diagnostic, never T4 acceptance.
-NCCL_VARIANT = "wheel"  # Explicit experimental opt-in: minimum_arch_guard.
+NCCL_VARIANT = "minimum_arch_guard_posix"
 
 
-def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None):
+def oracle_dependency_packages(mode):
+    return ['pyarrow==19.0.1'] if mode in ('device_protocol_replay', 'native_rank_gate',
+        'typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate',
+        'typed_sanitizer_version_gate', 'typed_matrix_gate') else []
+
+
+def macro_capture_command():
+    return ['cargo', 'test', '--locked', '-p', 'mgbfs-runtime',
+        '--features', 'cuda,library-owner', '--lib',
+        'macro_native::producer_capture_tests::macro_produce_captures_and_runs_without_host_count_readback',
+        '--', '--exact', '--nocapture', '--test-threads=1']
+
+
+def typed_rank_configs(base):
+    cases = []
+    for profile in ('DENSE', 'HASH_FIRST'):
+        for credits in (2, 3):
+            for prededup in (True, False):
+                for mapping in ([0, 1], [1, 0]):
+                    for banks in (2, 3, 4):
+                        config = copy.deepcopy(base)
+                        config.update(frontier_profile=profile, completion_epoch_window=credits,
+                            local_pre_dedup=prededup, owner_backend='CUCO_RANK', library_pool_bytes=96 << 20)
+                        config['topology']['logical_owner_to_rank'] = mapping.copy()
+                        config['capacities']['route_slot_count'] = banks
+                        cases.append(config)
+    return cases
+
+
+def typed_reuse_configs(base):
+    """U4(F2): a 13-state layer forces >4 parent batches on some rank."""
+    config = copy.deepcopy(base)
+    generators = []
+    for row in range(3):
+        matrix = base['graph']['start'].copy()
+        matrix[row * 4 + row + 1] = 1
+        generators.append(matrix)
+    config['graph'].update(generators=generators + copy.deepcopy(generators),
+        inverse_map=[3, 4, 5, 0, 1, 2], expected_max_unique_states=64)
+    config['capacities']['route_slot_records'] = 6
+    return [candidate for candidate in typed_rank_configs(config)
+        if candidate['completion_epoch_window'] == 3 and candidate['local_pre_dedup']
+        and candidate['topology']['logical_owner_to_rank'] == [0, 1]]
+
+
+def typed_stress_configs(base, modulus):
+    """Bounded full-state U4 gate; not an end-to-end performance benchmark."""
+    if type(modulus) is not int or not 2 <= modulus <= 6:
+        raise ValueError('BOUNDED_REFERENCE_UNITRIANGULAR')
+    config = copy.deepcopy(base)
+    generators, inverses = [], []
+    identity = [int(row == col) for row in range(4) for col in range(4)]
+    for row in range(3):
+        forward, inverse = identity.copy(), identity.copy()
+        forward[row * 4 + row + 1] = 1
+        inverse[row * 4 + row + 1] = modulus - 1
+        generators.append(forward)
+        inverses.append(inverse)
+    states = modulus ** 6
+    records = 1 << (states - 1).bit_length()
+    config['graph'].update(rows=4, cols=4, modulus=modulus, start=identity,
+        generators=generators + inverses, inverse_map=[3, 4, 5, 0, 1, 2],
+        expected_max_unique_states=states)
+    config['parent_batch'] = 8
+    config['capacities'].update(state_ring_records=2 * records,
+        state_extent_descriptors=2 * records, layer_hash_records_per_arena=records,
+        next_bucket_capacity_records=records, route_slot_records=48,
+        pinned_archive_slots=2 * records, pinned_archive_slot_bytes=512)
+    cases = []
+    for candidate in typed_rank_configs(config):
+        if candidate['completion_epoch_window'] != 3:
+            continue
+        for owner in ('CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
+            selected = copy.deepcopy(candidate)
+            selected['owner_backend'] = owner
+            selected['library_pool_bytes'] = (96 << 20) if owner == 'CUCO_RANK' else None
+            cases.append(selected)
+    return cases
+
+
+def typed_matrix_cases(base):
+    """Full U4/m=2..6 state oracle matrix through the existing rank runtime."""
+    cases = []
+    for modulus in range(2, 7):
+        for config in typed_stress_configs(base, modulus):
+            if config['capacities']['route_slot_count'] != 3:
+                continue
+            config['parent_batch'] = 256
+            config['capacities']['route_slot_records'] = 1536
+            config['capacities']['pinned_archive_slot_bytes'] = 8192
+            config['capacities']['pinned_archive_slots'] = 256
+            for seed in (0, 1, 20260828):
+                selected = copy.deepcopy(config)
+                selected['seed'] = list(seed.to_bytes(16, 'little'))
+                label = (f'u4m{modulus}-{selected["owner_backend"]}-{selected["frontier_profile"]}'
+                    f'-pre{int(selected["local_pre_dedup"])}'
+                    f'-map{"".join(map(str, selected["topology"]["logical_owner_to_rank"]))}-seed{seed}')
+                cases.append(dict(config=selected, label=label,
+                    extra=['--healthy-only', '--unitriangular-modulus', str(modulus)]))
+    return cases
+
+
+def typed_followup_cases(base):
+    """Unfiltered registration replays and full BFS traces; not performance."""
+    configs = [config for config in typed_rank_configs(base)
+        if config['completion_epoch_window'] == 3 and config['local_pre_dedup']
+        and config['topology']['logical_owner_to_rank'] == [0, 1]]
+    cases = []
+    for config in configs:
+        for repeat in range(3):
+            label = (f"initcheck-{config['frontier_profile']}-banks-"
+                     f"{config['capacities']['route_slot_count']}-repeat-{repeat}")
+            cases.append(dict(config=copy.deepcopy(config), repeat=repeat, label=label,
+                tool='initcheck', extra=['--healthy-only', '--instrument-processes', 'initcheck']))
+    for config in typed_reuse_configs(base):
+        if config['capacities']['route_slot_count'] == 3:
+            cases.append(dict(config=config, repeat=0, label='timeline-' + config['frontier_profile'],
+                tool='nsys', extra=['--healthy-only', '--unitriangular-modulus', '2',
+                    '--require-bank-reuse', '--instrument-processes', 'nsys']))
+    return cases
+
+
+def typed_paired_config(base, n):
+    """Explicit matrix L/R/X production input; no reference-dispatch defaults."""
+    if type(n) is not int or not 2 <= n <= 20:
+        raise ValueError('PAIRED_MATRIX_SIZE')
+    config = copy.deepcopy(base)
+    identity = list(range(n))
+    permutations = [identity[1:] + identity[:1], identity[-1:] + identity[:-1],
+                    [1, 0, *identity[2:]]]
+    order = 1
+    for value in range(2, n + 1):
+        order *= value
+    config['graph'] = dict(schema=1, rows=n, cols=n, modulus=2,
+        start=[int(i == j) for i in range(n) for j in range(n)],
+        generators=[[int(j == permutation[i]) for i in range(n) for j in range(n)]
+                    for permutation in permutations], inverse_map=[1, 0, 2],
+        expected_max_unique_states=order)
+    config.update(owner_backend='CUCO_RANK', library_pool_bytes=96 << 20,
+                  parent_batch=32768, frontier_profile='DENSE', local_pre_dedup=True,
+                  macro_depth=1, completion_epoch_window=3)
+    config['topology'].update(world_size=2, shards_per_rank=4, buckets_per_shard=256,
+                              logical_owner_to_rank=[0, 1])
+    config['capacities'].update(state_ring_records=1_000_000,
+        state_extent_descriptors=1_000_000, layer_hash_records_per_arena=1_000_000,
+        next_bucket_capacity_records=1_000_000, route_slot_records=98304,
+        route_slot_count=3, pinned_archive_slots=256,
+        pinned_archive_slot_bytes=32768 * (n * n + 16),
+        disk_extent_bytes_per_rank=1 << 30, untouched_vram_reserve_bytes=1 << 30)
+    return config
+
+
+def cuda_build_target(hardware):
+    """Match the admitted physical GPU; never reuse another major's SASS."""
+    targets = {"T4": "75", "RTX2070": "75", "A4000": "86"}
+    if hardware not in targets:
+        raise ValueError("UNSUPPORTED_CUDA_BUILD_HARDWARE: " + hardware)
+    return targets[hardware]
+
+
+def typed_warmup_cases(base):
+    cases = []
+    for profile in ('DENSE', 'HASH_FIRST'):
+        config = copy.deepcopy(base)
+        config['frontier_profile'] = profile
+        config['owner_backend'] = 'CUCO_RANK'
+        config['library_pool_bytes'] = 96 << 20
+        config['completion_epoch_window'] = 3
+        config['capacities']['route_slot_count'] = 3
+        cases.append(dict(config=config, label='warmup-' + profile,
+                          extra=['--bench-warmup', '--capacity-faults']))
+    return cases
+
+
+def typed_sanitizer_version_cases(base):
+    return [dict(config=copy.deepcopy(case['config']), version=version, tool=tool,
+                 label=f"toolchain-{case['config']['frontier_profile']}-{version}-{tool}",
+                 extra=['--healthy-only', '--instrument-processes', tool])
+            for case in typed_warmup_cases(base)
+            for version in ('host', 'cuda129')
+            for tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck')]
+
+
+def sanitizer_version_environment(env, host, pinned, version):
+    if version not in ('host', 'cuda129'):
+        raise ValueError('SANITIZER_VERSION_SELECTION')
+    selected = host if version == 'host' else pinned
+    result = dict(env)
+    result['MGBFS_COMPUTE_SANITIZER'] = str(selected)
+    result['PATH'] = Path(selected).parent.as_posix() + ':' + result.get('PATH', '')
+    return result
+
+
+def sanitizer_selection_matches(actual, executable, sha256):
+    return (isinstance(actual, dict) and actual.get('executable') == executable
+        and actual.get('sha256') == sha256 and isinstance(actual.get('version'), str)
+        and bool(actual['version'].strip()))
+
+
+def vmm_probe_cases():
+    return [dict(mode=mode, tool=tool, runtime_init=runtime_init, symmetric=symmetric,
+                 label=f'{mode}-{tool or "plain"}' + ('-runtime-init' if runtime_init else '')
+                       + ('-symmetric' if symmetric else ''))
+            for mode in ('local', 'import')
+            for runtime_init, symmetric in ((False, False), (True, False), (True, True))
+            for tool in (None, 'memcheck', 'racecheck', 'initcheck', 'synccheck')]
+
+
+def run_window_process_pair(command, cwd, env, output, timeout=120, required_stage=None,
+                            require_window=True):
     """Reduced vendor probe, independent ranks, bounded whole process trees."""
-    scripts = str(Path(__file__).resolve().parents[2] / 'scripts')
+    if not require_window and required_stage not in (
+            'device_comm_only_create', 'device_comm_zero_create', 'vmm_local', 'vmm_import'):
+        raise ValueError('WINDOWLESS_PROBE_REQUIRES_DEVICE_ONLY_STAGE')
+    # Kaggle relocates the uploaded script; cwd is the pinned source checkout.
+    scripts = str(Path(cwd).resolve() / 'scripts')
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
     from process_scope import spawn_group, stop_group
@@ -57,8 +271,9 @@ def run_window_process_pair(command, cwd, env, output, timeout=120, required_sta
     reached = ([text.count(f'rank={rank} stage={required_stage} result=PASS')
                 for rank, text in enumerate(texts)] if required_stage else [1, 1])
     return dict(returncodes=codes, timed_out=timed_out, registered_ranks=registered,
-                required_stage=required_stage, reached_stage=reached,
-                **{'pass': not timed_out and codes == [0, 0] and registered == [1, 1] and reached == [1, 1]})
+                required_stage=required_stage, reached_stage=reached, require_window=require_window,
+                **{'pass': not timed_out and codes == [0, 0]
+                    and registered == ([1, 1] if require_window else [0, 0]) and reached == [1, 1]})
 
 
 def run_protocol_replay(command, cwd, env, log, timeout=1800):
@@ -80,6 +295,7 @@ def run_protocol_replay(command, cwd, env, log, timeout=1800):
 
 
 def main():
+    architecture = cuda_build_target(HARDWARE)
     work = Path(tempfile.mkdtemp(prefix="mgbfs-lsa-bfs-", dir="/tmp"))
     logs = Path("/kaggle/working/lsa-bfs-gate")
     logs.mkdir(parents=True, exist_ok=True)
@@ -92,6 +308,7 @@ def main():
                if MODE == "warmup_admission_gate" else
                "two physical T4; boundary agreement, archive integrity and independent S4 full-state oracle")}
     report["hardware_target"] = HARDWARE
+    report["cuda_architecture"] = "sm" + architecture
     report["t4_acceptance_eligible"] = HARDWARE == "T4"
     if HARDWARE != "T4":
         report["scope"] = "explicit " + HARDWARE + " hardware diagnostic; not T4 acceptance"
@@ -118,6 +335,7 @@ def main():
     spec.loader.exec_module(library)
     env = library.isolated_environment(os.environ)
     env["NCCL_CUMEM_ENABLE"] = "1"
+    env["MGBFS_EPOCH_WINDOW"] = "3"
     env["PIP_DEFAULT_TIMEOUT"] = "300"
     env["PIP_RETRIES"] = "5"
 
@@ -155,14 +373,20 @@ def main():
             p2p.append({"source": source_gpu, "target": target_gpu,
                         "cuda_status": rc, "allowed": allowed.value})
         report["p2p"] = p2p
-        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only", "native_rank_gate") and any(
+        if MODE not in ("device_fatal_gate", "boundary_gate", "host_sized_only") and any(
                 row["cuda_status"] != 0 or row["allowed"] != 1 for row in p2p):
             report["status"] = "UNSUPPORTED_HOST"
             return
         sdk = work / "cuda-12.9"
         sdk.mkdir()
-        profiling_enabled = MODE in ('native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
+        # Resolve before adding SDK/bin: sanitizer_api includes a launcher there.
+        host_sanitizer = shutil.which('compute-sanitizer', path=env.get('PATH', ''))
+        profiling_enabled = MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'typed_matrix_gate', 'native_rank_gate', 'timeline', 'timeline_backtrace', 'timeline_analysis')
         components = list(library.CUDA_COMPONENTS)
+        if MODE == 'typed_sanitizer_version_gate':
+            # Official redistrib12.9.1, inspected tar includes the actual instrumenter.
+            components.append(('cuda_sanitizer_api', '12.9.79',
+                'e23aad21132ff58b92a22aad372a7048793400b79c625665d325d4ecec6979bf'))
         if profiling_enabled:
             # NVIDIA redistrib_12.9.1.json; checked archive contains NVTX3 headers.
             components.append(('cuda_nvtx', '12.9.79',
@@ -184,6 +408,43 @@ def main():
         (sdk / "lib64").symlink_to("lib", target_is_directory=True)
         env["PATH"] = str(sdk / "bin") + ":" + env.get("PATH", "")
         env["CUDACXX"] = str(sdk / "bin/nvcc")
+        if MODE in ('nccl_window_processes', 'cuda_posix_import') or profiling_enabled:
+            # The compiler is pinned, but the instrumenter comes from the host.
+            # Record actual versions; do not infer sanitizer identity from nvcc.
+            report['environment_versions'] = {
+                'driver': run(['nvidia-smi', '--query-gpu=driver_version',
+                    '--format=csv,noheader'], 'driver-version').strip(),
+                'cuda_compiler': run([env['CUDACXX'], '--version'], 'nvcc-version').strip(),
+                'compute_sanitizer': run([host_sanitizer or 'compute-sanitizer', '--version'],
+                    'compute-sanitizer-version').strip(),
+            }
+            save()
+        if MODE == 'cuda_posix_import':
+            binary = work / 'cuda-posix-import'
+            run([env['CUDACXX'], '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
+                 str(source / 'experiments/cuda_posix_import.cu'), '-lcuda', '-o', str(binary)],
+                'vmm-build')
+            report['scope'] = 'CUDA VMM local/import diagnostics; no NCCL or BFS acceptance'
+            report['vmm_cases'] = []
+            for case in vmm_probe_cases():
+                command = [str(binary), case['mode']]
+                if case['runtime_init']:
+                    command.append('--runtime-init')
+                if case['symmetric']:
+                    command.append('--symmetric')
+                if case['tool']:
+                    command = ['compute-sanitizer', '--tool', case['tool'],
+                               '--error-exitcode', '97'] + command
+                row = run_window_process_pair(command, source, env,
+                    logs / ('vmm-' + case['label']), timeout=180,
+                    required_stage='vmm_' + case['mode'], require_window=False)
+                row.update(case)
+                row['command'] = command
+                report['vmm_cases'].append(row)
+                (logs / 'vmm-cases.json').write_text(json.dumps(report['vmm_cases'], indent=2))
+            report['status'] = ('COMPLETE' if all(c['pass'] for c in report['vmm_cases'])
+                                else 'INCOMPLETE')
+            return
         venv = work / "venv"
         run([sys.executable, "-m", "venv", "--without-pip", str(venv)], "venv")
         python = str(venv / "bin/python")
@@ -191,12 +452,16 @@ def main():
              "--only-binary=:all:", "--no-cache-dir", "--require-hashes", "-r",
              str(source / "experiments/library_owner/requirements-linux-x86_64.lock")],
             "dependencies", timeout=1200)
-        if MODE in ("device_protocol_replay", "native_rank_gate"):
+        verifier_dependencies = oracle_dependency_packages(MODE)
+        if verifier_dependencies:
             # The full-state oracle reuses the archive reader in the Parquet
             # exporter; its module-level schemas require Arrow at import time.
             run([sys.executable, "-m", "pip", "--python", python, "install",
-                 "--only-binary=:all:", "--no-deps", "pyarrow==19.0.1"],
+                 "--only-binary=:all:", "--no-deps", *verifier_dependencies],
                 "archive-verifier-dependency", timeout=300)
+            run([python, '-c', 'from export_hf_dataset import frames'],
+                'archive-verifier-import-preflight', timeout=30,
+                cwd=source / 'scripts')
         site = subprocess.check_output([python, "-c", "import site; print(site.getsitepackages()[0])"],
                                        text=True, env=env).strip()
         site = Path(site)
@@ -206,7 +471,7 @@ def main():
         run([sys.executable, "-m", "pip", "install", "--no-deps", "--target",
              str(nccl_target), "nvidia-nccl-cu12==2.29.7"], "nccl-install")
         nccl = nccl_target / "nvidia/nccl"
-        if NCCL_VARIANT == "minimum_arch_guard":
+        if NCCL_VARIANT in ("minimum_arch_guard", "minimum_arch_guard_posix"):
             upstream = "b91894bd5b190c874d98a017f93f5daa515b65d0"
             patch_file = source / "patches/nccl-2.29.7-minimum-arch.patch"
             patch_digest = hashlib.sha256(patch_file.read_bytes()).hexdigest()
@@ -221,15 +486,38 @@ def main():
                 raise RuntimeError("NCCL_SOURCE_COMMIT_MISMATCH")
             run(["git", "apply", "--check", str(patch_file)], "nccl-patch-check", cwd=vendor)
             run(["git", "apply", str(patch_file)], "nccl-patch", cwd=vendor)
+            posix_patch_digest = None
+            if NCCL_VARIANT == "minimum_arch_guard_posix":
+                # Fixed before process startup. Keep VMM/LSA enabled; no probe
+                # error suppression, auto fallback, or legacy cudaMalloc.
+                env["NCCL_MNNVL_ENABLE"] = "0"
+                posix_patch = source / "patches/nccl-2.29.7-explicit-posix.patch"
+                posix_patch_digest = hashlib.sha256(posix_patch.read_bytes()).hexdigest()
+                if posix_patch_digest != "e73af6f263bb0eebb22904a20251c8b5da0dec2b463fdeb3c5a9c4fbc88b3072":
+                    raise RuntimeError("NCCL_POSIX_PATCH_DIGEST_MISMATCH")
+                run(["git", "apply", "--check", str(posix_patch)], "nccl-posix-check", cwd=vendor)
+                run(["git", "apply", str(posix_patch)], "nccl-posix-patch", cwd=vendor)
+                policy_env = dict(env, MGBFS_NCCL_POLICY_SOURCE=str(vendor))
+                gate.run([sys.executable, str(source / "scripts/test_nccl_allocator_policy.py")],
+                    cwd=source, env=policy_env, logs=logs, name="nccl-allocator-policy", timeout=60)
+            local_first_patch = source / "patches/nccl-2.29.7-local-first-map.patch"
+            local_first_digest = hashlib.sha256(local_first_patch.read_bytes()).hexdigest()
+            if local_first_digest != "95a042db1698504182c0cf0ee34c8c74dbaf5cb376d1aeeae93d464b0378b5b1":
+                raise RuntimeError("NCCL_LOCAL_FIRST_PATCH_DIGEST_MISMATCH")
+            run(["git", "apply", "--check", str(local_first_patch)], "nccl-local-first-check", cwd=vendor)
+            run(["git", "apply", str(local_first_patch)], "nccl-local-first-patch", cwd=vendor)
             # Existing independent-process replay resolves this exact root.
             # Preserve the wheel separately instead of accidentally replaying it.
             shutil.move(str(nccl_target), str(work / "nccl-wheel"))
             nccl = nccl_target / "nvidia/nccl"
             run(["make", "-j2", "src.build", "NVTX=1", "CUDA_HOME=" + str(sdk),
-                 "NVCC_GENCODE=-gencode=arch=compute_75,code=sm_75",
+                 "NVCC_GENCODE=-gencode=arch=compute_" + architecture + ",code=sm_" + architecture,
                  "BUILDDIR=" + str(nccl)], "nccl-build", cwd=vendor, timeout=5400)
             report["nccl_dependency"] = dict(variant=NCCL_VARIANT,
-                upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm75",
+                upstream_commit=upstream, patch_sha256=patch_digest, architecture="sm" + architecture,
+                posix_patch_sha256=posix_patch_digest,
+                local_first_map_patch_sha256=local_first_digest,
+                mnnvl_enable=env.get("NCCL_MNNVL_ENABLE"),
                 nvtx=1, experimental=True,
                 library_sha256=hashlib.sha256((nccl / "lib/libnccl.so.2.29.7").read_bytes()).hexdigest())
             save()
@@ -274,7 +562,7 @@ def main():
             return
         if MODE in ("nccl_window_isolation", "nccl_window_nonblocking", "nccl_window_processes"):
             binary = work / "nccl-window-isolation"
-            compiler = ([str(sdk / 'bin/nvcc'), '-std=c++17', '-arch=sm_75', '-lineinfo',
+            compiler = ([str(sdk / 'bin/nvcc'), '-std=c++17', '-arch=sm_' + architecture, '-lineinfo',
                          '-DMGBFS_WINDOW_DEVICE_PROBE=1', '-Xcompiler=-pthread']
                         if MODE == 'nccl_window_processes' else ['g++', '-std=c++17', '-pthread', '-x', 'c++'])
             linker = (['-Xlinker=-rpath,' + str(nccl / 'lib')] if MODE == 'nccl_window_processes'
@@ -292,14 +580,17 @@ def main():
                 report['t4_acceptance_eligible'] = False
                 report['window_runs'] = {}
                 probe_env = dict(env, NCCL_DEBUG='INFO')
-                for stage, argument in (('window', 'nonblocking'), ('device_comm_create', 'device_comm')):
+                for stage, argument in (('window', 'nonblocking'),
+                        ('device_comm_zero_create', 'device_comm_zero'),
+                        ('device_comm_only_create', 'device_comm_only'), ('device_comm_create', 'device_comm')):
                     for tool in ('plain', 'memcheck', 'racecheck', 'initcheck', 'synccheck'):
                         label = stage + '-' + tool
                         command = [str(binary), argument]
                         if tool != 'plain':
                             command = ['compute-sanitizer', '--tool', tool, '--error-exitcode', '97', *command]
                         row = run_window_process_pair(command, source, probe_env, logs / ('window-process-' + label),
-                            required_stage=stage if stage != 'window' else None)
+                            required_stage=stage if stage != 'window' else None,
+                            require_window=argument not in ('device_comm_only', 'device_comm_zero'))
                         row['command'] = command
                         if tool != 'plain':
                             from replay_lsa_cancel_candidate import instrumentation_clean
@@ -355,7 +646,7 @@ def main():
                       cuco, env, logs, "cuco")
         build = work / "library-build"
         run(["cmake", "-S", str(source / "experiments/library_owner"), "-B", str(build),
-             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75",
+             "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=" + architecture,
              "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUDAToolkit_ROOT=" + str(sdk),
              "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
@@ -372,7 +663,7 @@ def main():
              "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
              *(["-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -g1"]
                if MODE == "timeline_backtrace" else []),
-             "-DCMAKE_CUDA_ARCHITECTURES=75", "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
+             "-DCMAKE_CUDA_ARCHITECTURES=" + architecture, "-DCMAKE_CUDA_COMPILER=" + str(sdk / "bin/nvcc"),
              "-DCUTLASS_ROOT=" + str(cutlass), "-DMGBFS_NCCL_LSA=ON",
              "-DMGBFS_NCCL_ROOT=" + str(nccl),
              *(['-DMGBFS_NVTX=ON', '-DMGBFS_NVTX_INCLUDE_DIR=' + str(sdk / 'include')]
@@ -381,10 +672,141 @@ def main():
             "native-build", timeout=1800)
         env["MGBFS_CUDA_LIB_DIR"] = str(native)
         env["LD_LIBRARY_PATH"] = str(native) + ":" + env["LD_LIBRARY_PATH"]
+        if MODE == 'macro_capture_gate':
+            report['scope'] = 'single-rank existing macro producer CUDA Graph capture and exact layer oracle; not multi-GPU macro admission'
+            output = run(macro_capture_command(), 'macro-producer-capture', timeout=900)
+            if 'test result: ok. 1 passed; 0 failed' not in output:
+                raise RuntimeError('MACRO_CAPTURE_TEST_NOT_EXECUTED')
+            report['macro_producer_capture'] = 'PASS'
+            report['status'] = 'COMPLETE'
+            return
+        if MODE in ('typed_rank_gate', 'typed_followup_gate', 'typed_stress_gate', 'typed_warmup_gate', 'typed_sanitizer_version_gate', 'typed_matrix_gate'):
+            report['scope'] = 'typed RunConfigV1; independent two-T4 full-state S4 archives, faults and unfiltered sanitizers'
+            report['typed_runs'] = []
+            base = json.loads((source / 'tests/run-s4-two-rank.json').read_text())
+            configs = typed_rank_configs(base)
+            def replay_typed(config, label, extra, replay_env=None):
+                snapshot = logs / (label + '-config.json')
+                snapshot.write_text(json.dumps(config, separators=(',', ':')))
+                print('START ' + label, flush=True)
+                with (logs / (label + '.log')).open('w') as output:
+                    row = run_protocol_replay([python, str(source / 'scripts/replay_lsa_cancel_candidate.py'),
+                        str(work), str(logs / label), '--run-config', str(snapshot), *extra],
+                        cwd=source, env=env if replay_env is None else replay_env, log=output)
+                detail_path = logs / label / 'summary.json'
+                detail = json.loads(detail_path.read_text()) if detail_path.exists() else {}
+                row.update(label=label, run_config_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                    run_contract=detail.get('run_contract'), epoch_window=detail.get('epoch_window'),
+                    route_banks=detail.get('route_banks'),
+                    replay_status=detail.get('status'))
+                row['process_sanitizer'] = detail.get('process_sanitizer')
+                row['pass'] = row['returncode'] == 0 and not row['timed_out'] and (
+                    detail.get('status') == 'DIAGNOSTIC_CASES_PASS' and detail.get('run_contract') == 'RunConfigV1'
+                    and detail.get('epoch_window') == config['completion_epoch_window']
+                    and detail.get('route_banks') == config['capacities']['route_slot_count'])
+                report['typed_runs'].append(row)
+                save()
+                print('RESULT ' + json.dumps(row, separators=(',', ':')), flush=True)
+                return row
+            if MODE == 'typed_matrix_gate':
+                report['scope'] = 'production two-rank full-state U4 moduli2..6, profiles/owners/pre-dedup/maps/seeds; not performance or sanitizer acceptance'
+                for case in typed_matrix_cases(base):
+                    replay_typed(case['config'], case['label'], case['extra'])
+                report['status'] = 'TYPED_MATRIX_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
+            if MODE == 'typed_sanitizer_version_gate':
+                pinned = sdk / 'compute-sanitizer/compute-sanitizer'
+                if not host_sanitizer:
+                    raise RuntimeError('HOST_SANITIZER_NOT_FOUND')
+                report['scope'] = 'full typed BFS, unchanged runtime: host versus CUDA12.9 instrumenter, no suppression'
+                report['pinned_sanitizer_version'] = run([str(pinned), '--version'], 'pinned-sanitizer-version').strip()
+                report['pinned_sanitizer_executable_sha256'] = hashlib.sha256(pinned.read_bytes()).hexdigest()
+                for case in typed_sanitizer_version_cases(base):
+                    replay_env = sanitizer_version_environment(env, host_sanitizer, str(pinned), case['version'])
+                    row = replay_typed(case['config'], case['label'], case['extra'], replay_env)
+                    selected = replay_env['MGBFS_COMPUTE_SANITIZER']
+                    row['instrumenter_selection_verified'] = sanitizer_selection_matches(
+                        row.get('process_sanitizer'), selected,
+                        hashlib.sha256(Path(selected).read_bytes()).hexdigest())
+                    row['pass'] = row['pass'] and row['instrumenter_selection_verified']
+                    row.update(sanitizer_version=case['version'], tool=case['tool'])
+                    save()
+                report['status'] = 'TYPED_SANITIZER_VERSION_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
+            if MODE == 'typed_warmup_gate':
+                report['scope'] = 'typed two-rank production warmup and measured archive oracle; asymmetric failures'
+                for case in typed_warmup_cases(base):
+                    replay_typed(case['config'], case['label'], case['extra'])
+                report['status'] = 'TYPED_WARMUP_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
+            if MODE == 'typed_stress_gate':
+                report['scope'] = 'full typed U4/F3 state sets; all profile/pre-dedup/rank-map/source-bank combinations'
+                for config in typed_stress_configs(base, 3):
+                    label = (f"stress-{config['owner_backend']}-{config['frontier_profile']}-pre-{int(config['local_pre_dedup'])}"
+                        f"-map-{''.join(map(str,config['topology']['logical_owner_to_rank']))}"
+                        f"-banks-{config['capacities']['route_slot_count']}")
+                    replay_typed(config, label, ['--healthy-only', '--unitriangular-modulus', '3',
+                        '--require-bank-reuse'])
+                report['status'] = 'TYPED_STRESS_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
+            if MODE == 'typed_followup_gate':
+                report['scope'] = 'full typed two-rank BFS: repeated unfiltered initcheck activation and raw owner/transport/retirement timelines'
+                nsys = prepare_nsys()
+                for case in typed_followup_cases(base):
+                    replay_env = dict(env)
+                    if case['tool'] == 'initcheck':
+                        replay_env.update(NCCL_DEBUG='INFO', NCCL_DEBUG_SUBSYS='INIT,ALLOC,REG')
+                    else:
+                        # Diagnostic logging must not inflate the healthy timeline.
+                        replay_env.pop('NCCL_DEBUG', None)
+                        replay_env.pop('NCCL_DEBUG_SUBSYS', None)
+                        replay_env['PATH'] = str(Path(nsys).parent) + ':' + replay_env['PATH']
+                    row = replay_typed(case['config'], case['label'], case['extra'], replay_env)
+                    row.update(tool=case['tool'], repeat=case['repeat'])
+                    if case['tool'] == 'nsys' and row['pass']:
+                        row['rank_sqlite'] = []
+                        for rank in (0, 1):
+                            prefix = logs / case['label'] / 'healthy-None' / f'rank-{rank}'
+                            database = prefix.with_suffix('.sqlite')
+                            run([nsys, 'export', '--type', 'sqlite', '--force-overwrite=true',
+                                '-o', str(database), str(prefix.with_suffix('.nsys-rep'))],
+                                case['label'] + f'-rank{rank}-export', timeout=600)
+                            row['rank_sqlite'].append(str(database.relative_to(logs)))
+                    save()
+                report['status'] = 'TYPED_FOLLOWUP_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+                return
+            selected = []
+            for index, config in enumerate(configs):
+                fault_case = config['completion_epoch_window'] == 3 and config['local_pre_dedup'] and (
+                    config['topology']['logical_owner_to_rank'] == [0, 1])
+                replay_typed(config, 'typed-' + str(index),
+                    ['--capacity-faults'] if fault_case else ['--healthy-only'])
+                if fault_case:
+                    selected.append(config)
+            for config in selected:
+                for tool in ('memcheck', 'racecheck', 'initcheck', 'synccheck'):
+                    replay_typed(config, 'typed-' + config['frontier_profile'] + '-banks-' +
+                        str(config['capacities']['route_slot_count']) + '-' + tool,
+                        ['--healthy-only', '--instrument-processes', tool])
+            for index, config in enumerate(typed_reuse_configs(base)):
+                replay_typed(config, 'typed-reuse-' + str(index),
+                    ['--healthy-only', '--unitriangular-modulus', '2', '--require-bank-reuse'])
+            report['status'] = 'TYPED_GATE_PASS' if all(row['pass'] for row in report['typed_runs']) else 'INCOMPLETE'
+            return
         if MODE == "native_rank_gate":
             report["scope"] = "native rank owner: separate single-GPU T4 processes; two-rank checks only on verified P2P"
             report["t4_acceptance_eligible"] = False
             report["native_leaf_gates"] = []
+            # Exercise the actual host NCCL wrapper's error/progress ordering
+            # before GPU gates. This is API-boundary-double coverage only,
+            # never a replacement for independent-rank transport faults.
+            protocol = work / "native-host-nccl-protocol"
+            run(["g++", "-std=c++17", "-I" + str(source / "tests/nccl_stubs"),
+                 str(source / "tests/nccl_transport_failure.cpp"), "-o", str(protocol)],
+                "native-host-nccl-protocol-build")
+            run([str(protocol)], "native-host-nccl-protocol", timeout=30)
+            report["native_host_nccl_protocol"] = "PASS_API_BOUNDARY_DOUBLE_NOT_GPU"
+            save()
             for backend, defines in (("CUB_SORT_MERGE", []), ("BMMA_BUCKET", ["-DMGBFS_TEST_BMMA=1"])):
                 binary = work / ("native-rank-leaf-" + backend.lower())
                 run([str(sdk / "bin/nvcc"), "-std=c++17", "-lineinfo", "-arch=sm_75",
@@ -400,12 +822,19 @@ def main():
                     save()
             run(["cargo", "build", "--locked", "-p", "mgbfs-cli", "--features", "cuda,library-owner"],
                 "native-rank-cli-build", timeout=1800)
+            run(["cargo", "test", "--locked", "-p", "mgbfs-cli", "--features", "cuda,library-owner",
+                 "--test", "native_lsa_capture", "tensor_generation_hardware_admission_and_layer_counts",
+                 "--", "--exact", "--nocapture", "--test-threads=1"],
+                "tensor-generation-hardware-admission", timeout=300)
+            report["tensor_generation_cli_gate"] = "PASS_HARDWARE_CONDITIONAL_COUNTS_ARCHIVE"
+            save()
             spec = importlib.util.spec_from_file_location("native_replay", source / "scripts/replay_lsa_cancel_candidate.py")
             replay = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(replay)
             report["native_single_gpu_runs"] = []
+            rank_backends = ("CUCO_RANK", "CUB_SORT_MERGE", "BMMA_BUCKET")
             for gpu in (0, 1):
-                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for backend in rank_backends:
                     for profile in ("DENSE", "HASH_FIRST"):
                         for prededup in ("ON", "OFF"):
                             label = f"native-gpu{gpu}-{backend}-{profile}-{prededup}"
@@ -419,6 +848,8 @@ def main():
                                 MGBFS_ARCHIVE_SLOTS="128", MGBFS_BENCH_WARMUP="0", MGBFS_BENCH_SKIP_ARCHIVE="0",
                                 MGBFS_ARCHIVE_STREAM="0", MGBFS_CAPACITY_MODE="max_per_rank", MGBFS_RANK_MAP="0",
                                 MGBFS_TRANSPORT_BACKEND="NCCL_LSA", MGBFS_TEST_OWNER_DAG_CAPTURE="1")
+                            if backend == "CUCO_RANK":
+                                case_env["MGBFS_LIBRARY_POOL_BYTES"] = str(64 << 20)
                             with (case / "rank-0.log").open("w") as output:
                                 result = subprocess.run([str(source / "target/debug/mgbfs"), "bench", "--reference", "s4", "7",
                                     str(case / "bootstrap"), str(case / "archive"), str(case / "result")],
@@ -442,7 +873,7 @@ def main():
                 report["status"] = "NATIVE_SINGLE_GPU_PASS_MULTI_GPU_UNSUPPORTED"
                 return
             report["native_process_gates"] = []
-            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+            for backend in rank_backends:
                 for profile in ("DENSE", "HASH_FIRST"):
                     label = "native-process-" + backend + "-" + profile
                     with (logs / (label + ".log")).open("w") as output:
@@ -465,7 +896,7 @@ def main():
                         save()
             report["native_full_bfs_sanitizers"] = []
             sanitizer_env = dict(env, NCCL_DEBUG='INFO')
-            for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+            for backend in rank_backends:
                 for profile in ("DENSE", "HASH_FIRST"):
                     for tool in ("memcheck", "racecheck", "initcheck", "synccheck"):
                         label = "native-full-" + backend + "-" + profile + "-" + tool
@@ -484,7 +915,7 @@ def main():
                 trace_env = dict(env)
                 trace_env.pop('MGBFS_TEST_OWNER_DAG_CAPTURE', None)
                 trace_env['PATH'] = str(Path(nsys).parent) + ':' + trace_env['PATH']
-                for backend in ("CUB_SORT_MERGE", "BMMA_BUCKET"):
+                for backend in rank_backends:
                     for profile in ("DENSE", "HASH_FIRST"):
                         label = "native-s8-timeline-" + backend + "-" + profile
                         with (logs / (label + ".log")).open("w") as output:
@@ -768,7 +1199,11 @@ def main():
             sys.path.insert(0, str(source / "scripts"))
             from distributed_gpu_bench import run_group, stats
             from library_gpu_screen import run_case
-            report.update(scope="paired physical 2xT4 S10; native archive mandatory, CayleyPy no archive",
+            paired_config = typed_paired_config(json.loads(
+                (source / 'tests/run-s4-two-rank.json').read_text()), 10)
+            paired_config_path = logs / 'paired-s10-run-config.json'
+            paired_config_path.write_text(json.dumps(paired_config, separators=(',', ':')))
+            report.update(scope="paired physical 2xT4 S10; production RunConfigV1 native archive mandatory, CayleyPy no archive",
                           baseline_commit=baseline_commit, rows=[])
             save()
             expected = None
@@ -778,17 +1213,16 @@ def main():
                                 else ("cayleypy", "native")):
                     label = f"paired-s10-{backend}-r{repeat}"
                     if backend == "native":
-                        archive_root = work / label
+                        archive_root = logs / (label + '-archives')
                         case_env = dict(env, MGBFS_TRANSPORT_BACKEND="NCCL_LSA",
                                         MGBFS_SHARDS="4", MGBFS_BUCKETS="256",
                                         MGBFS_ARCHIVE_SLOTS="256")
                         result = run_case(str(source / "target/release/mgbfs"),
                                           logs / label, archive_root, "s10", 3_628_800,
                                           2, 32768, 1_000_000, 1_000_000, 96 << 20,
-                                          "DENSE", "ON", case_env, owner="CUCO_RANK")
+                                          "DENSE", "ON", case_env, owner="CUCO_RANK",
+                                          run_config=paired_config_path)
                         row = result["measurement"]
-                        for rank in range(2):
-                            (archive_root / f"archive-rank-{rank}.mgbfsar1").unlink()
                     else:
                         case_env = dict(env, PYTHONPATH=str(baseline),
                                         CUDA_VISIBLE_DEVICES="0,1",
@@ -808,6 +1242,7 @@ def main():
                     samples[backend].append(row)
                     report["rows"].append({"label": label, "backend": backend,
                                            "search_seconds": row["search_complete_seconds"],
+                                           "durable_seconds": row.get("durable_run_commit_seconds"),
                                            "peak_mib_per_rank": row["smi_peak_mib_per_rank"],
                                            "archive_contract": ("verified file_fsync"
                                                                 if backend == "native" else "none")})

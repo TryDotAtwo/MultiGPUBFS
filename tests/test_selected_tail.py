@@ -34,9 +34,11 @@ class SelectedTests(unittest.TestCase):
             counts=[500,3000,0,10,1001,4000,0,100]
             parts=[first*500]+[second*min(n,1000) for n in counts[1:]]
             a.selected_layer(0,sum(counts),parts,.1,{str(i):None for i in range(8)})
+            bounded=[part[:125*a.width] for part in parts]
+            a.partial_terminal(0,bounded,[dict(saved=len(part)//a.width,unprocessed=counts[i],processed=0) for i,part in enumerate(bounded)])
             m=json.loads(a.snapshot(False).read_text())
-            self.assertEqual(m['files'][0]['states'],1000)
-            self.assertEqual((a.root/m['files'][0]['path']).read_bytes(),first*500+second*500)
+            self.assertEqual(sum(f['states'] for f in m['files']),sum(min(n,125) for n in counts))
+            self.assertLessEqual(sum(f['states'] for f in m['files']),1000)
 
     def test_complete_small_graph_roundtrips_independent_word_oracle(self):
         from scripts.verify_tail_oracle import verify
@@ -110,12 +112,13 @@ class SelectedTests(unittest.TestCase):
             a.selected_layer(1,1000,[state*800,state*200],.2,{'0':None,'1':None})
             a.selected_layer(2,1000000,[state*1000,state*1000],.3,{'0':None,'1':None})
             self.assertFalse(list(a.root.rglob('*.bin')))
+            a.partial_terminal(2,[state*500,state*500],[dict(saved=500,unprocessed=500000,processed=0)]*2)
             m=json.loads(a.snapshot(False,'resource').read_text())
             self.assertEqual(len(m['layers']),3)
             self.assertEqual(sum(x['states'] for x in m['files']),1000)
             self.assertEqual(m['files'][0]['depth'],2)
             self.assertFalse(m['files'][0]['full_layer'])
-            self.assertEqual(m['files'][0]['first_state_ordinal'],0)
+            self.assertEqual(sorted(f['first_state_ordinal'] for f in m['files']),[0,500])
             self.assertLessEqual(sum(p.stat().st_size for p in a.tail.glob('*.bin')),16008)
 
     def test_complete_whole_terminal_and_all_small_layers(self):
@@ -158,7 +161,8 @@ class SelectedTests(unittest.TestCase):
             self.assertFalse(list(a.tail.glob('*.bin')))
             self.assertEqual(a.retained,[])
             m=json.loads(a.snapshot(False,'export failed').read_text())
-            self.assertEqual([(f['depth'],f['states']) for f in m['files']],[(1,1000)])
+            self.assertEqual(m['files'],[])
+            self.assertEqual(m['state_export']['sample_status'],'unavailable')
 
     def test_terminal_missing_fails_before_any_payload_write(self):
         with tempfile.TemporaryDirectory() as root:
@@ -166,7 +170,7 @@ class SelectedTests(unittest.TestCase):
             a.selected_layer(0,3000,[state*1000],.1,{'0':None})
             with self.assertRaisesRegex(ValueError,'missing'):a.snapshot(True)
             self.assertFalse(list(a.tail.glob('*.bin')))
-            self.assertFalse(json.loads(a.snapshot(False).read_text())['files'][0]['full_layer'])
+            self.assertEqual(json.loads(a.snapshot(False).read_text())['files'],[])
 
 
 if __name__ == '__main__': unittest.main()

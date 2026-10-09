@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from scripts.tail_wire import consume, pack_batch, PackBuffer
-from scripts.bfs_tail_archive import pack_state
+from scripts.bfs_tail_archive import TailArchive, pack_state
+import json
 
 
 def wire(corrupt=False, truncate=False):
@@ -55,6 +56,23 @@ class WireTests(unittest.TestCase):
                 width=((n*bits+63)//64)*8
                 expected=b''.join(sum(x<<(i*bits) for i,x in enumerate(state)).to_bytes(width,'little') for state in states)
                 self.assertEqual(pack_batch(raw,len(states),n,bits),expected)
+    def test_committed_wire_layer_is_preserved_in_tail_snapshot(self):
+        with tempfile.TemporaryDirectory() as root:
+            archive = TailArchive(Path(root)/'tail', n=3, r=1, start=[0,1,2],
+                actions={'L':'left','R':'right','X':'swap'}, program_commit='fixture',
+                launch_config={'world':1}, sample_interval_seconds=.1)
+            def committed(depth, count, path, digest):
+                archive.completed_layer(depth, count, [path.read_bytes()], .1, {'0':100})
+                path.unlink()
+            receipt = consume(io.BytesIO(wire()), Path(root)/'spool', 3, committed)
+            manifest_path = archive.snapshot(True, 'graph exhausted')
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual(receipt['states'], 2)
+            self.assertEqual(manifest['status'], 'COMPLETE')
+            self.assertEqual(manifest['files'][0]['states'], 2)
+            self.assertEqual((archive.root/manifest['files'][0]['path']).read_bytes(),
+                bytes.fromhex('10020000000000000201000000000000'))
+            self.assertEqual(list((Path(root)/'spool').glob('*.bin')), [])
 
     def test_vector_pack_matches_scalar(self):
         for n in (1,15,16,17,32):

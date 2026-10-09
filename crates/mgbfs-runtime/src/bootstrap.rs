@@ -2,13 +2,175 @@
 use crate::control_handshake::RunIdentity;
 use mgbfs_core::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::{atomic::{AtomicBool, AtomicU8, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU8, Ordering},
+    Arc,
+};
+
+#[cfg(test)]
+mod outcome_escalation_tests {
+    use super::*;
+    use crate::control_connection::ControlConnection;
+    use std::time::{Duration, Instant};
+
+    fn pair() -> (ControlConnection, ControlConnection) {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (root, _) = listener.accept().unwrap();
+        (
+            ControlConnection::new(root, 2, 0, 1).unwrap(),
+            ControlConnection::new(peer, 2, 1, 0).unwrap(),
+        )
+    }
+    fn receive(conn: &mut ControlConnection) -> Option<crate::control_wire::ControlFrame> {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            match conn.poll_boundary_receive() {
+                Ok(Some(frame)) => return Some(frame),
+                Ok(None) => (),
+                Err(error) if error == "CONTROL_EOF" => return None,
+                Err(error) => panic!("unexpected control error: {error}"),
+            }
+            std::thread::yield_now();
+        }
+        None
+    }
+
+    #[test]
+    fn peer_sends_archive_failure_after_search_success() {
+        let (mut root, peer) = pair();
+        let local = Arc::new(AtomicU8::new(1));
+        let signal = local.clone();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![Some(peer), None];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            search_sideband_loop(
+                1,
+                &mut peers,
+                &signal,
+                &AtomicBool::new(false),
+                &retirement,
+                Duration::from_secs(3),
+            )
+        });
+        assert_eq!(receive(&mut root), Some(search_frame(1, false)));
+        local.store(2, Ordering::Release);
+        let escalation = receive(&mut root);
+        // Complete the actual retirement handshake even when escalation is broken.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut root, search_frame(0, true), deadline).unwrap();
+        assert_eq!(receive(&mut root), Some(retirement_frame(1, 1)));
+        boundary_send(&mut root, retirement_frame(0, 2), deadline).unwrap();
+        assert_eq!(worker.join().unwrap().unwrap(), true);
+        assert_eq!(
+            escalation,
+            Some(search_frame(1, true)),
+            "archive failure was suppressed after the initial success notification"
+        );
+    }
+
+    #[test]
+    fn coordinator_accepts_success_to_failure_escalation() {
+        let (root, mut peer) = pair();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed = cancelled.clone();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![None, Some(root)];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            search_sideband_loop(
+                0,
+                &mut peers,
+                &AtomicU8::new(0),
+                &observed,
+                &retirement,
+                Duration::from_secs(3),
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut peer, search_frame(1, false), deadline).unwrap();
+        boundary_send(&mut peer, search_frame(1, true), deadline).unwrap();
+        let cancellation = receive(&mut peer);
+        if cancellation.is_some() {
+            boundary_send(&mut peer, retirement_frame(1, 1), deadline).unwrap();
+            assert_eq!(receive(&mut peer), Some(retirement_frame(0, 2)));
+        }
+        let result = worker.join().unwrap();
+        assert_eq!(result, Ok(true));
+        assert_eq!(cancellation, Some(search_frame(0, true)));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn queued_archive_failure_is_not_mistaken_for_reader_retirement() {
+        let (root, mut peer) = pair();
+        let worker = std::thread::spawn(move || {
+            let mut peers = vec![None, Some(root)];
+            let retirement = SearchRetirement::default();
+            retirement.local.store(true, Ordering::Release);
+            // Coordinator already consumed peer success before its own fatal.
+            let mut initial = vec![0, 1];
+            search_retirement_loop(
+                0,
+                &mut peers,
+                &retirement,
+                &mut initial,
+                Instant::now() + Duration::from_secs(2),
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        boundary_send(&mut peer, search_frame(1, true), deadline).unwrap();
+        // Merely receiving failure must not release the registered window.
+        assert_eq!(receive(&mut peer), None);
+        boundary_send(&mut peer, retirement_frame(1, 1), deadline).unwrap();
+        let completion = receive(&mut peer);
+        assert_eq!(worker.join().unwrap(), Ok(()));
+        assert_eq!(completion, Some(retirement_frame(0, 2)));
+    }
+}
+
+// Signal handler performs only a lock-free atomic store. The sideband
+// thread turns it into the ordinary group cancellation protocol.
+#[cfg(target_os="linux")]
+static SEARCH_SIGNAL: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os="linux")]
+extern "C" fn search_signal(_: libc::c_int) { SEARCH_SIGNAL.store(true,Ordering::Release); }
+#[cfg(target_os="linux")]
+pub struct SearchSignals { previous: [libc::sigaction;2] }
+#[cfg(target_os="linux")]
+impl SearchSignals {
+    pub fn install()->Result<Self> { unsafe {
+        SEARCH_SIGNAL.store(false,Ordering::Release);
+        let mut action:libc::sigaction=std::mem::zeroed();action.sa_sigaction=search_signal as usize;
+        libc::sigemptyset(&mut action.sa_mask);action.sa_flags=libc::SA_RESTART;
+        let mut previous:[libc::sigaction;2]=std::mem::zeroed();
+        for (i,sig) in [libc::SIGTERM,libc::SIGINT].into_iter().enumerate(){
+            if libc::sigaction(sig,&action,&mut previous[i])!=0 {
+                for (j,old_sig) in [libc::SIGTERM,libc::SIGINT].into_iter().take(i).enumerate(){libc::sigaction(old_sig,&previous[j],std::ptr::null_mut());}
+                return Err("SEARCH_SIGNAL_INSTALL".into());
+            }
+        }
+        Ok(Self{previous})
+    }}
+}
+#[cfg(target_os="linux")]
+impl Drop for SearchSignals {fn drop(&mut self){unsafe{
+    for (i,sig) in [libc::SIGTERM,libc::SIGINT].into_iter().enumerate(){libc::sigaction(sig,&self.previous[i],std::ptr::null_mut());}
+}}}
+fn observe_search_signal(local:&AtomicU8,cancelled:&AtomicBool){
+    #[cfg(target_os="linux")]
+    if SEARCH_SIGNAL.load(Ordering::Acquire){local.store(2,Ordering::Release);cancelled.store(true,Ordering::Release);}
+}
 
 pub struct SearchSideband {
     local: Arc<AtomicU8>,
     cancelled: Arc<AtomicBool>,
     retirement: Arc<SearchRetirement>,
-    worker: std::thread::JoinHandle<(Vec<Option<crate::control_connection::ControlConnection>>, Result<bool>)>,
+    worker: std::thread::JoinHandle<(
+        Vec<Option<crate::control_connection::ControlConnection>>,
+        Result<bool>,
+    )>,
 }
 /// Error-only acknowledgements. A local bit means all CUDA readers in this
 /// process have retired, not merely that a host failure was reported.
@@ -19,23 +181,42 @@ pub struct SearchRetirement {
     pub failed: AtomicBool,
 }
 impl SearchSideband {
-    pub fn report_success(&self) { let _ = self.local.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire); }
-    pub fn report_failure(&self) { self.local.store(2, Ordering::Release); }
-    pub fn cancel_requested(&self) -> bool { self.cancelled.load(Ordering::Acquire) }
-    pub fn cancel_token(&self) -> Arc<AtomicBool> { Arc::clone(&self.cancelled) }
-    pub fn failure_token(&self) -> Arc<AtomicU8> { Arc::clone(&self.local) }
-    pub fn retirement_token(&self) -> Arc<SearchRetirement> { Arc::clone(&self.retirement) }
+    pub fn report_success(&self) {
+        let _ = self
+            .local
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+    }
+    pub fn report_failure(&self) {
+        self.local.store(2, Ordering::Release);
+    }
+    pub fn cancel_requested(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+    pub fn cancel_token(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+    pub fn failure_token(&self) -> Arc<AtomicU8> {
+        Arc::clone(&self.local)
+    }
+    pub fn retirement_token(&self) -> Arc<SearchRetirement> {
+        Arc::clone(&self.retirement)
+    }
     pub fn report_retired(&self) {
         if !self.retirement.failed.load(Ordering::Acquire) {
             self.retirement.local.store(true, Ordering::Release);
         }
     }
-    pub fn finish_with_cleanup(self, group: &mut BootstrapGroup,
-        cleanup: impl FnOnce()) -> Result<bool> {
+    pub fn finish_with_cleanup(
+        self,
+        group: &mut BootstrapGroup,
+        cleanup: impl FnOnce(),
+    ) -> Result<bool> {
         let mut cleanup = Some(cleanup);
         while !self.worker.is_finished() {
             if self.cancel_requested() {
-                if let Some(cleanup) = cleanup.take() { cleanup(); }
+                if let Some(cleanup) = cleanup.take() {
+                    cleanup();
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -50,9 +231,18 @@ impl SearchSideband {
 
 fn search_frame(rank: u32, failed: bool) -> crate::control_wire::ControlFrame {
     use crate::control_wire::{Action, ControlFrame, Plane, NO_SLOT};
-    ControlFrame { action: Action::Boundary, rank, depth: 5, epoch: 0,
-        slot: NO_SLOT, plane: Plane::None, fatal_code: u32::from(failed),
-        source_rank: 0, destination_rank: 0, payload_bytes: 0 }
+    ControlFrame {
+        action: Action::Boundary,
+        rank,
+        depth: 5,
+        epoch: 0,
+        slot: NO_SLOT,
+        plane: Plane::None,
+        fatal_code: u32::from(failed),
+        source_rank: 0,
+        destination_rank: 0,
+        payload_bytes: 0,
+    }
 }
 fn retirement_frame(rank: u32, epoch: u64) -> crate::control_wire::ControlFrame {
     let mut frame = search_frame(rank, true);
@@ -60,10 +250,13 @@ fn retirement_frame(rank: u32, epoch: u64) -> crate::control_wire::ControlFrame 
     frame
 }
 
-fn search_retirement_loop(rank: u32,
+fn search_retirement_loop(
+    rank: u32,
     peers: &mut [Option<crate::control_connection::ControlConnection>],
-    retirement: &SearchRetirement, initial: &mut [bool],
-    deadline: std::time::Instant) -> Result<()> {
+    retirement: &SearchRetirement,
+    initial: &mut [u8],
+    deadline: std::time::Instant,
+) -> Result<()> {
     let mut acknowledged = vec![false; peers.len()];
     let mut sent = false;
     loop {
@@ -80,18 +273,24 @@ fn search_retirement_loop(rank: u32,
                     if frame == retirement_frame(peer as u32, 1) && !acknowledged[peer] {
                         acknowledged[peer] = true;
                     } else if frame == search_frame(peer as u32, frame.fatal_code != 0)
-                        && !initial[peer] && !acknowledged[peer] {
+                        && (initial[peer] == 0 || (initial[peer] == 1 && frame.fatal_code != 0))
+                        && !acknowledged[peer]
+                    {
                         // A success/failure notification already queued before
                         // cancellation is not a reader-retirement ACK.
-                        initial[peer] = true;
-                    } else { return Err("SEARCH_RETIREMENT_FRAME".into()); }
+                        initial[peer] = 1 + u8::from(frame.fatal_code != 0);
+                    } else {
+                        return Err("SEARCH_RETIREMENT_FRAME".into());
+                    }
                 }
             }
-            if retirement.local.load(Ordering::Acquire)
-                && acknowledged[1..].iter().all(|&x| x) {
+            if retirement.local.load(Ordering::Acquire) && acknowledged[1..].iter().all(|&x| x) {
                 for peer in peers.iter_mut().skip(1) {
-                    boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
-                        retirement_frame(0, 2), deadline)?;
+                    boundary_send(
+                        peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
+                        retirement_frame(0, 2),
+                        deadline,
+                    )?;
                 }
                 retirement.group.store(true, Ordering::Release);
                 return Ok(());
@@ -122,10 +321,12 @@ fn search_sideband_loop(
     retirement: &SearchRetirement,
     timeout: std::time::Duration,
 ) -> Result<bool> {
-    let deadline = std::time::Instant::now().checked_add(timeout)
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
         .ok_or("SEARCH_SIDEBAND_TIMEOUT")?;
     if peers.len() == 1 {
         loop {
+            observe_search_signal(local,cancelled);
             if std::time::Instant::now() >= deadline || retirement.failed.load(Ordering::Acquire) {
                 cancelled.store(true, Ordering::Release);
                 return Err("SEARCH_RETIREMENT_TIMEOUT".into());
@@ -143,14 +344,17 @@ fn search_sideband_loop(
                     cancelled.store(true, Ordering::Release);
                     return Err("SEARCH_SIDEBAND_TIMEOUT".into());
                 }
-                _ => {},
+                _ => {}
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
-    let mut sent = false;
-    let mut ready = vec![false; peers.len()];
+    // Search success is provisional while the asynchronous archive worker is
+    // still active. Permit exactly one monotone success -> failure update.
+    let mut sent = 0u8;
+    let mut ready = vec![0u8; peers.len()];
     loop {
+        observe_search_signal(local,cancelled);
         if std::time::Instant::now() >= deadline {
             cancelled.store(true, Ordering::Release);
             return Err("SEARCH_SIDEBAND_TIMEOUT".into());
@@ -162,16 +366,24 @@ fn search_sideband_loop(
                 let conn = peers[peer].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
                 if let Some(frame) = conn.poll_boundary_receive()? {
                     if frame != search_frame(peer as u32, frame.fatal_code != 0)
-                        || ready[peer] { return Err("SEARCH_SIDEBAND_FRAME".into()); }
-                    ready[peer] = true;
+                        || (ready[peer] != 0 && !(ready[peer] == 1 && frame.fatal_code != 0))
+                    {
+                        return Err("SEARCH_SIDEBAND_FRAME".into());
+                    }
+                    ready[peer] = 1 + u8::from(frame.fatal_code != 0);
                     failed |= frame.fatal_code != 0;
                 }
             }
-            if failed || (state == 1 && ready[1..].iter().all(|&x| x)) {
-                if failed { cancelled.store(true, Ordering::Release); }
+            if failed || (state == 1 && ready[1..].iter().all(|&x| x != 0)) {
+                if failed {
+                    cancelled.store(true, Ordering::Release);
+                }
                 for peer in peers.iter_mut().skip(1) {
-                    boundary_send(peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
-                        search_frame(0, failed), deadline)?;
+                    boundary_send(
+                        peer.as_mut().ok_or("SEARCH_SIDEBAND_PEER")?,
+                        search_frame(0, failed),
+                        deadline,
+                    )?;
                 }
                 if failed {
                     search_retirement_loop(rank, peers, retirement, &mut ready, deadline)?;
@@ -180,16 +392,18 @@ fn search_sideband_loop(
             }
         } else {
             let conn = peers[0].as_mut().ok_or("SEARCH_SIDEBAND_PEER")?;
-            if state != 0 && !sent {
+            if state != 0 && (sent == 0 || (sent == 1 && state == 2)) {
                 boundary_send(conn, search_frame(rank, state == 2), deadline)?;
-                sent = true;
+                sent = state;
             }
             if let Some(frame) = conn.poll_boundary_receive()? {
                 if frame != search_frame(0, frame.fatal_code != 0) {
                     return Err("SEARCH_SIDEBAND_FRAME".into());
                 }
                 let failed = frame.fatal_code != 0;
-                if failed { cancelled.store(true, Ordering::Release); }
+                if failed {
+                    cancelled.store(true, Ordering::Release);
+                }
                 if failed {
                     search_retirement_loop(rank, peers, retirement, &mut ready, deadline)?;
                 }
@@ -236,15 +450,26 @@ impl BootstrapGroup {
         let worker_cancelled = Arc::clone(&cancelled);
         let worker_retirement = Arc::clone(&retirement);
         let worker = std::thread::spawn(move || {
-            let result = search_sideband_loop(rank, &mut peers,
-                &worker_local, &worker_cancelled, &worker_retirement, timeout);
+            let result = search_sideband_loop(
+                rank,
+                &mut peers,
+                &worker_local,
+                &worker_cancelled,
+                &worker_retirement,
+                timeout,
+            );
             if result.is_err() {
                 worker_cancelled.store(true, Ordering::Release);
                 worker_retirement.failed.store(true, Ordering::Release);
             }
             (peers, result)
         });
-        Ok(SearchSideband { local, cancelled, retirement, worker })
+        Ok(SearchSideband {
+            local,
+            cancelled,
+            retirement,
+            worker,
+        })
     }
     /// Compare all 256 digest bits before any rank constructs CUDA/NCCL state.
     /// An invalid local configuration still participates with a zero digest.
@@ -264,16 +489,31 @@ impl BootstrapGroup {
             return Ok(local_failed);
         }
         let deadline = std::time::Instant::now()
-            .checked_add(timeout).ok_or("CONFIGURATION_TIMEOUT")?;
+            .checked_add(timeout)
+            .ok_or("CONFIGURATION_TIMEOUT")?;
         let chunk = |rank: u32, index: usize, value: u64, failed: bool| ControlFrame {
-            action: Action::Boundary, rank, depth: 0, epoch: index as u64,
-            slot: value, plane: Plane::None, fatal_code: u32::from(failed),
-            source_rank: 0, destination_rank: 0, payload_bytes: 0,
+            action: Action::Boundary,
+            rank,
+            depth: 0,
+            epoch: index as u64,
+            slot: value,
+            plane: Plane::None,
+            fatal_code: u32::from(failed),
+            source_rank: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         };
         let reply = |failed| ControlFrame {
-            action: Action::Boundary, rank: 0, depth: 0, epoch: 4,
-            slot: NO_SLOT, plane: Plane::None, fatal_code: u32::from(failed),
-            source_rank: 0, destination_rank: 0, payload_bytes: 0,
+            action: Action::Boundary,
+            rank: 0,
+            depth: 0,
+            epoch: 4,
+            slot: NO_SLOT,
+            plane: Plane::None,
+            fatal_code: u32::from(failed),
+            source_rank: 0,
+            destination_rank: 0,
+            payload_bytes: 0,
         };
         let failed = if self.rank == 0 {
             let mut failed = local_failed;
@@ -281,26 +521,31 @@ impl BootstrapGroup {
                 let conn = self.peers[peer].as_mut().ok_or("CONFIGURATION_PEER")?;
                 for index in 0..4 {
                     let received = boundary_receive(conn, deadline)?;
-                    if received.action != Action::Boundary || received.rank != peer as u32
-                        || received.depth != 0 || received.epoch != index as u64
+                    if received.action != Action::Boundary
+                        || received.rank != peer as u32
+                        || received.depth != 0
+                        || received.epoch != index as u64
                     {
                         return Err("CONFIGURATION_FRAME".into());
                     }
-                    let expected = u64::from_le_bytes(
-                        digest[index * 8..index * 8 + 8].try_into().unwrap());
+                    let expected =
+                        u64::from_le_bytes(digest[index * 8..index * 8 + 8].try_into().unwrap());
                     failed |= received.slot != expected || received.fatal_code != 0;
                 }
             }
             for peer in 1..world {
-                boundary_send(self.peers[peer].as_mut().ok_or("CONFIGURATION_PEER")?,
-                    reply(failed), deadline)?;
+                boundary_send(
+                    self.peers[peer].as_mut().ok_or("CONFIGURATION_PEER")?,
+                    reply(failed),
+                    deadline,
+                )?;
             }
             failed
         } else {
             let conn = self.peers[0].as_mut().ok_or("CONFIGURATION_PEER")?;
             for index in 0..4 {
-                let value = u64::from_le_bytes(
-                    digest[index * 8..index * 8 + 8].try_into().unwrap());
+                let value =
+                    u64::from_le_bytes(digest[index * 8..index * 8 + 8].try_into().unwrap());
                 boundary_send(conn, chunk(self.rank, index, value, local_failed), deadline)?;
             }
             let received = boundary_receive(conn, deadline)?;
@@ -380,8 +625,12 @@ fn boundary_send(
 ) -> Result<()> {
     conn.enqueue_boundary(frame)?;
     loop {
-        if conn.poll_boundary_send()? { return Ok(()); }
-        if std::time::Instant::now() >= deadline { return Err("BOUNDARY_TIMEOUT".into()); }
+        if conn.poll_boundary_send()? {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("BOUNDARY_TIMEOUT".into());
+        }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
@@ -390,8 +639,12 @@ fn boundary_receive(
     deadline: std::time::Instant,
 ) -> Result<crate::control_wire::ControlFrame> {
     loop {
-        if let Some(frame) = conn.poll_boundary_receive()? { return Ok(frame); }
-        if std::time::Instant::now() >= deadline { return Err("BOUNDARY_TIMEOUT".into()); }
+        if let Some(frame) = conn.poll_boundary_receive()? {
+            return Ok(frame);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("BOUNDARY_TIMEOUT".into());
+        }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
@@ -430,8 +683,13 @@ pub fn rendezvous(
         let mut listener = BootstrapListener::bind(world, identity, nccl_id)?;
         listener.record().publish(path)?;
         let peers = listener.accept_all(remaining()?)?;
-        return Ok(BootstrapGroup { nccl_id, peers, rank, next_boundary: 1,
-            configuration_agreed: false });
+        return Ok(BootstrapGroup {
+            nccl_id,
+            peers,
+            rank,
+            next_boundary: 1,
+            configuration_agreed: false,
+        });
     }
     loop {
         let left = remaining()?;

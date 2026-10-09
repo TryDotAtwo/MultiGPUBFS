@@ -75,6 +75,21 @@ int mgbfs_library_rank_seal_v1(void* rank_owner);
 int mgbfs_library_rank_export_shard_v1(void* rank_owner, uint32_t shard,
     uint32_t rows, MgbfsLibraryKeysV1* result);
 int mgbfs_library_rank_destroy_v1(void* rank_owner);
+/* Startup-only fixed target membership; no settled-history borrowing.
+ * StateRefs track the matching accepted hash through sorted GPU export.
+ * Pool and creating stream/device outlive the handle. No fallback/growth. */
+int mgbfs_library_rank_create_weighted_cuco_v1(const uint32_t* capacities,
+    uint32_t shards,uint32_t incoming,uint32_t logical_owner,uint32_t world,
+    uint32_t settled_capacity,void* cuda_stream,void** rank_owner);
+/* Enqueue sorted Hash128+StateRef pairs into nonaliasing layer-sized buffers.
+ * GPU count/fatal remain device-visible. Caller orders all readers before reset.
+ * Storage/temp are allocated at construction, never here. */
+int mgbfs_library_rank_export_sorted_refs_v1(void* rank_owner,void* keys,
+    uint64_t* refs,uint32_t* count,uint32_t capacity,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* control);
+/* FinalizeDepth only: caller has ordered every export/materialize reader before
+ * reset on the owner stream. Keeps allocations and monotonic epoch ordering. */
+int mgbfs_library_rank_reset_weighted_v1(void* rank_owner);
 
 /* One fixed RMM pool per device, installed before any owner/input allocation.
  * bytes is nonzero and 256-byte aligned; reserve_bytes is at least 1 GiB.

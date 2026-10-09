@@ -1,6 +1,48 @@
 use mgbfs_runtime::distributed_memory::{shared_buffers, SharedBufferShape};
 
 #[test]
+fn route_banks_reserve_distinct_payload_and_device_control_ranges() {
+    use mgbfs_runtime::distributed_memory::with_route_banks;
+    let base = shared_buffers(shape()).unwrap();
+    let ledger = with_route_banks(&base, 3).unwrap();
+    let bytes = |name: &str| {
+        ledger
+            .allocations
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap()
+            .payload_bytes
+    };
+    // 21 candidates with 16-byte packets. Each bank has the entire
+    // raw/sorted/packed storage, not just a descriptor or completion credit.
+    for bank in 0..3 {
+        let prefix = if bank == 0 {
+            String::new()
+        } else {
+            format!("route_bank_{bank}.")
+        };
+        for (name, expected) in [
+            ("children", 336),
+            ("child_hashes", 336),
+            ("sorted_hashes", 336),
+            ("sorted_refs", 168),
+            ("packed_states", 336),
+            ("route_count", 4),
+            ("owner_counts", 32),
+            ("generation_control", 12),
+        ] {
+            assert_eq!(bytes(&format!("{prefix}{name}")), expected);
+        }
+    }
+    assert_eq!(bytes("states"), 4096);
+    assert_eq!(bytes("recv_states"), 336); // A separate single receive slot.
+    assert_eq!(ledger.total() - base.total(), 256 + 2 * 3072);
+    assert!(with_route_banks(&base, 1).is_err());
+    assert!(with_route_banks(&base, 0).is_err());
+    assert!(with_route_banks(&base, usize::MAX).is_err());
+}
+
+#[test]
 fn packed_owner_count_storage_fits_all_eight_ranks() {
     let ledger = shared_buffers(shape()).unwrap();
     let counts = ledger
@@ -13,11 +55,21 @@ fn packed_owner_count_storage_fits_all_eight_ranks() {
 
 #[test]
 fn native_rank_metadata_covers_all_buckets_without_duplicate_receive_storage() {
-    use mgbfs_runtime::distributed_memory::native_rank_shared_buffers;
+    use mgbfs_runtime::distributed_memory::native_rank_shared_buffers_for_transport;
     let s = shape();
-    let ledger = native_rank_shared_buffers(s, 2).unwrap();
-    let bytes = |name: &str| ledger.allocations.iter().find(|a| a.name == name).unwrap().payload_bytes;
-    assert_eq!(bytes("counts"), s.buckets * std::mem::size_of::<mgbfs_cuda::native_owner::Counts>() as u64);
+    let ledger = native_rank_shared_buffers_for_transport(s, 2, true).unwrap();
+    let bytes = |name: &str| {
+        ledger
+            .allocations
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap()
+            .payload_bytes
+    };
+    assert_eq!(
+        bytes("counts"),
+        s.buckets * std::mem::size_of::<mgbfs_cuda::native_owner::Counts>() as u64
+    );
     assert_eq!(bytes("rank_prev_directory"), s.buckets * 16);
     assert_eq!(bytes("rank_curr_directory"), s.buckets * 16);
     assert_eq!(bytes("rank_shard_offsets"), 3 * 4);
@@ -27,7 +79,7 @@ fn native_rank_metadata_covers_all_buckets_without_duplicate_receive_storage() {
         assert!(!ledger.allocations.iter().any(|a| a.name == name));
     }
     // The existing leaf query, not the bucket count, still sizes merged scratch.
-    assert_eq!(bytes("accepted"), s.buckets*s.bucket_capacity*16);
+    assert_eq!(bytes("accepted"), s.buckets * s.bucket_capacity * 16);
 }
 
 #[test]
@@ -40,7 +92,7 @@ fn native_rank_aggregate_capacity_and_shards_are_checked_before_allocation() {
     assert!(native_rank_shared_buffers(s, 2).is_err());
     // Capacity counters are per shard, not a fictitious global u32 arena.
     // Byte planning only: this does not allocate the large shape on a GPU.
-    s.bucket_capacity = (u32::MAX as u64)/4;
+    s.bucket_capacity = (u32::MAX as u64) / 4;
     assert!(native_rank_shared_buffers(s, 2).is_ok());
 }
 
@@ -84,7 +136,10 @@ fn library_layout_replaces_legacy_owner_arrays_and_pads_history_planes() {
     assert_eq!(bytes("curr"), 2048);
     assert_eq!(bytes("library_candidates"), 1280);
     assert_eq!(bytes("states"), 4096);
-    assert_eq!(bytes("next_extents"), 2 * std::mem::size_of::<mgbfs_cuda::native_owner::Extent>() as u64);
+    assert_eq!(
+        bytes("next_extents"),
+        2 * std::mem::size_of::<mgbfs_cuda::native_owner::Extent>() as u64
+    );
     assert_eq!(bytes("next_extent_count"), 4);
     assert_eq!(bytes("owner_window"), 3 * std::mem::size_of::<u32>() as u64);
     for legacy in ["accepted", "lengths", "counts", "selected"] {
@@ -234,5 +289,57 @@ fn invalid_or_overflowing_storage_is_rejected_before_allocation() {
         },
     ] {
         assert!(shared_buffers(bad).is_err());
+    }
+}
+
+#[test]
+fn host_size_handshake_has_storage_disjoint_from_live_owner_count() {
+    use mgbfs_runtime::distributed_memory::with_route_banks;
+    for banks in [2, 3, 4] {
+        let ledger = with_route_banks(&shared_buffers(shape()).unwrap(), banks).unwrap();
+        let mut owner_count = 17u32.to_le_bytes();
+        for bank in 0..banks {
+            let name = if bank == 0 {
+                "generation_control".to_string()
+            } else {
+                format!("route_bank_{bank}.generation_control")
+            };
+            let allocation = ledger.allocations.iter().find(|a| a.name == name).unwrap();
+            // Fatal + producer/send word are live while the transport accepts
+            // its next exact size. The handshake cannot borrow the owner's count.
+            let mut storage = vec![0x5au8; allocation.payload_bytes as usize];
+            assert!(
+                storage.len() >= 12,
+                "bank {bank}: no independent handshake word"
+            );
+            storage[8..12].copy_from_slice(&23u32.to_le_bytes());
+            assert_eq!(&storage[..8], &[0x5au8; 8]);
+            assert_eq!(u32::from_le_bytes(owner_count), 17);
+            // Publication is deferred until the owner's last-reader dependency.
+            owner_count.copy_from_slice(&storage[8..12]);
+            assert_eq!(u32::from_le_bytes(owner_count), 23);
+            owner_count = 17u32.to_le_bytes();
+        }
+        assert_eq!(
+            ledger
+                .allocations
+                .iter()
+                .filter(|a| a.name == "recv_states")
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn compact_route_packet_adds_no_duplicate_payload_planes() {
+    use mgbfs_runtime::distributed_memory::{shard_ab_shared_buffers, with_compact_route_bank};
+    let base = shard_ab_shared_buffers(shape(), false).unwrap();
+    let ledger = with_compact_route_bank(&base).unwrap();
+    assert_eq!(ledger.total() - base.total(), 256);
+    assert_eq!(ledger.allocations.iter().filter(|a| a.name == "generation_control").count(), 1);
+    assert!(!ledger.allocations.iter().any(|a| a.name.starts_with("route_bank_")));
+    for allocation in &base.allocations {
+        assert_eq!(ledger.allocations.iter().find(|a| a.name == allocation.name).unwrap().payload_bytes, allocation.payload_bytes);
     }
 }

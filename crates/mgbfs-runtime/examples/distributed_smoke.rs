@@ -77,6 +77,8 @@ fn run() -> Result<()> {
         20260828u128.to_le_bytes(),
         id,
         DistributedConfig {
+            route_banks: 2,
+            epoch_window: 2,
             rank,
             world,
             logical_owner_to_rank: rank_map.to_vec(),
@@ -84,6 +86,7 @@ fn run() -> Result<()> {
             batch: 7,
             layer_capacity: 64,
             state_ring_capacity: 128,
+            state_descriptor_capacity: 128,
             buckets: 8,
             shards: 2,
             job_buckets: 2,

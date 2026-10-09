@@ -1,0 +1,1 @@
+{"id":"trydotatwo/mgbfs-v90-artifact-recovery","title":"MGBFS v90 Artifact Recovery","code_file":"kernel.py","language":"python","kernel_type":"script","is_private":true,"enable_gpu":false,"enable_tpu":false,"enable_internet":true,"dataset_sources":[],"kernel_sources":["trydotatwo/mgbfs-lsa-full-bfs-gate-t4"],"competition_sources":[],"model_sources":[]}

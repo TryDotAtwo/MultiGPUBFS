@@ -70,9 +70,22 @@ def make_plan(config, source, root):
                 'archive_slots', 'shards', 'buckets', 'bucket_capacity', 'job_buckets'))):
         raise ValueError('STREAM_CONFIG_CAPACITY')
     for key, allowed in [('profile', ('DENSE', 'HASH_FIRST')),
-                         ('owner', ('CUB_SORT_MERGE', 'CUCO_INDEXED')),
+                         ('owner', ('CUB_SORT_MERGE', 'CUCO_INDEXED', 'CUCO_RANK')),
                          ('pre_dedup', ('ON', 'OFF'))]:
         if config.get(key) not in allowed:
+            raise ValueError('STREAM_CONFIG_' + key)
+    transport = config.get('transport', 'HOST_SIZED_NCCL')
+    if transport not in ('HOST_SIZED_NCCL', 'NCCL_LSA') or (
+            transport == 'NCCL_LSA' and config['owner'] == 'CUCO_INDEXED') or (
+            transport == 'HOST_SIZED_NCCL' and config['owner'] == 'CUCO_RANK'
+            and config['profile'] == 'HASH_FIRST'):
+        raise ValueError('STREAM_CONFIG_TRANSPORT')
+    optional = {'route_banks': (2, 4), 'epoch_window': (2, 2**31-1),
+                'state_ring_capacity': (1, 2**31-1),
+                'state_descriptor_capacity': (1, 2**31-1)}
+    for key, (minimum, maximum) in optional.items():
+        if key in config and (type(config[key]) is not int or
+                              not minimum <= config[key] <= maximum):
             raise ValueError('STREAM_CONFIG_' + key)
     run_id = config.get('run_id', '')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,90}', run_id):
@@ -84,6 +97,7 @@ def make_plan(config, source, root):
                MGBFS_ARCHIVE_STREAM='1', MGBFS_BENCH_SKIP_ARCHIVE='0',
                MGBFS_ARCHIVE_CODEC='permutation_u8', MGBFS_STATE_CODEC='permutation_u8',
                MGBFS_PROFILE=config['profile'], MGBFS_OWNER_BACKEND=config['owner'],
+               MGBFS_TRANSPORT_BACKEND=transport,
                MGBFS_PRE_DEDUP=config['pre_dedup'], MGBFS_BENCH_WARMUP='0',
                MGBFS_TRACE_DEPTHS='1', MGBFS_RANK_MAP=','.join(map(str, range(world))))
     for name, key in [('BENCH_CAPACITY', 'capacity'), ('FUTURE_CAPACITY', 'capacity'),
@@ -92,6 +106,11 @@ def make_plan(config, source, root):
                       ('BUCKET_CAPACITY', 'bucket_capacity'), ('JOB_BUCKETS', 'job_buckets'),
                       ('LIBRARY_POOL_BYTES', 'library_pool_bytes')]:
         env['MGBFS_' + name] = str(config[key])
+    for name, key in [('ROUTE_BANKS', 'route_banks'), ('EPOCH_WINDOW', 'epoch_window'),
+                      ('FUTURE_CAPACITY', 'state_ring_capacity'),
+                      ('STATE_DESCRIPTOR_CAPACITY', 'state_descriptor_capacity')]:
+        if key in config:
+            env['MGBFS_' + name] = str(config[key])
     prefix = root / 'archive'
     fifos = [str(root / f'archive-rank-{r}.mgbfsar1') for r in range(world)]
     branches = [f'staging-{run_id}-rank-{r}' for r in range(world)]

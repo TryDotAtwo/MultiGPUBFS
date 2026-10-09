@@ -132,6 +132,12 @@ extern "C" int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t 
       if(generators[row*n+c]>=modulus)throw std::runtime_error("GENERATOR_NONCANONICAL");
       stacked[row*p->k+c]=generators[row*n+c];
     }
+    if(variant==5){
+      const size_t map_begin=size_t(bytes.rows)*bytes.k;
+      for(size_t row=0;row<size_t(moves)*n;++row)
+        for(uint32_t col=0;col<n;++col)
+          if(generators[row*n+col])stacked[map_begin+row]=uint8_t(col);
+    }
     checked(cudaMalloc(&p->generators,bytes.generators));
     checked(cudaMalloc(&p->parents,bytes.packed_parents));
     checked(cudaMalloc(&p->products,bytes.products_s32));
@@ -169,7 +175,7 @@ static int launch_gemm(GeneratePlan* p,Gemm& gemm,uint32_t columns,cudaStream_t 
 }
 static int generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* raw_stream,void* const* marks){
   auto* p=static_cast<GeneratePlan*>(plan);
-  if(!p||!parents||!children||count>p->capacity)return 1;
+  if(!p||!p->parents||!p->products||!parents||!children||count>p->capacity)return 1;
   if(count==0)return 0;
   auto stream=static_cast<cudaStream_t>(raw_stream);
   const uint32_t columns=(count*(p->variant==5?1:p->n)+3)&~3u;
@@ -214,3 +220,46 @@ extern "C" int mgbfs_generate_profile_run(void* plan,const uint8_t* parents,uint
   return generate_run(plan,parents,children,count,stream,marks);
 }
 extern "C" void mgbfs_generate_destroy(void* p){delete static_cast<GeneratePlan*>(p);}
+
+// Selected compact children use the immutable generator plan, not a transient
+// all-children buffer. Parents remain leased until the request epoch drains.
+__global__ void validate_compact_rows(const uint32_t* requests,const uint32_t* count,uint32_t capacity,uint32_t base,const uint32_t* device_base,uint32_t bound,const uint64_t* refs,uint32_t parents,uint32_t moves,uint32_t* fatal){
+ if(*count>capacity){if(!blockIdx.x&&!threadIdx.x)atomicCAS(fatal,0u,1u);return;}
+ for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<*count;i+=gridDim.x*blockDim.x){uint64_t row=uint64_t(device_base?*device_base:base)+requests[i];if(row>=bound||refs[row]>=uint64_t(parents)*moves)atomicCAS(fatal,0u,2u);}
+}
+__global__ void regenerate_compact_rows(uint32_t n,uint32_t moves,uint32_t k,uint32_t stride,bool move_major,const uint8_t* generators,const uint8_t* parents,uint32_t parent_count,const uint64_t* refs,uint32_t base,const uint32_t* device_base,const uint32_t* requests,const uint32_t* count,uint8_t* output,const uint32_t* fatal){
+ if(*fatal)return;
+ for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<uint64_t(*count)*stride;i+=uint64_t(gridDim.x)*blockDim.x){
+  uint32_t row=i/stride,byte=i%stride,child=refs[uint64_t(device_base?*device_base:base)+requests[row]];
+  uint32_t parent=move_major?child%parent_count:child/moves,move=move_major?child/parent_count:child%moves;uint8_t value=0;
+  if(byte<n){uint32_t col=generators[uint64_t(move)*n+byte];value=parents[uint64_t(parent)*stride+col];}
+  output[i]=value;
+ }
+}
+extern "C" int mgbfs_generate_selected_compact(void* raw,const uint8_t* parents,uint32_t parent_count,const uint64_t* refs,uint32_t base,uint32_t bound,const uint32_t* requests,const uint32_t* count,uint32_t capacity,uint8_t* output,uint32_t* fatal,void* stream){
+ auto*p=static_cast<GeneratePlan*>(raw);if(!p||p->variant!=5||!parents||!refs||!requests||!count||!capacity||!output||!fatal||parent_count>p->capacity)return 1;
+ auto st=static_cast<cudaStream_t>(stream);unsigned grid=unsigned(std::min(uint64_t(4096),(uint64_t(capacity)+255)/256));
+ validate_compact_rows<<<grid,256,0,st>>>(requests,count,capacity,base,nullptr,bound,refs,parent_count,p->moves,fatal);
+ regenerate_compact_rows<<<std::min(4096u,grid*(p->stride/16)),256,0,st>>>(p->n,p->moves,p->k,p->stride,p->move_major,p->generators+uint64_t(p->generator_rows)*p->k,parents,parent_count,refs,base,nullptr,requests,count,output,fatal);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+extern "C" int mgbfs_generate_selected_compact_device_base(void* raw,const uint8_t* parents,uint32_t parent_count,const uint64_t* refs,const uint32_t* base,uint32_t bound,const uint32_t* requests,const uint32_t* count,uint32_t capacity,uint8_t* output,uint32_t* fatal,void* stream){
+ auto*p=static_cast<GeneratePlan*>(raw);if(!p||p->variant!=5||!parents||!refs||!base||!requests||!count||!capacity||!output||!fatal||parent_count>p->capacity)return 1;
+ auto st=static_cast<cudaStream_t>(stream);unsigned grid=unsigned(std::min(uint64_t(4096),(uint64_t(capacity)+255)/256));
+ validate_compact_rows<<<grid,256,0,st>>>(requests,count,capacity,0,base,bound,refs,parent_count,p->moves,fatal);
+ regenerate_compact_rows<<<std::min(4096u,grid*(p->stride/16)),256,0,st>>>(p->n,p->moves,p->k,p->stride,p->move_major,p->generators+uint64_t(p->generator_rows)*p->k,parents,parent_count,refs,0,base,requests,count,output,fatal);
+ return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+extern "C" int mgbfs_compact_map_query(uint32_t n,uint32_t moves,uint32_t capacity,uint64_t* bytes){
+ if(!bytes)return 1;*bytes=0;if(!n||n>128||!moves||moves>128||!capacity||uint64_t(capacity)*moves>0x3fffffffu)return 1;*bytes=uint64_t(n)*moves;return 0;
+}
+extern "C" int mgbfs_compact_map_create(uint32_t n,uint32_t moves,uint32_t capacity,const uint8_t* permutation,void** out,char* error,size_t error_capacity){
+ if(!out)return 1;*out=nullptr;
+ try{uint64_t bytes;if(!permutation||mgbfs_compact_map_query(n,moves,capacity,&bytes))throw std::runtime_error("COMPACT_MAP_SHAPE");
+  for(uint32_t move=0;move<moves;++move){std::vector<bool> used(n,false);for(uint32_t j=0;j<n;++j){uint32_t col=permutation[uint64_t(move)*n+j];if(col>=n||used[col])throw std::runtime_error("COMPACT_MAP_PERMUTATION");used[col]=true;}}
+  auto p=std::make_unique<GeneratePlan>();p->n=n;p->moves=moves;p->capacity=capacity;p->k=(n+15)&~15u;p->stride=p->k;p->variant=5;p->move_major=true;p->generator_rows=0;
+  checked(cudaMalloc(&p->generators,bytes));checked(cudaMemcpy(p->generators,permutation,bytes,cudaMemcpyHostToDevice));*out=p.release();return 0;
+ }catch(const std::exception&e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}
+}

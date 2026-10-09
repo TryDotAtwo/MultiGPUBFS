@@ -10,6 +10,11 @@ except ImportError:
 
 SEEDS = ['000000000000000000000000013527dc', '6a09e667f3bcc909bb67ae8584caa73b']
 
+try:
+    from .tail_validation import validation_status
+except ImportError:
+    from tail_validation import validation_status
+
 def publication_records(ledger):
     records = dict(ledger.get('publication_history', {}))
     for key, record in ledger['cases'].items():
@@ -46,12 +51,16 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
         cfg.setdefault('env', {})['MGBFS_HASH_SEED_HEX'] = SEEDS[index]
         cfg['repetition'] = index+1
         at = time.monotonic()
+        runner_error = None
         try: manifest_path = runner(cfg, source, path, runtime)
         except Exception as error:
+            runner_error = dict(type=type(error).__name__, message=str(error))
             manifest_path = path/'saved/manifest.json'
             if not manifest_path.exists():
                 manifest_path = failure_snapshot(cfg, source, path, str(error))
         manifest = json.loads(Path(manifest_path).read_text())
+        if runner_error:
+            manifest['runner_error'] = runner_error
         native = []
         for rank in range(config['world']):
             try: native.append(json.loads((path/'result'/f'rank-{rank}.json').read_text()))
@@ -81,6 +90,8 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
                 from sweep_tail_bfs import resource_stop, allocation_failure
             first = dict(status=manifest['status'], attempted=True,
                          reason=manifest.get('stop_reason', ''))
+            if runner_error:
+                first['runner_error'] = runner_error
             if allocation_failure(path, source):
                 first['resource_classification'] = 'cuda_allocation_failure'
             if resource_stop(first):
@@ -91,6 +102,7 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
                     scope='Only one run: confirmed resource exhaustion; no comparison performed.')
                 manifest['comparison'] = comparison
                 manifest['replicas'] = []
+                manifest['validation_status'] = validation_status(manifest)
                 atomic_json(path/'saved/manifest.json', manifest)
                 atomic_json(case/'comparison.json', comparison)
                 return path/'saved/manifest.json'
@@ -99,9 +111,12 @@ def run_pair(config, source, case, runtime, runner, failure_snapshot):
     replica = dict(key=paths[1].name, n=config['n'], m=config['r'], attempted=True,
         status=manifests[1]['status'], last_completed_layer=manifests[1]['last_completed_layer'],
         reason=manifests[1]['stop_reason'], repetition=2, timing=timings[1])
+    if manifests[1].get('runner_error'):
+        replica['runner_error'] = manifests[1]['runner_error']
     manifests[0]['replicas'] = [replica]
     for path, manifest in zip(paths, manifests):
         manifest['comparison'] = comparison
+        manifest['validation_status'] = validation_status(manifest)
         atomic_json(path/'saved/manifest.json', manifest)
     atomic_json(case/'comparison.json', comparison)
     return case/'saved/manifest.json'

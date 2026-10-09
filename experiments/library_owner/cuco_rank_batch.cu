@@ -1,5 +1,7 @@
 #include "cuco_rank_batch.cuh"
 #include <cub/device/device_select.cuh>
+#include <cub/device/device_radix_sort.cuh>
+#include <cuda/std/tuple>
 #include <thrust/iterator/counting_iterator.h>
 #include <array>
 #include <climits>
@@ -14,7 +16,7 @@ using InsertRef = decltype(std::declval<Set&>().ref(cuco::insert));
 static_assert(std::is_trivially_copyable_v<ContainsRef> &&
               std::is_trivially_copyable_v<InsertRef>);
 
-struct AcceptedView { uint32_t* words[4]; uint32_t stride; };
+struct AcceptedView { uint32_t* words[4]; uint32_t stride; uint64_t* state_refs; };
 
 __device__ void poison(MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,uint32_t code){
   atomicCAS(&owner->error,0u,code);
@@ -105,7 +107,7 @@ __global__ void guard_commit(const uint32_t* count,const uint32_t* shard_counts,
 __global__ void append_rank(const uint32_t* selected,const uint32_t* count,
     const uint32_t* candidate,uint32_t stride,uint32_t shift,uint32_t shards,
     const uint32_t* offsets,const uint32_t* accepted,const AcceptedView* views,
-    const MgbfsOwnerControl* owner){
+    const MgbfsStateExtent* extent,const MgbfsOwnerControl* owner){
   if(owner->error)return;
   uint32_t n=*count;
   for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<n;
@@ -115,6 +117,7 @@ __global__ void append_rank(const uint32_t* selected,const uint32_t* count,
     AcceptedView view=views[shard];
     for(unsigned word=0;word<4;++word)
       view.words[word][dest]=candidate[uint64_t(word)*stride+source];
+    if(view.state_refs)view.state_refs[dest]=extent->sequence+row;
   }
 }
 __global__ void insert_rank(InsertRef* refs,const uint32_t* selected,
@@ -136,6 +139,46 @@ __global__ void publish_counts(const uint32_t* counts,uint32_t* accepted,
   for(uint32_t shard=0;shard<shards;++shard)accepted[shard]+=counts[shard];
   owner->stage=2;
 }
+
+struct alignas(16) ExportKey { uint32_t words[4]; };
+struct ExportDecompose {
+  __host__ __device__ auto operator()(ExportKey& k) const {
+    return cuda::std::tie(k.words[3],k.words[2],k.words[1],k.words[0]);
+  }
+};
+__global__ void export_prefix(const uint32_t* counts,const uint32_t* caps,
+    uint32_t shards,uint32_t capacity,uint32_t* offsets,uint32_t* total,
+    MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
+  *total=0;offsets[0]=0;
+  if(ring->fatal||owner->error)return;
+  uint64_t n=0;
+  for(uint32_t i=0;i<shards;++i){
+    if(counts[i]>caps[i]){poison(ring,owner,22);return;}
+    n+=counts[i];
+    if(n>capacity){poison(ring,owner,22);return;}
+    offsets[i+1]=uint32_t(n);
+  }
+  *total=uint32_t(n);
+}
+__global__ void export_fill(ExportKey* keys,uint64_t* refs,uint32_t capacity){
+  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<capacity;i+=gridDim.x*blockDim.x){
+    keys[i]={{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX}};
+    refs[i]=UINT64_MAX;
+  }
+}
+__global__ void export_pack(const AcceptedView* views,const uint32_t* counts,
+    const uint32_t* offsets,uint32_t capacity,ExportKey* keys,uint64_t* refs,
+    const MgbfsStateRingControl* ring,const MgbfsOwnerControl* owner){
+  if(ring->fatal||owner->error)return;
+  uint32_t shard=blockIdx.y;AcceptedView view=views[shard];
+  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<counts[shard];i+=gridDim.x*blockDim.x){
+    uint32_t dest=offsets[shard]+i;
+    if(dest>=capacity)return;
+    for(unsigned w=0;w<4;++w)keys[dest].words[w]=view.words[w][i];
+    refs[dest]=view.state_refs[i];
+  }
+}
+
 uint32_t bits(uint32_t x){uint32_t n=0;for(;x>1;x>>=1)++n;return n;}
 uint32_t* data(rmm::device_buffer& b){return static_cast<uint32_t*>(b.data());}
 const uint32_t* data(const rmm::device_buffer& b){return static_cast<const uint32_t*>(b.data());}
@@ -148,17 +191,21 @@ struct CucoRankBatch::Impl {
   uint64_t pending_epoch{0},committed_epoch{0};
   bool pending{false},needs_complete{false};
   bool sealed{false};
+  bool empty_history{true};
   std::shared_ptr<CucoWorkspace> workspace;
   std::vector<uint32_t> capacities;
   std::vector<rmm::device_buffer> accepted_keys;
+  std::vector<rmm::device_buffer> accepted_state_refs;
   std::vector<size_t> accepted_strides;
   std::vector<std::unique_ptr<Set>> sets;
   rmm::device_buffer contains_refs,insert_refs,accepted_views;
   rmm::device_buffer accepted_counts,accepted_capacities,shard_counts,shard_offsets;
+  rmm::device_buffer export_keys,export_refs,export_scratch;
+  uint32_t export_capacity{0};size_t export_scratch_bytes{0};
 
   Impl(std::vector<MgbfsLibraryKeysV1> previous,std::vector<MgbfsLibraryKeysV1> current,
       std::vector<uint32_t> caps,uint32_t cap,uint32_t logical,uint32_t world_size,
-      rmm::cuda_stream_view s,rmm::device_async_resource_ref res)
+      rmm::cuda_stream_view s,rmm::device_async_resource_ref res,bool retain_refs,uint32_t settled_capacity)
       : stream(s),resource(res),incoming(cap),shards(uint32_t(caps.size())),
         logical_owner(logical),world(world_size),shift(32-bits(world_size*shards)),
         workspace(std::make_shared<CucoWorkspace>(cap,s,res)),capacities(std::move(caps)) {
@@ -176,9 +223,10 @@ struct CucoRankBatch::Impl {
     std::vector<InsertRef> inserts;
     std::vector<AcceptedView> views;
     contains.reserve(shards);inserts.reserve(shards);views.reserve(shards);
-    accepted_keys.reserve(shards);accepted_strides.reserve(shards);sets.reserve(shards);
+    accepted_keys.reserve(shards);accepted_state_refs.reserve(shards);accepted_strides.reserve(shards);sets.reserve(shards);
     for(uint32_t shard=0;shard<shards;++shard){
       auto old=previous[shard],now=current[shard];uint32_t capacity=capacities[shard];
+      empty_history=empty_history&&old.rows==0&&now.rows==0;
       if(!capacity||capacity>INT32_MAX||old.reserved||now.reserved||
          old.rows>INT32_MAX||now.rows>INT32_MAX||
          uint64_t(old.rows)+now.rows+capacity>INT32_MAX)
@@ -189,6 +237,10 @@ struct CucoRankBatch::Impl {
       size_t stride=(size_t(capacity)+63)&~size_t{63};
       accepted_keys.push_back(allocate(stride*16));accepted_strides.push_back(stride);
       AcceptedView accepted{};accepted.stride=uint32_t(stride);
+      if(retain_refs){
+        accepted_state_refs.push_back(allocate(stride*sizeof(uint64_t)));
+        accepted.state_refs=static_cast<uint64_t*>(accepted_state_refs.back().data());
+      }
       IndexKeyViews keys{};
       for(unsigned word=0;word<4;++word){
         accepted.words[word]=data(accepted_keys.back())+word*stride;
@@ -217,6 +269,20 @@ struct CucoRankBatch::Impl {
         insert_refs.size(),cudaMemcpyHostToDevice,s.value()));
     cuco_owner_detail::check(cudaMemcpyAsync(accepted_views.data(),views.data(),
         accepted_views.size(),cudaMemcpyHostToDevice,s.value()));
+    if(retain_refs){
+      uint64_t total=0;for(auto capacity:capacities)total+=capacity;
+      if(!settled_capacity||settled_capacity>INT32_MAX||settled_capacity>total)
+        throw std::runtime_error("RANK_OWNER_EXPORT_CAPACITY");
+      // Shared settlement buffers are layer-sized, not sum-of-shard-capacities sized.
+      export_capacity=settled_capacity;
+      export_keys=allocate(size_t(export_capacity)*16);
+      export_refs=allocate(size_t(export_capacity)*8);
+      cuco_owner_detail::check(cub::DeviceRadixSort::SortPairs(nullptr,export_scratch_bytes,
+          static_cast<const ExportKey*>(nullptr),static_cast<ExportKey*>(nullptr),
+          static_cast<const uint64_t*>(nullptr),static_cast<uint64_t*>(nullptr),
+          int(export_capacity),ExportDecompose{},0,128,s.value()));
+      export_scratch=allocate(export_scratch_bytes);
+    }
     // Setup may synchronize: constructor-local host arrays back these uploads.
     s.synchronize();
   }
@@ -277,9 +343,9 @@ extern "C" int mgbfs_library_rank_pool_query_v1(uint32_t layer,
 CucoRankBatch::CucoRankBatch(std::vector<MgbfsLibraryKeysV1> previous,
     std::vector<MgbfsLibraryKeysV1> current,std::vector<uint32_t> caps,
     uint32_t incoming,uint32_t logical_owner,uint32_t world,
-    rmm::cuda_stream_view stream,rmm::device_async_resource_ref resource)
+    rmm::cuda_stream_view stream,rmm::device_async_resource_ref resource,bool retain_refs,uint32_t settled_capacity)
     : impl_(std::make_unique<Impl>(std::move(previous),std::move(current),
-          std::move(caps),incoming,logical_owner,world,stream,resource)) {}
+          std::move(caps),incoming,logical_owner,world,stream,resource,retain_refs,settled_capacity)) {}
 CucoRankBatch::~CucoRankBatch()=default;
 
 CucoRankDeviceBatch CucoRankBatch::compare(uint64_t epoch,MgbfsLibraryCandidatesV1 input,
@@ -340,7 +406,7 @@ void CucoRankBatch::commit(uint64_t epoch,MgbfsOwnerControl* owner,
       data(p.workspace->selected),data(p.workspace->control),
       data(p.workspace->candidates),uint32_t(p.workspace->stride),p.shift,p.shards,
       data(p.shard_offsets),data(p.accepted_counts),
-      static_cast<AcceptedView const*>(p.accepted_views.data()),owner);
+      static_cast<AcceptedView const*>(p.accepted_views.data()),extent,owner);
   insert_rank<<<cuco_owner_detail::grid(cap),256,0,s>>>(
       static_cast<InsertRef*>(p.insert_refs.data()),data(p.workspace->selected),
       data(p.workspace->control),data(p.workspace->candidates),
@@ -355,6 +421,55 @@ void CucoRankBatch::complete(uint64_t epoch){
   auto& p=*impl_;
   if(!p.needs_complete||p.committed_epoch!=epoch)throw std::runtime_error("RANK_OWNER_ORDER");
   p.needs_complete=false;
+}
+
+
+
+void CucoRankBatch::export_sorted(void* keys,uint64_t* refs,uint32_t* count,
+    uint32_t capacity,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner){
+  auto& p=*impl_;
+  if(p.pending||p.needs_complete||p.sealed||!p.export_capacity||
+      !capacity||capacity>p.export_capacity||!keys||!refs||!count||!ring||!owner)
+    throw std::runtime_error("RANK_OWNER_SORT_EXPORT_ORDER");
+  // The preallocated export arena is the physical upper bound; callers may
+  // impose a smaller logical layer budget. Let the GPU prefix guard report
+  // overflow through shared owner/ring fatal state, not a host ABI exception.
+  auto stream=p.stream.value();
+  export_prefix<<<1,1,0,stream>>>(data(p.accepted_counts),data(p.accepted_capacities),
+      p.shards,capacity,data(p.shard_offsets),count,ring,owner);
+  export_fill<<<cuco_owner_detail::grid(capacity),256,0,stream>>>(
+      static_cast<ExportKey*>(p.export_keys.data()),
+      static_cast<uint64_t*>(p.export_refs.data()),capacity);
+  export_pack<<<dim3(cuco_owner_detail::grid(capacity),p.shards),256,0,stream>>>(
+      static_cast<const AcceptedView*>(p.accepted_views.data()),data(p.accepted_counts),
+      data(p.shard_offsets),capacity,static_cast<ExportKey*>(p.export_keys.data()),
+      static_cast<uint64_t*>(p.export_refs.data()),ring,owner);
+  cuco_owner_detail::check(cudaGetLastError());
+  size_t bytes=p.export_scratch_bytes;
+  // Stable SortPairs keeps real maximum-valued keys before trailing padding.
+  // Only *count valid records are passed to the existing weighted settlement.
+  cuco_owner_detail::check(cub::DeviceRadixSort::SortPairs(p.export_scratch.data(),bytes,
+      static_cast<const ExportKey*>(p.export_keys.data()),static_cast<ExportKey*>(keys),
+      static_cast<const uint64_t*>(p.export_refs.data()),refs,int(capacity),
+      ExportDecompose{},0,128,stream));
+}
+
+const uint64_t* CucoRankBatch::export_state_refs(uint32_t shard) const {
+  auto const& p=*impl_;
+  if(shard>=p.shards||p.accepted_state_refs.size()!=p.shards||p.pending||p.needs_complete)
+    throw std::runtime_error("RANK_OWNER_STATE_REF_EXPORT");
+  return static_cast<const uint64_t*>(p.accepted_state_refs[shard].data());
+}
+
+void CucoRankBatch::reset_empty_history(){
+  auto& p=*impl_;
+  // Caller must retire every exported reader before reuse on this owner stream.
+  // Tables with borrowed old/current history cannot be reset as empty targets.
+  if(!p.empty_history||p.sealed||p.pending||p.needs_complete)
+    throw std::runtime_error("RANK_OWNER_RESET_ORDER");
+  for(auto& set:p.sets)set->clear_async(cuda::stream_ref{p.stream.value()});
+  cuco_owner_detail::check(cudaMemsetAsync(p.accepted_counts.data(),0,p.shards*4,p.stream.value()));
+  // Epoch monotonicity is retained across slot generations.
 }
 
 void CucoRankBatch::seal(){

@@ -13,6 +13,25 @@ import streamed_bfs_launcher as launcher
 
 
 class StreamedLauncher(unittest.TestCase):
+    def test_lsa_rank_owner_preserves_distinct_payload_and_completion_capacities(self):
+        config = self.config()
+        config.update(world=2, owner='CUCO_RANK', transport='NCCL_LSA',
+                      route_banks=4, epoch_window=3, state_ring_capacity=80000000,
+                      state_descriptor_capacity=12345)
+        plan = launcher.make_plan(config, Path('/repo'), Path('/run'))
+        expected = {'MGBFS_OWNER_BACKEND':'CUCO_RANK',
+                    'MGBFS_TRANSPORT_BACKEND':'NCCL_LSA', 'MGBFS_ROUTE_BANKS':'4',
+                    'MGBFS_EPOCH_WINDOW':'3', 'MGBFS_FUTURE_CAPACITY':'80000000',
+                    'MGBFS_STATE_DESCRIPTOR_CAPACITY':'12345'}
+        for key, value in expected.items():
+            self.assertEqual(plan['env'][key], value)
+
+    def test_hash_first_rank_owner_rejects_host_sized_transport_before_launch(self):
+        config = self.config()
+        config.update(owner='CUCO_RANK', profile='HASH_FIRST')
+        with self.assertRaisesRegex(ValueError, 'STREAM_CONFIG_TRANSPORT'):
+            launcher.make_plan(config, Path('/repo'), Path('/run'))
+
     @unittest.skipUnless(hasattr(os, 'mkfifo'), 'requires Linux FIFOs')
     def test_prepare_creates_eight_real_fifos_and_resets_diagnostic_environment(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -154,7 +173,12 @@ class StreamedLauncher(unittest.TestCase):
         for key, value in [('world', 3), ('capacity', 0), ('batch', True),
                            ('timeout_seconds', -1), ('run_id', '../escape'),
                            ('owner', 'automatic'), ('shards', 3),
-                           ('capacity', 2**32), ('job_buckets', 64)]:
+                           ('capacity', 2**32), ('job_buckets', 64),
+                           ('route_banks', 1), ('route_banks', 5),
+                           ('route_banks', True), ('epoch_window', 1),
+                           ('state_ring_capacity', 0),
+                           ('state_descriptor_capacity', 2**31),
+                           ('transport', 'NCCL_LSA')]:
             with self.subTest(key=key):
                 config = self.config(); config[key] = value
                 with self.assertRaises(ValueError):

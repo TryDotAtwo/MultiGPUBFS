@@ -87,3 +87,56 @@ extern "C" int mgbfs_hash_run(void* plan,const uint8_t* input,uint32_t* output,u
   return cudaGetLastError()==cudaSuccess?0:6;
 }
 extern "C" void mgbfs_hash_destroy(void* p) {delete static_cast<HashPlan*>(p);}
+
+// Compact permutation hash: compose each generator with the linear hash once.
+// Repeated run has no state materialization, allocations, or host readback.
+struct CompactHashPlan {
+ uint32_t n{},moves{},capacity{},stride{};bool move_major{};
+ uint8_t* weights{};uint32_t* offsets{};int32_t* partials{};Gemm gemm;
+ ~CompactHashPlan(){cudaFree(partials);cudaFree(offsets);cudaFree(weights);}
+};
+extern "C" int mgbfs_compact_hash_query(uint32_t n,uint32_t moves,uint32_t capacity,uint64_t* bytes){
+ if(!bytes)return 1;*bytes=0;
+ if(!n||n>128||!moves||moves>128||!capacity||uint64_t(capacity)*moves>0x3fffffffu)return 1;
+ uint32_t stride=(n+15)&~15u,cols=moves*16;
+ Gemm::Arguments a({int(capacity),int(cols),int(stride)},{nullptr,int(stride)},{nullptr,int(stride)},{nullptr,int(cols)},{nullptr,int(cols)},{1,0},1);
+ if(Gemm::get_workspace_size(a)!=0||Gemm::can_implement(a)!=cutlass::Status::kSuccess)return 2;
+ *bytes=uint64_t(cols)*stride+16+uint64_t(capacity)*cols*4;return 0;
+}
+extern "C" int mgbfs_compact_hash_create(uint32_t n,uint32_t moves,uint32_t capacity,const uint8_t* permutation,const uint8_t* limbs,const uint32_t* offsets,uint32_t move_major,void** out,char* error,size_t error_capacity){
+ if(!out)return 1;*out=nullptr;
+ try{
+  uint64_t bytes;if(!permutation||!limbs||!offsets||move_major>1||mgbfs_compact_hash_query(n,moves,capacity,&bytes))throw std::runtime_error("COMPACT_HASH_SHAPE");
+  auto p=std::make_unique<CompactHashPlan>();p->n=n;p->moves=moves;p->capacity=capacity;p->stride=(n+15)&~15u;p->move_major=move_major;
+  std::vector<uint8_t> w(size_t(moves)*16*p->stride,0);
+  for(uint32_t move=0;move<moves;++move){
+   std::vector<bool> used(n,false);
+   for(uint32_t j=0;j<n;++j){uint32_t col=permutation[size_t(move)*n+j];if(col>=n||used[col])throw std::runtime_error("COMPACT_HASH_PERMUTATION");used[col]=true;
+    for(uint32_t limb=0;limb<16;++limb)w[(size_t(move)*16+limb)*p->stride+col]=limbs[size_t(j)*16+limb];
+   }
+  }
+  for(int i=0;i<4;++i)if(offsets[i]>=4294967291ULL)throw std::runtime_error("COMPACT_HASH_OFFSET");
+  check(cudaMalloc(&p->weights,w.size()));check(cudaMalloc(&p->offsets,16));check(cudaMalloc(&p->partials,uint64_t(capacity)*moves*64));
+  check(cudaMemcpy(p->weights,w.data(),w.size(),cudaMemcpyHostToDevice));check(cudaMemcpy(p->offsets,offsets,16,cudaMemcpyHostToDevice));
+  *out=p.release();return 0;
+ }catch(const std::exception&e){if(error&&error_capacity)std::snprintf(error,error_capacity,"%s",e.what());return 1;}
+}
+__global__ void finish_compact_hash(const int32_t* sums,const uint32_t* offsets,uint32_t* output,uint32_t count,uint32_t moves,bool move_major){
+ uint64_t word=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+ if(word>=uint64_t(count)*moves*4)return;
+ uint32_t lane=word%4;uint64_t child=word/4,parent=child/moves,move=child%moves;
+ uint64_t sum=offsets[lane];
+ #pragma unroll
+ for(int limb=0;limb<4;++limb)sum+=uint64_t(sums[child*16+lane*4+limb])<<(8*limb);
+ uint64_t dst=move_major?move*count+parent:child;output[dst*4+lane]=uint32_t(sum%4294967291ULL);
+}
+extern "C" int mgbfs_compact_hash_run(void* raw,const uint8_t* parents,uint32_t* output,uint32_t count,void* stream){
+ auto*p=static_cast<CompactHashPlan*>(raw);if(!p||!parents||!output||count>p->capacity)return 1;if(!count)return 0;
+ auto s=static_cast<cudaStream_t>(stream);uint32_t cols=p->moves*16;
+ Gemm::Arguments a({int(count),int(cols),int(p->stride)},{parents,int(p->stride)},{p->weights,int(p->stride)},{p->partials,int(cols)},{p->partials,int(cols)},{1,0},1);
+ if(Gemm::get_workspace_size(a)!=0||p->gemm.can_implement(a)!=cutlass::Status::kSuccess)return 2;
+ if(p->gemm.initialize(a,nullptr,s)!=cutlass::Status::kSuccess||p->gemm(s)!=cutlass::Status::kSuccess)return 3;
+ finish_compact_hash<<<(uint64_t(count)*p->moves*4+255)/256,256,0,s>>>(p->partials,p->offsets,output,count,p->moves,p->move_major);
+ return cudaGetLastError()==cudaSuccess?0:4;
+}
+extern "C" void mgbfs_compact_hash_destroy(void*p){delete static_cast<CompactHashPlan*>(p);}

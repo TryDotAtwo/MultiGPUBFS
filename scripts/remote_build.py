@@ -65,7 +65,7 @@ def main():
     parser.add_argument('--jobs', type=int, default=2)
     parser.add_argument('--torchrun-executable', type=Path,
                         help='explicit installed host torchrun launcher; added to exported PATH')
-    parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90'), default='90')
+    parser.add_argument('--cuda-architecture', choices=('75', '86', '89', '90', '100', '103'), default='90')
     parser.add_argument('--nccl-lsa-root', type=Path,
                         help='explicit installed NCCL >=2.29 root for device-count transport')
     parser.add_argument('--graph-smoke-test', action='store_true',

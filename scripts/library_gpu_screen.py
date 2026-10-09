@@ -44,20 +44,48 @@ def validate_result(row, expected_states, pool_bytes, *, owner='CUDF_RELATIONAL'
 
 def run_case(cli, output, archive_root, group, expected_states, world, batch,
              capacity, ring, pool_bytes, profile, pre_dedup, inherited, *, owner='CUDF_RELATIONAL',
-             native_example=None, nsys=None):
+             native_example=None, nsys=None, run_config=None):
     """One screening run; optional diagnostic trace is never benchmark evidence."""
     if world not in (1, 2) or profile not in ('DENSE', 'HASH_FIRST'):
         raise ValueError('SCREEN_CONFIG')
     native = owner in ('CUB_SORT_MERGE', 'BMMA_BUCKET')
     if owner not in ('CUDF_RELATIONAL', 'CUCO_INDEXED', 'CUCO_RANK', 'CUB_SORT_MERGE', 'BMMA_BUCKET'):
         raise ValueError('SCREEN_OWNER')
-    if native != (native_example is not None) or (pool_bytes != 0 if native else pool_bytes <= 0):
+    if ((run_config is None and native != (native_example is not None))
+            or (run_config is not None and native_example is not None)
+            or (pool_bytes != 0 if native else pool_bytes <= 0)):
         raise ValueError('SCREEN_BACKEND_CONFIG')
     if pre_dedup not in ('ON', 'OFF') or min(batch, capacity, ring) <= 0:
         raise ValueError('SCREEN_CONFIG')
     output, archive_root = Path(output), Path(archive_root)
     output.mkdir(parents=True, exist_ok=False)
     archive_root.mkdir(parents=True, exist_ok=False)
+    typed_expected = None
+    if run_config is not None:
+        config = json.loads(Path(run_config).read_text())
+        caps = config['capacities']
+        if (config['topology']['world_size'] != world
+                or config['parent_batch'] != batch
+                or config['graph']['expected_max_unique_states'] != expected_states
+                or config['owner_backend'] != owner
+                or config['frontier_profile'] != profile
+                or config['local_pre_dedup'] != (pre_dedup == 'ON')
+                or caps['layer_hash_records_per_arena'] != capacity
+                or caps['state_ring_records'] != ring
+                or config.get('library_pool_bytes', 0) != pool_bytes):
+            raise ValueError('SCREEN_TYPED_CONFIGURATION')
+        snapshot = output/'run-config.json'
+        snapshot.write_text(json.dumps(config, separators=(',', ':')))
+        preflight = subprocess.run([str(cli), 'preflight', '--offline', str(snapshot)],
+            env=inherited, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True, timeout=30)
+        admission = json.loads(preflight.stdout)
+        digest = admission.get('config_digest')
+        if (admission.get('status') != 'CONFIG_VALIDATED'
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(x not in '0123456789abcdef' for x in digest)):
+            raise ValueError('SCREEN_TYPED_PREFLIGHT')
+        typed_expected = dict(run_contract='RunConfigV1', bootstrap_digest=list(bytes.fromhex(digest)))
+        group = 'matrix-' + digest
     env = dict(inherited, CUDA_VISIBLE_DEVICES=','.join(map(str, range(world))),
         MGBFS_BENCH_WORLD_SIZE=str(world), MGBFS_RANK_MAP=','.join(map(str, range(world))),
         MGBFS_OWNER_BACKEND=owner, MGBFS_LIBRARY_POOL_BYTES=str(pool_bytes),
@@ -66,10 +94,12 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
         MGBFS_FUTURE_CAPACITY=str(ring), MGBFS_CAPACITY_MODE='max_per_rank',
         MGBFS_STATE_CODEC='matrix_u8', MGBFS_ARCHIVE_CODEC='matrix_u8',
         MGBFS_BENCH_WARMUP='1', MGBFS_BENCH_SKIP_ARCHIVE='0', MGBFS_ARCHIVE_STREAM='0')
-    executable = [str(native_example)] if native else [str(cli), 'bench', '--reference']
+    executable = ([str(cli), 'run', str(snapshot)] if run_config is not None else
+                  [str(native_example)] if native else [str(cli), 'bench', '--reference'])
     command = [sys.executable, '-m', 'torch.distributed.run', '--standalone',
         f'--nproc-per-node={world}', '--no-python', *executable,
-        group, str(batch), str(archive_root/'bootstrap'), str(archive_root/'archive'),
+        *([] if run_config is not None else [group, str(batch)]),
+        str(archive_root/'bootstrap'), str(archive_root/'archive'),
         '{RANK_OUT}']
     if nsys is not None:
         backtrace = env.get('MGBFS_NSYS_CUDA_BACKTRACE')
@@ -107,7 +137,10 @@ def run_case(cli, output, archive_root, group, expected_states, world, batch,
             expected=dict(group=group, batch=batch, world_size=world,
                 frontier_profile=profile, pre_dedup=pre_dedup,
                 declared_capacity_records=capacity, declared_state_ring_records=ring,
-                capacity_mode='MaxPerRank', hash_first_generation='SCALAR', generation_variant=1))
+                capacity_mode='MaxPerRank',
+                hash_first_generation=('INT_MMA_SM75' if run_config is not None and profile == 'HASH_FIRST' else 'SCALAR'),
+                generation_variant=1,
+                **(typed_expected or {})))
         if nsys is not None:
             trace = output/'timeline.nsys-rep'
             if not trace.is_file() or trace.stat().st_size == 0:

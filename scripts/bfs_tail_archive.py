@@ -237,7 +237,7 @@ class TailArchive:
         generation.mkdir(exist_ok=True)
         selected, remaining = [], self.incomplete_bytes // self.width * self.width
         if self.compact_policy:
-            remaining = 1000 * self.width
+            remaining = (sum(x["bytes"] for x in self.retained) if getattr(self,"whole_incomplete",False) else 1000*self.width)
         full_tail = complete or (self.retained_layers is not None and not self.compact_policy)
         source_entries = self.retained if full_tail else reversed(self.retained)
         for entry in source_entries:

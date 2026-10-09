@@ -179,8 +179,9 @@ def consume_selected(stream, root, n, on_layer, *, bits_per_symbol=4,
                     raise ValueError('selected layer count')
                 if replacement:
                     if output is None:
-                        raise ValueError('empty terminal replacement')
-                    output.close(); output = None
+                        root.mkdir(parents=True,exist_ok=True)
+                        path=root/f'layer-{depth:06d}.bin';path.touch(exist_ok=False)
+                    else:output.close(); output = None
                     if on_packed_layer is None:
                         on_layer(depth, rows, path, config, True)
                     else:

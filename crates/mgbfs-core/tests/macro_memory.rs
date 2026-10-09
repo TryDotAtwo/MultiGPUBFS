@@ -87,7 +87,7 @@ fn checked_arithmetic_rejects_candidate_history_future_and_byte_overflow() {
 }
 
 #[test]
-fn plan_accounts_every_runtime_plane_and_library_query_once() {
+fn plan_accounts_paired_state_hash_banks_without_archive_rehash_scratch() {
     let shape = MacroMemoryShape::derive(input()).unwrap();
     let library = MacroLibraryBytes {
         generation: 101,
@@ -100,11 +100,10 @@ fn plan_accounts_every_runtime_plane_and_library_query_once() {
     };
     let plan = MacroMemoryPlan::derive(input(), library).unwrap();
     let external = 2 * 40_320 * 64
-        + 40_320 * 16
+        + 2 * 40_320 * 16
         + 8
         + shape.producer_state_bytes
         + shape.producer_hash_bytes
-        + 1024 * 16
         + 45_056 * (8 + 16 + 8)
         + 4
         + 100_000 * (16 + 8)

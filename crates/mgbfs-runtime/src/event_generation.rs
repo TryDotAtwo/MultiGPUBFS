@@ -56,13 +56,16 @@ impl NativeEvent {
     /// record/wait/barrier must belong to the same capture, with one launch per
     /// submitted generation. Host poll/retire is forbidden during capture;
     /// retire_after_device_barrier keeps reuse ordered by captured GPU edges.
+    #[track_caller]
     pub unsafe fn wait(&mut self, generation: u64, stream: *mut std::ffi::c_void) -> Result<()> {
+        let origin = std::panic::Location::caller();
         let handle = self.handle;
         self.generation.wait(generation, || {
             let status = mgbfs_cuda::ffi::cudaStreamWaitEvent(stream, handle, 0);
             if status == 0 {
                 Ok(())
             } else {
+                eprintln!("MGBFS_EVENT_WAIT_ERROR status={status} file={} line={} generation={generation} stream={stream:?} event={handle:?}", origin.file(), origin.line());
                 Err(format!("CUDA_EVENT_WAIT_{status}"))
             }
         })
@@ -75,12 +78,18 @@ impl NativeEvent {
     /// have recorded that completion event after all reads of the protected
     /// buffer, and must not let other consumers outlive it.
     pub unsafe fn retire_after_device_barrier(
-        &mut self, generation: u64, producer_stream: *mut std::ffi::c_void,
+        &mut self,
+        generation: u64,
+        producer_stream: *mut std::ffi::c_void,
         consumer_done: *mut std::ffi::c_void,
     ) -> Result<()> {
         self.generation.retire_after_device_barrier(generation, || {
             let status = mgbfs_cuda::ffi::cudaStreamWaitEvent(producer_stream, consumer_done, 0);
-            if status == 0 { Ok(()) } else { Err(format!("CUDA_REUSE_WAIT_{status}")) }
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(format!("CUDA_REUSE_WAIT_{status}"))
+            }
         })
     }
 }
@@ -166,7 +175,9 @@ impl EventGeneration {
     /// The caller submits a producer-stream wait on the completion of every
     /// consumer before re-recording the event or overwriting its buffer.
     pub fn retire_after_device_barrier(
-        &mut self, generation: u64, submit: impl FnOnce() -> Result<()>,
+        &mut self,
+        generation: u64,
+        submit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         self.apply(|s| {
             if s.active != Some(generation) || !s.consumer_waited {

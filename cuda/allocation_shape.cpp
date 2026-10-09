@@ -13,6 +13,8 @@ int generation_shape(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacit
   if(variant==5){q.stride=(n+15)&~15u;q.columns=(capacity+3)&~3u;}
   // Validated factors above bound every product below UINT64_MAX.
   q.generators=uint64_t(q.rows)*q.k;
+  // Immutable compact permutation indices share the generator allocation.
+  if(variant==5)q.generators+=uint64_t(moves)*n;
   q.packed_parents=uint64_t(q.columns)*q.k;
   q.products_s32=uint64_t(q.rows)*q.columns*4;
   *out=q;return 0;

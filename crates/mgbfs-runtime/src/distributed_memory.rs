@@ -36,7 +36,11 @@ pub fn device_admission(required: u64, reserve: u64, free: u64) -> Result<()> {
 /// Hash128 plane, and one fixed-stride state plane. NCCL allocator overhead
 /// remains outside this exact payload request.
 pub fn lsa_symmetric_slot_bytes(candidates: u32, packet_stride: u32) -> Result<u64> {
-    if candidates == 0 || candidates > i32::MAX as u32 || packet_stride == 0 || packet_stride % 16 != 0 {
+    if candidates == 0
+        || candidates > i32::MAX as u32
+        || packet_stride == 0
+        || packet_stride % 16 != 0
+    {
         return Err("LSA_SLOT_SHAPE".into());
     }
     u64::from(candidates)
@@ -128,6 +132,55 @@ pub fn shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
     Ok(l)
 }
 
+/// Expand the actual source route payload storage. Receive and owner scratch
+/// remain separate resources; completion credits do not multiply either.
+/// All names in bank zero retain the existing allocation-query ABI.
+pub fn with_route_banks(base: &AllocationLedger, banks: usize) -> Result<AllocationLedger> {
+    if !(2..=4).contains(&banks) {
+        return Err("ROUTE_BANK_CONFIG".into());
+    }
+    with_route_banks_impl(base, banks)
+}
+
+/// One physical producer packet for key-first SHARD_AB. This does not relax
+/// the two-bank contract of full-state regular/weighted producer pipelines.
+pub fn with_compact_route_bank(base: &AllocationLedger) -> Result<AllocationLedger> {
+    with_route_banks_impl(base, 1)
+}
+
+fn with_route_banks_impl(base: &AllocationLedger, banks: usize) -> Result<AllocationLedger> {
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in &base.allocations {
+        result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
+    }
+    result.add("generation_control", 3, 4, 256)?;
+    for bank in 1..banks {
+        for name in [
+            "children",
+            "child_hashes",
+            "sorted_hashes",
+            "sorted_refs",
+            "packed_states",
+            "route_count",
+            "owner_counts",
+        ] {
+            let allocation = base
+                .allocations
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or("ROUTE_BANK_ALLOCATION_MISSING")?;
+            result.add(
+                &format!("route_bank_{bank}.{name}"),
+                allocation.payload_bytes,
+                1,
+                256,
+            )?;
+        }
+        result.add(&format!("route_bank_{bank}.generation_control"), 3, 4, 256)?;
+    }
+    Ok(result)
+}
+
 /// Library-owner shared storage, excluding the separately charged fixed RMM
 /// pool. History is four aligned SoA planes; no duplicate legacy owner arrays.
 pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> {
@@ -154,40 +207,73 @@ pub fn library_shared_buffers(s: SharedBufferShape) -> Result<AllocationLedger> 
     Ok(result)
 }
 
-/// Native LSA rank transaction. Keep merged scratch at job_buckets*K;
-/// only metadata scales with the number of buckets. No duplicate receive slot.
+/// Transport-neutral native rank transaction. Keep merged scratch at job_buckets*K;
+/// only metadata scales with the number of buckets. Host-sized receive planes remain.
 pub fn native_rank_shared_buffers(s: SharedBufferShape, shards: u32) -> Result<AllocationLedger> {
-    if shards == 0 || s.buckets % u64::from(shards) != 0 ||
-        (s.buckets/u64::from(shards)).checked_mul(s.bucket_capacity)
-            .map_or(true, |n| n > u32::MAX as u64) {
+    if shards == 0
+        || s.buckets % u64::from(shards) != 0
+        || (s.buckets / u64::from(shards))
+            .checked_mul(s.bucket_capacity)
+            .map_or(true, |n| n > u32::MAX as u64)
+    {
         return Err("NATIVE_RANK_SHAPE".into());
     }
     let base = shared_buffers(s)?;
     let mut result = AllocationLedger::new(u64::MAX, 0)?;
     for allocation in base.allocations {
-        if ["counts", "recv_states", "recv_hashes", "recv_count"].contains(&allocation.name.as_str()) {
+        if allocation.name == "counts" {
             continue;
         }
         result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
     }
-    result.add("counts", s.buckets, std::mem::size_of::<Counts>() as u64, 256)?;
+    result.add(
+        "counts",
+        s.buckets,
+        std::mem::size_of::<Counts>() as u64,
+        256,
+    )?;
     result.add("owner_window", 3, 4, 256)?;
     result.add("next_extents", 2, std::mem::size_of::<Extent>() as u64, 256)?;
     result.add("next_extent_count", 1, 4, 256)?;
     for name in ["rank_prev_directory", "rank_curr_directory"] {
         result.add(name, s.buckets, std::mem::size_of::<Range>() as u64, 256)?;
     }
-    for name in ["rank_shard_counts", "rank_shard_accepted", "rank_shard_capacities"] {
+    for name in [
+        "rank_shard_counts",
+        "rank_shard_accepted",
+        "rank_shard_capacities",
+    ] {
         result.add(name, u64::from(shards), 4, 256)?;
     }
-    result.add("rank_shard_offsets", u64::from(shards)+1, 4, 256)?;
+    result.add("rank_shard_offsets", u64::from(shards) + 1, 4, 256)?;
+    Ok(result)
+}
+
+/// Select receive ownership explicitly, without changing native owner metadata.
+pub fn native_rank_shared_buffers_for_transport(
+    s: SharedBufferShape,
+    shards: u32,
+    lsa: bool,
+) -> Result<AllocationLedger> {
+    let base = native_rank_shared_buffers(s, shards)?;
+    if !lsa {
+        return Ok(base);
+    }
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in base.allocations {
+        if ["recv_states", "recv_hashes", "recv_count"].contains(&allocation.name.as_str()) {
+            continue;
+        }
+        result.add(&allocation.name, allocation.payload_bytes, 1, 256)?;
+    }
     Ok(result)
 }
 
 /// LSA owns the receive count/hash/state planes in its symmetric slot;
 /// the host-sized NCCL buffers must not be allocated a second time.
 pub fn library_shared_buffers_for_transport(
-    s: SharedBufferShape, lsa: bool,
+    s: SharedBufferShape,
+    lsa: bool,
 ) -> Result<AllocationLedger> {
     let base = library_shared_buffers(s)?;
     if !lsa {
@@ -216,4 +302,17 @@ pub fn append_query(
         ledger.add(&format!("{prefix}.{}", a.name), a.bytes, 1, a.alignment)?;
     }
     Ok(())
+}
+
+pub fn shard_ab_shared_buffers(s: SharedBufferShape, lsa: bool) -> Result<AllocationLedger> {
+    let base = library_shared_buffers_for_transport(s, lsa)?;
+    let mut result = AllocationLedger::new(u64::MAX, 0)?;
+    for allocation in base.allocations {
+        if allocation.name == "library_candidates" { continue; }
+        let bytes = if ["prev", "curr"].contains(&allocation.name.as_str()) {
+            s.layer_capacity.checked_mul(16).ok_or("SHARD_AB_HISTORY_OVERFLOW")?
+        } else { allocation.payload_bytes };
+        result.add(&allocation.name, bytes, 1, 256)?;
+    }
+    Ok(result)
 }

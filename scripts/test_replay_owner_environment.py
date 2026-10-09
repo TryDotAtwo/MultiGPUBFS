@@ -1,8 +1,102 @@
 import unittest
-from replay_lsa_cancel_candidate import configure_owner_environment
+from replay_lsa_cancel_candidate import configure_owner_environment, configure_epoch_window, rank_arguments
+from pathlib import Path
 
 
 class OwnerEnvironmentTests(unittest.TestCase):
+    def test_warmup_disagreement_changes_only_selected_rank_and_never_forwards_test_control(self):
+        from replay_lsa_cancel_candidate import rank_environment
+        env = {'MGBFS_BENCH_WARMUP': '1', 'MGBFS_REPLAY_WARMUP_MISMATCH_RANK': '1', 'keep': 'yes'}
+        self.assertEqual(rank_environment(env, 0), {'MGBFS_BENCH_WARMUP': '1', 'keep': 'yes',
+            'RANK': '0', 'LOCAL_RANK': '0', 'WORLD_SIZE': '2'})
+        self.assertEqual(rank_environment(env, 1), {'MGBFS_BENCH_WARMUP': '0', 'keep': 'yes',
+            'RANK': '1', 'LOCAL_RANK': '1', 'WORLD_SIZE': '2'})
+        self.assertEqual(env['MGBFS_BENCH_WARMUP'], '1')
+        env.update(MGBFS_BENCH_WARMUP='0', MGBFS_REPLAY_WARMUP_MISMATCH_RANK='0')
+        self.assertEqual(rank_environment(env, 0)['MGBFS_BENCH_WARMUP'], '1')
+        self.assertEqual(rank_environment(env, 1)['MGBFS_BENCH_WARMUP'], '0')
+
+    def test_route_banks_are_not_completion_credits(self):
+        from replay_lsa_cancel_candidate import configure_route_banks
+        env = {'MGBFS_EPOCH_WINDOW': '4'}
+        self.assertEqual(configure_route_banks(env), 2)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '2')
+        self.assertEqual(configure_route_banks(env, 3), 3)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '4')
+        env['MGBFS_ROUTE_BANKS'] = '4'
+        self.assertEqual(configure_route_banks(env), 4)
+
+    def test_invalid_route_banks_do_not_mutate_environment(self):
+        from replay_lsa_cancel_candidate import configure_route_banks
+        for value in (1, 5, True, 'bad'):
+            env = {'MGBFS_ROUTE_BANKS': '2', 'sentinel': 'keep'}
+            with self.assertRaises(ValueError):
+                configure_route_banks(env, value)
+            self.assertEqual(env, {'MGBFS_ROUTE_BANKS': '2', 'sentinel': 'keep'})
+
+    def test_typed_route_banks_override_inherited_environment(self):
+        from replay_lsa_cancel_candidate import configure_run_route_banks
+        env = {'MGBFS_ROUTE_BANKS': 'invalid-inherited-value'}
+        config = {'capacities': {'route_slot_count': 3}, 'completion_epoch_window': 4}
+        self.assertEqual(configure_run_route_banks(env, config), 3)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+        with self.assertRaises(ValueError):
+            configure_run_route_banks(env, config, 2)
+        self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+        for value in (None, True, '3', 1, 5):
+            with self.assertRaises(ValueError):
+                configure_run_route_banks(env, {'capacities': {'route_slot_count': value}})
+            self.assertEqual(env['MGBFS_ROUTE_BANKS'], '3')
+
+    def test_typed_epoch_window_is_authoritative_not_inherited(self):
+        from replay_lsa_cancel_candidate import configure_run_epoch_window
+        env = {'MGBFS_EPOCH_WINDOW': 'invalid-inherited-value'}
+        self.assertEqual(configure_run_epoch_window(env, {'completion_epoch_window': 3}), 3)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '3')
+        self.assertEqual(configure_run_epoch_window(env, {}), 2)
+        self.assertEqual(configure_run_epoch_window(env, {'completion_epoch_window': 4}, 4), 4)
+        with self.assertRaises(ValueError):
+            configure_run_epoch_window(env, {'completion_epoch_window': 3}, 4)
+        self.assertEqual(env['MGBFS_EPOCH_WINDOW'], '4')
+    def test_typed_cuco_uses_snapshot_pool_not_benchmark_or_inherited_pool(self):
+        env = {'MGBFS_LIBRARY_POOL_BYTES': '123', 'sentinel': 'keep'}
+        configure_owner_environment(env, 'CUCO_RANK', '1,0',
+            {'owner_backend': 'CUCO_RANK', 'library_pool_bytes': 100663296})
+        self.assertEqual(env['MGBFS_LIBRARY_POOL_BYTES'], '100663296')
+        self.assertEqual(env['sentinel'], 'keep')
+
+    def test_typed_pool_errors_do_not_mutate_environment(self):
+        for pool in (None, 0, 257, True, '67108864'):
+            env = {'sentinel': 'keep'}
+            with self.assertRaises(ValueError):
+                configure_owner_environment(env, 'CUCO_RANK', '0,1',
+                    {'owner_backend': 'CUCO_RANK', 'library_pool_bytes': pool})
+            self.assertEqual(env, {'sentinel': 'keep'})
+        env = {'sentinel': 'keep'}
+        with self.assertRaises(ValueError):
+            configure_owner_environment(env, 'CUB_SORT_MERGE', '0,1',
+                {'owner_backend': 'CUB_SORT_MERGE', 'library_pool_bytes': 67108864})
+        self.assertEqual(env, {'sentinel': 'keep'})
+    def test_typed_replay_calls_run_not_bench(self):
+        case = Path('case')
+        config = Path('snapshot.json')
+        self.assertEqual(rank_arguments(case, 's4', 16, config),
+            ['run', str(config), str(case / 'bootstrap'), str(case / 'archive'), str(case / 'result')])
+        self.assertEqual(rank_arguments(case, 's4', 16)[:4], ['bench', '--reference', 's4', '16'])
+
+    def test_epoch_window_explicit_and_inherited(self):
+        for requested, inherited, expected in ((None, None, 2), (None, '3', 3), (4, '3', 4)):
+            env = {} if inherited is None else {'MGBFS_EPOCH_WINDOW': inherited}
+            self.assertEqual(configure_epoch_window(env, requested), expected)
+            self.assertEqual(env['MGBFS_EPOCH_WINDOW'], str(expected))
+
+    def test_epoch_window_rejects_without_mutation(self):
+        for value in ('bad', '1', '4294967296', '-2'):
+            env = {'MGBFS_EPOCH_WINDOW': value}
+            with self.assertRaises(ValueError):
+                configure_epoch_window(env, None)
+            self.assertEqual(env, {'MGBFS_EPOCH_WINDOW': value})
+
     def test_native_drops_inherited_pool_and_preserves_other_environment(self):
         for backend in ('CUB_SORT_MERGE', 'BMMA_BUCKET'):
             env = {'MGBFS_LIBRARY_POOL_BYTES': '123', 'CUDA_VISIBLE_DEVICES': '0,1'}

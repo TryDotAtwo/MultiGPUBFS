@@ -179,6 +179,29 @@ static void rank_device_window() {
       lens.p,1,2,2,9,counts.p,control.p,ring.p,nullptr)==0,"rank compare enqueue");};
   auto commit=[&]{require(mgbfs_bounded_owner_rank_commit(plan,jobs.p,4,in.p,
       accepted.p,lens.p,counts.p,control.p,grant.p,selected.p,nullptr)==0,"rank commit enqueue");};
+#ifndef MGBFS_TEST_BMMA
+  // Compare-only flags are row-indexed; persistent merge scratch must not
+  // determine its launch count. This fixture has four buckets but j=2.
+  cudaStream_t capture_stream;ck(cudaStreamCreateWithFlags(&capture_stream,cudaStreamNonBlocking));
+  cudaGraph_t graph;cudaGraphExec_t executable;
+  ck(cudaStreamBeginCapture(capture_stream,cudaStreamCaptureModeThreadLocal));
+  require(mgbfs_bounded_owner_rank_compare(plan,jobs.p,4,in.p,
+      begin.p,rows.p,source_rows.p,prev.p,pd.p,1,curr.p,cd.p,1,accepted.p,
+      lens.p,1,2,2,9,counts.p,control.p,ring.p,capture_stream)==0,"rank graph compare enqueue");
+  ck(cudaStreamEndCapture(capture_stream,&graph));
+  size_t node_count=0;ck(cudaGraphGetNodes(graph,nullptr,&node_count));
+  std::vector<cudaGraphNode_t> nodes(node_count);ck(cudaGraphGetNodes(graph,nodes.data(),&node_count));
+  size_t kernels=0;
+  for(auto node:nodes){cudaGraphNodeType kind;ck(cudaGraphNodeGetType(node,&kind));kernels+=kind==cudaGraphNodeTypeKernel;}
+  ck(cudaGraphInstantiate(&executable,graph,nullptr,nullptr,0));
+  ck(cudaGraphLaunch(executable,capture_stream));ck(cudaStreamSynchronize(capture_stream));
+  auto captured=control.get()[0];
+  require(!captured.error&&captured.stage==1&&captured.survivors==2,"rank graph oracle");
+  require(lens.get()==std::vector<uint32_t>({0,0,0,1}),"rank graph persistent unchanged");
+  ck(cudaGraphExecDestroy(executable));ck(cudaGraphDestroy(graph));ck(cudaStreamDestroy(capture_stream));
+  std::printf("RANK_COMPARE_KERNEL_NODES=%zu\n",kernels);
+  require(kernels<=8,"rank compare launch budget grows with scratch groups");
+#endif
   compare();
   require(mgbfs_bounded_owner_rank_metadata(counts.p,lens.p,4,2,8,
       live.p,old.p,caps.p,offsets.p,control.p,nullptr)==0,"rank metadata enqueue");

@@ -89,7 +89,8 @@ fn native_macro_compact_permutation_layers_equal_full_state_oracle() {
             .unwrap()
             .into_iter()
             .map(|layer| {
-                let mut encoded: Vec<_> = layer.into_iter()
+                let mut encoded: Vec<_> = layer
+                    .into_iter()
                     .map(|state| mgbfs_core::matrix::encode_permutation_matrix(&state, n).unwrap())
                     .collect();
                 encoded.sort();
@@ -110,15 +111,21 @@ fn native_macro_compact_permutation_layers_equal_full_state_oracle() {
                         generation_variant: 5,
                         untouched_vram_reserve_bytes: 0,
                     },
-                ).unwrap();
+                )
+                .unwrap();
                 let mut actual = Vec::new();
                 loop {
                     let mut layer = bfs.snapshot().unwrap();
                     layer.sort();
                     actual.push(layer);
-                    if !bfs.advance().unwrap() { break; }
+                    if !bfs.advance().unwrap() {
+                        break;
+                    }
                 }
-                assert_eq!(actual, expected, "S{n} compact K={macro_depth} pre={prededup}");
+                assert_eq!(
+                    actual, expected,
+                    "S{n} compact K={macro_depth} pre={prededup}"
+                );
             }
         }
     }
@@ -265,11 +272,9 @@ fn native_macro_archive_is_complete_and_verifiable() {
         )
         .unwrap();
         let mut bfs = MacroNativeBfs::new(&graph, [3; 16], config).unwrap();
-        let mut actual = Vec::new();
+        // No snapshot drain before D2H: exercise the actual archive reader
+        // lifetime while advance reuses both paired GPU banks.
         loop {
-            let mut states = bfs.snapshot().unwrap();
-            states.sort();
-            actual.push(states);
             bfs.archive_current(&mut archive).unwrap();
             if !bfs.advance().unwrap() {
                 break;
@@ -278,6 +283,39 @@ fn native_macro_archive_is_complete_and_verifiable() {
         archive.finish().unwrap();
         let data = bytes.lock().unwrap();
         verify(&data).unwrap();
-        assert_eq!(actual, expected);
+        let hash = mgbfs_core::hash::GemmHash::from_seed(layout.width, [3; 16]).unwrap();
+        let word = |bytes: &[u8], offset: usize| {
+            u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize
+        };
+        let mut archived = vec![Vec::new(); expected.len()];
+        let mut cursor = 48usize;
+        loop {
+            let header = &data[cursor..cursor + 80];
+            let kind = word(header, 8);
+            let depth = word(header, 16);
+            let count = word(header, 24);
+            let size = word(header, 32);
+            let payload = &data[cursor + 80..cursor + 80 + size];
+            if kind == 1 {
+                assert!(depth < archived.len());
+                assert_eq!(size, count * (layout.width + 16));
+                let (states, hashes) = payload.split_at(count * layout.width);
+                for (state, stored) in states
+                    .chunks_exact(layout.width)
+                    .zip(hashes.chunks_exact(16))
+                {
+                    assert_eq!(stored, hash.hash(state).unwrap().to_le_bytes());
+                    archived[depth].push(state.to_vec());
+                }
+            }
+            cursor += 112 + size;
+            if kind == 3 {
+                break;
+            }
+        }
+        for layer in &mut archived {
+            layer.sort();
+        }
+        assert_eq!(archived, expected);
     }
 }

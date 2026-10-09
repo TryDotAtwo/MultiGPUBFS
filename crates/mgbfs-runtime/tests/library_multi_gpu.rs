@@ -151,85 +151,196 @@ fn lsa_one_exchange_matches_peer_payload() {
                         (16, [[0, 0], [0, 0]]),
                         (64, [[1, 1], [1, 2]]),
                     ] {
-                        let input: Vec<u8> = (0..192).map(|i|
-                            0x30 + rank as u8 * 4 + (i / width) as u8).collect();
+                        let input: Vec<u8> = (0..192)
+                            .map(|i| 0x30 + rank as u8 * 4 + (i / width) as u8)
+                            .collect();
                         let counts_here = counts_by_rank[rank as usize];
                         assert_eq!(gpu::cudaMemcpy(states, input.as_ptr().cast(), 192, 1), 0);
-                        assert_eq!(gpu::cudaMemcpy(counts, counts_here.as_ptr().cast(), 8, 1), 0);
-                        assert_eq!(gpu::cudaMemsetAsync(received_states as *mut c_void,
-                            0xcd, 192, stream), 0);
-                        assert_eq!(gpu::cudaMemsetAsync(received_hashes as *mut c_void,
-                            0xef, 48, stream), 0);
+                        assert_eq!(
+                            gpu::cudaMemcpy(counts, counts_here.as_ptr().cast(), 8, 1),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::cudaMemsetAsync(received_states as *mut c_void, 0xcd, 192, stream),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::cudaMemsetAsync(received_hashes as *mut c_void, 0xef, 48, stream),
+                            0
+                        );
                         assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
                         drain.wait(); // both consumers have closed the prior slot lease
-                        assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
-                            group_fatal.cast(), 1-rank, 1-rank, width as u32, stream), 0);
+                        assert_eq!(
+                            exchange(
+                                comm,
+                                std::ptr::null(),
+                                states,
+                                counts.cast(),
+                                group_fatal.cast(),
+                                1 - rank,
+                                1 - rank,
+                                width as u32,
+                                stream
+                            ),
+                            0
+                        );
                         assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
-                        let peer_counts = counts_by_rank[(1-rank) as usize];
+                        let peer_counts = counts_by_rank[(1 - rank) as usize];
                         let rows = peer_counts[rank as usize] as usize;
-                        let begin = if rank == 0 { 0 } else { peer_counts[0] as usize };
+                        let begin = if rank == 0 {
+                            0
+                        } else {
+                            peer_counts[0] as usize
+                        };
                         let mut payload = [0u8; 192];
                         let mut untouched_hashes = [0u8; 48];
-                        assert_eq!(gpu::cudaMemcpy(payload.as_mut_ptr().cast(),
-                            received_states, 192, 2), 0);
-                        assert_eq!(gpu::cudaMemcpy(untouched_hashes.as_mut_ptr().cast(),
-                            received_hashes, 48, 2), 0);
-                        assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
-                            received_count.cast(), 4, 2), 0);
+                        assert_eq!(
+                            gpu::cudaMemcpy(payload.as_mut_ptr().cast(), received_states, 192, 2),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::cudaMemcpy(
+                                untouched_hashes.as_mut_ptr().cast(),
+                                received_hashes,
+                                48,
+                                2
+                            ),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::cudaMemcpy(
+                                (&mut actual_count as *mut u32).cast(),
+                                received_count.cast(),
+                                4,
+                                2
+                            ),
+                            0
+                        );
                         assert_eq!(actual_count as usize, rows);
                         for row in 0..rows {
-                            assert_eq!(&payload[row*width..(row+1)*width],
-                                vec![0x30 + (1-rank) as u8*4 + (begin+row) as u8; width]);
+                            assert_eq!(
+                                &payload[row * width..(row + 1) * width],
+                                vec![0x30 + (1 - rank) as u8 * 4 + (begin + row) as u8; width]
+                            );
                         }
-                        assert!(payload[rows*width..].iter().all(|&b| b == 0xcd),
-                            "exchange wrote padding beyond exact payload");
-                        assert_eq!(untouched_hashes, [0xef; 48], "hash-free exchange wrote hashes");
+                        assert!(
+                            payload[rows * width..].iter().all(|&b| b == 0xcd),
+                            "exchange wrote padding beyond exact payload"
+                        );
+                        assert_eq!(
+                            untouched_hashes, [0xef; 48],
+                            "hash-free exchange wrote hashes"
+                        );
                         drain.wait();
                     }
                     for width in [0u32, 15, 80] {
-                        assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
-                            group_fatal.cast(), 1-rank, 1-rank, width, stream), 1);
+                        assert_eq!(
+                            exchange(
+                                comm,
+                                std::ptr::null(),
+                                states,
+                                counts.cast(),
+                                group_fatal.cast(),
+                                1 - rank,
+                                1 - rank,
+                                width,
+                                stream
+                            ),
+                            1
+                        );
                     }
                     // Both outgoing partitions individually fit, but their
                     // sum exceeds the allocated source slot: fail before any
                     // peer payload access, keep the receive tail untouched.
                     let overflow = [2u32, 2];
                     assert_eq!(gpu::cudaMemcpy(counts, overflow.as_ptr().cast(), 8, 1), 0);
-                    assert_eq!(gpu::cudaMemsetAsync(received_states as *mut c_void,
-                        0xab, 192, stream), 0);
+                    assert_eq!(
+                        gpu::cudaMemsetAsync(received_states as *mut c_void, 0xab, 192, stream),
+                        0
+                    );
                     assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
                     drain.wait();
-                    assert_eq!(exchange(comm, std::ptr::null(), states, counts.cast(),
-                        group_fatal.cast(), 1-rank, 1-rank, 16, stream), 0);
+                    assert_eq!(
+                        exchange(
+                            comm,
+                            std::ptr::null(),
+                            states,
+                            counts.cast(),
+                            group_fatal.cast(),
+                            1 - rank,
+                            1 - rank,
+                            16,
+                            stream
+                        ),
+                        0
+                    );
                     assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
-                    assert_eq!(gpu::cudaMemcpy((&mut actual_count as *mut u32).cast(),
-                        received_count.cast(), 4, 2), 0);
-                    assert_eq!(gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(),
-                        fatal.cast(), 4, 2), 0);
+                    assert_eq!(
+                        gpu::cudaMemcpy(
+                            (&mut actual_count as *mut u32).cast(),
+                            received_count.cast(),
+                            4,
+                            2
+                        ),
+                        0
+                    );
+                    assert_eq!(
+                        gpu::cudaMemcpy((&mut actual_fatal as *mut u32).cast(), fatal.cast(), 4, 2),
+                        0
+                    );
                     assert_eq!((actual_count, actual_fatal), (0, 1));
                     let mut rejected_payload = [0u8; 192];
-                    assert_eq!(gpu::cudaMemcpy(rejected_payload.as_mut_ptr().cast(),
-                        received_states, 192, 2), 0);
+                    assert_eq!(
+                        gpu::cudaMemcpy(
+                            rejected_payload.as_mut_ptr().cast(),
+                            received_states,
+                            192,
+                            2
+                        ),
+                        0
+                    );
                     assert_eq!(rejected_payload, [0xab; 192]);
                     drain.wait();
 
                     if rank == 1 {
                         // A poisoned exchange must not enter a device-team
                         // barrier when its peer has stopped issuing epochs.
-                        assert_eq!(gpu::mgbfs_device_store_u32(
-                            group_fatal.cast(), 1, stream,
-                        ), 0);
-                        assert_eq!(gpu::mgbfs_nccl_lsa_exchange(
-                            comm, hashes, states, counts.cast(), group_fatal.cast(),
-                            0, 0, stream,
-                        ), 0);
+                        assert_eq!(
+                            gpu::mgbfs_device_store_u32(group_fatal.cast(), 1, stream,),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::mgbfs_nccl_lsa_exchange(
+                                comm,
+                                hashes,
+                                states,
+                                counts.cast(),
+                                group_fatal.cast(),
+                                0,
+                                0,
+                                stream,
+                            ),
+                            0
+                        );
                         assert_eq!(gpu::cudaStreamSynchronize(stream), 0);
-                        assert_eq!(gpu::cudaMemcpy(
-                            (&mut actual_count as *mut u32).cast(), received_count.cast(), 4, 2,
-                        ), 0);
-                        assert_eq!(gpu::cudaMemcpy(
-                            (&mut actual_fatal as *mut u32).cast(), fatal.cast(), 4, 2,
-                        ), 0);
+                        assert_eq!(
+                            gpu::cudaMemcpy(
+                                (&mut actual_count as *mut u32).cast(),
+                                received_count.cast(),
+                                4,
+                                2,
+                            ),
+                            0
+                        );
+                        assert_eq!(
+                            gpu::cudaMemcpy(
+                                (&mut actual_fatal as *mut u32).cast(),
+                                fatal.cast(),
+                                4,
+                                2,
+                            ),
+                            0
+                        );
                         assert_eq!((actual_count, actual_fatal), (0, 1));
                     }
 
@@ -309,12 +420,15 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
             let peer_cancel = Arc::clone(&peer_cancel);
             std::thread::spawn(move || {
                 let cfg = DistributedConfig {
+                    route_banks: 2,
+                    epoch_window: 2,
                     rank,
                     world: 2,
                     logical_owner_to_rank: vec![0, 1],
                     batch: 8,
                     layer_capacity: 64,
                     state_ring_capacity: 64,
+                    state_descriptor_capacity: 64,
                     buckets: 8,
                     shards: 4,
                     job_buckets: 2,
@@ -347,8 +461,11 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
                     )
                 }
                 .unwrap();
-                if rank == 0 { bfs.set_failure_token(failure_report); }
-                else { bfs.set_cancel_token(peer_cancel).unwrap(); }
+                if rank == 0 {
+                    bfs.set_failure_token(failure_report);
+                } else {
+                    bfs.set_cancel_token(peer_cancel).unwrap();
+                }
                 let disk = Arc::new(Mutex::new(Vec::new()));
                 let mut archive = PinnedArchive::new(
                     SlowDisk(TestDisk(disk), rank == 0),
@@ -379,9 +496,11 @@ fn archive_slot_failure_fixture(transport: mgbfs_core::config::ReferenceTranspor
         "{}",
         errors[0]
     );
-    assert!(errors[1] == "REMOTE_ARCHIVE_FATAL"
-        || errors[1] == "REMOTE_SEARCH_CANCELLED",
-        "{transport:?}: {}", errors[1]);
+    assert!(
+        errors[1] == "REMOTE_ARCHIVE_FATAL" || errors[1] == "REMOTE_SEARCH_CANCELLED",
+        "{transport:?}: {}",
+        errors[1]
+    );
 }
 
 #[test]
@@ -454,7 +573,7 @@ fn retirement_fifo_fault_votes_group_fatal_on_two_devices() {
                     0
                 );
                 assert_eq!(
-                    mgbfs_owner_global_fatal_gate(
+                    mgbfs_cuda::native_owner::mgbfs_owner_global_fatal_gate(
                         comm,
                         ring_gpu.cast(),
                         owner_gpu.cast(),
@@ -606,46 +725,82 @@ fn cuco_rank_lsa_one_rank_host_owner_error_stops_group() {
 #[test]
 #[ignore = "requires two physical P2P GPUs; one rank rejects a nested RMM pool after NCCL init"]
 fn one_rank_constructor_failure_after_nccl_stops_peer() {
-    use mgbfs_cuda::{library_owner::mgbfs_library_pool_create_v1,
-                     library_owner::mgbfs_library_pool_destroy_v1,
-                     native_owner::cudaSetDevice};
+    use mgbfs_cuda::{
+        library_owner::mgbfs_library_pool_create_v1, library_owner::mgbfs_library_pool_destroy_v1,
+        native_owner::cudaSetDevice,
+    };
     let graph = MatrixGroup::unitriangular(3, 3).unwrap();
     let mut id = [0u8; 128];
-    assert_eq!(unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) }, 0);
+    assert_eq!(
+        unsafe { mgbfs_cuda::ffi::mgbfs_nccl_unique_id(id.as_mut_ptr().cast()) },
+        0
+    );
     let ready = Arc::new(Barrier::new(2));
-    let workers: Vec<_> = (0..2u32).map(|rank| {
-        let graph = graph.clone();
-        let ready = ready.clone();
-        std::thread::spawn(move || {
-            assert_eq!(unsafe { cudaSetDevice(rank as i32) }, 0);
-            let mut held_pool = std::ptr::null_mut();
-            if rank == 0 {
-                assert_eq!(unsafe { mgbfs_library_pool_create_v1(64 << 20, 1 << 30, &mut held_pool) }, 0);
-            }
-            ready.wait();
-            let cfg = DistributedConfig {
-                rank, world: 2, logical_owner_to_rank: vec![0, 1], batch: 1,
-                layer_capacity: 64, state_ring_capacity: 64, buckets: 8,
-                shards: 4, job_buckets: 2, bucket_capacity: 32, prededup: true,
-                transport: mgbfs_core::config::ReferenceTransport::Lsa,
-                generation_variant: 1, untouched_vram_reserve: 1 << 30,
-            };
-            let outcome = DistributedNativeBfs::new_library_reference_with_owner(
-                &graph, [7; 16], id, cfg, None, 64 << 20, false,
-                mgbfs_core::config::ReferenceOwner::CucoRank,
-            );
-            eprintln!("constructor fault fixture rank={rank} result={:?}", outcome.as_ref().err());
-            if rank == 0 {
-                assert_eq!(unsafe { mgbfs_library_pool_destroy_v1(held_pool) }, 0);
-            }
-            let failure = outcome.err().expect("both ranks must reject setup").to_string();
-            if rank == 0 {
-                assert_eq!(failure, "CUDA_STATUS_-1");
-            }
-            failure
+    let workers: Vec<_> = (0..2u32)
+        .map(|rank| {
+            let graph = graph.clone();
+            let ready = ready.clone();
+            std::thread::spawn(move || {
+                assert_eq!(unsafe { cudaSetDevice(rank as i32) }, 0);
+                let mut held_pool = std::ptr::null_mut();
+                if rank == 0 {
+                    assert_eq!(
+                        unsafe { mgbfs_library_pool_create_v1(64 << 20, 1 << 30, &mut held_pool) },
+                        0
+                    );
+                }
+                ready.wait();
+                let cfg = DistributedConfig {
+                    route_banks: 2,
+                    epoch_window: 2,
+                    rank,
+                    world: 2,
+                    logical_owner_to_rank: vec![0, 1],
+                    batch: 1,
+                    layer_capacity: 64,
+                    state_ring_capacity: 64,
+                    state_descriptor_capacity: 64,
+                    buckets: 8,
+                    shards: 4,
+                    job_buckets: 2,
+                    bucket_capacity: 32,
+                    prededup: true,
+                    transport: mgbfs_core::config::ReferenceTransport::Lsa,
+                    generation_variant: 1,
+                    untouched_vram_reserve: 1 << 30,
+                };
+                let outcome = DistributedNativeBfs::new_library_reference_with_owner(
+                    &graph,
+                    [7; 16],
+                    id,
+                    cfg,
+                    None,
+                    64 << 20,
+                    false,
+                    mgbfs_core::config::ReferenceOwner::CucoRank,
+                );
+                eprintln!(
+                    "constructor fault fixture rank={rank} result={:?}",
+                    outcome.as_ref().err()
+                );
+                if rank == 0 {
+                    assert_eq!(unsafe { mgbfs_library_pool_destroy_v1(held_pool) }, 0);
+                }
+                let failure = outcome
+                    .err()
+                    .expect("both ranks must reject setup")
+                    .to_string();
+                if rank == 0 {
+                    assert_eq!(failure, "CUDA_STATUS_-1");
+                }
+                failure
+            })
         })
-    }).collect();
-    let failures: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        .collect();
+    let failures: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
     assert_eq!(failures[0], "CUDA_STATUS_-1");
     assert_eq!(failures[1], "REMOTE_CONSTRUCTOR_FATAL");
 }
@@ -659,23 +814,38 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
     );
     let failure_report = Arc::new(std::sync::atomic::AtomicU8::new(0));
     let peer_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let retirements: Vec<_> = (0..2).map(|_| Arc::new(
-        mgbfs_runtime::bootstrap::SearchRetirement::default())).collect();
+    let retirements: Vec<_> = (0..2)
+        .map(|_| Arc::new(mgbfs_runtime::bootstrap::SearchRetirement::default()))
+        .collect();
     // This fixture uses threads, not the production TCP sideband. Acknowledge
     // only after BOTH production abort callbacks reported their CUDA drains.
     let retirement_relay = {
         let states = retirements.clone();
         std::thread::spawn(move || {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-            while !states.iter().all(|s| s.local.load(std::sync::atomic::Ordering::Acquire)) {
-                if std::time::Instant::now() >= deadline || states.iter().any(|s|
-                    s.failed.load(std::sync::atomic::Ordering::Acquire)) {
-                    for state in &states { state.failed.store(true, std::sync::atomic::Ordering::Release); }
+            while !states
+                .iter()
+                .all(|s| s.local.load(std::sync::atomic::Ordering::Acquire))
+            {
+                if std::time::Instant::now() >= deadline
+                    || states
+                        .iter()
+                        .any(|s| s.failed.load(std::sync::atomic::Ordering::Acquire))
+                {
+                    for state in &states {
+                        state
+                            .failed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            for state in &states { state.group.store(true, std::sync::atomic::Ordering::Release); }
+            for state in &states {
+                state
+                    .group
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
         })
     };
     let relay = inject_host.then(|| {
@@ -699,12 +869,14 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
                     std::panic::catch_unwind(|| {
                     if inject_host { eprintln!("MGBFS_HOST_FAULT_TEST rank={rank} stage=before_constructor"); }
                     let cfg = DistributedConfig {
+                        route_banks: 2,
+                        epoch_window: 2,
                         rank,
                         world: 2,
                         logical_owner_to_rank: vec![0, 1],
                         batch: 1,
                         layer_capacity: if !inject_host && rank == 0 { 2 } else { 64 },
-                        state_ring_capacity: 64,
+                        state_ring_capacity: 64, state_descriptor_capacity: 64,
                         buckets: 8,
                         shards: 4,
                         job_buckets: 2,
@@ -748,7 +920,9 @@ fn lsa_one_rank_failure(inject_host: bool) -> Vec<String> {
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect();
-    if let Some(relay) = relay { relay.join().unwrap(); }
+    if let Some(relay) = relay {
+        relay.join().unwrap();
+    }
     retirement_relay.join().unwrap();
     errors
 }
@@ -772,9 +946,14 @@ fn cuco_rank_lsa_hash_first_layers_and_archives_match_oracle() {
     for symmetric in [false, true] {
         for owners in [[0, 1], [1, 0]] {
             for prededup in [false, true] {
-                fixture(symmetric, true, &owners,
+                fixture(
+                    symmetric,
+                    true,
+                    &owners,
                     mgbfs_core::config::ReferenceOwner::CucoRank,
-                    prededup, mgbfs_core::config::ReferenceTransport::Lsa);
+                    prededup,
+                    mgbfs_core::config::ReferenceTransport::Lsa,
+                );
             }
         }
     }
@@ -840,12 +1019,15 @@ fn fixture(
                         eprintln!("MGBFS_LSA_GATE rank={rank} phase=before_constructor");
                     }
                     let cfg = DistributedConfig {
+                        route_banks: 2,
+                        epoch_window: 2,
                         rank,
                         world,
                         logical_owner_to_rank: owners.to_vec(),
                         batch: 1,
                         layer_capacity: 64,
                         state_ring_capacity: 64,
+                        state_descriptor_capacity: 64,
                         buckets: world * 4,
                         shards: world * 2,
                         job_buckets: 2,

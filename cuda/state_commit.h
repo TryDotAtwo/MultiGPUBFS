@@ -140,6 +140,17 @@ int mgbfs_state_apply_response_span(void* materialize_plan,const uint8_t* respon
     const uint64_t* targets,const uint32_t* count,uint32_t sorted_offset,const uint32_t* group_fatal,
     uint8_t* states,MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,
     MgbfsStateExtent* extent,void* stream);
+/* Indexed shard batch: validate selected counts, prefix offsets, and layer
+ * capacity, then reserve with the shared checked ring allocator in one kernel.
+ * Source lease stays live until the producer's survivor gather completes. */
+int mgbfs_state_reserve_indexed_batch(MgbfsStateRingControl*,MgbfsOwnerControl*,MgbfsStateExtent*,
+    const uint32_t* accepted_counts,const uint32_t* selected_counts,uint32_t shards,
+    uint32_t shard_capacity,uint32_t stage_capacity,uint32_t* selected_offsets,
+    uint32_t* previous_layer_count,uint32_t* layer_count,uint32_t layer_capacity,void* stream);
+/* Called after survivor writes on the same stream: publish ready and append
+ * or coalesce a validated frontier extent in one kernel. */
+int mgbfs_state_finish_next_extent(MgbfsStateRingControl*,MgbfsOwnerControl*,MgbfsStateExtent*,
+    uint32_t* extent_count,MgbfsStateExtent* extents,uint32_t extent_capacity,void* stream);
 #ifdef __cplusplus
 }
 #endif

@@ -18,6 +18,8 @@ from bfs_tail_archive import atomic_json,TailArchive
 from run_tail_bfs import run
 from sweep_tail_bfs import automatic_pairs, execute
 from paired_tail import publication_records, run_pair
+from tail_validation import validation_summary
+from pipeline_profile import select_pipeline
 
 
 class SweepPublisher:
@@ -172,7 +174,21 @@ def pair_config(base, n, r):
     cfg['env'].update(MGBFS_BENCH_CAPACITY=str(capacity),
         MGBFS_FUTURE_CAPACITY=str(capacity*2), MGBFS_BUCKET_CAPACITY=str(capacity),
         MGBFS_LIBRARY_POOL_BYTES=str(pool))
-    cfg['batch'] = min(32768, capacity)
+    if cfg['env'].get('MGBFS_OWNER_BACKEND') == 'SHARD_AB':
+        cfg['env'].pop('MGBFS_LIBRARY_POOL_BYTES', None)
+        cfg['env'].pop('MGBFS_LIBRARY_POOL_AUTOSIZE', None)
+        cfg['env']['MGBFS_CUDA_GRAPH_BATCHES'] = '0'
+        # Two full live layers plus worst-case contiguous ring wrap padding.
+        cfg['env']['MGBFS_FUTURE_CAPACITY'] = str(capacity*3)
+    target_batch = 32768
+    if cfg['env'].get('MGBFS_OWNER_BACKEND') == 'SHARD_AB':
+        # Queried admission includes the producer buffers at this same size.
+        # Bounded staging also participates in per-depth shard selection.
+        raw=cfg['env'].get('MGBFS_AUTO_BATCH_ROWS', '1048576')
+        try:target_batch=int(raw)
+        except (TypeError,ValueError):raise ValueError('invalid automatic producer batch')
+        if not 1<=target_batch<=1048576:raise ValueError('invalid automatic producer batch')
+    cfg['batch'] = min(target_batch, capacity)
     # The same rounded pinned geometry is reused across every pair and policy.
     from archive_ram import plan
     ram=plan(base,n,base.get('world',2))
@@ -198,7 +214,8 @@ def tune_pair(base, source, case, runtime_env, *, query=None, deadline=None, can
         # replaces it with the queried worst-case bound before admission.
         draft['resource_plan'].update(max_rows_per_rank=rows,
             library_pool_bytes=max(64<<20,((rows*512+255)//256)*256))
-        draft['env']['MGBFS_LIBRARY_POOL_AUTOSIZE']='1'
+        if draft['env'].get('MGBFS_OWNER_BACKEND') != 'SHARD_AB':
+            draft['env']['MGBFS_LIBRARY_POOL_AUTOSIZE']='1'
         return pair_config(draft,n,r)
     def probe(rows):
         if (deadline is not None and deadline<=time.time()) or (cancelled and cancelled()):
@@ -230,9 +247,9 @@ def tune_pair(base, source, case, runtime_env, *, query=None, deadline=None, can
         cfg['env']['MGBFS_LIBRARY_POOL_BYTES']=str(max(pools))
     cfg['resource_plan']=dict(policy='native-warmed-admission-v2',
         selected_rows_per_rank=rows, max_rows_per_rank=rows,
-        library_pool_bytes=int(cfg['env']['MGBFS_LIBRARY_POOL_BYTES']),
+        library_pool_bytes=int(cfg['env'].get('MGBFS_LIBRARY_POOL_BYTES','0')),
         probes=[dict(rows_per_rank=k,ranks=v) for k,v in sorted(probes.items())],
-        pool_policy='native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack',
+        pool_policy=('native-persistent-shard-fixed-payload-query' if cfg['env'].get('MGBFS_OWNER_BACKEND') == 'SHARD_AB' else 'native-cuco-extent-cub-query-worst-shard-history-plus-fragmentation-slack'),
         maximum_hardware_capacity_proven=False)
     cfg['resource_plan']['resident_admission_reused'] = reused
     return cfg
@@ -389,6 +406,10 @@ def main(cancelled=None):
     p.add_argument('--deadline-unix',type=float,required=True)
     p.add_argument('--retained-layers',type=int,default=None,
         help='retain only this many final whole completed layers, for COMPLETE and INCOMPLETE; no byte target')
+    p.add_argument('--owner-backend',choices=('SHARD_AB','CUCO_RANK'),default=None,
+        help='new runs default to persistent shard dedup; resumed runs preserve saved backend')
+    p.add_argument('--pipeline-profile',choices=('baseline','key-first'),default=None,
+        help='freeze owner pipeline for admission, execution and resume; key-first defaults for new SHARD_AB runs')
     p.add_argument('--retention-policy',choices=('last_complete_small_1000',),default=None)
     args = p.parse_args()
     if args.retained_layers is not None and args.retained_layers <= 0:
@@ -408,6 +429,8 @@ def main(cancelled=None):
     config_path=args.root/'automatic-config.json'
     if config_path.exists():
         base=json.loads(config_path.read_text())
+        try:base=select_pipeline(base,json.loads(args.runtime_env.read_text()),args.pipeline_profile,resume=True)
+        except ValueError as error:p.error(str(error))
     else:
         lines=subprocess.check_output(['nvidia-smi','--query-gpu=index,name,memory.free,memory.total',
             '--format=csv,noheader,nounits'],text=True).splitlines()
@@ -425,15 +448,23 @@ def main(cancelled=None):
             host_available_bytes=available_host_bytes(),
             gpu_inventory=inventory,resource_plan=device_budget(inventory),env=dict(
                 MGBFS_VRAM_RESERVE_BYTES=automatic_reserve(runtime),
-                MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='CUCO_RANK',MGBFS_PRE_DEDUP='ON',
+                MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND=args.owner_backend or 'SHARD_AB',MGBFS_PRE_DEDUP='ON',
                 MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BUCKETS='16',MGBFS_SHARDS='8',
                 MGBFS_JOB_BUCKETS='2',MGBFS_ARCHIVE_ROWS='8192',MGBFS_ARCHIVE_SLOTS='2048',
                 NCCL_CUMEM_ENABLE='0'))
         from automatic_transport import select_transport
         runtime=json.loads(args.runtime_env.read_text())
+        try:base=select_pipeline(base,runtime,args.pipeline_profile)
+        except ValueError as error:p.error(str(error))
         base=select_transport(base,args.source,args.root/'transport-gate',runtime,
             deadline=min(args.deadline_unix-120,time.time()+60),cancelled=cancelled)
         atomic_json(config_path,base)
+    if args.owner_backend is not None and base.get('env',{}).get('MGBFS_OWNER_BACKEND') != args.owner_backend:
+        p.error('resume owner backend differs from saved configuration')
+    if base.get('env',{}).get('MGBFS_OWNER_BACKEND') == 'SHARD_AB':
+        base['env'].pop('MGBFS_LIBRARY_POOL_BYTES',None)
+        base['env'].pop('MGBFS_LIBRARY_POOL_AUTOSIZE',None)
+        base['env']['MGBFS_CUDA_GRAPH_BATCHES']='0'
     if args.retained_layers is not None:
         if base.get('retained_layers') not in (None,args.retained_layers):
             p.error('resume retained layer count differs from saved configuration')
@@ -550,15 +581,18 @@ def main(cancelled=None):
             publication_status='FAILED',failure=str(error),local_snapshots_retained=True,
             upload_mode=mode,background_publication_generations=publisher.generations))
         raise
-    report=dict(status='VERIFIED',pending=ledger['pending'],publication=receipt,
+    report=dict(status='VERIFIED_PUBLICATION',pending=ledger['pending'],publication=receipt,
         upload_cycles=upload_cycles,
         sweep_status='INCOMPLETE' if ledger['pending'] else 'COMPLETE',
         stop_reason=ledger.get('global_stop_reason'),
         verification=verified,resource_plan=base['resource_plan'],
         attempted=sum(x.get('attempted',False) for x in ledger['cases'].values()),
-        complete=sum(x['status']=='COMPLETE' for x in ledger['cases'].values()),
+        publication_status='VERIFIED',
+        **validation_summary(ledger),
         pruned=sum('pruned_by' in x for x in ledger['cases'].values()),
         upload_mode=mode,background_publication_generations=publisher.generations)
+    if report['validation_status']=='FAILED':
+        report['status']='FAILED_VALIDATION'
     atomic_json(args.root/'automatic-report.json',report)
     api.upload_file(path_or_fileobj=str(args.root/'automatic-report.json'),
         repo_id=args.repo_id,repo_type='dataset',

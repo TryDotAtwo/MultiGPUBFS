@@ -106,7 +106,8 @@ impl MacroOwner {
         if offer.target_depth <= current || offer.target_depth > maximum {
             return Err("MACRO_FUTURE_DEPTH".into());
         }
-        if offer.key.weight == 0
+        if offer.key.source_depth > current
+            || offer.key.weight == 0
             || offer.key.weight > self.macro_depth
             || offer.key.source_depth.checked_add(offer.key.weight) != Some(offer.target_depth)
         {

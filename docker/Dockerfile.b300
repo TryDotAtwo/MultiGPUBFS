@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+# runtime-artifacts.tar is produced on the remote builder from a verified SM103 build.
+FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS runtime
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-venv libstdc++6 libgomp1 libnuma1 ca-certificates openssh-server curl git && apt-get clean && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*key*
+ADD runtime-artifacts.tar /
+ENV PATH=/opt/mgbfs/build/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    HF_HUB_DISABLE_XET=1
+WORKDIR /opt/mgbfs/src
+ENTRYPOINT ["/opt/mgbfs/src/docker/b300-entrypoint.sh"]

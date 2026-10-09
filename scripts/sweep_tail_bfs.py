@@ -32,6 +32,10 @@ def resource_stop(record):
     if record.get('replicas') and not all(resource_stop(replica) for replica in record['replicas']):return False
     reason=record.get('reason','').lower()
     if 'no space left on device' in reason:return False
+    if record.get('runner_error'):
+        # A finalization exception must not prune from a stale resource snapshot.
+        error_reason=record['runner_error'].get('message','').lower()
+        if not confirmed_capacity_reason(error_reason):return False
     if record.get('resource_classification') in ('cuda_allocation_failure','confirmed_shard_capacity'):return True
     # cuda/state_commit.cu uses sticky code 16 for layer/request capacity.
     # Other rank-depth codes and remote cancellation alone are not evidence.
@@ -39,11 +43,17 @@ def resource_stop(record):
     # Source-confirmed search-ring row/descriptor/layer capacity, not a
     # generic ring failure (protocol/transport codes must remain eligible).
     if re.search(r'\bgroup_state_ring_retire_fatal_(?:11|12|16)\b',reason):return True
+    if confirmed_capacity_reason(reason):return True
     return any(marker in reason for marker in (
         'cuda_error_out_of_memory','cudaerrormemoryallocation',
         'cuda out of memory','cuda error: out of memory',
         'search capacity exceeded','search capacity exhausted',
         'gpu capacity exceeded','gpu capacity exhausted'))
+
+
+def confirmed_capacity_reason(reason):
+    # Exact native snapshot codes; never infer capacity from generic CUDA status.
+    return bool(re.search(r'\b(?:shard_ab_prepare_fatal_(?:11|12|16|112)|group_state_ring_retire_fatal_112)\b', reason.lower()))
 
 
 def allocation_failure(case,source):
@@ -149,6 +159,12 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 manifest=json.loads(path.read_text()) if path.exists() else {}
                 record=dict(status='INCOMPLETE',last_completed_layer=manifest.get('last_completed_layer',-1),
                             reason=manifest.get('stop_reason',str(error)),attempted=True,n=n,m=m)
+                record['runner_error']=dict(type=type(error).__name__,message=str(error))
+                record['search_status']=manifest.get('status')
+                if path.exists():
+                    manifest['runner_error']=record['runner_error']
+                    manifest['validation_status']='FAILED'
+                    atomic_json(path,manifest)
             previous_runner_finished = time.monotonic()
             searches = []
             for rank in range(config.get('world',2)):
@@ -180,6 +196,8 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
                 scope='runner includes admission/calibration/startup/archive cleanup; transition includes ledger/progress/backpressure; search requires every rank report')
         if 'comparison' in manifest:
             record['comparison']=manifest['comparison']
+        if manifest.get('runner_error'):
+            record['runner_error']=manifest['runner_error']
         if manifest.get('replicas'):
             record['replicas']=manifest['replicas']
             record['comparison']=manifest['comparison']
@@ -191,6 +209,8 @@ def execute(base,source,root,runtime,grid,deadline_seconds,runner=run, *, on_pro
         if case_key != key:
             record['publication_key']=case_key
         ledger['cases'][key]=record
+        from tail_validation import validation_status
+        record['validation_status']=validation_status(record, base.get('two_seeds',False))
         if resource_stop(record):
             blocked[m]=record
             # Record future exclusions now, even if the global deadline is near.

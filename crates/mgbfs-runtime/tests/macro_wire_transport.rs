@@ -1,5 +1,13 @@
-use mgbfs_core::{hash::Hash128, wire::{validate_macro_candidate_payload, payload_layout, FrameHeader, FrameKind, MacroCandidateRef}};
-use mgbfs_runtime::{macro_owner::{CandidateKey, FutureOffer, MacroOwner}, transport::{Kind, Transport}};
+use mgbfs_core::{
+    hash::Hash128,
+    wire::{
+        payload_layout, validate_macro_candidate_payload, FrameHeader, FrameKind, MacroCandidateRef,
+    },
+};
+use mgbfs_runtime::{
+    macro_owner::{CandidateKey, FutureOffer, MacroOwner},
+    transport::{Kind, Transport},
+};
 
 fn deliver(
     transport: &mut Transport,
@@ -11,7 +19,9 @@ fn deliver(
     state_ref: u64,
     hash: Hash128,
 ) {
-    transport.offer_at(Kind::Candidate, target, source, slot, vec![0, 1]).unwrap();
+    transport
+        .offer_at(Kind::Candidate, target, source, slot, vec![0, 1])
+        .unwrap();
     let ticket = transport.issue().unwrap().unwrap();
     assert_eq!((ticket.target_depth, ticket.source), (target, source));
     let header = FrameHeader {
@@ -27,15 +37,25 @@ fn deliver(
     let layout = payload_layout(header.kind, 1, 16).unwrap();
     let mut payload = vec![0; layout.bytes as usize];
     payload[..16].copy_from_slice(&hash.to_le_bytes());
-    let reference = MacroCandidateRef { source_depth: 0, weight, state_ref };
+    let reference = MacroCandidateRef {
+        source_depth: 0,
+        weight,
+        state_ref,
+    };
     let begin = layout.planes[1].offset as usize;
     payload[begin..begin + 16].copy_from_slice(&reference.encode());
     for rank in 0..2 {
         transport.complete(rank, ticket.seq).unwrap();
     }
     validate_macro_candidate_payload(&payload, &header, 16, 3).unwrap();
-    owner.offer(FutureOffer::new(target, hash, state_ref,
-        CandidateKey::new(0, weight, source as u32, slot, 0))).unwrap();
+    owner
+        .offer(FutureOffer::new(
+            target,
+            hash,
+            state_ref,
+            CandidateKey::new(0, weight, source as u32, slot, 0),
+        ))
+        .unwrap();
     transport.consume(ticket.seq).unwrap();
 }
 

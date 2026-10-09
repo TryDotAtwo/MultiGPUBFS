@@ -27,6 +27,16 @@ int mgbfs_generate_hash_only_tc(
  const uint8_t* parents,const uint8_t* generators,const uint32_t* coefficients,
  const uint32_t* offsets,const uint32_t* parent_count,uint32_t* hashes,
  MgbfsRegenerateOrigin* origins,uint32_t* candidate_count,uint32_t* fatal,void* stream);
+/* Initialization-only hardware admission: 0=SM75, 2=CUDA API failure,
+ * 3=unsupported device. The admitted launch requires the SAME current device
+ * throughout its lifetime. Legacy tc entry retains its per-call guard. */
+int mgbfs_hash_first_tc_validate_device(void);
+int mgbfs_generate_hash_only_tc_admitted(
+ uint32_t n,uint32_t moves,uint32_t modulus,uint32_t stride,uint32_t parent_capacity,
+ uint32_t candidate_capacity,uint32_t source,uint64_t parent_begin,
+ const uint8_t* parents,const uint8_t* generators,const uint32_t* coefficients,
+ const uint32_t* offsets,const uint32_t* parent_count,uint32_t* hashes,
+ MgbfsRegenerateOrigin* origins,uint32_t* candidate_count,uint32_t* fatal,void* stream);
 #ifdef __cplusplus
 }
 #endif

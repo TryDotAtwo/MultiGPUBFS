@@ -6,13 +6,22 @@ use std::collections::BTreeSet;
 pub struct LrxMultiset { start: Vec<u8>, order: u64, order_words: Vec<u64> }
 impl LrxMultiset {
     pub fn from_label(label: &str) -> Result<Self> {
-        let (n,r) = label.strip_prefix("lrx").and_then(|s| s.split_once('r'))
+        let (n, r) = label
+            .strip_prefix("lrx")
+            .and_then(|s| s.split_once('r'))
             .ok_or("LRX_MULTISET_LABEL")?;
-        Self::new(n.parse().map_err(|_| "LRX_MULTISET_LABEL")?,
-                  r.parse().map_err(|_| "LRX_MULTISET_LABEL")?)
+        Self::new(
+            n.parse().map_err(|_| "LRX_MULTISET_LABEL")?,
+            r.parse().map_err(|_| "LRX_MULTISET_LABEL")?,
+        )
     }
     pub fn label(&self) -> String {
-        let repeated = self.start.iter().rev().take_while(|x| **x == *self.start.last().unwrap()).count();
+        let repeated = self
+            .start
+            .iter()
+            .rev()
+            .take_while(|x| **x == *self.start.last().unwrap())
+            .count();
         format!("lrx{}r{repeated}", self.start.len())
     }
     /// Only the position action is represented by invertible matrices. The
@@ -54,19 +63,23 @@ impl LrxMultiset {
     pub fn successor(&self, state: &[u8], generator: usize) -> Result<Vec<u8>> {
         let mut canonical = state.to_vec();
         canonical.sort_unstable();
-        if canonical != self.start { return Err("LRX_MULTISET_STATE".into()); }
+        if canonical != self.start {
+            return Err("LRX_MULTISET_STATE".into());
+        }
         let mut child = state.to_vec();
         match generator {
             0 => child.rotate_left(1),
             1 => child.rotate_right(1),
-            2 => child.swap(0,1),
+            2 => child.swap(0, 1),
             _ => return Err("LRX_MULTISET_GENERATOR".into()),
         }
         Ok(child)
     }
     /// Independent bounded CPU oracle using full words, never hashes.
     pub fn exact_layers(&self, capacity: usize) -> Result<Vec<Vec<Vec<u8>>>> {
-        if capacity == 0 { return Err("ORACLE_CAPACITY".into()); }
+        if capacity == 0 {
+            return Err("ORACLE_CAPACITY".into());
+        }
         let mut seen = BTreeSet::from([self.start.clone()]);
         let mut layers = vec![vec![self.start.clone()]];
         loop {
@@ -74,11 +87,17 @@ impl LrxMultiset {
             for state in layers.last().unwrap() {
                 for generator in 0..3 {
                     let child = self.successor(state, generator)?;
-                    if !seen.contains(&child) { next.insert(child); }
-                    if next.len() > capacity - seen.len() { return Err("ORACLE_CAPACITY".into()); }
+                    if !seen.contains(&child) {
+                        next.insert(child);
+                    }
+                    if next.len() > capacity - seen.len() {
+                        return Err("ORACLE_CAPACITY".into());
+                    }
                 }
             }
-            if next.is_empty() { return Ok(layers); }
+            if next.is_empty() {
+                return Ok(layers);
+            }
             seen.extend(next.iter().cloned());
             layers.push(next.into_iter().collect());
         }

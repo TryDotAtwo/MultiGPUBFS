@@ -24,7 +24,7 @@ int main() {
   // matrix columns. Its output product is padded moves*n by padded batch.
   assert(generation_shape(3,2,3,3,5,&g)==0);
   assert(g.k==16 && g.stride==16 && g.rows==8 && g.columns==4);
-  assert(g.generators==128 && g.packed_parents==64 && g.products_s32==128);
+  assert(g.generators==134 && g.packed_parents==64 && g.products_s32==128);
   for(unsigned variant : {4u,6u}) {
     assert(generation_shape(3,2,3,3,variant,&g)!=0);
     assert(g.products_s32==0 && g.rows==0);

@@ -75,6 +75,7 @@ pub struct PinnedArchive {
     device: i32,
     wait_for_credit: bool,
     pub(crate) selected: bool,
+    pub(crate) selected_whole: bool,
     pub(crate) state_only: bool,
 }
 impl PinnedArchive {
@@ -199,6 +200,7 @@ impl PinnedArchive {
             pinned_bytes,
             slots,
             selected,
+            selected_whole: selected && std::env::var("MGBFS_SELECTED_WHOLE_ONLY").as_deref() != Ok("0"),
             state_only,
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),

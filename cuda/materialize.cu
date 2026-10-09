@@ -1,5 +1,6 @@
 #include "mgbfs_cuda.h"
 #include "state_commit.h"
+#include "weighted_state_ring.h"
 #include <cuda_runtime.h>
 #include <cub/device/device_radix_sort.cuh>
 #include <cstdio>
@@ -162,4 +163,74 @@ extern "C" int mgbfs_state_apply_response_span(void* plan,const uint8_t* respons
  const uint32_t* count,uint32_t offset,const uint32_t* group_fatal,uint8_t* states,MgbfsStateRingControl* ring,
  MgbfsOwnerControl* owner,MgbfsStateExtent* extent,void* stream){
  return apply_response_span(plan,responses,targets,count,offset,false,group_fatal,states,ring,owner,extent,stream);
+}
+
+// Weighted settlement uses the SAME preallocated MaterializePlan and radix
+// sort. StateRefs are monotonic allocation sequences, not physical row indices.
+// Sorting produces monotonic source reads and one dense destination extent.
+__global__ void weighted_ring_shape(const uint32_t* count,uint32_t capacity,uint32_t stride,
+ MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,MgbfsStateExtent* extent){
+ extent->padding[0]=0;
+ if(ring->fatal||owner->error)return;
+ if(owner->stage!=2||extent->ready||*count>capacity||extent->count!=*count||
+    extent->count!=extent->granted_rows||owner->survivors!=*count||
+    !ring->capacity||!ring->descriptor_capacity||ring->capacity>UINT64_MAX/stride||
+    ring->head>ring->tail||ring->tail-ring->head>ring->capacity||
+    ring->descriptor_head>ring->descriptor_tail||
+    ring->descriptor_tail-ring->descriptor_head>ring->descriptor_capacity){response_fatal(ring,owner);return;}
+ if(*count&&(extent->begin>=ring->capacity||extent->count>ring->capacity-extent->begin||
+    extent->begin!=extent->sequence%ring->capacity||extent->sequence<ring->head||
+    extent->sequence>ring->tail||extent->count>ring->tail-extent->sequence||
+    extent->descriptor<ring->descriptor_head||extent->descriptor>=ring->descriptor_tail)){
+   response_fatal(ring,owner);return;
+ }
+ extent->padding[0]=*count;
+}
+__global__ void weighted_ring_requests(const uint64_t* refs,uint32_t capacity,uint32_t target,
+ const MgbfsWeightedExtentV1* records,const MgbfsStateExtent* extent,
+ MgbfsStateRingControl* ring,MgbfsOwnerControl* owner,uint64_t* keys,uint32_t* indices){
+ const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=capacity)return;
+ // padding[0] was gated by the preceding shape node. No concurrent reads of
+ // fatal while other blocks validate and atomically publish a failure.
+ const bool active=i<extent->padding[0];const uint64_t sequence=active?refs[i]:UINT64_MAX;
+ keys[i]=sequence;indices[i]=i;if(!active)return;
+ uint64_t lo=ring->descriptor_head,hi=extent->descriptor;
+ while(lo<hi){const uint64_t mid=lo+(hi-lo)/2;
+   if(records[mid%ring->descriptor_capacity].sequence<=sequence)lo=mid+1;else hi=mid;
+ }
+ if(lo==ring->descriptor_head||sequence<ring->head||sequence>=extent->sequence){
+   response_fatal(ring,owner);return;
+ }
+ const uint64_t descriptor=lo-1;const auto record=records[descriptor%ring->descriptor_capacity];
+ if(record.descriptor!=descriptor||record.phase!=2||record.target_depth!=target||
+    sequence<record.sequence||sequence-record.sequence>=record.count)response_fatal(ring,owner);
+}
+__global__ void weighted_ring_copy(uint4* states,const uint64_t* sorted,uint32_t chunks,
+ const MgbfsStateRingControl* ring,const MgbfsOwnerControl* owner,const MgbfsStateExtent* extent){
+ if(ring->fatal||owner->error)return;
+ const uint64_t total=extent->count*chunks;
+ for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<total;i+=uint64_t(gridDim.x)*blockDim.x){
+   const uint64_t row=i/chunks,chunk=i%chunks;
+   states[(extent->begin+row)*chunks+chunk]=states[(sorted[row]%ring->capacity)*chunks+chunk];
+ }
+}
+__global__ void weighted_ring_ready(const MgbfsStateRingControl* ring,
+ const MgbfsOwnerControl* owner,MgbfsStateExtent* extent){
+ if(!ring->fatal&&!owner->error)extent->ready=1;
+}
+extern "C" int mgbfs_state_materialize_weighted_refs(void* plan,const uint64_t* refs,
+ const uint32_t* count,uint32_t target,uint8_t* states,MgbfsStateRingControl* ring,
+ MgbfsOwnerControl* owner,MgbfsStateExtent* extent,const MgbfsWeightedExtentV1* records,void* raw_stream){
+ auto p=static_cast<MaterializePlan*>(plan);
+ if(!p||!refs||!count||!states||!ring||!owner||!extent||!records)return 1;
+ auto stream=static_cast<cudaStream_t>(raw_stream);const uint32_t blocks=(p->capacity+255)/256;
+ weighted_ring_shape<<<1,1,0,stream>>>(count,p->capacity,p->stride,ring,owner,extent);
+ weighted_ring_requests<<<blocks,256,0,stream>>>(refs,p->capacity,target,records,extent,ring,owner,p->keys,p->indices);
+ if(cudaGetLastError()!=cudaSuccess)return 2;
+ size_t bytes=p->scratch_bytes;
+ if(cub::DeviceRadixSort::SortPairs(p->scratch,bytes,p->keys,p->sorted,p->indices,p->order,
+      int(p->capacity),0,64,stream)!=cudaSuccess)return 3;
+ weighted_ring_copy<<<blocks,256,0,stream>>>(reinterpret_cast<uint4*>(states),p->sorted,p->stride/16,ring,owner,extent);
+ weighted_ring_ready<<<1,1,0,stream>>>(ring,owner,extent);
+ return cudaGetLastError()==cudaSuccess?0:2;
 }

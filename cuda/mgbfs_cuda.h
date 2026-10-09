@@ -71,6 +71,14 @@ typedef struct MgbfsFutureMergeBytes {
   uint64_t selected_count, flags, states, state, scratch;
 } MgbfsFutureMergeBytes;
 int mgbfs_generate_query(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,uint32_t variant,MgbfsGenerateBytes* out);
+// Separate compact hash plan. Query includes all device allocations, zero workspace.
+// Regeneration-only plan: immutable permutation map, no GEMM parents/products.
+int mgbfs_compact_map_query(uint32_t n,uint32_t moves,uint32_t capacity,uint64_t* bytes);
+int mgbfs_compact_map_create(uint32_t n,uint32_t moves,uint32_t capacity,const uint8_t* permutation,void** out,char* error,size_t error_capacity);
+int mgbfs_compact_hash_query(uint32_t n,uint32_t moves,uint32_t capacity,uint64_t* bytes);
+int mgbfs_compact_hash_create(uint32_t n,uint32_t moves,uint32_t capacity,const uint8_t* permutation,const uint8_t* limbs,const uint32_t* offsets,uint32_t move_major,void** out,char* error,size_t error_capacity);
+int mgbfs_compact_hash_run(void* plan,const uint8_t* parents,uint32_t* output,uint32_t count,void* stream);
+void mgbfs_compact_hash_destroy(void* plan);
 int mgbfs_hash_query(uint32_t bytes,uint32_t capacity,MgbfsHashBytes* out);
 int mgbfs_materialize_query(uint32_t stride,uint32_t capacity,uint32_t frontier,MgbfsMaterializeBytes* out);
 int mgbfs_future_merge_query(uint32_t stride,uint32_t future,uint32_t incoming,MgbfsFutureMergeBytes* out);
@@ -91,6 +99,8 @@ int mgbfs_generate_create_variant(uint32_t n,uint32_t moves,uint32_t modulus,uin
  */
 int mgbfs_generate_create_macro_variant(uint32_t n,uint32_t moves,uint32_t modulus,uint32_t capacity,
   const uint8_t* generators,const uint32_t* weights,uint32_t variant,void** out,char* error,size_t error_capacity);
+int mgbfs_generate_selected_compact(void*,const uint8_t*,uint32_t,const uint64_t*,uint32_t,uint32_t,const uint32_t*,const uint32_t*,uint32_t,uint8_t*,uint32_t*,void*);
+int mgbfs_generate_selected_compact_device_base(void*,const uint8_t*,uint32_t,const uint64_t*,const uint32_t*,uint32_t,const uint32_t*,const uint32_t*,uint32_t,uint8_t*,uint32_t*,void*);
 int mgbfs_generate_run(void* plan,const uint8_t* parents,uint8_t* children,uint32_t count,void* stream);
 /* Measurement only: host array of four already-created CUDA timing events.
  * Records start, packed, GEMM done, children done. No synchronization/allocation.
@@ -109,6 +119,7 @@ typedef struct MgbfsRouteBytes {
 } MgbfsRouteBytes;
 int mgbfs_route_query(uint32_t capacity,MgbfsRouteBytes* out);
 int mgbfs_route_run(void* plan,const void* hashes,const uint64_t* refs,void* sorted_hashes,uint64_t* sorted_refs,uint32_t* output_count,uint32_t count,int pre_dedup,void* stream);
+int mgbfs_route_run_sharded(void* plan,const void* hashes,const uint64_t* refs,void* output,uint64_t* outrefs,uint32_t* output_count,uint32_t count,uint32_t partitions,void* stream);
 void mgbfs_route_destroy(void* plan);
 typedef struct MgbfsOwnerState {
   uint64_t last_epoch;
@@ -215,6 +226,11 @@ int mgbfs_owner_import_transport_fatal(const uint32_t* transport_fatal,
 /* Legacy pre-owner admission: stream-ordered local sticky fatal -> NCCL max ->
  * imported group fatal. Returns after enqueue, not after GPU completion.
  * Every rank must issue this call in the same communicator epoch. */
+/* HOST-only sticky local GPU failure publication. No collective, no D2H.
+ * Runtime must publish group failure before serialized abort; FinalizeDepth
+ * still performs group success agreement. LSA uses its existing device vote. */
+int mgbfs_owner_local_fatal_gate(void* comm,MgbfsStateRingControl* ring,
+    MgbfsOwnerControl* owner,uint32_t* local_fatal,void* stream);
 int mgbfs_owner_global_fatal_gate(void* comm,MgbfsStateRingControl* ring,
     MgbfsOwnerControl* owner,uint32_t* send,uint32_t* receive,void* stream);
 /* Explicit LSA control-plane OR; same sticky guards, no internal NCCL kernel
@@ -225,6 +241,9 @@ int mgbfs_exchange_pack(uint32_t stride,uint32_t capacity,const uint8_t* source_
   const void* sorted_hashes,const uint64_t* sorted_refs,uint32_t count,uint8_t* packed_states,uint32_t* owner_counts,void* stream);
 int mgbfs_archive_pack_permutation_u8(uint32_t n,uint32_t stride,const uint8_t* states,uint32_t count,
   uint8_t* permutations,void* ring,void* stream);
+/* Common monotone mapped cancellation/fatal word; owned by Comm, allocated
+ * before NCCL initialization. Consumers must retire before Comm destruction. */
+int mgbfs_nccl_cancel_words(void* comm,uint32_t** host,uint32_t** device);
 int mgbfs_nccl_unique_id(void* id128);
 int mgbfs_nccl_create(uint32_t rank,uint32_t world,uint32_t device,const void* id128,void** out,char* error,size_t error_capacity);
 /* Callback context must outlive initialization and the returned communicator.
@@ -248,7 +267,8 @@ void mgbfs_nccl_destroy(void* comm);
  * serialize with all other communicator calls. Does not provide a watchdog. */
 int mgbfs_nccl_abort(void* comm);
 /* Health query, not transfer completion. 0 healthy, 1 invalid/aborted,
- * 2 query failure, 3 terminal async failure, 4 operation in progress. */
+ * 2 query failure, 3 terminal async failure, 4 operation in progress,
+ * 5 mapped local GPU logical fatal (caller reports group failure before abort). */
 int mgbfs_nccl_poll(void* comm);
 /* Optional NCCL 2.29+ LSA transport. All ranks initialize collectively
  * before depth zero. Exchange consumes device-resident owner counts and
@@ -322,6 +342,10 @@ int mgbfs_materialize_sort_origins(void* plan,uint32_t source_rank,
 int mgbfs_trace_ranges_available(void);
 void mgbfs_trace_range_push(const char* label);
 void mgbfs_trace_range_pop(void);
+/* Exact-sized hash/state lanes in one NCCL group; payload lease unchanged. */
+int mgbfs_nccl_send_recv_pair(void* comm,const void* hashes,uint64_t hash_bytes,
+    const void* states,uint64_t state_bytes,uint32_t peer,void* receive_hashes,
+    uint64_t receive_hash_bytes,void* receive_states,uint64_t receive_state_bytes,void* stream);
 #ifdef __cplusplus
 }
 #endif

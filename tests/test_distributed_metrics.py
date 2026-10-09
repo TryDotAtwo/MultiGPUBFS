@@ -10,9 +10,53 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from distributed_gpu_bench import smi_peaks, aggregate_rank_results, suite, stats, baseline_worker, run_group, validate_group_commit
+import distributed_gpu_bench as benchmark
 
 
 class RankMetrics(unittest.TestCase):
+    def test_baseline_provenance_rejects_wrong_commit_and_dirty_source(self):
+        self.assertTrue(hasattr(benchmark,'baseline_provenance'))
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            package=root/'cayleypy';package.mkdir()
+            module=package/'__init__.py';module.write_text('VERSION=1\n')
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            git('init','-q');git('add','cayleypy')
+            git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid',
+                'commit','-qm','fixture')
+            revision=git('rev-parse','HEAD')
+            self.assertEqual(benchmark.baseline_provenance(module,revision)['commit'],revision)
+            ignored=root/'shadow'/'cayleypy';ignored.mkdir(parents=True)
+            shadow=ignored/'__init__.py';shadow.write_text('VERSION=99\n')
+            (root/'.git'/'info'/'exclude').write_text('shadow/\n')
+            with self.assertRaisesRegex(ValueError,'BASELINE_CHECKOUT_UNVERIFIED'):
+                benchmark.baseline_provenance(shadow,revision)
+            with self.assertRaisesRegex(ValueError,'BASELINE_REVISION'):
+                benchmark.baseline_provenance(module,'0'*40)
+            module.write_text('VERSION=2\n')
+            with self.assertRaisesRegex(ValueError,'BASELINE_DIRTY'):
+                benchmark.baseline_provenance(module,revision)
+
+    def test_repeat_statistics_reject_different_runtime_configuration(self):
+        base = dict(search_complete_seconds=1, smi_peak_mib_per_rank=[100,100],
+                    smi_peak_mib_total=200, epoch_window=2, frontier_profile='DENSE',
+                    hash_seed_hex='00' * 16)
+        for key, value in [('epoch_window',3), ('state_descriptor_capacity',16), ('frontier_profile','HASH_FIRST'),
+                           ('hash_seed_hex','01' * 16)]:
+            with self.subTest(key=key), self.assertRaisesRegex(
+                    ValueError, 'MEASUREMENT_CONFIGURATION_MISMATCH: '+key):
+                stats([base,dict(base,**{key:value})])
+
+    def test_aggregation_preserves_and_checks_epoch_window(self):
+        base = dict(status='COMPLETE',backend='native_test',local_layer_sizes=[1],
+                    search_complete_seconds=1,epoch_window=3)
+        ranks = [dict(base,rank=0),dict(base,rank=1)]
+        self.assertEqual(aggregate_rank_results(ranks).get('epoch_window'),3)
+        ranks[1]['epoch_window']=2
+        with self.assertRaisesRegex(ValueError,'rank configuration mismatch: epoch_window'):
+            aggregate_rank_results(ranks)
+
     def test_rank_transport_must_agree_and_is_retained_in_measurement(self):
         base = dict(status='COMPLETE', backend='native_test',
             local_layer_sizes=[1], search_complete_seconds=1, transport_backend='Lsa')
@@ -239,7 +283,9 @@ class RankMetrics(unittest.TestCase):
                         layer_sizes=[1, 23], search_complete_seconds=1.0)
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict('os.environ', {'WORLD_SIZE':'1', 'RANK':'0', 'LOCAL_RANK':'0'}), \
-             patch('symmetric_gpu_bench.baseline', measured):
+             patch('symmetric_gpu_bench.baseline', measured), \
+             patch('distributed_gpu_bench.imported_baseline_provenance',
+                   return_value={'commit':benchmark.BASELINE_COMMIT,'module_file':'fixture'}):
             baseline_worker(4, 65536, directory)
             result = json.loads((Path(directory)/'rank-0.json').read_text())
         self.assertEqual(result['backend'], 'cayleypy_single_matrix')

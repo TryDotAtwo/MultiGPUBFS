@@ -234,7 +234,9 @@ def resident(root):
 
 
 def launch(command, **kwargs):
-    if _active is not None:
+    # LSA communicator/window generation reset has not passed reuse acceptance.
+    # Give probes and BFS jobs fresh rank processes until that gate is proven.
+    if _active is not None and kwargs.get('env', {}).get('MGBFS_TRANSPORT_BACKEND') != 'NCCL_LSA':
         return _active.launch(command, kwargs['env'])
     return subprocess.Popen(command, **kwargs)
 

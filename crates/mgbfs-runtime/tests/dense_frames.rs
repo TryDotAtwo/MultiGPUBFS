@@ -110,16 +110,37 @@ fn weighted_frames_bind_original_target_depth_and_preserve_rank_ranges() {
     let mut plan = DenseFrames::new_macro(&[1, 0], 32, 18, 3072, 3, 4, 4).unwrap();
     plan.prepare(&[17, 1]).unwrap();
     assert_eq!(plan.sizes().unwrap(), &[1024, 2048]);
-    let key = TicketKey { depth: 3, epoch: 19, source: 0, plane: Plane::Candidate, generation: 4 };
+    let key = TicketKey {
+        depth: 3,
+        epoch: 19,
+        source: 0,
+        plane: Plane::Candidate,
+        generation: 4,
+    };
     let mut headers = [[0u8; 64]; 2];
     plan.encode_headers(key, 5, &mut headers).unwrap();
     let expected = ExpectedFrame {
-        run_tag: 5, sequence: 19, batch: 4, depth: 3, source: 0,
-        destination: 1, world: 2, kind: FrameKind::MacroDense,
-        max_records: 18, max_payload: 1792, state_stride: 32,
+        run_tag: 5,
+        sequence: 19,
+        batch: 4,
+        depth: 3,
+        source: 0,
+        destination: 1,
+        world: 2,
+        kind: FrameKind::MacroDense,
+        max_records: 18,
+        max_payload: 1792,
+        state_stride: 32,
     };
-    assert_eq!(decode_macro_header(&headers[1], &expected, 4).unwrap().count, 17);
-    assert!(plan.encode_headers(TicketKey { depth: 8, ..key }, 5, &mut headers).is_err());
+    assert_eq!(
+        decode_macro_header(&headers[1], &expected, 4)
+            .unwrap()
+            .count,
+        17
+    );
+    assert!(plan
+        .encode_headers(TicketKey { depth: 8, ..key }, 5, &mut headers)
+        .is_err());
     assert!(DenseFrames::new_macro(&[0, 1], 32, 18, 3072, 3, 0, 4).is_err());
     assert!(DenseFrames::new_macro(&[0, 1], 32, 18, 3072, 3, 5, 4).is_err());
 }

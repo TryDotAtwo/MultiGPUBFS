@@ -32,13 +32,13 @@ pub mod group_commit;
 #[cfg(feature = "cuda")]
 pub mod hash_first_exchange;
 pub mod jobs;
-pub mod library_owner;
 #[cfg(feature = "library-owner")]
 pub mod library_native;
+pub mod library_owner;
+pub mod macro_history_window;
 #[cfg(feature = "cuda")]
 pub mod macro_native;
 pub mod macro_owner;
-pub mod macro_history_window;
 pub mod macro_simulation;
 #[cfg(feature = "cuda")]
 pub mod native;
@@ -59,3 +59,6 @@ pub mod simulation;
 pub mod source_banks;
 pub mod topology;
 pub mod transport;
+
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub mod cuda_loading;

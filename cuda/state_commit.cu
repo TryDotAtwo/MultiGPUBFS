@@ -1,4 +1,5 @@
 #include "state_commit.h"
+#include "weighted_state_ring.h"
 #include "state_index.h"
 #include <cuda_runtime.h>
 #include <climits>
@@ -31,6 +32,17 @@ __device__ void reserve_checked(MgbfsStateRingControl* r,MgbfsOwnerControl* o,Mg
 }
 __global__ void reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e){
   reserve_checked(r,o,e,o->survivors);
+}
+__global__ void reserve_indexed_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,
+ const uint32_t* counts,const uint32_t* selected,uint32_t shards,uint32_t cap,uint32_t stage,
+ uint32_t* offsets,uint32_t* start,uint32_t* layer,uint32_t layer_capacity){
+ *e={};if(r->fatal||o->error)return;uint64_t total=0;offsets[0]=0;*start=*layer;
+ for(uint32_t shard=0;shard<shards;++shard){
+  if(counts[shard]>cap||selected[shard]>stage){fatal(r,o,112);return;}
+  total+=selected[shard];if(total>UINT32_MAX){fatal(r,o,16);return;}offsets[shard+1]=uint32_t(total);
+ }
+ if(*layer>layer_capacity||total>layer_capacity-*layer){fatal(r,o,16);return;}
+ *o={};o->stage=1;o->survivors=uint32_t(total);reserve_checked(r,o,e,total);if(!o->error)*layer+=uint32_t(total);
 }
 __global__ void reserve_rank_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
  MgbfsStateExtent* e,const uint32_t* survivors,const uint32_t* accepted,
@@ -201,7 +213,7 @@ __global__ void retire_dense_prefix(MgbfsStateRingControl* r,MgbfsStateExtent* e
 __global__ void retire_dense_prefix_value(MgbfsStateRingControl* r,MgbfsStateExtent e,uint64_t n){
   retire_dense_prefix_impl(r,&e,n);
 }
-__global__ void publish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
+__device__ void publish_next_extent_impl(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
     const MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap){
   if(r->fatal||o->error)return;
   if(!e->count)return;
@@ -228,6 +240,10 @@ __global__ void publish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* 
   }
   if(n==cap){fatal(r,o,24);return;}
   out[n]=value;*count=n+1;
+}
+__global__ void publish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,const MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap){publish_next_extent_impl(r,o,e,count,out,cap);}
+__global__ void finish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap){
+ if(!r->fatal&&!o->error){e->ready=1;o->stage=2;}publish_next_extent_impl(r,o,e,count,out,cap);
 }
 }
 extern "C" int mgbfs_state_reserve(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,void* stream){
@@ -369,4 +385,114 @@ extern "C" int mgbfs_state_validate_response_count(const uint32_t* expected,
  if(!expected||!received||!r||!o)return 1;
  validate_response_count<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(expected,received,r,o);
  return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+extern "C" int mgbfs_state_reserve_indexed_batch(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,const uint32_t* counts,const uint32_t* selected,uint32_t shards,uint32_t cap,uint32_t stage,uint32_t* offsets,uint32_t* start,uint32_t* layer,uint32_t layer_capacity,void* stream){
+ if(!r||!o||!e||!counts||!selected||!shards||!cap||!stage||!offsets||!start||!layer||!layer_capacity)return 1;
+ reserve_indexed_batch<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e,counts,selected,shards,cap,stage,offsets,start,layer,layer_capacity);return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_state_finish_next_extent(MgbfsStateRingControl* r,MgbfsOwnerControl* o,MgbfsStateExtent* e,uint32_t* count,MgbfsStateExtent* out,uint32_t cap,void* stream){
+ if(!r||!o||!e||!count||!out||!cap)return 1;finish_next_extent<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e,count,out,cap);return cudaGetLastError()==cudaSuccess?0:2;
+}
+namespace {
+__device__ bool weighted_shape(const MgbfsStateRingControl* r){
+  return r->capacity&&r->descriptor_capacity&&r->head<=r->tail&&
+    r->descriptor_head<=r->descriptor_tail&&r->tail-r->head<=r->capacity&&
+    r->descriptor_tail-r->descriptor_head<=r->descriptor_capacity;
+}
+__device__ void weighted_fatal(MgbfsStateRingControl* r,unsigned code){
+  atomicCAS(&r->fatal,0u,code);
+}
+// Sole writer, amortized one visit per reclaimed descriptor. Pending/unregistered
+// reservations are never interpreted as dead; they stop prefix reclamation.
+__device__ void weighted_reclaim(MgbfsStateRingControl* r,MgbfsWeightedExtentV1* records){
+  while(r->descriptor_head<r->descriptor_tail){
+    const auto e=records[r->descriptor_head%r->descriptor_capacity];
+    if(!e.phase||e.descriptor!=r->descriptor_head)return;
+    if(e.phase>3||e.sequence<r->head||e.sequence>r->tail||
+       e.count>r->tail-e.sequence||(e.phase==3&&e.count)){
+      weighted_fatal(r,28);return;
+    }
+    r->head=e.sequence;
+    if(e.phase!=3)return;
+    ++r->descriptor_head;
+  }
+  r->head=r->tail;
+}
+__global__ void weighted_register(MgbfsStateRingControl* r,MgbfsOwnerControl* o,
+ const MgbfsStateExtent* extent,MgbfsWeightedExtentV1* records,
+ uint32_t target,uint32_t provisional){
+  if(r->fatal||o->error)return;
+  const auto e=*extent;
+  if(!e.count)return;
+  if(!weighted_shape(r)||!e.ready||e.count!=e.granted_rows||
+     e.sequence<r->head||e.sequence>r->tail||e.count>r->tail-e.sequence||
+     e.begin!=e.sequence%r->capacity||e.count>r->capacity-e.begin||
+     e.descriptor<r->descriptor_head||e.descriptor>=r->descriptor_tail){
+    fatal(r,o,27);return;
+  }
+  auto& out=records[e.descriptor%r->descriptor_capacity];
+  if(out.phase&&out.descriptor>=r->descriptor_head){fatal(r,o,27);return;}
+  out={e.sequence,e.count,e.descriptor,target,provisional?2u:1u};
+}
+__global__ void weighted_retire(MgbfsStateRingControl* r,MgbfsWeightedExtentV1* records,
+ MgbfsStateExtent extent,uint64_t rows){
+  if(r->fatal||!rows)return;
+  if(!weighted_shape(r)||!extent.ready||extent.descriptor<r->descriptor_head||
+     extent.descriptor>=r->descriptor_tail||extent.padding[1]!=extent.descriptor||
+     extent.begin!=extent.sequence%r->capacity){weighted_fatal(r,28);return;}
+  auto& e=records[extent.descriptor%r->descriptor_capacity];
+  if(e.phase!=1||e.descriptor!=extent.descriptor||e.sequence!=extent.sequence||
+     e.count!=extent.count||rows>e.count||e.sequence>r->tail||
+     e.count>r->tail-e.sequence){weighted_fatal(r,28);return;}
+  e.sequence+=rows;e.count-=rows;if(!e.count)e.phase=3;
+  weighted_reclaim(r,records);
+}
+__global__ void weighted_discard(MgbfsStateRingControl* r,MgbfsWeightedExtentV1* records,
+ uint32_t target){
+  __shared__ unsigned stopped;
+  if(!threadIdx.x)stopped=atomicAdd(&r->fatal,0u);
+  __syncthreads();
+  if(stopped)return;
+  if(!weighted_shape(r)){
+    if(!blockIdx.x&&!threadIdx.x)weighted_fatal(r,28);
+    return;
+  }
+  // Each lane exclusively writes its allocation record. Physical wrap changes
+  // only the array index; the generation tag prevents stale-slot reclamation.
+  const uint64_t count=r->descriptor_tail-r->descriptor_head;
+  for(uint64_t row=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+      row<count;row+=uint64_t(gridDim.x)*blockDim.x){
+    const uint64_t d=r->descriptor_head+row;
+    auto& e=records[d%r->descriptor_capacity];
+    if(e.descriptor==d&&e.phase==2&&e.target_depth==target){
+      if(e.sequence<r->head||e.sequence>r->tail||!e.count||
+         e.count>r->tail-e.sequence){weighted_fatal(r,28);continue;}
+      e.sequence+=e.count;e.count=0;e.phase=3;
+    }
+  }
+}
+__global__ void weighted_reclaim_kernel(MgbfsStateRingControl* r,MgbfsWeightedExtentV1* records){
+  if(!r->fatal)weighted_reclaim(r,records);
+}
+}
+extern "C" int mgbfs_weighted_extent_register(MgbfsStateRingControl* r,
+ MgbfsOwnerControl* o,const MgbfsStateExtent* e,MgbfsWeightedExtentV1* records,
+ uint32_t depth,uint32_t provisional,void* stream){
+  if(!r||!o||!e||!records||provisional>1)return 1;
+  weighted_register<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,o,e,records,depth,provisional);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_weighted_extent_retire(MgbfsStateRingControl* r,
+ MgbfsWeightedExtentV1* records,MgbfsStateExtent e,uint64_t rows,void* stream){
+  if(!r||!records)return 1;
+  weighted_retire<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(r,records,e,rows);
+  return cudaGetLastError()==cudaSuccess?0:2;
+}
+extern "C" int mgbfs_weighted_discard_depth(MgbfsStateRingControl* r,
+ MgbfsWeightedExtentV1* records,uint32_t depth,void* stream){
+  if(!r||!records)return 1;auto s=static_cast<cudaStream_t>(stream);
+  weighted_discard<<<64,256,0,s>>>(r,records,depth);
+  weighted_reclaim_kernel<<<1,1,0,s>>>(r,records);
+  return cudaGetLastError()==cudaSuccess?0:2;
 }

@@ -44,6 +44,9 @@ def select_transport(base, source, root, runtime, *, deadline, runner=None, veri
             MGBFS_BUCKET_CAPACITY='256',MGBFS_BUCKETS='8',MGBFS_SHARDS='4',
             MGBFS_JOB_BUCKETS='2',MGBFS_LIBRARY_POOL_BYTES=str(64<<20),
             MGBFS_ARCHIVE_ROWS='2',MGBFS_ARCHIVE_SLOTS='64')
+        if cfg['env'].get('MGBFS_OWNER_BACKEND') == 'SHARD_AB':
+            cfg['env'].pop('MGBFS_LIBRARY_POOL_BYTES',None)
+            cfg['env'].pop('MGBFS_LIBRARY_POOL_AUTOSIZE',None)
         try:
             runner(cfg,source,root/'lsa-probe',runtime,cancelled=cancelled)
             oracle=verifier(root/'lsa-probe/saved')
@@ -53,6 +56,9 @@ def select_transport(base, source, root, runtime, *, deadline, runner=None, veri
             result['env']['NCCL_CUMEM_ENABLE']='1'
         except Exception as error:
             decision.update(status='FAILED',error_type=type(error).__name__,reason=str(error))
+    if base['world']>1 and base['env'].get('MGBFS_OWNER_BACKEND')=='SHARD_AB' and decision['selected']!='NCCL_LSA':
+        atomic_json(root/'decision.json',decision)
+        raise RuntimeError('SHARD_AB_DEVICE_TRANSPORT_REQUIRED: '+decision.get('reason','startup gate failed'))
     result['env']['MGBFS_TRANSPORT_BACKEND']=decision['selected']
     result['transport_selection']=decision
     atomic_json(root/'decision.json',decision)

@@ -1,15 +1,21 @@
 //! Host-side group completion marker; never part of the GPU data plane.
 use mgbfs_core::Result;
 use sha2::{Digest, Sha256};
-use std::{io::{Read, Write}, path::Path};
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
 
 pub fn write_rank_result(dir: &Path, rank: u32, bytes: &[u8]) -> Result<()> {
     let mut file = std::fs::OpenOptions::new()
-        .write(true).create_new(true)
+        .write(true)
+        .create_new(true)
         .open(dir.join(format!("rank-{rank}.json")))
         .map_err(|e| format!("RANK_RESULT_CREATE: {e}"))?;
-    file.write_all(bytes).map_err(|e| format!("RANK_RESULT_WRITE: {e}"))?;
-    file.sync_all().map_err(|e| format!("RANK_RESULT_SYNC: {e}"))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("RANK_RESULT_WRITE: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("RANK_RESULT_SYNC: {e}"))?;
     Ok(())
 }
 
@@ -31,7 +37,9 @@ fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option
     let mut hashes = Vec::with_capacity(world as usize);
     let mut commit_scope: Option<String> = None;
     for rank in 0..world {
-        let mut file = std::fs::OpenOptions::new().read(true).write(true)
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
             .open(dir.join(format!("rank-{rank}.json")))
             .map_err(|e| format!("GROUP_RANK_RESULT_{rank}: {e}"))?;
         let mut bytes = Vec::new();
@@ -55,9 +63,12 @@ fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option
             { return Err(format!("CALIBRATION_RANK_MISMATCH_{rank}")); }
         }
         let scope = value["archive_commit_scope"]
-            .as_str().ok_or("GROUP_COMMIT_SCOPE")?;
+            .as_str()
+            .ok_or("GROUP_COMMIT_SCOPE")?;
         if !matches!(scope, "file_fsync" | "fifo_flush" | "search_only")
-            || commit_scope.as_deref().is_some_and(|previous| previous != scope)
+            || commit_scope
+                .as_deref()
+                .is_some_and(|previous| previous != scope)
         {
             return Err("GROUP_COMMIT_SCOPE".into());
         }
@@ -77,13 +88,16 @@ fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option
     let temporary = dir.join(format!("{name}.tmp"));
     let final_path = dir.join(name);
     let mut file = std::fs::OpenOptions::new()
-        .write(true).create_new(true).open(&temporary)
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
         .map_err(|e| format!("GROUP_COMMIT_CREATE: {e}"))?;
-    file.write_all(&marker).map_err(|e| format!("GROUP_COMMIT_WRITE: {e}"))?;
-    file.sync_all().map_err(|e| format!("GROUP_COMMIT_SYNC: {e}"))?;
+    file.write_all(&marker)
+        .map_err(|e| format!("GROUP_COMMIT_WRITE: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("GROUP_COMMIT_SYNC: {e}"))?;
     drop(file);
-    std::fs::rename(&temporary, &final_path)
-        .map_err(|e| format!("GROUP_COMMIT_RENAME: {e}"))?;
+    std::fs::rename(&temporary, &final_path).map_err(|e| format!("GROUP_COMMIT_RENAME: {e}"))?;
     #[cfg(target_os = "linux")]
     std::fs::File::open(dir)
         .and_then(|directory| directory.sync_all())

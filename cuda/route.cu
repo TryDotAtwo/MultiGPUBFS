@@ -79,3 +79,20 @@ extern "C" int mgbfs_route_run(void* plan,const void* hashes,const uint64_t* ref
   return cudaGetLastError()==cudaSuccess?0:7;
 }
 extern "C" void mgbfs_route_destroy(void* p){delete static_cast<RoutePlan*>(p);}
+
+extern "C" int mgbfs_route_run_sharded(void* plan,const void* hashes,const uint64_t* refs,
+ void* output,uint64_t* outrefs,uint32_t* output_count,uint32_t count,uint32_t partitions,void* raw_stream){
+ auto*p=static_cast<RoutePlan*>(plan);
+ if(!p||!hashes||!refs||!output||!outrefs||!output_count||count>p->capacity||!partitions||(partitions&(partitions-1)))return 1;
+ auto stream=static_cast<cudaStream_t>(raw_stream);uint32_t bits=0;for(uint32_t v=partitions;v>1;v>>=1)++bits;
+ if(count){
+  if(bits){size_t bytes=p->scratch_bytes;
+   if(cub::DeviceRadixSort::SortPairs(p->scratch,bytes,static_cast<const Key128*>(hashes),
+      static_cast<Key128*>(output),refs,outrefs,int(count),Decompose{},128-bits,128,stream)!=cudaSuccess)return 3;
+  }else{
+   if(cudaMemcpyAsync(output,hashes,size_t(count)*16,cudaMemcpyDeviceToDevice,stream)!=cudaSuccess)return 4;
+   if(cudaMemcpyAsync(outrefs,refs,size_t(count)*8,cudaMemcpyDeviceToDevice,stream)!=cudaSuccess)return 4;
+  }
+ }
+ publish_count<<<1,1,0,stream>>>(output_count,count);return cudaGetLastError()==cudaSuccess?0:7;
+}

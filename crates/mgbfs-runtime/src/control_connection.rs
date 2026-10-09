@@ -47,13 +47,17 @@ impl ControlConnection {
     }
     pub(crate) fn poll_boundary_send(&mut self) -> Result<bool> {
         self.alive()?;
-        if self.started { return self.finish(Err("CONTROL_BOUNDARY_PHASE".into())); }
+        if self.started {
+            return self.finish(Err("CONTROL_BOUNDARY_PHASE".into()));
+        }
         let result = self.writer.poll(&mut self.stream);
         self.finish(result)
     }
     pub(crate) fn poll_boundary_receive(&mut self) -> Result<Option<ControlFrame>> {
         self.alive()?;
-        if self.started { return self.finish(Err("CONTROL_BOUNDARY_PHASE".into())); }
+        if self.started {
+            return self.finish(Err("CONTROL_BOUNDARY_PHASE".into()));
+        }
         let result = self.reader.poll(&mut self.stream);
         let frame = self.finish(result)?;
         if let Some(frame) = frame {

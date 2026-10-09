@@ -1,5 +1,6 @@
 //! Raw C ABI. CUDA is opt-in; there is no CPU implementation of these calls.
 pub mod allocation;
+pub mod shard_ab;
 pub mod library_owner;
 pub mod native_owner;
 #[cfg(any(feature = "cuda", feature = "library-owner"))]
@@ -79,6 +80,29 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         /// Experimental SM75 integer-MMA generation, register-only hash reduction.
+        pub fn mgbfs_hash_first_tc_validate_device() -> i32;
+        /// Requires successful SM75 admission on the same current device.
+        /// Same shapes/lifetimes as legacy tc; no per-batch hardware query.
+        pub fn mgbfs_generate_hash_only_tc_admitted(
+            n: u32,
+            moves: u32,
+            modulus: u32,
+            stride: u32,
+            parent_capacity: u32,
+            candidate_capacity: u32,
+            source: u32,
+            parent_begin: u64,
+            parents: *const u8,
+            generators: *const u8,
+            coefficients: *const u32,
+            offsets: *const u32,
+            parent_count: *const u32,
+            hashes: *mut u32,
+            origins: *mut RegenerateOrigin,
+            candidate_count: *mut u32,
+            fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         /// Same pointer/lifetime contract as mgbfs_generate_hash_only.
         pub fn mgbfs_generate_hash_only_tc(
             n: u32,
@@ -416,8 +440,13 @@ pub mod ffi {
         ) -> i32;
         pub fn mgbfs_nccl_session_park(comm: *mut c_void) -> i32;
         pub fn mgbfs_nccl_create_with_cancel(
-            rank: u32, world: u32, device: u32, id128: *const c_void,
-            out: *mut *mut c_void, error: *mut c_char, error_capacity: usize,
+            rank: u32,
+            world: u32,
+            device: u32,
+            id128: *const c_void,
+            out: *mut *mut c_void,
+            error: *mut c_char,
+            error_capacity: usize,
             probe: Option<extern "C" fn(*mut c_void) -> i32>,
             context: *mut c_void,
         ) -> i32;
@@ -433,6 +462,19 @@ pub mod ffi {
             peer: u32,
             receive: *mut c_void,
             receive_bytes: u64,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_send_recv_pair(
+            comm: *mut c_void,
+            hashes: *const c_void,
+            hash_bytes: u64,
+            states: *const c_void,
+            state_bytes: u64,
+            peer: u32,
+            receive_hashes: *mut c_void,
+            receive_hash_bytes: u64,
+            receive_states: *mut c_void,
+            receive_state_bytes: u64,
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_nccl_lsa_prepare(
@@ -475,11 +517,35 @@ pub mod ffi {
             hashes: *mut *const c_void,
             states: *mut *const c_void,
         ) -> i32;
-        pub fn mgbfs_nccl_lsa_cancel_word(comm: *mut c_void, word: *mut *mut u32) -> i32;
-        pub fn mgbfs_owner_lsa_fatal_gate(comm: *mut c_void,
+        pub fn mgbfs_nccl_cancel_words(
+            comm: *mut c_void,
+            host: *mut *mut u32,
+            device: *mut *mut u32,
+        ) -> i32;
+        pub fn mgbfs_owner_local_fatal_gate(
+            comm: *mut c_void,
             ring: *mut crate::native_owner::Ring,
             owner: *mut crate::native_owner::Control,
-            send: *mut u32, receive: *mut u32, stream: *mut c_void) -> i32;
+            local_fatal: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_owner_global_fatal_gate(
+            comm: *mut c_void,
+            ring: *mut crate::native_owner::Ring,
+            owner: *mut crate::native_owner::Control,
+            send: *mut u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
+        pub fn mgbfs_nccl_lsa_cancel_word(comm: *mut c_void, word: *mut *mut u32) -> i32;
+        pub fn mgbfs_owner_lsa_fatal_gate(
+            comm: *mut c_void,
+            ring: *mut crate::native_owner::Ring,
+            owner: *mut crate::native_owner::Control,
+            send: *mut u32,
+            receive: *mut u32,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_all_gather_u32(
             comm: *mut c_void,
             send: *const u32,
@@ -517,6 +583,8 @@ pub mod ffi {
             error: *mut c_char,
             error_capacity: usize,
         ) -> i32;
+        pub fn mgbfs_nccl_all_reduce_sum_u32(comm: *mut c_void, send: *const u32, recv: *mut u32, stream: *mut c_void) -> i32;
+        pub fn mgbfs_route_run_sharded(plan: *mut c_void, hashes: *const c_void, refs: *const u64, output: *mut c_void, outrefs: *mut u64, output_count: *mut u32, count: u32, partitions: u32, stream: *mut c_void) -> i32;
         pub fn mgbfs_route_run(
             plan: *mut c_void,
             hashes: *const c_void,
@@ -578,6 +646,12 @@ pub mod ffi {
             stream: *mut c_void,
         ) -> i32;
         pub fn mgbfs_generate_destroy(plan: *mut c_void);
+        pub fn mgbfs_compact_map_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
+        pub fn mgbfs_compact_map_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
+        pub fn mgbfs_compact_hash_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
+        pub fn mgbfs_compact_hash_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,limbs:*const u8,offsets:*const u32,move_major:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
+        pub fn mgbfs_compact_hash_run(plan:*mut c_void,parents:*const u8,output:*mut u32,count:u32,stream:*mut c_void)->i32;
+        pub fn mgbfs_compact_hash_destroy(plan:*mut c_void);
         pub fn mgbfs_hash_create(
             bytes: u32,
             capacity: u32,

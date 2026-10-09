@@ -83,7 +83,9 @@ pub fn permit_comm(value: bool) { CACHE.with(|c| {
 pub fn bootstrap_id(create: impl FnOnce() -> mgbfs_core::Result<[u8;128]>) -> mgbfs_core::Result<[u8;128]> {
     CACHE.with(|c| {
         let mut c=c.borrow_mut();
-        if c.enabled { if let Some(id)=c.nccl_id { return Ok(id); } }
+        // A unique ID belongs to the parked communicator, not the rank process.
+        // Query-only LSA construction destroys its communicator on unwind.
+        if c.enabled && !c.comm.is_null() { if let Some(id)=c.nccl_id { return Ok(id); } }
         let id=create()?;if c.enabled { c.nccl_id=Some(id); }Ok(id)
     })
 }
@@ -162,4 +164,22 @@ pub fn pool_put(ptr: *mut c_void) -> bool {
         if unsafe { mgbfs_library_pool_usage_v1(ptr, &mut usage) } != 0 || usage.live_bytes != 0 { return false; }
         c.pool = Some((ptr, usage.reserved_bytes)); true
     })
+}
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+    #[test]
+    fn successive_queries_without_parked_comm_get_fresh_ids() {
+        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=true;c.nccl_id=None;assert!(c.comm.is_null()); });
+        assert_eq!(bootstrap_id(|| Ok([1;128])).unwrap(),[1;128]);
+        assert_eq!(bootstrap_id(|| Ok([2;128])).unwrap(),[2;128]);
+        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=false;c.nccl_id=None; });
+    }
+    #[test]
+    fn factory_failure_does_not_reuse_a_destroyed_comm_id() {
+        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=true;c.nccl_id=Some([1;128]);assert!(c.comm.is_null()); });
+        assert_eq!(bootstrap_id(|| Err("fresh id failed".into())).unwrap_err(),"fresh id failed");
+        CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=false;c.nccl_id=None; });
+    }
 }

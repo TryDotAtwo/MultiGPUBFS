@@ -28,7 +28,8 @@ class CucoRankBatch {
       std::vector<MgbfsLibraryKeysV1> current,
       std::vector<uint32_t> accepted_capacities, uint32_t incoming_capacity,
       uint32_t logical_owner, uint32_t world, rmm::cuda_stream_view stream,
-      rmm::device_async_resource_ref resource);
+      rmm::device_async_resource_ref resource, bool retain_state_refs = false,
+      uint32_t settled_capacity = 0);
   CucoRankBatch(CucoRankBatch const&) = delete;
   CucoRankBatch& operator=(CucoRankBatch const&) = delete;
   ~CucoRankBatch();
@@ -39,6 +40,10 @@ class CucoRankBatch {
       MgbfsStateRingControl* ring, const MgbfsStateExtent* extent);
   void complete(uint64_t epoch);
   void seal();
+  void reset_empty_history();
+  void export_sorted(void* keys, uint64_t* refs, uint32_t* count,
+      uint32_t capacity, MgbfsStateRingControl* ring, MgbfsOwnerControl* owner);
+  const uint64_t* export_state_refs(uint32_t shard) const;
   MgbfsLibraryKeysV1 export_shard(uint32_t shard, uint32_t rows) const;
  private:
   struct Impl;

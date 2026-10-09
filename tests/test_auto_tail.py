@@ -128,7 +128,7 @@ class AutomaticPlanningTests(unittest.TestCase):
                   resource_plan=device_budget([{'free_bytes':12<<30}]))
         original=json.loads(json.dumps(base))
         def query(cfg):
-            self.assertEqual(cfg['batch'],32768)
+            self.assertEqual(cfg['batch'],min(32768,int(cfg['env']['MGBFS_BENCH_CAPACITY'])))
             e=cfg['env'];rows=int(e['MGBFS_BENCH_CAPACITY'])
             self.assertEqual(int(e['MGBFS_FUTURE_CAPACITY']),2*rows)
             return [dict(rank=rank,required_bytes=rows*640+100000,

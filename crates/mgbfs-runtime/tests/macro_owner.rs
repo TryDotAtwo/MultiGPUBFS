@@ -6,6 +6,31 @@ fn hash(value: u32) -> Hash128 {
 }
 
 #[test]
+fn offer_from_unsettled_source_is_rejected_without_consuming_capacity() {
+    let mut owner = MacroOwner::new(3, 1, 8).unwrap();
+    owner.seed(0, [hash(0)]).unwrap();
+    assert!(owner
+        .offer(FutureOffer::new(
+            2,
+            hash(2),
+            20,
+            CandidateKey::new(1, 1, 0, 0, 0)
+        ))
+        .is_err());
+    assert_eq!(owner.pending_records(), 0);
+    owner
+        .offer(FutureOffer::new(
+            2,
+            hash(2),
+            21,
+            CandidateKey::new(0, 2, 0, 0, 0),
+        ))
+        .unwrap();
+    assert!(owner.settle(1).unwrap().is_empty());
+    assert_eq!(owner.settle(2).unwrap(), vec![(hash(2), 21)]);
+}
+
+#[test]
 fn later_shorter_arrival_wins_without_mutating_the_longer_slot() {
     let mut owner = MacroOwner::new(3, 8, 16).unwrap();
     owner.seed(0, [hash(0)]).unwrap();

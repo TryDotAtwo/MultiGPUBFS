@@ -16,6 +16,14 @@ from bfs_tail_archive import TailArchive, atomic_json
 from tail_wire import consume, consume_selected
 
 
+def launch_environment(config, runtime_env):
+    env = dict(os.environ, **runtime_env)
+    env.update(config.get('env', {}))
+    if env.get('MGBFS_OWNER_BACKEND') == 'SHARD_AB':
+        env.pop('MGBFS_LIBRARY_POOL_BYTES', None)
+    return env
+
+
 class FifoReader:
     def __init__(self, path, stopped):
         self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
@@ -152,8 +160,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     if binary_sha is None:
         binary_sha = hashlib.sha256(cli.read_bytes()).hexdigest()
         metadata[str(cli)+'sha'] = binary_sha
-    env = dict(os.environ, **runtime_env)
-    env.update(config.get('env', {}))
+    env = launch_environment(config, runtime_env)
     from archive_ram import plan
     if 'host_available_bytes' not in config:
         from streamed_bfs_launcher import available_host_bytes
@@ -240,6 +247,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
             except queue.Full:
                 pass
     begins, ends, samples, native_errors, lock = {}, {}, [], [], threading.Lock()
+    incomplete_samples = {}
     readers, threads, pending, receipts = [], [], {}, {}
     replacements, selected_latest = {}, None
     for rank in range(world):
@@ -285,7 +293,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
     from resident_session import launch
     process = launch(command, env=env, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    if session:
+    if session and hasattr(process, 'sequence'):
         archive.manifest['launch_config']['resident_session'] = dict(
             root=str(session.root), generation=session.generation-1,
             sequence=process.sequence, rank_group_pid=process.pid,
@@ -298,6 +306,10 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                 fatal = native_failure(line)
                 if fatal:
                     native_errors.append(fatal)
+                sample=re.search(r'MGBFS_INCOMPLETE_SAMPLE rank=(\d+) depth=(\d+) saved=(\d+) unprocessed=(\d+) processed=(\d+) scope=unprocessed_current_suffix',line)
+                if sample:
+                    rank,at,saved,unprocessed,processed=map(int,sample.groups())
+                    incomplete_samples[rank]=dict(depth=at,saved=saved,unprocessed=unprocessed,processed=processed)
                 match = re.search(r'MGBFS_DEPTH_(BEGIN|END) rank=(\d+) depth=(\d+) (.*)', line)
                 if match:
                     fields = dict(re.findall(r'(\w+)=([^\s]+)', match[4]))
@@ -324,7 +336,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                 if process.poll() is None:
                     try:os.killpg(process.pid, signal.SIGTERM)
                     except ProcessLookupError:pass
-            if cancellation_started is not None and now > cancellation_started+10 and process.poll() is None:
+            if cancellation_started is not None and now > cancellation_started+min(300,max(10,config.get("snapshot_drain_seconds",120 if selected else 10))) and process.poll() is None:
                 try:os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:pass
             if publisher and publisher.error:
@@ -364,7 +376,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                     raise ValueError('rank configuration mismatch')
                 if selected:
                     counts = [int(begins[rank,depth]['count']) for rank in range(world)]
-                    if any(parts[rank][0] != min(counts[rank],1000) for rank in range(world)):
+                    if not (sum(counts)>1000 and all(parts[rank][0]==0 for rank in range(world))) and any(parts[rank][0] != min(counts[rank],1000) for rank in range(world)):
                         raise ValueError('selected prefix count differs from native layer')
                     data = [parts[rank][1] for rank in range(world)]
                     archive.selected_layer(depth, sum(counts), data, seconds, peaks)
@@ -405,7 +417,7 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
                         at, counts, data = selected_latest
                         final_parts = []
                         for rank,count in enumerate(counts):
-                            if count > 1000:
+                            if count > 1000 or (count>0 and not data[rank]):
                                 replacement = replacements.get(rank)
                                 if replacement is None or replacement[:2] != (at,count) or replacement[3] != receipts[rank]['config_digest']:
                                     raise ValueError('complete terminal replacement missing or mismatched')
@@ -419,6 +431,16 @@ def run(config, source, root, runtime_env, *, publisher_api=None, cancelled=None
         final = archive.snapshot(traversal_complete, reason)
     except BaseException as error:
         failure, reason = error, str(error)
+        if selected and selected_latest is not None:
+            at,counts,data=selected_latest
+            final_parts=[];metadata=[];valid=True
+            for rank,count in enumerate(counts):
+                replacement=replacements.get(rank);sample=incomplete_samples.get(rank)
+                if (replacement is None or sample is None or sample['depth']!=at or
+                    replacement[:2]!=(at,sample['saved']) or replacement[3]!=receipts.get(rank,{}).get('config_digest')):
+                    valid=False;break
+                final_parts.append((replacement[2],replacement[1],replacement[4]));metadata.append(sample)
+            if valid:archive.partial_terminal(at,final_parts,metadata)
         final = archive.snapshot(False, reason)
     finally:
         consumer_closed.set()

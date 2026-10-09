@@ -1,5 +1,8 @@
 #![cfg(all(feature = "cuda", feature = "library-owner"))]
-use mgbfs_core::{config::{OwnerBackend, ReferenceOwner}, lrx_multiset::LrxMultiset};
+use mgbfs_core::{
+    config::{OwnerBackend, ReferenceOwner},
+    lrx_multiset::LrxMultiset,
+};
 use mgbfs_runtime::distributed_native::{DistributedConfig, DistributedNativeBfs};
 
 #[test]
@@ -86,6 +89,7 @@ fn multiset_oracle(worlds: &[u32], include_rank: bool) {
                         std::panic::catch_unwind(|| {
                             let graph = LrxMultiset::new(n,4).unwrap();
                             let cfg = DistributedConfig {
+                                route_banks: 2, epoch_window: 2, state_descriptor_capacity: 512,
                                 rank, world, logical_owner_to_rank: if world == 1 { vec![0, 0] } else { (0..world).rev().collect() },
                                 transport: mgbfs_core::config::ReferenceTransport::HostSizedNccl,
                                 batch: 2, layer_capacity: 256, state_ring_capacity: 512,
@@ -108,11 +112,20 @@ fn multiset_oracle(worlds: &[u32], include_rank: bool) {
                     for worker in workers {
                         let local = worker.join().unwrap();
                         assert_eq!(local.len(), actual.len());
-                        for (dst, src) in actual.iter_mut().zip(local) { dst.extend(src); }
+                        for (dst, src) in actual.iter_mut().zip(local) {
+                            dst.extend(src);
+                        }
                     }
-                    for layer in &mut actual { layer.sort(); }
-                    for layer in &mut expected { layer.sort(); }
-                    assert_eq!(actual, expected, "world={world} n={n} owner={owner:?} prededup={prededup}");
+                    for layer in &mut actual {
+                        layer.sort();
+                    }
+                    for layer in &mut expected {
+                        layer.sort();
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "world={world} n={n} owner={owner:?} prededup={prededup}"
+                    );
                     eprintln!("LRX_MULTISET_ORACLE_PASS world={world} n={n} owner={owner:?} prededup={prededup}");
                 }
             }

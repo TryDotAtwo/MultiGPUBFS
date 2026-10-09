@@ -3,7 +3,9 @@ name: Native CPU contracts
 on:
   push:
     branches: ['codex/**', main]
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'cuda/**', 'tests/**', 'scripts/nccl_dependency_cache.py', '.github/workflows/native-contracts.yml']
   pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'cuda/**', 'tests/**', 'scripts/nccl_dependency_cache.py', '.github/workflows/native-contracts.yml']
   workflow_dispatch:
 
 permissions:
@@ -19,8 +21,8 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust
         run: rustup toolchain install 1.75.0 --profile minimal --component rustfmt
-      - name: Check native Rust formatting
-        run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -p mgbfs-cli -- --check
+      - name: Verify focused acceptance inventory without executing launcher ingress
+        run: python3 scripts/validation/test_focused_validation_selection.py scripts/validation/dense-packet-prefetch-gate-kaggle.py
       - name: Verify CPU contracts (not a GPU or performance gate)
         run: cargo +1.75.0 test --locked
       - name: Type-check Linux native benchmark (no CUDA link or execution)
@@ -49,3 +51,45 @@ jobs:
         run: g++ -std=c++17 -Wall -Wextra -Werror -Icuda tests/owner_memory_query.cpp cuda/bounded_owner_query.cpp -o /tmp/owner-memory-query && /tmp/owner-memory-query
       - name: Verify NCCL wrapper error cleanup without GPU
         run: g++ -std=c++17 -Itests/nccl_stubs tests/nccl_transport_failure.cpp -o /tmp/nccl-transport-failure && /tmp/nccl-transport-failure
+      - name: Verify probe finalize-before-destroy lifetime
+        run: g++ -std=c++17 tests/nccl_probe_teardown.cpp -o /tmp/nccl-probe-teardown && /tmp/nccl-probe-teardown
+
+      - name: Check native Rust formatting
+        run: cargo +1.75.0 fmt -p mgbfs-core -p mgbfs-runtime -p mgbfs-cuda -p mgbfs-cli -- --check
+
+  dependency-cache:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify immutable NCCL cache behavior (no GPU claims)
+        run: |
+          python3 - <<'PY'
+          import io, sys, unittest
+          suite=unittest.defaultTestLoader.discover('tests', pattern='test_nccl_dependency_cache.py')
+          output=io.StringIO()
+          result=unittest.TextTestRunner(stream=output, verbosity=2).run(suite)
+          print(output.getvalue())
+          for case, detail in result.failures + result.errors:
+              escaped=detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print(f'::error file=tests/test_nccl_dependency_cache.py,title={case.id()}::{escaped}')
+          print(f'::notice title=NCCL cache tests::tests={result.testsRun}; failures={len(result.failures)}; errors={len(result.errors)}')
+          sys.exit(not result.wasSuccessful())
+          PY
+
+  cuda-library-typecheck:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.75.0 --profile minimal
+      - name: Type-check integrated CUDA library runtime (no linking or GPU execution)
+        env:
+          MGBFS_CUDA_LIB_DIR: /tmp
+          MGBFS_LIBRARY_OWNER_LIB_DIR: /tmp
+        run: cargo +1.75.0 check --locked -p mgbfs-runtime --features cuda,library-owner --lib --tests

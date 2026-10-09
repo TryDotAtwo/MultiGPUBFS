@@ -57,8 +57,38 @@ pub fn inflight_batches(value: Option<&str>) -> Result<usize> {
     Ok(count)
 }
 
+/// Number of completion credits, not a count of payload receive buffers.
+pub fn epoch_window_for_launch(value: Option<&str>) -> Result<usize> {
+    let count = value
+        .unwrap_or("2")
+        .parse::<u32>()
+        .map_err(|_| "ENV_MGBFS_EPOCH_WINDOW")?;
+    if count < 2 {
+        return Err("ENV_MGBFS_EPOCH_WINDOW".into());
+    }
+    usize::try_from(count).map_err(|_| "ENV_MGBFS_EPOCH_WINDOW".into())
+}
+
+/// Decode and validate before device admission. Paths are not graph identity.
+pub fn load_matrix_manifest(
+    path: &std::path::Path,
+) -> Result<(String, mgbfs_core::matrix::MatrixGroup)> {
+    use sha2::{Digest, Sha256};
+    let file = std::fs::File::open(path).map_err(|e| format!("MATRIX_MANIFEST_OPEN: {e}"))?;
+    let graph: mgbfs_core::matrix::MatrixGroup =
+        serde_json::from_reader(std::io::BufReader::new(file))
+            .map_err(|e| format!("MATRIX_MANIFEST_PARSE: {e}"))?;
+    graph.validate()?;
+    let digest = Sha256::digest(serde_json::to_vec(&graph).map_err(|e| e.to_string())?);
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    Ok((format!("matrix-{hex}"), graph))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BenchPhase { Warmup, Measure }
+pub enum BenchPhase {
+    Warmup,
+    Measure,
+}
 
 pub fn bench_warmup_for_launch(value: Option<&str>, stream: Option<&str>) -> Result<bool> {
     let warmup = match value {
@@ -101,7 +131,9 @@ pub fn bench_phase_paths(args: &[&str], warmup: bool, phase: BenchPhase) -> Resu
 /// Select the existing single-rank macro path, or reject unsupported
 /// multi-rank macro settings while all ranks still participate in admission.
 pub fn macro_depth_for_launch(value: Option<&str>, world: u32) -> Result<bool> {
-    let depth = value.unwrap_or("1").parse::<u32>()
+    let depth = value
+        .unwrap_or("1")
+        .parse::<u32>()
         .map_err(|_| "ENV_MGBFS_MACRO_DEPTH")?;
     if depth == 0 {
         return Err("ENV_MGBFS_MACRO_DEPTH".into());

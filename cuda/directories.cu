@@ -30,8 +30,14 @@ __global__ void prefix(const uint32_t*counts,uint32_t b,uint32_t k,uint32_t cap,
  for(unsigned i=0;i<b;++i){if(counts[i]>k||sum+counts[i]>cap){*f=31;return;}sum+=counts[i];}
  sum=0;for(unsigned i=0;i<b;++i){dir[i]={sum,counts[i]};sum+=counts[i];}*n=unsigned(sum);
 }
-__global__ void copy(const Key*in,uint32_t k,Key*out,const MgbfsOwnerRange*dir,const uint32_t*f){
- if(*f)return;auto r=dir[blockIdx.x];for(uint64_t i=threadIdx.x;i<r.count;i+=blockDim.x)out[r.begin+i]=in[uint64_t(blockIdx.x)*k+i];
+template<bool WithRefs=false>
+__global__ void copy(const Key*in,uint32_t k,Key*out,const MgbfsOwnerRange*dir,const uint32_t*f,
+    const uint64_t*refs=nullptr,uint64_t*out_refs=nullptr){
+ if(*f)return;auto r=dir[blockIdx.x];for(uint64_t i=threadIdx.x;i<r.count;i+=blockDim.x){
+  const uint64_t source=uint64_t(blockIdx.x)*k+i,target=r.begin+i;
+  out[target]=in[source];
+  if constexpr(WithRefs)out_refs[target]=refs[source];
+ }
 }
 }
 extern "C" int mgbfs_bucket_directory(const void*keys,const uint32_t*n,uint32_t cap,uint32_t b,MgbfsOwnerRange*out,uint32_t*f,void*stream){
@@ -62,5 +68,17 @@ extern "C" int mgbfs_bind_owner_jobs(MgbfsBucketJob*jobs,uint32_t n,const uint32
 }
 extern "C" int mgbfs_compact_hash_layer(const void*in,const uint32_t*counts,uint32_t b,uint32_t k,void*out,uint32_t cap,MgbfsOwnerRange*dir,uint32_t*n,uint32_t*f,void*stream){
  if(!in||!counts||!out||!dir||!n||!f||!b||b>INT_MAX||!k||cap>INT_MAX)return 1;auto s=static_cast<cudaStream_t>(stream);
- prefix<<<1,1,0,s>>>(counts,b,k,cap,dir,n,f);copy<<<b,256,0,s>>>(static_cast<const Key*>(in),k,static_cast<Key*>(out),dir,f);return cudaGetLastError()==cudaSuccess?0:2;
+ prefix<<<1,1,0,s>>>(counts,b,k,cap,dir,n,f);copy<false><<<b,256,0,s>>>(static_cast<const Key*>(in),k,static_cast<Key*>(out),dir,f);return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+// The same validated prefix and coalesced bucket copy as unit-cost finalize.
+// Hash and monotonic StateRef share exactly one source/destination ordinal.
+extern "C" int mgbfs_compact_hash_refs_layer(const void*in,const uint64_t*refs,
+    const uint32_t*counts,uint32_t b,uint32_t k,void*out,uint64_t*out_refs,
+    uint32_t cap,MgbfsOwnerRange*dir,uint32_t*n,uint32_t*f,void*stream){
+ if(!in||!refs||!counts||!out||!out_refs||!dir||!n||!f||!b||b>INT_MAX||!k||cap>INT_MAX)return 1;
+ auto s=static_cast<cudaStream_t>(stream);
+ prefix<<<1,1,0,s>>>(counts,b,k,cap,dir,n,f);
+ copy<true><<<b,256,0,s>>>(static_cast<const Key*>(in),k,static_cast<Key*>(out),dir,f,refs,out_refs);
+ return cudaGetLastError()==cudaSuccess?0:2;
 }

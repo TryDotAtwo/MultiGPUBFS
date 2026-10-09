@@ -61,7 +61,10 @@ def exact_search(n, r, seed_hex, on_layer, *, deadline=None, cancelled=None):
                 reason = cancelled() if cancelled else None
                 if reason or (deadline is not None and time.monotonic() >= deadline):
                     return dict(complete=False, reason=reason or 'CPU search deadline',
-                                search_seconds=time.perf_counter()-started)
+                                search_seconds=time.perf_counter()-started,
+                                partial_depth=depth, partial_count=len(frontier),
+                                partial_processed=index, partial_unprocessed=len(frontier)-index,
+                                partial_words=frontier[index:index+1000], partial_prefix=frontier[:1000])
             for child in transitions(parent, n, bits):
                 key = encode(child)
                 if key not in visited:
@@ -157,6 +160,16 @@ def run(config, source, root, runtime_env, *, cancelled=None, deadline=None,
     if selected and outcome['complete'] and layers and layers[-1][1] > 1000:
         depth,count,start,length,_,_=layers[-1]
         archive.terminal(depth,[bytes(arena[start:start+length])])
+    if selected and not outcome['complete']:
+        depth=outcome['partial_depth'];count=outcome['partial_count']
+        # This frontier was generated completely; its expansion was interrupted.
+        sample=b''.join(word.to_bytes(width,'little') for word in outcome['partial_words'])
+        archive.selected_layer(depth,count,[b''.join(word.to_bytes(width,'little') for word in outcome['partial_prefix'])],0.0,
+            {str(gpu):None for gpu in range(world)})
+        archive.manifest['layers'][-1]['expansion_complete']=False
+        archive.partial_terminal(depth,[sample],[dict(saved=len(outcome['partial_words']),
+            processed=outcome['partial_processed'],unprocessed=outcome['partial_unprocessed'],
+            scope='unprocessed_current_suffix',completion_source='CPU_EXACT_CURSOR')])
     final = archive.snapshot(outcome['complete'],outcome['reason'])
     archive.release_working_tail()
     result = dict(status='COMPLETE' if outcome['complete'] else 'INCOMPLETE',

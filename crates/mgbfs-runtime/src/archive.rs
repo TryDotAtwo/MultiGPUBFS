@@ -130,6 +130,23 @@ mod submission_failure_tests {
     }
 }
 impl ArchiveRingPlan {
+    /// FIFO output owns no disk extent. Its bounded consumer budgets staging;
+    /// this limit only guards the sequential writer's checked wire offset.
+    pub fn reference_output_limit(
+        width: usize,
+        states: u64,
+        capacity: u32,
+        streaming: bool,
+    ) -> Result<u64> {
+        if !(1..=33025).contains(&width) || states == 0 || capacity == 0 {
+            return Err("ARCHIVE_EXTENT_SHAPE".into());
+        }
+        if streaming {
+            Ok(u64::MAX)
+        } else {
+            Self::reference_extent_bytes(width, states, capacity)
+        }
+    }
     /// A layer capacity is not a bound on the sum of BFS layers. The reference
     /// graph order bounds all archived states and nonempty global depths;
     /// retain a larger explicitly declared layer capacity as a safe bound.
@@ -251,9 +268,11 @@ impl<W: Write> Extent for StreamExtent<W> {
                 "stream offset or capacity violation",
             ));
         }
-        let deadline = Instant::now().checked_add(self.stall_timeout).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream write deadline")
-        })?;
+        let deadline = Instant::now()
+            .checked_add(self.stall_timeout)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "stream write deadline")
+            })?;
         let mut written = 0;
         while written < bytes.len() {
             match self.writer.write(&bytes[written..]) {
@@ -263,7 +282,9 @@ impl<W: Write> Extent for StreamExtent<W> {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_STALLED"));
+                            std::io::ErrorKind::TimedOut,
+                            "FIFO_CONSUMER_STALLED",
+                        ));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
@@ -359,19 +380,30 @@ pub fn create_archive_extent_with_timeout(
             "stream archive target is not a FIFO",
         ));
     }
-    let deadline = std::time::Instant::now().checked_add(timeout).ok_or_else(||
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "FIFO_OPEN_DEADLINE"))?;
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "FIFO_OPEN_DEADLINE")
+        })?;
     loop {
         let result = std::fs::OpenOptions::new()
-            .write(true).custom_flags(libc::O_NONBLOCK).open(path);
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path);
         match result {
-            Ok(writer) => return Ok(Box::new(StreamExtent::with_stall_timeout(
-                writer, timeout.min(std::time::Duration::from_secs(30))))),
+            Ok(writer) => {
+                return Ok(Box::new(StreamExtent::with_stall_timeout(
+                    writer,
+                    timeout.min(std::time::Duration::from_secs(30)),
+                )))
+            }
             Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
                 let left = deadline.saturating_duration_since(std::time::Instant::now());
                 if left.is_zero() {
                     return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut, "FIFO_CONSUMER_TIMEOUT"));
+                        std::io::ErrorKind::TimedOut,
+                        "FIFO_CONSUMER_TIMEOUT",
+                    ));
                 }
                 std::thread::sleep(left.min(std::time::Duration::from_millis(10)));
             }

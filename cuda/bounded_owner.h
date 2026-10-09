@@ -59,6 +59,17 @@ int mgbfs_bounded_owner_rank_commit(void* plan, const MgbfsBucketJob* jobs,
     uint32_t* accepted_counts, const MgbfsOwnerCounts* counts,
     MgbfsOwnerControl* control, const uint32_t* granted_rows,
     uint32_t* survivor_indices, void* stream);
+/* StateRef variant: key and monotonic ring sequence are published together.
+ * Both reference buffers are device arrays, preallocated by the caller. Old
+ * refs are live for every accepted key; new refs use reserved state_sequence
+ * plus the exact selected/materialization row. No host counts or allocations. */
+int mgbfs_bounded_owner_rank_commit_refs(void* plan,const MgbfsBucketJob* jobs,
+    uint32_t buckets,const void* input,void* accepted,uint32_t* accepted_counts,
+    const MgbfsOwnerCounts* counts,MgbfsOwnerControl* control,
+    const uint32_t* granted_rows,uint32_t* survivor_indices,
+    uint64_t* accepted_refs,uint64_t accepted_ref_records,
+    uint64_t* merged_refs,uint64_t merged_ref_records,
+    const uint64_t* state_sequence,void* stream);
 int mgbfs_bounded_owner_compare(void* plan, const MgbfsBucketJob* jobs,
     uint32_t job_count, uint32_t rows, const void* incoming,
     const void* prev, uint64_t prev_count, const void* curr, uint64_t curr_count,

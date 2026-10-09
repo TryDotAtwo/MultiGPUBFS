@@ -94,7 +94,9 @@ impl StateRing {
         self.peak = self.peak.max(end - head);
         Ok(extent)
     }
-    /// Absolute record address, not an extent descriptor ID or physical index.
+    /// Absolute handle to owned materialized bytes, not an extent ID or a
+    /// physical index. Creating a provisional handle does not grant generation
+    /// access: `resolve` still requires Current or a live Enumerated origin lease.
     pub fn state_ref(&self, id: u64, row: u64) -> Result<u64> {
         let x = self
             .live
@@ -109,7 +111,9 @@ impl StateRing {
             .sequence
             .checked_add(row)
             .ok_or("STATE_RING_COUNTER_OVERFLOW")?;
-        self.resolve(reference)?;
+        if x.state != State::Materialized {
+            self.resolve(reference)?;
+        }
         Ok(reference)
     }
     pub fn resolve(&self, reference: u64) -> Result<u64> {

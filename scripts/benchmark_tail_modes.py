@@ -53,7 +53,9 @@ def summarize(root, name, started, events, error):
     auto = json.loads(auto_path.read_text()) if auto_path.exists() else {}
     gap = [r['transition_before_seconds'] for r in pairs.values()
            if isinstance(r.get('transition_before_seconds'), (int, float))]
-    return dict(name=name, status='VERIFIED' if auto.get('status') == 'VERIFIED' else 'INCOMPLETE',
+    publication_verified = auto.get('status') in ('VERIFIED', 'VERIFIED_PUBLICATION')
+    return dict(name=name, status='VERIFIED' if publication_verified and auto.get('validation_status') != 'FAILED' else 'INCOMPLETE',
+        validation_status=auto.get('validation_status', 'NOT_VALIDATED'),
         error=error, program_wall_seconds=time.monotonic()-started, events=events,
         grid_pairs=len(ledger.get('configuration', {}).get('grid', [])),
         attempted=len(pairs), complete=sum(r['status'] == 'COMPLETE' for r in pairs.values()),
