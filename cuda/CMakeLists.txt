@@ -49,6 +49,11 @@ target_compile_options(mgbfs_cuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo;-
 set_target_properties(mgbfs_cuda PROPERTIES POSITION_INDEPENDENT_CODE ON WINDOWS_EXPORT_ALL_SYMBOLS ON)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(mgbfs-lossless-key-test ../tests/lossless_state_key.cu)
+  target_include_directories(mgbfs-lossless-key-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_features(mgbfs-lossless-key-test PRIVATE cxx_std_17 cuda_std_17)
+  add_test(NAME lossless-state-key COMMAND mgbfs-lossless-key-test)
+
   add_executable(mgbfs-batch-graph-window-test ../tests/batch_graph_window.cu)
   target_include_directories(mgbfs-batch-graph-window-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(mgbfs-batch-graph-window-test PRIVATE mgbfs_cuda)

@@ -5,10 +5,19 @@ No CPU successor generation/dedup. Only bounded committed snapshots are read.
 import hashlib,json,math,os,re,select,struct,subprocess,threading,time,uuid
 from pathlib import Path
 
-def exact_specialized_supported():
- # Legacy owners compare Hash128 fingerprints only. A small oracle does not
- # prove injectivity for arbitrary graphs; exact public launch must fail closed.
- return False
+def exact_specialized_supported(graph=None):
+ if graph is None:return False
+ match=match_lrx(graph)
+ if match is None:return False
+ bits=max(1,(len(match['labels'])-1).bit_length())
+ return match['n']*bits<=128
+
+def require_lossless_native(native,env):
+ p=subprocess.run([native,'key-info'],env=env,capture_output=True,text=True,timeout=10)
+ try:capability=json.loads(p.stdout)
+ except ValueError:capability={}
+ if p.returncode or capability.get('schema')!=1 or capability.get('lossless_bitpack128_feistel_v1') is not True:raise RuntimeError('SPECIALIZED_NATIVE_LOSSLESS_KEYS_UNAVAILABLE')
+ return capability
 
 def match_lrx(graph):
  if graph.action['kind']!='permutation' or not 2<=graph.state_elements<=128:return None
@@ -73,7 +82,7 @@ def _environment(env,match,devices,capacity,batch,mode,query=False,profile_layer
  if mode not in ('HASH','SORT_MERGE'):raise ValueError('SPECIALIZED_OWNER_MODE')
  world=len(devices)
  if world not in (1,2,4,8):raise ValueError('SPECIALIZED_WORLD_UNSUPPORTED')
- e=dict(env);e.update(MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='SHARD_AB',MGBFS_PRE_DEDUP='OFF',MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BENCH_CAPACITY=str(capacity),MGBFS_FUTURE_CAPACITY=str(capacity*3),MGBFS_BUCKET_CAPACITY=str(capacity),MGBFS_BUCKETS='16',MGBFS_SHARDS='8',MGBFS_JOB_BUCKETS='2',MGBFS_STATE_CODEC='permutation_u8',MGBFS_ARCHIVE_CODEC='permutation_u8',MGBFS_ARCHIVE_SELECTION='last_complete_prefix_1000',MGBFS_ARCHIVE_ROWS='1000',MGBFS_ARCHIVE_SLOTS='16',MGBFS_ARCHIVE_INITIAL_SLOTS='16',MGBFS_ARCHIVE_CREDIT_MODE='wait',MGBFS_SELECTED_WHOLE_ONLY='0',MGBFS_TRACE_DEPTHS='1',MGBFS_BENCH_WARMUP='0',MGBFS_BENCH_WORLD_SIZE=str(world),MGBFS_RANK_MAP=','.join(map(str,range(world))),MGBFS_MACRO_DEPTH='1',MGBFS_CUDA_GRAPH_BATCHES='0',MGBFS_TRANSPORT_BACKEND=env.get('MGBFS_SPECIALIZED_TRANSPORT','HOST_SIZED_NCCL'),MGBFS_SHARD_AB_DEDUP=mode,MGBFS_SHARD_AB_CAPACITY=str(shard_target),MGBFS_VRAM_RESERVE_BYTES=str(256<<20),MGBFS_BENCH_SKIP_ARCHIVE='1' if query else '0',MGBFS_ARCHIVE_STREAM='0' if query else '1')
+ e=dict(env);e.update(MGBFS_EXACT_PACKED_KEYS='1',MGBFS_PROFILE='DENSE',MGBFS_OWNER_BACKEND='SHARD_AB',MGBFS_PRE_DEDUP='OFF',MGBFS_CAPACITY_MODE='max_per_rank',MGBFS_BENCH_CAPACITY=str(capacity),MGBFS_FUTURE_CAPACITY=str(capacity*3),MGBFS_BUCKET_CAPACITY=str(capacity),MGBFS_BUCKETS='16',MGBFS_SHARDS='8',MGBFS_JOB_BUCKETS='2',MGBFS_STATE_CODEC='permutation_u8',MGBFS_ARCHIVE_CODEC='permutation_u8',MGBFS_ARCHIVE_SELECTION='last_complete_prefix_1000',MGBFS_ARCHIVE_ROWS='1000',MGBFS_ARCHIVE_SLOTS='16',MGBFS_ARCHIVE_INITIAL_SLOTS='16',MGBFS_ARCHIVE_CREDIT_MODE='wait',MGBFS_SELECTED_WHOLE_ONLY='0',MGBFS_TRACE_DEPTHS='1',MGBFS_BENCH_WARMUP='0',MGBFS_BENCH_WORLD_SIZE=str(world),MGBFS_RANK_MAP=','.join(map(str,range(world))),MGBFS_MACRO_DEPTH='1',MGBFS_CUDA_GRAPH_BATCHES='0',MGBFS_TRANSPORT_BACKEND=env.get('MGBFS_SPECIALIZED_TRANSPORT','HOST_SIZED_NCCL'),MGBFS_SHARD_AB_DEDUP=mode,MGBFS_SHARD_AB_CAPACITY=str(shard_target),MGBFS_VRAM_RESERVE_BYTES=str(256<<20),MGBFS_BENCH_SKIP_ARCHIVE='1' if query else '0',MGBFS_ARCHIVE_STREAM='0' if query else '1')
  for key in ('MGBFS_LIBRARY_POOL_BYTES','MGBFS_LIBRARY_POOL_AUTOSIZE','MGBFS_CALIBRATION_LAYERS','MGBFS_SHARD_AB_SHARDS','MGBFS_MEMORY_QUERY','MGBFS_SEARCH_ONLY'):e.pop(key,None)
  for key in ('MGBFS_SHARD_AB_KEY_FIRST','MGBFS_COMPACT_DIRECT_HASH','MGBFS_SHARD_AB_PEER_METADATA','MGBFS_SHARD_AB_ASYNC_MATERIALIZE','MGBFS_SHARD_AB_DIRECT_INPUT','MGBFS_SORT_HISTORY_LOOKUP'):e[key]='1'
  for key in ('MGBFS_SHARD_AB_COMBINED_STATUS','MGBFS_SHARD_AB_FUSED_RESPONSE_META','MGBFS_SHARD_AB_REUSE_HISTORY'):e[key]='0'
@@ -115,6 +124,8 @@ def _workers(native,root,match,devices,batch,env,seconds,query=False):
 def query(native,env,graph,root,devices,capacity,batch,mode='HASH',seconds=60,shard_target=1<<20):
  match=match_lrx(graph)
  if match is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
+ if not exact_specialized_supported(graph):raise ValueError('SPECIALIZED_LOSSLESS_KEY_DOMAIN_UNSUPPORTED')
+ require_lossless_native(native,env)
  root=Path(root);root.mkdir(parents=True);e=_environment(env,match,devices,capacity,batch,mode,query=True,shard_target=shard_target)
  codes,wall,stopped=_workers(native,root,match,devices,batch,e,seconds,query=True);records=[]
  for rank in range(len(devices)):
@@ -131,6 +142,8 @@ def query(native,env,graph,root,devices,capacity,batch,mode='HASH',seconds=60,sh
 def run_specialized(graph,output,*,native,env,devices,capacity,batch,max_seconds,mode='HASH',profile_layers=None,shard_target=1<<20):
  match=match_lrx(graph)
  if match is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
+ if not exact_specialized_supported(graph):raise ValueError('SPECIALIZED_LOSSLESS_KEY_DOMAIN_UNSUPPORTED')
+ require_lossless_native(native,env)
  output=Path(output);output.mkdir(parents=True);stopped=threading.Event();pipes=[];threads=[];receipts={};errors={};n=match['n']
  try:
   for rank in range(len(devices)):
@@ -251,6 +264,8 @@ def select_capacity(query, upper, *, minimum=32768):
 def admit_specialized(graph,native,env,devices,root,*,capacity=None,mode='HASH',shard_target=1<<20,seconds=60):
  match=match_lrx(graph)
  if match is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
+ if not exact_specialized_supported(graph):raise ValueError('SPECIALIZED_LOSSLESS_KEY_DOMAIN_UNSUPPORTED')
+ require_lossless_native(native,env)
  root=Path(root);root.mkdir(parents=True);upper=min(match['order'],(2**31-1)//3)
  def probe(rows):
   batch=min(rows,65536)

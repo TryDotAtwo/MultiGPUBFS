@@ -29,6 +29,8 @@ fn execute() -> Result<(), (i32, String)> {
     }
 
     match args.first().and_then(|x| x.to_str()) {
+        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
+
         Some(command @ ("graph-info" | "graph-plan" | "graph-rank")) => {
             #[cfg(all(feature="cuda",target_os="linux"))]
             {let paths=args[1..].iter().map(|v|v.clone().into_string().map_err(|_|(2,"CLI_GRAPH_ARGUMENT_ENCODING".into()))).collect::<Result<Vec<_>,_>>()?;

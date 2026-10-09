@@ -3012,6 +3012,13 @@ impl DistributedNativeBfs {
             graph.start.clone()
         };
         let width = start_state.len();
+        let lossless_bits = if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref()==Some("1") {
+            if !compact_direct_enabled || owner_backend!=OwnerBackend::ShardAb || permutation_n.is_none(){return Err("LOSSLESS_KEYS_REQUIRE_COMPACT_PERMUTATION_SHARD_AB".into());}
+            let maximum=*start_state.iter().max().ok_or("LOSSLESS_KEY_DOMAIN")?;
+            let bits=(8-maximum.leading_zeros()).max(1);
+            mgbfs_core::lossless_key::pack(&start_state,bits)?;
+            Some(bits)
+        } else {None};
         let stride = (width + 15) & !15;
         let moves = u32::try_from(macro_operators.map_or(graph.generators.len(), |schedule| {
             schedule.transitions.len()
@@ -3286,6 +3293,7 @@ impl DistributedNativeBfs {
             )?;
             }
             if compact_direct_enabled {
+                if lossless_bits.is_some(){owned_memory.add("compact_direct.lossless_permutation",width as u64*u64::from(moves),1,256)?;}else{
                 let mut bytes=0;check(unsafe{mgbfs_compact_hash_query(width as u32,moves,cfg.batch,&mut bytes)})?;
                 let weights=u64::from(moves)*16*stride as u64;
                 let partials=u64::from(cfg.batch)*u64::from(moves)*64;
@@ -3293,6 +3301,7 @@ impl DistributedNativeBfs {
                 owned_memory.add("compact_direct.weights",weights,1,256)?;
                 owned_memory.add("compact_direct.offsets",16,1,256)?;
                 owned_memory.add("compact_direct.partials",partials,1,256)?;
+                }
             } else {
             append_query(
                 &mut owned_memory,
@@ -3302,11 +3311,13 @@ impl DistributedNativeBfs {
             }
             None
         };
+if lossless_bits.is_none(){
         append_query(
             &mut owned_memory,
             "archive_hash",
             &query_hash(width as u32, cfg.batch)?,
         )?;
+        }
         append_query(&mut owned_memory, "route", &query_route(candidates)?)?;
         if let Some(shape) = ab_shape {
             let mut bytes = 0;
@@ -3578,7 +3589,9 @@ impl DistributedNativeBfs {
             let mut permutation=Vec::new();
             for generator in &graph.generators {permutation.extend(encode_permutation_matrix(generator,graph.rows)?);}
             Some(Plan::new(mgbfs_compact_hash_destroy,|out,e|unsafe{
+                if let Some(bits)=lossless_bits {mgbfs_lossless_compact_hash_create(width as u32,moves,cfg.batch,permutation.as_ptr(),bits,1,out,e,512)}else{
                 mgbfs_compact_hash_create(width as u32,moves,cfg.batch,permutation.as_ptr(),limbs.as_ptr(),contract.offsets.as_ptr(),1,out,e,512)
+                }
             })?)
         }else{None};
         let hash = if materialization_capacity.is_some() || compact_direct_enabled {
@@ -3614,6 +3627,7 @@ impl DistributedNativeBfs {
                 mgbfs_route_create(candidates, out, e, 512)
             })?;
             let archive_hash = Plan::new(mgbfs_hash_destroy, |out, e| unsafe {
+                if let Some(bits)=lossless_bits {mgbfs_lossless_hash_create(width as u32,cfg.batch,bits,out,e,512)}else{
                 mgbfs_hash_create(
                     width as u32,
                     cfg.batch,
@@ -3623,6 +3637,7 @@ impl DistributedNativeBfs {
                     e,
                     512,
                 )
+                }
             })?;
             let owner = if library_pool_bytes.is_some() || ab_shape.is_some() {
                 None
@@ -3675,7 +3690,7 @@ impl DistributedNativeBfs {
             let states = b("states")?;
             let prev = b("prev")?;
             let curr = b("curr")?;
-            let start_hash = contract.hash(&start_state)?;
+            let start_hash = if let Some(bits)=lossless_bits {mgbfs_core::lossless_key::pack(&start_state,bits)?}else{contract.hash(&start_state)?};
             let start_owner = crate::topology::hash_owner(cfg.world, start_hash.0[3])?;
             let start_rank = cfg.logical_owner_to_rank[start_owner];
             let current_count = (start_rank == cfg.rank) as u32;

@@ -127,7 +127,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
 
 def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_seconds,backend,batch,profile_layers,profile):
  from .specialized import admit_specialized,match_lrx,run_specialized,exact_specialized_supported
- if not exact_specialized_supported():raise RuntimeError('SPECIALIZED_EXACT_EQUALITY_UNAVAILABLE: legacy Hash128-only membership lacks full-state collision resolution')
+ if not exact_specialized_supported(graph):raise RuntimeError('SPECIALIZED_LOSSLESS_KEY_DOMAIN_UNSUPPORTED: no proved injective key for this graph')
  if match_lrx(graph) is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
  output=Path(output).absolute();output.parent.mkdir(parents=True,exist_ok=True)
  if output.exists():raise FileExistsError(output)

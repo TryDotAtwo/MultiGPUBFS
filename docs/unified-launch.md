@@ -1,3 +1,7 @@
+# Current lossless-key update
+
+The earlier fingerprint-only restriction below is historical. Current source admits matched LRX permutation graphs only when their entire normalized state has a proved injective128-bit packed key, and checks native capability before specialized launch. Other graph domains retain general full-state equality. See lossless-shard-keys.md for the proof, producer/allocation contract, current GPU evidence and remaining clean-installed/release gates. Do not infer arbitrary-graph exactness from prior fingerprint fixtures.
+
 # Current exact-owner restriction
 
 The exact public API currently selects only the generic full-state-equality backend. Legacy SHARD_AB HASH/SORT_MERGE compare128-bit fingerprints without full-state collision resolution, so they are excluded from automatic profiles and explicit public requests fail with SPECIALIZED_EXACT_EQUALITY_UNAVAILABLE. Earlier small-graph oracles validate those fixtures only; they do not prove hash injectivity for arbitrary graphs. Peer-capability experiments remain bounded private reference tests. The source goal remains incomplete until the specialized owner has full equality or a proved lossless key.

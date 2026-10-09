@@ -1,3 +1,7 @@
+# Current lossless-key update
+
+The earlier fingerprint-only restriction below is historical. Current source admits matched LRX permutation graphs only when their entire normalized state has a proved injective128-bit packed key, and checks native capability before specialized launch. Other graph domains retain general full-state equality. See lossless-shard-keys.md for the proof, producer/allocation contract, current GPU evidence and remaining clean-installed/release gates. Do not infer arbitrary-graph exactness from prior fingerprint fixtures.
+
 # Current exactness correction
 
 Authoritative final audit: cuda/shard_ab_pipeline.cu equal(Key,Key) compares onlyfour fingerprint words; history membership and merge uniqueness use that predicate without full-state comparison. The unified public API therefore rejects fingerprint-only SHARD_AB and automatic tuning excludes it. The generic backend retains forced-collision full-state equality and remains the exact supported path. Previous specialized fixture results and throughput receipts are historical bounded oracle evidence, not a proof of arbitrary-graph exactness. Current correction is a Python policy gate; CUDA and the general aggregation path are unchanged from the clean-installed/network/terminal accepted runtime. The lease work deadline has passed; no new GPU work is started after it. Package rejection/policy validation uses CPU-only checks.

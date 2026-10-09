@@ -855,6 +855,7 @@ fn run_pass(
         return Err("SELECTED_ARCHIVE_REQUIRES_COMPACT_STATES".into());
     }
     let description = format!("{description};archive_selection={archive_selection:?}");
+    let description = format!("{description};exact_packed_keys={:?}",std::env::var("MGBFS_EXACT_PACKED_KEYS").ok());
 
         let digest: [u8; 32] = Sha256::digest(description.as_bytes()).into();
         let archive_path = format!("{}-rank-{rank}.mgbfsar1", args[4]);
@@ -924,6 +925,7 @@ fn run_pass(
             "calibration_layers": std::env::var("MGBFS_CALIBRATION_LAYERS").ok(),
             "shard_key_first": std::env::var("MGBFS_SHARD_AB_KEY_FIRST").ok(),
             "compact_direct": std::env::var("MGBFS_COMPACT_DIRECT_HASH").ok(),
+            "exact_packed_keys": std::env::var("MGBFS_EXACT_PACKED_KEYS").ok(),
             "peer_metadata": std::env::var("MGBFS_SHARD_AB_PEER_METADATA").ok(),
             "reuse_preowner_status": std::env::var("MGBFS_SHARD_AB_REUSE_PREOWNER_STATUS").ok(),
             "combined_status": std::env::var("MGBFS_SHARD_AB_COMBINED_STATUS").ok(),
@@ -1403,6 +1405,7 @@ fn run_pass(
             value["device_allocation_plan"] =
                 crate::distributed_memory::allocation_report(bfs.owned_memory());
             value["hash_seed_hex"] = serde_json::json!(seed_hex);
+            value["state_key_codec"] = serde_json::json!(if std::env::var("MGBFS_EXACT_PACKED_KEYS").ok().as_deref()==Some("1"){"lossless_bitpack128_feistel_v1"}else{"affine_fingerprint128_v1"});
             value["cuda_loading"] = crate::cuda_loading::evidence();
             value["bootstrap_digest"] = serde_json::json!(bootstrap_digest);
             value["logical_owner_to_rank"] = serde_json::json!(cfg.logical_owner_to_rank);

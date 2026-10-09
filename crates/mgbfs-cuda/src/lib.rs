@@ -651,6 +651,8 @@ pub mod ffi {
         pub fn mgbfs_generate_destroy(plan: *mut c_void);
         pub fn mgbfs_compact_map_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
         pub fn mgbfs_compact_map_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
+        pub fn mgbfs_lossless_hash_create(n:u32,capacity:u32,bits:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
+        pub fn mgbfs_lossless_compact_hash_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,bits:u32,move_major:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
         pub fn mgbfs_compact_hash_query(n:u32,moves:u32,capacity:u32,bytes:*mut u64)->i32;
         pub fn mgbfs_compact_hash_create(n:u32,moves:u32,capacity:u32,permutation:*const u8,limbs:*const u8,offsets:*const u32,move_major:u32,out:*mut *mut c_void,error:*mut c_char,error_capacity:usize)->i32;
         pub fn mgbfs_compact_hash_run(plan:*mut c_void,parents:*const u8,output:*mut u32,count:u32,stream:*mut c_void)->i32;

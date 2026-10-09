@@ -15,3 +15,5 @@ pub mod wire;
 pub type Result<T> = std::result::Result<T, String>;
 
 pub mod graph_definition;
+
+pub mod lossless_key;

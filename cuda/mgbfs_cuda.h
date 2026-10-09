@@ -352,3 +352,6 @@ int mgbfs_nccl_lsa_compiled(void);
 }
 #endif
 #endif
+
+extern "C" int mgbfs_lossless_hash_create(uint32_t,uint32_t,uint32_t,void**,char*,size_t);
+extern "C" int mgbfs_lossless_compact_hash_create(uint32_t,uint32_t,uint32_t,const uint8_t*,uint32_t,uint32_t,void**,char*,size_t);
