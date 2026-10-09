@@ -8,7 +8,7 @@ if identity_path.exists():assert json.loads(identity_path.read_text())==identity
 else:identity_path.write_text(json.dumps(identity))
 env=dict(os.environ);checks=[]
 g=GraphDefinition.permutation([[1,2,3,0],[1,0,2,3]],[0,255,128,0]);oracle=g.exact_layers(24)
-def ranks(g,name,codec,bits,shards,capacity):
+def ranks(g,name,codec,bits,shards,capacity,batch=2):
  out=r/name
  if out.exists():
   assert GraphDefinition.from_dict(json.loads((out/'graph.json').read_text())).digest()==g.digest()
@@ -19,7 +19,7 @@ def ranks(g,name,codec,bits,shards,capacity):
  try:
   for rank in range(2):
    log=(out/f'rank-{rank}.log').open('w');logs.append(log)
-   jobs.append(subprocess.Popen(['/root/universal/src/target/release/examples/generic_distributed_gate',str(rank),str(out),str(definition),str(bits),str(shards),str(capacity),str(codec)],env=env,stdout=log,stderr=subprocess.STDOUT))
+   jobs.append(subprocess.Popen(['/root/universal/src/target/release/examples/generic_distributed_gate',str(rank),str(out),str(definition),str(bits),str(shards),str(capacity),str(codec),str(batch)],env=env,stdout=log,stderr=subprocess.STDOUT))
   started=time.monotonic()
   while any(p.poll() is None for p in jobs):
    if any(p.poll() not in (None,0) for p in jobs):raise RuntimeError('rank failure '+name)
@@ -57,5 +57,13 @@ for index,g in enumerate(fixtures):
   states=json.loads((out/'states.json').read_text());assert sorted(states['current'])==expected[-1];assert sorted(states['previous_small'])==expected[-2]
   codec=report.get('state_bytes',report.get('plan',{}).get('state_bytes'));assert codec==(1 if index==0 else 8),(codec,report)
   checks.append({'case':f'public-{index}-{selection}','state_bytes':codec,'all_layer_counts_and_terminal_states_exact':True})
+skew_graph=GraphDefinition.permutation([[1,2,3,4,5,0],[1,0,2,3,4,5]],list(range(6)))
+skew_oracle=skew_graph.exact_layers(1000)
+for codec in (1,8):
+ parts=ranks(skew_graph,f'skew-retry-{codec}',codec,0,4,720,32)
+ assert all(p['fatal']==0 and p['source_retries']>0 for p in parts),parts
+ assert parts[0]['source_retries']==parts[1]['source_retries']
+ assert [sorted(parts[0]['layers'][i]+parts[1]['layers'][i]) for i in range(len(parts[0]['layers']))]==skew_oracle
+ checks.append({'case':f'skew-retry-{codec}','source_retries':parts[0]['source_retries'],'all_layers_exact':True})
 receipt={'status':'VERIFIED_COMPACT_STORAGE_ONE_TWO_GPU','native_identity':identity,'checks':checks,'resource_current_previous_exact':True,'scope':'storage codec and exact hash/equality/routing semantics only; throughput and specialized key-first dispatch pending'}
 (r/'verification.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt))

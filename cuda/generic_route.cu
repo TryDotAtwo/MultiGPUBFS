@@ -111,3 +111,12 @@ extern "C" int mgbfs_generic_regenerate_routes_count_u8(uint32_t kind,uint32_t e
  regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,device_count,output,output_stride,error);
  return int(cudaGetLastError());
 }
+
+// Distinguish retryable source skew from owner/metadata errors. Owners from
+// earlier successful rounds are never reset or confused with source overflow.
+__global__ void classify_route_retry(const uint32_t* source,const uint32_t* owner,uint32_t* vote){
+ if(threadIdx.x==0&&blockIdx.x==0){const uint32_t s=*source,o=*owner;*vote=o?0x100u|o:((s==1u||s==5u)?1u:(s?0x10000u|s:0u));}
+}
+extern "C" int mgbfs_generic_route_retry_vote(const uint32_t* source,const uint32_t* owner,uint32_t* vote,void* stream){
+ if(!source||!owner||!vote)return 1;classify_route_retry<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(source,owner,vote);return cudaGetLastError()==cudaSuccess?0:2;
+}

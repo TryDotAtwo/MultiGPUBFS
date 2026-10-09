@@ -137,3 +137,5 @@ extern "C" {
 pub unsafe fn mgbfs_generic_accept_all_storage(state_bytes:u32,elements:u32,local:*const i64,remote:*const i64,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
  slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>mgbfs_generic_accept_all_u8(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited.cast(),visited_capacity,visited_count,future,future_capacity,future_count,error,stream),8=>mgbfs_generic_accept_all_i64(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream),_=>1}}
+
+extern "C" {pub fn mgbfs_generic_route_retry_vote(source:*const u32,owner:*const u32,vote:*mut u32,stream:*mut std::ffi::c_void)->i32;}

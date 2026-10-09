@@ -14,7 +14,7 @@ pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:
 pub struct GenericDistributedBfs{
  bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
  banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,
- streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,
+ streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
 impl GenericDistributedBfs{
@@ -41,8 +41,9 @@ impl GenericDistributedBfs{
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
   check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
   let counts=(0..plan.world).map(|r|if r==0{1}else{0}).collect();
-  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts})
+  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
+ pub fn source_retries(&self)->u64{self.source_retries}
  pub fn frontier_len(&self)->u32{self.bfs.count}
  pub fn sample_global(&mut self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().map(|&v|u64::from(v)).sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(u64::from(self.bfs.count)) as u32;self.bfs.sample(quota)}
  /// Layer-boundary cancellation vote: every rank must call in the same order.
@@ -60,16 +61,19 @@ impl GenericDistributedBfs{
   check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;let stream=b.stream.ptr;let p=&self.plan;
   check(unsafe{mgbfs_generic_gather_storage(p.state_bytes,p.elements,b.visited.ptr.cast(),p.capacity,b.front.ptr.cast(),b.count,b.parents.ptr.cast(),p.capacity,stream)})?;
   check(unsafe{cudaMemsetAsync(b.control.at::<c_void>(4),0,4,stream)})?;
-  let rounds=(u64::from(self.max_frontier)+u64::from(p.batch)-1)/u64::from(p.batch);
+  let mut global_begin=0u64;let mut batch=p.batch;let mut round=0u64;
   let queues=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;let width=p.elements as usize;let shards=p.shards as usize;let state_bytes=p.state_bytes as usize;
-  for round in 0..rounds{
-   let bank=&self.banks[((self.depth+round)%2) as usize];let begin=(round*u64::from(p.batch)).min(u64::from(b.count)) as u32;let count=p.batch.min(b.count-begin);
+  while global_begin<u64::from(self.max_frontier){
+   let bank=&self.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
+   check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    check(unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
-   check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),ptr::null(),bank.records.ptr.cast(),bank.counts.ptr.cast(),b.control.at(8),stream)})?;
-   for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,b.control.at(8),stream)})?;}
+   check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),ptr::null(),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
+   for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}
    // Invalid source counts must not be presented as valid owner inboxes.
-   check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,b.control.at(8),self.control.at(0),stream)})?;
+   check(unsafe{mgbfs_generic_route_retry_vote(self.control.at(8),b.control.at(8),self.control.at(12),stream)})?;
+   check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,self.control.at(12),self.control.at(0),stream)})?;
    let mut fatal=0u32;check(unsafe{cudaMemcpyAsync((&mut fatal as *mut u32).cast(),self.control.ptr,4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
+   if fatal==1&&batch>1{batch=(batch/2).max(1);self.source_retries+=1;continue;}
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
    // A single matched NCCL group submits all peer lanes without host count reads.
    check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*width*state_bytes) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
@@ -79,6 +83,7 @@ impl GenericDistributedBfs{
     check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;check(unsafe{cudaStreamWaitEvent(stream,self.done[shard].ptr,0)})?;
    }
    // This dependency retires all inbox and immutable source leases before reuse.
+   global_begin+=u64::from(batch);round+=1;
   }
   check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,b.control.at(8),self.control.at(0),stream)})?;
   check(unsafe{mgbfs_nccl_all_gather_u32(self.comm,b.control.at(4),self.control.at(32),stream)})?;
