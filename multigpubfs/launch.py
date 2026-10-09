@@ -120,7 +120,6 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
   report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
-  report['transport_selection']=decision
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return _receipt(output,digest)
