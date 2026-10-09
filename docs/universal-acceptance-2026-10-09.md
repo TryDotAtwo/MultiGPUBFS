@@ -1,3 +1,9 @@
+# Current exactness correction
+
+Authoritative final audit: cuda/shard_ab_pipeline.cu equal(Key,Key) compares onlyfour fingerprint words; history membership and merge uniqueness use that predicate without full-state comparison. The unified public API therefore rejects fingerprint-only SHARD_AB and automatic tuning excludes it. The generic backend retains forced-collision full-state equality and remains the exact supported path. Previous specialized fixture results and throughput receipts are historical bounded oracle evidence, not a proof of arbitrary-graph exactness. Current correction is a Python policy gate; CUDA and the general aggregation path are unchanged from the clean-installed/network/terminal accepted runtime. The lease work deadline has passed; no new GPU work is started after it. Package rejection/policy validation uses CPU-only checks.
+
+Remaining required engineering: implement exact specialized equality. A possible fast LRX solution is a provably injective permutation/multiset rank key (with reversible mixing for owner distribution) when the exact domain fits64/128bits, and full-state collision resolution otherwise. Prove that every key producer, historical key, materialization path and codec uses the same key contract; test forced-key collisions and compare complete layers/terminal states before enabling it. General persistent sorted-history integration and successful LSA hardware acceptance remain unverified.
+
 # Unified BFS acceptance audit, 2026-10-09
 
 Current runtime artifact: c7d399f (full immutable commit and installation URL are recorded in install-native-package.md after publication). Earlier receipts below are historical evidence for their corresponding source revisions. CUDA13.2 SM86+PTX, two actual RTX3060 12GB on one host. Current wheel and immutable installation URL are in install-native-package.md. Source-only delivery preserves historical commits on the sole integrated GitHub branch.

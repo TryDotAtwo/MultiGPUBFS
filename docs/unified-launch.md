@@ -1,3 +1,7 @@
+# Current exact-owner restriction
+
+The exact public API currently selects only the generic full-state-equality backend. Legacy SHARD_AB HASH/SORT_MERGE compare128-bit fingerprints without full-state collision resolution, so they are excluded from automatic profiles and explicit public requests fail with SPECIALIZED_EXACT_EQUALITY_UNAVAILABLE. Earlier small-graph oracles validate those fixtures only; they do not prove hash injectivity for arbitrary graphs. Peer-capability experiments remain bounded private reference tests. The source goal remains incomplete until the specialized owner has full equality or a proved lossless key.
+
 # Unified graph launch (current implementation)
 
 ```python
