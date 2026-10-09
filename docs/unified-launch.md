@@ -9,7 +9,7 @@ The default uses all CUDA-visible devices on one host. `device=1` selects one
 card; `devices=[1,0]` sets explicit placement. `max_seconds` limits work, and
 `capacity` overrides retained rows per card subject to VRAM admission.
 `shards=4` selects independent owner streams. When `shards` is omitted, substantial
-workloads measure three bounded same-graph GPU profiles (1 shard, 4 shards,
+workloads measure four bounded same-graph GPU profiles (1 shard, 4 shards, 16 shards,
 and 4 shards with quarter-size routing batches). Comparable completed depths
 and identical layer counts are required; first-collective warmup is excluded.
 An alternative must beat the baseline by at least 5% to justify a switch.

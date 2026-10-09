@@ -14,7 +14,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  if output.exists():raise FileExistsError(output)
  output.parent.mkdir(parents=True,exist_ok=True)
  digest=graph.digest();host=os.environ['MASTER_ADDR'];port=int(os.environ.get('MGBFS_CONTROL_PORT',str(int(os.environ['MASTER_PORT'])+1)))
- session=os.environ.get('MGBFS_RUN_ID',digest+'-'+os.environ['MASTER_PORT']);store=ControlStore(host,port,rank,session,max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
+ session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
  started=time.monotonic();profile=None
  try:
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
@@ -77,21 +77,28 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       if any(v[k]!=reports[0][k] for k in ('status','reason','layer_sizes')):raise RuntimeError('EXTERNAL_LAYER_CONSENSUS_MISMATCH')
      current=[row for v in parts for row in v['states']['current']];previous=[row for v in parts for row in v['states']['previous_small']]
      if len(current)>1000 or len(previous)>=1000:raise RuntimeError('EXTERNAL_RETENTION_BOUND')
-     states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
+     states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(layer_seconds=[max(v['layer_seconds'][i] for v in reports) for i in range(len(reports[0]['layer_seconds']))],devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
      store.put(label+'/result',{'report':result,'states':states})
     result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2));return result['report']
    if shards is None and autotune and max_seconds>=10:
     inventory=inventories('profile-admission')
     if rank==0:
-     variants=[(1,1.0),(4,1.0),(4,.25)];plans=[admit('profile-'+str(i),inventory,c,capacity)['plan'] for i,(c,f) in enumerate(variants)];common=min(p['capacity'] for p in plans);store.put('profile-plan',{'capacity':common,'run':common>4096})
+     variants=[];plans=[]
+     for i,(c,f) in enumerate(((1,1.0),(4,1.0),(16,1.0),(4,.25))):
+      try:plan=admit('profile-'+str(i),inventory,c,capacity)['plan']
+      except RuntimeError as error:
+       if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
+       raise
+      variants.append((c,f));plans.append(plan)
+     common=min(p['capacity'] for p in plans) if plans else 0;store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
     proposal=store.get('profile-plan')
     if proposal['run']:
      pilots=[]
-     for i,(count,fraction) in enumerate(((1,1.0),(4,1.0),(4,.25))):
+     for i,(count,fraction) in enumerate(proposal['variants']):
       v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,min(3,max(1,max_seconds//20)),36);pilots.append({'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
      depth=min(len(p['layer_seconds']) for p in pilots);sizes=pilots[0]['layer_sizes'][:depth+1]
      if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('EXTERNAL_PROFILE_PREFIX_MISMATCH')
-     scores=[sum(p['layer_seconds'][1:depth]) for p in pilots];winner=min(range(3),key=lambda i:scores[i]) if depth>=4 and sum(sizes[2:])>=32768 else 0
+     scores=[sum(p['layer_seconds'][1:depth]) for p in pilots];winner=min(range(len(pilots)),key=lambda i:scores[i]) if depth>=4 and sum(sizes[2:])>=32768 else 0
      if scores[winner]>=scores[0]*.95:winner=0
      profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
    shards=shards if shards is not None else (profile['shards'] if profile else 1)

@@ -11,9 +11,9 @@ report=run_graph(g,r/'automatic',max_seconds=60)
 assert report['status']=='COMPLETE',report
 assert report['plan']['state_bytes']==1,report
 assert report['layer_sizes']==list(map(len,oracle)),report
-p=report['autotune'];assert p['status']=='MEASURED_EQUAL_PREFIX_GPU_PROFILE',p
+p=report['autotune'];assert len(p['pilots'])==4;assert p['status']=='MEASURED_EQUAL_PREFIX_GPU_PROFILE',p
 assert p['common_depth']>=4 and sum(p['common_layer_sizes'][2:])>=32768,p
-assert p['shards'] in (1,4) and p['batch_fraction'] in (1,.25)
+assert p['shards'] in (1,4,16) and p['batch_fraction'] in (1,.25)
 states=json.loads((r/'automatic/states.json').read_text())
 assert sorted(states['current'])==oracle[-1]
 if len(oracle[-2])<1000:assert sorted(states['previous_small'])==oracle[-2]

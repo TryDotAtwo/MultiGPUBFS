@@ -76,6 +76,9 @@ impl GenericDistributedBfs{
    check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
    for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}
    // Invalid source counts must not be presented as valid owner inboxes.
+   // Generate the next immutable source bank while preceding owners work.
+   // Retire their inbox leases only before reading owner errors/exchanging.
+   if round>0{for event in &self.done{check(unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}}
    check(unsafe{mgbfs_generic_route_retry_vote(self.control.at(8),b.control.at(8),self.control.at(12),stream)})?;
    check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,self.control.at(12),self.control.at(0),stream)})?;
    let mut fatal=0u32;check(unsafe{cudaMemcpyAsync((&mut fatal as *mut u32).cast(),self.control.ptr,4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
@@ -86,11 +89,13 @@ impl GenericDistributedBfs{
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
     check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.at(shard*p.slots_per_shard as usize*8),p.slots_per_shard,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;
-    check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;check(unsafe{cudaStreamWaitEvent(stream,self.done[shard].ptr,0)})?;
+    check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;
    }
-   // This dependency retires all inbox and immutable source leases before reuse.
+   // Next round may generate into the other source bank; inbox retirement
+   // waits occur after that generation and before the next exchange.
    global_begin+=u64::from(batch);round+=1;
   }
+  if round>0{for event in &self.done{check(unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}}
   check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,b.control.at(8),self.control.at(0),stream)})?;
   check(unsafe{mgbfs_nccl_all_gather_u32(self.comm,b.control.at(4),self.control.at(32),stream)})?;
   let mut fatal=0u32;let mut counts=vec![0u32;p.world as usize];let mut visited=0u32;
