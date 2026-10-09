@@ -1,10 +1,10 @@
 use std::{path::Path,time::{Instant,Duration},sync::atomic::{AtomicBool,Ordering}};
 use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use crate::{generic_native::{GenericNativeBfs,GenericAdvance},generic_memory::GenericMemoryPlan};
-static CANCELLED:AtomicBool=AtomicBool::new(false);
+pub(crate) static CANCELLED:AtomicBool=AtomicBool::new(false);
 extern "C" fn cancel(_:i32){CANCELLED.store(true,Ordering::Relaxed);}
-struct Signals{term:libc::sighandler_t,int:libc::sighandler_t}
-impl Signals{fn new()->Self{CANCELLED.store(false,Ordering::Relaxed);unsafe{Self{term:libc::signal(libc::SIGTERM,cancel as libc::sighandler_t),int:libc::signal(libc::SIGINT,cancel as libc::sighandler_t)}}}}
+pub(crate) struct Signals{term:libc::sighandler_t,int:libc::sighandler_t}
+impl Signals{pub(crate) fn new()->Self{CANCELLED.store(false,Ordering::Relaxed);unsafe{Self{term:libc::signal(libc::SIGTERM,cancel as libc::sighandler_t),int:libc::signal(libc::SIGINT,cancel as libc::sighandler_t)}}}}
 impl Drop for Signals{fn drop(&mut self){unsafe{libc::signal(libc::SIGTERM,self.term);libc::signal(libc::SIGINT,self.int);}}}
 pub fn run(args:&[String])->Result<()> {
  if args.len()<2{return Err("CLI_USAGE: mgbfs graph <graph.json> <output-dir> [--device N] [--capacity N] [--seconds N]".into());}

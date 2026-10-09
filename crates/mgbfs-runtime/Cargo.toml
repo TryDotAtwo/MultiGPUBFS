@@ -12,6 +12,7 @@ library-owner = ["mgbfs-cuda/library-owner"]
 mgbfs-core = { path = "../mgbfs-core" }
 sha2 = "=0.10.8"
 serde_json = "=1.0.138"
+serde = { version = "=1.0.217", features = ["derive"] }
 mgbfs-cuda = { path = "../mgbfs-cuda" }
 
 [target.'cfg(target_os = "linux")'.dependencies]

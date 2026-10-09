@@ -14,7 +14,7 @@ pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:
 pub struct GenericDistributedBfs{
  bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
  banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,
- streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,
+ streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
 impl GenericDistributedBfs{
@@ -40,9 +40,18 @@ impl GenericDistributedBfs{
   let mut streams=vec![];let mut done=vec![];for _ in 0..plan.shards{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
   check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
-  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1})
+  let counts=(0..plan.world).map(|r|if r==0{1}else{0}).collect();
+  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts})
  }
  pub fn frontier_len(&self)->u32{self.bfs.count}
+ pub fn sample_global(&mut self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().map(|&v|u64::from(v)).sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(u64::from(self.bfs.count)) as u32;self.bfs.sample(quota)}
+ /// Layer-boundary cancellation vote: every rank must call in the same order.
+ pub fn collective_stop(&mut self,reason:u32)->Result<u32>{if self.bfs.terminal{return Err("GENERIC_DISTRIBUTED_TERMINAL".into());}
+  let stream=self.bfs.stream.ptr;check(unsafe{cudaMemcpyAsync(self.control.at::<c_void>(16),(&reason as *const u32).cast(),4,1,stream)})?;
+  check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,self.control.at(16),self.control.at(20),stream)})?;
+  let mut global=0u32;check(unsafe{cudaMemcpyAsync((&mut global as *mut u32).cast(),self.control.at::<c_void>(20),4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;if global!=0{self.bfs.stop();}Ok(global)
+ }
+
  pub fn stop(&mut self){self.bfs.stop();}
  pub fn sample(&mut self,limit:u32)->Result<Vec<Vec<i64>>>{self.bfs.sample(limit)}
  pub fn previous_small_sample(&mut self,global_previous:u64)->Result<Vec<Vec<i64>>>{if global_previous>=1000{return Ok(vec![]);}self.bfs.previous_small_sample()}
@@ -86,7 +95,7 @@ impl GenericDistributedBfs{
   let local=counts[self.rank as usize];if local>p.capacity{return Err("GENERIC_DISTRIBUTED_COUNT_BOUNDS".into());}
   b.previous=Some((b.current_start,b.count));b.current_start=b.visited_used;b.visited_used=visited;
   self.parent_cursor=self.parent_cursor.checked_add(u64::from(b.count)).ok_or("GENERIC_PARENT_CURSOR_OVERFLOW")?;
-  self.depth+=1;self.max_frontier=*counts.iter().max().unwrap();std::mem::swap(&mut b.front,&mut b.future);b.count=local;b.terminal=false;
+  self.depth+=1;self.max_frontier=*counts.iter().max().unwrap();self.counts=counts;std::mem::swap(&mut b.front,&mut b.future);b.count=local;b.terminal=false;
   Ok(DistributedAdvance::Layer{local,global})
  }
 }

@@ -48,7 +48,7 @@ impl GenericNativeBfs {
   graph.validate()?;let ordinal=i32::try_from(device).map_err(|_|"GENERIC_DEVICE_ORDINAL")?;check(unsafe{cudaSetDevice(ordinal)})?;
   let mut free=0;let mut total=0;check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
   let elements=u32::try_from(graph.start.len()).map_err(|_|"GENERIC_STATE_WIDTH")?;
-  GenericMemoryPlan::automatic(elements,free as u64,graph.expected_max_unique_states)
+  GenericMemoryPlan::automatic(elements,free as u64,crate::generic_memory::state_space_bound(graph))
  }
  pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{
   graph.validate()?;if plan.elements as usize!=graph.start.len()||hash_bits>64{return Err("GENERIC_GRAPH_PLAN".into());}

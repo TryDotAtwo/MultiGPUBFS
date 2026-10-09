@@ -1,33 +1,78 @@
-"""Native graph launch; mathematical CPU oracles are never runtime fallbacks."""
-import hashlib,json,os,shutil,subprocess,tempfile
+"""Single-host native launch. CPU control never generates or deduplicates states."""
+import hashlib,json,os,shutil,subprocess,tempfile,time,signal
 from pathlib import Path
 from .graph_definition import GraphDefinition,from_cayleypy
 
-def run_graph(graph,output,*,device=0,capacity=None,max_seconds=3600,executable=None):
- """Run the general exact single-device engine and validate its output receipt.
-
- Distributed SHARD_AB dispatch is being integrated; this entry point does not
- silently distribute or ignore a requested topology. No HF account is needed.
- """
- if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
- for name,value in [('device',device),('max_seconds',max_seconds)]:
-  if type(value) is not int or value<(0 if name=='device' else 1):raise ValueError('INVALID_'+name.upper())
- if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
- if os.environ.get('WORLD_SIZE','1')!='1':raise RuntimeError('GENERIC_DISTRIBUTED_INTEGRATION_NOT_READY')
- native=executable or os.environ.get('MGBFS_EXECUTABLE') or shutil.which('mgbfs')
- if not native:raise RuntimeError('MGBFS_EXECUTABLE_NOT_FOUND: install the native Linux CUDA runtime or set MGBFS_EXECUTABLE')
- output=Path(output).absolute()
- if output.exists():raise FileExistsError(output)
- output.parent.mkdir(parents=True,exist_ok=True)
- with tempfile.TemporaryDirectory(prefix='mgbfs-definition-',dir=output.parent) as temporary:
-  definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
-  command=[str(native),'graph',str(definition),str(output),'--device',str(device),'--seconds',str(max_seconds)]
-  if capacity is not None:command+=['--capacity',str(capacity)]
-  process=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-  if process.returncode:raise RuntimeError('NATIVE_GRAPH_FAILED: '+process.stderr[-4000:])
+def _receipt(output,digest):
  report=json.loads((output/'report.json').read_text(encoding='utf-8'))
- digest=graph.digest()
  if report['graph_digest']!=digest:raise RuntimeError('GRAPH_RECEIPT_IDENTITY_MISMATCH')
  if report['status'] not in ('COMPLETE','INCOMPLETE'):raise RuntimeError('GRAPH_RECEIPT_STATUS')
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
+
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=1):
+ """Launch on all visible GPUs by default, or an explicit device/device list.
+
+ Memory is admitted from actual free VRAM; throughput profile tuning remains
+ pending. This launcher covers one host, not a multi-host torchrun deployment.
+ """
+ if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
+ if device is not None and devices is not None:raise ValueError('DEVICE_SELECTION_CONFLICT')
+ if device is not None:
+  if type(device) is not int or device<0:raise ValueError('INVALID_DEVICE')
+  devices=[device]
+ if devices is not None and (not isinstance(devices,(list,tuple)) or not devices or any(type(v) is not int or v<0 for v in devices) or len(set(devices))!=len(devices)):raise ValueError('INVALID_DEVICES')
+ if type(max_seconds) is not int or max_seconds<1:raise ValueError('INVALID_MAX_SECONDS')
+ if type(shards) is not int or not 1<=shards<=4096:raise ValueError('INVALID_SHARDS')
+ if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
+ if os.environ.get('WORLD_SIZE','1')!='1':raise RuntimeError('EXTERNAL_MULTIHOST_LAUNCH_NOT_CONNECTED')
+ native=executable or os.environ.get('MGBFS_EXECUTABLE') or shutil.which('mgbfs')
+ if not native:raise RuntimeError('MGBFS_EXECUTABLE_NOT_FOUND: install the native Linux CUDA runtime or set MGBFS_EXECUTABLE')
+ output=Path(output).absolute()
+ if output.exists():raise FileExistsError(output)
+ output.parent.mkdir(parents=True,exist_ok=True);digest=graph.digest()
+ with tempfile.TemporaryDirectory(prefix='mgbfs-definition-',dir=output.parent) as temporary:
+  definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
+  selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
+  if capacity is not None:command.append(str(capacity))
+  probe=subprocess.run(command,capture_output=True,text=True)
+  if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
+  admission=json.loads(probe.stdout);devices=admission['devices']
+  if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
+  if len(devices)==1 and shards==1:
+   command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
+   if capacity is not None:command+=['--capacity',str(capacity)]
+   process=subprocess.run(command,capture_output=True,text=True)
+   if process.returncode:raise RuntimeError('NATIVE_GRAPH_FAILED: '+process.stderr[-4000:])
+   return _receipt(output,digest)
+  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
+  try:
+   for rank in range(len(devices)):
+    log=(output/f'rank-{rank}.log').open('w');logs.append(log)
+    env=dict(os.environ,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
+    jobs.append(subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env=env,stdout=log,stderr=subprocess.STDOUT))
+   while any(p.poll() is None for p in jobs):
+    failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
+    if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
+    if time.monotonic()-started>max_seconds+180:raise RuntimeError('DISTRIBUTED_COMPLETION_TIMEOUT: worker state remains in rank logs; no restart')
+    time.sleep(.02)
+   if any(p.returncode for p in jobs):raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED')
+  finally:
+   for p in jobs:
+    if p.poll() is None:p.terminate()
+   for p in jobs:
+    if p.poll() is None:
+     try:p.wait(timeout=10)
+     except subprocess.TimeoutExpired:p.kill();p.wait()
+   for log in logs:log.close()
+  parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
+  for rank,p in enumerate(parts):
+   if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission['plan']:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
+   if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
+  snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
+  current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
+  if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
+  states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
+  report=dict(parts[0]);report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; larger hardware and measured tuning not verified')
+  (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
+  return _receipt(output,digest)

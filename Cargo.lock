@@ -116,6 +116,7 @@ dependencies = [
  "libc",
  "mgbfs-core",
  "mgbfs-cuda",
+ "serde",
  "serde_json",
  "sha2",
 ]

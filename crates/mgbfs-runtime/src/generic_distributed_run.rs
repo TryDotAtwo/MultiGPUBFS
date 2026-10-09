@@ -1,0 +1,34 @@
+//! Single-host distributed launch worker. No CPU state generation or dedup.
+use std::{path::Path,time::{Duration,Instant},sync::atomic::Ordering};
+use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
+use mgbfs_cuda::{ffi::*,native_owner::{cudaSetDevice,cudaMemGetInfo}};
+use crate::{generic_native::check,generic_distributed_memory::GenericDistributedMemoryPlan as Plan,generic_distributed_native::{GenericDistributedBfs,DistributedAdvance},generic_run::{Signals,CANCELLED}};
+fn graph(path:&str)->Result<GraphDefinitionV2>{let g:GraphDefinitionV2=serde_json::from_reader(std::fs::File::open(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;g.validate()?;Ok(g)}
+fn digest(g:&GraphDefinitionV2)->Result<String>{Ok(g.semantic_digest()?.iter().map(|v|format!("{v:02x}")).collect())}
+fn graph_bytes(g:&GraphDefinitionV2)->u64{match &g.action{GraphAction::Permutation{generators,..}=>generators.iter().map(|v|v.len() as u64*4).sum(),GraphAction::Matrix{generators,..}=>generators.iter().map(|v|v.matrix.len() as u64*8+4).sum()}}
+extern "C"{fn cudaGetDeviceCount(count:*mut i32)->i32;}
+pub fn info(args:&[String])->Result<()>{
+ if args.len()<3{return Err("CLI_GRAPH_INFO_ARGUMENTS".into());}let g=graph(&args[0])?;let shards:u32=args[2].parse().map_err(|_|"CLI_GRAPH_SHARDS")?;
+ let mut count=0i32;check(unsafe{cudaGetDeviceCount(&mut count)})?;if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}
+ let devices=if args[1]=="auto"{(0..count as u32).collect::<Vec<_>>()}else{args[1].split(',').map(|v|v.parse::<u32>().map_err(|_|"CLI_GRAPH_DEVICES".to_owned())).collect::<Result<Vec<_>>>()?};
+ if devices.is_empty()||devices.len()>128||devices.iter().any(|&d|d>=count as u32)||devices.iter().enumerate().any(|(i,d)|devices[..i].contains(d)){return Err("CLI_GRAPH_DEVICE_SELECTION".into());}
+ let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{check(unsafe{cudaSetDevice(device as i32)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total}));}
+ let plan=if args.len()>3{let capacity:u32=args[3].parse().map_err(|_|"CLI_GRAPH_CAPACITY")?;let auto=Plan::automatic(g.start.len() as u32,devices.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),minimum,Some(u64::from(capacity)))?;if auto.capacity!=capacity{return Err("REQUESTED_CAPACITY_EXCEEDS_ADMISSION".into());}auto}else{Plan::automatic(g.start.len() as u32,devices.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),minimum,crate::generic_memory::state_space_bound(&g))?};
+ println!("{}",serde_json::json!({"graph_digest":digest(&g)?,"devices":devices,"inventory":inventory,"plan":plan,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED","topology_scope":"single host CUDA_VISIBLE_DEVICES ordinals"}));Ok(())
+}
+#[derive(serde::Deserialize)]struct Launch{graph_digest:String,devices:Vec<u32>,plan:Plan}
+pub fn run(args:&[String])->Result<()>{
+ if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}let g=graph(&args[0])?;let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
+ if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
+ let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;if seconds==0{return Err("CLI_GRAPH_SECONDS".into());}let output=Path::new(&args[4]);if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
+ let bootstrap=Path::new(&args[3]);let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}check(unsafe{mgbfs_nccl_unique_id(id.as_mut_ptr().cast())})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let started=Instant::now();while !bootstrap.exists(){if started.elapsed()>Duration::from_secs(60){return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}std::thread::sleep(Duration::from_millis(10));}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);}
+ let _signals=Signals::new();let setup=Instant::now();let mut bfs=GenericDistributedBfs::new(&g,launch.devices[rank as usize],rank,launch.plan.clone(),&id,0x19f856a2,64)?;let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={}",launch.devices[rank as usize]);
+ let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let(status,reason)=loop{
+  let local=if CANCELLED.load(Ordering::Relaxed){1}else if start.elapsed()>=Duration::from_secs(seconds){2}else{0};let vote=bfs.collective_stop(local)?;if vote!=0{break("INCOMPLETE",if vote==1{"CANCELLED".to_owned()}else{"DEADLINE".to_owned()});}
+  let layer=Instant::now();match bfs.advance()?{DistributedAdvance::Layer{global,..}=>{sizes.push(global);times.push(layer.elapsed().as_secs_f64());},DistributedAdvance::Complete=>break("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),DistributedAdvance::Resource{fatal}=>break("INCOMPLETE",format!("RESOURCE_{fatal}")),}
+ };let bfs_seconds=start.elapsed().as_secs_f64();let current=bfs.sample_global(1000)?;let previous=bfs.previous_small_sample(*sizes.iter().rev().nth(1).unwrap_or(&0))?;
+ let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
+ use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
+ let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"setup_seconds":setup_seconds,"plan":launch.plan,"backend":"GENERIC_DISTRIBUTED_EXACT_ALL_VISITED","profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"});
+ std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;Ok(())
+}

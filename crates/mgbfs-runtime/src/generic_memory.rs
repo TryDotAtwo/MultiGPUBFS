@@ -18,3 +18,25 @@ impl GenericMemoryPlan {
   Self::new(elements,low)
  }
 }
+
+/// Mathematical state-space bound, capped only at the arena index limit.
+/// Used for admission, not as evidence that the graph has been enumerated.
+pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)->Option<u64>{
+ use mgbfs_core::graph_definition::GraphAction;let limit=1u64<<28;
+ let proven=match &graph.action{
+  GraphAction::Permutation{..}=>{
+   let mut counts=std::collections::BTreeMap::<i64,u64>::new();for &v in &graph.start{*counts.entry(v).or_default()+=1;}
+   let mut remaining=graph.start.len() as u64;let mut bound=1u64;
+   for &count in counts.values(){let k=count.min(remaining-count);let mut choose=1u64;for i in 1..=k{choose=choose.saturating_mul(remaining-k+i)/i;if choose>=limit{choose=limit;break;}}bound=bound.saturating_mul(choose).min(limit);remaining-=count;}
+   Some(bound)
+  },
+  GraphAction::Matrix{generators,..}=>{
+   let modulus=generators.first().map(|v|v.modulo).unwrap_or(0);
+   if modulus==0||generators.iter().any(|v|v.modulo!=modulus){None}else{
+    let mut bound=1u64;for _ in &graph.start{bound=bound.saturating_mul(u64::from(modulus)).min(limit);if bound==limit{break;}}
+    if graph.start.iter().any(|&v|v<0||v>=i64::from(modulus)){bound=bound.saturating_add(1).min(limit);}Some(bound)
+   }
+  },
+ };
+ match (proven,graph.expected_max_unique_states){(Some(a),Some(b))=>Some(a.min(b)),(a,b)=>a.or(b)}
+}

@@ -1,7 +1,7 @@
 //! Byte-exact admission for retained-history routing. This is admission,
 //! not a measured throughput tuner. Queue capacity tolerates complete skew.
 use mgbfs_core::Result;
-#[derive(Clone,Debug,PartialEq,Eq)]
+#[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 pub struct GenericDistributedMemoryPlan {
  pub elements:u32,pub world:u32,pub shards:u32,pub capacity:u32,pub batch:u32,
  pub queue_capacity:u32,pub slots_per_shard:u32,pub generator_bytes:u64,pub device_bytes:u64,
