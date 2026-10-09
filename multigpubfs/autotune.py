@@ -40,7 +40,7 @@ def _transport_variants(graph,env):
  if order is None:variants.append((4,.25,'parent' if forced is None and not packed else mode,'radix'))
  return variants
 
-def choose_profile(graph,devices,capacity,max_seconds,native,env):
+def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
  with tempfile.TemporaryDirectory(prefix='mgbfs-profile-') as temporary:
   baseline=_admit(graph,devices,capacity,1,native,env,temporary)
@@ -51,13 +51,15 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':6,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT')}}
+  identity={'schema':8,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
    try:saved=json.loads(cache.read_text())
    except (OSError,ValueError):saved={}
-   if saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and saved.get('shards') in (1,4,16) and saved.get('batch_fraction') in (1.0,.25) and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants:
+   from .specialized import match_lrx
+   specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and match_lrx(graph) is not None
+   if saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and saved.get('shards') in (1,4,16) and saved.get('batch_fraction') in (1.0,.25) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants) or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
     saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;return saved
   admitted=[]
   for shards,fraction,transport,order in variants:
@@ -76,7 +78,22 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
    report=run_graph(graph,Path(temporary)/('pilot-'+str(index)),devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
-   pilots.append({'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+   pilots.append({'backend':'generic','candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+  # Specialized candidates preserve only a proved identical LRX action/root.
+  # Unsupported definitions/topologies remain on the general exact backend.
+  if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and max_seconds-(time.monotonic()-started)>=8:
+   from .specialized import match_lrx,admit_specialized,run_specialized
+   matched=match_lrx(graph)
+   if matched is not None and matched['order']>=32768:
+    for mode,backend in [('HASH','shard_ab_hash'),('SORT_MERGE','shard_ab_sort_merge')]:
+     remaining=max_seconds-(time.monotonic()-started)
+     if remaining<5:break
+     plan=admit_specialized(graph,native,env,selected,Path(temporary)/('admit-'+backend),capacity=capacity,mode=mode,seconds=min(60,remaining))
+     remaining=max_seconds-(time.monotonic()-started)
+     if remaining<2:break
+     report=run_specialized(graph,Path(temporary)/backend,native=native,env=env,devices=selected,capacity=plan['capacity'],batch=plan['batch'],max_seconds=min(5,max(2,int(remaining))),mode=mode,profile_layers=36)
+     if len(report['layer_seconds'])>=4 and sum(report['layer_sizes'][2:])>=32768:
+      pilots.append({'backend':backend,'candidate_order':'none' if mode=='HASH' else 'radix','transport':'specialized_key_first_host','shards':1,'batch_fraction':1.0,'batch':plan['batch'],'specialized_capacity':plan['capacity'],'specialized_mode':mode,'state_bytes':1,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason'],'specialized_admission':plan})
   depth=min(len(p['layer_seconds']) for p in pilots)
   sizes=pilots[0]['layer_sizes'][:depth+1]
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
@@ -89,7 +106,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
   # unless the alternative beats it by at least five percent.
   if scores[winner]>=scores[0]*.95:winner=0
   chosen=pilots[winner]
-  result={'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'scope':'bounded prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles; no claim of global optimum or large-rank acceptance'}
+  result={'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'scope':'bounded prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
+  if chosen['backend']!='generic':result.update(specialized_capacity=chosen['specialized_capacity'],specialized_mode=chosen['specialized_mode'],specialized_admission=chosen['specialized_admission'],batch=chosen['batch'])
   if dependency is not None and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True)
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)

@@ -5898,7 +5898,7 @@ impl DistributedNativeBfs {
             self.archive_unprocessed_snapshot(archive,&view[..len],depth)?;
         }
         let terminal = matches!(result,Ok(false));
-        if terminal && count>0 && (if archive.selected_whole {!small} else {count>1000}) {
+        if terminal && !archive.selected_prefix && count>0 && (if archive.selected_whole {!small} else {count>1000}) {
             archive.replace_last_layer()?;
             let advanced_depth = self.depth;
             self.depth = depth;

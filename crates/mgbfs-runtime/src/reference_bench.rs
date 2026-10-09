@@ -848,7 +848,7 @@ fn run_pass(
         let description = format!("{description};compact_states={compact_states}");
     let description = format!("{description};reference_selection={selection:?}");
     let archive_selection = std::env::var("MGBFS_ARCHIVE_SELECTION").ok();
-    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000" && mode != "all_states") {
+    if archive_selection.as_deref().is_some_and(|mode| mode != "last_complete_small_1000" && mode != "last_complete_prefix_1000" && mode != "all_states") {
         return Err("ENV_MGBFS_ARCHIVE_SELECTION".into());
     }
     if archive_selection.is_some() && !compact_states {
@@ -1205,7 +1205,7 @@ fn run_pass(
         }
         let advance = if sideband.cancel_requested() {
             if let Some(archive)=archive.as_mut(){
-                if archive.selected_whole {bfs.archive_selected_terminal_snapshot(archive)?;}
+                if archive.selected_whole || archive.selected_prefix {bfs.archive_selected_terminal_snapshot(archive)?;}
             }
             Err("REMOTE_SEARCH_CANCELLED".into())
         } else if let Some(archive) = archive.as_mut() {
@@ -1218,7 +1218,7 @@ fn run_pass(
         // communicator is aborted. Peers need the sideband cancellation even
         // when their own GPU path has not yet observed the NCCL error.
         if let Err(error) = &advance {
-            if archive.as_ref().is_some_and(|a|a.selected_whole) {
+            if archive.as_ref().is_some_and(|a|a.selected_whole || a.selected_prefix) {
                 let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                     .map_err(|e|e.to_string())?.as_secs_f64();
                 // Keep failure-boundary metadata atomic on the shared pipe.
@@ -1351,7 +1351,7 @@ fn run_pass(
                 value["search_prefix_seconds"] = serde_json::json!(search);
                 value.as_object_mut().ok_or("RECORD_JSON_OBJECT")?.remove("search_complete_seconds");
             }
-            if archive_selection.as_deref()==Some("last_complete_small_1000") {
+            if matches!(archive_selection.as_deref(),Some("last_complete_small_1000" | "last_complete_prefix_1000")) {
                 value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts");
                 value["archive_wire_format"] = serde_json::json!("MGBFSAS2");
                 value["archive_prefix_limit_per_rank"] = serde_json::json!(1000);
@@ -1444,7 +1444,7 @@ fn run_pass(
             {
                 value["backend"] = serde_json::json!(label);
             }
-            if archive_selection.as_deref()==Some("last_complete_small_1000") { value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts"); }
+            if matches!(archive_selection.as_deref(),Some("last_complete_small_1000" | "last_complete_prefix_1000")) { value["output_contract"] = serde_json::json!("selected_states_and_all_layer_counts"); }
             serde_json::to_vec(&value).map_err(|e| format!("RECORD_JSON: {e}"))?
         })?;
         if !is_measure && archive_enabled {

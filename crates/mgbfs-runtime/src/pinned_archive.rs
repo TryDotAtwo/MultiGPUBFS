@@ -76,6 +76,7 @@ pub struct PinnedArchive {
     wait_for_credit: bool,
     pub(crate) selected: bool,
     pub(crate) selected_whole: bool,
+    pub(crate) selected_prefix: bool,
     pub(crate) state_only: bool,
 }
 impl PinnedArchive {
@@ -95,7 +96,8 @@ impl PinnedArchive {
         rows: u32, slots: usize,
         failure_report: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
     ) -> Result<Self> {
-        let selected = std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000");
+        let selected_prefix = std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_prefix_1000");
+        let selected = selected_prefix || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("last_complete_small_1000");
         let state_only = selected || std::env::var("MGBFS_ARCHIVE_SELECTION").as_deref() == Ok("all_states");
         let mut plan = ArchiveRingPlan::new(width, rows, slots)?;
         if state_only {
@@ -200,7 +202,8 @@ impl PinnedArchive {
             pinned_bytes,
             slots,
             selected,
-            selected_whole: selected && std::env::var("MGBFS_SELECTED_WHOLE_ONLY").as_deref() != Ok("0"),
+            selected_prefix,
+            selected_whole: selected && !selected_prefix && std::env::var("MGBFS_SELECTED_WHOLE_ONLY").as_deref() != Ok("0"),
             state_only,
             device,
             wait_for_credit: std::env::var("MGBFS_ARCHIVE_CREDIT_MODE").as_deref() == Ok("wait"),

@@ -11,7 +11,7 @@ def _receipt(output,digest):
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,backend='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -28,6 +28,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if type(max_seconds) is not int or max_seconds<1:raise ValueError('INVALID_MAX_SECONDS')
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
+ if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
@@ -36,16 +37,23 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if transport!='auto':native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport)
  if candidate_order!='auto':native_env=dict(native_env,MGBFS_GENERIC_SORT=candidate_order)
  if os.environ.get('WORLD_SIZE','1')!='1':
+  if backend not in ('auto','generic'):raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
   from .distributed_launch import run_external
   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune)
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None
+ if backend.startswith('shard_ab_'):
+  if shards is not None or transport!='auto' or candidate_order!='auto':raise ValueError('SPECIALIZED_ADAPTIVE_GEOMETRY_OR_GENERIC_OPTION_CONFLICT')
+  return _run_specialized_admitted(graph,output,native,native_env,devices,capacity,max_seconds,backend,_batch,_profile_layers,None)
  if shards is None:
   if autotune:
    from .autotune import choose_profile
-   profile=choose_profile(graph,devices,capacity,max_seconds,native,native_env)
+   profile=choose_profile(graph,devices,capacity,max_seconds,native,native_env,allow_specialized=backend=='auto')
    shards=profile['shards']
+   if profile.get('backend','generic')!='generic':
+    remaining=max(1,max_seconds-int(profile['seconds']+.999))
+    return _run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile)
    native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'))
    max_seconds=max(1,max_seconds-int(profile['seconds']+.999))
   else:shards=1
@@ -112,3 +120,25 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return _receipt(output,digest)
+
+
+def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_seconds,backend,batch,profile_layers,profile):
+ from .specialized import admit_specialized,match_lrx,run_specialized
+ if match_lrx(graph) is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
+ output=Path(output).absolute();output.parent.mkdir(parents=True,exist_ok=True)
+ if output.exists():raise FileExistsError(output)
+ started=time.monotonic()
+ with tempfile.TemporaryDirectory(prefix='mgbfs-specialized-admit-',dir=output.parent) as temporary:
+  definition=Path(temporary)/'definition.json';definition.write_text(graph.to_json());selection='auto' if devices is None else ','.join(map(str,devices))
+  probe=subprocess.run([native,'graph-info',str(definition),selection,'1'],capture_output=True,text=True,env=env)
+  if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
+  inventory=json.loads(probe.stdout)
+  if inventory['graph_digest']!=graph.digest():raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
+  selected=inventory['devices'];mode='HASH' if backend=='shard_ab_hash' else 'SORT_MERGE'
+  plan=admit_specialized(graph,native,env,selected,Path(temporary)/'queries',capacity=capacity,mode=mode,seconds=max_seconds)
+  actual_batch=plan['batch'] if batch is None else batch
+  if actual_batch!=plan['batch']:raise ValueError('SPECIALIZED_BATCH_REQUIRES_MATCHED_ADMISSION')
+  report=run_specialized(graph,output,native=native,env=env,devices=selected,capacity=plan['capacity'],batch=actual_batch,max_seconds=max(1,max_seconds-(time.monotonic()-started)),mode=mode,profile_layers=profile_layers)
+  report['plan'].update(plan);report['startup_admission_seconds']=time.monotonic()-started-report['launch_wall_seconds']
+  if profile:report['autotune']=profile
+  (output/'report.json').write_text(json.dumps(report,indent=2));return _receipt(output,graph.digest())
