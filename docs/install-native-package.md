@@ -28,3 +28,13 @@ python -m pip install "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-na
 ```
 
 SHA256: `85f8570c1e2753d7a21833a439e4d76c4baebc5a94f3dcd4ada94b8f6ef3c998`. The CUDA12 wheel above remains the earlier implementation. The updated wheel passed clean two-RTX3060 installation, exact layer/resource/collision tests, network rank control and four-profile autotuning. CUDA13 compatibility and these GPU tests do not establish acceptance on Blackwell or physical multihost clusters.
+
+## Automatic three-bank build (latest verified implementation)
+
+Source implementation: `9a30c0212063a6f595b251ef1733ef0a80c20b49`. This CUDA13.2/SM86+PTX artifact passed clean installed one/two-GPU exact graph, resource/deadline/cancel, external-rank network and collective tuning gates. Other GPU models and physical multi-host configurations remain unverified.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/a04c7ba9b108981678c3140de7258c865fe66fad/linux-x86_64-sm86-cuda13.2/9a30c0212063a6f595b251ef1733ef0a80c20b49/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu13==2.30.7"
+```
+
+The host must already provide compatible CUDA runtime13 and an NVIDIA driver. Wheel SHA256: `9f62296da744202d46e76743b7af88ec8769b03a96fffbd41a92f9913e090a11`. The embedded manifest checks the executable and native library before launch. Force reinstall is intentional because these development artifacts share a package version; immutable URLs and source manifests distinguish builds.
