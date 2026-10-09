@@ -1,16 +1,16 @@
 # Current sorted-history and automatic-profile native package
 
-Verified executable/package source: `28d5aa3cab27bc7bdb7882742a33e7a0b68fc2b0`.
+Verified executable/package source: `32b8a03973f087e8085c419fa1c65508d4d04c61`.
 Linux x86_64, compiled target SM86, CUDA 13.2 runtime, NCCL 2.30.7.
 Actual clean installation: one/two RTX3060 with driver 595.84. Blackwell,
 physical 4/8/128 GPUs and separate hosts remain unverified. Choose an artifact
 compiled for your GPU; this SM86 release is not a B200/B300 acceptance claim.
 
 ```bash
-python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/06320af7fa64d34d85faea17b599211b3afbd3d1/linux-x86_64-sm86-cuda13.2/28d5aa3cab27bc7bdb7882742a33e7a0b68fc2b0/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/0c33061aa343f2dd6307a696c02b9c61d2d7f2ce/linux-x86_64-sm86-cuda13.2/32b8a03973f087e8085c419fa1c65508d4d04c61/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
 ```
 
-Wheel SHA256: `13d7f67558a3f354f22f20eb9e1fd7c0032f266ea85711e019347d1d21a2184a`. Anonymous immutable readback
+Wheel SHA256: `b0c9d8aee1c282f8ffe684775d84ec4ef0460119eb680a20c2f56fc09d13f482`. Anonymous immutable readback
 verified. The wheel includes the native executable and CUDA library; its
 manifest checks both hashes. No source checkout, toolkit compilation or
 MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. NVIDIA driver
@@ -42,7 +42,11 @@ runs and four resource-stop retention cases across HASH/SORTED and one/two GPUs,
 plus the console command. Installed 40320-state automatic profiling, exact CPU
 layer/terminal oracles and cache reuse passed separately. CUDA 13 pip runtime
 namespace discovery is covered; older CUDA namespace ordering remains tested.
-Near-card throughput and larger hardware acceptance remain pending.
+Installed LRX14 comparison also passes nine equal-capacity profiles, a common
+35.6-million-state prefix, and selector cache reuse. Actual buffer allocations
+reach 10015MiB/card (HASH) and 9137MiB/card (SORTED); occupied VRAM causes
+re-admission and oversized requests reject. Full-capacity sustained throughput
+and larger hardware acceptance remain pending.
 
 ## Historical immutable artifacts
 
