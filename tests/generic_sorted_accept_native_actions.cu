@@ -1,6 +1,8 @@
 #include "generic_parent_action.cuh"
 #include "generic_sorted_origin_exact.cuh"
 #include "generic_sorted_accept.cuh"
+#include "generic_sorted_native.h"
+#include <type_traits>
 #include <algorithm>
 #include <vector>
 #include <cstdint>
@@ -11,6 +13,16 @@ template<class T>struct Device{T* p;explicit Device(size_t n){CUDA_CHECK(cudaMal
 
 __global__ void retire_accept(GenericSortedRunPool pool,GenericSortedRunCarry* carry,uint32_t* error){if(!blockIdx.x&&!threadIdx.x&&carry->valid){generic_sorted_run_release(pool,carry->token,true,error);carry->valid=0;}}
 
+
+template<class State,bool Packed,bool Shared>static GenericSortedNativeInput host_input(const IncomingAllAction<State,Packed,Shared>& a){
+ static_assert(Shared,"native owner geometry");GenericSortedNativeInput p{};p.elements=a.elements;p.world=a.world;p.rank=a.rank;p.shard=a.shard;p.shards=a.shards;p.queue_capacity=a.stride;p.state_bytes=sizeof(State);p.transport=Packed?1:0;p.hash_bits=64;
+ p.local=a.local;p.remote=a.remote;p.local_meta=a.local_meta;p.remote_meta=a.remote_meta;p.local_counts=a.local_counts;p.remote_counts=a.remote_counts;return p;
+}
+template<class State>static GenericSortedNativeInput host_input(const ParentOriginAction<State>& a){
+ auto p=host_input(static_cast<const IncomingAllAction<State,false,true>&>(a));p.transport=2;p.kind=a.graph.kind;p.rows=a.graph.n;p.cols=a.graph.m;p.generators=a.graph.generators;p.parent_stride=a.parent_stride;p.chunk=a.chunk;p.begin=a.begin;
+ p.parents=a.parents;p.cursors=a.cursors;p.frontiers=a.frontiers;p.permutations=a.graph.permutations;p.matrices=a.graph.matrices;p.moduli=a.graph.moduli;return p;
+}
+
 template<class A>static void oracle(A action,uint32_t count,const std::vector<uint32_t>& physical,
  const std::vector<int64_t>& values,const std::vector<uint8_t>& active,const char* label){
  auto cmp=[&](uint32_t a,uint32_t b){for(uint32_t c=0;c<action.elements;++c){auto av=values[uint64_t(a)*action.elements+c],bv=values[uint64_t(b)*action.elements+c];if(av<bv)return -1;if(av>bv)return 1;}return 0;};
@@ -20,28 +32,59 @@ template<class A>static void oracle(A action,uint32_t count,const std::vector<ui
  uint32_t prior=0xffffffffu;for(auto i:sorted_expected){if(prior==0xffffffffu||cmp(prior,i)!=0)unique.push_back(physical[i]);prior=i;}
  Device<uint64_t> hashes(count),out_hashes(count);
  Device<uint32_t> origins(count),sorted(count),flags(count),prefix(count),out(count),out_count(1),error(1);error.put({0});
- GenericSortedOriginShape shape{};CUDA_CHECK(generic_sorted_origin_shape(action,count,&shape));Device<uint8_t> temporary(shape.shared_temporary_bytes);
+ GenericSortedOriginShape shape{};
+#ifdef MGBFS_SORTED_NATIVE_GATEWAY
+ auto native_input=host_input(action);uint64_t native_bytes=0,native_temp=0,native_count=0;
+ CUDA_CHECK(cudaError_t(mgbfs_generic_sorted_native_shape(&native_input,&native_bytes,&native_temp,&native_count,nullptr)));
+ if(native_count!=count||native_bytes!=2*generic_sorted_origin_align(uint64_t(count)*8)+5*generic_sorted_origin_align(uint64_t(count)*4)+generic_sorted_origin_align(native_temp)+256)exit(22);
+ shape.shared_temporary_bytes=native_temp;
+#else
+ CUDA_CHECK(generic_sorted_origin_shape(action,count,&shape));
+#endif
+ Device<uint8_t> temporary(shape.shared_temporary_bytes);
+ #ifdef MGBFS_SORTED_NATIVE_GATEWAY
+
+ GenericSortedNativeWorkspace native_workspace{hashes.p,origins.p,sorted.p,flags.p,prefix.p,out_hashes.p,out.p,out_count.p,temporary.p,shape.shared_temporary_bytes};
+ CUDA_CHECK(cudaError_t(mgbfs_generic_sorted_native_origin(&native_input,&native_workspace,error.p,nullptr)));
+#else
  CUDA_CHECK(generic_sorted_origin_exact(action,count,0,64,hashes.p,origins.p,sorted.p,flags.p,prefix.p,out_hashes.p,out.p,out_count.p,temporary.p,shape.shared_temporary_bytes,error.p));
+#endif
  CUDA_CHECK(cudaDeviceSynchronize());
  if(error.get(1)[0]||out_count.get(1)[0]!=unique.size()||out.get(unique.size())!=unique){fprintf(stderr,"native action oracle failed %s error%u\n",label,error.get(1)[0]);exit(3);}
  auto actual_sorted=sorted.get(count);for(size_t i=0;i<sorted_expected.size();++i)if(actual_sorted[i]!=sorted_expected[i])exit(3);
  for(auto key:out_hashes.get(unique.size()))if(key!=~uint64_t(0))exit(3);
  // Reject invalid hash configuration before launching the action.
+ #ifdef MGBFS_SORTED_NATIVE_GATEWAY
+ auto invalid_input=native_input;invalid_input.hash_bits=65;
+ if(mgbfs_generic_sorted_native_origin(&invalid_input,&native_workspace,error.p,nullptr)!=int(cudaErrorInvalidValue))exit(4);
+#else
  if(generic_sorted_origin_exact(action,count,0,65,hashes.p,origins.p,sorted.p,flags.p,prefix.p,out_hashes.p,out.p,out_count.p,temporary.p,shape.shared_temporary_bytes,error.p)!=cudaErrorInvalidValue)exit(4);
+#endif
  
  constexpr uint32_t state_stride=192,cap=64,base=64,regions=2,page=4;
- std::vector<int64_t> canonical(uint64_t(state_stride)*action.elements,-123456);
+ using MaterialState=std::remove_cv_t<std::remove_pointer_t<decltype(action.local)>>;
+ std::vector<MaterialState> canonical(uint64_t(state_stride)*action.elements,MaterialState(201));
  auto value_of=[&](uint32_t physical_origin,uint32_t c){auto it=std::find(physical.begin(),physical.end(),physical_origin);if(it==physical.end())exit(10);return values[uint64_t(it-physical.begin())*action.elements+c];};
  uint32_t known=uint32_t(std::min<size_t>(2,unique.size()));
  for(uint32_t i=0;i<known;++i)for(uint32_t c=0;c<action.elements;++c)canonical[uint64_t(c)*state_stride+i]=value_of(unique[i],c);
- Device<int64_t> arena(canonical.size());arena.put(canonical);Device<uint64_t> history_keys(known);history_keys.put(std::vector<uint64_t>(known,~0ull));Device<uint32_t> history_rows(known);std::vector<uint32_t> known_rows;for(uint32_t i=0;i<known;++i)known_rows.push_back(i);history_rows.put(known_rows);
+ Device<MaterialState> arena(canonical.size());arena.put(canonical);Device<uint64_t> history_keys(known);history_keys.put(std::vector<uint64_t>(known,~0ull));Device<uint32_t> history_rows(known);std::vector<uint32_t> known_rows;for(uint32_t i=0;i<known;++i)known_rows.push_back(i);history_rows.put(known_rows);
  GenericSortedHistorySnapshot initial{};initial.count=1;initial.held=1;initial.runs[0]={history_keys.p,history_rows.p,known};
  Device<GenericSortedHistorySnapshot> snapshots(2);snapshots.put({initial,{}});
  GenericSortedRunPoolShape pool_shape{};if(!generic_sorted_run_pool_shape(regions,page,&pool_shape))exit(11);
  Device<unsigned long long> occupied(regions);Device<GenericSortedRunDescriptor> descriptors(regions*64);descriptors.put(std::vector<GenericSortedRunDescriptor>(regions*64));
  Device<uint64_t> run_hashes(pool_shape.entries);Device<uint32_t> run_rows(pool_shape.entries),row_count(1),frontier_count(1),future(cap);Device<GenericSortedAcceptReservation> reservation(1);Device<GenericSortedRunCarry> carry(1);GenericSortedRunPool pool{occupied.p,descriptors.p,regions,page};
  size_t scan_bytes=0;CUDA_CHECK(cub::DeviceScan::ExclusiveSum(nullptr,scan_bytes,flags.p,prefix.p,count));Device<uint8_t> scan(scan_bytes);
+ #ifdef MGBFS_SORTED_NATIVE_GATEWAY
+ GenericSortedNativeWorkspace accept_workspace=native_workspace;accept_workspace.temporary=scan.p;accept_workspace.temporary_bytes=scan_bytes;
+ auto invoke=[&](uint32_t rolling,uint32_t maximum,uint32_t snapshots_count){
+  GenericSortedNativeDestination d{snapshots.p,snapshots_count,state_stride,rolling?base:0,maximum,rolling,0,
+   &pool,run_hashes.p,run_rows.p,arena.p,row_count.p,rolling?row_count.p:frontier_count.p,future.p,reservation.p,carry.p,error.p};
+  return cudaError_t(mgbfs_generic_sorted_native_accept(&native_input,&accept_workspace,&d,nullptr));
+ };
+#else
  auto invoke=[&](uint32_t rolling,uint32_t maximum,uint32_t snapshots_count){return generic_sorted_accept(action,out_hashes.p,out.p,out_count.p,count,snapshots.p,snapshots_count,pool,run_hashes.p,run_rows.p,arena.p,state_stride,rolling?base:0,maximum,row_count.p,rolling?row_count.p:frontier_count.p,rolling,future.p,flags.p,prefix.p,scan.p,scan_bytes,reservation.p,carry.p,error.p);};
+
+#endif
  for(uint32_t rolling=0;rolling<2;++rolling){
   arena.put(canonical);error.put({0});carry.put({{}});row_count.put({rolling?0:known});frontier_count.put({0});occupied.put(std::vector<unsigned long long>(regions,~0ull));
   CUDA_CHECK(invoke(rolling,cap,1));CUDA_CHECK(cudaDeviceSynchronize());
@@ -53,7 +96,7 @@ template<class A>static void oracle(A action,uint32_t count,const std::vector<ui
   CUDA_CHECK(invoke(rolling,cap,1));CUDA_CHECK(cudaDeviceSynchronize());auto hc=carry.get(1)[0];uint32_t survivors=uint32_t(unique.size())-known;
   if(error.get(1)[0]||!hc.valid||row_count.get(1)[0]!=(rolling?survivors:uint32_t(unique.size()))||(!rolling&&frontier_count.get(1)[0]!=survivors))exit(15);
   auto descriptor=descriptors.get(regions*64)[hc.token.slot];if(descriptor.count!=survivors)exit(16);auto rr=run_rows.get(pool_shape.entries);auto hh=run_hashes.get(pool_shape.entries);auto materialized=arena.get(canonical.size());auto ff=future.get(cap);
-  std::vector<int64_t> expected_arena=canonical;
+  std::vector<MaterialState> expected_arena=canonical;
   for(uint32_t i=0;i<survivors;++i){uint32_t row=(rolling?base:known)+i,offset=hc.token.slot*page+i;if(rr[offset]!=row||ff[i]!=row||hh[offset]!=~0ull)exit(17);for(uint32_t c=0;c<action.elements;++c)expected_arena[uint64_t(c)*state_stride+row]=value_of(unique[known+i],c);}
   if(materialized!=expected_arena)exit(18);
   GenericSortedHistorySnapshot accepted{};accepted.held=1;accepted.count=1;accepted.runs[0]={run_hashes.p+hc.token.slot*page,run_rows.p+hc.token.slot*page,survivors};snapshots.put({initial,accepted});
