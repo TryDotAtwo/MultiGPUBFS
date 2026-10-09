@@ -150,34 +150,8 @@ extern "C" int mgbfs_generic_accept_u8(uint32_t elements,const uint8_t* incoming
 // All source inboxes for one shard share one exclusive owner launch. Pending
 // origins identify source+row in immutable banks, so exact equality remains
 // independent of thread scheduling and full hash collisions.
-template<class State,bool Packed=false,bool Shared=false> struct IncomingAllAction {
- uint32_t elements,count,stride,generators,rank,world,shard,shards;
- const State* local;const State* remote;const GenericRouteRecord* local_meta;const GenericRouteRecord* remote_meta;
- const uint32_t* local_counts;const uint32_t* remote_counts;const uint32_t* ordered=nullptr;
- __device__ uint32_t child(uint32_t i)const{if(ordered)return ordered[i];return Shared?((i/stride)*shards+shard)*stride+i%stride:i;}
- __device__ uint32_t origin_limit()const{return Shared?count*shards:count;}
- __device__ uint32_t bucket(uint64_t h,uint32_t capacity)const{return Shared?uint32_t((uint64_t(uint32_t(h))*capacity)>>32):uint32_t(h&(capacity-1));}
- __device__ uint32_t source(uint32_t child)const{return Shared?(child/stride)/shards:child/stride;}
- __device__ uint64_t queue(uint32_t child)const{return Shared?child/stride:uint64_t(source(child))*shards+shard;}
- __device__ bool valid(uint32_t child,uint32_t* error)const{
-  const uint32_t* counts=source(child)==rank?local_counts:remote_counts;
-  uint32_t actual=counts[queue(child)];if(actual>stride){atomicOr(error,32u);return false;}return child%stride<actual;
- }
- __device__ int64_t value(uint32_t child,uint32_t e)const{
-  if constexpr(Packed){
-   const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;
-   const auto v=meta[queue(child)*stride+child%stride];
-   const uint64_t word=e<8?v.parent:(e<16?(uint64_t(v.source)|(uint64_t(v.generator)<<32)):(uint64_t(v.shard)|(uint64_t(v.reserved)<<32)));
-   return int64_t((word>>(8*(e%8)))&255u);
-  }else{
-   const State* states=source(child)==rank?local:remote;
-   return states[queue(child)*uint64_t(elements)*stride+uint64_t(e)*stride+child%stride];
-  }
- }
- __device__ uint64_t hash(uint32_t child,uint64_t,uint32_t)const{
-  const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;return meta[queue(child)*stride+child%stride].hash;
- }
-};
+#include "generic_incoming_action.cuh"
+
 template<class State,bool Packed=false,bool Shared=false> int accept_all(uint32_t elements,const State* local,const State* remote,
  const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,const uint32_t* local_counts,const uint32_t* remote_counts,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,uint64_t* slots,uint32_t slot_capacity,
