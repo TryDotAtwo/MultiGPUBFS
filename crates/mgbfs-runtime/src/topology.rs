@@ -72,3 +72,24 @@ pub fn reference_owner_geometry(
     }
     Ok((buckets / world, shards / world))
 }
+
+/// Global communication rank and process-local CUDA ordinal are distinct.
+/// CUDA itself validates the ordinal against the process-visible devices.
+/// Legacy callers without an explicit placement retain rank=device behavior.
+pub fn reference_local_device(rank:u32,world:u32,local:Option<u32>)->Result<u32> {
+ if world==0 || rank>=world {return Err("DEVICE_PLACEMENT_RANK".into());}
+ let device=local.unwrap_or(rank);
+ if device>i32::MAX as u32 {return Err("DEVICE_PLACEMENT_ORDINAL".into());}
+ Ok(device)
+}
+#[cfg(test)]
+mod device_tests {
+ use super::*;
+ #[test] fn global_rank_does_not_override_local_device() {
+  assert_eq!(reference_local_device(7,8,Some(0)).unwrap(),0);
+  assert_eq!(reference_local_device(127,128,Some(3)).unwrap(),3);
+  assert_eq!(reference_local_device(1,2,None).unwrap(),1);
+  assert!(reference_local_device(2,2,Some(0)).is_err());
+  assert!(reference_local_device(0,1,Some(u32::MAX)).is_err());
+ }
+}

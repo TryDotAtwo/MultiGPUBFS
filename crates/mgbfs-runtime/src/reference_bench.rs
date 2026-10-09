@@ -710,7 +710,7 @@ fn run_pass(
     let rank = required("RANK")?;
     let local = required("LOCAL_RANK")?;
     let world = required("WORLD_SIZE")?;
-    if !world.is_power_of_two() || world > 8 || rank != local {
+    if !world.is_power_of_two() || world > 8 || rank >= world || local > i32::MAX as u32 {
         return Err("TOPOLOGY".into());
     }
     if !production && world == 1 && crate::reference_launch::macro_depth_from_env(world)? {

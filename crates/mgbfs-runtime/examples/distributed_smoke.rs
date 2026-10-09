@@ -61,7 +61,7 @@ fn run() -> Result<()> {
     let rank = env_u32("RANK")?;
     let local = env_u32("LOCAL_RANK")?;
     let world = env_u32("WORLD_SIZE")?;
-    if rank != local {
+    if rank >= world || local > i32::MAX as u32 {
         return Err("SINGLE_NODE_RANK_MAP".into());
     }
     let path = std::env::args().nth(1).ok_or("BOOTSTRAP_ARG")?;
@@ -96,6 +96,12 @@ fn run() -> Result<()> {
             untouched_vram_reserve: 1 << 30,
         },
     )?;
+    extern "C" { fn cudaGetDevice(device:*mut i32)->i32; }
+    let mut actual_device=-1;
+    if unsafe {cudaGetDevice(&mut actual_device)}!=0 || actual_device!=local as i32 {
+        return Err("LOCAL_DEVICE_CHANGED_BY_CONSTRUCTOR".into());
+    }
+    eprintln!("MGBFS_DEVICE_PLACEMENT rank={rank} local={local} actual={actual_device}");
     let mut counts = Vec::new();
     let mut states = Vec::new();
     loop {

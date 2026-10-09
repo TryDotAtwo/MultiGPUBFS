@@ -62,3 +62,8 @@ pub mod transport;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod cuda_loading;
+
+pub mod generic_memory;
+
+#[cfg(feature="cuda")]
+pub mod generic_native;

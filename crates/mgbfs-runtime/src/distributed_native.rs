@@ -2970,7 +2970,13 @@ impl DistributedNativeBfs {
         // owner jobs use the local contiguous hash-prefix partition.
         cfg.buckets = local_buckets;
         cfg.shards = local_shards;
-        check(observed_native!(unsafe { cudaSetDevice(cfg.rank as i32) }))?;
+        let requested_local = match std::env::var("LOCAL_RANK") {
+            Ok(value) => Some(value.parse::<u32>().map_err(|_| "DEVICE_PLACEMENT_ORDINAL")?),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => return Err("DEVICE_PLACEMENT_ORDINAL".into()),
+        };
+        let local_device = crate::topology::reference_local_device(cfg.rank,cfg.world,requested_local)?;
+        check(observed_native!(unsafe { cudaSetDevice(local_device as i32) }))?;
         #[cfg(target_os = "linux")]
         crate::cuda_loading::verify_driver_before_allocations()?;
         if hash_first_tensor_generation {
@@ -3381,7 +3387,7 @@ impl DistributedNativeBfs {
             mgbfs_nccl_create_with_cancel(
                 cfg.rank,
                 cfg.world,
-                cfg.rank,
+                local_device,
                 id.as_ptr().cast(),
                 &mut comm,
                 error.as_mut_ptr(),
