@@ -82,3 +82,10 @@ SHA256 `ce554b0d13b55ff0df83bd3d897d27864f28356285412dd4517009bdbcb0758f`. Fresh
 Source `fde169f6e5ae9ba11d6176c14fe7a17448133665`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/fc4ccf023fe30b11ec4b3f1b93a972c0d6c1e5f4/linux-x86_64-sm86-cuda13.2/fde169f6e5ae9ba11d6176c14fe7a17448133665/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
 
 SHA256 `9142e3cf32af04f61fe3f825b176006231a2bddefdf5bd1601a12baee83bec10`. Clean installation outside checkout passed parent/full transport, packed and wide states, terminal snapshots, local tuning/cache and external two-rank TCP/NCCL tuning. CUDA13/NCCL2 required. Physical8/128GPUs, multi-host and Blackwell remain unverified. Radix ordering lost the matched3628800-state benchmark; it is optional and automatically selected only on a measured prefix win.
+
+
+## Unified command and specialized measured owner package
+
+Source `68f6195985dfcbff1e7260fe0fe5e3b97fca03c4`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/0b424872f9e111123d3090e613cbd4cbc5a6c5a2/linux-x86_64-sm86-cuda13.2/68f6195985dfcbff1e7260fe0fe5e3b97fca03c4/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `8803d929d350bd6c9f6c592fa9146ab5172528979cc87fa03d4e76bb867d5fdf`. Clean package outside checkout passed exact public HASH/SORT_MERGE on two RTX3060, seven-profile selection and cache, and installed module/console commands. Compact samples pass independent oracles including resource/SIGTERM. LSA, physical4/8/128 and multi-host specialized owners remain unverified.
