@@ -5,6 +5,8 @@ extern "C" {
 #endif
 /* Flat 32-byte route records. Immutable parent banks are leased until all
  * routed origins have been compared/materialized on destination owners. */
+/* Packed-u8 variant: hash followed by24 exact bytes; the origin field names
+ * apply only to the ordinary origin-routing variant. */
 struct GenericRouteRecord {uint64_t hash,parent;uint32_t source,generator,shard,reserved;};
 /* Optional owner_cuts[world+1]: increasing cumulative high-word boundaries,
  * first=0,last=2^32. Optional owner_to_rank[world]: a validated permutation.

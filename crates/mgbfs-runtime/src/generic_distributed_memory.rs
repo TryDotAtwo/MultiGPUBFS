@@ -23,11 +23,11 @@ impl GenericDistributedMemoryPlan {
    let arena=u64::from(elements).checked_mul(u64::from(capacity))?.checked_mul(u64::from(state_bytes)*2)?.checked_add(u64::from(capacity)*8)?;
    let tables=u64::from(table_slots).checked_mul(8)?;
    let boxes=u64::from(world).checked_mul(u64::from(shards))?;
-   let payload=if state_bytes==1&&elements<=16{0}else{u64::from(elements)*u64::from(state_bytes)};
+   let payload=if state_bytes==1&&elements<=24{0}else{u64::from(elements)*u64::from(state_bytes)};
    let queue=u64::from(queue_capacity).checked_mul(32+payload)?.checked_add(4)?;
    // Two source banks and one received inbox for every source. Control,
    // graph tables and rank count gather are included, not hidden headroom.
-   arena.checked_add(tables)?.checked_add(boxes.checked_mul(queue)?.checked_mul(3)?)?.checked_add(generator_bytes)?.checked_add(98+u64::from(world)*20+if state_bytes==1&&elements<=16{3}else{0})
+   arena.checked_add(tables)?.checked_add(boxes.checked_mul(queue)?.checked_mul(3)?)?.checked_add(generator_bytes)?.checked_add(98+u64::from(world)*20+if state_bytes==1&&elements<=24{3}else{0})
   };
   let device_bytes=checked().ok_or("GENERIC_DISTRIBUTED_BYTES_OVERFLOW")?;
   Ok(Self{history_layers:1,table_layout:"SHARD_HASH_REGIONS_SHARED_OVERFLOW".into(),state_bytes,elements,world,shards,capacity,batch,queue_capacity,table_slots,generator_bytes,device_bytes})
@@ -58,7 +58,7 @@ impl GenericDistributedMemoryPlan {
  }
  pub fn transport_bytes(&self)->u64{u64::from(self.world)*u64::from(self.shards)*(u64::from(self.queue_capacity)*(32+self.queue_payload_bytes() as u64)+4)*3+if self.packed_candidates(){3}else{0}}
 
- pub fn packed_candidates(&self)->bool{self.state_bytes==1&&self.elements<=16}
+ pub fn packed_candidates(&self)->bool{self.state_bytes==1&&self.elements<=24}
  pub fn queue_payload_bytes(&self)->usize{if self.packed_candidates(){0}else{self.elements as usize*self.state_bytes as usize}}
 
  pub fn with_storage_history(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64,state_bytes:u32,history_layers:u32)->Result<Self>{

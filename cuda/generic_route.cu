@@ -7,12 +7,12 @@ template<class State,bool Packed=false> __global__ void route(ActionT<State> act
  GenericRouteRecord* output,uint32_t* counts,uint32_t* error){
  uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
-  uint64_t hash,lo=0,hi=0;
+  uint64_t hash,lo=0,hi=0,tail=0;
   if constexpr(Packed){
    uint64_t h=seed;
    for(uint32_t e=0;e<action.elements;e++){
     const uint64_t v=uint64_t(action.value(child,e));h=mix64(h^v^uint64_t(e));
-    if(e<8)lo|=v<<(8*e);else hi|=v<<(8*(e-8));
+    if(e<8)lo|=v<<(8*e);else if(e<16)hi|=v<<(8*(e-8));else tail|=v<<(8*(e-16));
    }
    hash=finish_hash(h,bits);
   }else hash=action.hash(child,seed,bits);
@@ -29,7 +29,7 @@ template<class State,bool Packed=false> __global__ void route(ActionT<State> act
   if constexpr(Packed){
    // Exact bytes, not a probabilistic identity. Origin is diagnostic only.
    const uint64_t origin=(begin+child/action.generators)*action.generators+child%action.generators;
-   output[uint64_t(queue)*capacity+row]={hash,lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(origin),uint32_t(origin>>32)};
+   output[uint64_t(queue)*capacity+row]={hash,lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(tail),uint32_t(tail>>32)};
   }else output[uint64_t(queue)*capacity+row]={hash,begin+child/action.generators,source,child%action.generators,shard,0};
  }
 }
@@ -139,7 +139,7 @@ extern "C" int mgbfs_generic_route_packed_u8(uint32_t kind,uint32_t elements,uin
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
  uint32_t* counts,uint32_t* error,void* stream){
- if(kind>0||elements>16||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+ if(kind>0||elements>24||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
   bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
   !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);

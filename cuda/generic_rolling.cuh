@@ -51,7 +51,7 @@ extern "C" int mgbfs_generic_retire_rows(uint64_t* slots,uint32_t slot_capacity,
 }
 template<class State,bool Packed=false> int rolling_accept(uint32_t elements,const State* local,const State* remote,const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint64_t* slots,uint32_t slot_capacity,State* arena,uint32_t stride,uint32_t base,uint32_t cap,uint32_t* accepted,uint32_t* future,uint32_t* positions,uint32_t* error,void* stream){
- if(!elements||(Packed&&elements>16)||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!q||uint64_t(world)*shards*q>=0x7fffffffULL||!slot_capacity||(slot_capacity&(slot_capacity-1))||!stride||stride>=0x80000000U||base>stride||!cap||cap>stride-base||!local||!remote||!lm||!rm||!lc||!rc||!slots||!arena||!accepted||!future||!positions||!error)return int(cudaErrorInvalidValue);
+ if(!elements||(Packed&&elements>24)||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!q||uint64_t(world)*shards*q>=0x7fffffffULL||!slot_capacity||(slot_capacity&(slot_capacity-1))||!stride||stride>=0x80000000U||base>stride||!cap||cap>stride-base||!local||!remote||!lm||!rm||!lc||!rc||!slots||!arena||!accepted||!future||!positions||!error)return int(cudaErrorInvalidValue);
  IncomingAllAction<State,Packed,true> action{elements,world*q,q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc};
  accept_rolling<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,arena,stride,base,cap,accepted,future,positions,error);return int(cudaGetLastError());
 }

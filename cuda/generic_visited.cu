@@ -167,7 +167,7 @@ template<class State,bool Packed=false,bool Shared=false> struct IncomingAllActi
   if constexpr(Packed){
    const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;
    const auto v=meta[queue(child)*stride+child%stride];
-   const uint64_t word=e<8?v.parent:(uint64_t(v.source)|(uint64_t(v.generator)<<32));
+   const uint64_t word=e<8?v.parent:(e<16?(uint64_t(v.source)|(uint64_t(v.generator)<<32)):(uint64_t(v.shard)|(uint64_t(v.reserved)<<32)));
    return int64_t((word>>(8*(e%8)))&255u);
   }else{
    const State* states=source(child)==rank?local:remote;
@@ -182,7 +182,7 @@ template<class State,bool Packed=false,bool Shared=false> int accept_all(uint32_
  const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,const uint32_t* local_counts,const uint32_t* remote_counts,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,uint64_t* slots,uint32_t slot_capacity,
  State* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream){
- if((Shared&&uint64_t(world)*shards*stride>=0x7fffffffULL)||(Packed&&elements>16)||!elements||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!stride||uint64_t(world)*stride>=0x7fffffffULL||
+ if((Shared&&uint64_t(world)*shards*stride>=0x7fffffffULL)||(Packed&&elements>24)||!elements||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!stride||uint64_t(world)*stride>=0x7fffffffULL||
   !slot_capacity||(slot_capacity&(slot_capacity-1))||!visited_capacity||visited_capacity>=0x80000000U||!future_capacity||
   !local||!remote||!local_meta||!remote_meta||!local_counts||!remote_counts||!slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
  IncomingAllAction<State,Packed,Shared> action{elements,world*stride,stride,1,rank,world,shard,shards,local,remote,local_meta,remote_meta,local_counts,remote_counts};

@@ -24,7 +24,7 @@ The isolated atomic-load change produced no acceleration in three paired runs: m
 
 - Physical8/128GPUs, separate hosts, heterogeneous GPU models, B200/B300 and throughput scaling remain unverified. Logical geometry and two local ranks cannot prove those results.
 - Calibration measures four admitted shard/batch profiles, not every possible bank/hash/sort algorithm or frontier size. It cannot guarantee maximum throughput for every graph.
-- The generic byte path packs complete candidate states directly into routing records for width<=16. Wider byte/int64 candidates still use full-state transport before dedup; key-first survivor-only transport is not implemented in that path.
+- The generic byte path packs complete candidate states directly into routing records for width<=24. Wider byte/int64 candidates still use full-state transport before dedup; key-first survivor-only transport is not implemented in that path.
 - Specialized SHARD_AB remains separately available; the unified generic launcher does not automatically select every specialized kernel, LSA or HOST fallback capability.
 - NCCL chooses its available communication transport. The accepted network fixture used local TCP/NCCL, not physical inter-node networking.
 - Pure GraphDefinition use has no CayleyPy dependency. Optional catalog integration is pinned and tested at CayleyPy0.2.0; future third-party APIs are not covered automatically.
@@ -42,3 +42,10 @@ Actual one/twoRTX3060 automatic launches passed17-state wide inverse rotation,2-
 ## Recovery acceptance
 
 Source 2cdfdc30b88dba7fb69c9458393131157bf71ca7 was reconstructed remotely after lease teardown. Fresh Rust CLI SHA256 exactly matches the previously tested cyclic implementation. Native CUDA library is unchanged and reused from its verified public wheel. Fresh clean installed cyclic fixtures and public/network suites passed on one/two RTX3060. Proof receipt: recovery-clean-status.json. Generic wide states still transmit candidates before dedup; survivor-only transport and broader algorithm-profile tuning remain unfinished. Physical8/128 GPUs, separate nodes and Blackwell are not accepted by these tests.
+
+
+## Packed24 route extension
+
+Route records remain32 bytes:8 bytes hash plus24 exact state bytes. Permutation states17..24 bytes no longer allocate/generate/exchange a separate full candidate plane. Wider states and int64 states retain the existing exact transport. Owner tests used forced full hash collisions with states differing only in the final bytes, malformed counts and cross-shard pending origins on both RTX3060 GPUs. Logical1/2/3/8/128 source layouts are synthetic, not rank-scale acceptance. Public automatic launches matched independent full-state CPU oracles at widths16/17/23/24/25, including the fallback boundary.
+
+Three alternating matched full runs of the3,628,800-state10-element permutation graph embedded in17 coordinates with7 fixed values produced layer medians0.737101221s old versus0.482075518s new, ratio1.529016. Every layer count and canonical retained terminal state matched. Both used2RTX3060,4shards, batch65536, capacity3628800. This is a measured improvement for this fixture; setup/wall timing remains separate. General survivor-only transport above24 bytes and broader algorithm selection remain unfinished.
