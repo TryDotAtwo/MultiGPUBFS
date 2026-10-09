@@ -8,8 +8,17 @@ report = run_graph(cayleypy_graph, "results")
 The default uses all CUDA-visible devices on one host. `device=1` selects one
 card; `devices=[1,0]` sets explicit placement. `max_seconds` limits work, and
 `capacity` overrides retained rows per card subject to VRAM admission.
-`shards=4` selects independent owner streams; automatic throughput tuning is
-not yet connected. State generation, routing, equality and dedup run on GPUs.
+`shards=4` selects independent owner streams. When `shards` is omitted, substantial
+workloads measure three bounded same-graph GPU profiles (1 shard, 4 shards,
+and 4 shards with quarter-size routing batches). Comparable completed depths
+and identical layer counts are required; first-collective warmup is excluded.
+An alternative must beat the baseline by at least 5% to justify a switch.
+`autotune=False` selects the conservative one-shard profile without pilots.
+Small/short workloads skip pilots. Profiles are cached by graph, native binary,
+GPU identity, driver, topology and relevant communication environment; actual
+free-VRAM admission is repeated on every launch. Tuning time is deducted from
+the requested work budget. This bounded prefix selection is not a guarantee
+of a globally optimal profile across a growing frontier. State generation, routing, equality and dedup run on GPUs.
 
 The general backend retains complete visited history for directed graphs.
 Compact output saves at most 1000 states of the last completed layer globally,
@@ -32,4 +41,9 @@ restarting BFS. Reports contain graph identity and state checksums.
 Verified hardware: one and two RTX 3060 on one host. Logical 8/128-rank memory
 geometry tests do not establish hardware acceptance or throughput scaling.
 Multi-host launch and external torchrun dispatch are not connected to this API.
-Native clean installation and throughput tuning remain acceptance work.
+A Linux x86_64 native wheel was clean-installed and verified outside its source
+checkout on one and two RTX 3060, including four-shard placement. Its manifest
+verifies executable and CUDA-library SHA256 before launch. The wheel contains
+SM86 code only and still requires compatible external CUDA12/NCCL2/driver.
+Bounded GPU profile selection and cache were verified on a complete 40,320-state
+graph against a CPU oracle. Heavy-graph and larger-rank tuning acceptance remain.

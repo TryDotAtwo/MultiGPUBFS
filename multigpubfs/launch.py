@@ -11,11 +11,12 @@ def _receipt(output,digest):
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=1):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
- Memory is admitted from actual free VRAM; throughput profile tuning remains
- pending. This launcher covers one host, not a multi-host torchrun deployment.
+ Memory is admitted from actual free VRAM. With shards omitted, bounded
+ GPU prefix measurements select a cached profile for substantial workloads.
+ This launcher covers one host, not a multi-host torchrun deployment.
  """
  if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
  if device is not None and devices is not None:raise ValueError('DEVICE_SELECTION_CONFLICT')
@@ -24,10 +25,22 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   devices=[device]
  if devices is not None and (not isinstance(devices,(list,tuple)) or not devices or any(type(v) is not int or v<0 for v in devices) or len(set(devices))!=len(devices)):raise ValueError('INVALID_DEVICES')
  if type(max_seconds) is not int or max_seconds<1:raise ValueError('INVALID_MAX_SECONDS')
- if type(shards) is not int or not 1<=shards<=4096:raise ValueError('INVALID_SHARDS')
+ if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
+ if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
  if os.environ.get('WORLD_SIZE','1')!='1':raise RuntimeError('EXTERNAL_MULTIHOST_LAUNCH_NOT_CONNECTED')
  native,native_env=native_runtime(executable)
+ if _native_env is not None:native_env=dict(_native_env)
+ output=Path(output).absolute()
+ if output.exists():raise FileExistsError(output)
+ profile=None
+ if shards is None:
+  if autotune:
+   from .autotune import choose_profile
+   profile=choose_profile(graph,devices,capacity,max_seconds,native,native_env)
+   shards=profile['shards']
+   max_seconds=max(1,max_seconds-int(profile['seconds']+.999))
+  else:shards=1
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  output.parent.mkdir(parents=True,exist_ok=True);digest=graph.digest()
@@ -35,16 +48,30 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
   selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
   if capacity is not None:command.append(str(capacity))
+  if profile and profile.get('batch_fraction',1.0)!=1.0:
+   initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
+   if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
+   _batch=max(1,int(json.loads(initial.stdout)['plan']['batch']*profile['batch_fraction']))
+  if _batch is not None:
+   if capacity is None:
+    initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
+    if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
+    command.append(str(json.loads(initial.stdout)['plan']['capacity']))
+   command.append(str(_batch))
   probe=subprocess.run(command,capture_output=True,text=True,env=native_env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
+  if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
-  if len(devices)==1 and shards==1:
+  if len(devices)==1 and shards==1 and _profile_layers is None:
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
    if capacity is not None:command+=['--capacity',str(capacity)]
    process=subprocess.run(command,capture_output=True,text=True,env=native_env)
    if process.returncode:raise RuntimeError('NATIVE_GRAPH_FAILED: '+process.stderr[-4000:])
-   return _receipt(output,digest)
+   result=_receipt(output,digest)
+   if profile:
+    result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
+   return result
   output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
   try:
    for rank in range(len(devices)):
@@ -73,6 +100,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-  report=dict(parts[0]);report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; larger hardware and measured tuning not verified')
+  report=dict(parts[0]);report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return _receipt(output,digest)
