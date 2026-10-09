@@ -55,6 +55,7 @@ impl GenericNativeBfs {
   check(unsafe{cudaStreamSynchronize(stream.ptr)})?;
   Ok(Self{device,stream,plan,kind,rows,cols,generators,visited,parents,front,future,slots,control,perms,matrices,moduli,count:1,seed,hash_bits,terminal:false,visited_used:1,current_start:0,previous:None})
  }
+ pub fn stop(&mut self){self.terminal=true;}
  pub fn frontier_len(&self)->u32{self.count}
  pub fn advance(&mut self)->Result<GenericAdvance>{
   if self.terminal{return Err("GENERIC_TERMINAL_ARENA".into());}check(unsafe{cudaSetDevice(self.device)})?;let s=self.stream.ptr;self.terminal=true;

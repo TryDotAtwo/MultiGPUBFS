@@ -67,3 +67,6 @@ pub mod generic_memory;
 
 #[cfg(feature="cuda")]
 pub mod generic_native;
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub mod generic_run;

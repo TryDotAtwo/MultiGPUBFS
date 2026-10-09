@@ -5,7 +5,7 @@ fn execute() -> Result<(), (i32, String)> {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
         args.first().and_then(|x| x.to_str()),
-        Some("run") | Some("bench") | Some("session")
+        Some("run") | Some("bench") | Some("session") | Some("graph")
     ) {
         match mgbfs_runtime::cuda_loading::configure_cli_before_cuda() {
             Ok(true) => {
@@ -29,6 +29,13 @@ fn execute() -> Result<(), (i32, String)> {
     }
 
     match args.first().and_then(|x| x.to_str()) {
+        Some("graph") => {
+            #[cfg(all(feature="cuda",target_os="linux"))]
+            {let paths=args[1..].iter().map(|v|v.clone().into_string().map_err(|_|(2,"CLI_GRAPH_ARGUMENT_ENCODING".into()))).collect::<Result<Vec<_>,_>>()?;
+             mgbfs_runtime::generic_run::run(&paths).map_err(|e|(1,e))?;}
+            #[cfg(not(all(feature="cuda",target_os="linux")))]
+            return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
+        }
         Some("session") if args.len() == 2 => {
             #[cfg(all(feature = "cuda", target_os = "linux"))]
             mgbfs_runtime::session_worker::run(&PathBuf::from(&args[1])).map_err(|e| (1, e))?;
@@ -50,6 +57,7 @@ fn execute() -> Result<(), (i32, String)> {
         Some("run") => return Err((2,
             "CLI_USAGE: mgbfs run <config.json> <bootstrap> <archive-prefix> <output-dir>".into())),
         Some("--help") | Some("-h") if args.len() == 1 => {
+            println!("mgbfs graph <graph.json> <output-dir> [--device N] [--capacity N] [--seconds N]\nGeneral exact GPU path currently supports one device; directed graphs retain all visited states.\n");
             println!("mgbfs bench --manifest <matrix.json> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nManifest input uses the same benchmark runtime; it is not the production RunConfigV1 dispatcher.");
             println!("mgbfs run <config.json> <bootstrap> <archive-prefix> <output-dir>\nRun currently supports unit-depth matrix states, two producer banks, exact candidate slot capacity and aligned pinned slots; other contracts fail explicitly.\nmgbfs verify <archive>\nmgbfs preflight --offline <config.json>\nmgbfs bench --reference <sN|uNmM> <batch> <bootstrap> <archive-prefix> <output-dir> [--search-only]\nReference bench requires a Linux CUDA build and torchrun topology; archive is enabled unless --search-only is explicit.\nOffline preflight validates only the configuration, not device memory or hardware readiness.\nHardware preflight/calibrate are not connected yet.");
         }
