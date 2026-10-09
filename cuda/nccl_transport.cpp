@@ -623,3 +623,15 @@ extern "C" int mgbfs_nccl_lsa_owner_fatal_vote(void*,MgbfsStateRingControl*,Mgbf
 #endif
 
 extern "C" int mgbfs_nccl_all_reduce_sum_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclSum,p->value,static_cast<cudaStream_t>(raw_stream)));}
+
+// General graph queues carry GPU count, origin metadata and regenerated
+// payload as one ordered submission. Capacities are agreed at startup;
+// fixed-capacity fallback avoids intermediate host count readback. It is
+// not a throughput claim; device-count transport remains a separate backend.
+extern "C" int mgbfs_nccl_send_recv_triplet(void* raw,const void* count,uint64_t count_bytes,
+ const void* metadata,uint64_t metadata_bytes,const void* states,uint64_t state_bytes,uint32_t peer,
+ void* recv_count,void* recv_metadata,void* recv_states,void* stream){
+ const void* send[]={count,metadata,states};void* recv[]={recv_count,recv_metadata,recv_states};
+ const uint64_t bytes[]={count_bytes,metadata_bytes,state_bytes};
+ return send_recv_lanes(raw,send,bytes,recv,bytes,3,peer,stream);
+}
