@@ -17,11 +17,16 @@ def _system_info(command):
 def _dependency_identity(native,env):
  try:resolved=subprocess.run(['ldd',native],capture_output=True,text=True,env=env,timeout=10)
  except (OSError,subprocess.TimeoutExpired):return None
+ dependencies=[]
+ for line in resolved.stdout.splitlines():
+  fields=line.split()
+  if len(fields)>=3 and fields[1]=='=>' and Path(fields[2]).is_file():
+   dep=Path(fields[2]).resolve();stat=dep.stat();dependencies.append([fields[0],str(dep),stat.st_size,stat.st_mtime_ns])
  for line in resolved.stdout.splitlines():
   fields=line.split()
   if len(fields)>=3 and fields[0]=='libmgbfs_cuda.so' and fields[1]=='=>':
    path=Path(fields[2])
-   if path.is_file():return {'cuda_library_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'resolved_dependencies':resolved.stdout}
+   if path.is_file():return {'cuda_library_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'resolved_dependencies':dependencies}
  return None
 
 def choose_profile(graph,devices,capacity,max_seconds,native,env):
