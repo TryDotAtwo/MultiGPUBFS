@@ -1,5 +1,7 @@
 # MultiGPUBFS
 
+Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Actual acceptance: one/two RTX3060; larger/Blackwell and physical multi-host configurations remain unverified.
+
 Research workspace for understanding exact breadth-first search, from a small
 CPU reference to conceptual and measurement-based study of GPU and multi-GPU
 traversal over explicit and implicit graphs.
