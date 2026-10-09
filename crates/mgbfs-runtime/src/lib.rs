@@ -74,3 +74,6 @@ pub mod generic_run;
 pub mod generic_route;
 
 pub mod generic_distributed_memory;
+
+#[cfg(feature="cuda")]
+pub mod generic_distributed_native;

@@ -5,23 +5,43 @@ use std::{ffi::c_void,ptr};
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*,native_owner::{cudaSetDevice,cudaMemGetInfo}};
 use crate::generic_memory::GenericMemoryPlan;
-fn check(code:i32)->Result<()> {if code==0{Ok(())}else{Err(format!("GENERIC_CUDA_{code}"))}}
-struct Buffer {ptr:*mut c_void,bytes:usize,device:i32}
+pub(crate) fn check(code:i32)->Result<()> {if code==0{Ok(())}else{Err(format!("GENERIC_CUDA_{code}"))}}
+pub(crate) struct Buffer {pub(crate) ptr:*mut c_void,pub(crate) bytes:usize,pub(crate) device:i32}
 impl Buffer {
- fn new(bytes:usize,device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaMalloc(&mut p,bytes.max(1))})?;Ok(Self{ptr:p,bytes,device})}
- fn upload<T>(&self,data:&[T])->Result<()> {let bytes=std::mem::size_of_val(data);if bytes>self.bytes{return Err("GENERIC_UPLOAD_BOUNDS".into());}check(unsafe{cudaMemcpy(self.ptr,data.as_ptr().cast(),bytes,1)})}
- fn at<T>(&self,offset:usize)->*mut T{unsafe{self.ptr.cast::<u8>().add(offset).cast()}}
+ pub(crate) fn new(bytes:usize,device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaMalloc(&mut p,bytes.max(1))})?;Ok(Self{ptr:p,bytes,device})}
+ pub(crate) fn upload<T>(&self,data:&[T])->Result<()> {let bytes=std::mem::size_of_val(data);if bytes>self.bytes{return Err("GENERIC_UPLOAD_BOUNDS".into());}check(unsafe{cudaMemcpy(self.ptr,data.as_ptr().cast(),bytes,1)})}
+ pub(crate) fn at<T>(&self,offset:usize)->*mut T{unsafe{self.ptr.cast::<u8>().add(offset).cast()}}
 }
 impl Drop for Buffer {fn drop(&mut self){unsafe{cudaSetDevice(self.device);cudaFree(self.ptr);}}}
-struct Stream {ptr:*mut c_void,device:i32}
-impl Stream {fn new(device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaStreamCreateWithFlags(&mut p,1)})?;Ok(Self{ptr:p,device})}}
+pub(crate) struct Stream {pub(crate) ptr:*mut c_void,pub(crate) device:i32}
+impl Stream {pub(crate) fn new(device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaStreamCreateWithFlags(&mut p,1)})?;Ok(Self{ptr:p,device})}}
 impl Drop for Stream {fn drop(&mut self){unsafe{cudaSetDevice(self.device);cudaStreamSynchronize(self.ptr);cudaStreamDestroy(self.ptr);}}}
 #[derive(Debug,PartialEq,Eq)]
 pub enum GenericAdvance {Layer{count:u32},Complete,Resource{fatal:u32}}
 pub struct GenericNativeBfs {
- device:i32,stream:Stream,plan:GenericMemoryPlan,kind:u32,rows:u32,cols:u32,generators:u32,
- visited:Buffer,parents:Buffer,front:Buffer,future:Buffer,slots:Buffer,control:Buffer,
- perms:Buffer,matrices:Buffer,moduli:Buffer,count:u32,seed:u64,hash_bits:u32,terminal:bool,visited_used:u32,current_start:u32,previous:Option<(u32,u32)>,
+ pub(crate) device:i32,
+ pub(crate) stream:Stream,
+ pub(crate) plan:GenericMemoryPlan,
+ pub(crate) kind:u32,
+ pub(crate) rows:u32,
+ pub(crate) cols:u32,
+ pub(crate) generators:u32,
+ pub(crate) count:u32,
+ pub(crate) seed:u64,
+ pub(crate) hash_bits:u32,
+ pub(crate) terminal:bool,
+ pub(crate) visited_used:u32,
+ pub(crate) current_start:u32,
+ pub(crate) previous:Option<(u32,u32)>,
+ pub(crate) visited:Buffer,
+ pub(crate) parents:Buffer,
+ pub(crate) front:Buffer,
+ pub(crate) future:Buffer,
+ pub(crate) slots:Buffer,
+ pub(crate) control:Buffer,
+ pub(crate) perms:Buffer,
+ pub(crate) matrices:Buffer,
+ pub(crate) moduli:Buffer,
 }
 impl GenericNativeBfs {
  pub fn automatic_plan(graph:&GraphDefinitionV2,device:u32)->Result<GenericMemoryPlan>{
