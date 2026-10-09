@@ -18,3 +18,13 @@ Source compiled/packaged functional checkpoint: `3aaf1862dab3d6cf7dc8f6e9d3642d2
 The public URL was downloaded without credentials and checked against the on-rental wheel checksum. A clean installation outside the source checkout passed native GPU smoke, regular tuning and external network tuning gates. CUTLASS redistribution notice is bundled.
 
 Actual GPU acceptance is one/two RTX3060. The library contains SM86 code and PTX; this is not B200/B300 or other-architecture hardware acceptance. Separate physical nodes and8/128 GPU configurations are unverified. Native runtime dependencies are external; this wheel does not install drivers. General directed retained-history, automatic specialized compact-history dispatch and survivor-only transport boundaries are documented in unified-launch.md.
+
+## Packed-candidate CUDA13 release
+
+For Linux x86_64 with CUDA runtime13, NCCL2 and a compatible driver, the updated packed-candidate wheel is available without a token:
+
+```bash
+python -m pip install "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/34b7b907773f83dadf89976ef1743e7f3a626f83/linux-x86_64-sm86-cuda13.2/ceb125a47bd4d5c0224404c9835a57c9e8de8bfa/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl"
+```
+
+SHA256: `85f8570c1e2753d7a21833a439e4d76c4baebc5a94f3dcd4ada94b8f6ef3c998`. The CUDA12 wheel above remains the earlier implementation. The updated wheel passed clean two-RTX3060 installation, exact layer/resource/collision tests, network rank control and four-profile autotuning. CUDA13 compatibility and these GPU tests do not establish acceptance on Blackwell or physical multihost clusters.
