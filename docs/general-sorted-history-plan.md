@@ -162,3 +162,27 @@ This establishes serialized/automatic MEMORY admission for explicitly selected
 sorted history. It does not establish measured automatic algorithm/lane choice,
 near-card throughput, fresh release installation, Blackwell or physical scaling
 beyond two cards. The whole unified launch goal remains active.
+
+
+## Measured history and owner lane selection, 2026-10-10
+
+The public generic autotuner now admits and measures SORTED_RUNS owners with
+1/2/4/8 lanes in addition to existing HASH shard/batch/transport candidates.
+Explicit history/lane overrides constrain candidates, including small-workload
+fallbacks. The profile cache schema includes serialized history/workspace
+geometry; chosen history, lanes and exact measured batch reach production
+admission. A measured batch is not multiplied by its fraction a second time.
+Forced generic history excludes incompatible specialized owner selection.
+
+Seventeen policy tests pass. On two actual RTX3060, a 40320-state permutation
+component in a 25-element representation completed with exact CPU layer and
+terminal state oracles after comparing eleven candidates on depth 35. HASH with
+parent transport and batch 10080 won this workload; sorted is not forced by
+optimistic assumptions. Cache reuse is checked. Separate actual GPU tests inject
+an explicitly labelled sorted selection to validate worker dispatch, exact batch
+and terminal oracle, and test forced eight-lane small-workload admission. The
+injected selection is dispatch evidence, not a measured speed claim.
+
+These bounded prefixes do not establish near-card throughput, all workload
+optima, Blackwell readiness, remote native-shape inventory or larger physical
+rank scaling. Those requirements remain open, as does fresh release packaging.

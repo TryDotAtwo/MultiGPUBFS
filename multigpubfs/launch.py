@@ -58,6 +58,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     remaining=max(1,max_seconds-int(profile['seconds']+.999))
     return _run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile)
    native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'))
+   if profile.get('history_algorithm')=='SORTED_RUNS':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(profile['owner_lanes']))
+   elif profile.get('history_algorithm')=='HASH':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
+   if profile.get('measured') and profile.get('backend','generic')=='generic':_batch=profile['batch']
    max_seconds=max(1,max_seconds-int(profile['seconds']+.999))
   else:shards=1
  output=Path(output).absolute()
@@ -67,7 +70,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
   selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
   if capacity is not None:command.append(str(capacity))
-  if profile and profile.get('batch_fraction',1.0)!=1.0:
+  if _batch is None and profile and profile.get('batch_fraction',1.0)!=1.0:
    initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
    if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
    _batch=max(1,int(json.loads(initial.stdout)['plan']['batch']*profile['batch_fraction']))

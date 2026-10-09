@@ -38,6 +38,12 @@ def _transport_variants(graph,env):
  packed=graph.action['kind']=='permutation' and graph.state_elements<=24 and all(0<=v<=255 for v in graph.start)
  if forced is None and not packed:variants += [(4,1.0,'parent',order_default),(4,.25,'parent',order_default)]
  if order is None:variants.append((4,.25,'parent' if forced is None and not packed else mode,'radix'))
+ history=env.get('MGBFS_GENERIC_HISTORY')
+ if history not in (None,'hash','sorted'):raise ValueError('INVALID_HISTORY_ALGORITHM')
+ if history=='sorted':
+  lane=int(env.get('MGBFS_GENERIC_OWNER_LANES','1'))
+  if not 1<=lane<=8:raise ValueError('INVALID_OWNER_LANES')
+  variants=list(dict.fromkeys((max(sh,lane),f,tr,'none') for sh,f,tr,_ in variants))
  return variants
 
 def _configuration_digest(env):
@@ -53,23 +59,24 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
  allow_specialized=allow_specialized and exact_specialized_supported(graph)
  started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
  with tempfile.TemporaryDirectory(prefix='mgbfs-profile-') as temporary:
-  baseline=_admit(graph,devices,capacity,1,native,env,temporary)
+  baseline_shards=variants[0][0]
+  baseline=_admit(graph,devices,capacity,baseline_shards,native,env,temporary)
   selected=baseline['devices'];plan=baseline['plan']
   if plan['capacity']<=4096 or max_seconds<10:
-   return {'status':'SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE','shards':1,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
+   return {'status':'SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   # Native content, graph and driver/topology identity prevent stale reuse.
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':12,'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':13,'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
    try:saved=json.loads(cache.read_text())
    except (OSError,ValueError):saved={}
    from .specialized import match_lrx
-   specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and match_lrx(graph) is not None
-   if saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and saved.get('shards') in (1,4,16) and saved.get('batch_fraction') in (1.0,.25) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants) or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
+   specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and match_lrx(graph) is not None
+   if saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and saved.get('shards') in (1,4,8,16) and saved.get('batch_fraction') in (1.0,.25) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
     saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;return saved
   admitted=[]
   for shards,fraction,transport,order in variants:
@@ -79,7 +86,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
     raise
    admitted.append((shards,fraction,transport,order,admission['plan']))
-  if len(admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':1,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
+  if len(admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   common_capacity=min(p['capacity'] for _,_,_,_,p in admitted)
   pilots=[];limit=min(3,max(1,max_seconds//20))
   from .launch import run_graph
@@ -88,10 +95,30 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
    report=run_graph(graph,Path(temporary)/('pilot-'+str(index)),devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
-   pilots.append({'backend':'generic','candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+   pilots.append({'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+  # Same canonical state capacity: history/lane alternatives must pass actual
+  # native workspace admission before they can become timing candidates.
+  history=env.get('MGBFS_GENERIC_HISTORY')
+  if history not in (None,'hash','sorted'):raise ValueError('INVALID_HISTORY_ALGORITHM')
+  if history in (None,'sorted'):
+   forced_lanes=env.get('MGBFS_GENERIC_OWNER_LANES')
+   lanes=[int(forced_lanes)] if forced_lanes is not None else [1,2,4,8]
+   for lane in lanes:
+    if not 1<=lane<=8:raise ValueError('INVALID_OWNER_LANES')
+    remaining=max_seconds-(time.monotonic()-started)
+    if remaining<3:break
+    shards=max(4,lane);transport=default_transport
+    candidate_env=dict(env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(lane),MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT='none')
+    try:admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
+    except RuntimeError as error:
+     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM','SORTED_OWNER_NO_ADMISSION')):continue
+     raise
+    batch=max(1,min(admission['plan']['batch'],pilots[0]['batch']))
+    report=run_graph(graph,Path(temporary)/('sorted-lanes-'+str(lane)),devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(remaining))),executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
+    pilots.append({'backend':'generic','history_algorithm':'SORTED_RUNS','owner_lanes':lane,'candidate_order':'none','transport':transport,'shards':shards,'batch_fraction':1.0,'batch':batch,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Specialized candidates preserve only a proved identical LRX action/root.
   # Unsupported definitions/topologies remain on the general exact backend.
-  if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and max_seconds-(time.monotonic()-started)>=8:
+  if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and max_seconds-(time.monotonic()-started)>=8:
    from .specialized import match_lrx,admit_specialized,run_specialized
    matched=match_lrx(graph)
    if matched is not None and matched['order']>=32768:
@@ -116,7 +143,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
   # Exclude first collective warmup. Tiny prefixes cannot justify a speed claim.
   if depth<4 or sum(sizes[2:])<32768:
-   return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':1,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':pilots,'common_depth':depth,'seconds':time.monotonic()-started}
+   return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':pilots,'common_depth':depth,'seconds':time.monotonic()-started}
   scores=[sum(p['layer_seconds'][1:depth]) for p in pilots]
   winner=min(range(len(scores)),key=lambda i:scores[i])
   # A single bounded sample cannot justify a marginal switch. Keep baseline
@@ -124,6 +151,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   if scores[winner]>=scores[0]*.95:winner=0
   chosen=pilots[winner]
   result={'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'scope':'bounded prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
+  result.update(history_algorithm=chosen.get('history_algorithm','SORTED_RUNS' if env.get('MGBFS_GENERIC_HISTORY')=='sorted' else 'HASH'),owner_lanes=chosen.get('owner_lanes',int(env.get('MGBFS_GENERIC_OWNER_LANES','0'))))
+  if chosen['backend']=='generic':result['batch']=chosen['batch']
   if chosen['backend']!='generic':result.update(specialized_capacity=chosen['specialized_capacity'],specialized_mode=chosen['specialized_mode'],specialized_transport=chosen['specialized_transport'],specialized_admission=chosen['specialized_admission'],batch=chosen['batch'])
   if dependency is not None and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True)
