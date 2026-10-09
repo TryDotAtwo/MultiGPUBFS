@@ -5,7 +5,7 @@ fn execute() -> Result<(), (i32, String)> {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
         args.first().and_then(|x| x.to_str()),
-        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-rank")
+        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-rank")
     ) {
         match mgbfs_runtime::cuda_loading::configure_cli_before_cuda() {
             Ok(true) => {
@@ -29,10 +29,10 @@ fn execute() -> Result<(), (i32, String)> {
     }
 
     match args.first().and_then(|x| x.to_str()) {
-        Some(command @ ("graph-info" | "graph-rank")) => {
+        Some(command @ ("graph-info" | "graph-plan" | "graph-rank")) => {
             #[cfg(all(feature="cuda",target_os="linux"))]
             {let paths=args[1..].iter().map(|v|v.clone().into_string().map_err(|_|(2,"CLI_GRAPH_ARGUMENT_ENCODING".into()))).collect::<Result<Vec<_>,_>>()?;
-             if command=="graph-info"{mgbfs_runtime::generic_distributed_run::info(&paths)}else{mgbfs_runtime::generic_distributed_run::run(&paths)}.map_err(|e|(1,e))?;}
+             if command=="graph-info"{mgbfs_runtime::generic_distributed_run::info(&paths)}else if command=="graph-plan"{mgbfs_runtime::generic_distributed_run::global_info(&paths)}else{mgbfs_runtime::generic_distributed_run::run(&paths)}.map_err(|e|(1,e))?;}
             #[cfg(not(all(feature="cuda",target_os="linux")))]
             return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
         }

@@ -30,8 +30,8 @@ Automatic fast-path selection is not yet complete.
 Memory admission reads actual free VRAM, reserves headroom, and accounts for
 retained history, per-shard tables, routing banks and receive buffers. A finite
 mathematical state-space bound avoids VRAM-sized allocations for small graphs.
-Current multi-device placement uses a common capacity based on the smallest
-available card; heterogeneous weighted capacity tuning remains pending.
+Automatic multi-device placement uses independent admitted capacities and
+weighted hash intervals; explicit capacity overrides retain common capacity.
 
 `COMPLETE` means frontier exhaustion. Deadline, cancellation or resource stop
 produce `INCOMPLETE`, never a full enumeration claim. Signals are voted across
@@ -40,7 +40,10 @@ restarting BFS. Reports contain graph identity and state checksums.
 
 Verified hardware: one and two RTX 3060 on one host. Logical 8/128-rank memory
 geometry tests do not establish hardware acceptance or throughput scaling.
-Multi-host launch and external torchrun dispatch are not connected to this API.
+External-rank network launch is connected through WORLD_SIZE/RANK/LOCAL_RANK
+and MASTER_ADDR/MASTER_PORT. Its actual TCP/NCCL protocol was checked using two
+independent worker directories on one host; physically separate nodes remain
+unverified. See external-rank-launch.md.
 A Linux x86_64 native wheel was clean-installed and verified outside its source
 checkout on one and two RTX 3060, including four-shard placement. Its manifest
 verifies executable and CUDA-library SHA256 before launch. The wheel contains

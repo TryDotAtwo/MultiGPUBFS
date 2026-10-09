@@ -16,7 +16,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
  GPU prefix measurements select a cached profile for substantial workloads.
- This launcher covers one host, not a multi-host torchrun deployment.
+ With WORLD_SIZE/RANK/LOCAL_RANK and MASTER_ADDR/MASTER_PORT it uses
+ the external-rank network launcher; one process owns one local GPU.
  """
  if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
  if device is not None and devices is not None:raise ValueError('DEVICE_SELECTION_CONFLICT')
@@ -28,9 +29,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
- if os.environ.get('WORLD_SIZE','1')!='1':raise RuntimeError('EXTERNAL_MULTIHOST_LAUNCH_NOT_CONNECTED')
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ if os.environ.get('WORLD_SIZE','1')!='1':
+  from .distributed_launch import run_external
+  return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune)
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None

@@ -13,8 +13,16 @@ pub fn info(args:&[String])->Result<()>{
  let devices=if args[1]=="auto"{(0..count as u32).collect::<Vec<_>>()}else{args[1].split(',').map(|v|v.parse::<u32>().map_err(|_|"CLI_GRAPH_DEVICES".to_owned())).collect::<Result<Vec<_>>>()?};
  if devices.is_empty()||devices.len()>128||devices.iter().any(|&d|d>=count as u32)||devices.iter().enumerate().any(|(i,d)|devices[..i].contains(d)){return Err("CLI_GRAPH_DEVICE_SELECTION".into());}
  let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{check(unsafe{cudaSetDevice(device as i32)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total}));}
- let state_bytes=crate::generic_memory::preferred_state_bytes(&g);
  let requested=if args.len()>3&&args[3]!="auto"{Some(args[3].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?)}else{None};
+ let batch=if args.len()>4{Some(args[4].parse::<u32>().map_err(|_|"CLI_GRAPH_BATCH")?)}else{None};
+ println!("{}",admit(&g,devices,inventory,shards,requested,batch)?);Ok(())
+}
+fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,shards:u32,requested:Option<u32>,batch:Option<u32>)->Result<serde_json::Value>{
+ if devices.is_empty()||devices.len()>128||inventory.len()!=devices.len(){return Err("GRAPH_GLOBAL_INVENTORY_SHAPE".into());}
+ let mut minimum=u64::MAX;
+ for v in &inventory{let free=v["free_bytes"].as_u64().ok_or("GRAPH_GLOBAL_FREE_BYTES")?;let total=v["total_bytes"].as_u64().ok_or("GRAPH_GLOBAL_TOTAL_BYTES")?;if free==0||free>total{return Err("GRAPH_GLOBAL_MEMORY_RANGE".into());}minimum=minimum.min(free);}
+ let state_bytes=crate::generic_memory::preferred_state_bytes(&g);
+ 
  let (mut rank_plans,owner_cuts)=if let Some(capacity)=requested{
   let auto=Plan::automatic_storage(g.start.len() as u32,devices.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),minimum,Some(u64::from(capacity)),state_bytes)?;
   if auto.capacity!=capacity{return Err("REQUESTED_CAPACITY_EXCEEDS_ADMISSION".into());}
@@ -23,12 +31,18 @@ pub fn info(args:&[String])->Result<()>{
   let free=inventory.iter().map(|v|v["free_bytes"].as_u64().unwrap()).collect::<Vec<_>>();
   let(plans,cuts)=crate::generic_distributed_memory::heterogeneous_plans(g.start.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),&free,crate::generic_memory::state_space_bound(&g),state_bytes)?;(plans,Some(cuts))
  };
- if args.len()>4{let batch:u32=args[4].parse().map_err(|_|"CLI_GRAPH_BATCH")?;
+ if let Some(batch)=batch{
   for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if candidate.device_bytes>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
  }
  let plan=rank_plans.iter().min_by_key(|p|p.capacity).unwrap().clone();
- println!("{}",serde_json::json!({"graph_digest":digest(&g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED","topology_scope":"single host CUDA_VISIBLE_DEVICES ordinals"}));Ok(())
+ Ok(serde_json::json!({"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
 }
+pub fn global_info(args:&[String])->Result<()>{
+ if args.len()<3{return Err("CLI_GRAPH_GLOBAL_ARGUMENTS".into());}let g=graph(&args[0])?;let inventory:Vec<serde_json::Value>=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+ let devices=inventory.iter().map(|v|v["device"].as_u64().filter(|&d|d<=u64::from(u32::MAX)).map(|d|d as u32).ok_or("GRAPH_GLOBAL_DEVICE".to_owned())).collect::<Result<Vec<_>>>()?;
+ let shards=args[2].parse().map_err(|_|"CLI_GRAPH_SHARDS")?;let requested=if args.len()>3&&args[3]!="auto"{Some(args[3].parse().map_err(|_|"CLI_GRAPH_CAPACITY")?)}else{None};let batch=if args.len()>4{Some(args[4].parse().map_err(|_|"CLI_GRAPH_BATCH")?)}else{None};println!("{}",admit(&g,devices,inventory,shards,requested,batch)?);Ok(())
+}
+
 #[derive(serde::Deserialize)]struct Launch{graph_digest:String,devices:Vec<u32>,plan:Plan,#[serde(default)]rank_plans:Vec<Plan>,#[serde(default)]owner_cuts:Option<Vec<u64>>,#[serde(default)]profile_max_layers:Option<u32>}
 pub fn run(args:&[String])->Result<()>{
  if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}let g=graph(&args[0])?;let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
