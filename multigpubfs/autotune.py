@@ -64,7 +64,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
    admission=_admit(graph,selected,common_capacity,shards,native,env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
    report=run_graph(graph,Path(temporary)/('pilot-'+str(index)),devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=env)
-   pilots.append({'shards':shards,'batch_fraction':fraction,'batch':batch,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+   pilots.append({'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   depth=min(len(p['layer_seconds']) for p in pilots)
   sizes=pilots[0]['layer_sizes'][:depth+1]
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')

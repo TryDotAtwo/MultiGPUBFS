@@ -6,3 +6,15 @@ extern "C" int mgbfs_generic_generate_i64(uint32_t kind,uint32_t elements,uint32
  const int64_t* parents,uint32_t parent_count,uint32_t parent_stride,const uint32_t* permutation_tables,
  const int64_t* matrix_tables,const uint32_t* moduli,const uint64_t* selected_children,uint32_t output_count,
  int64_t* output,uint32_t output_stride,uint32_t* device_error,void* stream);
+
+// Compact permutation state payloads; matrix tables remain int64.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int mgbfs_generic_generate_u8(uint32_t kind,uint32_t elements,uint32_t rows,uint32_t cols,uint32_t generators,
+ const uint8_t* parents,uint32_t parent_count,uint32_t parent_stride,const uint32_t* permutation_tables,
+ const int64_t* matrix_tables,const uint32_t* moduli,const uint64_t* selected_children,uint32_t output_count,
+ uint8_t* output,uint32_t output_stride,uint32_t* device_error,void* raw_stream);
+#ifdef __cplusplus
+}
+#endif

@@ -48,12 +48,13 @@ impl GenericNativeBfs {
   graph.validate()?;let ordinal=i32::try_from(device).map_err(|_|"GENERIC_DEVICE_ORDINAL")?;check(unsafe{cudaSetDevice(ordinal)})?;
   let mut free=0;let mut total=0;check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
   let elements=u32::try_from(graph.start.len()).map_err(|_|"GENERIC_STATE_WIDTH")?;
-  GenericMemoryPlan::automatic(elements,free as u64,crate::generic_memory::state_space_bound(graph))
+  GenericMemoryPlan::automatic_storage(elements,free as u64,crate::generic_memory::state_space_bound(graph),crate::generic_memory::preferred_state_bytes(graph))
  }
  pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{
   graph.validate()?;if plan.elements as usize!=graph.start.len()||hash_bits>64{return Err("GENERIC_GRAPH_PLAN".into());}
   // Recompute the public plan contract before admitting any allocation.
-  let checked=GenericMemoryPlan::new(plan.elements,plan.capacity)?;
+  if plan.state_bytes==1&&crate::generic_memory::preferred_state_bytes(graph)!=1{return Err("GENERIC_COMPACT_ALPHABET".into());}
+  let checked=GenericMemoryPlan::with_storage(plan.elements,plan.capacity,plan.state_bytes)?;
   if checked.table_slots!=plan.table_slots||checked.device_bytes!=plan.device_bytes||plan.batch==0||plan.batch>plan.capacity{return Err("GENERIC_PLAN_MUTATED".into());}
   let device=i32::try_from(device).map_err(|_|"GENERIC_DEVICE_ORDINAL")?;check(unsafe{cudaSetDevice(device)})?;
   #[cfg(target_os="linux")] crate::cuda_loading::verify_driver_before_allocations()?;
@@ -63,30 +64,35 @@ impl GenericNativeBfs {
   };
   let generators=u32::try_from(graph.generator_count()).map_err(|_|"GENERIC_GENERATOR_COUNT")?;
   if generators==0||generators>=0x7fff_ffff{return Err("GENERIC_GENERATOR_COUNT".into());}
-  let width=plan.elements as usize;let cap=plan.capacity as usize;
+  let width=plan.elements as usize;let cap=plan.capacity as usize;let state_bytes=plan.state_bytes as usize;
   let stream=Stream::new(device)?;
-  let visited=Buffer::new(width*cap*8,device)?;let parents=Buffer::new(width*cap*8,device)?;
+  let visited=Buffer::new(width*cap*state_bytes,device)?;let parents=Buffer::new(width*cap*state_bytes,device)?;
   let front=Buffer::new(cap*4,device)?;let future=Buffer::new(cap*4,device)?;let slots=Buffer::new(plan.table_slots as usize*8,device)?;let control=Buffer::new(24,device)?;
   let perms=Buffer::new(ps.len()*4,device)?;perms.upload(&ps)?;let matrices=Buffer::new(ms.len()*8,device)?;matrices.upload(&ms)?;let moduli=Buffer::new(mods.len()*4,device)?;moduli.upload(&mods)?;
   front.upload(&[0u32])?;control.upload(&[1u32,0,0,0,0,0])?;
-  for (e,value) in graph.start.iter().enumerate(){check(unsafe{cudaMemcpy(visited.at::<c_void>(e*cap*8),(value as *const i64).cast(),8,1)})?;}
+  for (e,value) in graph.start.iter().enumerate(){let byte=*value as u8;let source=if state_bytes==1{(&byte as *const u8).cast()}else{(value as *const i64).cast()};check(unsafe{cudaMemcpy(visited.at::<c_void>(e*cap*state_bytes),source,state_bytes,1)})?;}
   check(unsafe{cudaMemsetAsync(slots.ptr,255,slots.bytes,stream.ptr)})?;
-  check(unsafe{mgbfs_generic_seed_i64(plan.elements,visited.ptr.cast(),plan.capacity,1,slots.ptr.cast(),plan.table_slots,seed,hash_bits,control.at(8),stream.ptr)})?;
+  check(unsafe{mgbfs_generic_seed_storage(plan.state_bytes,plan.elements,visited.ptr.cast(),plan.capacity,1,slots.ptr.cast(),plan.table_slots,seed,hash_bits,control.at(8),stream.ptr)})?;
   check(unsafe{cudaStreamSynchronize(stream.ptr)})?;
   Ok(Self{device,stream,plan,kind,rows,cols,generators,visited,parents,front,future,slots,control,perms,matrices,moduli,count:1,seed,hash_bits,terminal:false,visited_used:1,current_start:0,previous:None})
+ }
+ fn read_soa(&self,count:u32)->Result<Vec<i64>>{
+  let length=count as usize*self.plan.elements as usize;
+  if self.plan.state_bytes==1{let mut raw=vec![0u8;length];check(unsafe{cudaMemcpyAsync(raw.as_mut_ptr().cast(),self.parents.ptr,length,2,self.stream.ptr)})?;check(unsafe{cudaStreamSynchronize(self.stream.ptr)})?;Ok(raw.into_iter().map(i64::from).collect())}
+  else{let mut raw=vec![0i64;length];check(unsafe{cudaMemcpyAsync(raw.as_mut_ptr().cast(),self.parents.ptr,length*8,2,self.stream.ptr)})?;check(unsafe{cudaStreamSynchronize(self.stream.ptr)})?;Ok(raw)}
  }
  pub fn stop(&mut self){self.terminal=true;}
  pub fn frontier_len(&self)->u32{self.count}
  pub fn advance(&mut self)->Result<GenericAdvance>{
   if self.terminal{return Err("GENERIC_TERMINAL_ARENA".into());}check(unsafe{cudaSetDevice(self.device)})?;let s=self.stream.ptr;self.terminal=true;
-  check(unsafe{mgbfs_generic_gather_i64(self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.front.ptr.cast(),self.count,self.parents.ptr.cast(),self.plan.capacity,s)})?;
+  check(unsafe{mgbfs_generic_gather_storage(self.plan.state_bytes,self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.front.ptr.cast(),self.count,self.parents.ptr.cast(),self.plan.capacity,s)})?;
   check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(4),0,4,s)})?;
   let batch=self.plan.batch.min(0x7fff_fffe/self.generators);if batch==0{return Err("GENERIC_BATCH_CAPACITY".into());}
   let mut begin=0;
   while begin<self.count {
    let count=batch.min(self.count-begin);
-   check(unsafe{mgbfs_generic_expand_i64(self.kind,self.plan.elements,self.rows,self.cols,self.generators,
-    self.parents.at::<i64>(begin as usize*8),count,self.plan.capacity,self.perms.ptr.cast(),self.matrices.ptr.cast(),self.moduli.ptr.cast(),
+   check(unsafe{mgbfs_generic_expand_storage(self.plan.state_bytes,self.kind,self.plan.elements,self.rows,self.cols,self.generators,
+    self.parents.at::<i64>(begin as usize*self.plan.state_bytes as usize),count,self.plan.capacity,self.perms.ptr.cast(),self.matrices.ptr.cast(),self.moduli.ptr.cast(),
     self.slots.ptr.cast(),self.plan.table_slots,self.visited.ptr.cast(),self.plan.capacity,self.control.at(0),self.future.ptr.cast(),self.plan.capacity,self.control.at(4),self.seed,self.hash_bits,self.control.at(8),s)})?;
    begin+=count;
   }
@@ -105,15 +111,15 @@ impl GenericNativeBfs {
   let (start,count)=match self.previous {Some(pair) if pair.1<1000=>pair,_=>return Ok(vec![])};
   check(unsafe{cudaSetDevice(self.device)})?;
   let indices=(start..start+count).collect::<Vec<u32>>();self.future.upload(&indices)?;
-  check(unsafe{mgbfs_generic_gather_i64(self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.future.ptr.cast(),count,self.parents.ptr.cast(),count,self.stream.ptr)})?;
-  let mut soa=vec![0i64;count as usize*self.plan.elements as usize];check(unsafe{cudaMemcpyAsync(soa.as_mut_ptr().cast(),self.parents.ptr,soa.len()*8,2,self.stream.ptr)})?;check(unsafe{cudaStreamSynchronize(self.stream.ptr)})?;
+  check(unsafe{mgbfs_generic_gather_storage(self.plan.state_bytes,self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.future.ptr.cast(),count,self.parents.ptr.cast(),count,self.stream.ptr)})?;
+  let soa=self.read_soa(count)?;
   Ok((0..count as usize).map(|i|(0..self.plan.elements as usize).map(|e|soa[e*count as usize+i]).collect()).collect())
  }
  /// Terminal/sample readout. No state copies occur in advance().
  pub fn sample(&mut self,limit:u32)->Result<Vec<Vec<i64>>>{
   check(unsafe{cudaSetDevice(self.device)})?;let count=limit.min(self.count);if count==0{return Ok(vec![]);}
-  check(unsafe{mgbfs_generic_gather_i64(self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.front.ptr.cast(),count,self.parents.ptr.cast(),count,self.stream.ptr)})?;
-  let mut soa=vec![0i64;count as usize*self.plan.elements as usize];check(unsafe{cudaMemcpyAsync(soa.as_mut_ptr().cast(),self.parents.ptr,soa.len()*8,2,self.stream.ptr)})?;check(unsafe{cudaStreamSynchronize(self.stream.ptr)})?;
+  check(unsafe{mgbfs_generic_gather_storage(self.plan.state_bytes,self.plan.elements,self.visited.ptr.cast(),self.plan.capacity,self.front.ptr.cast(),count,self.parents.ptr.cast(),count,self.stream.ptr)})?;
+  let soa=self.read_soa(count)?;
   Ok((0..count as usize).map(|i|(0..self.plan.elements as usize).map(|e|soa[e*count as usize+i]).collect()).collect())
  }
 }

@@ -9,6 +9,7 @@ g=GraphDefinition.permutation([[1,2,3,4,5,6,7,0],[1,0,2,3,4,5,6,7]],list(range(8
 oracle=g.exact_layers(40320)
 report=run_graph(g,r/'automatic',max_seconds=60)
 assert report['status']=='COMPLETE',report
+assert report['plan']['state_bytes']==1,report
 assert report['layer_sizes']==list(map(len,oracle)),report
 p=report['autotune'];assert p['status']=='MEASURED_EQUAL_PREFIX_GPU_PROFILE',p
 assert p['common_depth']>=4 and sum(p['common_layer_sizes'][2:])>=32768,p

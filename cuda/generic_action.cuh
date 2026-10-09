@@ -3,9 +3,9 @@
 #include <cstdint>
 static __device__ __forceinline__ uint64_t mix64(uint64_t x){x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;return x^(x>>31);}
 static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
-struct Action {
+template<class State> struct ActionT {
  uint32_t kind,elements,n,m,generators,count,stride;
- const int64_t* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
+ const State* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
  __device__ bool valid(uint32_t,uint32_t*)const{return true;}
  __device__ int64_t value(uint32_t child,uint32_t element)const {
   const uint32_t parent=child/generators,g=child%generators;
@@ -18,3 +18,5 @@ struct Action {
   uint64_t h=seed;for(uint32_t e=0;e<elements;e++)h=mix64(h^uint64_t(value(child,e))^uint64_t(e));return finish_hash(h,bits);
  }
 };
+
+using Action=ActionT<int64_t>;

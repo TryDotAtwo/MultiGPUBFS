@@ -6,7 +6,7 @@
 static constexpr uint64_t EMPTY=~uint64_t(0);
 #include "generic_action.cuh"
 #include "generic_route.h"
-__global__ void seed_table(uint32_t elements,const int64_t* states,uint32_t stride,uint32_t count,uint64_t* slots,
+template<class State> __global__ void seed_table(uint32_t elements,const State* states,uint32_t stride,uint32_t count,uint64_t* slots,
  uint32_t capacity,uint64_t seed,uint32_t bits,uint32_t* error){
  for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<count;row+=blockDim.x*gridDim.x){
   uint64_t h=seed;for(uint32_t e=0;e<elements;e++)h=mix64(h^uint64_t(states[uint64_t(e)*stride+row])^uint64_t(e));h=finish_hash(h,bits);
@@ -15,8 +15,8 @@ __global__ void seed_table(uint32_t elements,const int64_t* states,uint32_t stri
   if(!done)atomicOr(error,1u);
  }
 }
-template<class Candidate>
-__global__ void accept_candidates(Candidate action,uint64_t* slots,uint32_t slot_capacity,int64_t* visited,uint32_t visited_capacity,
+template<class Candidate,class State>
+__global__ void accept_candidates(Candidate action,uint64_t* slots,uint32_t slot_capacity,State* visited,uint32_t visited_capacity,
  uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint64_t seed,uint32_t bits,uint32_t* error){
  const uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
@@ -55,8 +55,8 @@ __global__ void accept_candidates(Candidate action,uint64_t* slots,uint32_t slot
   if(!done)atomicOr(error,1u);
  }
 }
-__global__ void gather(uint32_t elements,const int64_t* source,uint32_t source_stride,const uint32_t* indices,
- uint32_t count,int64_t* output,uint32_t output_stride){
+template<class State> __global__ void gather(uint32_t elements,const State* source,uint32_t source_stride,const uint32_t* indices,
+ uint32_t count,State* output,uint32_t output_stride){
  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<uint64_t(elements)*count;i+=uint64_t(blockDim.x)*gridDim.x){
   uint32_t e=i/count,row=i%count;output[uint64_t(e)*output_stride+row]=source[uint64_t(e)*source_stride+indices[row]];
  }
@@ -86,8 +86,8 @@ extern "C" int mgbfs_generic_gather_i64(uint32_t elements,const int64_t* source,
  if(!count)return 0;gather<<<grid(uint64_t(elements)*count),256,0,static_cast<cudaStream_t>(stream)>>>(elements,source,stride,indices,count,output,output_stride);return int(cudaGetLastError());
 }
 
-struct IncomingAction {
- uint32_t elements,count,stride,generators=1;const int64_t* states;
+template<class State> struct IncomingActionT {
+ uint32_t elements,count,stride,generators=1;const State* states;
  const GenericRouteRecord* metadata;const uint32_t* received;
  __device__ bool valid(uint32_t row,uint32_t* error)const{
   uint32_t actual=*received;if(actual>count){atomicOr(error,32u);return false;}return row<actual;
@@ -102,7 +102,43 @@ extern "C" int mgbfs_generic_accept_i64(uint32_t elements,const int64_t* incomin
  if(!elements||!bound||bound>stride||bound>=0x7fffffffU||!slot_capacity||(slot_capacity&(slot_capacity-1))||
   !visited_capacity||visited_capacity>=0x80000000U||!future_capacity||!incoming||!metadata||!received||
   !slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
- IncomingAction action{elements,bound,stride,1,incoming,metadata,received};
+ IncomingActionT<int64_t> action{elements,bound,stride,1,incoming,metadata,received};
+ accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
+ return int(cudaGetLastError());
+}
+
+// Compact permutation payload ABI shares the exact same kernel logic.
+extern "C" int mgbfs_generic_seed_u8(uint32_t elements,const uint8_t* states,uint32_t stride,uint32_t count,uint64_t* slots,
+ uint32_t capacity,uint64_t seed,uint32_t bits,uint32_t* error,void* stream){
+ if(!elements||count>stride||!capacity||(capacity&(capacity-1))||bits>64||!error||!slots||(!states&&count)||count>=0x80000000U)return int(cudaErrorInvalidValue);
+ if(!count)return 0;seed_table<<<grid(count),256,0,static_cast<cudaStream_t>(stream)>>>(elements,states,stride,count,slots,capacity,seed,bits,error);return int(cudaGetLastError());
+}
+extern "C" int mgbfs_generic_expand_u8(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const uint8_t* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,const uint32_t* moduli,
+ uint64_t* slots,uint32_t slot_capacity,uint8_t* visited,uint32_t visited_capacity,uint32_t* visited_count,
+ uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint64_t seed,uint32_t bits,uint32_t* error,void* stream){
+ if(kind>0||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+  !slot_capacity||(slot_capacity&(slot_capacity-1))||!visited_capacity||visited_capacity>=0x80000000U||bits>64||
+  !visited_count||!future_count||!error||!slots||!visited||!future||!parents||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
+ if(!count)return 0;
+ ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
+ accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error);
+ return int(cudaGetLastError());
+}
+extern "C" int mgbfs_generic_gather_u8(uint32_t elements,const uint8_t* source,uint32_t stride,const uint32_t* indices,
+ uint32_t count,uint8_t* output,uint32_t output_stride,void* stream){
+ if(!elements||count>output_stride||(!source&&count)||(!indices&&count)||(!output&&count))return int(cudaErrorInvalidValue);
+ if(!count)return 0;gather<<<grid(uint64_t(elements)*count),256,0,static_cast<cudaStream_t>(stream)>>>(elements,source,stride,indices,count,output,output_stride);return int(cudaGetLastError());
+}
+extern "C" int mgbfs_generic_accept_u8(uint32_t elements,const uint8_t* incoming,uint32_t stride,
+ const GenericRouteRecord* metadata,const uint32_t* received,uint32_t bound,uint64_t* slots,
+ uint32_t slot_capacity,uint8_t* visited,uint32_t visited_capacity,uint32_t* visited_count,
+ uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream){
+ if(!elements||!bound||bound>stride||bound>=0x7fffffffU||!slot_capacity||(slot_capacity&(slot_capacity-1))||
+  !visited_capacity||visited_capacity>=0x80000000U||!future_capacity||!incoming||!metadata||!received||
+  !slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
+ IncomingActionT<uint8_t> action{elements,bound,stride,1,incoming,metadata,received};
  accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
  return int(cudaGetLastError());
 }

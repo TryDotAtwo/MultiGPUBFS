@@ -20,3 +20,18 @@ fn graph(text:&str)->GraphDefinitionV2{serde_json::from_str(text).unwrap()}
  loop {let before=bfs.sample(1000).unwrap();match bfs.advance().unwrap(){GenericAdvance::Layer{..}=>(),GenericAdvance::Resource{fatal}=>{assert_ne!(fatal&2,0);assert_eq!(bfs.sample(1000).unwrap(),before);break;},other=>panic!("unexpected {other:?}")}}
  }
 }
+
+#[test]fn compact_permutation_matches_i64_for_collisions_and_resource_boundaries(){
+ let g=graph(r#"{"schema":2,"name":"byte-edge","generator_names":["L","X"],"action":{"kind":"permutation","degree":4,"generators":[[1,2,3,0],[1,0,2,3]]},"start":[0,255,128,0],"expected_max_unique_states":null}"#);
+ let expected=g.exact_layers(24).unwrap();assert_eq!(mgbfs_runtime::generic_memory::preferred_state_bytes(&g),1);
+ for device in 0..2{for bytes in [1,8]{for bits in [0,64]{
+  let mut plan=GenericMemoryPlan::with_storage(4,24,bytes).unwrap();plan.batch=1;let mut bfs=GenericNativeBfs::new(&g,device,plan,123,bits).unwrap();let mut layers=vec![];
+  loop{let mut states=bfs.sample(1000).unwrap();states.sort();layers.push(states);match bfs.advance().unwrap(){GenericAdvance::Layer{..}=>(),GenericAdvance::Complete=>break,other=>panic!("{other:?}")}}
+  assert_eq!(layers,expected);let mut previous=bfs.previous_small_sample().unwrap();previous.sort();assert_eq!(previous,expected[expected.len()-2]);
+ }}}
+ let mut negative=g.clone();negative.start[0]=-1;assert_eq!(mgbfs_runtime::generic_memory::preferred_state_bytes(&negative),8);
+ assert!(GenericNativeBfs::new(&negative,0,GenericMemoryPlan::with_storage(4,24,1).unwrap(),123,64).is_err());
+ let mut wide=g.clone();wide.start[0]=256;assert_eq!(mgbfs_runtime::generic_memory::preferred_state_bytes(&wide),8);
+ let mut bfs=GenericNativeBfs::new(&g,0,GenericMemoryPlan::with_storage(4,3,1).unwrap(),123,0).unwrap();
+ loop{let current=bfs.sample(1000).unwrap();match bfs.advance().unwrap(){GenericAdvance::Layer{..}=>(),GenericAdvance::Resource{fatal}=>{assert_ne!(fatal&2,0);assert_eq!(bfs.sample(1000).unwrap(),current);break},other=>panic!("{other:?}")}}
+}
