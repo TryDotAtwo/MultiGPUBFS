@@ -46,3 +46,13 @@ use mgbfs_runtime::generic_memory::GenericMemoryPlan;
  graph.action=GraphAction::Permutation{degree:3,generators:vec![vec![1,2,0],vec![1,0,2]]};graph.start=vec![0,1,2];graph.generator_names.push("x".into());
  assert_eq!(state_space_bound(&graph),Some(6));
 }
+
+#[test] fn component_bound_preserves_fixed_coordinates_and_is_conservative(){
+ use mgbfs_core::graph_definition::{GraphDefinitionV2,GraphAction};use mgbfs_runtime::generic_memory::state_space_bound;
+ let graph=|generators:Vec<Vec<u32>>,start:Vec<i64>|GraphDefinitionV2{schema:2,name:"components".into(),generator_names:vec!["g".into();generators.len()],action:GraphAction::Permutation{degree:start.len() as u32,generators},start,expected_max_unique_states:None};
+ let n=25usize;let mut rotate=(0..n as u32).collect::<Vec<_>>();rotate[..8].copy_from_slice(&[1,2,3,4,5,6,7,0]);let mut swap=(0..n as u32).collect::<Vec<_>>();swap.swap(0,1);
+ assert_eq!(state_space_bound(&graph(vec![rotate,swap],(0..n as i64).collect())),Some(40320));
+ let mut seed=91u64;
+ for n in 2..=7{for sample in 0..24{let mut gens=Vec::new();for _ in 0..2{let mut g=(0..n as u32).collect::<Vec<_>>();for i in (1..n).rev(){seed=seed.wrapping_mul(6364136223846793005).wrapping_add(1);g.swap(i,(seed as usize)%(i+1));}gens.push(g);}
+ let start=(0..n).map(|i|if sample%2==0{i as i64}else{(i%3) as i64-1}).collect();let g=graph(gens,start);let actual=g.exact_layers(10000).unwrap().iter().map(Vec::len).sum::<usize>();assert!(state_space_bound(&g).unwrap()>=actual as u64,"n={n},sample={sample}");}}
+}

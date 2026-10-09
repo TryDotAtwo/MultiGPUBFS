@@ -20,7 +20,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
    dependency=_dependency_identity(native,native_env)
-   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'cuda':dependency['cuda_library_sha256'] if dependency else None}
+   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'cuda':dependency['cuda_library_sha256'] if dependency else None}
    store.put(f'identity/{rank}',identity)
    if rank==0:
     peers=[store.get(f'identity/{i}') for i in range(world)]
@@ -33,19 +33,21 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
-   def admit(label,inventory,count,requested,batch=None,transport=None):
-    admission_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport) if transport else native_env
+   def admit(label,inventory,count,requested,batch=None,transport=None,order=None):
+    admission_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport) if transport else dict(native_env)
+    if order:admission_env['MGBFS_GENERIC_SORT']=order
     path=temporary/(label.replace('/','-')+'-inventory.json');path.write_text(json.dumps(inventory));cmd=[str(native),'graph-plan',str(definition),str(path),str(count),str(requested) if requested is not None else 'auto']
     if batch is not None:cmd.append(str(batch))
     p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
     if p.returncode:raise RuntimeError('EXTERNAL_GLOBAL_ADMISSION_FAILED '+p.stderr[-2000:])
     return json.loads(p.stdout)
-   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None):
-    phase_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport) if transport else native_env
+   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None):
+    phase_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport) if transport else dict(native_env)
+    if order:phase_env['MGBFS_GENERIC_SORT']=order
     inventory=inventories(label)
     if rank==0:
-     config=admit(label,inventory,count,requested,transport=transport)
-     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport)
+     config=admit(label,inventory,count,requested,transport=transport,order=order)
+     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order)
      config['max_seconds']=seconds
      if depth is not None:config['profile_max_layers']=depth
      store.put(label+'/config',config)
@@ -86,25 +88,25 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     inventory=inventories('profile-admission')
     if rank==0:
      variants=[];plans=[]
-     for i,(c,f,transport) in enumerate(_transport_variants(graph,native_env)):
-      try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport)['plan']
+     for i,(c,f,transport,order) in enumerate(_transport_variants(graph,native_env)):
+      try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order)['plan']
       except RuntimeError as error:
        if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
        raise
-      variants.append((c,f,transport));plans.append(plan)
+      variants.append((c,f,transport,order));plans.append(plan)
      common=min(p['capacity'] for p in plans) if plans else 0;store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
     proposal=store.get('profile-plan')
     if proposal['run']:
      pilots=[]
-     for i,(count,fraction,transport) in enumerate(proposal['variants']):
-      v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,min(3,max(1,max_seconds//20)),36,transport=transport);pilots.append({'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
+     for i,(count,fraction,transport,order) in enumerate(proposal['variants']):
+      v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,min(3,max(1,max_seconds//20)),36,transport=transport,order=order);pilots.append({'candidate_order':order,'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
      depth=min(len(p['layer_seconds']) for p in pilots);sizes=pilots[0]['layer_sizes'][:depth+1]
      if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('EXTERNAL_PROFILE_PREFIX_MISMATCH')
      scores=[sum(p['layer_seconds'][1:depth]) for p in pilots];winner=min(range(len(pilots)),key=lambda i:scores[i]) if depth>=4 and sum(sizes[2:])>=32768 else 0
      if scores[winner]>=scores[0]*.95:winner=0
-     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
+     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'candidate_order':pilots[winner]['candidate_order'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
    shards=shards if shards is not None else (profile['shards'] if profile else 1)
-   remaining=max(1,max_seconds-int(time.monotonic()-started+.999));result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'))
+   remaining=max(1,max_seconds-int(time.monotonic()-started+.999));result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'))
    if profile:result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    store.put(f'finished/{rank}',True)
    if rank==0:

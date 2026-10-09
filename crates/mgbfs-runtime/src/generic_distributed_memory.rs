@@ -3,7 +3,7 @@
 use mgbfs_core::Result;
 #[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 pub struct GenericDistributedMemoryPlan {
- #[serde(default)]pub parent_transport:bool,
+ #[serde(default)]pub parent_transport:bool,#[serde(default)]pub sort_candidates:bool,
  #[serde(default="retained_history_layers")]pub history_layers:u32, pub state_bytes:u32,pub elements:u32,pub world:u32,pub shards:u32,pub capacity:u32,pub batch:u32,
  pub table_layout:String,pub queue_capacity:u32,pub table_slots:u32,pub generator_bytes:u64,pub device_bytes:u64,
 }
@@ -31,7 +31,7 @@ impl GenericDistributedMemoryPlan {
    arena.checked_add(tables)?.checked_add(boxes.checked_mul(queue)?.checked_mul(3)?)?.checked_add(generator_bytes)?.checked_add(98+u64::from(world)*20+if state_bytes==1&&elements<=24{3}else{0})
   };
   let device_bytes=checked().ok_or("GENERIC_DISTRIBUTED_BYTES_OVERFLOW")?;
-  Self{parent_transport:false,history_layers:1,table_layout:"SHARD_HASH_REGIONS_SHARED_OVERFLOW".into(),state_bytes,elements,world,shards,capacity,batch,queue_capacity,table_slots,generator_bytes,device_bytes}.with_parent_transport(match std::env::var("MGBFS_GENERIC_TRANSPORT").as_deref(){Ok("parent")=>true,Ok("full")|Err(_)=>false,_=>return Err("GENERIC_TRANSPORT_MODE".into())})
+  Self{parent_transport:false,sort_candidates:false,history_layers:1,table_layout:"SHARD_HASH_REGIONS_SHARED_OVERFLOW".into(),state_bytes,elements,world,shards,capacity,batch,queue_capacity,table_slots,generator_bytes,device_bytes}.with_parent_transport(match std::env::var("MGBFS_GENERIC_TRANSPORT").as_deref(){Ok("parent")=>true,Ok("full")|Err(_)=>false,_=>return Err("GENERIC_TRANSPORT_MODE".into())})?.with_sort_candidates(match std::env::var("MGBFS_GENERIC_SORT").as_deref(){Ok("radix")=>true,Ok("none")|Err(_)=>false,_=>return Err("GENERIC_SORT_MODE".into())})
  }
  pub fn automatic(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>)->Result<Self>{Self::automatic_storage(elements,world,shards,generators,generator_bytes,free_bytes,upper_bound,8)}
  pub fn automatic_storage(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32)->Result<Self>{
@@ -57,10 +57,12 @@ impl GenericDistributedMemoryPlan {
   while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage(elements,world,shards,mid,mid.min(batch_target),generators,generator_bytes,state_bytes)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
   Self::with_storage(elements,world,shards,low,low.min(batch_target),generators,generator_bytes,state_bytes)
  }
- pub fn transport_bytes(&self)->u64{u64::from(self.world)*u64::from(self.shards)*(u64::from(self.queue_capacity)*(32+self.queue_payload_bytes() as u64)+4)*3+if self.packed_candidates()||self.parent_transport{3}else{0}+self.parent_cache_bytes()}
+ pub fn transport_bytes(&self)->u64{u64::from(self.world)*u64::from(self.shards)*(u64::from(self.queue_capacity)*(32+self.queue_payload_bytes() as u64)+4)*3+if self.packed_candidates()||self.parent_transport{3}else{0}+self.parent_cache_bytes()+self.sort_cache_bytes()}
  pub fn packed_candidates(&self)->bool{self.state_bytes==1&&self.elements<=24}
  pub fn queue_payload_bytes(&self)->usize{if self.packed_candidates()||self.parent_transport{0}else{self.elements as usize*self.state_bytes as usize}}
  pub fn parent_cache_bytes(&self)->u64{if self.parent_transport{u64::from(self.world+2)*u64::from(self.batch)*u64::from(self.elements)*u64::from(self.state_bytes)+u64::from(self.world)*12}else{0}}
+ pub fn sort_cache_bytes(&self)->u64{if self.sort_candidates{u64::from(self.shards)*(u64::from(self.world)*u64::from(self.queue_capacity)*88+65536)}else{0}}
+ pub fn with_sort_candidates(mut self,enabled:bool)->Result<Self>{if enabled==self.sort_candidates{return Ok(self);}let old=self.transport_bytes();self.sort_candidates=enabled;let new=self.transport_bytes();self.device_bytes=self.device_bytes.checked_sub(old).and_then(|b|b.checked_add(new)).ok_or("GENERIC_SORT_TRANSPORT_BYTES")?;Ok(self)}
  pub fn with_parent_transport(mut self,enabled:bool)->Result<Self>{
   let enabled=enabled&&!self.packed_candidates();if enabled==self.parent_transport{return Ok(self);}
   let old=self.transport_bytes();self.parent_transport=enabled;let new=self.transport_bytes();
@@ -101,7 +103,7 @@ impl GenericDistributedMemoryPlan {
   Self::with_storage_history(elements,world,shards,low,low.min(batch_target),generators,generator_bytes,state_bytes,history_layers)
  }
  pub fn validate(&self,generators:u32)->Result<()> {
-  if *self!=Self::with_storage_history(self.elements,self.world,self.shards,self.capacity,self.batch,generators,self.generator_bytes,self.state_bytes,self.history_layers)?.with_parent_transport(self.parent_transport)?{return Err("GENERIC_DISTRIBUTED_PLAN_MUTATED".into());}Ok(())
+  if *self!=Self::with_storage_history(self.elements,self.world,self.shards,self.capacity,self.batch,generators,self.generator_bytes,self.state_bytes,self.history_layers)?.with_parent_transport(self.parent_transport)?.with_sort_candidates(self.sort_candidates)?{return Err("GENERIC_DISTRIBUTED_PLAN_MUTATED".into());}Ok(())
  }
 }
 

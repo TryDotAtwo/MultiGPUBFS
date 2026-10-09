@@ -2,7 +2,7 @@
 import os,json,subprocess,time,socket,hashlib
 from pathlib import Path
 from multigpubfs import GraphDefinition
-r=Path(os.environ.get('MGBFS_NETWORK_GATE_ROOT','/root/universal/parent-network'));r.mkdir(exist_ok=True);checks=[]
+r=Path(os.environ.get('MGBFS_NETWORK_GATE_ROOT','/root/universal/sorted-network'));r.mkdir(exist_ok=True);checks=[]
 worker=r/'worker.py';worker.write_text("from multigpubfs import GraphDefinition,run_graph\nfrom pathlib import Path\nimport sys,os,json\ng=GraphDefinition.from_dict(json.loads(Path(sys.argv[1]).read_text()))\nv=run_graph(g,sys.argv[2],devices=[int(os.environ['LOCAL_RANK'])],capacity=None if sys.argv[3]=='auto' else int(sys.argv[3]),shards=None if sys.argv[4]=='auto' else int(sys.argv[4]),autotune=sys.argv[4]=='auto',transport='auto' if sys.argv[4]=='auto' else 'parent',max_seconds=30)\nprint(json.dumps(v))\n")
 def case(name,g,capacity='auto',shards='4',mismatch=False):
  folder=r/name;folder.mkdir();jobs=[];logs=[]

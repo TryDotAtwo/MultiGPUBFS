@@ -11,8 +11,12 @@ extern "C" {
  fn mgbfs_generic_accept_parent_origin(bytes:u32,kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
  parents:*const c_void,parent_stride:u32,chunk:u32,begin:u64,cursors:*const u64,frontiers:*const u32,
  local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,q:u32,
- slots:*mut u64,slot_capacity:u32,arena:*mut c_void,arena_stride:u32,base:u32,capacity:u32,visited_count:*mut u32,future:*mut u32,accepted:*mut u32,positions:*mut u32,error:*mut u32,rolling:u32,stream:*mut c_void)->i32;
+ slots:*mut u64,slot_capacity:u32,arena:*mut c_void,arena_stride:u32,base:u32,capacity:u32,visited_count:*mut u32,future:*mut u32,accepted:*mut u32,positions:*mut u32,error:*mut u32,rolling:u32,ordered:*const u32,stream:*mut c_void)->i32;
+ fn mgbfs_generic_sort_origins(lm:*const GenericRouteRecord,rm:*const GenericRouteRecord,lc:*const u32,rc:*const u32,rank:u32,world:u32,shard:u32,shards:u32,q:u32,keys:*mut u64,sorted_keys:*mut u64,origins:*mut u32,sorted_origins:*mut u32,scratch:*mut c_void,scratch_bytes:u64,error:*mut u32,stream:*mut c_void)->i32;
+ fn mgbfs_generic_accept_sorted(bytes:u32,elements:u32,local:*const c_void,remote:*const c_void,lm:*const GenericRouteRecord,rm:*const GenericRouteRecord,lc:*const u32,rc:*const u32,rank:u32,world:u32,shard:u32,shards:u32,q:u32,slots:*mut u64,sc:u32,arena:*mut c_void,stride:u32,base:u32,capacity:u32,vc:*mut u32,future:*mut u32,accepted:*mut u32,positions:*mut u32,error:*mut u32,rolling:u32,ordered:*const u32,stream:*mut c_void)->i32;
 }
+struct SortCache{keys:Buffer,sorted_keys:Buffer,origins:Buffer,sorted_origins:Buffer,scratch:Buffer,scratch_stride:usize}
+impl SortCache{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{let n=p.world as usize*p.queue_capacity as usize;let size=n*p.shards as usize;let scratch_stride=n*64+65536;Ok(Self{keys:Buffer::new(size*8,device)?,sorted_keys:Buffer::new(size*8,device)?,origins:Buffer::new(size*4,device)?,sorted_origins:Buffer::new(size*4,device)?,scratch:Buffer::new(scratch_stride*p.shards as usize,device)?,scratch_stride})}}
 struct ParentCache{sources:[Buffer;2],received:Buffer,cursors:Buffer,frontiers:Buffer}
 impl ParentCache{fn new(p:&GenericDistributedMemoryPlan,device:i32,counts:&[u32])->Result<Self>{
  let bytes=p.batch as usize*p.elements as usize*p.state_bytes as usize;
@@ -29,7 +33,7 @@ impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
  bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
- parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
+ sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,positions:Option<Buffer>,rolling_counts:[u32;3],retired_rows:u64,
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
@@ -65,9 +69,10 @@ impl GenericDistributedBfs{
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
   check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
   let counts=(0..plan.world).map(|r|if r==root_rank{1u32}else{0}).collect::<Vec<_>>();
+  let sort_cache=if plan.sort_candidates{Some(SortCache::new(&plan,d)?)}else{None};
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
-  Ok(Self{parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
+  Ok(Self{sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn frontier_len(&self)->u32{self.bfs.count}
@@ -127,8 +132,14 @@ impl GenericDistributedBfs{
    }
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
+    let ordered=if let Some(cache)=&self.sort_cache{
+     let offset=shard*p.world as usize*q;
+     check(unsafe{mgbfs_generic_sort_origins(bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,cache.keys.at(offset*8),cache.sorted_keys.at(offset*8),cache.origins.at(offset*4),cache.sorted_origins.at(offset*4),cache.scratch.at::<c_void>(shard*cache.scratch_stride),cache.scratch_stride as u64,b.control.at(8),owner_stream)})?;cache.sorted_origins.at::<u32>(offset*4).cast_const()
+    }else{ptr::null()};
     if let Some(cache)=&self.parent_cache{
-     check(unsafe{mgbfs_generic_accept_parent_origin(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),cache.received.ptr,p.batch,batch,global_begin,cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),owner_stream)})?;
+     check(unsafe{mgbfs_generic_accept_parent_origin(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),cache.received.ptr,p.batch,batch,global_begin,cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
+    }else if self.sort_cache.is_some(){
+     check(unsafe{mgbfs_generic_accept_sorted(p.state_bytes,p.elements,bank.states.ptr, self.inbox.states.ptr,bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
     }else if rolling{check(unsafe{mgbfs_generic_accept_rolling_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),b.arena_stride,future_base,p.capacity,b.control.at(4),b.future.ptr.cast(),self.positions.as_ref().unwrap().ptr.cast(),b.control.at(8),owner_stream)})?;}
     else{    check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;}
     check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;

@@ -6,6 +6,7 @@ u=C.c_uint32;h=C.c_uint64;p=C.c_void_p
 class Route(C.Structure):_fields_=[('hash',h),('parent',h),('source',u),('generator',u),('shard',u),('reserved',u)]
 lib=C.CDLL(sys.argv[1]);cuda=C.CDLL(find_library('cudart') or 'libcudart.so.13');cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
 fn=lib.mgbfs_generic_accept_parent_origin;fn.argtypes=[u]*6+[p]*4+[u,u,h]+[p]*6+[u]*5+[p,u,p,u,u,u]+[p]*5+[u,p,p];fn.restype=C.c_int
+sort=lib.mgbfs_generic_sort_origins;sort.argtypes=[p]*4+[u]*5+[p]*5+[h,p,p];sort.restype=C.c_int
 checks=[]
 def ck(x):
  if x:raise RuntimeError('CUDA_STATUS_'+str(x))
@@ -37,6 +38,10 @@ for device in (0,1):
      if shards>1:tokens[0]=0x80000000
      slots=upload(tokens,h);arena=upload([0]*(capacity*width),ty);vc=upload([0],u);future=upload([0]*capacity,u);accepted=upload([0],u);error=upload([0],u)
      args=[bytes,0,width,width,1,1,perms,None,None,parents,q,q,begin,cursor,frontier,*meta,rank,world,shard,shards,q,slots,512,arena,capacity,0,capacity,vc,future,accepted,None,error,0,None,None]
+     keys=upload([0]*(world*q),h);sorted_keys=upload([0]*(world*q),h);origins=upload([0]*(world*q),u);ordered=upload([0]*(world*q),u);scratch=upload([0]*(world*q*64+65536),C.c_uint8)
+     ck(sort(*meta,rank,world,shard,shards,q,keys,sorted_keys,origins,ordered,scratch,world*q*64+65536,error,None));ck(cuda.cudaDeviceSynchronize())
+     valid=sum((lc if source==rank else rc)[source*shards+shard] for source in range(world));assert read(sorted_keys,world*q,h)==[0]*valid+[(1<<64)-1]*(world*q-valid)
+     args[-2]=ordered
      ck(fn(*args));ck(cuda.cudaDeviceSynchronize());assert read(error,1,u)==[0],(device,world,shards,width)
      n=read(vc,1,u)[0];raw=read(arena,capacity*width,ty);actual={tuple(raw[e*capacity+i] for e in range(width)) for i in range(n)};assert actual==expected,(device,world,shards,width,len(actual),len(expected));assert read(accepted,1,u)==[n]
      # Stale/foreign origin is a fatal lease error, never a partial successful layer.
@@ -45,4 +50,4 @@ for device in (0,1):
      checks.append({'device':device,'logical_sources':world,'shards':shards,'elements':width,'state_bytes':bytes,'forced_hash_collision_exact':True,'stale_origin_rejected':True,'cross_shard_pending_exact':shards>1})
     finally:
      for v in alloc:ck(cuda.cudaFree(v))
-v={'status':'VERIFIED_PARENT_ORIGIN_FORCED_COLLISION_LEASES','checks':checks,'scope':'actual kernels on two GPUs with synthetic source layouts; no physical3/8/128rank claim'};Path(sys.argv[2]).write_text(json.dumps(v));print(json.dumps(v))
+v={'status':'VERIFIED_SORTED_PARENT_FORCED_COLLISION_LEASES','checks':checks,'scope':'actual kernels on two GPUs with synthetic source layouts; no physical3/8/128rank claim'};Path(sys.argv[2]).write_text(json.dumps(v));print(json.dumps(v))

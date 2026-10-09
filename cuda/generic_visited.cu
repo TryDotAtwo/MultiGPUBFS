@@ -153,8 +153,8 @@ extern "C" int mgbfs_generic_accept_u8(uint32_t elements,const uint8_t* incoming
 template<class State,bool Packed=false,bool Shared=false> struct IncomingAllAction {
  uint32_t elements,count,stride,generators,rank,world,shard,shards;
  const State* local;const State* remote;const GenericRouteRecord* local_meta;const GenericRouteRecord* remote_meta;
- const uint32_t* local_counts;const uint32_t* remote_counts;
- __device__ uint32_t child(uint32_t i)const{return Shared?((i/stride)*shards+shard)*stride+i%stride:i;}
+ const uint32_t* local_counts;const uint32_t* remote_counts;const uint32_t* ordered=nullptr;
+ __device__ uint32_t child(uint32_t i)const{if(ordered)return ordered[i];return Shared?((i/stride)*shards+shard)*stride+i%stride:i;}
  __device__ uint32_t origin_limit()const{return Shared?count*shards:count;}
  __device__ uint32_t bucket(uint64_t h,uint32_t capacity)const{return Shared?uint32_t((uint64_t(uint32_t(h))*capacity)>>32):uint32_t(h&(capacity-1));}
  __device__ uint32_t source(uint32_t child)const{return Shared?(child/stride)/shards:child/stride;}
@@ -230,3 +230,5 @@ extern "C" int mgbfs_generic_seed_shared_u8(uint32_t elements,const uint8_t* sta
 #include "generic_rolling.cuh"
 
 #include "generic_parent_origin.cuh"
+
+#include "generic_sort_origin.cuh"

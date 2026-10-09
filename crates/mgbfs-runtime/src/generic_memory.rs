@@ -56,9 +56,16 @@ pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)
  let proven=match &graph.action{
   GraphAction::Permutation{generators,..}=>{
    if let Some(cyclic)=cyclic_permutation_orbit_bound(generators,&graph.start){return Some(graph.expected_max_unique_states.map_or(cyclic,|b|cyclic.min(b)))}
-   let mut counts=std::collections::BTreeMap::<i64,u64>::new();for &v in &graph.start{*counts.entry(v).or_default()+=1;}
-   let mut remaining=graph.start.len() as u64;let mut bound=1u64;
-   for &count in counts.values(){let k=count.min(remaining-count);let mut choose=1u64;for i in 1..=k{choose=choose.saturating_mul(remaining-k+i)/i;if choose>=limit{choose=limit;break;}}bound=bound.saturating_mul(choose).min(limit);remaining-=count;}
+   // Generators cannot move a label between position components. Count
+   // arrangements within each component; correlated components only make
+   // this conservative upper bound smaller than the global multinomial.
+   fn root(parent:&mut [usize],mut i:usize)->usize{while parent[i]!=i{parent[i]=parent[parent[i]];i=parent[i];}i}
+   let n=graph.start.len();let mut parent=(0..n).collect::<Vec<_>>();
+   for generator in generators {for (i,&j) in generator.iter().enumerate(){let a=root(&mut parent,i);let b=root(&mut parent,j as usize);parent[a]=b;}}
+   let mut components=std::collections::BTreeMap::<usize,std::collections::BTreeMap<i64,u64>>::new();
+   for (i,&label) in graph.start.iter().enumerate(){let component=root(&mut parent,i);*components.entry(component).or_default().entry(label).or_default()+=1;}
+   let mut bound=1u64;
+   for counts in components.values(){let mut remaining=counts.values().sum::<u64>();for &count in counts.values(){let k=count.min(remaining-count);let mut choose=1u64;for i in 1..=k{choose=choose.saturating_mul(remaining-k+i)/i;if choose>=limit{choose=limit;break;}}bound=bound.saturating_mul(choose).min(limit);remaining-=count;}if bound==limit{break;}}
    Some(bound)
   },
   GraphAction::Matrix{generators,..}=>{

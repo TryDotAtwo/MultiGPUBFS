@@ -73,3 +73,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
  }}}
  assert!(!Plan::with_storage(24,2,4,4096,32,3,1024,1).unwrap().with_parent_transport(true).unwrap().parent_transport);
 }
+
+#[test]fn radix_origin_scratch_is_fully_admitted(){
+ for world in [1,2,8,128]{for width in [14,25,257]{let full=Plan::with_storage_history(width,world,4,4096,32,3,1024,1,3).unwrap();for parent in [false,true]{let base=full.clone().with_parent_transport(parent).unwrap();let sorted=base.clone().with_sort_candidates(true).unwrap();sorted.validate(3).unwrap();assert_eq!(sorted.sort_cache_bytes(),u64::from(sorted.shards)*(u64::from(sorted.world)*u64::from(sorted.queue_capacity)*88+65536));assert_eq!(sorted.device_bytes,base.device_bytes+sorted.sort_cache_bytes());assert_eq!(sorted.with_sort_candidates(false).unwrap(),base);}}}
+}
