@@ -61,3 +61,10 @@ python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotA
 ```
 
 The host must already provide compatible CUDA runtime13 and an NVIDIA driver. Wheel SHA256: `9f62296da744202d46e76743b7af88ec8769b03a96fffbd41a92f9913e090a11`. The embedded manifest checks the executable and native library before launch. Force reinstall is intentional because these development artifacts share a package version; immutable URLs and source manifests distinguish builds.
+
+
+## Latest recovered cyclic admission package
+
+Verified source: `2cdfdc30b88dba7fb69c9458393131157bf71ca7`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/7b071f7c457bbe38bbefadd9432a5571d177afc2/linux-x86_64-sm86-cuda13.2/2cdfdc30b88dba7fb69c9458393131157bf71ca7/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256: `09a264b12d9905cee7389604a5fc05668f838fdfd15f76909e7ea06403c12e53`. Clean installation passed cyclic admission, exact rolling terminal states, cancellation/resource boundaries and two-rank TCP/NCCL tests on one/two RTX3060. CUDA13 and NCCL2 runtimes are required. Blackwell and physical8/128 GPU acceptance remain unverified.
