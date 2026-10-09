@@ -13,6 +13,10 @@ def native_runtime(explicit=None):
   for name in ('bin/mgbfs','lib/libmgbfs_cuda.so'):
    if hashlib.sha256((root/name).read_bytes()).hexdigest()!=manifest['sha256'][name]:raise RuntimeError('NATIVE_BUNDLE_CHECKSUM_'+name)
   libraries=[str(root/'lib')];pure=Path(sysconfig.get_paths()['purelib'])
+  toolkit=manifest.get('cuda_toolkit')
+  if toolkit:
+   major=int(toolkit.split('.')[0]);location=pure/'nvidia'/('cu'+str(major))/'lib'
+   if location.is_dir():libraries.append(str(location))
   for name in ('cuda_runtime','nccl'):
    location=pure/'nvidia'/name/'lib'
    if location.is_dir():libraries.append(str(location))
