@@ -72,3 +72,11 @@ Remaining: focused multi-region trim/reuse acceptance, payload carry integration
 Thirty-six matched GPU/independent CPU fixtures passed across both RTX3060 cards, byte/int64 canonical SoA rows, widths2/25/129 and constant-all-ones/truncated/full hashes. Five overlapping sorted roots are merged and deduplicated through allocated tickets, committed, trimmed and retained across tiers. Sorted unique order inside each run, exact union across retained runs, hash/row association, ownership cleanup and zero final occupied credits are checked. Focused multi-region-to-single trim and immediate tail credit reuse also passed, including rejection of trim after publication. Memcheck reports zero errors/leaks.
 
 The harness deliberately synchronizes and reads small carry metadata between operations to inspect the result; this is test orchestration and is not an accepted production scheduling design. CPU-free carry scheduling, canonical row lifetime, history queries and native/AUTO integration remain required.
+
+## Device-controlled carry graph
+
+A reusable owner-stream conditional WHILE graph prepares tickets on GPU, enables exactly the matching size-class IF body, performs tiled merge, exact unique scan/scatter and commits the device count. No intermediate host count/ticket read selects or advances a carry. Inactive classes do not scan their payload; each active class uses its admitted capacity. This is a component, not production BFS integration.
+
+Thirty-six byte/int64 fixtures on both RTX3060 cards passed the independent CPU union/order oracle across widths2/25/129, full/truncated/all-ones hash modes and repeated overlapping roots; memcheck reports zero errors/leaks. The cold shape query includes aligned shared workspace planes, control views/counts, conditional handles and the maximum CUB scan workspace queried over every admitted class. An undersized scan allocation is rejected before graph construction. CUDA12.8/driver570 conditional-loop capability passed repeated launches on both cards. Other runtime/driver versions remain unverified.
+
+Remaining requirements include concurrent owner-stream pressure acceptance, actual canonical row lifetime integration, sorted history filtering, complete memory admission and public native/AUTO integration, matched full BFS correctness and timing. No end-to-end speedup is established.
