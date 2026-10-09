@@ -1,6 +1,6 @@
 # Unified BFS acceptance audit, 2026-10-09
 
-Implementation artifact: 73cdef732ba116c4540491b405d659a103ee91e4. CUDA13.2 SM86+PTX, two actual RTX3060 12GB on one host. Current wheel and immutable installation URL are in install-native-package.md. Source-only delivery preserves historical commits on the sole integrated GitHub branch.
+Current runtime artifact: fde169f6e5ae9ba11d6176c14fe7a17448133665. Earlier receipts below are historical evidence for their corresponding source revisions. CUDA13.2 SM86+PTX, two actual RTX3060 12GB on one host. Current wheel and immutable installation URL are in install-native-package.md. Source-only delivery preserves historical commits on the sole integrated GitHub branch.
 
 | Requirement | Evidence inspected | Result and coverage |
 |---|---|---|
@@ -10,7 +10,7 @@ Implementation artifact: 73cdef732ba116c4540491b405d659a103ee91e4. CUDA13.2 SM86
 | Automatic history | final-clean-public/verification.json | Proved inverse-closed actions use previous/current/future VRAM banks. Directed actions and unsafe modular inverse proofs retain all visited keys |
 | Compact retention | final-clean-public/verification.json | Last completed layer sample <=1000 globally; previous only if globally<1000. A 3476-state layer was sampled. Deadline, actual SIGTERM and resource stop preserve previous/current and reject partial future |
 | Automatic memory/buffers | graph-info free-VRAM admission, joint memory planner, rolling-cpu-admission.log, clean public launches | Byte-exact shared table, arena/banks, route/receive/control/readout budget with headroom; weighted per-rank capacities. Logical1/2/8/128 geometry is CPU evidence |
-| Bounded performance selection | final-clean-network/verification.json; heavy-installed-autotune/verification.json | Four same-graph GPU profiles, identical completed layer counts, conservative5% switch threshold, native/graph/driver/topology cache and repeated free-VRAM admission |
+| Bounded performance selection | final-clean-network/verification.json; heavy-installed-autotune/verification.json | Five packed/seven wide same-graph GPU profiles, identical completed layer counts, conservative5% switch threshold, native/graph/driver/topology cache and repeated free-VRAM admission |
 | External ranks | final-clean-network/verification.json | Real TCP control and NCCL with independent directories, explicit local/global placement, parameter mismatch rejection, directed/inverse/resource oracles and collective tuning on two GPUs |
 | Clean package without checkout | final-wheel-status.json; final-clean-extended-status.json | Installed outside source directory, environment overrides removed; one/twoGPU oracle and terminal/network checks |
 | Public package integrity | final-public-release-receipt.json | Wheel and manifest anonymously downloaded and SHA256 checked |
@@ -23,14 +23,14 @@ The isolated atomic-load change produced no acceleration in three paired runs: m
 ## Explicit remaining boundaries
 
 - Physical8/128GPUs, separate hosts, heterogeneous GPU models, B200/B300 and throughput scaling remain unverified. Logical geometry and two local ranks cannot prove those results.
-- Calibration measures four admitted shard/batch profiles, not every possible bank/hash/sort algorithm or frontier size. It cannot guarantee maximum throughput for every graph.
-- The generic byte path packs complete candidate states directly into routing records for width<=24. Wider byte/int64 candidates still use full-state transport before dedup; key-first survivor-only transport is not implemented in that path.
+- Calibration measures five packed or seven wide admitted shard/batch/transport/order profiles, not every possible kernel, history algorithm or frontier size. It cannot guarantee maximum throughput for every graph.
+- Packed byte states<=24 use exact routing records. Wider byte/int64 states have a measured parent-origin alternative that removes full candidate materialization/transmission; full transport remains a reproducible fallback. Destination regeneration and parent replication can lose on different actions/topologies.
 - Specialized SHARD_AB remains separately available; the unified generic launcher does not automatically select every specialized kernel, LSA or HOST fallback capability.
 - NCCL chooses its available communication transport. The accepted network fixture used local TCP/NCCL, not physical inter-node networking.
 - Pure GraphDefinition use has no CayleyPy dependency. Optional catalog integration is pinned and tested at CayleyPy0.2.0; future third-party APIs are not covered automatically.
 - A development artifact with external CUDA/NCCL dependencies is not a universal precompiled binary for every architecture.
 
-This audit proves the listed bounded implemented behavior. It does not establish the broader claim that all graphs on arbitrary hardware are already maximally optimized; further transport/algorithm selection work and any later hardware acceptance must retain these boundaries.
+This audit proves the listed bounded implemented behavior. It does not establish the broader claim that all graphs on arbitrary hardware are already maximally optimized; further specialized/history algorithm selection work and any later hardware acceptance must retain these boundaries.
 
 ## Cyclic action admission follow-up
 
@@ -39,12 +39,12 @@ For generators consisting of one permutation and its inverse/identity/duplicate 
 Actual one/twoRTX3060 automatic launches passed17-state wide inverse rotation,2-state100-element periodic directed rotation,15-state mixed-cycle aliases and noncyclic720-state fallback. Capacities were no larger than the verified orbit cardinalities and planned buffers stayed below1MB. The single-device retained-history report now exposes its own actual memory plan and device list, preserving existing fields. `cyclic-bound-gpu-v2/verification.json` is the GPU receipt. New package publication and source delivery must be verified separately.
 
 
-## Recovery acceptance
+## Recovery acceptance (historical)
 
 Source 2cdfdc30b88dba7fb69c9458393131157bf71ca7 was reconstructed remotely after lease teardown. Fresh Rust CLI SHA256 exactly matches the previously tested cyclic implementation. Native CUDA library is unchanged and reused from its verified public wheel. Fresh clean installed cyclic fixtures and public/network suites passed on one/two RTX3060. Proof receipt: recovery-clean-status.json. Generic wide states still transmit candidates before dedup; survivor-only transport and broader algorithm-profile tuning remain unfinished. Physical8/128 GPUs, separate nodes and Blackwell are not accepted by these tests.
 
 
-## Packed24 route extension
+## Packed24 route extension (historical checkpoint)
 
 Route records remain32 bytes:8 bytes hash plus24 exact state bytes. Permutation states17..24 bytes no longer allocate/generate/exchange a separate full candidate plane. Wider states and int64 states retain the existing exact transport. Owner tests used forced full hash collisions with states differing only in the final bytes, malformed counts and cross-shard pending origins on both RTX3060 GPUs. Logical1/2/3/8/128 source layouts are synthetic, not rank-scale acceptance. Public automatic launches matched independent full-state CPU oracles at widths16/17/23/24/25, including the fallback boundary.
 
@@ -53,7 +53,7 @@ Three alternating matched full runs of the3,628,800-state10-element permutation 
 Clean installed Packed24 package passed `VERIFIED_INSTALLED_PACKED24_PUBLIC_NETWORK_TERMINAL`; immutable public wheel and manifest both passed anonymous SHA256 readback. Runtime source is `a7198174dd778e59dcf234c04c4837e51d6e30b3`.
 
 
-## General wide parent-origin path
+## General wide parent-origin path (historical checkpoint)
 
 Full wide candidates remain an explicit fallback; the new parent-origin path eliminates their materialization and transmission. It preserves full-state equality, including forced full-hash collisions, via GPU reconstruction from immutable origin-indexed parent caches. CPU1/2/8/128 allocation contracts include `(world+2)*batch*elements*state_bytes + world*12` extra parent/cursor/count bytes, and remove padded candidate payloads. GPU owner collision and stale-lease checks passed on bothRTX3060, with synthetic1/2/3/8/128-source layouts. Full independent layer/state oracles passed one/twoGPU directed and inverse-closed permutations25/31/300elements, byte/int64 storage, mixed-modulus matrices, signed actions and overflow fallback. Deadline/cancellation/resource snapshots passed on the wide path. Actual two-rank TCP/NCCL tests and six-profile collective tuning passed; physical multi-host and8/128 hardware remain unverified.
 
@@ -67,3 +67,10 @@ GPU correctness passed parent/full transport, packed4/17/24byte and wide25/31/30
 On the same complete3628800-state25coordinate embedding, three alternating paired runs measured median layer time0.561821422s unsorted versus0.641451771s radix, ratio0.87585918. Radix was about14.17percent slower, so this is evidence against forcing radix on that workload. All layers and canonical terminal states matched. Measurements cover twoRTX3060, fourshards,batch65536,capacity3628800; startup/wall/tuning costs remain separate. This path sorts candidate indices and retains hash-table history; it does not implement a globally sorted merge history. Physical8/128GPUs, multi-host and Blackwell remain untested.
 
 Clean installed parent/radix package passed VERIFIED_INSTALLED_PARENT_SORT_PUBLIC_TERMINAL_NETWORK_AUTOTUNE; public wheel and manifest passed anonymous SHA256 readback. Runtime source `fde169f6e5ae9ba11d6176c14fe7a17448133665`.
+
+
+## Current delivery and unfinished integration
+
+Clean installed current runtime, public wheel and anonymous integrity checks are complete. GitHub delivery is one integrated branch. Private immutable proof revisions: parent checkpoint `ad03c53b84e8d6d31cb39b70b6936605f08b8558`, radix/component checkpoint `5b29ba983df2394d372d0f91a4eb33ab33f61cfb`, clean-package proof `2338a96ff06ff869a697fa418d9245d021049028`. Source-only transport does not download state/proof archives to the user's computer.
+
+Remaining engineering scope includes automatic selection of specialized SHARD_AB/LSA/HOST capabilities where contracts permit, and any additional persistent sorted-history algorithm/profile integration. Optional radix ordering currently feeds exact hash-table membership, not sorted-history merge. These points prevent declaring the broader optimization goal complete. Physical multi-node/8/128GPU/Blackwell acceptance remains explicitly outside the current two3060 evidence. Current rental token removal and APIABSENT teardown are pending while authorized work continues under fixed independent guards.
