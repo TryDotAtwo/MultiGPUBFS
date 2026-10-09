@@ -18,3 +18,9 @@ target/
 /artifacts/
 *.nsys-rep
 *.ncu-rep
+
+# Generated native wheel staging and setuptools metadata
+multigpubfs/_native/
+*.egg-info/
+dist/
+build/

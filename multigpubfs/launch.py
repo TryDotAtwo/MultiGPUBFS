@@ -2,6 +2,7 @@
 import hashlib,json,os,shutil,subprocess,tempfile,time,signal
 from pathlib import Path
 from .graph_definition import GraphDefinition,from_cayleypy
+from .native_distribution import native_runtime
 
 def _receipt(output,digest):
  report=json.loads((output/'report.json').read_text(encoding='utf-8'))
@@ -26,8 +27,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if type(shards) is not int or not 1<=shards<=4096:raise ValueError('INVALID_SHARDS')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
  if os.environ.get('WORLD_SIZE','1')!='1':raise RuntimeError('EXTERNAL_MULTIHOST_LAUNCH_NOT_CONNECTED')
- native=executable or os.environ.get('MGBFS_EXECUTABLE') or shutil.which('mgbfs')
- if not native:raise RuntimeError('MGBFS_EXECUTABLE_NOT_FOUND: install the native Linux CUDA runtime or set MGBFS_EXECUTABLE')
+ native,native_env=native_runtime(executable)
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  output.parent.mkdir(parents=True,exist_ok=True);digest=graph.digest()
@@ -35,21 +35,21 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
   selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
   if capacity is not None:command.append(str(capacity))
-  probe=subprocess.run(command,capture_output=True,text=True)
+  probe=subprocess.run(command,capture_output=True,text=True,env=native_env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
   if len(devices)==1 and shards==1:
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
    if capacity is not None:command+=['--capacity',str(capacity)]
-   process=subprocess.run(command,capture_output=True,text=True)
+   process=subprocess.run(command,capture_output=True,text=True,env=native_env)
    if process.returncode:raise RuntimeError('NATIVE_GRAPH_FAILED: '+process.stderr[-4000:])
    return _receipt(output,digest)
   output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
   try:
    for rank in range(len(devices)):
     log=(output/f'rank-{rank}.log').open('w');logs.append(log)
-    env=dict(os.environ,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
+    env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
     jobs.append(subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env=env,stdout=log,stderr=subprocess.STDOUT))
    while any(p.poll() is None for p in jobs):
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
