@@ -27,3 +27,11 @@ Memory admission reserves the actual history layout and a conservative upper bou
 The 9a30c02 wheel passed clean installed public launch, network TCP/NCCL with independent directories on one host, collective tuning, cancellation, deadline and a 3476-state current layer exported as an exact 1000-state sample. The previous layer obeyed the strict less-than-1000 rule.
 
 A 3,628,800-state inverse-closed ten-element permutation graph completed in 46 layers on two RTX3060, CUDA13.2, four shards, fixed batch65536 and capacity3628800. Three alternating pairs against the preceding shared-table all-history binary yielded medians 0.521422919 s (old) and 0.521959133 s (three banks), ratio 0.998972690x. This does not establish additional acceleration. GPU layer counts and terminal states matched a previously completed full CPU enumeration, reused by immutable digest for the final readout allocation adjustment. Fixed capacity has different semantics (all retained rows versus rows per layer); allocations differ and setup time is recorded separately. This is not an LRX14, Blackwell or larger-rank result.
+
+## Padded candidate early skip
+
+Both retained and rolling acceptance kernels check the immutable queue's valid descriptor count before reading the shared error counter. Empty padded positions no longer issue an atomic read-modify-write against that counter. Exact malformed-count rejection, collision equality and partial-future failure behavior are preserved. Primitive, full small-graph oracle and resource gates passed on two RTX3060 after this change.
+
+The same 3,628,800-state, 46-layer workload produced three paired old times 0.524059645/0.526326132/0.521602171 s and new times 0.526007062/0.513895872/0.513116113 s. Median ratio is 1.01978x (about 2 percent); intervals overlap and this does not establish a broadly significant speedup. Configuration, all layer counts and terminal states matched the bound CPU reference.
+
+CayleyPy scalar adaptation rejects nonintegral, boolean, text, nonfinite and out-of-int64 values rather than silently changing the graph. Exact integral NumPy-style scalars remain accepted.

@@ -43,3 +43,11 @@ class OverflowInverseGuard(unittest.TestCase):
   g=GraphDefinition.matrix(1,1,[([(1<<63)-1],3)],[2]);self.assertEqual(g.successor([2],0),[1]);self.assertFalse(g.inverse_closed())
   for modulus in (0,4):self.assertTrue(GraphDefinition.matrix(1,1,[([(1<<63)-1],modulus)],[2]).inverse_closed())
   self.assertTrue(GraphDefinition.matrix(1,1,[([100],101)],[2]).inverse_closed())
+
+class LosslessAdapterScalars(unittest.TestCase):
+ def test_adapter_rejects_fractional_boolean_and_text_labels(self):
+  from multigpubfs.graph_definition import _flatten
+  for bad in (0.5,True,'1',float('inf'),float('nan')):
+   with self.assertRaises(ValueError):_flatten(bad)
+  self.assertEqual(_flatten([1.0,-2,3]),[1,-2,3])
+  with self.assertRaises(ValueError):_flatten(1<<63)

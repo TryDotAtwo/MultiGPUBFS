@@ -120,7 +120,12 @@ def _flatten(value):
  if hasattr(value,'tolist'):value=value.tolist()
  if isinstance(value,(list,tuple)):
   return [x for item in value for x in _flatten(item)]
- return [int(value)]
+ # CayleyPy/NumPy scalar conversion must not silently change the graph.
+ if isinstance(value,bool):raise ValueError('GRAPH_NONINTEGER_SCALAR')
+ try:converted=int(value)
+ except (TypeError,ValueError,OverflowError):raise ValueError('GRAPH_NONINTEGER_SCALAR') from None
+ if converted!=value:raise ValueError('GRAPH_NONINTEGER_SCALAR')
+ return [_integer(converted)]
 
 def from_cayleypy(definition):
  """Preserve CayleyGraphDef generators and start; never substitute a family."""

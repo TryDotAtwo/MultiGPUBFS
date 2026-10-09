@@ -21,8 +21,8 @@ __global__ void accept_candidates(Candidate action,uint64_t* slots,uint32_t slot
  const uint32_t children=action.count*action.generators;
  for(uint32_t iteration=blockIdx.x*blockDim.x+threadIdx.x;iteration<children;iteration+=blockDim.x*gridDim.x){
   const uint32_t child=action.child(iteration);
-  if(atomicAdd(error,0u))return;
   if(!action.valid(child,error))continue;
+  if(atomicAdd(error,0u))return;
   const uint64_t hash=action.hash(child,seed,bits),prefix=hash&0xffffffff00000000ULL;
   const uint64_t pending=prefix|0x80000000ULL|child;uint32_t slot=action.bucket(hash,slot_capacity);bool done=false;
   for(uint32_t probe=0;probe<slot_capacity;probe++,slot=(slot+1)&(slot_capacity-1)){
