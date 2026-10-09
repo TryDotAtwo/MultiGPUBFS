@@ -21,18 +21,18 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  if devices.is_empty()||devices.len()>128||inventory.len()!=devices.len(){return Err("GRAPH_GLOBAL_INVENTORY_SHAPE".into());}
  let mut minimum=u64::MAX;
  for v in &inventory{let free=v["free_bytes"].as_u64().ok_or("GRAPH_GLOBAL_FREE_BYTES")?;let total=v["total_bytes"].as_u64().ok_or("GRAPH_GLOBAL_TOTAL_BYTES")?;if free==0||free>total{return Err("GRAPH_GLOBAL_MEMORY_RANGE".into());}minimum=minimum.min(free);}
- let state_bytes=crate::generic_memory::preferred_state_bytes(&g);
+ let state_bytes=crate::generic_memory::preferred_state_bytes(&g);let history_layers=if g.inverse_closed()?{3}else{1};
  
  let (mut rank_plans,owner_cuts)=if let Some(capacity)=requested{
-  let auto=Plan::automatic_storage(g.start.len() as u32,devices.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),minimum,Some(u64::from(capacity)),state_bytes)?;
+  let auto=Plan::automatic_storage_history(g.start.len() as u32,devices.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),minimum,Some(u64::from(capacity)),state_bytes,history_layers)?;
   if auto.capacity!=capacity{return Err("REQUESTED_CAPACITY_EXCEEDS_ADMISSION".into());}
   (vec![auto;devices.len()],None)
  }else{
   let free=inventory.iter().map(|v|v["free_bytes"].as_u64().unwrap()).collect::<Vec<_>>();
-  let(plans,cuts)=crate::generic_distributed_memory::heterogeneous_plans(g.start.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),&free,crate::generic_memory::state_space_bound(&g),state_bytes)?;(plans,Some(cuts))
+  let(plans,cuts)=crate::generic_distributed_memory::heterogeneous_plans_history(g.start.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),&free,crate::generic_memory::state_space_bound(&g),state_bytes,history_layers)?;(plans,Some(cuts))
  };
  if let Some(batch)=batch{
-  for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if candidate.device_bytes>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
+  for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage_history(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes,history_layers)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if candidate.device_bytes>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
  }
  let plan=rank_plans.iter().min_by_key(|p|p.capacity).unwrap().clone();
  Ok(serde_json::json!({"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
@@ -49,7 +49,7 @@ pub fn run(args:&[String])->Result<()>{
  if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
  if plans.len()!=launch.devices.len(){return Err("GRAPH_RANK_PLANS".into());}
- for p in &plans{p.validate(g.generator_count() as u32)?;if p.world!=launch.plan.world||p.shards!=launch.plan.shards||p.elements!=launch.plan.elements||p.state_bytes!=launch.plan.state_bytes||p.batch!=launch.plan.batch||p.queue_capacity!=launch.plan.queue_capacity||p.generator_bytes<graph_bytes(&g){return Err("GRAPH_TRANSPORT_GEOMETRY".into());}}
+ for p in &plans{p.validate(g.generator_count() as u32)?;if p.history_layers!=launch.plan.history_layers||p.world!=launch.plan.world||p.shards!=launch.plan.shards||p.elements!=launch.plan.elements||p.state_bytes!=launch.plan.state_bytes||p.batch!=launch.plan.batch||p.queue_capacity!=launch.plan.queue_capacity||p.generator_bytes<graph_bytes(&g){return Err("GRAPH_TRANSPORT_GEOMETRY".into());}}
  let rank_plan=plans[rank as usize].clone();
  let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;if seconds==0{return Err("CLI_GRAPH_SECONDS".into());}let output=Path::new(&args[4]);if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
  let bootstrap=Path::new(&args[3]);let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}check(unsafe{mgbfs_nccl_unique_id(id.as_mut_ptr().cast())})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let started=Instant::now();while !bootstrap.exists(){if started.elapsed()>Duration::from_secs(60){return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}std::thread::sleep(Duration::from_millis(10));}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);}
@@ -60,6 +60,6 @@ pub fn run(args:&[String])->Result<()>{
  };let bfs_seconds=start.elapsed().as_secs_f64();let current=bfs.sample_global(1000)?;let previous=bfs.previous_small_sample(*sizes.iter().rev().nth(1).unwrap_or(&0))?;
  let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
  use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
- let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":"GENERIC_DISTRIBUTED_EXACT_ALL_VISITED","profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"});
+ let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":if rank_plan.history_layers==3{"GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"}else{"GENERIC_DISTRIBUTED_EXACT_ALL_VISITED"},"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"});
  std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;Ok(())
 }

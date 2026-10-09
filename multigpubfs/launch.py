@@ -66,7 +66,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   admission=json.loads(probe.stdout);devices=admission['devices']
   if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
-  if len(devices)==1 and shards==1 and _profile_layers is None:
+  if len(devices)==1 and shards==1 and _profile_layers is None and admission['plan'].get('history_layers',1)==1:
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
    if capacity is not None:command+=['--capacity',str(capacity)]
    process=subprocess.run(command,capture_output=True,text=True,env=native_env)

@@ -92,9 +92,15 @@ class GraphDefinition:
    return True
   n=a['rows']
   if len({g['modulo'] for g in gs})!=1:return False
+  mod=gs[0]['modulo']
+  if mod and mod&(mod-1):
+   if any(sum(abs(v)*(mod-1) for v in g['matrix'][i*n:(i+1)*n])>I64_MAX for g in gs for i in range(n)):return False
   eye=[int(i==j) for i in range(n) for j in range(n)]
+  def compose(g,h):
+   right=[v%mod for v in h['matrix']] if mod else h['matrix']
+   return self._multiply(g['matrix'],right,n,n,mod)
   for g in gs:
-   if not any(g['modulo']==h['modulo'] and self._multiply(g['matrix'],h['matrix'],n,n,g['modulo'])==eye and self._multiply(h['matrix'],g['matrix'],n,n,h['modulo'])==eye for h in gs):return False
+   if not any(compose(g,h)==eye and compose(h,g)==eye for h in gs):return False
   # A modular inverse is an inverse only on canonical values. Noncanonical
   # starts may enter the canonical orbit irreversibly on the first edge.
   for g in gs:

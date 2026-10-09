@@ -42,3 +42,21 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
   if p.capacity<(1<<28){assert!(Plan::with_storage(width,2,4,p.capacity+1,p.batch,3,4096,bytes).unwrap().device_bytes>budget);}
  }
 }
+
+#[test]fn rolling_history_accounts_for_three_immutable_banks_and_positions(){
+ for bytes in [1,8]{let retained=Plan::with_storage(17,2,4,100,8,3,4096,bytes).unwrap();let rolling=Plan::with_storage_history(17,2,4,100,8,3,4096,bytes,3).unwrap();
+ assert_eq!(rolling.table_slots,1024);assert_eq!(rolling.history_layers,3);
+ assert_eq!(rolling.device_bytes-retained.device_bytes,17*100*bytes as u64*2+100*12+(1024-256)*8);rolling.validate(3).unwrap();
+ let mut bad=rolling.clone();bad.history_layers=1;assert!(bad.validate(3).is_err());}
+ assert!(Plan::with_storage_history(4,2,4,100,8,3,4096,1,2).is_err());
+}
+#[test]fn rolling_automatic_capacity_is_exactly_admitted(){
+ let p=Plan::automatic_storage_history(14,2,16,3,4096,12u64<<30,None,1,3).unwrap();assert_eq!(p.history_layers,3);assert!(p.device_bytes<=(12u64<<30)-(12u64<<30)/10);p.validate(3).unwrap();
+ let (plans,cuts)=mgbfs_runtime::generic_distributed_memory::heterogeneous_plans_history(14,4,3,4096,&[12u64<<30,24u64<<30],None,1,3).unwrap();assert!(plans[0].capacity<plans[1].capacity);assert_eq!(plans[0].batch,plans[1].batch);assert_eq!(*cuts.last().unwrap(),1u64<<32);
+}
+
+#[test]fn rolling_logical_geometry_admission_at_1_2_8_128_ranks(){
+ for world in [1,2,8,128]{for shards in [1,4,16]{for (width,bytes) in [(4,1),(16,1),(257,8)]{
+  let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=p.capacity*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
+ }}}
+}

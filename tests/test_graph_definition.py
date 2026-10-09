@@ -37,3 +37,9 @@ class GraphDefinitionTests(unittest.TestCase):
   g=GraphDefinition.permutation([[1,2,0]],[0,1,2])
   with self.assertRaises(ValueError):g.exact_layers(2)
 if __name__=='__main__':unittest.main()
+
+class OverflowInverseGuard(unittest.TestCase):
+ def test_wrapping_can_fake_modular_inverse(self):
+  g=GraphDefinition.matrix(1,1,[([(1<<63)-1],3)],[2]);self.assertEqual(g.successor([2],0),[1]);self.assertFalse(g.inverse_closed())
+  for modulus in (0,4):self.assertTrue(GraphDefinition.matrix(1,1,[([(1<<63)-1],modulus)],[2]).inverse_closed())
+  self.assertTrue(GraphDefinition.matrix(1,1,[([100],101)],[2]).inverse_closed())
