@@ -186,3 +186,16 @@ injected selection is dispatch evidence, not a measured speed claim.
 These bounded prefixes do not establish near-card throughput, all workload
 optima, Blackwell readiness, remote native-shape inventory or larger physical
 rank scaling. Those requirements remain open, as does fresh release packaging.
+
+
+## Clean installed acceptance, 2026-10-10
+
+Release implementation 28d5aa3 resolves nvidia/cu13/lib from the native manifest
+in addition to the legacy pip runtime directories. Two library-order regression
+tests pass. A fresh virtualenv with pip CUDA13.2.86, NCCL2.30.7, CayleyPy0.2.0 and
+CPU PyTorch runs the installed binary without source/runtime-path overrides.
+Twelve complete permutation/matrix cases, four resource-retention cases, the
+console command, installed 40320-state measured profile choice and cache reuse
+pass on one/two RTX3060. This closes the clean installation checkpoint for this
+SM86 artifact. Near-card performance, distinct-architecture remote admission
+and larger physical GPU acceptance remain open.

@@ -1,3 +1,54 @@
+# Current sorted-history and automatic-profile native package
+
+Verified executable/package source: `28d5aa3cab27bc7bdb7882742a33e7a0b68fc2b0`.
+Linux x86_64, compiled target SM86, CUDA 13.2 runtime, NCCL 2.30.7.
+Actual clean installation: one/two RTX3060 with driver 595.84. Blackwell,
+physical 4/8/128 GPUs and separate hosts remain unverified. Choose an artifact
+compiled for your GPU; this SM86 release is not a B200/B300 acceptance claim.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/06320af7fa64d34d85faea17b599211b3afbd3d1/linux-x86_64-sm86-cuda13.2/28d5aa3cab27bc7bdb7882742a33e7a0b68fc2b0/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `13d7f67558a3f354f22f20eb9e1fd7c0032f266ea85711e019347d1d21a2184a`. Anonymous immutable readback
+verified. The wheel includes the native executable and CUDA library; its
+manifest checks both hashes. No source checkout, toolkit compilation or
+MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. NVIDIA driver
+installation remains a host prerequisite.
+
+For CayleyPy definitions, install the optional adapter dependency. Native BFS
+uses its own CUDA kernels; a CPU PyTorch dependency is sufficient for loading
+these definitions and avoids downloading an unrelated GPU PyTorch stack:
+
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install cayleypy
+```
+
+```python
+from cayleypy import PermutationGroups
+from multigpubfs import run_graph
+report = run_graph(PermutationGroups.lrx(8), "new-result-directory")
+```
+
+All visible GPUs are the default. This release serializes sorted memory/owner
+admission, admits workspace before state allocation, measures HASH versus
+SORTED_RUNS and 1/2/4/8 sorted-owner lanes on bounded common prefixes, and carries
+the exact chosen batch into production. Tiny prefixes keep a conservative
+profile. Prefix selection does not promise a global performance optimum.
+
+Clean installed verification covered 12 complete CayleyPy permutation/matrix
+runs and four resource-stop retention cases across HASH/SORTED and one/two GPUs,
+plus the console command. Installed 40320-state automatic profiling, exact CPU
+layer/terminal oracles and cache reuse passed separately. CUDA 13 pip runtime
+namespace discovery is covered; older CUDA namespace ordering remains tested.
+Near-card throughput and larger hardware acceptance remain pending.
+
+## Historical immutable artifacts
+
+The sections below retain older receipts. Their words 'current/latest' refer to
+their original recording dates; use the release above for the current package.
+
 # Current exact key-domain and cache release
 
 Latest source `407a5d7c796e548f6cf88de58c10c345a864475c`. This adds consistent omitted/auto peer-policy cache identity to the full-key-domain/NCCL repair below. One/two RTX3060 clean installed general matrices/permutations, compact stop boundaries, local external TCP/NCCL and bounded tuning/cache passed. Freshly reinstalled immutable wheel passed cold production plus cached direct tuning with equal identity. SM86/CUDA runtime12; native binary built12.6 and library12.8. Physical4/8/128, separate hosts and Blackwell remain unverified. Broader general sorted-history integration remains unfinished.

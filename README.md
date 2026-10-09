@@ -12,7 +12,7 @@ and reproducible reference experiments.
 The current implementation target is specified in
 [Multi-GPU Cayley BFS architecture](ARCHITECTURE_NEED.md).
 
-The current native graph runtime supports CayleyPy permutation and int64 matrix actions through one [automatic launcher](docs/unified-launch.md). It plans memory from actual free VRAM and uses bounded same-graph GPU measurements to select shard/batch profiles. Proved inverse-closed graphs use three VRAM layer banks; directed graphs retain all visited states. Exact equality resolves hash collisions. Compact output, resource limits and cancellation preserve completed-layer evidence.
+The current native graph runtime supports CayleyPy permutation and int64 matrix actions through one [automatic launcher](docs/unified-launch.md). It plans memory from actual free VRAM and uses bounded same-graph GPU measurements to select history algorithms, owner lanes and shard/batch/transport profiles. Proved inverse-closed graphs use three VRAM layer banks; directed graphs retain all visited states. Exact equality resolves hash collisions. Compact output, resource limits and cancellation preserve completed-layer evidence.
 
 [Current acceptance and remaining hardware boundaries](docs/universal-acceptance-2026-10-09.md) separates actual one/twoRTX3060 results from logical8/128rank contracts. Physical multi-host, larger-rank and Blackwell execution remain unverified. Historical research and native-matrix status documents describe earlier implementation stages and are not the current unified launch status.
 
