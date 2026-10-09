@@ -14,6 +14,16 @@ def _system_info(command):
  try:return subprocess.run(command,capture_output=True,text=True,timeout=10)
  except (OSError,subprocess.TimeoutExpired):return subprocess.CompletedProcess(command,1,'unavailable','')
 
+def _dependency_identity(native,env):
+ try:resolved=subprocess.run(['ldd',native],capture_output=True,text=True,env=env,timeout=10)
+ except (OSError,subprocess.TimeoutExpired):return None
+ for line in resolved.stdout.splitlines():
+  fields=line.split()
+  if len(fields)>=3 and fields[0]=='libmgbfs_cuda.so' and fields[1]=='=>':
+   path=Path(fields[2])
+   if path.is_file():return {'cuda_library_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'resolved_dependencies':resolved.stdout}
+ return None
+
 def choose_profile(graph,devices,capacity,max_seconds,native,env):
  started=time.monotonic()
  with tempfile.TemporaryDirectory(prefix='mgbfs-profile-') as temporary:
@@ -24,10 +34,11 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
   # Native content, graph and driver/topology identity prevent stale reuse.
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
-  identity={'schema':2,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME')}}
+  dependency=_dependency_identity(native,env)
+  identity={'schema':3,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
-  if hardware.returncode==0 and topology.returncode==0 and cache.is_file():
+  if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
    try:saved=json.loads(cache.read_text())
    except (OSError,ValueError):saved={}
    if saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and saved.get('shards') in (1,4) and saved.get('batch_fraction') in (1.0,.25):
@@ -62,7 +73,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env):
   if scores[winner]>=scores[0]*.95:winner=0
   chosen=pilots[winner]
   result={'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'scope':'bounded prefix among three admitted profiles; no claim of global optimum or large-rank acceptance'}
-  if hardware.returncode==0 and topology.returncode==0:
+  if dependency is not None and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True)
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
