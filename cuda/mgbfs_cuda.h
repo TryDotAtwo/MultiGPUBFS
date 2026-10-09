@@ -346,6 +346,8 @@ void mgbfs_trace_range_pop(void);
 int mgbfs_nccl_send_recv_pair(void* comm,const void* hashes,uint64_t hash_bytes,
     const void* states,uint64_t state_bytes,uint32_t peer,void* receive_hashes,
     uint64_t receive_hash_bytes,void* receive_states,uint64_t receive_state_bytes,void* stream);
+/* Pure startup build metadata, not a device capability test. */
+int mgbfs_nccl_lsa_compiled(void);
 #ifdef __cplusplus
 }
 #endif

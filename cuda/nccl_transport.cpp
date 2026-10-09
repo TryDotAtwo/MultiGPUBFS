@@ -669,3 +669,12 @@ extern "C" int mgbfs_nccl_all_gather_bytes(void* raw,const void* send,void* recv
  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
  return await_nccl(p,ncclAllGather(send,recv,size_t(bytes),ncclUint8,p->value,static_cast<cudaStream_t>(raw_stream)));
 }
+
+// Startup metadata only: no device allocation or CUDA work.
+extern "C" int mgbfs_nccl_lsa_compiled(){
+#if defined(MGBFS_NCCL_LSA)
+  return 1;
+#else
+  return 0;
+#endif
+}

@@ -11,7 +11,7 @@ def _receipt(output,digest):
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,backend='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,backend='auto',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -29,15 +29,18 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
+ if peer_transport not in ('auto','host','lsa'):raise ValueError('INVALID_PEER_TRANSPORT')
+ if peer_transport=='lsa' and not backend.startswith('shard_ab_'):raise ValueError('LSA_REQUIRES_SPECIALIZED_BACKEND')
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  if transport!='auto':native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport)
  if candidate_order!='auto':native_env=dict(native_env,MGBFS_GENERIC_SORT=candidate_order)
  if os.environ.get('WORLD_SIZE','1')!='1':
-  if backend not in ('auto','generic'):raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
+  if backend not in ('auto','generic') or peer_transport=='lsa':raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
   from .distributed_launch import run_external
   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune)
  output=Path(output).absolute()
@@ -117,6 +120,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
   report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  report['transport_selection']=decision
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return _receipt(output,digest)
@@ -135,10 +139,16 @@ def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_secon
   inventory=json.loads(probe.stdout)
   if inventory['graph_digest']!=graph.digest():raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
   selected=inventory['devices'];mode='HASH' if backend=='shard_ab_hash' else 'SORT_MERGE'
-  plan=admit_specialized(graph,native,env,selected,Path(temporary)/'queries',capacity=capacity,mode=mode,seconds=max_seconds)
+  from .transport import select_peer_transport
+  request=('lsa' if profile['specialized_transport']=='NCCL_LSA' else 'host') if profile and profile.get('specialized_transport') else env.get('MGBFS_PEER_TRANSPORT','auto')
+  decision=select_peer_transport(native,env,selected,Path(temporary)/'transport',request=request,seconds=max_seconds)
+  env=dict(env,MGBFS_SPECIALIZED_TRANSPORT=decision['selected'])
+  if decision['selected']=='NCCL_LSA':env['NCCL_CUMEM_ENABLE']='1'
+  plan=admit_specialized(graph,native,env,selected,Path(temporary)/'queries',capacity=capacity,mode=mode,seconds=max(1,max_seconds-(time.monotonic()-started)))
   actual_batch=plan['batch'] if batch is None else batch
   if actual_batch!=plan['batch']:raise ValueError('SPECIALIZED_BATCH_REQUIRES_MATCHED_ADMISSION')
   report=run_specialized(graph,output,native=native,env=env,devices=selected,capacity=plan['capacity'],batch=actual_batch,max_seconds=max(1,max_seconds-(time.monotonic()-started)),mode=mode,profile_layers=profile_layers)
   report['plan'].update(plan);report['startup_admission_seconds']=time.monotonic()-started-report['launch_wall_seconds']
+  report['transport_selection']=decision
   if profile:report['autotune']=profile
   (output/'report.json').write_text(json.dumps(report,indent=2));return _receipt(output,graph.digest())

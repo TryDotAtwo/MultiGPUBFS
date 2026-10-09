@@ -93,3 +93,10 @@ On the verified two3060 n8r1 acceptance workload, all seven profiles matched thr
 
 
 The installed package exposes `multigpubfs graph.json new-results --devices 0,1 --seconds 120`, or `python -m multigpubfs` with the same arguments. Input is the validated schema2 definition produced by `GraphDefinition.to_json()`. Omit devices to use all visible GPUs. The result JSON and checksummed compact state receipt are stored in the new output directory; COMPLETE versus INCOMPLETE is retained explicitly. Explicit backend, capacity, transport and candidate ordering are optional. This entrypoint does not enumerate graph states on CPU.
+
+
+### Peer transport capability and selection
+
+`peer_transport="auto"` (CLI `--peer-transport auto`) observes a pure native LSA build flag. An enabled library must pass a bounded fixed exact24-state GPU graph with known layer and terminal-state receipts before LSA enters performance profiles. AUTO retains HOST as an alternative and scores transports on identical graph prefixes. Compiled-off or the exact NCCL unsupported-device/team error selects HOST; timeouts, unknown native errors and oracle failures are errors rather than silent fallback. `peer_transport="host"` skips the LSA gate. Explicit `peer_transport="lsa"` requires a specialized backend and fails if capability cannot be verified. External ranks retain the general backend; explicit LSA is unsupported there. The cached winning transport is retained and LSA capability is rechecked before use.
+
+Both compiled-off and enabled-but-unsupported fallback paths passed complete exact HASH/SORT_MERGE graphs on twoRTX3060; explicit unsupported LSA rejected. The current hardware cannot validate successful LSA data-plane/throughput. CPU policy tests cover adding and choosing LSA profiles after a verified capability; they are not GPU LSA acceptance. No capability queries or CPU successor enumeration run inside the BFS hot loop.
