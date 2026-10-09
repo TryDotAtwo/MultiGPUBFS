@@ -19,6 +19,6 @@ use mgbfs_runtime::generic_memory::GenericMemoryPlan;
  assert_eq!(wide.device_bytes-compact.device_bytes,14*1024*2*7);assert!(GenericMemoryPlan::with_storage(14,1024,2).is_err());
  use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as Plan;
  let wide=Plan::with_storage(14,2,4,1024,32,3,4096,8).unwrap();let compact=Plan::with_storage(14,2,4,1024,32,3,4096,1).unwrap();compact.validate(3).unwrap();
- assert_eq!(wide.device_bytes-compact.device_bytes,14*1024*2*7+2*4*u64::from(compact.queue_capacity)*14*7*3);
+ assert_eq!(wide.device_bytes-compact.device_bytes,14*1024*2*7+2*4*u64::from(compact.queue_capacity)*14*8*3-3);
  let free=12u64<<30;assert!(Plan::automatic_storage(14,2,4,3,4096,free,None,1).unwrap().capacity>Plan::automatic_storage(14,2,4,3,4096,free,None,8).unwrap().capacity);
 }

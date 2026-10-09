@@ -654,6 +654,7 @@ extern "C" int mgbfs_nccl_exchange_triplets(void* raw,uint32_t rank,uint32_t wor
  if(ncclGroupStart()!=ncclSuccess)return 2;int status=0;auto stream=static_cast<cudaStream_t>(raw_stream);
  for(uint32_t peer=0;peer<world&&!status;peer++){if(peer==rank)continue;
   for(unsigned lane=0;lane<3&&!status;lane++){
+   if(!bytes[lane])continue;
    auto sent=ncclSend((bytes[lane]?static_cast<const unsigned char*>(send[lane])+peer*bytes[lane]:send[lane]),size_t(bytes[lane]),ncclUint8,int(peer),p->value,stream);
    if(sent!=ncclSuccess&&sent!=ncclInProgress){status=3;break;}
    auto received=ncclRecv((bytes[lane]?static_cast<unsigned char*>(recv[lane])+peer*bytes[lane]:recv[lane]),size_t(bytes[lane]),ncclUint8,int(peer),p->value,stream);

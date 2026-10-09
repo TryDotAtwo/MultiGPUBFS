@@ -8,7 +8,7 @@ struct Event{ptr:*mut c_void,device:i32}
 impl Event{fn new(device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaEventCreateWithFlags(&mut p,2)})?;Ok(Self{ptr:p,device})}}
 impl Drop for Event{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.device);cudaEventDestroy(self.ptr);}}}
 struct QueueBank{records:Buffer,counts:Buffer,states:Buffer}
-impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{let boxes=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;Ok(Self{records:Buffer::new(boxes*q*32,device)?,counts:Buffer::new(boxes*4,device)?,states:Buffer::new(boxes*q*p.elements as usize*p.state_bytes as usize,device)?})}}
+impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{let boxes=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;Ok(Self{records:Buffer::new(boxes*q*32,device)?,counts:Buffer::new(boxes*4,device)?,states:Buffer::new(boxes*q*p.queue_payload_bytes(),device)?})}}
 #[derive(Debug,PartialEq,Eq)]
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
@@ -74,7 +74,7 @@ impl GenericDistributedBfs{
    check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    check(unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
    check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
-   for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}
+   if !p.packed_candidates(){for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}
    // Invalid source counts must not be presented as valid owner inboxes.
    // Generate the next immutable source bank while preceding owners work.
    // Retire their inbox leases only before reading owner errors/exchanging.
@@ -85,7 +85,7 @@ impl GenericDistributedBfs{
    if fatal==1&&batch>1{batch=(batch/2).max(1);self.source_retries+=1;continue;}
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
    // A single matched NCCL group submits all peer lanes without host count reads.
-   check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*width*state_bytes) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
+   check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*p.queue_payload_bytes()) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
     check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.at(shard*p.slots_per_shard as usize*8),p.slots_per_shard,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;

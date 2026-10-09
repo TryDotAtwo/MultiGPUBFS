@@ -21,3 +21,11 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
  for (p,free) in plans.iter().zip([12u64<<30,24u64<<30]){p.validate(3).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));}
  assert!(heterogeneous_plans(14,4,3,4096,&[],None,1).is_err());
 }
+
+#[test]fn packed_candidate_boundary_and_exact_queue_admission(){
+ for width in [1,8,16,17,257]{for bytes in [1,8]{
+  let p=Plan::with_storage(width,2,4,1024,32,3,4096,bytes).unwrap();
+  assert_eq!(p.packed_candidates(),bytes==1&&width<=16);
+  assert_eq!(p.queue_payload_bytes(),if bytes==1&&width<=16{0}else{(width*bytes) as usize});p.validate(3).unwrap();
+ }}
+}

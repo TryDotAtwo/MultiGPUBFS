@@ -65,5 +65,16 @@ for codec in (1,8):
  assert parts[0]['source_retries']==parts[1]['source_retries']
  assert [sorted(parts[0]['layers'][i]+parts[1]['layers'][i]) for i in range(len(parts[0]['layers']))]==skew_oracle
  checks.append({'case':f'skew-retry-{codec}','source_retries':parts[0]['source_retries'],'all_layers_exact':True})
+for width in [8,16,17]:
+ start=[(17*i+128)%256 for i in range(width)]
+ graph=GraphDefinition.permutation([list(range(1,width))+[0]],start)
+ expected=graph.exact_layers(width+1)
+ for codec in [1,8]:
+  for bits in [0,64]:
+   name=f'boundary-{width}-codec-{codec}-bits-{bits}'
+   parts=ranks(graph,name,codec,bits,4,width,4)
+   assert all(p['fatal']==0 for p in parts),parts
+   assert [sorted(parts[0]['layers'][i]+parts[1]['layers'][i]) for i in range(len(parts[0]['layers']))]==expected
+   checks.append({'case':name,'all_layers_exact':True,'packed_expected':codec==1 and width<=16})
 receipt={'status':'VERIFIED_COMPACT_STORAGE_ONE_TWO_GPU','native_identity':identity,'checks':checks,'resource_current_previous_exact':True,'scope':'storage codec and exact hash/equality/routing semantics only; throughput and specialized key-first dispatch pending'}
 (r/'verification.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt))
