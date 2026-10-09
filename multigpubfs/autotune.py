@@ -40,6 +40,12 @@ def _transport_variants(graph,env):
  if order is None:variants.append((4,.25,'parent' if forced is None and not packed else mode,'radix'))
  return variants
 
+def _configuration_digest(env):
+ # Values are hashed, never copied into a public receipt (tokens may coexist).
+ ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID'}
+ values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')) and k not in ignored}
+ return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
+
 def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
  with tempfile.TemporaryDirectory(prefix='mgbfs-profile-') as temporary:
@@ -51,7 +57,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':9,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':10,'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():

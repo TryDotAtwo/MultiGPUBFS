@@ -42,6 +42,16 @@ class ProfilePolicy(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'INVALID_TRANSPORT'):_transport_variants(wide,{'MGBFS_GENERIC_TRANSPORT':'typo'})
  def test_radix_order_can_win_without_changing_transport(self):
   p=self.run_case([1,.9,.8,.7,.5]);self.assertEqual((p['shards'],p['transport'],p['candidate_order']),(4,'full','radix'))
+class ConfigurationIdentity(unittest.TestCase):
+ def test_communication_and_owner_knobs_invalidate_without_disclosing_values(self):
+  from multigpubfs.autotune import _configuration_digest
+  a=_configuration_digest({'NCCL_IB_DISABLE':'0','MGBFS_SHARD_AB_CAPACITY':'100'})
+  for env in ({'NCCL_IB_DISABLE':'1','MGBFS_SHARD_AB_CAPACITY':'100'},{'NCCL_IB_DISABLE':'0','MGBFS_SHARD_AB_CAPACITY':'200'}):self.assertNotEqual(a,_configuration_digest(env))
+  self.assertEqual(len(a),64)
+ def test_cache_location_and_control_token_do_not_change_kernel_profile(self):
+  from multigpubfs.autotune import _configuration_digest
+  self.assertEqual(_configuration_digest({'NCCL_IB_DISABLE':'0'}),_configuration_digest({'NCCL_IB_DISABLE':'0','MGBFS_PROFILE_CACHE':'elsewhere','MGBFS_CONTROL_TOKEN':'private'}))
+
 class SpecializedProfilePolicy(unittest.TestCase):
  admission=ProfilePolicy.admission
  tearDown=ProfilePolicy.tearDown
