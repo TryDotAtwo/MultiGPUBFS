@@ -68,3 +68,10 @@ The host must already provide compatible CUDA runtime13 and an NVIDIA driver. Wh
 Verified source: `2cdfdc30b88dba7fb69c9458393131157bf71ca7`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/7b071f7c457bbe38bbefadd9432a5571d177afc2/linux-x86_64-sm86-cuda13.2/2cdfdc30b88dba7fb69c9458393131157bf71ca7/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
 
 SHA256: `09a264b12d9905cee7389604a5fc05668f838fdfd15f76909e7ea06403c12e53`. Clean installation passed cyclic admission, exact rolling terminal states, cancellation/resource boundaries and two-rank TCP/NCCL tests on one/two RTX3060. CUDA13 and NCCL2 runtimes are required. Blackwell and physical8/128 GPU acceptance remain unverified.
+
+
+## Latest Packed24 package
+
+Source `a7198174dd778e59dcf234c04c4837e51d6e30b3`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/c62cf77656974326df3c76a2e5f4561f5be11d57/linux-x86_64-sm86-cuda13.2/a7198174dd778e59dcf234c04c4837e51d6e30b3/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `ce554b0d13b55ff0df83bd3d897d27864f28356285412dd4517009bdbcb0758f`. Fresh installation outside checkout passed width16/17/23/24/25 boundaries, rolling retention/cancellation and external-rank TCP/NCCL tests on one/twoRTX3060. CUDA13/NCCL2 required. Larger hardware remains unverified.
