@@ -89,3 +89,10 @@ SHA256 `9142e3cf32af04f61fe3f825b176006231a2bddefdf5bd1601a12baee83bec10`. Clean
 Source `68f6195985dfcbff1e7260fe0fe5e3b97fca03c4`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/0b424872f9e111123d3090e613cbd4cbc5a6c5a2/linux-x86_64-sm86-cuda13.2/68f6195985dfcbff1e7260fe0fe5e3b97fca03c4/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
 
 SHA256 `8803d929d350bd6c9f6c592fa9146ab5172528979cc87fa03d4e76bb867d5fdf`. Clean package outside checkout passed exact public HASH/SORT_MERGE on two RTX3060, seven-profile selection and cache, and installed module/console commands. Compact samples pass independent oracles including resource/SIGTERM. LSA, physical4/8/128 and multi-host specialized owners remain unverified.
+
+
+## Capability-gated peer transport package
+
+Source `c7d399f3d02e1985f0327432c62a438d1f30f45f`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/2eaa1b475286b03a360a6452f770bc4b124e0126/linux-x86_64-sm86-cuda13.2/c7d399f3d02e1985f0327432c62a438d1f30f45f/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `907026c228f3eb8eed5ad423432ee2f33b34686b54db7928cb91f8ddd0b616a2`. CUDA13/NCCL2.30.7 and compatible host driver required. This SM86 package contains LSA-enabled code, but the allowed twoRTX3060 host cannot provide LSA device/team capability: automatic fallback to HOST is GPU-verified, explicit LSA rejects. Clean installed public selection/cache, CLI, wide deadline/cancel/resource snapshots and separate TCP/NCCL ranks passed. Successful LSA, physically separate nodes and physical4/8/128/Blackwell remain unverified.

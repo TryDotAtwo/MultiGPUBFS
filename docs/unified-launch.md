@@ -9,8 +9,7 @@ The default uses all CUDA-visible devices on one host. `device=1` selects one
 card; `devices=[1,0]` sets explicit placement. `max_seconds` limits work, and
 `capacity` overrides rows per card subject to VRAM admission: per-layer rows for proved inverse-closed graphs, cumulative retained rows for directed graphs.
 `shards=4` selects independent owner streams. When `shards` is omitted, substantial
-workloads measure four bounded same-graph GPU profiles (1 shard, 4 shards, 16 shards,
-and 4 shards with quarter-size routing batches). Comparable completed depths
+workloads measure admitted same-graph GPU profiles:1/4/16 owner shards, quarter-size routing batches, optional parent-origin transport and radix origin ordering. Eligible LRX actions additionally compare SHARD_AB HASH/SORT_MERGE and verified peer transports. Comparable completed depths
 and identical layer counts are required; first-collective warmup is excluded.
 An alternative must beat the baseline by at least 5% to justify a switch.
 `autotune=False` selects the conservative one-shard profile without pilots.
@@ -25,7 +24,7 @@ Compact output saves at most 1000 states of the last completed layer globally,
 and the previous completed layer only when it contains fewer than 1000 states.
 The launcher automatically uses three immutable VRAM banks for a proved inverse-closed action: previous, current and future. It retires older keys using a row-to-slot map, preserving probe chains with tombstones; occasional GPU maintenance amortizes retired keys rather than rebuilding history every layer. Generation reads the current bank directly, without a full parent gather. Only the future bank may be partial on a resource stop. The readout staging buffer is capped at 1000 rows. Directed actions and modular matrices whose wrapping arithmetic invalidates an inverse proof retain all visited history. Reports expose `history_layers` (3 or 1) and the actual backend.
 
-Specialized SHARD_AB remains available through its existing native configuration interface. The general automatic path does not claim to select that specialized kernel for every graph.
+Losslessly matched LRX definitions can enter specialized SHARD_AB profile selection through this same API. Other action/root definitions retain the exact general backend.
 
 Memory admission reads actual free VRAM, reserves headroom, and accounts for
 the selected history layout, one shared shard-overflow table, row-position maps, routing banks, receive buffers, and control/owner metadata. A finite
