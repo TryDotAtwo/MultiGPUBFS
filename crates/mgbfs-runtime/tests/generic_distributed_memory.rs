@@ -2,7 +2,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 #[test] fn actual_route_banks_fit_at_1_2_8_128_rank_geometries(){
  for world in [1,2,8,128] {for width in [4,16,257] {for shards in [1,4,16] {
   let p=Plan::automatic(width,world,shards,4,16384,12u64<<30,None).unwrap();p.validate(4).unwrap();
-  assert!(p.device_bytes<=((12u64<<30)*9/10));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.slots_per_shard>=p.capacity*2);
+  assert!(p.device_bytes<=((12u64<<30)*9/10));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.table_slots>=p.capacity*2);
   let mut bad=p.clone();bad.device_bytes-=1;assert!(bad.validate(4).is_err());
  }}}
 }
@@ -28,4 +28,17 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
   assert_eq!(p.packed_candidates(),bytes==1&&width<=16);
   assert_eq!(p.queue_payload_bytes(),if bytes==1&&width<=16{0}else{(width*bytes) as usize});p.validate(3).unwrap();
  }}
+}
+
+#[test]fn shard_tables_do_not_multiply_local_history_capacity(){
+ for shards in [1,3,16,256]{let p=Plan::with_storage(14,2,shards,4096,128,3,4096,1).unwrap();assert_eq!(p.table_slots,8192);assert_eq!(p.table_layout,"SHARD_HASH_REGIONS_SHARED_OVERFLOW");p.validate(3).unwrap();}
+ assert!(Plan::with_storage(14,128,4096,4096,1,4096,4096,1).is_err());
+}
+
+#[test]fn automatic_plan_uses_remaining_history_budget_after_bounded_transport(){
+ for (width,bytes) in [(14,1),(17,1),(257,8)]{
+  let free=12u64<<30;let budget=free-(1u64<<30).max(free/10);
+  let p=Plan::automatic_storage(width,2,4,3,4096,free,None,bytes).unwrap();assert!(p.transport_bytes()<=budget/4);assert!(p.device_bytes<=budget);
+  if p.capacity<(1<<28){assert!(Plan::with_storage(width,2,4,p.capacity+1,p.batch,3,4096,bytes).unwrap().device_bytes>budget);}
+ }
 }

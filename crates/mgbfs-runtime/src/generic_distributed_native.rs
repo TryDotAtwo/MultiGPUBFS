@@ -27,19 +27,18 @@ impl GenericDistributedBfs{
   if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
   let local=GenericMemoryPlan::with_storage(plan.elements,plan.capacity,plan.state_bytes)?;
-  let mut bfs=GenericNativeBfs::new(graph,device,local,seed,hash_bits)?;let d=bfs.device;
-  let slots=Buffer::new(plan.slots_per_shard as usize*plan.shards as usize*8,d)?;
-  check(unsafe{cudaMemsetAsync(slots.ptr,255,slots.bytes,bfs.stream.ptr)})?;
+  let mut bfs=GenericNativeBfs::new_unseeded(graph,device,local,seed,hash_bits)?;let d=bfs.device;
+  if bfs.slots.bytes!=plan.table_slots as usize*8{return Err("GENERIC_SHARED_TABLE_ALLOCATION_SHAPE".into());}
+  check(unsafe{cudaMemsetAsync(bfs.slots.ptr,255,bfs.slots.bytes,bfs.stream.ptr)})?;
   let mut hash=seed;for(e,v)in graph.start.iter().enumerate(){hash=mix(hash^(*v as u64)^(e as u64));}hash=mix(hash);if hash_bits<64{hash&=if hash_bits==0{0}else{(1u64<<hash_bits)-1};}
   let owner=if let Some(c)=cuts{c.windows(2).position(|v|v[0]<=hash>>32&&hash>>32<v[1]).ok_or("GENERIC_ROOT_OWNER")? as u32}else{(((hash>>32)*u64::from(plan.world))>>32) as u32};
-  let shard=(((hash&0xffffffff)*u64::from(plan.shards))>>32) as usize;
   // Swap root logical owner with rank zero, preserving a bijective rank map.
   let mut map=(0..plan.world).collect::<Vec<_>>();if cuts.is_none(){map.swap(0,owner as usize);}
   let root_rank=map[owner as usize];
   let owner_cuts=if let Some(c)=cuts{let v=Buffer::new(c.len()*8,d)?;v.upload(c)?;Some(v)}else{None};
   let owner_map=Buffer::new(map.len()*4,d)?;owner_map.upload(&map)?;
-  bfs.slots=slots;bfs.count=if rank==root_rank{1}else{0};bfs.visited_used=bfs.count;bfs.control.upload(&[bfs.count,0u32,0,0,0,0])?;
-  if rank==root_rank{check(unsafe{mgbfs_generic_seed_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.at(shard*plan.slots_per_shard as usize*8),plan.slots_per_shard,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
+  bfs.count=if rank==root_rank{1}else{0};bfs.visited_used=bfs.count;bfs.control.upload(&[bfs.count,0u32,0,0,0,0])?;
+  if rank==root_rank{check(unsafe{mgbfs_generic_seed_shared_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.ptr.cast(),plan.table_slots,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
   check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;
   let banks=[QueueBank::new(&plan,d)?,QueueBank::new(&plan,d)?];let inbox=QueueBank::new(&plan,d)?;
   let control=Buffer::new(64+plan.world as usize*8,d)?;
@@ -88,7 +87,7 @@ impl GenericDistributedBfs{
    check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*p.queue_payload_bytes()) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
-    check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.at(shard*p.slots_per_shard as usize*8),p.slots_per_shard,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;
+    check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;
     check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;
    }
    // Next round may generate into the other source bank; inbox retirement

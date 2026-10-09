@@ -6,6 +6,9 @@ static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits)
 template<class State> struct ActionT {
  uint32_t kind,elements,n,m,generators,count,stride;
  const State* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
+ __device__ uint32_t child(uint32_t i)const{return i;}
+ __device__ uint32_t origin_limit()const{return count*generators;}
+ __device__ uint32_t bucket(uint64_t h,uint32_t capacity)const{return h&(capacity-1);}
  __device__ bool valid(uint32_t,uint32_t*)const{return true;}
  __device__ int64_t value(uint32_t child,uint32_t element)const {
   const uint32_t parent=child/generators,g=child%generators;

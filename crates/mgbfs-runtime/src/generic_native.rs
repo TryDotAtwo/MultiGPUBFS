@@ -50,7 +50,9 @@ impl GenericNativeBfs {
   let elements=u32::try_from(graph.start.len()).map_err(|_|"GENERIC_STATE_WIDTH")?;
   GenericMemoryPlan::automatic_storage(elements,free as u64,crate::generic_memory::state_space_bound(graph),crate::generic_memory::preferred_state_bytes(graph))
  }
- pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{
+ pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,true)}
+ pub(crate) fn new_unseeded(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false)}
+ fn new_internal(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32,seed_table:bool)->Result<Self>{
   graph.validate()?;if plan.elements as usize!=graph.start.len()||hash_bits>64{return Err("GENERIC_GRAPH_PLAN".into());}
   // Recompute the public plan contract before admitting any allocation.
   if plan.state_bytes==1&&crate::generic_memory::preferred_state_bytes(graph)!=1{return Err("GENERIC_COMPACT_ALPHABET".into());}
@@ -71,9 +73,11 @@ impl GenericNativeBfs {
   let perms=Buffer::new(ps.len()*4,device)?;perms.upload(&ps)?;let matrices=Buffer::new(ms.len()*8,device)?;matrices.upload(&ms)?;let moduli=Buffer::new(mods.len()*4,device)?;moduli.upload(&mods)?;
   front.upload(&[0u32])?;control.upload(&[1u32,0,0,0,0,0])?;
   for (e,value) in graph.start.iter().enumerate(){let byte=*value as u8;let source=if state_bytes==1{(&byte as *const u8).cast()}else{(value as *const i64).cast()};check(unsafe{cudaMemcpy(visited.at::<c_void>(e*cap*state_bytes),source,state_bytes,1)})?;}
+  if seed_table{
   check(unsafe{cudaMemsetAsync(slots.ptr,255,slots.bytes,stream.ptr)})?;
   check(unsafe{mgbfs_generic_seed_storage(plan.state_bytes,plan.elements,visited.ptr.cast(),plan.capacity,1,slots.ptr.cast(),plan.table_slots,seed,hash_bits,control.at(8),stream.ptr)})?;
   check(unsafe{cudaStreamSynchronize(stream.ptr)})?;
+  }
   Ok(Self{device,stream,plan,kind,rows,cols,generators,visited,parents,front,future,slots,control,perms,matrices,moduli,count:1,seed,hash_bits,terminal:false,visited_used:1,current_start:0,previous:None})
  }
  fn read_soa(&self,count:u32)->Result<Vec<i64>>{

@@ -19,6 +19,8 @@ extern "C" {
  /// is invalid and this arena must not be resumed with another parent bank.
  pub fn mgbfs_generic_seed_i64(elements:u32,states:*const i64,state_stride:u32,state_count:u32,
   slots:*mut u64,slot_capacity:u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_seed_shared_i64(elements:u32,states:*const i64,state_stride:u32,state_count:u32,
+  slots:*mut u64,slot_capacity:u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_expand_i64(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,
   parents:*const i64,parent_count:u32,parent_stride:u32,permutation_tables:*const u32,
   matrix_tables:*const i64,moduli:*const u32,slots:*mut u64,slot_capacity:u32,
@@ -75,6 +77,7 @@ extern "C" {
 extern "C" {
  pub fn mgbfs_generic_generate_u8(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,parents:*const u8,parent_count:u32,parent_stride:u32,permutation_tables:*const u32,matrix_tables:*const i64,moduli:*const u32,selected_children:*const u64,output_count:u32,output:*mut u8,output_stride:u32,device_error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_seed_u8(elements:u32,states:*const u8,state_stride:u32,state_count:u32,slots:*mut u64,slot_capacity:u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_seed_shared_u8(elements:u32,states:*const u8,state_stride:u32,state_count:u32,slots:*mut u64,slot_capacity:u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_expand_u8(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,parents:*const u8,parent_count:u32,parent_stride:u32,permutation_tables:*const u32,matrix_tables:*const i64,moduli:*const u32,slots:*mut u64,slot_capacity:u32,visited:*mut u8,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_gather_u8(elements:u32,source:*const u8,source_stride:u32,indices:*const u32,count:u32,output:*mut u8,output_stride:u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_route_u8(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,parents:*const u8,count:u32,stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,seed:u64,hash_bits:u32,world:u32,source:u32,local_shards:u32,queue_capacity:u32,parent_begin:u64,owner_to_rank:*const u32,owner_cuts:*const u64,queues:*mut GenericRouteRecord,counts:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
@@ -130,16 +133,29 @@ extern "C" {
  pub fn mgbfs_generic_accept_all_i64(elements:u32,local:*const i64,remote:*const i64,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
  slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_accept_all_shared_i64(elements:u32,local:*const i64,remote:*const i64,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
+ local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
+ slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_accept_all_u8(elements:u32,local:*const u8,remote:*const u8,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
  slot_capacity:u32,visited:*mut u8,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_accept_all_shared_u8(elements:u32,local:*const u8,remote:*const u8,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
+ local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
+ slot_capacity:u32,visited:*mut u8,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
  pub fn mgbfs_generic_accept_all_packed_u8(elements:u32,local:*const u8,remote:*const u8,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
+ local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
+ slot_capacity:u32,visited:*mut u8,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_accept_all_shared_packed_u8(elements:u32,local:*const u8,remote:*const u8,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
  slot_capacity:u32,visited:*mut u8,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
 }
 #[cfg(feature="cuda")]
 pub unsafe fn mgbfs_generic_accept_all_storage(state_bytes:u32,elements:u32,local:*const i64,remote:*const i64,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
- slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>(if elements<=16 {mgbfs_generic_accept_all_packed_u8} else {mgbfs_generic_accept_all_u8})(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited.cast(),visited_capacity,visited_count,future,future_capacity,future_count,error,stream),8=>mgbfs_generic_accept_all_i64(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream),_=>1}}
+ slot_capacity:u32,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>(if elements<=16 {mgbfs_generic_accept_all_shared_packed_u8} else {mgbfs_generic_accept_all_shared_u8})(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited.cast(),visited_capacity,visited_count,future,future_capacity,future_count,error,stream),8=>mgbfs_generic_accept_all_shared_i64(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream),_=>1}}
 
 extern "C" {pub fn mgbfs_generic_route_retry_vote(source:*const u32,owner:*const u32,vote:*mut u32,stream:*mut std::ffi::c_void)->i32;}
+
+#[cfg(feature="cuda")]
+pub unsafe fn mgbfs_generic_seed_shared_storage(state_bytes:u32,elements:u32,states:*const i64,state_stride:u32,state_count:u32,
+  slots:*mut u64,slot_capacity:u32,seed:u64,hash_bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>mgbfs_generic_seed_shared_u8(elements,states.cast(),state_stride,state_count,slots,slot_capacity,seed,hash_bits,error,stream),8=>mgbfs_generic_seed_shared_i64(elements,states,state_stride,state_count,slots,slot_capacity,seed,hash_bits,error,stream),_=>1}}
