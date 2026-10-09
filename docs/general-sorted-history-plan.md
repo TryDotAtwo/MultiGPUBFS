@@ -66,3 +66,9 @@ The shared run pool now admits power-of-two spans across bitmap regions, with ro
 The changed pool tests passed on both RTX3060 devices across eleven classes and whole-region contention, with zero memcheck errors/leaks. Tier metadata tests passed on both devices for normal carry, abort, invalid output counts, existing error, empty roots, and allocation pressure/retry, also with zero memcheck errors/leaks. These tests do not execute payload merges through the hierarchy and do not establish full BFS integration or speedup. Fresh real incoming/parent action tests after the bounds guard passed all twelve fixtures on both devices; their memcheck reports zero errors/leaks.
 
 Remaining: focused multi-region trim/reuse acceptance, payload carry integration, canonical state leases, peak capacity/reserve admission, owner-stream scheduling, production runtime/AUTO integration and matched end-to-end BFS verification.
+
+## Payload carry acceptance
+
+Thirty-six matched GPU/independent CPU fixtures passed across both RTX3060 cards, byte/int64 canonical SoA rows, widths2/25/129 and constant-all-ones/truncated/full hashes. Five overlapping sorted roots are merged and deduplicated through allocated tickets, committed, trimmed and retained across tiers. Sorted unique order inside each run, exact union across retained runs, hash/row association, ownership cleanup and zero final occupied credits are checked. Focused multi-region-to-single trim and immediate tail credit reuse also passed, including rejection of trim after publication. Memcheck reports zero errors/leaks.
+
+The harness deliberately synchronizes and reads small carry metadata between operations to inspect the result; this is test orchestration and is not an accepted production scheduling design. CPU-free carry scheduling, canonical row lifetime, history queries and native/AUTO integration remain required.
