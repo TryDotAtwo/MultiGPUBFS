@@ -30,7 +30,7 @@ __global__ void lease_contract(GenericSortedRunPool pool,uint32_t* failures,uint
  if(!generic_sorted_run_release(pool,second,true,&e))++*failures;
  if(*pool.occupied)++*failures;
  expected_error=0;
- if(generic_sorted_run_allocate(pool,7,0,&blocked,&expected_error)!=SORTED_RUN_INVALID||expected_error!=32u)++*failures;
+ if(generic_sorted_run_allocate(pool,32,0,&blocked,&expected_error)!=SORTED_RUN_INVALID||expected_error!=32u)++*failures;
  *errors=e;
 }
 __global__ void fanout_prepare(GenericSortedRunPool pool,GenericSortedRunToken* token,uint32_t* errors) {
@@ -52,10 +52,33 @@ __global__ void fanout_retire(GenericSortedRunPool pool,const GenericSortedRunTo
 __global__ void fanout_release(GenericSortedRunPool pool,const GenericSortedRunToken* token,uint32_t* errors) {
  if(!generic_sorted_run_release(pool,*token,false,errors))atomicOr(errors,1024u);
 }
+__global__ void multiregion_contract(GenericSortedRunPool pool,uint32_t* failures,uint32_t* error){
+ if(blockIdx.x||threadIdx.x)return;
+ GenericSortedRunToken small{},whole{},left{},right{},blocked{};
+ if(generic_sorted_run_allocate(pool,0,1,&small,error)!=SORTED_RUN_ACQUIRED)++*failures;
+ if(generic_sorted_run_allocate(pool,10,0,&blocked,error)!=SORTED_RUN_PRESSURE)++*failures;
+ for(uint32_t i=0;i<pool.regions;++i)
+  if(pool.occupied[i]!=(i==1?1ull:0ull))++*failures;
+ if(!generic_sorted_run_release(pool,small,true,error))++*failures;
+ if(generic_sorted_run_allocate(pool,10,0,&whole,error)!=SORTED_RUN_ACQUIRED)++*failures;
+ if(!generic_sorted_run_publish(pool,whole,pool.regions*64*pool.page_entries,error))++*failures;
+ if(!generic_sorted_run_read_acquire(pool,whole,error))++*failures;
+ if(!generic_sorted_run_release(pool,whole,true,error))++*failures;
+ if(generic_sorted_run_allocate(pool,0,0,&blocked,error)!=SORTED_RUN_PRESSURE)++*failures;
+ if(!generic_sorted_run_release(pool,whole,false,error))++*failures;
+ for(uint32_t i=0;i<pool.regions;++i)if(pool.occupied[i])++*failures;
+ if(generic_sorted_run_allocate(pool,9,0,&left,error)!=SORTED_RUN_ACQUIRED)++*failures;
+ if(generic_sorted_run_allocate(pool,9,8,&right,error)!=SORTED_RUN_ACQUIRED)++*failures;
+ if(left.slot!=0||right.slot!=8*64)++*failures;
+ if(generic_sorted_run_allocate(pool,10,0,&blocked,error)!=SORTED_RUN_PRESSURE)++*failures;
+ if(!generic_sorted_run_release(pool,left,true,error)||!generic_sorted_run_release(pool,right,true,error))++*failures;
+ for(uint32_t i=0;i<pool.regions;++i)if(pool.occupied[i])++*failures;
+ if(generic_sorted_run_allocate(pool,11,0,&blocked,error)!=SORTED_RUN_PRESSURE)++*failures;
+}
 __global__ void concurrent_allocate(GenericSortedRunPool pool,GenericSortedRunToken* tokens,
  uint32_t* classes,uint32_t* status,uint32_t* errors,uint32_t n) {
  uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
- uint32_t cls=i%7;classes[i]=cls;
+ uint32_t cls=i%11;classes[i]=cls;
  status[i]=generic_sorted_run_allocate(pool,cls,0,tokens+i,errors);
  if(status[i]==SORTED_RUN_ACQUIRED)generic_sorted_run_publish(pool,tokens[i],pool.page_entries*(1u<<cls),errors);
 }
@@ -105,6 +128,12 @@ static void run_device(int device) {
  if(remaining||error){fprintf(stderr,"fanout readers retirement failed %llu %u\n",remaining,error);exit(7);}
  printf("SORTED_RUN_POOL_FANOUT_PASS device=%d readers=512\n",device);
  pool.regions=regions;
+ multiregion_contract<<<1,1>>>(pool,failures,errors);CUDA_CHECK(cudaDeviceSynchronize());
+ CUDA_CHECK(cudaMemcpy(&failed,failures,sizeof(failed),cudaMemcpyDeviceToHost));
+ CUDA_CHECK(cudaMemcpy(&error,errors,sizeof(error),cudaMemcpyDeviceToHost));
+ if(failed||error){fprintf(stderr,"multi-region rollback/lease contract failed %u %u\n",failed,error);exit(8);}
+ printf("SORTED_RUN_POOL_MULTIREGION_PASS device=%d max_class=10\n",device);
+
  std::vector<GenericSortedRunToken> ht(n);std::vector<uint32_t> hc(n),hs(n);
  std::vector<unsigned long long> masks(regions),actual(regions);
  for(uint32_t round=0;round<40;++round) {
@@ -118,10 +147,17 @@ static void run_device(int device) {
    if(hs[i]==SORTED_RUN_PRESSURE)continue;
    if(hs[i]!=SORTED_RUN_ACQUIRED){fprintf(stderr,"invalid allocation result\n");exit(4);}
    uint32_t region=ht[i].slot/64,start=ht[i].slot%64,pages=1u<<hc[i];
-   if(region>=regions||start%pages||!ht[i].generation){fprintf(stderr,"bad geometry\n");exit(4);}
-   auto mask=pages==64?~0ull:((1ull<<pages)-1ull)<<start;
-   if(masks[region]&mask){fprintf(stderr,"overlapping live allocation\n");exit(4);}
-   masks[region]|=mask;++accepted;
+   if(region>=regions||(pages<=64&&start%pages)||!ht[i].generation){fprintf(stderr,"bad geometry\n");exit(4);}
+   if(pages<=64){
+    auto mask=pages==64?~0ull:((1ull<<pages)-1ull)<<start;
+    if(masks[region]&mask){fprintf(stderr,"overlapping live allocation\n");exit(4);}
+    masks[region]|=mask;
+   }else{
+    uint32_t needed=pages/64;
+    if(start||region%needed||region+needed>regions)exit(4);
+    for(uint32_t j=0;j<needed;++j){if(masks[region+j])exit(4);masks[region+j]=~0ull;}
+   }
+   ++accepted;
   }
   if(!accepted||masks!=actual){fprintf(stderr,"bitmap oracle mismatch\n");exit(4);}
   concurrent_retire<<<8,64>>>(pool,tokens,status,errors,n);CUDA_CHECK(cudaDeviceSynchronize());

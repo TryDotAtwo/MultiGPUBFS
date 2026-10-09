@@ -58,3 +58,11 @@ The incoming sort moves only cached full64-bit hashes and logical origin indices
 The audit exposed a separate existing bug: an ordered origin was used to index queue counts without an origin-limit or expected-shard check. IncomingAllAction.valid now rejects an out-of-range physical origin or a foreign owner queue before dereferencing counts. The inherited parent-origin validation benefits from the same guard. Fresh focused tests on both GPUs and memcheck passed out-of-range/max origins, wrong-shard origins and overcapacity queue counts. The shared library rebuilt with this guard. This is a production safety fix, while the new sorting backend remains unintegrated.
 
 The general run hierarchy, sorted-history admission, incoming-to-canonical materialization, owner A/B integration, AUTO algorithm profiles and end-to-end matched BFS timing remain unfinished. Primitive success is not evidence of a production speedup or completion of the active goal.
+
+## Shared multi-region credits and tier metadata checkpoint
+
+The shared run pool now admits power-of-two spans across bitmap regions, with rollback of partially claimed spans. Sole unpublished writers can trim surplus credits after exact deduplication without copying payload. Equal-class carry tickets reserve output before acquiring input readers; abort and invalid count preserve both input owners, while successful commit publishes output before releasing inputs.
+
+The changed pool tests passed on both RTX3060 devices across eleven classes and whole-region contention, with zero memcheck errors/leaks. Tier metadata tests passed on both devices for normal carry, abort, invalid output counts, existing error, empty roots, and allocation pressure/retry, also with zero memcheck errors/leaks. These tests do not execute payload merges through the hierarchy and do not establish full BFS integration or speedup. Fresh real incoming/parent action tests after the bounds guard passed all twelve fixtures on both devices; their memcheck reports zero errors/leaks.
+
+Remaining: focused multi-region trim/reuse acceptance, payload carry integration, canonical state leases, peak capacity/reserve admission, owner-stream scheduling, production runtime/AUTO integration and matched end-to-end BFS verification.
