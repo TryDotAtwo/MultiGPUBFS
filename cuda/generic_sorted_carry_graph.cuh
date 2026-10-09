@@ -1,6 +1,14 @@
 #pragma once
 #include "generic_sorted_run_tiers.cuh"
 #include "generic_sorted_run_merge.cuh"
+inline cudaError_t generic_sorted_graph_add_node(cudaGraphNode_t* node,cudaGraph_t graph,
+ const cudaGraphNode_t* dependencies,size_t count,cudaGraphNodeParams* parameters){
+#if CUDART_VERSION >= 13000
+ return cudaGraphAddNode(node,graph,dependencies,nullptr,count,parameters);
+#else
+ return cudaGraphAddNode(node,graph,dependencies,count,parameters);
+#endif
+}
 // A reusable owner-stream graph dispatches one admitted size class per carry.
 // Conditions, views, output pointers and commit counts stay on device.
 __global__ void generic_sorted_carry_select(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
@@ -57,15 +65,15 @@ template<class State> cudaError_t generic_sorted_carry_graph_create(cudaGraph_t*
  #define SORTED_GRAPH_TRY(x) do{auto status_=(x);if(status_!=cudaSuccess){cudaGraphDestroy(graph);return status_;}}while(0)
  cudaGraph_t graph;auto status=cudaGraphCreate(&graph,0);if(status!=cudaSuccess)return status;
  cudaGraphConditionalHandle loop;SORTED_GRAPH_TRY(cudaGraphConditionalHandleCreate(&loop,graph,1,cudaGraphCondAssignDefault));
- cudaGraphNodeParams lp{};lp.type=cudaGraphNodeTypeConditional;lp.conditional.handle=loop;lp.conditional.type=cudaGraphCondTypeWhile;lp.conditional.size=1;cudaGraphNode_t loopnode;SORTED_GRAPH_TRY(cudaGraphAddNode(&loopnode,graph,nullptr,0,&lp));auto body=lp.conditional.phGraph_out[0];
+ cudaGraphNodeParams lp{};lp.type=cudaGraphNodeTypeConditional;lp.conditional.handle=loop;lp.conditional.type=cudaGraphCondTypeWhile;lp.conditional.size=1;cudaGraphNode_t loopnode;SORTED_GRAPH_TRY(generic_sorted_graph_add_node(&loopnode,graph,nullptr,0,&lp));auto body=lp.conditional.phGraph_out[0];
  cudaGraphConditionalHandle handles[31];for(uint32_t c=0;c<classes;++c)SORTED_GRAPH_TRY(cudaGraphConditionalHandleCreate(&handles[c],graph,0,cudaGraphCondAssignDefault));
  SORTED_GRAPH_TRY(cudaMemcpy(w.device_handles,handles,classes*sizeof(handles[0]),cudaMemcpyHostToDevice));
  void* args[]={&pool,&tiers,&carry,&hashes,&rows,&error,&loop,&w.device_handles,&classes,&w.left,&w.right};
  cudaGraphNodeParams selector{};selector.type=cudaGraphNodeTypeKernel;selector.kernel.func=(void*)generic_sorted_carry_select;selector.kernel.gridDim=dim3(1);selector.kernel.blockDim=dim3(1);selector.kernel.kernelParams=args;
- cudaGraphNode_t previous;SORTED_GRAPH_TRY(cudaGraphAddNode(&previous,body,nullptr,0,&selector));
+ cudaGraphNode_t previous;SORTED_GRAPH_TRY(generic_sorted_graph_add_node(&previous,body,nullptr,0,&selector));
  cudaStream_t stream;SORTED_GRAPH_TRY(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking));
  for(uint32_t c=0;c<classes;++c){cudaGraphNodeParams ip{};ip.type=cudaGraphNodeTypeConditional;ip.conditional.handle=handles[c];ip.conditional.type=cudaGraphCondTypeIf;ip.conditional.size=1;cudaGraphNode_t node;
-  status=cudaGraphAddNode(&node,body,&previous,1,&ip);if(status!=cudaSuccess){cudaStreamDestroy(stream);cudaGraphDestroy(graph);return status;}previous=node;auto child=ip.conditional.phGraph_out[0];uint32_t capacity=pool.page_entries<<(c+1);
+  status=generic_sorted_graph_add_node(&node,body,&previous,1,&ip);if(status!=cudaSuccess){cudaStreamDestroy(stream);cudaGraphDestroy(graph);return status;}previous=node;auto child=ip.conditional.phGraph_out[0];uint32_t capacity=pool.page_entries<<(c+1);
   status=cudaStreamBeginCaptureToGraph(stream,child,nullptr,nullptr,0,cudaStreamCaptureModeThreadLocal);if(status!=cudaSuccess){cudaStreamDestroy(stream);cudaGraphDestroy(graph);return status;}
   generic_sorted_run_merge<<<(capacity+255)/256,256,0,stream>>>(w.left,w.right,arena,stride,width,w.hashes,w.rows,capacity/2,capacity/2,capacity,w.count,error);
   generic_sorted_run_unique_flags<<<(capacity+255)/256,256,0,stream>>>(w.hashes,w.rows,w.count,capacity,arena,stride,width,w.flags,error);
