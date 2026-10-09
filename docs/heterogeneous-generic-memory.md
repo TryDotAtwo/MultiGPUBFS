@@ -1,0 +1,7 @@
+# Per-GPU capacity and weighted exact ownership
+
+Automatic launch inventories free VRAM separately for every selected GPU, admits a separate retained-state arena/table capacity for each rank, and uses a common batch/queue geometry for matched NCCL transport. Hash intervals are weighted by admitted state capacities. Root placement follows the actual weighted interval; it need not be rank zero. Every state always routes to the same physical owner and local shard. Explicit capacity overrides retain common-capacity compatibility.
+
+A fresh admission is made on every production launch, including cached autotuner profiles. Partial-batch profiles retain automatic per-rank capacity instead of converting it to a minimum-capacity override. Reports include rank_plans and owner_cuts.
+
+Acceptance: two RTX3060 with unequal 384/768-state arenas, byte/int64 storage, forced hash collisions, exact completed layers/resource snapshots and normal-hash full CPU-oracle graph. Root placement on rank1 was observed. Automatic public launch was checked with both physical-device orderings. Holding4GiB on GPU1 produced capacities67108864/33554432 and weighted intervals2:1. This establishes unequal free-memory admission and ownership on identical models; physically heterogeneous GPU models and multi-node hardware remain unverified. Power-of-two hash table transitions can leave admission on a capacity plateau despite small changes of available VRAM.

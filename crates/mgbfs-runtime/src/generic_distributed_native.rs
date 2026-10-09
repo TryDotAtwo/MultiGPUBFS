@@ -13,7 +13,7 @@ impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
  bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
- banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,
+ banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
@@ -21,27 +21,33 @@ impl GenericDistributedBfs{
  /// All ranks must agree on graph, seed, hash bits, batch/queue geometry and
  /// rank map before entering this constructor. The launcher owns that gate.
  pub fn new(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32)->Result<Self>{
+  Self::new_with_cuts(graph,device,rank,plan,id,seed,hash_bits,None)
+ }
+ pub fn new_with_cuts(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32,cuts:Option<&[u64]>)->Result<Self>{
+  if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
   let local=GenericMemoryPlan::with_storage(plan.elements,plan.capacity,plan.state_bytes)?;
   let mut bfs=GenericNativeBfs::new(graph,device,local,seed,hash_bits)?;let d=bfs.device;
   let slots=Buffer::new(plan.slots_per_shard as usize*plan.shards as usize*8,d)?;
   check(unsafe{cudaMemsetAsync(slots.ptr,255,slots.bytes,bfs.stream.ptr)})?;
   let mut hash=seed;for(e,v)in graph.start.iter().enumerate(){hash=mix(hash^(*v as u64)^(e as u64));}hash=mix(hash);if hash_bits<64{hash&=if hash_bits==0{0}else{(1u64<<hash_bits)-1};}
-  let owner=(((hash>>32)*u64::from(plan.world))>>32) as u32;
+  let owner=if let Some(c)=cuts{c.windows(2).position(|v|v[0]<=hash>>32&&hash>>32<v[1]).ok_or("GENERIC_ROOT_OWNER")? as u32}else{(((hash>>32)*u64::from(plan.world))>>32) as u32};
   let shard=(((hash&0xffffffff)*u64::from(plan.shards))>>32) as usize;
   // Swap root logical owner with rank zero, preserving a bijective rank map.
-  let mut map=(0..plan.world).collect::<Vec<_>>();map.swap(0,owner as usize);
+  let mut map=(0..plan.world).collect::<Vec<_>>();if cuts.is_none(){map.swap(0,owner as usize);}
+  let root_rank=map[owner as usize];
+  let owner_cuts=if let Some(c)=cuts{let v=Buffer::new(c.len()*8,d)?;v.upload(c)?;Some(v)}else{None};
   let owner_map=Buffer::new(map.len()*4,d)?;owner_map.upload(&map)?;
-  bfs.slots=slots;bfs.count=if rank==0{1}else{0};bfs.visited_used=bfs.count;bfs.control.upload(&[bfs.count,0u32,0,0,0,0])?;
-  if rank==0{check(unsafe{mgbfs_generic_seed_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.at(shard*plan.slots_per_shard as usize*8),plan.slots_per_shard,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
+  bfs.slots=slots;bfs.count=if rank==root_rank{1}else{0};bfs.visited_used=bfs.count;bfs.control.upload(&[bfs.count,0u32,0,0,0,0])?;
+  if rank==root_rank{check(unsafe{mgbfs_generic_seed_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.at(shard*plan.slots_per_shard as usize*8),plan.slots_per_shard,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
   check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;
   let banks=[QueueBank::new(&plan,d)?,QueueBank::new(&plan,d)?];let inbox=QueueBank::new(&plan,d)?;
   let control=Buffer::new(64+plan.world as usize*8,d)?;
   let mut streams=vec![];let mut done=vec![];for _ in 0..plan.shards{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
   check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
-  let counts=(0..plan.world).map(|r|if r==0{1}else{0}).collect();
-  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
+  let counts=(0..plan.world).map(|r|if r==root_rank{1}else{0}).collect();
+  Ok(Self{bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn frontier_len(&self)->u32{self.bfs.count}
@@ -67,7 +73,7 @@ impl GenericDistributedBfs{
    let bank=&self.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
    check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    check(unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
-   check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),ptr::null(),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
+   check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
    for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.parents.at(begin as usize*state_bytes),count,p.capacity,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}
    // Invalid source counts must not be presented as valid owner inboxes.
    check(unsafe{mgbfs_generic_route_retry_vote(self.control.at(8),b.control.at(8),self.control.at(12),stream)})?;

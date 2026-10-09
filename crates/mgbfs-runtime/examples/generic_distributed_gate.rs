@@ -10,7 +10,8 @@
  let mut id=[0u8;128];let bootstrap=root.join("id");if rank==0{let code=unsafe{mgbfs_nccl_unique_id(id.as_mut_ptr().cast())};if code!=0{return Err(format!("UID_{code}"));}std::fs::write(root.join("id.tmp"),id).map_err(|e|e.to_string())?;std::fs::rename(root.join("id.tmp"),&bootstrap).map_err(|e|e.to_string())?;}else{let started=Instant::now();while !bootstrap.exists(){if started.elapsed()>Duration::from_secs(20){return Err("BOOTSTRAP_TIMEOUT".into());}std::thread::sleep(Duration::from_millis(10));}id.copy_from_slice(&std::fs::read(bootstrap).map_err(|e|e.to_string())?);}
  let state_bytes=a.get(7).map(|v|v.parse::<u32>().unwrap()).unwrap_or(8);
  let plan=GenericDistributedMemoryPlan::with_storage(graph.start.len() as u32,2,shards,capacity,a.get(8).map(|v|v.parse::<u32>().unwrap()).unwrap_or(capacity.min(2)),graph.generator_count() as u32,4096,state_bytes)?;
- let mut bfs=GenericDistributedBfs::new(&graph,rank,rank,plan,&id,123,bits)?;
+ let cuts=a.get(9).map(|v|serde_json::from_str::<Vec<u64>>(v).unwrap());
+ let mut bfs=GenericDistributedBfs::new_with_cuts(&graph,rank,rank,plan,&id,123,bits,cuts.as_deref())?;
  let mut layers=vec![];let mut global_sizes=vec![1u64];let mut fatal=0;
  for _ in 0..2048{layers.push(bfs.sample(1000)?);match bfs.advance()?{DistributedAdvance::Layer{global,..}=>global_sizes.push(global),DistributedAdvance::Complete=>break,DistributedAdvance::Resource{fatal:f}=>{fatal=f;break;}}}
  let previous=if fatal!=0{bfs.previous_small_sample(*global_sizes.iter().rev().nth(1).unwrap_or(&0))?}else{vec![]};

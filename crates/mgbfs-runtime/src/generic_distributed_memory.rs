@@ -48,3 +48,16 @@ impl GenericDistributedMemoryPlan {
   if *self!=Self::with_storage(self.elements,self.world,self.shards,self.capacity,self.batch,generators,self.generator_bytes,self.state_bytes)?{return Err("GENERIC_DISTRIBUTED_PLAN_MUTATED".into());}Ok(())
  }
 }
+
+/// Independent per-rank admission with matched transport geometry and exact
+/// weighted hash intervals. No runtime state crosses the host planner.
+pub fn heterogeneous_plans(elements:u32,shards:u32,generators:u32,generator_bytes:u64,free:&[u64],upper:Option<u64>,state_bytes:u32)->Result<(Vec<GenericDistributedMemoryPlan>,Vec<u64>)>{
+ if free.is_empty()||free.len()>128{return Err("GENERIC_HETEROGENEOUS_WORLD".into());}
+ let world=free.len() as u32;let mut admitted=Vec::new();
+ for &bytes in free{admitted.push(GenericDistributedMemoryPlan::automatic_storage(elements,world,shards,generators,generator_bytes,bytes,upper,state_bytes)?);}
+ let batch=admitted.iter().map(|p|p.batch).min().unwrap();let mut plans=Vec::new();
+ for p in admitted{plans.push(GenericDistributedMemoryPlan::with_storage(elements,world,shards,p.capacity,batch,generators,generator_bytes,state_bytes)?);}
+ let total: u64=plans.iter().map(|p|u64::from(p.capacity)).sum();let mut cuts=vec![0];let mut cumulative=0u64;
+ for p in &plans{cumulative+=u64::from(p.capacity);cuts.push(((u128::from(cumulative)*(1u128<<32)+u128::from(total)-1)/u128::from(total)) as u64);}
+ Ok((plans,cuts))
+}

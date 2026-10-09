@@ -56,7 +56,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if capacity is None:
     initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
     if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
-    command.append(str(json.loads(initial.stdout)['plan']['capacity']))
+    command.append('auto')
    command.append(str(_batch))
   probe=subprocess.run(command,capture_output=True,text=True,env=native_env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
@@ -94,13 +94,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    for log in logs:log.close()
   parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
   for rank,p in enumerate(parts):
-   if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission['plan']:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
+   if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission.get('rank_plans',[admission['plan']]*len(devices))[rank]:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
    if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
   snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-  report=dict(parts[0]);report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return _receipt(output,digest)
