@@ -2,7 +2,7 @@
 //! Fixed-capacity transport is a correctness fallback, not an optimal bandwidth claim.
 use std::{ffi::c_void,ptr};
 use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
-use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
+use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{generic_native::{GenericNativeBfs,Buffer,Stream,check},generic_memory::GenericMemoryPlan,generic_distributed_memory::GenericDistributedMemoryPlan};
 extern "C" {
@@ -47,11 +47,25 @@ impl GenericDistributedBfs{
  pub fn new_with_cuts(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32,cuts:Option<&[u64]>)->Result<Self>{
   if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
+  let use_sorted=plan.history_algorithm=="SORTED_RUNS";
+  if !use_sorted&&std::env::var("MGBFS_GENERIC_HISTORY").as_deref()==Ok("sorted"){return Err("SORTED_HISTORY_REQUIRES_SERIALIZED_ADMISSION".into());}
+  let admitted_sorted_shape=if use_sorted{
+   graph.validate()?;
+   if graph.start.len()!=plan.elements as usize{return Err("SORTED_GRAPH_PLAN_WIDTH".into());}
+   let(kind,rows,cols)=match &graph.action{GraphAction::Permutation{degree,..}=>(0,*degree,1),GraphAction::Matrix{rows,cols,..}=>(1,*rows,*cols)};
+   let ordinal=i32::try_from(device).map_err(|_|"SORTED_DEVICE_ORDINAL")?;
+   let input=SortedInput{elements:plan.elements,world:plan.world,rank,shards:plan.shards,queue_capacity:plan.queue_capacity,state_bytes:plan.state_bytes,transport:if plan.packed_candidates(){1}else if plan.parent_transport{2}else{0},kind,rows,cols,generators:graph.generator_count() as u32,parent_stride:plan.batch,hash_bits,seed,..Default::default()};
+   let shape=OwnerShape::query(&input,plan.capacity,plan.history_layers,plan.owner_lanes,ordinal)?;
+   if shape.allocated_bytes as u64!=plan.sorted_owner_bytes{return Err("SORTED_OWNER_SERIALIZED_SHAPE_MISMATCH".into());}
+   let(mut free,mut total)=(0,0);check(unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+   if plan.device_bytes>free as u64{return Err("SORTED_PLAN_FREE_MEMORY_CHANGED".into());}
+   Some(shape)
+  }else{None};
   let local=GenericMemoryPlan::with_storage(plan.elements,plan.capacity,plan.state_bytes)?;
   let rolling=plan.history_layers==3;if rolling&&!graph.inverse_closed()?{return Err("GENERIC_ROLLING_REQUIRES_INVERSE_CLOSED".into());}
-  let mut bfs=if rolling{GenericNativeBfs::new_unseeded_rolling(graph,device,local,seed,hash_bits)?}else{GenericNativeBfs::new_unseeded(graph,device,local,seed,hash_bits)?};let d=bfs.device;
+  let mut bfs=if use_sorted{GenericNativeBfs::new_unseeded_sorted(graph,device,local,seed,hash_bits,rolling)?}else if rolling{GenericNativeBfs::new_unseeded_rolling(graph,device,local,seed,hash_bits)?}else{GenericNativeBfs::new_unseeded(graph,device,local,seed,hash_bits)?};let d=bfs.device;
   if bfs.slots.bytes!=plan.table_slots as usize*8{return Err("GENERIC_SHARED_TABLE_ALLOCATION_SHAPE".into());}
-  check(unsafe{cudaMemsetAsync(bfs.slots.ptr,255,bfs.slots.bytes,bfs.stream.ptr)})?;
+  if !use_sorted{check(unsafe{cudaMemsetAsync(bfs.slots.ptr,255,bfs.slots.bytes,bfs.stream.ptr)})?;}
   let mut hash=seed;for(e,v)in graph.start.iter().enumerate(){hash=mix(hash^(*v as u64)^(e as u64));}hash=mix(hash);if hash_bits<64{hash&=if hash_bits==0{0}else{(1u64<<hash_bits)-1};}
   let owner=if let Some(c)=cuts{c.windows(2).position(|v|v[0]<=hash>>32&&hash>>32<v[1]).ok_or("GENERIC_ROOT_OWNER")? as u32}else{(((hash>>32)*u64::from(plan.world))>>32) as u32};
   // Swap root logical owner with rank zero, preserving a bijective rank map.
@@ -60,23 +74,22 @@ impl GenericDistributedBfs{
   let owner_cuts=if let Some(c)=cuts{let v=Buffer::new(c.len()*8,d)?;v.upload(c)?;Some(v)}else{None};
   let owner_map=Buffer::new(map.len()*4,d)?;owner_map.upload(&map)?;
   bfs.count=if rank==root_rank{1}else{0};bfs.visited_used=bfs.count;bfs.control.upload(&[bfs.count,0u32,0,0,0,0])?;
-  let positions=if rolling{Some(Buffer::new(bfs.arena_stride as usize*4,d)?)}else{None};
-  if rank==root_rank&&rolling{check(unsafe{mgbfs_generic_reseed_rows_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),bfs.arena_stride,0,1,bfs.slots.ptr.cast(),plan.table_slots,positions.as_ref().unwrap().ptr.cast(),seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
-  if rank==root_rank&&!rolling{check(unsafe{mgbfs_generic_seed_shared_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.ptr.cast(),plan.table_slots,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
+  let positions=if rolling&&!use_sorted{Some(Buffer::new(bfs.arena_stride as usize*4,d)?)}else{None};
+  if rank==root_rank&&rolling&&!use_sorted{check(unsafe{mgbfs_generic_reseed_rows_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),bfs.arena_stride,0,1,bfs.slots.ptr.cast(),plan.table_slots,positions.as_ref().unwrap().ptr.cast(),seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
+  if rank==root_rank&&!rolling&&!use_sorted{check(unsafe{mgbfs_generic_seed_shared_storage(plan.state_bytes,plan.elements,bfs.visited.ptr.cast(),plan.capacity,1,bfs.slots.ptr.cast(),plan.table_slots,seed,hash_bits,bfs.control.at(8),bfs.stream.ptr)})?;}
   check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;
   let banks=[QueueBank::new(&plan,d)?,QueueBank::new(&plan,d)?];let inbox=QueueBank::new(&plan,d)?;
   let control=Buffer::new(64+plan.world as usize*8,d)?;
-  let use_sorted=match std::env::var("MGBFS_GENERIC_HISTORY").as_deref(){Ok("sorted")=>true,Ok("hash")|Err(_)=>false,_=>return Err("GENERIC_HISTORY_MODE".into())};
-  let lanes=if use_sorted{plan.shards.min(4)}else{plan.shards};
+  let lanes=if use_sorted{plan.owner_lanes}else{plan.shards};
   let mut streams=vec![];let mut done=vec![];for _ in 0..lanes{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
   let sorted_owner=if use_sorted{
    let input=SortedInput{elements:plan.elements,world:plan.world,rank,shards:plan.shards,queue_capacity:plan.queue_capacity,state_bytes:plan.state_bytes,transport:if plan.packed_candidates(){1}else if plan.parent_transport{2}else{0},kind:bfs.kind,rows:bfs.rows,cols:bfs.cols,generators:bfs.generators,parent_stride:plan.batch,hash_bits,seed,..Default::default()};
-   let shape=OwnerShape::query(&input,plan.capacity,plan.history_layers,lanes,d)?;
+   let shape=admitted_sorted_shape.ok_or("SORTED_OWNER_ADMITTED_SHAPE_MISSING")?;
    let(mut free,mut total)=(0,0);check(unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
-   // Temporary explicit integration admission includes every extra buffer.
-   // Driver-owned graph metadata uses separate cold headroom; legacy plan
-   // accounting is replaced by unified sorted admission in the next step.
-   let graph_reserve=(128usize<<20).max(plan.shards as usize*plan.history_layers as usize*65536);
+   // Revalidate the serialized native shape; driver graph reserve is separate
+   // from application buffers and is not advertised as byte-exact driver use.
+   if shape.allocated_bytes as u64!=plan.sorted_owner_bytes{return Err("SORTED_OWNER_SERIALIZED_SHAPE_MISMATCH".into());}
+   let graph_reserve=usize::try_from(plan.driver_graph_reserve_bytes).map_err(|_|"SORTED_OWNER_ADMISSION_OVERFLOW")?;
    if shape.allocated_bytes.checked_add(graph_reserve).ok_or("SORTED_OWNER_ADMISSION_OVERFLOW")?>free{return Err("SORTED_OWNER_ADMISSION_NO_CAPACITY".into());}
    let pointers=streams.iter().map(|v|v.ptr).collect::<Vec<_>>();
    let owner=SortedOwner::new(&input,shape,bfs.visited.ptr,bfs.arena_stride,bfs.control.at(8),&pointers,d)?;
@@ -91,6 +104,8 @@ impl GenericDistributedBfs{
   let rolling_counts=[bfs.count,0,0];
   Ok(Self{sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
+ pub fn history_algorithm(&self)->&str{&self.plan.history_algorithm}
+ pub fn owner_lanes(&self)->usize{self.streams.len()}
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn frontier_len(&self)->u32{self.bfs.count}
  pub fn sample_global(&mut self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().map(|&v|u64::from(v)).sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(u64::from(self.bfs.count)) as u32;self.bfs.sample(quota)}

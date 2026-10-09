@@ -3,11 +3,13 @@
 use mgbfs_core::Result;
 #[derive(Clone,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 pub struct GenericDistributedMemoryPlan {
+ #[serde(default="hash_history_algorithm")]pub history_algorithm:String,#[serde(default)]pub owner_lanes:u32,#[serde(default)]pub sorted_owner_bytes:u64,#[serde(default)]pub driver_graph_reserve_bytes:u64,
  #[serde(default)]pub parent_transport:bool,#[serde(default)]pub sort_candidates:bool,
  #[serde(default="retained_history_layers")]pub history_layers:u32, pub state_bytes:u32,pub elements:u32,pub world:u32,pub shards:u32,pub capacity:u32,pub batch:u32,
  pub table_layout:String,pub queue_capacity:u32,pub table_slots:u32,pub generator_bytes:u64,pub device_bytes:u64,
 }
 fn retained_history_layers()->u32{1}
+fn hash_history_algorithm()->String{"HASH".into()}
 impl GenericDistributedMemoryPlan {
  pub fn new(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64)->Result<Self>{Self::with_storage(elements,world,shards,capacity,batch,generators,generator_bytes,8)}
  pub fn with_storage(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64,state_bytes:u32)->Result<Self>{
@@ -31,7 +33,7 @@ impl GenericDistributedMemoryPlan {
    arena.checked_add(tables)?.checked_add(boxes.checked_mul(queue)?.checked_mul(3)?)?.checked_add(generator_bytes)?.checked_add(98+u64::from(world)*20+if state_bytes==1&&elements<=24{3}else{0})
   };
   let device_bytes=checked().ok_or("GENERIC_DISTRIBUTED_BYTES_OVERFLOW")?;
-  Self{parent_transport:false,sort_candidates:false,history_layers:1,table_layout:"SHARD_HASH_REGIONS_SHARED_OVERFLOW".into(),state_bytes,elements,world,shards,capacity,batch,queue_capacity,table_slots,generator_bytes,device_bytes}.with_parent_transport(match std::env::var("MGBFS_GENERIC_TRANSPORT").as_deref(){Ok("parent")=>true,Ok("full")|Err(_)=>false,_=>return Err("GENERIC_TRANSPORT_MODE".into())})?.with_sort_candidates(match std::env::var("MGBFS_GENERIC_SORT").as_deref(){Ok("radix")=>true,Ok("none")|Err(_)=>false,_=>return Err("GENERIC_SORT_MODE".into())})
+  Self{history_algorithm:hash_history_algorithm(),owner_lanes:0,sorted_owner_bytes:0,driver_graph_reserve_bytes:0,parent_transport:false,sort_candidates:false,history_layers:1,table_layout:"SHARD_HASH_REGIONS_SHARED_OVERFLOW".into(),state_bytes,elements,world,shards,capacity,batch,queue_capacity,table_slots,generator_bytes,device_bytes}.with_parent_transport(match std::env::var("MGBFS_GENERIC_TRANSPORT").as_deref(){Ok("parent")=>true,Ok("full")|Err(_)=>false,_=>return Err("GENERIC_TRANSPORT_MODE".into())})?.with_sort_candidates(match std::env::var("MGBFS_GENERIC_SORT").as_deref(){Ok("radix")=>true,Ok("none")|Err(_)=>false,_=>return Err("GENERIC_SORT_MODE".into())})
  }
  pub fn automatic(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>)->Result<Self>{Self::automatic_storage(elements,world,shards,generators,generator_bytes,free_bytes,upper_bound,8)}
  pub fn automatic_storage(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32)->Result<Self>{
@@ -102,9 +104,41 @@ impl GenericDistributedMemoryPlan {
   while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage_history(elements,world,shards,mid,mid.min(batch_target),generators,generator_bytes,state_bytes,history_layers)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
   Self::with_storage_history(elements,world,shards,low,low.min(batch_target),generators,generator_bytes,state_bytes,history_layers)
  }
- pub fn validate(&self,generators:u32)->Result<()> {
-  if *self!=Self::with_storage_history(self.elements,self.world,self.shards,self.capacity,self.batch,generators,self.generator_bytes,self.state_bytes,self.history_layers)?.with_parent_transport(self.parent_transport)?.with_sort_candidates(self.sort_candidates)?{return Err("GENERIC_DISTRIBUTED_PLAN_MUTATED".into());}Ok(())
+ pub fn with_sorted_admission(mut self,lanes:u32,owner_bytes:u64,driver_bytes:u64)->Result<Self>{
+  if self.history_algorithm!="HASH"||lanes==0||lanes>self.shards||lanes>8||owner_bytes==0||driver_bytes<(128u64<<20).max(u64::from(self.shards)*u64::from(self.history_layers)*65536){return Err("SORTED_PLAN_ADMISSION".into());}
+  self=self.with_sort_candidates(false)?;
+  let obsolete=u64::from(self.table_slots)*8+if self.history_layers==3{u64::from(self.capacity)*12}else{0};
+  // Buffer::new(0) has a one-byte allocation for the unused table handle.
+  self.device_bytes=self.device_bytes.checked_sub(obsolete).and_then(|v|v.checked_add(1)).and_then(|v|v.checked_add(owner_bytes)).and_then(|v|v.checked_add(driver_bytes)).ok_or("SORTED_PLAN_BYTES")?;
+  self.table_slots=0;self.table_layout="SORTED_EPOCH_RUNS_SHARED_CREDITS".into();self.history_algorithm="SORTED_RUNS".into();self.owner_lanes=lanes;self.sorted_owner_bytes=owner_bytes;self.driver_graph_reserve_bytes=driver_bytes;Ok(self)
  }
+ #[cfg(feature="cuda")]
+ pub fn with_sorted_for_graph(self,graph:&mgbfs_core::graph_definition::GraphDefinitionV2,device:i32,lanes:u32)->Result<Self>{
+  use mgbfs_core::graph_definition::GraphAction;use crate::generic_sorted_native::{Input,OwnerShape};
+  if graph.start.len()!=self.elements as usize{return Err("SORTED_GRAPH_SHAPE".into());}
+  let(kind,rows,cols)=match &graph.action{GraphAction::Permutation{degree,..}=>(0,*degree,1),GraphAction::Matrix{rows,cols,..}=>(1,*rows,*cols)};
+  let input=Input{elements:self.elements,world:self.world,shards:self.shards,queue_capacity:self.queue_capacity,state_bytes:self.state_bytes,transport:if self.packed_candidates(){1}else if self.parent_transport{2}else{0},kind,rows,cols,generators:graph.generator_count() as u32,parent_stride:self.batch,hash_bits:64,..Default::default()};
+  let shape=OwnerShape::query(&input,self.capacity,self.history_layers,lanes,device)?;
+  let reserve=(128u64<<20).max(u64::from(self.shards)*u64::from(self.history_layers)*65536);
+  self.with_sorted_admission(lanes,shape.allocated_bytes as u64,reserve)
+ }
+ #[cfg(feature="cuda")]
+ pub fn automatic_sorted_for_graph(graph:&mgbfs_core::graph_definition::GraphDefinitionV2,device:i32,world:u32,shards:u32,generator_bytes:u64,free:u64,upper:Option<u64>,bytes:u32,batch_target:u32,banks:u32,lanes:u32)->Result<Self>{
+  if batch_target==0{return Err("SORTED_BATCH_TARGET".into());}
+  let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("SORTED_ADMISSION_HEADROOM")?;
+  let ceiling=upper.unwrap_or(1<<28).min(1<<28) as u32;if ceiling==0{return Err("SORTED_EMPTY_BOUND".into());}
+  let candidate=|cap:u32|->Result<Self>{Self::with_storage_history(graph.start.len() as u32,world,shards,cap,cap.min(batch_target),graph.generator_count() as u32,generator_bytes,bytes,banks)?.with_sorted_for_graph(graph,device,lanes)};
+  if candidate(1)?.device_bytes>budget{return Err("SORTED_ADMISSION_NO_CAPACITY".into());}
+  let(mut low,mut high)=(1,ceiling);
+  while low<high{let mid=low+(high-low+1)/2;match candidate(mid){Ok(p) if p.device_bytes<=budget=>low=mid,_=>high=mid-1}}
+  candidate(low)
+ }
+ pub fn validate(&self,generators:u32)->Result<()> {
+  let mut expected=Self::with_storage_history(self.elements,self.world,self.shards,self.capacity,self.batch,generators,self.generator_bytes,self.state_bytes,self.history_layers)?.with_parent_transport(self.parent_transport)?.with_sort_candidates(self.sort_candidates)?;
+  if self.history_algorithm=="SORTED_RUNS"{expected=expected.with_sorted_admission(self.owner_lanes,self.sorted_owner_bytes,self.driver_graph_reserve_bytes)?;}
+  if *self!=expected{return Err("GENERIC_DISTRIBUTED_PLAN_MUTATED".into());}Ok(())
+ }
+
 }
 
 /// Independent per-rank admission with matched transport geometry and exact

@@ -27,6 +27,7 @@ def run(g,name,codec,bits,shards,cap,batch,history,transport='full',resource=Fal
     except subprocess.TimeoutExpired:p.kill();p.wait()
   for f in logs:f.close()
  parts=[json.loads((out/f'rank-{i}.json').read_text()) for i in range(2)]
+ assert all(p['history_algorithm']=='SORTED_RUNS' and p['memory_plan']['table_slots']==0 and p['memory_plan']['sorted_owner_bytes']>0 and p['owner_lanes']==min(shards,4) for p in parts)
  assert len(parts[0]['layers'])==len(parts[1]['layers'])
  actual=[sorted(parts[0]['layers'][i]+parts[1]['layers'][i]) for i in range(len(parts[0]['layers']))]
  assert actual==expected[:len(actual)],(name,'exact layer mismatch')

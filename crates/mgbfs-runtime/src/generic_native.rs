@@ -52,10 +52,11 @@ impl GenericNativeBfs {
   let elements=u32::try_from(graph.start.len()).map_err(|_|"GENERIC_STATE_WIDTH")?;
   GenericMemoryPlan::automatic_storage(elements,free as u64,crate::generic_memory::state_space_bound(graph),crate::generic_memory::preferred_state_bytes(graph))
  }
- pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,true,false)}
- pub(crate) fn new_unseeded(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false,false)}
- pub(crate) fn new_unseeded_rolling(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false,true)}
- fn new_internal(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32,seed_table:bool,rolling:bool)->Result<Self>{
+ pub fn new(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,true,false,true)}
+ pub(crate) fn new_unseeded(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false,false,true)}
+ pub(crate) fn new_unseeded_rolling(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false,true,true)}
+ pub(crate) fn new_unseeded_sorted(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32,rolling:bool)->Result<Self>{Self::new_internal(graph,device,plan,seed,hash_bits,false,rolling,false)}
+ fn new_internal(graph:&GraphDefinitionV2,device:u32,plan:GenericMemoryPlan,seed:u64,hash_bits:u32,seed_table:bool,rolling:bool,hashed:bool)->Result<Self>{
   graph.validate()?;if plan.elements as usize!=graph.start.len()||hash_bits>64{return Err("GENERIC_GRAPH_PLAN".into());}
   // Recompute the public plan contract before admitting any allocation.
   if plan.state_bytes==1&&crate::generic_memory::preferred_state_bytes(graph)!=1{return Err("GENERIC_COMPACT_ALPHABET".into());}
@@ -72,7 +73,7 @@ impl GenericNativeBfs {
   let width=plan.elements as usize;let cap=plan.capacity as usize;let state_bytes=plan.state_bytes as usize;
   let stream=Stream::new(device)?;
   let arena_stride=if rolling{plan.capacity.checked_mul(3).ok_or("GENERIC_ROLLING_STRIDE")?}else{plan.capacity};
-  let table_slots=if rolling{plan.capacity.checked_mul(6).and_then(u32::checked_next_power_of_two).ok_or("GENERIC_ROLLING_TABLE")?}else{plan.table_slots};
+  let table_slots=if !hashed{0}else if rolling{plan.capacity.checked_mul(6).and_then(u32::checked_next_power_of_two).ok_or("GENERIC_ROLLING_TABLE")?}else{plan.table_slots};
   let visited=Buffer::new(width*arena_stride as usize*state_bytes,device)?;let readout_capacity=if rolling{plan.capacity.min(1000)}else{plan.capacity};let parents=Buffer::new(width*readout_capacity as usize*state_bytes,device)?;
   let front=Buffer::new(cap*4,device)?;let future=Buffer::new(cap*4,device)?;let slots=Buffer::new(table_slots as usize*8,device)?;let control=Buffer::new(24,device)?;
   let perms=Buffer::new(ps.len()*4,device)?;perms.upload(&ps)?;let matrices=Buffer::new(ms.len()*8,device)?;matrices.upload(&ms)?;let moduli=Buffer::new(mods.len()*4,device)?;moduli.upload(&mods)?;

@@ -77,3 +77,17 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 #[test]fn radix_origin_scratch_is_fully_admitted(){
  for world in [1,2,8,128]{for width in [14,25,257]{let full=Plan::with_storage_history(width,world,4,4096,32,3,1024,1,3).unwrap();for parent in [false,true]{let base=full.clone().with_parent_transport(parent).unwrap();let sorted=base.clone().with_sort_candidates(true).unwrap();sorted.validate(3).unwrap();assert_eq!(sorted.sort_cache_bytes(),u64::from(sorted.shards)*(u64::from(sorted.world)*u64::from(sorted.queue_capacity)*88+65536));assert_eq!(sorted.device_bytes,base.device_bytes+sorted.sort_cache_bytes());assert_eq!(sorted.with_sort_candidates(false).unwrap(),base);}}}
 }
+
+#[test]fn serialized_sorted_admission_replaces_hash_and_position_storage(){
+ for history in [1,3]{
+  let legacy=Plan::with_storage_history(25,2,8,1000,32,2,4096,1,history).unwrap();
+  let reserve=128u64<<20;let owner=123456u64;
+  let sorted=legacy.clone().with_sorted_admission(4,owner,reserve).unwrap();
+  assert_eq!(sorted.table_slots,0);assert_eq!(sorted.history_algorithm,"SORTED_RUNS");assert!(!sorted.sort_candidates);
+  assert_eq!(sorted.device_bytes,legacy.device_bytes-u64::from(legacy.table_slots)*8-if history==3{12000}else{0}+1+owner+reserve);
+  sorted.validate(2).unwrap();let roundtrip:Plan=serde_json::from_str(&serde_json::to_string(&sorted).unwrap()).unwrap();assert_eq!(roundtrip,sorted);
+  let mut bad=sorted.clone();bad.device_bytes+=1;assert!(bad.validate(2).is_err());
+  let mut bad=sorted.clone();bad.table_slots=1;assert!(bad.validate(2).is_err());
+  assert!(legacy.clone().with_sorted_admission(0,owner,reserve).is_err());assert!(legacy.with_sorted_admission(4,owner,0).is_err());
+ }
+}

@@ -130,3 +130,35 @@ plan/AUTO must still admit the combined backend and remove unused hash storage.
 History algorithm must become a matched serialized plan and measured AUTO
 candidate. Near-card throughput, cancellation/deadline, clean package install,
 multi-host and physical scales beyond two GPU remain unverified for this code.
+
+
+## Serialized sorted memory admission, 2026-10-10
+
+SORTED_RUNS now belongs to GenericDistributedMemoryPlan, with owner_lanes,
+sorted_owner_bytes and a separately named driver_graph_reserve_bytes. HASH
+defaults preserve old plan deserialization. Sorted plans charge actual native
+origin/snapshot/carry/root/pool buffer shapes and remove unused hash slots,
+rolling position arrays and optional legacy radix scratch. A zero-length table
+handle retains the allocator's one-byte minimum, explicitly charged.
+
+Worker admission recomputes the native shape before allocating canonical state
+buffers and rejects a changed serialized workspace shape. Rank launch requires
+matched history algorithms. Public graph-info can admit automatic capacity and
+matched batch for explicit sorted history, including heterogeneous per-rank
+free-memory budgets and weighted owner cuts. The native shape is queried on the
+selected available device and must match on each worker; distinct remote
+architecture/CUB-shape inventory and multi-host acceptance remain incomplete.
+Driver graph reserve is conservative headroom, not a byte-exact driver claim.
+
+Four public run_graph cases (permutation and matrix, one/two actual RTX3060)
+complete with automatic memory admission and exact terminal CPU oracles. The
+single-GPU one-shard directed case verifies that the legacy hash shortcut does
+not bypass sorted dispatch. Fourteen CPU memory-plan tests and ten two-GPU
+completed-layer/resource oracles pass. A deliberately changed owner workspace
+with otherwise consistent plan totals is rejected with
+SORTED_OWNER_SERIALIZED_SHAPE_MISMATCH before state allocation.
+
+This establishes serialized/automatic MEMORY admission for explicitly selected
+sorted history. It does not establish measured automatic algorithm/lane choice,
+near-card throughput, fresh release installation, Blackwell or physical scaling
+beyond two cards. The whole unified launch goal remains active.
