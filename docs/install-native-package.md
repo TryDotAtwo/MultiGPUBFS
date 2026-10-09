@@ -1,3 +1,13 @@
+# Current full-domain repaired native package
+
+Use this immutable release; the earlier fa4883c package below is superseded because it rejects some legal exact keys. Linux x86_64, SM86, CUDA runtime12, compatible driver; actual acceptance2RTX3060 driver570.211.01. Library builtCUDA12.8, unchanged executable builtCUDA12.6. B200/B300 and physical4/8/128GPU unverified.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/017880f66fd1f41bb18b6a7330750ed9ee09c920/linux-x86_64-sm86-cuda12.8/cfae5a1ae6ebb3451db9fa9e454b0b746f3afd3d/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256 `7527a3ab4fdc4e32959b5d01e84b00b7ad96576f768eae857c3486cdad9ac893`; anonymous readback and fresh installation passed. See [failure, repair and measured prefix](exact-key-domain-repair-2026-10-09.md).
+
 # Current lossless-key native package
 
 Latest executable/library source: `fa4883cf0bacb06e3898f359b31aba86649bc354`. Tested Linux x86_64, CUDA12.6 toolkit/runtime12, NCCL2.30.7, driver565.57.01 and twoRTX3060. Compiled targetSM86; physical4/8/128GPU and Blackwell acceptance remain unverified. LSA is compiledOFF in this wheel; the public planner observes this and selects the verified host-count NCCL transport. This does not prove LSA incompatibility on other hardware.
