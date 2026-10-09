@@ -63,17 +63,17 @@ class SpecializedProfilePolicy(unittest.TestCase):
   specialized=dict(generic,layer_seconds=[.04,.1,.1,.1])
   plan={'capacity':50000,'batch':64}
   with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',return_value=generic),patch('multigpubfs.specialized.admit_specialized',return_value=plan),patch('multigpubfs.specialized.run_specialized',return_value=specialized):
-   p=choose_profile(self.g,None,None,60,str(self.native),{'MGBFS_GENERIC_HISTORY':'hash'});self.assertEqual(p['backend'],'shard_ab_hash');self.assertEqual(len(p['pilots']),7)
+   p=choose_profile(self.g,None,None,60,str(self.native),{});self.assertEqual(p['backend'],'shard_ab_hash');self.assertEqual(len(p['pilots']),11)
  @patch('multigpubfs.specialized.exact_specialized_supported',return_value=True)
  def test_specialized_prefix_mismatch_is_rejected(self,_support):
   generic={'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.04,1,1,1],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
   bad=dict(generic,layer_sizes=[1,20000,19999,20000,1])
   with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',return_value=generic),patch('multigpubfs.specialized.admit_specialized',return_value={'capacity':50000,'batch':64}),patch('multigpubfs.specialized.run_specialized',return_value=bad):
-   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH'):choose_profile(self.g,None,None,60,str(self.native),{'MGBFS_GENERIC_HISTORY':'hash'})
+   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH'):choose_profile(self.g,None,None,60,str(self.native),{})
  @patch('multigpubfs.specialized.exact_specialized_supported',return_value=True)
  def test_verified_lsa_adds_equal_prefix_transport_candidates(self,_support):
   generic={'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.04,1,1,1],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
   def pilot(*args,**kwargs):return dict(generic,layer_seconds=[.04]+([.1]*3 if kwargs['env']['MGBFS_SPECIALIZED_TRANSPORT']=='NCCL_LSA' else [.5]*3))
   with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',return_value=generic),patch('multigpubfs.specialized.admit_specialized',return_value={'capacity':50000,'batch':64}),patch('multigpubfs.specialized.run_specialized',side_effect=pilot),patch('multigpubfs.transport.select_peer_transport',return_value={'selected':'NCCL_LSA','status':'VERIFIED_FIXED_EXACT_GPU_CAPABILITY'}):
-   p=choose_profile(self.g,None,None,60,str(self.native),{'MGBFS_GENERIC_HISTORY':'hash'});self.assertEqual(p['specialized_transport'],'NCCL_LSA');self.assertEqual(len(p['pilots']),9)
+   p=choose_profile(self.g,None,None,60,str(self.native),{});self.assertEqual(p['specialized_transport'],'NCCL_LSA');self.assertEqual(len(p['pilots']),13)
 if __name__=='__main__':unittest.main()

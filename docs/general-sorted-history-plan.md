@@ -199,3 +199,27 @@ console command, installed 40320-state measured profile choice and cache reuse
 pass on one/two RTX3060. This closes the clean installation checkpoint for this
 SM86 artifact. Near-card performance, distinct-architecture remote admission
 and larger physical GPU acceptance remain open.
+
+
+## Large automatic admission and allocation, 2026-10-10
+
+LRX14 automatic geometry allocated actual peak 10015MiB/card (HASH) and
+9137MiB/card (SORTED_RUNS) on two RTX3060. Six completed expansion layers
+[1,3,6,12,24,48,91] and exact current/previous snapshots match the CPU oracle.
+This is allocation acceptance, not saturated-frontier throughput.
+
+An actual competing 2GiB allocation on device0 reduces HASH admission from
+89478485 to 69979531 states and sorted admission from 44738730 to 37108181;
+both oversized requests reject before state allocation. The gate exposed the
+separate REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION code, now handled explicitly
+by the autotuner. More importantly, common pilot capacity is computed across
+both HASH and sorted cold admissions instead of imposing the HASH capacity on
+all sorted owners. Eighteen policy tests pass, including differing admissions
+and specialized selection fixtures with explicit generic-history constraints.
+
+Nine actual LRX14 profiles pass equal completed prefix layer counts at common
+44738218-state capacity through depth29. HASH/one shard wins this bounded sample.
+All terminal pilot receipts/states remain in the private proof archive. This
+is not full LRX14 graph timing, a global optimum, or physical larger-rank proof.
+Selector cache schema14 additionally hashes the Python selector so a logic
+change cannot silently reuse the old native-binary-only profile identity.

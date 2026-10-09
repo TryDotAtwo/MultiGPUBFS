@@ -4,6 +4,17 @@ from unittest.mock import patch
 from multigpubfs import GraphDefinition
 from multigpubfs.autotune import choose_profile
 class HistoryPolicy(unittest.TestCase):
+ def test_smaller_sorted_admission_sets_common_capacity(self):
+  with tempfile.TemporaryDirectory() as d:
+   native=Path(d)/'native';native.write_bytes(b'test');g=GraphDefinition.permutation([[1,0]],[0,1]);capacities=[]
+   def admit(g,devices,c,sh,n,e,tmp):
+    maximum=20000 if e.get('MGBFS_GENERIC_HISTORY')=='sorted' else 50000
+    if c is not None and c>maximum:raise RuntimeError('PROFILE_ADMISSION_FAILED: REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION')
+    return {'devices':[0,1],'plan':{'capacity':maximum if c is None else c,'batch':64}}
+   def pilot(*a,**kw):
+    capacities.append(kw['capacity']);return {'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.01,1,1,1],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
+   with patch('multigpubfs.autotune._admit',side_effect=admit),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',side_effect=pilot):
+    p=choose_profile(g,None,None,60,str(native),{},allow_specialized=False);self.assertEqual(set(capacities),{20000});self.assertEqual(len(p['pilots']),9)
  def test_forced_sorted_geometry(self):
   from multigpubfs.autotune import _transport_variants
   g=GraphDefinition.permutation([[1,0]],[0,1])

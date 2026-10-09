@@ -68,7 +68,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':13,'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':14,'selector_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
@@ -83,11 +83,24 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    try:admission=_admit(graph,selected,capacity,shards,native,candidate_env,temporary)
    except RuntimeError as error:
-    if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
+    if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
     raise
    admitted.append((shards,fraction,transport,order,admission['plan']))
-  if len(admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
-  common_capacity=min(p['capacity'] for _,_,_,_,p in admitted)
+  history=env.get('MGBFS_GENERIC_HISTORY');sorted_admitted=[]
+  if history in (None,'sorted'):
+   forced_lanes=env.get('MGBFS_GENERIC_OWNER_LANES')
+   lanes=[int(forced_lanes)] if forced_lanes is not None else [1,2,4,8]
+   for lane in lanes:
+    if not 1<=lane<=8:raise ValueError('INVALID_OWNER_LANES')
+    shards=max(4,lane);transport=default_transport
+    candidate_env=dict(env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(lane),MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT='none')
+    try:admission=_admit(graph,selected,capacity,shards,native,candidate_env,temporary)
+    except RuntimeError as error:
+     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM','SORTED_OWNER_NO_ADMISSION')):continue
+     raise
+    sorted_admitted.append((lane,shards,transport,admission['plan']))
+  if len(admitted)+len(sorted_admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
+  common_capacity=min([p['capacity'] for _,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted])
   pilots=[];limit=min(3,max(1,max_seconds//20))
   from .launch import run_graph
   for index,(shards,fraction,transport,order,_) in enumerate(admitted):
@@ -98,20 +111,15 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    pilots.append({'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Same canonical state capacity: history/lane alternatives must pass actual
   # native workspace admission before they can become timing candidates.
-  history=env.get('MGBFS_GENERIC_HISTORY')
-  if history not in (None,'hash','sorted'):raise ValueError('INVALID_HISTORY_ALGORITHM')
-  if history in (None,'sorted'):
-   forced_lanes=env.get('MGBFS_GENERIC_OWNER_LANES')
-   lanes=[int(forced_lanes)] if forced_lanes is not None else [1,2,4,8]
-   for lane in lanes:
-    if not 1<=lane<=8:raise ValueError('INVALID_OWNER_LANES')
+  if sorted_admitted:
+   for lane,shards,transport,_ in sorted_admitted:
     remaining=max_seconds-(time.monotonic()-started)
     if remaining<3:break
     shards=max(4,lane);transport=default_transport
     candidate_env=dict(env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(lane),MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT='none')
     try:admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
     except RuntimeError as error:
-     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM','SORTED_OWNER_NO_ADMISSION')):continue
+     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM','SORTED_OWNER_NO_ADMISSION')):continue
      raise
     batch=max(1,min(admission['plan']['batch'],pilots[0]['batch']))
     report=run_graph(graph,Path(temporary)/('sorted-lanes-'+str(lane)),devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(remaining))),executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
