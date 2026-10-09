@@ -663,3 +663,9 @@ extern "C" int mgbfs_nccl_exchange_triplets(void* raw,uint32_t rank,uint32_t wor
  }
  const auto end=ncclGroupEnd();const int settled=(end==ncclSuccess||end==ncclInProgress)?await_nccl(p,end):5;return status?status:settled;
 }
+
+extern "C" int mgbfs_nccl_all_gather_bytes(void* raw,const void* send,void* recv,uint64_t bytes,void* raw_stream){
+ auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv||!bytes||bytes>SIZE_MAX/p->world)return 1;
+ if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+ return await_nccl(p,ncclAllGather(send,recv,size_t(bytes),ncclUint8,p->value,static_cast<cudaStream_t>(raw_stream)));
+}

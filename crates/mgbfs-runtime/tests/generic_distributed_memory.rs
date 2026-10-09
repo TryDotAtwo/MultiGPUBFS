@@ -60,3 +60,16 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
   let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=p.capacity*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
  }}}
 }
+
+#[test]fn parent_origin_buffers_are_exactly_admitted(){
+ for world in [1,2,8,128]{for history in [1,3]{for (width,bytes) in [(25,1),(257,8)]{
+  let full=Plan::with_storage_history(width,world,4,4096,32,3,1024,bytes,history).unwrap();
+  let parent=full.clone().with_parent_transport(true).unwrap();parent.validate(3).unwrap();
+  assert!(parent.parent_transport);assert_eq!(parent.queue_payload_bytes(),0);
+  assert_eq!(parent.parent_cache_bytes(),u64::from(world+2)*32*u64::from(width)*u64::from(bytes)+u64::from(world)*12);
+  assert_eq!(parent.device_bytes,full.device_bytes-full.transport_bytes()+parent.transport_bytes());
+  assert_eq!(parent.clone().with_parent_transport(false).unwrap(),full);
+  let mut bad=parent;bad.device_bytes-=1;assert!(bad.validate(3).is_err());
+ }}}
+ assert!(!Plan::with_storage(24,2,4,4096,32,3,1024,1).unwrap().with_parent_transport(true).unwrap().parent_transport);
+}

@@ -14,9 +14,9 @@ class ProfilePolicy(unittest.TestCase):
    return {'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.04,times[i],times[i],times[i]],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
   unavailable=subprocess.CompletedProcess([],1,'unavailable','')
   with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=unavailable),patch('multigpubfs.launch.run_graph',side_effect=pilot):return choose_profile(self.g,None,None,60,str(self.native),{})
- def test_margin_keeps_baseline(self):self.assertEqual(self.run_case([1,.98,1.1])['shards'],1)
+ def test_margin_keeps_baseline(self):self.assertEqual(self.run_case([1,.98,1.1,.98])['shards'],1)
  def test_substantial_gain_selects_batch(self):
-  p=self.run_case([1,.9,.7]);self.assertEqual((p['shards'],p['batch_fraction']),(4,.25))
+  p=self.run_case([1,.9,.8,.7]);self.assertEqual((p['shards'],p['batch_fraction']),(4,.25))
  def test_memory_inadmissible_alternatives_skip_gpu_pilots(self):
   def admit(*args):
    if args[3]!=1:raise RuntimeError('PROFILE_ADMISSION_FAILED: REQUESTED_CAPACITY_EXCEEDS_ADMISSION')
@@ -29,4 +29,15 @@ class ProfilePolicy(unittest.TestCase):
    return self.admission(*args)
   with patch('multigpubfs.autotune._admit',side_effect=admit),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')):
    with self.assertRaisesRegex(RuntimeError,'CUDA_STATUS_700'):choose_profile(self.g,None,None,60,str(self.native),{})
+ def test_wide_parent_mode_is_measured_and_selected(self):
+  self.g=GraphDefinition.permutation([list(range(1,25))+[0]],list(range(25)))
+  p=self.run_case([1,.95,.9,.8,.6,.5]);self.assertEqual((p['shards'],p['batch_fraction'],p['transport']),(4,.25,'parent'));self.assertEqual(len(p['pilots']),6)
+ def test_packed_does_not_measure_duplicate_parent_transport(self):
+  p=self.run_case([1,.9,.8,.7]);self.assertEqual(len(p['pilots']),4);self.assertEqual(p['transport'],'full')
+ def test_transport_override_is_respected(self):
+  from multigpubfs.autotune import _transport_variants
+  wide=GraphDefinition.permutation([list(range(1,25))+[0]],list(range(25)))
+  self.assertTrue(all(p[2]=='parent' for p in _transport_variants(wide,{'MGBFS_GENERIC_TRANSPORT':'parent'})))
+  self.assertTrue(all(p[2]=='full' for p in _transport_variants(wide,{'MGBFS_GENERIC_TRANSPORT':'full'})))
+  with self.assertRaisesRegex(ValueError,'INVALID_TRANSPORT'):_transport_variants(wide,{'MGBFS_GENERIC_TRANSPORT':'typo'})
 if __name__=='__main__':unittest.main()

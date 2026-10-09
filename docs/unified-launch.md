@@ -69,3 +69,10 @@ resource stops. Negative/256-valued permutations and modulo-257 matrix actions
 were checked through the public launcher and retain the int64 codec.
 
 Three-bank acceptance includes complete CPU-oracle layer/state comparisons for 720/5040-state inverse-closed permutations, a 257-state matrix cycle with capacity 3, wide byte/int64 states, exact resource snapshots, actual one/two-GPU automatic dispatch, cancellation, deadline, and external-rank TCP/NCCL with collective tuning on a complete 40,320-state graph. The larger logical 8/128-rank admission checks are CPU geometry evidence, not physical scaling.
+
+
+### Wide exact parent-origin transport
+
+`run_graph(..., transport="auto")` remains the default. For sufficiently large wide permutation/int64 workloads, bounded calibration measures full-child transport against parent-origin transport in addition to shard/batch alternatives. Packed<=24byte permutations do not need a duplicate parent-cache alternative. `transport="full"` or `transport="parent"` fixes that choice for reproducibility; shard/batch tuning still applies if enabled. The environment equivalent is `MGBFS_GENERIC_TRANSPORT=full|parent`.
+
+Parent-origin transport all-gathers one immutable SoA parent chunk per source and routes hashes plus exact origin indices. Owners regenerate values for exact equality and write only surviving states directly into retained/rolling VRAM. Parent caches, origin cursors and frontier counts are preallocated and included in admission; no full child plane, CPU child generation, CPU dedup or new host count readback is introduced. All shard owners retire the cache before its next exchange. This trades repeated child traffic for parent replication and destination generation; it may lose at large rank count or expensive actions, so automatic selection uses same-graph measured prefixes rather than assuming a universal win.

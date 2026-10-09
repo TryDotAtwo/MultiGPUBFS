@@ -11,7 +11,7 @@ def _receipt(output,digest):
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=3600,executable=None,shards=None,autotune=True,transport='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -28,9 +28,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if type(max_seconds) is not int or max_seconds<1:raise ValueError('INVALID_MAX_SECONDS')
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
+ if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ if transport!='auto':native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport)
  if os.environ.get('WORLD_SIZE','1')!='1':
   from .distributed_launch import run_external
   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune)
@@ -42,6 +44,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    from .autotune import choose_profile
    profile=choose_profile(graph,devices,capacity,max_seconds,native,native_env)
    shards=profile['shards']
+   native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'))
    max_seconds=max(1,max_seconds-int(profile['seconds']+.999))
   else:shards=1
  output=Path(output).absolute()
@@ -66,7 +69,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   admission=json.loads(probe.stdout);devices=admission['devices']
   if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
-  if len(devices)==1 and shards==1 and _profile_layers is None and admission['plan'].get('history_layers',1)==1:
+  if len(devices)==1 and shards==1 and _profile_layers is None and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False):
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
    if capacity is not None:command+=['--capacity',str(capacity)]
    process=subprocess.run(command,capture_output=True,text=True,env=native_env)
