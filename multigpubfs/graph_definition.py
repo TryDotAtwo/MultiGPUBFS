@@ -129,7 +129,9 @@ def _flatten(value):
 
 def from_cayleypy(definition):
  """Preserve CayleyGraphDef generators and start; never substitute a family."""
- if not hasattr(definition,'generators_type') and hasattr(definition,'graph_def'):definition=definition.graph_def
+ if not hasattr(definition,'generators_type'):
+  if hasattr(definition,'definition'):definition=definition.definition
+  elif hasattr(definition,'graph_def'):definition=definition.graph_def
  kind=definition.generators_type.name;start=_flatten(definition.central_state)
  options={'name':definition.name,'generator_names':list(definition.generator_names)}
  if kind=='PERMUTATION':return GraphDefinition.permutation([_flatten(g) for g in definition.generators_permutations],start,**options)
