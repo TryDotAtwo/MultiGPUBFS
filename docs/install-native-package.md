@@ -75,3 +75,10 @@ SHA256: `09a264b12d9905cee7389604a5fc05668f838fdfd15f76909e7ea06403c12e53`. Clea
 Source `a7198174dd778e59dcf234c04c4837e51d6e30b3`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/c62cf77656974326df3c76a2e5f4561f5be11d57/linux-x86_64-sm86-cuda13.2/a7198174dd778e59dcf234c04c4837e51d6e30b3/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
 
 SHA256 `ce554b0d13b55ff0df83bd3d897d27864f28356285412dd4517009bdbcb0758f`. Fresh installation outside checkout passed width16/17/23/24/25 boundaries, rolling retention/cancellation and external-rank TCP/NCCL tests on one/twoRTX3060. CUDA13/NCCL2 required. Larger hardware remains unverified.
+
+
+## Latest wide parent/radix package
+
+Source `fde169f6e5ae9ba11d6176c14fe7a17448133665`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/fc4ccf023fe30b11ec4b3f1b93a972c0d6c1e5f4/linux-x86_64-sm86-cuda13.2/fde169f6e5ae9ba11d6176c14fe7a17448133665/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `9142e3cf32af04f61fe3f825b176006231a2bddefdf5bd1601a12baee83bec10`. Clean installation outside checkout passed parent/full transport, packed and wide states, terminal snapshots, local tuning/cache and external two-rank TCP/NCCL tuning. CUDA13/NCCL2 required. Physical8/128GPUs, multi-host and Blackwell remain unverified. Radix ordering lost the matched3628800-state benchmark; it is optional and automatically selected only on a measured prefix win.
