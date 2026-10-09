@@ -47,6 +47,8 @@ def _configuration_digest(env):
  return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 
 def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
+ # Omitted peer policy and public default auto are the same configuration.
+ env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
  from .specialized import exact_specialized_supported
  allow_specialized=allow_specialized and exact_specialized_supported(graph)
  started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
