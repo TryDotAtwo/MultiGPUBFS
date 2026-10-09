@@ -24,6 +24,9 @@ try:
  ck(fn(comm,sends[0],4,sends[1],128,sends[2],256,1-rank,*receives,None));ck(cuda.cudaDeviceSynchronize())
  for ptr,n,base in [(receives[0],1,1-rank+1),(receives[1],32,100*(1-rank)),(receives[2],64,1000*(1-rank))]:
   values=(u*n)();ck(cuda.cudaMemcpy(values,ptr,C.sizeof(values),2));assert list(values)==([base] if n==1 else list(range(base,base+n)))
+ total_send=p();total_recv=p();ck(cuda.cudaMalloc(C.byref(total_send),8));alloc.append(total_send);ck(cuda.cudaMalloc(C.byref(total_recv),8));alloc.append(total_recv)
+ large=(h*1)((1<<32)+rank);ck(cuda.cudaMemcpy(total_send,large,8,1))
+ total=lib.mgbfs_nccl_all_reduce_sum_u64;total.argtypes=[p,p,p,p];ck(total(comm,total_send,total_recv,None));ck(cuda.cudaDeviceSynchronize());ck(cuda.cudaMemcpy(large,total_recv,8,2));assert large[0]==(1<<33)+1
  (root/f'rank-{rank}.json').write_text(json.dumps({'status':'VERIFIED_GENERIC_THREE_LANE_GPU_TRANSPORT','rank':rank,'scope':'NCCL two GPU count/metadata/payload primitive; not integrated BFS or throughput'}))
 finally:
  lib.mgbfs_nccl_destroy(comm)

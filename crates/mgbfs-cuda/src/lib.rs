@@ -583,6 +583,8 @@ pub mod ffi {
             error: *mut c_char,
             error_capacity: usize,
         ) -> i32;
+        pub fn mgbfs_nccl_all_reduce_sum_u64(comm:*mut c_void,send:*const u64,recv:*mut u64,stream:*mut c_void)->i32;
+        pub fn mgbfs_nccl_send_recv_triplet(comm:*mut c_void,count:*const c_void,count_bytes:u64,metadata:*const c_void,metadata_bytes:u64,states:*const c_void,state_bytes:u64,peer:u32,recv_count:*mut c_void,recv_metadata:*mut c_void,recv_states:*mut c_void,stream:*mut c_void)->i32;
         pub fn mgbfs_nccl_all_reduce_sum_u32(comm: *mut c_void, send: *const u32, recv: *mut u32, stream: *mut c_void) -> i32;
         pub fn mgbfs_route_run_sharded(plan: *mut c_void, hashes: *const c_void, refs: *const u64, output: *mut c_void, outrefs: *mut u64, output_count: *mut u32, count: u32, partitions: u32, stream: *mut c_void) -> i32;
         pub fn mgbfs_route_run(

@@ -635,3 +635,9 @@ extern "C" int mgbfs_nccl_send_recv_triplet(void* raw,const void* count,uint64_t
  const uint64_t bytes[]={count_bytes,metadata_bytes,state_bytes};
  return send_recv_lanes(raw,send,bytes,recv,bytes,3,peer,stream);
 }
+
+extern "C" int mgbfs_nccl_all_reduce_sum_u64(void* raw,const uint64_t* send,uint64_t* recv,void* raw_stream){
+ auto*p=static_cast<Comm*>(raw);if(!p||!p->value||!send||!recv)return 1;
+ if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+ return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint64,ncclSum,p->value,static_cast<cudaStream_t>(raw_stream)));
+}

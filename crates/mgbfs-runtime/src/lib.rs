@@ -72,3 +72,5 @@ pub mod generic_native;
 pub mod generic_run;
 
 pub mod generic_route;
+
+pub mod generic_distributed_memory;
