@@ -1,3 +1,13 @@
+# Current exact key-domain and cache release
+
+Latest source `407a5d7c796e548f6cf88de58c10c345a864475c`. This adds consistent omitted/auto peer-policy cache identity to the full-key-domain/NCCL repair below. One/two RTX3060 clean installed general matrices/permutations, compact stop boundaries, local external TCP/NCCL and bounded tuning/cache passed. Freshly reinstalled immutable wheel passed cold production plus cached direct tuning with equal identity. SM86/CUDA runtime12; native binary built12.6 and library12.8. Physical4/8/128, separate hosts and Blackwell remain unverified. Broader general sorted-history integration remains unfinished.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/a219a76e8966240e1c811b85b07d2d78e8b4c658/linux-x86_64-sm86-cuda12.8/407a5d7c796e548f6cf88de58c10c345a864475c/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256 `379ae09bf0ed325b3ef769a4ea9fcbd61814d31d6ec2fd736c2bb5e438dc6c0c`, anonymous readback verified. Earlier immutable packages below are historical.
+
 # Current full-domain repaired native package
 
 Use this immutable release; the earlier fa4883c package below is superseded because it rejects some legal exact keys. Linux x86_64, SM86, CUDA runtime12, compatible driver; actual acceptance2RTX3060 driver570.211.01. Library builtCUDA12.8, unchanged executable builtCUDA12.6. B200/B300 and physical4/8/128GPU unverified.
