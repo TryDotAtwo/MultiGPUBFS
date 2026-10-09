@@ -15,4 +15,4 @@ cayleypy = ["cayleypy"]
 include = ["multigpubfs", "multigpubfs.*"]
 
 [tool.setuptools.package-data]
-multigpubfs = ["_native/bin/*", "_native/lib/*", "_native/manifest.json"]
+multigpubfs = ["_native/bin/*", "_native/lib/*", "_native/manifest.json", "third_party/*.txt"]
