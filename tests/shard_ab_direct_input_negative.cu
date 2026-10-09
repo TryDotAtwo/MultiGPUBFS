@@ -21,7 +21,7 @@ void negative(unsigned kind){
  req(!mgbfs_shard_ab_pipeline_begin(p,4,0,kind==1?2:1,prev.p,0,curr.p,0,128,(uint32_t*)((char*)ring.p+48)),"begin");
  std::vector<Key>k(4);for(unsigned i=0;i<4;++i)k[i]={{i,0,0,0}};
  unsigned expected=0;
- if(kind==0){k[0].w[0]=4294967291u;expected=102;}
+ if(kind==0){k[3].w[0]=4294967291u;expected=0;}
  if(kind==1){k[0].w[3]=0x80000000u;expected=111;}
  if(kind==2){k[0].w[3]=0x40000000u;expected=111;}
  if(kind==3){expected=110;}

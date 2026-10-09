@@ -50,9 +50,14 @@ void test_device(int device){
  require(mgbfs_shard_ab_job_run(a.job,a.keys.p,(uint8_t*)a.states.p,a.count.p,nullptr,0,nullptr,0,a.fatal.p,a.stream)==0,"OVERFLOW_ENQUEUE");
  ck(cudaStreamSynchronize(a.stream));require(a.fatal.get(1)[0]==101&&a.count.get(1)[0]==C+1,"OVERFLOW_TRANSACTION");
  auto preserved=a.keys.get(input.size());for(unsigned i=0;i<input.size();++i)require(eq(preserved[i],input[i]),"OVERFLOW_PRESERVES_BUFFER");
- a.keys.put({Key{{UINT_MAX,0,0,0}}});a.count.put({1});a.fatal.put({0});
- require(mgbfs_shard_ab_job_run(a.job,a.keys.p,(uint8_t*)a.states.p,a.count.p,nullptr,0,nullptr,0,a.fatal.p,a.stream)==0,"INVALID_ENQUEUE");
- ck(cudaStreamSynchronize(a.stream));require(a.fatal.get(1)[0]==102&&a.count.get(1)[0]==1,"INVALID_TRANSACTION");
+ // Full uint128 key domain, including the same value as sort padding.
+ std::vector<Key>boundary;for(unsigned word=0;word<4;++word)for(unsigned long long v=4294967291ULL;v<=4294967295ULL;++v){Key k={{0,0,0,0}};k.w[word]=unsigned(v);boundary.push_back(k);}
+ boundary.push_back(Key{{UINT_MAX,UINT_MAX,UINT_MAX,UINT_MAX}});boundary.push_back(boundary.back());
+ std::vector<State>boundary_states;std::map<Key,State,Less>boundary_oracle;for(unsigned i=0;i<boundary.size();++i){State state={{i,i+1,i+2,i+3}};boundary_states.push_back(state);boundary_oracle.emplace(boundary[i],state);}
+ for(unsigned path=0;path<2;++path){a.keys.put(boundary);a.states.put(boundary_states);a.count.put({unsigned(boundary.size())});a.fatal.put({0});
+ if(path==0)require(!mgbfs_shard_ab_job_run_added(a.job,C,a.keys.p,(uint8_t*)a.states.p,a.count.p,nullptr,0,nullptr,0,a.fatal.p,added.p,a.stream),"FULL_DOMAIN_HASH");
+ require(!mgbfs_shard_ab_job_run(a.job,a.keys.p,(uint8_t*)a.states.p,a.count.p,nullptr,0,nullptr,0,a.fatal.p,a.stream),"FULL_DOMAIN_SORT");ck(cudaStreamSynchronize(a.stream));require(!a.fatal.get(1)[0]&&a.count.get(1)[0]==boundary_oracle.size(),"FULL_DOMAIN_COUNT");
+ auto result_keys=a.keys.get(boundary_oracle.size());auto result_states=a.states.get(boundary_oracle.size());unsigned at=0;for(auto const& entry:boundary_oracle){require(eq(result_keys[at],entry.first)&&result_states[at]==entry.second,"FULL_DOMAIN_STATE_IDENTITY");++at;}}
  std::cout<<"SHARD_AB_JOB_CPU_ORACLE_PASS device="<<device<<" unique="<<oracle.size()<<"\n";
 }
 int main(){try{int n;ck(cudaGetDeviceCount(&n));for(int i=0;i<n;++i)test_device(i);return 0;}catch(std::exception const&e){std::cerr<<e.what()<<"\n";return 1;}}

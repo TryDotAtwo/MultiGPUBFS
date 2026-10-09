@@ -16,9 +16,10 @@ def native_runtime(explicit=None):
   for name in ('cuda_runtime','nccl'):
    location=pure/'nvidia'/name/'lib'
    if location.is_dir():libraries.append(str(location))
-  # Keep the actual host driver ahead of optional toolkit compatibility stubs.
+  # Packaged NCCL/runtime must precede unrelated system versions.
+  # Keep the real host driver directory before inherited toolkit stubs.
   driver=Path('/usr/lib/x86_64-linux-gnu')
-  if driver.is_dir():libraries.insert(0,str(driver))
+  if driver.is_dir():libraries.append(str(driver))
   inherited=env.get('LD_LIBRARY_PATH','')
   if inherited:libraries.append(inherited)
   env['LD_LIBRARY_PATH']=':'.join(libraries)

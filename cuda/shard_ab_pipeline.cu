@@ -216,7 +216,7 @@ __global__ void stage_copy(const Key* input,const uint8_t* states,const uint32_t
   if(*fatal)return;uint32_t row=i/chunks,part=i%chunks;if(row>=*rows)continue;uint32_t source=*begin+row;Key key=input[source];
   uint32_t actual=world==1?0:key.w[3]>>(32-__ffs(world)+1);
   if(part==0 && (actual!=owner||(row&&shard_of(key,shift)<shard_of(input[source-1],shift)))){atomicCAS(fatal,0u,111u);continue;}
-  if(part==0)for(int w=0;w<4;++w)if(key.w[w]>=4294967291u){atomicCAS(fatal,0u,102u);return;}
+  // Every128-bit value is valid; occupancy uses separate row indices.
   uint32_t shard=shard_of(key,shift)&(shards-1),local=row-ranges[shard];if(local>=stage_cap){atomicCAS(fatal,0u,112u);continue;}
   uint64_t at=uint64_t(shard*2+buffer)*stage_cap+local;
   if(destination)reinterpret_cast<uint4*>(destination)[at*chunks+part]=reinterpret_cast<const uint4*>(states)[uint64_t(source)*chunks+part];if(part==0&&keys)keys[at]=key;

@@ -74,10 +74,7 @@ __global__ void prepare(const Key* in,const uint32_t* count,uint32_t capacity,Ke
  if(*count>capacity){atomicCAS(fatal,0u,101u);out[i]={{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX}};indices[i]=UINT32_MAX;return;}
  if(i<*count){
   Key k=in[i];
-  // Existing hash kernel emits residues modulo 4294967291. Invalid sentinels
-  // are outside this domain; reject malformed input instead of losing rows.
-  bool valid=true;for(int w=0;w<4;++w)valid=valid&&k.w[w]<4294967291u;
-  if(!valid)atomicCAS(fatal,0u,102u);
+  // Padding is identified by its invalid row reference, not key value.
   out[i]=k;indices[i]=i;
  }else{out[i]={{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX}};indices[i]=UINT32_MAX;}
 }
@@ -112,8 +109,7 @@ __global__ void bind_job(Binding* dst,Binding value){*dst=value;}
 __global__ void graph_prepare(const Binding* b,uint32_t capacity,Key* out,uint32_t* indices){
  uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=capacity)return;
  if(*b->count>capacity){atomicCAS(b->fatal,0u,101u);out[i]={{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX}};indices[i]=UINT32_MAX;return;}
- if(i<*b->count){Key k=b->keys[i];bool valid=true;for(int w=0;w<4;++w)valid=valid&&k.w[w]<4294967291u;
-  if(!valid)atomicCAS(b->fatal,0u,102u);out[i]=k;indices[i]=i;
+ if(i<*b->count){Key k=b->keys[i];out[i]=k;indices[i]=i;
  }else{out[i]={{UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX}};indices[i]=UINT32_MAX;}
 }
 __global__ void graph_mark(const Binding* b,const Key* keys,const uint32_t* indices,const uint32_t* runs,uint32_t capacity,uint8_t* flags){
@@ -183,8 +179,7 @@ __global__ void hash_clear(const Binding* b,uint32_t* table,uint32_t n,uint32_t 
 __global__ void hash_insert(const Binding* b,uint32_t* table,uint32_t span,uint32_t bound){
  uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;
  if(!added(b)||*b->fatal||i>=bound||i>=*b->count)return;
- Key key=b->keys[i];bool valid=true;for(int w=0;w<4;++w)valid=valid&&key.w[w]<4294967291u;
- if(!valid){atomicCAS(b->fatal,0u,102u);return;}
+ Key key=b->keys[i];
  if(contains(b->previous,b->pn,key)||contains(b->current,b->cn,key))return;
  uint32_t slot=key_hash(key)&(span-1);
  for(uint32_t probe=0;probe<span;++probe){
