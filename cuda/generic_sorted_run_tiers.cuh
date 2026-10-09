@@ -19,7 +19,7 @@ struct GenericSortedMergeTicket {
  uint32_t destination_capacity;
 };
 struct GenericSortedRunCarry {
- GenericSortedRunToken token;uint32_t valid,stage;GenericSortedMergeTicket ticket;
+ GenericSortedRunToken token;uint32_t valid,stage;GenericSortedMergeTicket ticket;uint32_t retries_remaining;
 };
 __device__ inline bool generic_sorted_same_token(GenericSortedRunToken a,GenericSortedRunToken b){return a.slot==b.slot&&a.generation==b.generation;}
 __device__ inline GenericSortedHistoryRun generic_sorted_pool_view(GenericSortedRunPool pool,

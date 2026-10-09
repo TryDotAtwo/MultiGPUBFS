@@ -85,6 +85,21 @@ template<class A>static void oracle(A action,uint32_t count,const std::vector<ui
  auto invoke=[&](uint32_t rolling,uint32_t maximum,uint32_t snapshots_count){return generic_sorted_accept(action,out_hashes.p,out.p,out_count.p,count,snapshots.p,snapshots_count,pool,run_hashes.p,run_rows.p,arena.p,state_stride,rolling?base:0,maximum,row_count.p,rolling?row_count.p:frontier_count.p,rolling,future.p,flags.p,prefix.p,scan.p,scan_bytes,reservation.p,carry.p,error.p);};
 
 #endif
+ // An undersized non-null scratch buffer must fail without publishing state.
+ arena.put(canonical);error.put({0});carry.put({{}});row_count.put({known});frontier_count.put({0});occupied.put(std::vector<unsigned long long>(regions));
+ #ifdef MGBFS_SORTED_NATIVE_GATEWAY
+ accept_workspace.temporary_bytes=1;
+ #else
+ size_t admitted_scan_bytes=scan_bytes;scan_bytes=1;
+ #endif
+ if(invoke(0,cap,1)!=cudaErrorInvalidValue)exit(23);CUDA_CHECK(cudaDeviceSynchronize());
+ if(carry.get(1)[0].valid||row_count.get(1)[0]!=known||frontier_count.get(1)[0]||arena.get(canonical.size())!=canonical)exit(24);
+ for(auto word:occupied.get(regions))if(word)exit(25);
+ #ifdef MGBFS_SORTED_NATIVE_GATEWAY
+ accept_workspace.temporary_bytes=scan_bytes;
+ #else
+ scan_bytes=admitted_scan_bytes;
+ #endif
  for(uint32_t rolling=0;rolling<2;++rolling){
   arena.put(canonical);error.put({0});carry.put({{}});row_count.put({rolling?0:known});frontier_count.put({0});occupied.put(std::vector<unsigned long long>(regions,~0ull));
   CUDA_CHECK(invoke(rolling,cap,1));CUDA_CHECK(cudaDeviceSynchronize());

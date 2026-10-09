@@ -164,9 +164,8 @@ impl SortedOwner {
   // Releasing snapshot leases before carry returns old epoch credits promptly.
   let graph=&self.graphs[(bank*self.shards+input.shard) as usize];
   check(unsafe{mgbfs_generic_sorted_native_carry_launch(graph.0,stream)})?;
-  // One bounded retry handles credits returned by simultaneous owner lanes;
-  // persistent pressure is reported collectively, never a silent lost batch.
-  check(unsafe{mgbfs_generic_sorted_native_carry_launch(graph.0,stream)})?;
+  // The graph retries once on actual allocation pressure. Normal publication
+  // needs one host launch; persistent pressure remains a collective failure.
   check(unsafe{mgbfs_generic_sorted_native_owner_status(destination.reservation,destination.carry,destination.error,stream)})
  }
 }

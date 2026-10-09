@@ -1,6 +1,24 @@
 #pragma once
 #include "generic_sorted_carry_graph.cuh"
 #include "generic_sorted_disjoint_merge.cuh"
+static __global__ void generic_sorted_disjoint_carry_select(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
+ GenericSortedRunCarry* carry,uint64_t* hashes,uint32_t* rows,uint32_t* error,
+ cudaGraphConditionalHandle loop,const cudaGraphConditionalHandle* handles,uint32_t classes,
+ GenericSortedHistoryRun* a,GenericSortedHistoryRun* b){
+ if(blockIdx.x||threadIdx.x)return;
+ for(uint32_t c=0;c<classes;++c)cudaGraphSetConditional(handles[c],0);
+ generic_sorted_tier_prepare(pool,tiers,carry,hashes,rows,error);
+ if(carry->stage!=SORTED_CARRY_MERGE){
+  // Same bounded second chance as the old two host graph launches, but only
+  // on actual pressure. Input ownership is unchanged by failed allocation.
+  bool retry=carry->stage==SORTED_CARRY_PRESSURE&&carry->valid&&!(*error)&&carry->retries_remaining;
+  if(retry)--carry->retries_remaining;
+  cudaGraphSetConditional(loop,retry);return;
+ }
+ uint32_t cls=carry->ticket.size_class;
+ if(cls>=classes){generic_sorted_tier_abort(pool,carry,error);atomicOr(error,32u);carry->stage=SORTED_CARRY_FAILED;cudaGraphSetConditional(loop,0);return;}
+ *a=carry->ticket.left_view;*b=carry->ticket.right_view;cudaGraphSetConditional(handles[cls],1);
+}
 struct GenericSortedDisjointCarryShape {uint32_t capacity;uint64_t control_bytes,handle_bytes,aligned_workspace_bytes;};
 inline cudaError_t generic_sorted_disjoint_carry_shape(uint32_t page_entries,uint32_t classes,GenericSortedDisjointCarryShape* out){
  if(!out)return cudaErrorInvalidValue;*out={};if(!page_entries||!classes||classes>31||(uint64_t(page_entries)<<classes)>0x7fffffff)return cudaErrorInvalidValue;
@@ -22,7 +40,7 @@ template<class State> cudaError_t generic_sorted_disjoint_carry_graph_create(cud
  cudaGraphConditionalHandle handles[31];for(uint32_t c=0;c<classes;++c)SORTED_GRAPH_TRY(cudaGraphConditionalHandleCreate(&handles[c],graph,0,cudaGraphCondAssignDefault));
  SORTED_GRAPH_TRY(cudaMemcpy(w.device_handles,handles,classes*sizeof(handles[0]),cudaMemcpyHostToDevice));
  void* args[]={&pool,&tiers,&carry,&hashes,&rows,&error,&loop,&w.device_handles,&classes,&w.left,&w.right};
- cudaGraphNodeParams selector{};selector.type=cudaGraphNodeTypeKernel;selector.kernel.func=(void*)generic_sorted_carry_select;selector.kernel.gridDim=dim3(1);selector.kernel.blockDim=dim3(1);selector.kernel.kernelParams=args;
+ cudaGraphNodeParams selector{};selector.type=cudaGraphNodeTypeKernel;selector.kernel.func=(void*)generic_sorted_disjoint_carry_select;selector.kernel.gridDim=dim3(1);selector.kernel.blockDim=dim3(1);selector.kernel.kernelParams=args;
  cudaGraphNode_t previous;SORTED_GRAPH_TRY(generic_sorted_graph_add_node(&previous,body,nullptr,0,&selector));
  cudaStream_t stream;SORTED_GRAPH_TRY(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking));
  for(uint32_t c=0;c<classes;++c){cudaGraphNodeParams ip{};ip.type=cudaGraphNodeTypeConditional;ip.conditional.handle=handles[c];ip.conditional.type=cudaGraphCondTypeIf;ip.conditional.size=1;cudaGraphNode_t node;

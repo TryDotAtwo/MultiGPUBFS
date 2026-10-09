@@ -57,7 +57,7 @@ static __global__ void generic_sorted_accept_publish(GenericSortedRunPool pool,
  if(*error){generic_sorted_run_release(pool,reservation->token,true,error);reservation->valid=0;return;}
  if(!generic_sorted_run_publish(pool,reservation->token,reservation->count,error)){
   generic_sorted_run_release(pool,reservation->token,true,error);reservation->valid=0;return;}
- carry->token=reservation->token;carry->valid=1;carry->stage=SORTED_CARRY_NEXT;reservation->valid=0;
+ carry->token=reservation->token;carry->valid=1;carry->stage=SORTED_CARRY_NEXT;carry->retries_remaining=1;reservation->valid=0;
 }
 template<class Action,class State> inline cudaError_t generic_sorted_accept(
  Action action,const uint64_t* hashes,const uint32_t* origins,const uint32_t* count,uint32_t n,
@@ -74,8 +74,9 @@ template<class Action,class State> inline cudaError_t generic_sorted_accept(
   !capacity||capacity>stride-base||!row_count||!frontier_count||rolling>1||
   (rolling&&row_count!=frontier_count)||(!rolling&&row_count==frontier_count)||!future||
   !flags||!prefix||!temporary||!reservation||!carry||!error)return cudaErrorInvalidValue;
- size_t required=0;auto status=cub::DeviceScan::ExclusiveSum(nullptr,required,flags,prefix,n,stream);
- if(status!=cudaSuccess)return status;if(temporary_bytes<required)return cudaErrorInvalidValue;
+ // Scratch for this fixed geometry is admitted by generic_sorted_origin_shape.
+ // CUB execution retains its own storage/error validation, as in origin_exact.
+ cudaError_t status=cudaSuccess;
  uint32_t blocks=n/256+(n%256!=0);if(!blocks)blocks=1;if(blocks>65535)blocks=65535;
  generic_sorted_accept_flags<<<blocks,256,0,stream>>>(action,hashes,origins,count,n,snapshots,snapshot_count,arena,stride,flags,error);
  status=cudaGetLastError();if(status!=cudaSuccess)return status;
