@@ -4,7 +4,7 @@ template<class Candidate,class State> __global__ void accept_rolling(Candidate a
  State* arena,uint32_t arena_stride,uint32_t base,uint32_t capacity,uint32_t* accepted,uint32_t* future,
  uint32_t* positions,uint32_t* error){
  for(uint32_t iteration=blockIdx.x*blockDim.x+threadIdx.x;iteration<action.count;iteration+=blockDim.x*gridDim.x){
-  const uint32_t child=action.child(iteration);if(!action.valid(child,error))continue;if(atomicAdd(error,0u))return;
+  const uint32_t child=action.child(iteration);if(!action.valid(child,error))continue;if(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed))return;
   const uint64_t hash=action.hash(child,0,64),prefix=hash&0xffffffff00000000ULL,pending=prefix|0x80000000ULL|child;
   bool done=false;
   while(!done){

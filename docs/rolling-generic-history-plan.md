@@ -35,3 +35,6 @@ Both retained and rolling acceptance kernels check the immutable queue's valid d
 The same 3,628,800-state, 46-layer workload produced three paired old times 0.524059645/0.526326132/0.521602171 s and new times 0.526007062/0.513895872/0.513116113 s. Median ratio is 1.01978x (about 2 percent); intervals overlap and this does not establish a broadly significant speedup. Configuration, all layer counts and terminal states matched the bound CPU reference.
 
 CayleyPy scalar adaptation rejects nonintegral, boolean, text, nonfinite and out-of-int64 values rather than silently changing the graph. Exact integral NumPy-style scalars remain accepted.
+
+## Atomic error load
+The early shared error-counter check uses a device-scope relaxed atomic load instead of atomicAdd(0). It is only an early-exit hint; bounds checks, slot publication and collective rejection of a partial future remain authoritative. Full retained/rolling GPU oracle and resource gates passed on two RTX3060. Three matched paired old times were 0.514650802, 0.509893420, 0.509543119 s; new times 0.524529894, 0.516095143, 0.510205369 s. Median ratio 0.987983: no measured acceleration, and this workload does not establish a broad regression or speedup.
