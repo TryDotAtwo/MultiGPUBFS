@@ -12,12 +12,9 @@ and reproducible reference experiments.
 The current implementation target is specified in
 [Multi-GPU Cayley BFS architecture](ARCHITECTURE_NEED.md).
 
-Native matrix implementation is in `crates/` and `cuda/`. It is **incomplete**:
-CPU contracts and individually tested GPU generation/hash/routing primitives
-exist; there is no production multi-GPU BFS executable yet. See the
-[implementation status and local test commands](docs/native-matrix-implementation.md).
-The Python package and `gpu/` / `rust/` trees below remain research prototypes,
-not fallback implementations of the new runtime.
+The current native graph runtime supports CayleyPy permutation and int64 matrix actions through one [automatic launcher](docs/unified-launch.md). It plans memory from actual free VRAM and uses bounded same-graph GPU measurements to select shard/batch profiles. Proved inverse-closed graphs use three VRAM layer banks; directed graphs retain all visited states. Exact equality resolves hash collisions. Compact output, resource limits and cancellation preserve completed-layer evidence.
+
+[Current acceptance and remaining hardware boundaries](docs/universal-acceptance-2026-10-09.md) separates actual one/twoRTX3060 results from logical8/128rank contracts. Physical multi-host, larger-rank and Blackwell execution remain unverified. Historical research and native-matrix status documents describe earlier implementation stages and are not the current unified launch status.
 
 The measured one/two-rank reference is also available through
 `mgbfs bench --reference` in a Linux CUDA build. It is not the production

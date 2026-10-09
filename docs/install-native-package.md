@@ -1,3 +1,26 @@
+# Install the verified native development package
+
+Latest implementation: `73cdef732ba116c4540491b405d659a103ee91e4`. Linux x86_64, CUDA13 runtime and a compatible driver are required. The wheel contains SM86 and PTX targets; actual acceptance is one/two RTX3060, not Blackwell or physical8/128GPU scaling.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/bd87478b1df62b573f655a25bb25cd2efd6ac7f6/linux-x86_64-sm86-cuda13.2/73cdef732ba116c4540491b405d659a103ee91e4/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu13==2.30.7"
+```
+
+Wheel SHA256: `dc6f7215d18d757c58895f094c7fc02c6cc0b5151ae51a5798b61e994cb4be66`. Anonymous public readback matched the hash. Native artifact identity is checked before launch. Development wheels share a version, so force reinstall is required when changing immutable artifacts.
+
+```python
+from multigpubfs import run_graph
+report = run_graph(cayleypy_graph, "results")
+```
+
+Pass either a CayleyPy0.2.0 CayleyGraph object, its CayleyGraphDef, or multigpubfs.GraphDefinition. CayleyPy itself is optional for explicit GraphDefinition use; install `cayleypy==0.2.0` separately for its catalog. All visible local GPUs are selected by default. Use the same API under the external rank environment for cluster launch. See [unified launch](unified-launch.md), [external ranks](external-rank-launch.md), and [current acceptance audit](universal-acceptance-2026-10-09.md).
+
+The fresh installation passed one/two-GPU exact graph, deadline/cancel/resource, network and collective tuning gates. Actual CayleyPy wrappers passed CPU neighbor comparisons and installed native complete BFS for inverse-closed permutations, directed permutations and modular rectangular matrices. General graph state identity is the exact integer vector, not its hash. Compact output contains a maximum1000-state last-layer sample and the previous layer only if globally smaller than1000. INCOMPLETE means enumeration stopped before frontier exhaustion.
+
+## Historical artifact records
+
+The records below preserve previous versions and their measured acceptance. Use the latest artifact above for the current implementation.
+
 # Install the verified development wheel
 
 Linux x86_64 with compatible NVIDIA driver, CUDA runtime12 and NCCL2 shared libraries:

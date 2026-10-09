@@ -1,8 +1,12 @@
 """Integration with the actual optional CayleyPy package, CPU semantic oracle."""
 import unittest
-from cayleypy import CayleyGraph, CayleyGraphDef, MatrixGenerator, PermutationGroups
+try:
+ from cayleypy import CayleyGraph, CayleyGraphDef, MatrixGenerator, PermutationGroups
+except ImportError:
+ CayleyGraph=None
 from multigpubfs.graph_definition import from_cayleypy
 import numpy as np
+@unittest.skipIf(CayleyGraph is None,'optional cayleypy not installed')
 class RealCayleyAdapter(unittest.TestCase):
  def test_catalog_and_runtime_wrapper(self):
   fixtures=[PermutationGroups.lrx(5),PermutationGroups.lx(5),PermutationGroups.all_transpositions(4),PermutationGroups.pancake(5),PermutationGroups.signed_reversals(3)]

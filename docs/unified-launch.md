@@ -49,7 +49,7 @@ checkout on one and two RTX 3060, including four-shard placement. Its manifest
 verifies executable and CUDA-library SHA256 before launch. The wheel contains
 SM86 code and PTX build targets and still requires the compatible external CUDA/NCCL/driver versions stated in its own manifest (published CUDA12 and CUDA13 variants exist).
 Bounded GPU profile selection and cache were verified on a complete 40,320-state
-graph against a CPU oracle. Heavy-graph and larger-rank tuning acceptance remain.
+graph against a CPU oracle. A complete3.63M-state graph also passed four-profile selection, cache reuse and bound CPU-reference layer/terminal checks. Larger-rank tuning acceptance remains.
 
 
 Permutation graphs whose start values are all in 0..255 automatically use byte
