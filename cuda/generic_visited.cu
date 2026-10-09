@@ -227,3 +227,4 @@ extern "C" int mgbfs_generic_seed_shared_u8(uint32_t elements,const uint8_t* sta
  if(!elements||count>stride||!capacity||(capacity&(capacity-1))||bits>64||!error||!slots||(!states&&count)||count>=0x80000000U)return int(cudaErrorInvalidValue);
  if(!count)return 0;seed_table<uint8_t,true><<<grid(count),256,0,static_cast<cudaStream_t>(stream)>>>(elements,states,stride,count,slots,capacity,seed,bits,error);return int(cudaGetLastError());
 }
+#include "generic_rolling.cuh"

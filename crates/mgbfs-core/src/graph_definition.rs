@@ -71,8 +71,22 @@ impl GraphDefinitionV2 {
    GraphAction::Matrix{rows,generators,..}=>{
     let n=*rows as usize;let modulus=generators[0].modulo;
     if generators.iter().any(|g|g.modulo!=modulus) || (modulus!=0 && self.start.iter().any(|&x|x<0 || x>=i64::from(modulus))) {return Ok(false)}
+    // CUDA uses wrapping int64 arithmetic before modular reduction. For
+    // non-power-of-two moduli, wrapping is not a homomorphism modulo m.
+    // Admit compact history only when every canonical-state dot product
+    // is overflow-free; otherwise conservatively retain all history.
+    if modulus!=0 && !modulus.is_power_of_two(){
+     let bound=i128::from(modulus-1);
+     if generators.iter().any(|g|g.matrix.chunks(n).any(|row|row.iter().map(|&v|i128::from(v).abs()*bound).sum::<i128>()>i128::from(i64::MAX))){return Ok(false)}
+    }
     let eye:Vec<i64>=(0..n).flat_map(|i|(0..n).map(move |j|i64::from(i==j))).collect();
-    generators.iter().all(|g|generators.iter().any(|h|Self::multiply(&g.matrix,&h.matrix,n,n,modulus)==eye && Self::multiply(&h.matrix,&g.matrix,n,n,modulus)==eye))
+    let compose=|a:&[i64],b:&[i64]|->Vec<i64>{
+     if modulus==0{return Self::multiply(a,b,n,n,0)}
+     // Normalize the right operand, as an actual canonical modular state.
+     let canonical=b.iter().map(|&x|x.rem_euclid(i64::from(modulus))).collect::<Vec<_>>();
+     Self::multiply(a,&canonical,n,n,modulus)
+    };
+    generators.iter().all(|g|generators.iter().any(|h|compose(&g.matrix,&h.matrix)==eye && compose(&h.matrix,&g.matrix)==eye))
    }
   })
  }
