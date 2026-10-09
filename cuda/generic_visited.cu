@@ -1,24 +1,10 @@
 #include "generic_visited.h"
 #include <cuda_runtime.h>
 #include <cstdint>
+#include <cuda/atomic>
 
 static constexpr uint64_t EMPTY=~uint64_t(0);
-__device__ uint64_t mix64(uint64_t x){x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;return x^(x>>31);}
-__device__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
-struct Action {
- uint32_t kind,elements,n,m,generators,count,stride;
- const int64_t* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
- __device__ int64_t value(uint32_t child,uint32_t element)const {
-  const uint32_t parent=child/generators,g=child%generators;
-  if(kind==0)return parents[uint64_t(permutations[uint64_t(g)*elements+element])*stride+parent];
-  const uint32_t row=element/m,col=element%m;const int64_t* matrix=matrices+uint64_t(g)*n*n;
-  uint64_t sum=0;for(uint32_t k=0;k<n;k++)sum+=uint64_t(matrix[uint64_t(row)*n+k])*uint64_t(parents[uint64_t(k*m+col)*stride+parent]);
-  int64_t v=static_cast<int64_t>(sum);uint32_t mod=moduli[g];if(mod){v%=int64_t(mod);if(v<0)v+=mod;}return v;
- }
- __device__ uint64_t hash(uint32_t child,uint64_t seed,uint32_t bits)const {
-  uint64_t h=seed;for(uint32_t e=0;e<elements;e++)h=mix64(h^uint64_t(value(child,e))^uint64_t(e));return finish_hash(h,bits);
- }
-};
+#include "generic_action.cuh"
 __global__ void seed_table(uint32_t elements,const int64_t* states,uint32_t stride,uint32_t count,uint64_t* slots,
  uint32_t capacity,uint64_t seed,uint32_t bits,uint32_t* error){
  for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<count;row+=blockDim.x*gridDim.x){
@@ -36,7 +22,9 @@ __global__ void expand(Action action,uint64_t* slots,uint32_t slot_capacity,int6
   const uint64_t hash=action.hash(child,seed,bits),prefix=hash&0xffffffff00000000ULL;
   const uint64_t pending=prefix|0x80000000ULL|child;uint32_t slot=hash&(slot_capacity-1);bool done=false;
   for(uint32_t probe=0;probe<slot_capacity;probe++,slot=(slot+1)&(slot_capacity-1)){
-   uint64_t observed=atomicCAS(reinterpret_cast<unsigned long long*>(slots+slot),EMPTY,pending);
+   cuda::atomic_ref<uint64_t,cuda::thread_scope_device> published(slots[slot]);
+   uint64_t observed=EMPTY;
+   published.compare_exchange_strong(observed,pending,cuda::memory_order_acq_rel,cuda::memory_order_acquire);
    if(observed==EMPTY){
     // Publish the origin atomically before any payload allocation. Peers can
     // compare that immutable origin by regeneration, without spinning on a
@@ -44,7 +32,9 @@ __global__ void expand(Action action,uint64_t* slots,uint32_t slot_capacity,int6
     const uint32_t row=atomicAdd(visited_count,1u);
     if(row>=visited_capacity){atomicOr(error,2u);done=true;break;}
     for(uint32_t e=0;e<action.elements;e++)visited[uint64_t(e)*visited_capacity+row]=action.value(child,e);
-    __threadfence();atomicExch(reinterpret_cast<unsigned long long*>(slots+slot),prefix|row);
+    // Release/acquire publishes the full canonical payload, including on GPUs
+    // whose state loads use L1. No reader spins on an unpublished payload.
+    published.store(prefix|row,cuda::memory_order_release);
     const uint32_t position=atomicAdd(future_count,1u);
     if(position>=future_capacity){atomicOr(error,4u);done=true;break;}
     future[position]=row;done=true;break;
