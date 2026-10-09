@@ -11,7 +11,7 @@ inline cudaError_t generic_sorted_graph_add_node(cudaGraphNode_t* node,cudaGraph
 }
 // A reusable owner-stream graph dispatches one admitted size class per carry.
 // Conditions, views, output pointers and commit counts stay on device.
-__global__ void generic_sorted_carry_select(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
+static __global__ void generic_sorted_carry_select(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
  GenericSortedRunCarry* carry,uint64_t* hashes,uint32_t* rows,uint32_t* error,
  cudaGraphConditionalHandle loop,const cudaGraphConditionalHandle* handles,uint32_t classes,
  GenericSortedHistoryRun* a,GenericSortedHistoryRun* b){
@@ -23,14 +23,14 @@ __global__ void generic_sorted_carry_select(GenericSortedRunPool pool,GenericSor
  if(cls>=classes){generic_sorted_tier_abort(pool,carry,error);atomicOr(error,32u);carry->stage=SORTED_CARRY_FAILED;cudaGraphSetConditional(loop,0);return;}
  *a=carry->ticket.left_view;*b=carry->ticket.right_view;cudaGraphSetConditional(handles[cls],1);
 }
-__global__ void generic_sorted_carry_scatter(GenericSortedRunCarry* carry,const uint64_t* hashes,
+static __global__ void generic_sorted_carry_scatter(GenericSortedRunCarry* carry,const uint64_t* hashes,
  const uint32_t* rows,const uint32_t* flags,const uint32_t* prefix,uint32_t capacity,uint32_t* count){
  if(!blockIdx.x&&!threadIdx.x)*count=prefix[capacity-1]+flags[capacity-1];
  auto ticket=carry->ticket;
  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<capacity;i+=uint64_t(blockDim.x)*gridDim.x)
   if(flags[i]){ticket.destination_hashes[prefix[i]]=hashes[i];ticket.destination_rows[prefix[i]]=rows[i];}
 }
-__global__ void generic_sorted_carry_finish(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
+static __global__ void generic_sorted_carry_finish(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,
  GenericSortedRunCarry* carry,const uint32_t* count,uint32_t* error,cudaGraphConditionalHandle loop){
  if(blockIdx.x||threadIdx.x)return;generic_sorted_tier_commit(pool,tiers,carry,*count,error);
  cudaGraphSetConditional(loop,carry->stage==SORTED_CARRY_NEXT&&!(*error));

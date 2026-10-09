@@ -18,7 +18,7 @@ template<class Action,class State> __global__ void generic_sorted_accept_flags(
   flags[i]=keep;
  }
 }
-__global__ void generic_sorted_accept_reserve(GenericSortedRunPool pool,
+static __global__ void generic_sorted_accept_reserve(GenericSortedRunPool pool,
  const uint32_t* flags,const uint32_t* prefix,uint32_t n,uint32_t capacity,
  uint32_t* row_count,uint32_t* frontier_count,uint32_t rolling,
  GenericSortedAcceptReservation* out,const GenericSortedRunCarry* carry,uint32_t* error){
@@ -50,7 +50,7 @@ template<class Action,class State> __global__ void generic_sorted_accept_materia
   future[reservation->frontier_begin+position]=row;
  }
 }
-__global__ void generic_sorted_accept_publish(GenericSortedRunPool pool,
+static __global__ void generic_sorted_accept_publish(GenericSortedRunPool pool,
  GenericSortedAcceptReservation* reservation,GenericSortedRunCarry* carry,uint32_t* error){
  if(blockIdx.x||threadIdx.x)return;
  if(!reservation->valid)return;

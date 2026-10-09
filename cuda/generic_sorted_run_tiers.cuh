@@ -21,13 +21,13 @@ struct GenericSortedMergeTicket {
 struct GenericSortedRunCarry {
  GenericSortedRunToken token;uint32_t valid,stage;GenericSortedMergeTicket ticket;
 };
-__device__ bool generic_sorted_same_token(GenericSortedRunToken a,GenericSortedRunToken b){return a.slot==b.slot&&a.generation==b.generation;}
-__device__ GenericSortedHistoryRun generic_sorted_pool_view(GenericSortedRunPool pool,
+__device__ inline bool generic_sorted_same_token(GenericSortedRunToken a,GenericSortedRunToken b){return a.slot==b.slot&&a.generation==b.generation;}
+__device__ inline GenericSortedHistoryRun generic_sorted_pool_view(GenericSortedRunPool pool,
  GenericSortedRunToken token,uint64_t* hashes,uint32_t* rows){
  uint64_t offset=uint64_t(token.slot)*pool.page_entries;
  return {hashes+offset,rows+offset,pool.descriptors[token.slot].count};
 }
-__device__ void generic_sorted_tier_prepare(GenericSortedRunPool pool,
+__device__ inline void generic_sorted_tier_prepare(GenericSortedRunPool pool,
  GenericSortedRunTiers* tiers,GenericSortedRunCarry* carry,uint64_t* hashes,uint32_t* rows,uint32_t* error){
  if(!carry->valid){carry->stage=SORTED_CARRY_IDLE;return;}
  if(*error){carry->stage=SORTED_CARRY_FAILED;return;}
@@ -68,14 +68,14 @@ __device__ void generic_sorted_tier_prepare(GenericSortedRunPool pool,
   generic_sorted_pool_view(pool,right,hashes,rows),hashes+destination_offset,rows+destination_offset,uint32_t(capacity)};
  __threadfence();carry->stage=SORTED_CARRY_MERGE;
 }
-__device__ void generic_sorted_tier_abort(GenericSortedRunPool pool,GenericSortedRunCarry* carry,uint32_t* error){
+__device__ inline void generic_sorted_tier_abort(GenericSortedRunPool pool,GenericSortedRunCarry* carry,uint32_t* error){
  if(carry->stage!=SORTED_CARRY_MERGE){atomicOr(error,512u);return;}
  auto ticket=carry->ticket;
  generic_sorted_run_release(pool,ticket.left,false,error);generic_sorted_run_release(pool,ticket.right,false,error);
  generic_sorted_run_release(pool,ticket.destination,true,error);
  carry->stage=SORTED_CARRY_PRESSURE; // original tier + carry ownership are intact
 }
-__device__ void generic_sorted_tier_commit(GenericSortedRunPool pool,
+__device__ inline void generic_sorted_tier_commit(GenericSortedRunPool pool,
  GenericSortedRunTiers* tiers,GenericSortedRunCarry* carry,uint32_t count,uint32_t* error){
  if(carry->stage!=SORTED_CARRY_MERGE){atomicOr(error,512u);return;}
  auto ticket=carry->ticket;uint32_t bit=1u<<ticket.size_class;

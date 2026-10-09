@@ -30,7 +30,7 @@ inline cudaError_t generic_sorted_run_merge_shape(uint32_t capacity,
 // Hash orders buckets; full canonical coordinates resolve every hash tie.
 // Equal states compare equal, independently of physical row and input run.
 template<class State>
-__device__ int generic_sorted_run_compare(uint64_t ah,uint32_t ar,uint64_t bh,uint32_t br,
+__device__ inline int generic_sorted_run_compare(uint64_t ah,uint32_t ar,uint64_t bh,uint32_t br,
  const State* arena,uint32_t stride,uint32_t elements,uint32_t* error) {
  if(ar>=stride||br>=stride){atomicOr(error,8u);return 0;}
  if(ah<bh)return -1;if(ah>bh)return 1;
@@ -42,7 +42,7 @@ __device__ int generic_sorted_run_compare(uint64_t ah,uint32_t ar,uint64_t bh,ui
 }
 // Stable left-before-right merge-path partition at an output diagonal.
 template<class State>
-__device__ uint32_t generic_sorted_run_partition(uint32_t diagonal,
+__device__ inline uint32_t generic_sorted_run_partition(uint32_t diagonal,
  GenericSortedHistoryRun a,GenericSortedHistoryRun b,const State* arena,
  uint32_t stride,uint32_t elements,uint32_t* error) {
  uint32_t lo=diagonal>b.count?diagonal-b.count:0;
@@ -58,7 +58,7 @@ __device__ uint32_t generic_sorted_run_partition(uint32_t diagonal,
  atomicOr(error,256u);return lo;
 }
 template<class State>
-__global__ void generic_sorted_run_validate_exact(const GenericSortedHistoryRun* view,
+static __global__ void generic_sorted_run_validate_exact(const GenericSortedHistoryRun* view,
  uint32_t admitted_capacity,const State* arena,uint32_t stride,uint32_t elements,uint32_t* error){
  auto run=*view;
  if(run.count>admitted_capacity){if(!blockIdx.x&&!threadIdx.x)atomicOr(error,32u);return;}
@@ -71,7 +71,7 @@ __global__ void generic_sorted_run_validate_exact(const GenericSortedHistoryRun*
 // Device views/counts: launch geometry depends only on admitted destination capacity.
 // Input and destination planes must have distinct, held pool leases.
 template<class State>
-__global__ void generic_sorted_run_merge(const GenericSortedHistoryRun* av,
+static __global__ void generic_sorted_run_merge(const GenericSortedHistoryRun* av,
  const GenericSortedHistoryRun* bv,const State* arena,uint32_t stride,uint32_t elements,
  uint64_t* hashes,uint32_t* rows,uint32_t a_capacity,uint32_t b_capacity,
  uint32_t capacity,uint32_t* count,uint32_t* error){
@@ -97,7 +97,7 @@ __global__ void generic_sorted_run_merge(const GenericSortedHistoryRun* av,
  rows[start+lane]=left?at.rows[ai]:bt.rows[bi];
 }
 template<class State>
-__global__ void generic_sorted_run_unique_flags(const uint64_t* hashes,const uint32_t* rows,
+static __global__ void generic_sorted_run_unique_flags(const uint64_t* hashes,const uint32_t* rows,
  const uint32_t* count,uint32_t capacity,const State* arena,uint32_t stride,uint32_t elements,
  uint32_t* flags,uint32_t* error){
  uint32_t n=*count;
@@ -110,7 +110,7 @@ __global__ void generic_sorted_run_unique_flags(const uint64_t* hashes,const uin
  }
 }
 // Prefix is a caller-owned CUB exclusive scan over the fixed admitted capacity.
-__global__ void generic_sorted_run_unique_scatter(const uint64_t* hashes,const uint32_t* rows,
+static __global__ void generic_sorted_run_unique_scatter(const uint64_t* hashes,const uint32_t* rows,
  const uint32_t* flags,const uint32_t* prefix,uint32_t capacity,uint64_t* out_hashes,
  uint32_t* out_rows,uint32_t* out_count){
  if(!blockIdx.x&&!threadIdx.x)*out_count=capacity?prefix[capacity-1]+flags[capacity-1]:0;

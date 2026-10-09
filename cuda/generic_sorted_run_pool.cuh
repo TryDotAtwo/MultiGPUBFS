@@ -43,16 +43,16 @@ static constexpr unsigned long long SORTED_RUN_PUBLISHING=0x20000000ull;
 static constexpr unsigned long long SORTED_RUN_PUBLISHED=0x40000000ull;
 static constexpr unsigned long long SORTED_RUN_RETIRING=0x80000000ull;
 
-__device__ unsigned long long generic_sorted_run_mask(uint32_t start,uint32_t size_class) {
+__device__ inline unsigned long long generic_sorted_run_mask(uint32_t start,uint32_t size_class) {
  uint32_t pages=1u<<size_class;
  return pages==64 ? ~0ull : ((1ull<<pages)-1ull)<<start;
 }
-__device__ void generic_sorted_run_free_pages(GenericSortedRunPool pool,uint32_t slot,uint32_t size_class){
+__device__ inline void generic_sorted_run_free_pages(GenericSortedRunPool pool,uint32_t slot,uint32_t size_class){
  uint32_t region=slot/64,start=slot%64;
  if(size_class<=6)atomicAnd(pool.occupied+region,~generic_sorted_run_mask(start,size_class));
  else{uint32_t regions=1u<<(size_class-6);for(uint32_t i=0;i<regions;++i)atomicExch(pool.occupied+region+i,0ull);}
 }
-__device__ GenericSortedRunAcquire generic_sorted_run_claimed_descriptor(
+__device__ inline GenericSortedRunAcquire generic_sorted_run_claimed_descriptor(
  GenericSortedRunPool pool,uint32_t slot,uint32_t size_class,
  GenericSortedRunToken* result,uint32_t* error){
  auto* descriptor=pool.descriptors+slot;
@@ -65,7 +65,7 @@ __device__ GenericSortedRunAcquire generic_sorted_run_claimed_descriptor(
  atomicExch(&descriptor->lease,(uint64_t(generation)<<32)|1ull);
  *result={slot,generation};return SORTED_RUN_ACQUIRED;
 }
-__device__ GenericSortedRunAcquire generic_sorted_run_allocate(
+__device__ inline GenericSortedRunAcquire generic_sorted_run_allocate(
  GenericSortedRunPool pool,uint32_t size_class,uint32_t first_region,
  GenericSortedRunToken* result,uint32_t* error) {
  GenericSortedRunPoolShape shape;
@@ -106,7 +106,7 @@ __device__ GenericSortedRunAcquire generic_sorted_run_allocate(
 }
 // Only the sole unpublished writer may return unused tail credit. The prefix
 // already contains the unique output; no hash/ref/state payload is copied.
-__device__ bool generic_sorted_run_trim(GenericSortedRunPool pool,
+__device__ inline bool generic_sorted_run_trim(GenericSortedRunPool pool,
  GenericSortedRunToken token,uint32_t count,uint32_t* error){
  if(!count||token.slot>=uint64_t(pool.regions)*64){atomicOr(error,32u);return false;}
  auto* d=pool.descriptors+token.slot;auto expected=(uint64_t(token.generation)<<32)|1ull;
@@ -131,7 +131,7 @@ __device__ bool generic_sorted_run_trim(GenericSortedRunPool pool,
  }
  __threadfence();atomicExch(&d->lease,expected);return true;
 }
-__device__ bool generic_sorted_run_publish(GenericSortedRunPool pool,
+__device__ inline bool generic_sorted_run_publish(GenericSortedRunPool pool,
  GenericSortedRunToken token,uint32_t count,uint32_t* error) {
  if(token.slot>=uint64_t(pool.regions)*64) {atomicOr(error,8u);return false;}
  auto* d=pool.descriptors+token.slot;
@@ -147,7 +147,7 @@ __device__ bool generic_sorted_run_publish(GenericSortedRunPool pool,
  atomicExch(&d->lease,expected|SORTED_RUN_PUBLISHED);
  return true;
 }
-__device__ bool generic_sorted_run_read_acquire(GenericSortedRunPool pool,
+__device__ inline bool generic_sorted_run_read_acquire(GenericSortedRunPool pool,
  GenericSortedRunToken token,uint32_t* error) {
  if(token.slot>=uint64_t(pool.regions)*64) {atomicOr(error,8u);return false;}
  auto* d=pool.descriptors+token.slot;
@@ -162,7 +162,7 @@ __device__ bool generic_sorted_run_read_acquire(GenericSortedRunPool pool,
   observed=previous;
  }
 }
-__device__ bool generic_sorted_run_release(GenericSortedRunPool pool,
+__device__ inline bool generic_sorted_run_release(GenericSortedRunPool pool,
  GenericSortedRunToken token,bool owner,uint32_t* error) {
  if(token.slot>=uint64_t(pool.regions)*64) {atomicOr(error,8u);return false;}
  auto* d=pool.descriptors+token.slot;

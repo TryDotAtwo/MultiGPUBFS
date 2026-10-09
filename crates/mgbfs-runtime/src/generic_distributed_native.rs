@@ -1,6 +1,7 @@
 //! General exact distributed engine: preallocated queues and independent owner streams.
 //! Fixed-capacity transport is a correctness fallback, not an optimal bandwidth claim.
 use std::{ffi::c_void,ptr};
+use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
 use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{generic_native::{GenericNativeBfs,Buffer,Stream,check},generic_memory::GenericMemoryPlan,generic_distributed_memory::GenericDistributedMemoryPlan};
@@ -33,7 +34,7 @@ impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
  bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
- sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
+ sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,positions:Option<Buffer>,rolling_counts:[u32;3],retired_rows:u64,
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
@@ -65,14 +66,30 @@ impl GenericDistributedBfs{
   check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;
   let banks=[QueueBank::new(&plan,d)?,QueueBank::new(&plan,d)?];let inbox=QueueBank::new(&plan,d)?;
   let control=Buffer::new(64+plan.world as usize*8,d)?;
-  let mut streams=vec![];let mut done=vec![];for _ in 0..plan.shards{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
+  let use_sorted=match std::env::var("MGBFS_GENERIC_HISTORY").as_deref(){Ok("sorted")=>true,Ok("hash")|Err(_)=>false,_=>return Err("GENERIC_HISTORY_MODE".into())};
+  let lanes=if use_sorted{plan.shards.min(4)}else{plan.shards};
+  let mut streams=vec![];let mut done=vec![];for _ in 0..lanes{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
+  let sorted_owner=if use_sorted{
+   let input=SortedInput{elements:plan.elements,world:plan.world,rank,shards:plan.shards,queue_capacity:plan.queue_capacity,state_bytes:plan.state_bytes,transport:if plan.packed_candidates(){1}else if plan.parent_transport{2}else{0},kind:bfs.kind,rows:bfs.rows,cols:bfs.cols,generators:bfs.generators,parent_stride:plan.batch,hash_bits,seed,..Default::default()};
+   let shape=OwnerShape::query(&input,plan.capacity,plan.history_layers,lanes,d)?;
+   let(mut free,mut total)=(0,0);check(unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+   // Temporary explicit integration admission includes every extra buffer.
+   // Driver-owned graph metadata uses separate cold headroom; legacy plan
+   // accounting is replaced by unified sorted admission in the next step.
+   let graph_reserve=(128usize<<20).max(plan.shards as usize*plan.history_layers as usize*65536);
+   if shape.allocated_bytes.checked_add(graph_reserve).ok_or("SORTED_OWNER_ADMISSION_OVERFLOW")?>free{return Err("SORTED_OWNER_ADMISSION_NO_CAPACITY".into());}
+   let pointers=streams.iter().map(|v|v.ptr).collect::<Vec<_>>();
+   let owner=SortedOwner::new(&input,shape,bfs.visited.ptr,bfs.arena_stride,bfs.control.at(8),&pointers,d)?;
+   if rank==root_rank{let shard=((u64::from(hash as u32)*u64::from(plan.shards))>>32) as u32;owner.seed(shard,hash,bfs.control.at(8),bfs.stream.ptr)?;}
+   check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;Some(owner)
+  }else{None};
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
   check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
   let counts=(0..plan.world).map(|r|if r==root_rank{1u32}else{0}).collect::<Vec<_>>();
-  let sort_cache=if plan.sort_candidates{Some(SortCache::new(&plan,d)?)}else{None};
+  let sort_cache=if plan.sort_candidates&&!use_sorted{Some(SortCache::new(&plan,d)?)}else{None};
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
-  Ok(Self{sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
+  Ok(Self{sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn frontier_len(&self)->u32{self.bfs.count}
@@ -91,7 +108,9 @@ impl GenericDistributedBfs{
   let b=&mut self.bfs;if b.terminal{return Err("GENERIC_DISTRIBUTED_TERMINAL".into());}b.terminal=true;
   check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;let stream=b.stream.ptr;let p=&self.plan;
   let rolling=p.history_layers==3;let future_bank=((self.depth+1)%3) as usize;let future_base=future_bank as u32*p.capacity;
-  if rolling{
+  if rolling&&self.sorted_owner.is_some(){
+   self.sorted_owner.as_ref().unwrap().retire_bank(future_bank as u32,b.control.at(8),stream)?;self.rolling_counts[future_bank]=0;
+  }else if rolling{
    let positions=self.positions.as_ref().ok_or("GENERIC_ROLLING_POSITIONS")?;let expired=self.rolling_counts[future_bank];
    if expired!=0{check(unsafe{mgbfs_generic_retire_rows(b.slots.ptr.cast(),p.table_slots,positions.ptr.cast(),b.arena_stride,future_base,expired,b.control.at(8),stream)})?;self.retired_rows+=u64::from(expired);self.rolling_counts[future_bank]=0;}
    // Tombstones preserve probe chains. Maintenance is amortized over at
@@ -131,7 +150,14 @@ impl GenericDistributedBfs{
     check(unsafe{mgbfs_nccl_all_gather_bytes(self.comm,cache.sources[((self.depth+round)%2) as usize].ptr,cache.received.ptr,u64::from(p.batch)*u64::from(p.elements)*u64::from(p.state_bytes),stream)})?;
    }
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
-   for shard in 0..shards{let owner_stream=self.streams[shard].ptr;check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;
+   for shard in 0..shards{let owner_stream=self.streams[shard%self.streams.len()].ptr;if shard<self.streams.len(){check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;}
+    if let Some(owner)=&self.sorted_owner{
+     let mut input=SortedInput{elements:p.elements,world:p.world,rank:self.rank,shard:shard as u32,shards:p.shards,queue_capacity:p.queue_capacity,state_bytes:p.state_bytes,transport:if p.packed_candidates(){1}else if p.parent_transport{2}else{0},kind:b.kind,rows:b.rows,cols:b.cols,generators:b.generators,parent_stride:p.batch,chunk:batch,hash_bits:b.hash_bits,begin:global_begin,seed:b.seed,local:bank.states.ptr,remote:self.inbox.states.ptr,local_meta:bank.records.ptr,remote_meta:self.inbox.records.ptr,local_counts:bank.counts.ptr,remote_counts:self.inbox.counts.ptr,permutations:b.perms.ptr,matrices:b.matrices.ptr,moduli:b.moduli.ptr,..Default::default()};
+     if let Some(cache)=&self.parent_cache{input.parents=cache.received.ptr;input.cursors=cache.cursors.ptr;input.frontiers=cache.frontiers.ptr;}
+     let destination=SortedDestination{arena:b.visited.ptr,stride:b.arena_stride,base:if rolling{future_base}else{0},capacity:p.capacity,rolling:u32::from(rolling),row_count:if rolling{b.control.at(4)}else{b.control.at(0)},frontier_count:b.control.at(4),future:b.future.ptr,error:b.control.at(8),..Default::default()};
+     owner.accept(&input,destination,if rolling{future_bank as u32}else{0})?;
+     continue;
+    }
     let ordered=if let Some(cache)=&self.sort_cache{
      let offset=shard*p.world as usize*q;
      check(unsafe{mgbfs_generic_sort_origins(bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,cache.keys.at(offset*8),cache.sorted_keys.at(offset*8),cache.origins.at(offset*4),cache.sorted_origins.at(offset*4),cache.scratch.at::<c_void>(shard*cache.scratch_stride),cache.scratch_stride as u64,b.control.at(8),owner_stream)})?;cache.sorted_origins.at::<u32>(offset*4).cast_const()
@@ -142,8 +168,8 @@ impl GenericDistributedBfs{
      check(unsafe{mgbfs_generic_accept_sorted(p.state_bytes,p.elements,bank.states.ptr, self.inbox.states.ptr,bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
     }else if rolling{check(unsafe{mgbfs_generic_accept_rolling_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),b.arena_stride,future_base,p.capacity,b.control.at(4),b.future.ptr.cast(),self.positions.as_ref().unwrap().ptr.cast(),b.control.at(8),owner_stream)})?;}
     else{    check(unsafe{mgbfs_generic_accept_all_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),p.capacity,b.control.at(0),b.future.ptr.cast(),p.capacity,b.control.at(4),b.control.at(8),owner_stream)})?;}
-    check(unsafe{cudaEventRecord(self.done[shard].ptr,owner_stream)})?;
    }
+   for(lane,owner_stream)in self.streams.iter().enumerate(){check(unsafe{cudaEventRecord(self.done[lane].ptr,owner_stream.ptr)})?;}
    // Next round may generate into the other source bank; inbox retirement
    // waits occur after that generation and before the next exchange.
    global_begin+=u64::from(batch);round+=1;

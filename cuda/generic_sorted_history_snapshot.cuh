@@ -5,7 +5,7 @@
 struct GenericSortedHistorySnapshot {
  GenericSortedHistoryRun runs[32];GenericSortedRunToken tokens[32];uint32_t count,held;
 };
-__device__ void generic_sorted_history_snapshot_acquire(GenericSortedRunPool pool,
+__device__ inline void generic_sorted_history_snapshot_acquire(GenericSortedRunPool pool,
  const GenericSortedRunTiers* tiers,GenericSortedHistorySnapshot* snapshot,
  uint64_t* hashes,uint32_t* rows,uint32_t* error){
  if(snapshot->held){atomicOr(error,512u);return;}
@@ -20,7 +20,7 @@ __device__ void generic_sorted_history_snapshot_acquire(GenericSortedRunPool poo
  }
  __threadfence();snapshot->held=1;
 }
-__device__ void generic_sorted_history_snapshot_release(GenericSortedRunPool pool,
+__device__ inline void generic_sorted_history_snapshot_release(GenericSortedRunPool pool,
  GenericSortedHistorySnapshot* snapshot,uint32_t* error){
  if(!snapshot->held){atomicOr(error,512u);return;}
  for(uint32_t i=0;i<snapshot->count;++i)generic_sorted_run_release(pool,snapshot->tokens[i],false,error);

@@ -96,3 +96,37 @@ The sorted replacement must use separate tier sets per state epoch/bank and shar
 Runtime integration must preserve the existing full/general, packed24 and parent-origin action value/child distinction, collective resource votes, terminal previous/current sampling, inverse-closed admission and source retry handling. Incoming exact origin sort/unique precedes materialization of survivors into admitted future bank space. Run pool, per-owner graph workspaces, canonical arena, incoming sort, queue metadata/payload and transport must all be charged by the same planner; total/per-shard capacity must not assume uniform ownership. Graph pressure preserves both input roots and accepted future rows and is a collective resource outcome only after bounded reclaim/retry.
 
 The existing native main stream waits for owner done events between inbox uses and at layer boundaries. Preserve that state-lifetime boundary while wiring sorted epochs; finer immediate parent-row recycling requires a distinct proved lease contract and is not supplied by immutable run credits. This source-bound integration plan is incomplete implementation evidence.
+
+
+## First main-runtime integration, 2026-10-10
+
+The sorted owner now participates in GenericDistributedBfs acceptance and
+rolling epoch retirement. It is explicitly gated by MGBFS_GENERIC_HISTORY=sorted
+for this integration stage. The accepted hash default remains available.
+Logical shards have independent roots and graph handles; up to four owner lanes
+reuse flat origin/snapshot/carry scratch in fixed stream order. Each retained
+bank has its own shard roots. Snapshots are released before direct disjoint carry;
+layer events join all lanes before recycling a canonical bank. Persistent pool
+pressure becomes a collective resource result after a bounded carry retry.
+
+Ten complete-graph/resource fixtures on two RTX3060 compare every completed
+state of every layer with an independent CPU oracle: packed byte/int64, widths
+above packed24 via full and parent transport, matrix/involution actions, forced
+hash collisions, 1/8/32 logical shards, directed all-history, inverse-closed
+three-bank history, and preservation of previous/current on capacity stop.
+Native ABI carry transactions additionally pass memcheck on both GPUs.
+
+Reproduce with the CUDA library and generic_distributed_gate example built from
+the same source, MGBFS_CUDA_LIB_DIR pointing to that library, and run
+tests/generic_sorted_history_runtime_gpu.py. The script sets EAGER CUDA loading
+and accepts MGBFS_SORTED_HISTORY_GATE_ROOT and MGBFS_SORTED_HISTORY_GATE_EXAMPLE.
+Proof states remain on the validation host/private HF, not on the user's PC.
+
+This is explicit-capacity runtime correctness acceptance, not completion of
+the unified launch goal or a throughput result. Legacy hash slots/positions
+remain allocated during this first integration. New owner buffers have an
+additional cold free-memory gate and allocation-shape check, but the serialized
+plan/AUTO must still admit the combined backend and remove unused hash storage.
+History algorithm must become a matched serialized plan and measured AUTO
+candidate. Near-card throughput, cancellation/deadline, clean package install,
+multi-host and physical scales beyond two GPU remain unverified for this code.

@@ -1,0 +1,32 @@
+#include "generic_sorted_disjoint_carry_graph.cuh"
+#include "generic_sorted_native.h"
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
+#define CK(x) do{auto e=(x);if(e!=cudaSuccess){fprintf(stderr,"%s: %s\n",#x,cudaGetErrorString(e));exit(2);}}while(0)
+template<class T>struct Dev{T* p;Dev(size_t n){CK(cudaMalloc(&p,(n?n:1)*sizeof(T)));}~Dev(){cudaFree(p);}std::vector<T>get(size_t n){std::vector<T>v(n);if(n)CK(cudaMemcpy(v.data(),p,n*sizeof(T),cudaMemcpyDeviceToHost));return v;}};
+template<class State>__global__ void fill(State* states,uint32_t stride,uint32_t width){for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<uint64_t(stride)*width;i+=uint64_t(gridDim.x)*blockDim.x){uint32_t row=i%stride,c=i/stride;if constexpr(sizeof(State)==1)states[i]=State(c==0?row>>8:c==1?row&255:(row+c)%17);else states[i]=State(uint64_t(row)*17+c);}}
+__global__ void seed(GenericSortedRunPool pool,GenericSortedRunCarry* carry,uint64_t* hashes,uint32_t* rows,uint32_t begin,uint32_t mode,uint32_t* error){if(blockIdx.x||threadIdx.x)return;GenericSortedRunToken token{};if(generic_sorted_run_allocate(pool,5,0,&token,error)!=SORTED_RUN_ACQUIRED){atomicOr(error,2u);return;}uint64_t offset=uint64_t(token.slot)*pool.page_entries;for(uint32_t i=0;i<256;++i){hashes[offset+i]=mode?~0ull:uint64_t(begin+i);rows[offset+i]=begin+i;}if(!generic_sorted_run_publish(pool,token,256,error))return;carry->token=token;carry->valid=1;carry->stage=SORTED_CARRY_NEXT;}
+__global__ void release_all(GenericSortedRunPool pool,GenericSortedRunTiers* tiers,GenericSortedRunCarry* carry,uint32_t* error){if(blockIdx.x||threadIdx.x)return;if(carry->valid){generic_sorted_run_release(pool,carry->token,true,error);carry->valid=0;}for(uint32_t c=0;c<32;++c)if(tiers->present&(1u<<c))generic_sorted_run_release(pool,tiers->tokens[c],true,error);tiers->present=0;}
+template<class State>void fixture(int device,uint32_t width,uint32_t mode){
+ constexpr uint32_t regions=16,page=8,stride=512,classes=7;GenericSortedRunPoolShape shape{};if(!generic_sorted_run_pool_shape(regions,page,&shape))exit(3);
+ Dev<unsigned long long> bitmap(regions);Dev<GenericSortedRunDescriptor> descriptors(regions*64);Dev<uint64_t> hashes(shape.entries);Dev<uint32_t> rows(shape.entries),error(1),count(1);Dev<GenericSortedRunTiers> tiers(1);Dev<GenericSortedRunCarry> carry(1);Dev<GenericSortedHistoryRun> a(1),b(1);Dev<State> arena(uint64_t(stride)*width);Dev<cudaGraphConditionalHandle> handles(classes);
+ CK(cudaMemset(bitmap.p,0,regions*8));CK(cudaMemset(descriptors.p,0,regions*64*sizeof(GenericSortedRunDescriptor)));CK(cudaMemset(tiers.p,0,sizeof(GenericSortedRunTiers)));CK(cudaMemset(carry.p,0,sizeof(GenericSortedRunCarry)));CK(cudaMemset(error.p,0,4));fill<<<64,256>>>(arena.p,stride,width);GenericSortedRunPool pool{bitmap.p,descriptors.p,regions,page};GenericSortedDisjointCarryShape admitted{};CK(generic_sorted_disjoint_carry_shape(page,classes,&admitted));if(admitted.aligned_workspace_bytes!=512)exit(4);
+ Dev<uint8_t> control(256),native_handles(256);uint64_t cb=0,hb=0;
+ CK((cudaError_t)mgbfs_generic_sorted_native_carry_shape(page,classes,&cb,&hb));if(cb!=256||hb!=256)exit(14);
+ GenericSortedNativeCarry config{&pool,tiers.p,carry.p,hashes.p,rows.p,arena.p,error.p,control.p,native_handles.p,stride,width,sizeof(State),classes};void* exec=nullptr;
+ CK((cudaError_t)mgbfs_generic_sorted_native_carry_create(&config,nullptr,&exec));
+ cudaStream_t other;CK(cudaStreamCreateWithFlags(&other,cudaStreamNonBlocking));
+ if(mgbfs_generic_sorted_native_carry_launch(exec,other)!=cudaErrorInvalidValue)exit(15);CK(cudaStreamDestroy(other));
+
+ seed<<<1,1>>>(pool,carry.p,hashes.p,rows.p,0,mode,error.p);CK((cudaError_t)mgbfs_generic_sorted_native_carry_launch(exec,nullptr));CK(cudaDeviceSynchronize());if(error.get(1)[0]||carry.get(1)[0].valid)exit(5);auto initial=tiers.get(1)[0];if(initial.present!=(1u<<5))exit(6);
+ // One exact duplicate straddles the 256-position tile boundary. A caller that
+ // bypasses native acceptance must fail without consuming either input root.
+ seed<<<1,1>>>(pool,carry.p,hashes.p,rows.p,255,mode,error.p);auto right=carry.get(1)[0].token;CK((cudaError_t)mgbfs_generic_sorted_native_carry_launch(exec,nullptr));CK(cudaDeviceSynchronize());auto fatal=error.get(1)[0];auto result=carry.get(1)[0];auto retained=tiers.get(1)[0];
+ if(fatal!=GENERIC_SORTED_DISJOINT_DUPLICATE||!result.valid||result.stage!=SORTED_CARRY_FAILED||retained.present!=initial.present||retained.tokens[5].slot!=initial.tokens[5].slot||retained.tokens[5].generation!=initial.tokens[5].generation)exit(7);
+ auto dd=descriptors.get(regions*64);auto rr=rows.get(shape.entries);auto hh=hashes.get(shape.entries);
+ for(uint32_t which=0;which<2;++which){auto token=which?right:initial.tokens[5];auto d=dd[token.slot];if(d.count!=256||(d.lease&SORTED_RUN_REFS)!=1||(d.lease&SORTED_RUN_RETIRING)||!(d.lease&SORTED_RUN_PUBLISHED))exit(8);for(uint32_t i=0;i<256;++i){uint32_t row=(which?255:0)+i,offset=token.slot*page+i;if(rr[offset]!=row||hh[offset]!=(mode?~0ull:uint64_t(row)))exit(9);}}
+ uint32_t pages=0;for(auto word:bitmap.get(regions))pages+=__builtin_popcountll(word);if(pages!=64)exit(10);
+ CK(cudaMemset(error.p,0,4));release_all<<<1,1>>>(pool,tiers.p,carry.p,error.p);CK(cudaDeviceSynchronize());if(error.get(1)[0])exit(11);for(auto word:bitmap.get(regions))if(word)exit(12);CK((cudaError_t)mgbfs_generic_sorted_native_carry_destroy(exec));printf("DISJOINT_NATIVE_TRANSACTION_PASS device=%d bytes=%zu width=%u mode=%u\n",device,sizeof(State),width,mode);
+}
+int main(){int devices=0;CK(cudaGetDeviceCount(&devices));if(devices<2)return 13;for(int d=0;d<2;++d){CK(cudaSetDevice(d));for(uint32_t width:{2u,25u,129u})for(uint32_t mode=0;mode<2;++mode){fixture<uint8_t>(d,width,mode);fixture<int64_t>(d,width,mode);}}}

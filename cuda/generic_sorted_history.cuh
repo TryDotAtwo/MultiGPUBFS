@@ -10,7 +10,7 @@ struct GenericSortedHistoryRun {
 };
 
 template<class Candidate,class State>
-__device__ bool generic_sorted_history_contains(const Candidate& action,uint32_t child,
+__device__ inline bool generic_sorted_history_contains(const Candidate& action,uint32_t child,
  uint64_t hash,GenericSortedHistoryRun run,const State* arena,uint32_t stride,uint32_t* error){
  uint32_t lo=0,hi=run.count;
  while(lo<hi){uint32_t middle=lo+(hi-lo)/2;if(run.hashes[middle]<hash)lo=middle+1;else hi=middle;}
@@ -26,7 +26,7 @@ __device__ bool generic_sorted_history_contains(const Candidate& action,uint32_t
 }
 
 // Run validation is a publication gate, never an O(history) per-candidate scan.
-__global__ void generic_sorted_history_validate(GenericSortedHistoryRun run,uint32_t capacity,
+static __global__ void generic_sorted_history_validate(GenericSortedHistoryRun run,uint32_t capacity,
  uint32_t stride,uint32_t* error){
  if(run.count>capacity){if(!blockIdx.x&&!threadIdx.x)atomicOr(error,32u);return;}
  for(uint64_t row=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;row<run.count;row+=uint64_t(blockDim.x)*gridDim.x){
@@ -38,7 +38,7 @@ __global__ void generic_sorted_history_validate(GenericSortedHistoryRun run,uint
 // Exact-coordinate ordering permits logarithmic lookup even when every hash
 // collides. The run must have passed exact-order publication validation.
 template<class Candidate,class State>
-__device__ bool generic_sorted_history_contains_exact_sorted(const Candidate& action,
+__device__ inline bool generic_sorted_history_contains_exact_sorted(const Candidate& action,
  uint32_t child,uint64_t hash,GenericSortedHistoryRun run,const State* arena,
  uint32_t stride,uint32_t* error){
  uint32_t lo=0,hi=run.count;

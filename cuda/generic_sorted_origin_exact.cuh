@@ -25,7 +25,7 @@ template<class Action> struct GenericSortedOriginLess {
  }
 };
 template<class Action>
-__global__ void generic_sorted_origin_prepare(Action action,uint32_t capacity,uint64_t seed,
+static __global__ void generic_sorted_origin_prepare(Action action,uint32_t capacity,uint64_t seed,
  uint32_t bits,uint64_t* hashes,uint32_t* origins,uint32_t* error){
  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<capacity;i+=uint64_t(blockDim.x)*gridDim.x){
   uint32_t child=action.child(uint32_t(i));
@@ -36,7 +36,7 @@ __global__ void generic_sorted_origin_prepare(Action action,uint32_t capacity,ui
  }
 }
 template<class Action>
-__global__ void generic_sorted_origin_unique_flags(GenericSortedOriginLess<Action> order,
+static __global__ void generic_sorted_origin_unique_flags(GenericSortedOriginLess<Action> order,
  const uint32_t* sorted,uint32_t capacity,uint32_t* flags){
  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<capacity;i+=uint64_t(blockDim.x)*gridDim.x){
   uint32_t origin=sorted[i];
@@ -44,7 +44,7 @@ __global__ void generic_sorted_origin_unique_flags(GenericSortedOriginLess<Actio
  }
 }
 template<class Action>
-__global__ void generic_sorted_origin_scatter(Action action,const uint64_t* hashes,const uint32_t* sorted,
+static __global__ void generic_sorted_origin_scatter(Action action,const uint64_t* hashes,const uint32_t* sorted,
  const uint32_t* flags,const uint32_t* prefix,uint32_t capacity,uint64_t* unique_hashes,
  uint32_t* unique_origins,uint32_t* unique_count){
  if(!blockIdx.x&&!threadIdx.x)*unique_count=capacity?prefix[capacity-1]+flags[capacity-1]:0;
