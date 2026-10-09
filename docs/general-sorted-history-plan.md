@@ -1,0 +1,32 @@
+# General exact sorted-history integration plan
+
+Status: architectural plan and primitive gates; no production sorted-history backend is accepted yet. The active goal remains the unified exact graph launch with automatic admission and measured choice, not adding a manually forced benchmark mode. User-approved contracts: flat preallocated SoA, separate hash/index and state planes, concurrent shard A/B leases, no CPU production state work, large transactions, compact committed stop snapshots. Supported actions are CayleyPy permutation and integer matrix definitions; byte and signed-int64 codecs preserve the existing exact action semantics.
+
+## Current source
+
+GenericDistributedBfs already launches independent owner streams and overlaps generation into alternate source banks with preceding owner work. GenericSortCache sorts incoming origins but acceptance still uses exact hash-table membership. Rolling hash retirement/reseed is amortized, not rebuilt every layer. Legacy SHARD_AB SORT_MERGE repeatedly merges portions with growing shard history; it must not be copied as the general implementation. The repaired exact LRX owner remains an eligible measured alternative, not an arbitrary-graph proof.
+
+## Final target
+
+1. Immutable sorted runs hold full64-bit hash and canonical VRAM row reference in separate aligned arrays. A hash is an ordering/bucket key only. Equal-hash membership always compares every canonical coordinate; uint64 max and all legal signed state values remain valid. Invalid padding is expressed by validity/count/reference, never by excluding a hash domain.
+2. Accepted future rows are stored once in flat SoA arena. Incoming full/parent-origin/packed24 actions retain their existing immutable lease and GPU value() semantics. Sort and dedup operate on indices. No new full-child plane, CPU generation, CPU dedup or CPU per-row checks are introduced.
+3. Previous/current sorted runs persist across layers for proved inverse-closed graphs. Directed graphs retain every committed run until end of the graph; no false three-bank history optimization. References may be recycled only after all owner events and publication readers retire. On INCOMPLETE, only the partial future is discarded; previous/current remain canonical for compact snapshots.
+4. Future accepted runs form a binary hierarchy. Merge only comparable capacity classes, with GPU merge-path and scans. Never merge every small portion with all accepted history. GPU-resident counts and valid references handle padding and empty runs. The last layer compaction publishes a committed immutable view atomically after every shard finishes.
+5. Runs and allocator descriptors use one preallocated flat arena and bounded size-class bitmaps; no per-state pointers or host allocations in the hot path. Each merge needs an admitted destination credit while its two input runs are leased. A/B producer ownership is released only after exact dedup/materialization and merge completion. If credits are exhausted, apply bounded GPU stream/event backpressure; if the admitted state capacity is exhausted, resource stop without accepting a partial future.
+6. All shard owners have independent streams/workspaces. Carry merges within one shard are true dependencies; other shards and alternate generation continue. Do not reintroduce global cudaDeviceSynchronize or CPU per-portion count reads. Existing collective safety votes remain until a separately accepted device transport replaces them.
+7. Shared capacity cannot assume uniform hashes. One busy shard must be able to consume the admitted shared pool. Forced collisions, skew, tiny/empty queues and uneven ranks are correctness tests. Allocator peak (both leased inputs plus destination, padded capacities, all live ranks/shards/classes and workspace) must be derived and proven before planner admission enables this path.
+
+## Implementation and acceptance sequence
+
+A. Exact sorted-run membership and validation primitive for byte/int64, arbitrary state width, forced hash collisions, valid max hash, invalid references/counts. Independent GPU/CPU oracle on both allowed cards. This alone is not runtime integration or speed evidence.
+B. Flat run allocator and publication generation contracts; synthetic concurrent skew/credit reuse/abort tests, byte-exact peak oracle and native allocation query. No runtime planner advertisement before these pass.
+C. GPU incoming sort/scan/exact tie dedup + merge-path carry over hash/index planes. Parent-origin validity and full-state equality under collisions; equal-class merge bound counters, A/B lease proof. Avoid quadratic tie scans: collided groups need exact-coordinate ordering or collision-safe substructure.
+D. Integrate permutation/matrix, directed/rolling and full/parent/packed paths in GenericDistributedBfs. Allocation planner and serialized plan include history_algorithm and actual workspace. Unsupported old binaries must reject explicit sorted requests before launch; AUTO may retain the accepted hash backend.
+E. Add bounded history_algorithm profiles to local/external autotune, compare the same completed prefix and statuses, keep conservative5percent threshold/cache identity. Complete CPU layer/terminal oracles precede performance. Near-card matched cases, matrix and wide workloads, resource/deadline/SIGTERM, independent external ranks and clean immutable wheel/HF readback gates. Existing unchanged large benchmarks are reused where applicable.
+F. Completion audit against the full objective and single GitHub branch. Physical multi-host/4/8/128, Blackwell and successful LSA remain explicitly unverified without authorized hardware. Do not label the goal complete because one primitive, package or small graph passes.
+
+The plan deliberately separates required data dependencies from accidental waits and optional algorithm selection. A sorted-history candidate must be measured; adding it does not establish that it beats hash on all graphs.
+
+## Foundation acceptance, 2026-10-09
+
+Standalone GPU primitive passed on both RTX3060 devices against an independent CPU full-coordinate oracle: byte/int64 states, widths 2/17/25/129, full/truncated/constant-zero/constant-all-ones hashes, mutated misses, empty view, invalid row, overcapacity and unsorted publication guards. This verifies lookup and publication validation only. The production BFS still uses its prior owner backend. Run allocator, exact sort/dedup/merge, native admission and runtime integration remain unfinished. No throughput claim is made for this foundation.
