@@ -1,3 +1,15 @@
+# Current lossless-key native package
+
+Latest executable/library source: `fa4883cf0bacb06e3898f359b31aba86649bc354`. Tested Linux x86_64, CUDA12.6 toolkit/runtime12, NCCL2.30.7, driver565.57.01 and twoRTX3060. Compiled targetSM86; physical4/8/128GPU and Blackwell acceptance remain unverified. LSA is compiledOFF in this wheel; the public planner observes this and selects the verified host-count NCCL transport. This does not prove LSA incompatibility on other hardware.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/2b666d0eff4892847ffb5c1116c4a8392dc531fe/linux-x86_64-sm86-cuda12.6/fa4883cf0bacb06e3898f359b31aba86649bc354/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `94ec9059abf2e02e7d93417dacc460671d265605c562a7b4c1206e300db67cd3`. Anonymous public readback matched. A fresh virtual environment passed exact small and25-byte-wide full-graph terminal/layer oracles, unsupported packed-key domain rejection, and cold/cached automatic selection. AUTO measured7profiles and chose the general exact path for n8r1 on this machine. No global optimum claim is made.
+
+Exact SHARD_AB is eligible only for matched LRX whose complete normalized state fits128bits, with native capability checked. Other supported graphs use full-state equality. See [lossless key proof and acceptance](lossless-shard-keys.md). The installation command below is historical and superseded.
+
 # Install the verified native development package
 
 Latest implementation: `73cdef732ba116c4540491b405d659a103ee91e4`. Linux x86_64, CUDA13 runtime and a compatible driver are required. The wheel contains SM86 and PTX targets; actual acceptance is one/two RTX3060, not Blackwell or physical8/128GPU scaling.
