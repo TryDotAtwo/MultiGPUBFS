@@ -699,3 +699,5 @@ pub mod ffi {
         ) -> i32;
     }
 }
+
+pub mod generic_graph;

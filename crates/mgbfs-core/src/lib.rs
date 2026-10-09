@@ -13,3 +13,5 @@ pub mod rank_plan;
 pub mod wire;
 
 pub type Result<T> = std::result::Result<T, String>;
+
+pub mod graph_definition;
