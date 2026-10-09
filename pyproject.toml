@@ -8,6 +8,9 @@ version = "0.2.0.dev0"
 description = "Exact native GPU BFS for CayleyPy graph actions"
 requires-python = ">=3.10"
 
+[project.scripts]
+multigpubfs = "multigpubfs.cli:main"
+
 [project.optional-dependencies]
 cayleypy = ["cayleypy"]
 

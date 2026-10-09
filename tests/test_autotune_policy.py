@@ -42,4 +42,20 @@ class ProfilePolicy(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'INVALID_TRANSPORT'):_transport_variants(wide,{'MGBFS_GENERIC_TRANSPORT':'typo'})
  def test_radix_order_can_win_without_changing_transport(self):
   p=self.run_case([1,.9,.8,.7,.5]);self.assertEqual((p['shards'],p['transport'],p['candidate_order']),(4,'full','radix'))
+class SpecializedProfilePolicy(unittest.TestCase):
+ admission=ProfilePolicy.admission
+ tearDown=ProfilePolicy.tearDown
+ def setUp(self):
+  ProfilePolicy.setUp(self);n=8;self.g=GraphDefinition.permutation([list(range(1,n))+[0],[n-1]+list(range(n-1)),[1,0]+list(range(2,n))],list(range(n)))
+ def test_measured_specialized_owner_can_win(self):
+  generic={'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.04,1,1,1],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
+  specialized=dict(generic,layer_seconds=[.04,.1,.1,.1])
+  plan={'capacity':50000,'batch':64}
+  with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',return_value=generic),patch('multigpubfs.specialized.admit_specialized',return_value=plan),patch('multigpubfs.specialized.run_specialized',return_value=specialized):
+   p=choose_profile(self.g,None,None,60,str(self.native),{});self.assertEqual(p['backend'],'shard_ab_hash');self.assertEqual(len(p['pilots']),7)
+ def test_specialized_prefix_mismatch_is_rejected(self):
+  generic={'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.04,1,1,1],'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
+  bad=dict(generic,layer_sizes=[1,20000,19999,20000,1])
+  with patch('multigpubfs.autotune._admit',side_effect=self.admission),patch('multigpubfs.autotune._system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch('multigpubfs.launch.run_graph',return_value=generic),patch('multigpubfs.specialized.admit_specialized',return_value={'capacity':50000,'batch':64}),patch('multigpubfs.specialized.run_specialized',return_value=bad):
+   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH'):choose_profile(self.g,None,None,60,str(self.native),{})
 if __name__=='__main__':unittest.main()
