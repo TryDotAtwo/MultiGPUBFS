@@ -1,16 +1,16 @@
 # Current local-rank planning and automatic-profile native package
 
-Verified executable/package source: `0791e713694cf8f757d071c93cf2b5a01b960d61`.
+Verified executable/package source: `a37480a9eb92e479b9eee5d9bc98063c5736e5e9`.
 Linux x86_64, compiled target SM86, CUDA 13.2 runtime, NCCL 2.30.7.
 Actual clean installation: one/two RTX3060 with driver 595.84. Blackwell,
 physical 4/8/128 GPUs and separate hosts remain unverified. Choose an artifact
 compiled for your GPU; this SM86 release is not a B200/B300 acceptance claim.
 
 ```bash
-python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/1969097489383613ca833200bf5b8a9885b0b0ba/linux-x86_64-sm86-cuda13.2/0791e713694cf8f757d071c93cf2b5a01b960d61/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/77903224f739334802e3fac139ab3c3ec6487aef/linux-x86_64-sm86-cuda13.2/a37480a9eb92e479b9eee5d9bc98063c5736e5e9/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
 ```
 
-Wheel SHA256: `c0b41b03b17c5691c98402efbc9fe722af2cb19452c0a3f84022c0af5a8a3fb0`. Anonymous immutable readback
+Wheel SHA256: `7851d280da9dff21b510a2c5012ab9764f4f22ad6b32f47f50dd510aa0598961`. Anonymous immutable readback
 verified. The wheel includes the native executable and CUDA library; its
 manifest checks both hashes. No source checkout, toolkit compilation or
 MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. NVIDIA driver
@@ -49,6 +49,8 @@ re-admission and oversized requests reject. Full-capacity sustained throughput
 and larger hardware acceptance remain pending.
 
 External ranks collectively compare HASH/SORTED and owner lanes1/2/4/8. Each rank queries its own native memory shape before common-batch and weighted-capacity negotiation. Clean-installed TCP/NCCL and isolated local-device0 tests passed on two physical cards on one host. Separate physical nodes remain unverified.
+
+Cold host/cgroup admission, consumed pilot snapshot release and forced sorted-lane inventory fixes: [host-control-memory-2026-10-10.md](host-control-memory-2026-10-10.md). Fresh installed one/two GPU public and collective network tests passed for this package.
 
 ## Historical immutable artifacts
 
