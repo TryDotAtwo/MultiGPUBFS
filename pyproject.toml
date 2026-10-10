@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 multigpubfs = "multigpubfs.cli:main"
 
 [project.optional-dependencies]
-cayleypy = ["cayleypy"]
+cayleypy = ["cayleypy==0.2.0"]
 
 [tool.setuptools.packages.find]
 include = ["multigpubfs", "multigpubfs.*"]

@@ -8,6 +8,19 @@ from multigpubfs import run_graph
 report = run_graph(cayleypy_graph, "results")
 ```
 
+A constructor can also be selected by its exact public catalog name. Install the optional `cayleypy` extra (pinned to the tested CayleyPy0.2.0 API), then use:
+
+```python
+from multigpubfs import from_catalog, run_graph
+report = run_graph(from_catalog("PermutationGroups.lrx", kwargs={"n": 5}), "results")
+```
+
+```bash
+multigpubfs PermutationGroups.lrx results --catalog --catalog-kwargs '{"n": 5}'
+```
+
+Allowed families are `PermutationGroups`, `MatrixGroups` and `Puzzles`; private or arbitrary dotted names are rejected. Positional arguments use `--catalog-args` as a JSON list. Keyword arguments use a JSON object, so parameters requiring non-JSON objects should be supplied through the Python API or an exact serialized `GraphDefinition`. No user source is evaluated. Constructor selection is startup work and does not enter GPU generation/dedup.
+
 The default uses all CUDA-visible devices on one host. `device=1` selects one
 card; `devices=[1,0]` sets explicit placement. `max_seconds` limits work, and
 `capacity` overrides rows per card subject to VRAM admission: per-layer rows for proved inverse-closed graphs, cumulative retained rows for directed graphs.

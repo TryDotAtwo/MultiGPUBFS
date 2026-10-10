@@ -6,7 +6,10 @@ from .launch import run_graph
 
 def main(argv=None):
  parser=argparse.ArgumentParser(description='Exact GPU BFS for CayleyPy permutation and matrix actions. Defaults: all visible GPUs, measured startup tuning and compact terminal retention.')
- parser.add_argument('definition',type=Path,help='GraphDefinition schema2 JSON file')
+ parser.add_argument('definition',help='Schema2 JSON file, or Family.constructor with --catalog')
+ parser.add_argument('--catalog',action='store_true',help='Resolve an exact public CayleyPy constructor name without evaluated source')
+ parser.add_argument('--catalog-args',help='JSON positional argument list for the constructor')
+ parser.add_argument('--catalog-kwargs',help='JSON keyword argument object for the constructor')
  parser.add_argument('output',type=Path,help='New result directory')
  parser.add_argument('--devices',help='Comma-separated local GPU IDs; omitted uses all visible GPUs')
  parser.add_argument('--seconds',type=int,default=3600,help='Bounded launch/work budget including startup tuning')
@@ -19,9 +22,14 @@ def main(argv=None):
  parser.add_argument('--no-autotune',action='store_true')
  args=parser.parse_args(argv)
  try:
-  graph=GraphDefinition.from_dict(json.loads(args.definition.read_text(encoding='utf-8')))
+  if args.catalog:
+   from .catalog import from_catalog
+   graph=from_catalog(args.definition,args=json.loads(args.catalog_args) if args.catalog_args is not None else None,kwargs=json.loads(args.catalog_kwargs) if args.catalog_kwargs is not None else None)
+  else:
+   if args.catalog_args is not None or args.catalog_kwargs is not None:raise ValueError('CATALOG_ARGUMENTS_REQUIRE_CATALOG')
+   graph=GraphDefinition.from_dict(json.loads(Path(args.definition).read_text(encoding='utf-8')))
   devices=None if args.devices is None else [int(v) for v in args.devices.split(',')]
   report=run_graph(graph,args.output,devices=devices,max_seconds=args.seconds,capacity=args.capacity,backend=args.backend,peer_transport=args.peer_transport,shards=args.shards,transport=args.transport,candidate_order=args.candidate_order,autotune=not args.no_autotune)
- except (OSError,ValueError,RuntimeError) as error:
+ except (OSError,ValueError,RuntimeError,TypeError) as error:
   print(str(error),file=sys.stderr);return 1
  print(json.dumps(report,sort_keys=True));return 0
