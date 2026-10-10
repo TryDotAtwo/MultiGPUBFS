@@ -19,3 +19,11 @@ Large LRX12 runs with equal capacity, shard geometry and transport were compared
 The serial startup receipt measured 9.683 seconds fresh and 2.049 seconds cached on this two-3060 fixture, versus the preceding feature's 20.323-second first startup. This is one workload/hardware measurement.
 
 Large validation: common completed depth 29, maximum common layer 3432644 states. Sum of measured common-layer times without/with live tuning: [0.656773666, 0.6724242260000001] seconds. Raw observations, failure/correction logs and paired evidence are archived separately.
+
+## Accepted package
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/06ec26d71864cf4642a37c6f64de748d3454eb54/linux-x86_64-sm86-size-tuning-cuda13.2/92203d003927a53edeab77e8b0fce6283a67ac87/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+SHA256: `e19bd9b3b863309c474d8dec42371efb3e900e968c1a21809442b5eb79e607b8`. This accepted binary package targets SM86. The previous portable binary package is unchanged; use a current source build for this feature on other architectures.
