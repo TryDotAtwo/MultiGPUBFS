@@ -25,8 +25,11 @@ class SharedProfiles(unittest.TestCase):
  def test_atomic_roundtrip_and_invalid_payload(self):
   with tempfile.TemporaryDirectory() as root:
    store(root,self.key,self.saved);self.assertEqual(load(root,self.key),self.saved)
-   for field,value in [('shards',True),('history_algorithm','wrong'),('transport','wrong'),('scores_seconds',[float('nan')]),('backend','wrong'),('generator_backend','gemm')]:
+   for field,value in [('shards',True),('history_algorithm','wrong'),('transport','wrong'),('scores_seconds',[float('nan')]),('backend','wrong'),('generator_backend','unsupported')]:
     p=dict(self.saved);p[field]=value;store(root,self.key,p);self.assertIsNone(load(root,self.key),field)
+ def test_permutation_gemm_profile_roundtrip(self):
+  with tempfile.TemporaryDirectory() as root:
+   p=dict(self.saved,generator_backend='gemm');store(root,self.key,p);self.assertEqual(load(root,self.key),p)
  def test_unmeasured_not_shared(self):
   with tempfile.TemporaryDirectory() as root:
    store(root,self.key,dict(self.saved,measured=False));self.assertIsNone(load(root,self.key))

@@ -18,7 +18,7 @@ impl GenericDistributedMemoryPlan {
  pub fn new(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64)->Result<Self>{Self::with_storage(elements,world,shards,capacity,batch,generators,generator_bytes,8)}
  pub fn with_storage(elements:u32,world:u32,shards:u32,capacity:u32,batch:u32,generators:u32,generator_bytes:u64,state_bytes:u32)->Result<Self>{
   if ![1,8].contains(&state_bytes)||elements==0||!(1..=128).contains(&world)||!(1..=4096).contains(&shards)||capacity==0||capacity>MAX_ARENA_CAPACITY||batch==0||batch>capacity||generators==0 {return Err("GENERIC_DISTRIBUTED_SHAPE".into());}
-  if crate::generic_gemm::requested()?&&u64::from(batch)*u64::from(elements)>1048576{return Err("GEMM_BATCH_EXCEEDS_ADMISSION".into());}
+  if crate::generic_gemm::requested()?&&u64::from(batch)*u64::from(if state_bytes==1{1}else{elements})>1048576{return Err("GEMM_BATCH_EXCEEDS_ADMISSION".into());}
   let full=batch.checked_mul(generators).filter(|v|*v<0x80000000).ok_or("GENERIC_QUEUE_INDEX_RANGE")?;
   let boxes=u64::from(world)*u64::from(shards);
   let balanced=((u64::from(full)+boxes-1)/boxes).saturating_mul(4).max(u64::from(generators));
@@ -47,7 +47,7 @@ impl GenericDistributedMemoryPlan {
   if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   // Reserve at most a quarter for predictable transport, then admit the
   // largest history arena with the actual bounded queues included.
-  let ceiling_batch=ceiling.min((1<<20)/generators.max(1)).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}).max(1);
+  let ceiling_batch=ceiling.min((1<<20)/generators.max(1)).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}).max(1);
   let minimum=Self::with_storage(elements,world,shards,1,1,generators,generator_bytes,state_bytes)?;
   if minimum.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let queue_budget=(budget/4).max(minimum.transport_bytes());
@@ -61,8 +61,8 @@ impl GenericDistributedMemoryPlan {
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(MAX_ARENA_CAPACITY)) as u32;if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   if Self::with_storage(elements,world,shards,1,1,generators,generator_bytes,state_bytes)?.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let mut low=1;let mut high=ceiling;
-  while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage(elements,world,shards,mid,mid.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}),generators,generator_bytes,state_bytes)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
-  Self::with_storage(elements,world,shards,low,low.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}),generators,generator_bytes,state_bytes)
+  while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage(elements,world,shards,mid,mid.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}),generators,generator_bytes,state_bytes)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
+  Self::with_storage(elements,world,shards,low,low.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}),generators,generator_bytes,state_bytes)
  }
  pub fn transport_bytes(&self)->u64{u64::from(self.world)*u64::from(self.shards)*(u64::from(self.queue_capacity)*(32+self.queue_payload_bytes() as u64)+4)*3+if self.packed_candidates()||self.parent_transport{3}else{0}+self.parent_cache_bytes()+self.sort_cache_bytes()}
  pub fn packed_candidates(&self)->bool{self.state_bytes==1&&self.elements<=24}
@@ -93,7 +93,7 @@ impl GenericDistributedMemoryPlan {
   if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   // Reserve at most a quarter for predictable transport, then admit the
   // largest history arena with the actual bounded queues included.
-  let ceiling_batch=ceiling.min((1<<20)/generators.max(1)).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}).max(1);
+  let ceiling_batch=ceiling.min((1<<20)/generators.max(1)).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}).max(1);
   let minimum=Self::with_storage_history(elements,world,shards,1,1,generators,generator_bytes,state_bytes,history_layers)?;
   if minimum.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let queue_budget=(budget/4).max(minimum.transport_bytes());
@@ -107,8 +107,8 @@ impl GenericDistributedMemoryPlan {
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(if history_layers==3{MAX_ROLLING_CAPACITY}else{MAX_ARENA_CAPACITY})) as u32;if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   if Self::with_storage_history(elements,world,shards,1,1,generators,generator_bytes,state_bytes,history_layers)?.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let mut low=1;let mut high=ceiling;
-  while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage_history(elements,world,shards,mid,mid.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}),generators,generator_bytes,state_bytes,history_layers)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
-  Self::with_storage_history(elements,world,shards,low,low.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/elements.max(1)}else{u32::MAX}),generators,generator_bytes,state_bytes,history_layers)
+  while low<high{let mid=low+(high-low+1)/2;let p=Self::with_storage_history(elements,world,shards,mid,mid.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}),generators,generator_bytes,state_bytes,history_layers)?;if p.device_bytes<=budget{low=mid;}else{high=mid-1;}}
+  Self::with_storage_history(elements,world,shards,low,low.min(batch_target).min(if crate::generic_gemm::requested()?{(1<<20)/if state_bytes==1{1}else{elements.max(1)}}else{u32::MAX}),generators,generator_bytes,state_bytes,history_layers)
  }
  pub fn with_sorted_admission(mut self,lanes:u32,owner_bytes:u64,driver_bytes:u64)->Result<Self>{
   if self.history_algorithm!="HASH"||lanes==0||lanes>self.shards||lanes>8||owner_bytes==0||driver_bytes<(128u64<<20).max(u64::from(self.shards)*u64::from(self.history_layers)*65536){return Err("SORTED_PLAN_ADMISSION".into());}

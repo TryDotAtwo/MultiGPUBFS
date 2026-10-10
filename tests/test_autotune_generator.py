@@ -8,7 +8,8 @@ class GeneratorPolicy(unittest.TestCase):
  def graph(self,value=1,mod=251,n=8):return GraphDefinition.matrix(n,1,[([value]*(n*n),mod)],[1]*n)
  def test_exact_gate(self):
   self.assertTrue(gemm_supported(self.graph()))
-  for g in [self.graph(-1),self.graph(256),self.graph(mod=0),self.graph(mod=257),self.graph(n=7),GraphDefinition.permutation([[1,0]],[0,1])]:self.assertFalse(gemm_supported(g))
+  self.assertTrue(gemm_supported(GraphDefinition.permutation([[1,0]],[0,1])))
+  for g in [self.graph(-1),self.graph(256),self.graph(mod=0),self.graph(mod=257),self.graph(n=7)]:self.assertFalse(gemm_supported(g))
  def test_measured_generator_selection(self):
   for gain,want in [(.4,'gemm'),(.98,'cuda'),(1.4,'cuda')]:
    with tempfile.TemporaryDirectory() as d:

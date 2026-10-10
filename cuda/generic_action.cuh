@@ -13,7 +13,7 @@ template<class State> struct ActionT {
  __device__ bool valid(uint32_t,uint32_t*)const{return true;}
  __device__ int64_t value(uint32_t child,uint32_t element)const {
   const uint32_t parent=child/generators,g=child%generators;
-  if(products){uint32_t row=element/m,col=element%m;return int64_t(products[uint64_t(g*n+row)*product_stride+uint64_t(col)*count+parent])%moduli[g];}
+  if(products){uint32_t row=element/m,col=element%m;const int64_t v=products[uint64_t(g*n+row)*product_stride+uint64_t(col)*count+parent];return kind==0?v:v%moduli[g];}
   if(kind==0)return parents[uint64_t(permutations[uint64_t(g)*elements+element])*stride+parent];
   const uint32_t row=element/m,col=element%m;const int64_t* matrix=matrices+uint64_t(g)*n*n;
   uint64_t sum=0;for(uint32_t k=0;k<n;k++)sum+=uint64_t(matrix[uint64_t(row)*n+k])*uint64_t(parents[uint64_t(k*m+col)*stride+parent]);

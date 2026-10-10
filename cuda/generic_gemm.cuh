@@ -16,12 +16,12 @@ extern "C" int mgbfs_generic_gemm_create(uint32_t n,uint32_t m,uint32_t g,uint32
  if(e!=cudaSuccess){cleanup();return int(e);}*result=x;return 0;
 }
 extern "C" int mgbfs_generic_gemm_destroy(void*raw){auto*x=static_cast<GenericGemmContext*>(raw);if(x){cudaFree(x->a);cudaFree(x->b);cudaFree(x->c);delete x;}return 0;}
-__global__ void generic_gemm_pack(const int64_t*parents,uint32_t count,uint32_t stride,uint32_t n,uint32_t m,uint32_t k,uint8_t*out){
+template<class State> __global__ void generic_gemm_pack(const State*parents,uint32_t count,uint32_t stride,uint32_t n,uint32_t m,uint32_t k,uint8_t*out){
  __shared__ uint8_t tile[32][33];uint32_t p=blockIdx.x*32+threadIdx.x,base=blockIdx.y*32,col=blockIdx.z;
  for(uint32_t j=threadIdx.y;j<32;j+=8){uint32_t row=base+j;tile[j][threadIdx.x]=(p<count&&row<n)?uint8_t(parents[uint64_t(row*m+col)*stride+p]):0;}__syncthreads();
  for(uint32_t j=threadIdx.y;j<32;j+=8){uint32_t parent=blockIdx.x*32+j,row=base+threadIdx.x;if(parent<count&&row<k)out[(uint64_t(col)*count+parent)*k+row]=tile[threadIdx.x][j];}
 }
-static int generic_gemm_compute(GenericGemmContext*x,const int64_t*parents,uint32_t count,uint32_t stride,cudaStream_t stream){
+template<class State> static int generic_gemm_compute(GenericGemmContext*x,const State*parents,uint32_t count,uint32_t stride,cudaStream_t stream){
  if(!x||count>x->batch||count>stride||(!parents&&count))return int(cudaErrorInvalidValue);if(!count)return 0;
  generic_gemm_pack<<<dim3((count+31)/32,(x->k+31)/32,x->m),dim3(32,8),0,stream>>>(parents,count,stride,x->n,x->m,x->k,x->a);
  auto e=cudaGetLastError();if(e!=cudaSuccess)return int(e);
