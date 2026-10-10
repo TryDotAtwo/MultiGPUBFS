@@ -231,7 +231,9 @@ bottlenecks are not interchangeable.
 - [Experiment log](docs/experiment-log.md)
 - [Open questions](docs/open-questions.md)
 
-## Current status
+## Historical research status (2026-08-31)
+
+This section records the earlier research-notes audit. It does not describe the current native unified implementation linked at the top of this README.
 
 Latest recorded direction, 2026-08-31: correct the audited research first;
 plugin design and implementation are deferred. The audit found errors despite
@@ -257,10 +259,11 @@ and infinite-branching finality boundaries; these are not runtime measurements.
 Evidence gaps remain explicitly recorded; they do not automatically start a
 new study cycle, benchmark, source-code change, or plugin task.
 
-## Containerized GPU path
+## Historical primitive Docker path
 
-GPU code is built and run only in Docker. Rust owns host orchestration and
-validation; C++ is restricted to CUDA translation units behind a C ABI.
+The `gpu/` and `rust/` prototype below is retained for research reproducibility. It is not the current unified `crates/` and `cuda/` native entry point. Current users should follow [native installation](docs/install-native-package.md) and [unified launch](docs/unified-launch.md); Docker is not required for those Linux GPU runs.
+
+The historical prototype uses Rust host orchestration and validation, with CUDA translation units behind a C ABI.
 
 ```powershell
 docker build -f docker/Dockerfile.gpu -t multigpubfs-gpu:dev .

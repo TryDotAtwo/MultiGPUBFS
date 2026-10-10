@@ -1,3 +1,5 @@
+# Historical gpu/ + rust/ primitive prototype; not the unified crates/ + cuda/ runtime.
+# Current native installation: docs/install-native-package.md
 # syntax=docker/dockerfile:1
 
 FROM gpu-dev-cutlass-nsight:2026-05-24 AS rust-toolchain
