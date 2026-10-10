@@ -61,7 +61,7 @@ impl GenericDistributedBfs{
    let shape=OwnerShape::query(&input,plan.capacity,plan.history_layers,plan.owner_lanes,ordinal)?;
    if shape.allocated_bytes as u64!=plan.sorted_owner_bytes{return Err("SORTED_OWNER_SERIALIZED_SHAPE_MISMATCH".into());}
    let(mut free,mut total)=(0,0);check(unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
-   if plan.device_bytes>free as u64{return Err("SORTED_PLAN_FREE_MEMORY_CHANGED".into());}
+   if plan.device_bytes>(free as u64+crate::session_cache::reusable_bytes()+crate::generic_pool::available()?){return Err("SORTED_PLAN_FREE_MEMORY_CHANGED".into());}
    Some(shape)
   }else{None};
   let local=GenericMemoryPlan::with_storage(plan.elements,plan.capacity,plan.state_bytes)?;
@@ -93,7 +93,8 @@ impl GenericDistributedBfs{
    // from application buffers and is not advertised as byte-exact driver use.
    if shape.allocated_bytes as u64!=plan.sorted_owner_bytes{return Err("SORTED_OWNER_SERIALIZED_SHAPE_MISMATCH".into());}
    let graph_reserve=usize::try_from(plan.driver_graph_reserve_bytes).map_err(|_|"SORTED_OWNER_ADMISSION_OVERFLOW")?;
-   if shape.allocated_bytes.checked_add(graph_reserve).ok_or("SORTED_OWNER_ADMISSION_OVERFLOW")?>free{return Err("SORTED_OWNER_ADMISSION_NO_CAPACITY".into());}
+   if shape.allocated_bytes.checked_add(graph_reserve).ok_or("SORTED_OWNER_ADMISSION_OVERFLOW")? as u64>free as u64+crate::session_cache::reusable_bytes()+crate::generic_pool::available()?{return Err("SORTED_OWNER_ADMISSION_NO_CAPACITY".into());}
+   crate::generic_pool::external_headroom(plan.driver_graph_reserve_bytes)?;
    let pointers=streams.iter().map(|v|v.ptr).collect::<Vec<_>>();
    let owner=SortedOwner::new(&input,shape,bfs.visited.ptr,bfs.arena_stride,bfs.control.at(8),&pointers,d)?;
    if rank==root_rank{let shard=((u64::from(hash as u32)*u64::from(plan.shards))>>32) as u32;owner.seed(shard,hash,bfs.control.at(8),bfs.stream.ptr)?;}
