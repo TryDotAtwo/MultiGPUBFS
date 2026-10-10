@@ -19,6 +19,23 @@ def _phase_environment(env,transport=None,order=None,history=None,lanes=None):
   if value is not None:result[key]=str(value)
  return result
 
+def _merge_local_sorted_plans(parts,digest,requested):
+ if not parts or len(parts)>128:raise RuntimeError('EXTERNAL_LOCAL_PLAN_WORLD')
+ plans=[v['plan'] for v in parts];first=plans[0]
+ fields=('world','shards','elements','state_bytes','history_layers','history_algorithm','owner_lanes','batch','queue_capacity','generator_bytes','parent_transport','sort_candidates')
+ for item in parts:
+  if item['graph_digest']!=digest or item['plan']['world']!=len(parts) or item['plan']['history_algorithm']!='SORTED_RUNS':raise RuntimeError('EXTERNAL_LOCAL_PLAN_IDENTITY')
+  if any(item['plan'][k]!=first[k] for k in fields):raise RuntimeError('EXTERNAL_LOCAL_PLAN_TRANSPORT_GEOMETRY')
+  if requested is not None and item['plan']['capacity']!=requested:raise RuntimeError('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION')
+ cuts=None
+ if requested is None:
+  total=sum(p['capacity'] for p in plans)
+  if total<=0:raise RuntimeError('EXTERNAL_LOCAL_PLAN_CAPACITY')
+  cuts=[0];cumulative=0
+  for p in plans:
+   cumulative+=p['capacity'];cuts.append((cumulative*(1<<32)+total-1)//total)
+ return {'graph_digest':digest,'devices':[v['device'] for v in parts],'inventory':[{k:v[k] for k in ('device','free_bytes','total_bytes')} for v in parts],'plan':first,'rank_plans':plans,'owner_cuts':cuts}
+
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune):
  from .launch import _receipt
  rank=int(os.environ['RANK']);world=int(os.environ['WORLD_SIZE']);local=int(os.environ.get('LOCAL_RANK','0'))
@@ -50,17 +67,36 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
    def admit(label,inventory,count,requested,batch=None,transport=None,order=None,history=None,lanes=None):
     admission_env=_phase_environment(native_env,transport,order,history,lanes)
-    path=temporary/(label.replace('/','-')+'-inventory.json');path.write_text(json.dumps(inventory));cmd=[str(native),'graph-plan',str(definition),str(path),str(count),str(requested) if requested is not None else 'auto']
-    if batch is not None:cmd.append(str(batch))
-    p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
-    if p.returncode:raise RuntimeError('EXTERNAL_GLOBAL_ADMISSION_FAILED '+p.stderr[-2000:])
-    return json.loads(p.stdout)
+    if admission_env.get('MGBFS_GENERIC_HISTORY')=='sorted':
+     target=batch or max(1,(1<<20)//max(1,len(graph.action['generators'])))
+     def local_probe(stage,target):
+      cmd=[str(native),'graph-local-plan',str(definition),str(device),str(world),str(count),str(requested) if requested is not None else 'auto',str(target)]
+      p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
+      item={'value':json.loads(p.stdout)} if p.returncode==0 else {'error':'EXTERNAL_LOCAL_ADMISSION_FAILED '+p.stderr[-2000:]}
+      store.put(label+f'/{stage}/{rank}',item)
+      if rank==0:
+       parts=[store.get(label+f'/{stage}/{i}') for i in range(world)];errors=[v['error'] for v in parts if 'error' in v]
+       store.put(label+'/'+stage+'-result',{'error':errors[0]} if errors else {'parts':[v['value'] for v in parts]})
+      result=store.get(label+'/'+stage+'-result')
+      if 'error' in result:raise RuntimeError(result['error'])
+      return result['parts']
+     initial=local_probe('initial',target);common=min(v['plan']['batch'] for v in initial)
+     if batch is not None and common!=batch:raise RuntimeError('REQUESTED_BATCH_EXCEEDS_SORTED_ADMISSION')
+     parts=local_probe('matched',common);return _merge_local_sorted_plans(parts,digest,requested)
+    if rank==0:
+     path=temporary/(label.replace('/','-')+'-inventory.json');path.write_text(json.dumps(inventory));cmd=[str(native),'graph-plan',str(definition),str(path),str(count),str(requested) if requested is not None else 'auto']
+     if batch is not None:cmd.append(str(batch))
+     p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
+     store.put(label+'/admitted',{'value':json.loads(p.stdout)} if p.returncode==0 else {'error':'EXTERNAL_GLOBAL_ADMISSION_FAILED '+p.stderr[-2000:]})
+    result=store.get(label+'/admitted')
+    if 'error' in result:raise RuntimeError(result['error'])
+    return result['value']
    def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None):
     phase_env=_phase_environment(native_env,transport,order,history,lanes)
     inventory=inventories(label)
+    config=admit(label,inventory,count,requested,transport=transport,order=order,history=history,lanes=lanes)
+    if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes)
     if rank==0:
-     config=admit(label,inventory,count,requested,transport=transport,order=order,history=history,lanes=lanes)
-     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes)
      config['max_seconds']=seconds
      if depth is not None:config['profile_max_layers']=depth
      store.put(label+'/config',config)
@@ -99,15 +135,15 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2));return result['report']
    if shards is None and autotune and max_seconds>=10:
     inventory=inventories('profile-admission')
-    if rank==0:
-     variants=[];plans=[]
-     for i,(c,f,transport,order,history,lanes) in enumerate(_external_variants(graph,native_env)):
-      try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order,history=history,lanes=lanes)['plan']
-      except RuntimeError as error:
-       if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
-       raise
-      variants.append((c,f,transport,order,history,lanes));plans.append(plan)
-     common=min(p['capacity'] for p in plans) if plans else 0;store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
+    variants=[];plans=[]
+    for i,(c,f,transport,order,history,lanes) in enumerate(_external_variants(graph,native_env)):
+     try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order,history=history,lanes=lanes)['plan']
+     except RuntimeError as error:
+      if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
+      raise
+     variants.append((c,f,transport,order,history,lanes));plans.append(plan)
+    common=min(p['capacity'] for p in plans) if plans else 0
+    if rank==0:store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
     proposal=store.get('profile-plan')
     if proposal['run']:
      pilots=[]

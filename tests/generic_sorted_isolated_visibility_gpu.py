@@ -9,7 +9,7 @@ def case(name,g,capacity='auto',shards='4',mismatch=False,history_mismatch=False
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  try:
   for rank in (0,1):
-   local=folder/f'local-{rank}';local.mkdir();definition=local/'definition.json';definition.write_text((GraphDefinition.permutation([[1,0]],[0,1]) if mismatch and rank==1 else g).to_json());env=dict(os.environ,RANK=str(rank),WORLD_SIZE='2',LOCAL_RANK=str(rank),MASTER_ADDR='127.0.0.1',MASTER_PORT=str(port-1),MGBFS_CONTROL_PORT=str(port),MGBFS_RUN_ID=name,MGBFS_CONTROL_TOKEN='fixture-token')
+   local=folder/f'local-{rank}';local.mkdir();definition=local/'definition.json';definition.write_text((GraphDefinition.permutation([[1,0]],[0,1]) if mismatch and rank==1 else g).to_json());env=dict(os.environ,RANK=str(rank),WORLD_SIZE='2',LOCAL_RANK='0',CUDA_VISIBLE_DEVICES=str(rank),MASTER_ADDR='127.0.0.1',MASTER_PORT=str(port-1),MGBFS_CONTROL_PORT=str(port),MGBFS_RUN_ID=name,MGBFS_CONTROL_TOKEN='fixture-token')
    if history_mismatch:env['MGBFS_GENERIC_HISTORY']='sorted' if rank==0 else 'hash'
    log=(folder/f'rank-{rank}.log').open('w');logs.append(log);jobs.append(subprocess.Popen([sys.executable,str(worker),str(definition),str(local/'result'),str(capacity),str(shards)],env=env,stdout=log,stderr=subprocess.STDOUT))
   start=time.monotonic()
@@ -45,8 +45,9 @@ def case(name,g,capacity='auto',shards='4',mismatch=False,history_mismatch=False
   assert reports[0]['plan']['history_algorithm']==profile['history_algorithm']
   if profile['history_algorithm']=='SORTED_RUNS':assert reports[0]['plan']['owner_lanes']==profile['owner_lanes']
  checks.append({'case':name,'states':sum(reports[0]['layer_sizes']),'status':reports[0]['status'],'all_layer_counts_and_terminal_states_exact':True,'collective_autotune':shards=='auto'})
-tail=list(range(6,25));g=GraphDefinition.permutation([[1,2,3,4,5,0]+tail,[5,0,1,2,3,4]+tail,[1,0,2,3,4,5]+tail],list(range(25)))
-case('weighted-network',g);case('resource-network',g,3);case('matrix-network',GraphDefinition.matrix(2,1,[([1,1,0,1],7)],[0,1]));case('mismatch-network',g,mismatch=True)
-case('history-mismatch-network',g,history_mismatch=True)
-case('collective-tuning',GraphDefinition.permutation([[1,2,3,4,5,6,7,0]+list(range(8,25)),[7,0,1,2,3,4,5,6]+list(range(8,25)),[1,0,2,3,4,5,6,7]+list(range(8,25))],list(range(25))),shards='auto')
-receipt={'status':'VERIFIED_ROLLING_NETWORK_EXTERNAL_RANK_TWO_GPU','checks':checks,'scope':'two GPUs and independent worker directories on one host, actual TCP rendezvous and NCCL; physically separate nodes and 8/128 GPUs unverified'};(r/'verification.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt))
+
+g=GraphDefinition.permutation([[1,2,3,4,5,0],[5,0,1,2,3,4],[1,0,2,3,4,5]],list(range(6)))
+case('isolated-visible-sorted',g,shards='8')
+reports=[json.loads((r/'isolated-visible-sorted'/f'local-{i}'/'result/report.json').read_text()) for i in range(2)]
+assert all(v['devices']==[0,0] and v['plan']['history_algorithm']=='SORTED_RUNS' for v in reports)
+(r/'verification.json').write_text(json.dumps({'status':'VERIFIED_LOCAL_GPU_ONLY_SORTED_NETWORK','checks':checks,'scope':'Each worker exposes only its own physical RTX3060 as local device0, separate directories, actual TCP/NCCL; not physical multi-host hardware.'},indent=2))

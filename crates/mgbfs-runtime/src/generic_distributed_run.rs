@@ -48,6 +48,22 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  let plan=rank_plans.iter().min_by_key(|p|p.capacity).unwrap().clone();
  Ok(serde_json::json!({"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
 }
+/// Query only this rank's physical GPU; remote IDs must never be queried here.
+pub fn local_info(args:&[String])->Result<()>{
+ if args.len()!=6{return Err("CLI_GRAPH_LOCAL_PLAN_ARGUMENTS".into());}
+ let g=graph(&args[0])?;let device:i32=args[1].parse().map_err(|_|"CLI_GRAPH_DEVICE")?;
+ let world:u32=args[2].parse().map_err(|_|"CLI_GRAPH_WORLD")?;let shards:u32=args[3].parse().map_err(|_|"CLI_GRAPH_SHARDS")?;
+ if device<0||world==0||world>128{return Err("CLI_GRAPH_LOCAL_PLAN_GEOMETRY".into());}
+ if std::env::var("MGBFS_GENERIC_HISTORY").as_deref()!=Ok("sorted"){return Err("LOCAL_SORTED_PLAN_REQUIRES_SORTED_HISTORY".into());}
+ let requested=if args[4]=="auto"{None}else{Some(args[4].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?)};
+ let target=args[5].parse::<u32>().map_err(|_|"CLI_GRAPH_BATCH")?;if target==0{return Err("CLI_GRAPH_BATCH".into());}
+ check(unsafe{cudaSetDevice(device)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
+ let lanes=std::env::var("MGBFS_GENERIC_OWNER_LANES").ok().map(|v|v.parse::<u32>().map_err(|_|"SORTED_OWNER_LANES")).transpose()?.unwrap_or(shards.min(4));
+ let upper=requested.map(u64::from).or_else(||crate::generic_memory::state_space_bound(&g));let bytes=crate::generic_memory::preferred_state_bytes(&g);let banks=if g.inverse_closed()?{3}else{1};
+ let plan=Plan::automatic_sorted_for_graph(&g,device,world,shards,graph_bytes(&g),free as u64,upper,bytes,target,banks,lanes)?;
+ if requested.map_or(false,|v|plan.capacity!=v){return Err("REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION".into());}
+ println!("{}",serde_json::json!({"graph_digest":digest(&g)?,"device":device,"free_bytes":free,"total_bytes":total,"plan":plan}));Ok(())
+}
 pub fn global_info(args:&[String])->Result<()>{
  if args.len()<3{return Err("CLI_GRAPH_GLOBAL_ARGUMENTS".into());}let g=graph(&args[0])?;let inventory:Vec<serde_json::Value>=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
  let devices=inventory.iter().map(|v|v["device"].as_u64().filter(|&d|d<=u64::from(u32::MAX)).map(|d|d as u32).ok_or("GRAPH_GLOBAL_DEVICE".to_owned())).collect::<Result<Vec<_>>>()?;
