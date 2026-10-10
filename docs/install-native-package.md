@@ -1,3 +1,21 @@
+# Current portable native package
+
+Package source: `bdb8565a20f3a3c341b56fb386ed0ec9bd13e5a9`. Linux x86_64; CUDA13.2 runtime and NCCL2.30.7. Compiled SASS:75/80/86/89/90/100/103/120; PTX120. Actual acceptance is one/two RTX3060 only. B200/B300, separate physical nodes and8/128 GPUs remain unverified. This is an installation artifact, not a universal hardware/performance guarantee.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/35959488089604ce6d1fbafa3297e5dbd46eaee2/linux-x86_64-portable-cuda13.2/bdb8565a20f3a3c341b56fb386ed0ec9bd13e5a9/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `27b8925fce018c1be6130347e4ce69269bf67df7290225d6a770e7a6a8591f95`. Anonymous immutable readback passed. Host ELF requirements: GLIBC>=2.34, GLIBCXX>=3.4.32 and CXXABI>=1.3.9; compatible driver required. No checkout, compiler, token or native path override is needed. Install CPU PyTorch and pinned `cayleypy==0.2.0` only for the optional named catalog adapter.
+
+The fresh isolated installation passed permutation, directed width257, matrix and console exact BFS on one/two GPUs. Source tests additionally passed forced collisions, HASH/SORTED history, network rank control on one host, compact resource retention and eleven-profile tuning. LSA is compiled on; these RTX3060 reject its actual topology capability and automatically select HOST_SIZED_NCCL. Compiled-on does not establish Blackwell acceptance.
+
+Compared with the prior accepted native library on the same complete 3,628,800-state graph and the same executable, three alternating runs gave completed-layer medians: HASH old0.396823479/new0.396122526s; SORTED old0.644649058/new0.599724539s. Ratios old/new1.00177 and1.07491. This is a compiler-build comparison, not a new algorithmic speedup or maximal-frontier benchmark. The sorted translation unit used optional Ofast-compile=mid; default source build policy remains0.
+
+All visible GPUs remain the default; admitted bounded profiles are selected from matched graph prefixes, not a guarantee of globally optimal utilization. General public output remains compact. See [acceptance audit](portable-native-acceptance-2026-10-10.md).
+
+## Historical SM86-only release
+
 # Verified compact native package
 
 Executable/package source: `5998ba54d9e200e5d547ea7a470d88c5505ca9cc`.
