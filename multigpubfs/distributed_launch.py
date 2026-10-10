@@ -1,6 +1,7 @@
 """External rank launch with network bootstrap and bounded collective tuning."""
 import os,json,time,tempfile,subprocess,hashlib,statistics,base64
 from pathlib import Path
+from .process_control import query as native_query
 from .network_control import ControlStore
 from .autotune import _dependency_identity,_transport_variants
 
@@ -64,7 +65,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     store.put('identity-ready',True)
    store.get('identity-ready')
    def inventories(label):
-    probe=subprocess.run([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
+    probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
@@ -74,7 +75,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      target=batch or max(1,(1<<20)//max(1,len(graph.action['generators'])))
      def local_probe(stage,target):
       cmd=[str(native),'graph-local-plan',str(definition),str(device),str(world),str(count),str(requested) if requested is not None else 'auto',str(target)]
-      p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
+      p=native_query(cmd,env=admission_env,capture_output=True,text=True)
       item={'value':json.loads(p.stdout)} if p.returncode==0 else {'error':'EXTERNAL_LOCAL_ADMISSION_FAILED '+p.stderr[-2000:]}
       store.put(label+f'/{stage}/{rank}',item)
       if rank==0:
@@ -89,7 +90,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if rank==0:
      path=temporary/(label.replace('/','-')+'-inventory.json');path.write_text(json.dumps(inventory));cmd=[str(native),'graph-plan',str(definition),str(path),str(count),str(requested) if requested is not None else 'auto']
      if batch is not None:cmd.append(str(batch))
-     p=subprocess.run(cmd,env=admission_env,capture_output=True,text=True)
+     p=native_query(cmd,env=admission_env,capture_output=True,text=True)
      store.put(label+'/admitted',{'value':json.loads(p.stdout)} if p.returncode==0 else {'error':'EXTERNAL_GLOBAL_ADMISSION_FAILED '+p.stderr[-2000:]})
     result=store.get(label+'/admitted')
     if 'error' in result:raise RuntimeError(result['error'])

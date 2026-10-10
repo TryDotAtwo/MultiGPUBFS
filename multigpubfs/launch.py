@@ -1,6 +1,7 @@
 """Single-host native launch. CPU control never generates or deduplicates states."""
 import hashlib,json,os,shutil,subprocess,tempfile,time,signal
 from pathlib import Path
+from .process_control import query as native_query, run as native_run
 from .graph_definition import GraphDefinition,from_cayleypy
 from .native_distribution import native_runtime
 
@@ -79,16 +80,16 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
   if capacity is not None:command.append(str(capacity))
   if _batch is None and profile and profile.get('batch_fraction',1.0)!=1.0:
-   initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
+   initial=native_query(command,capture_output=True,text=True,env=native_env)
    if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
    _batch=max(1,int(json.loads(initial.stdout)['plan']['batch']*profile['batch_fraction']))
   if _batch is not None:
    if capacity is None:
-    initial=subprocess.run(command,capture_output=True,text=True,env=native_env)
+    initial=native_query(command,capture_output=True,text=True,env=native_env)
     if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
     command.append('auto')
    command.append(str(_batch))
-  probe=subprocess.run(command,capture_output=True,text=True,env=native_env)
+  probe=native_query(command,capture_output=True,text=True,env=native_env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
   if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
@@ -96,7 +97,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if admission['plan'].get('history_algorithm','HASH')=='HASH' and len(devices)==1 and shards==1 and _profile_layers is None and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False) and not admission['plan'].get('sort_candidates',False):
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(max_seconds)]
    if capacity is not None:command+=['--capacity',str(capacity)]
-   process=subprocess.run(command,capture_output=True,text=True,env=native_env)
+   process=native_run(command,capture_output=True,text=True,env=native_env,timeout=max_seconds+180)
    if process.returncode:raise RuntimeError('NATIVE_GRAPH_FAILED: '+process.stderr[-4000:])
    result=_receipt(output,digest)
    if profile:
@@ -145,7 +146,7 @@ def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_secon
  started=time.monotonic()
  with tempfile.TemporaryDirectory(prefix='mgbfs-specialized-admit-',dir=output.parent) as temporary:
   definition=Path(temporary)/'definition.json';definition.write_text(graph.to_json());selection='auto' if devices is None else ','.join(map(str,devices))
-  probe=subprocess.run([native,'graph-info',str(definition),selection,'1'],capture_output=True,text=True,env=env)
+  probe=native_query([native,'graph-info',str(definition),selection,'1'],capture_output=True,text=True,env=env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   inventory=json.loads(probe.stdout)
   if inventory['graph_digest']!=graph.digest():raise RuntimeError('GRAPH_ADMISSION_IDENTITY')

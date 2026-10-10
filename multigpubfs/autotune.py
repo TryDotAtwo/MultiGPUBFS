@@ -1,12 +1,13 @@
 """Bounded same-graph GPU prefix tuning; no CPU successor or dedup in production."""
 import hashlib,json,os,subprocess,tempfile,time
 from pathlib import Path
+from .process_control import query as native_query
 
 def _admit(graph,devices,capacity,shards,native,env,directory):
  path=Path(directory)/'definition.json';path.write_text(graph.to_json())
  command=[native,'graph-info',str(path),'auto' if devices is None else ','.join(map(str,devices)),str(shards)]
  if capacity is not None:command.append(str(capacity))
- p=subprocess.run(command,capture_output=True,text=True,env=env)
+ p=native_query(command,capture_output=True,text=True,env=env)
  if p.returncode:raise RuntimeError('PROFILE_ADMISSION_FAILED: '+p.stderr[-2000:])
  return json.loads(p.stdout)
 
