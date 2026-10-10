@@ -24,3 +24,11 @@ Median completed-layer time was 0.047940733 s on one GPU and 0.568540260 s on tw
 Previously delivered host/control package: source a37480a9eb92e479b9eee5d9bc98063c5736e5e9; public release revision 77903224f739334802e3fac139ab3c3ec6487aef; private proof revision b774e2dc8117dc56d485ea58c811e8c9567d9cf0. Local-rank proof revision 7e49f8e5e5866724dfb509cb4435a5257d2329cf and bounded-retry proof revision 3e780ddbe74ade61e35f57ae02f87dd6fa8b668b preserve earlier gates. Current cold disk/provenance extensions and portable native build require a new package receipt before being described as delivered.
 
 Only one GitHub branch remains: codex/integrated-bfs-best-practices-delivery. Remaining acceptance work includes clean installed verification of the latest changes, proof publication, artifact delivery and verified rental teardown. The broad goal remains active.
+
+## Bounded-transfer follow-up
+
+Live-chunk queue transfer preserves each allocated receiver stride and transfers full-state SoA planes separately. Parent SoA planes are compacted at the live chunk stride used by every reader. No new child-count readback is introduced. Twenty two-RTX3060 exact-layer gates cover HASH/SORTED, rolling/all-visited, wide byte/int64 states, parent/full transport, collisions and resource-stop preservation.
+
+Three alternating matched two-GPU runs on the same 3,628,800-state graph gave median completed-layer times 0.566575350 s before and 0.395965297 s after, a ratio of 1.430871. Background CPU compilation was present for both variants. This is not maximum-frontier, 8/128-rank or Blackwell throughput acceptance; two-GPU scaling still underperforms one GPU on this fixed case.
+
+The attempted eight-target CUDA build hit its explicit time limit. The changed NCCL object was linked with unchanged accepted SM86 CUDA objects; other architecture acceptance remains pending.

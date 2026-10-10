@@ -6,6 +6,7 @@ use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{generic_native::{GenericNativeBfs,Buffer,Stream,check},generic_memory::GenericMemoryPlan,generic_distributed_memory::GenericDistributedMemoryPlan};
 extern "C" {
+ fn mgbfs_nccl_exchange_bounded_triplets(comm:*mut c_void,rank:u32,world:u32,shards:u32,capacity:u32,used:u32,payload:u64,state_bytes:u32,counts:*const c_void,records:*const c_void,states:*const c_void,recv_counts:*mut c_void,recv_records:*mut c_void,recv_states:*mut c_void,stream:*mut c_void)->i32;
  fn mgbfs_nccl_all_gather_bytes(comm:*mut c_void,send:*const c_void,recv:*mut c_void,bytes:u64,stream:*mut c_void)->i32;
  fn mgbfs_generic_pack_parent_chunk(bytes:u32,elements:u32,source:*const c_void,source_stride:u32,count:u32,out:*mut c_void,stride:u32,stream:*mut c_void)->i32;
  fn mgbfs_generic_advance_parent_cursors(cursors:*mut u64,frontiers:*mut u32,next:*const u32,world:u32,stream:*mut c_void)->i32;
@@ -139,7 +140,7 @@ impl GenericDistributedBfs{
   // Current remains immutable; generation reads its bank directly.
   let parent_ptr=if rolling{b.visited.at::<i64>(b.current_start as usize*p.state_bytes as usize)}else{b.parents.ptr.cast()};let parent_stride=if rolling{b.arena_stride}else{p.capacity};
   check(unsafe{cudaMemsetAsync(b.control.at::<c_void>(4),0,4,stream)})?;
-  let mut global_begin=0u64;let mut batch=p.batch;let mut round=0u64;
+  let mut global_begin=0u64;let mut batch=p.batch.min(self.max_frontier);let mut round=0u64;
   let queues=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;let width=p.elements as usize;let shards=p.shards as usize;let state_bytes=p.state_bytes as usize;
   while global_begin<u64::from(self.max_frontier){
    let bank=&self.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
@@ -148,7 +149,7 @@ impl GenericDistributedBfs{
    check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
    if !p.packed_candidates()&&!p.parent_transport{for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}
    if let Some(cache)=&self.parent_cache{
-    check(unsafe{mgbfs_generic_pack_parent_chunk(p.state_bytes,p.elements,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),parent_stride,count,cache.sources[((self.depth+round)%2) as usize].ptr,p.batch,stream)})?;
+    check(unsafe{mgbfs_generic_pack_parent_chunk(p.state_bytes,p.elements,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),parent_stride,count,cache.sources[((self.depth+round)%2) as usize].ptr,batch,stream)})?;
    }
    // Invalid source counts must not be presented as valid owner inboxes.
    // Generate the next immutable source bank while preceding owners work.
@@ -160,14 +161,15 @@ impl GenericDistributedBfs{
    if fatal==1&&batch>1{batch=(batch/2).max(1);self.source_retries+=1;continue;}
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
    // A single matched NCCL group submits all peer lanes without host count reads.
-   check(unsafe{mgbfs_nccl_exchange_triplets(self.comm,self.rank,p.world,bank.counts.ptr,(shards*4) as u64,bank.records.ptr,(shards*q*32) as u64,bank.states.ptr,(shards*q*p.queue_payload_bytes()) as u64,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
+   let used=u32::try_from((u64::from(batch)*u64::from(b.generators)).min(u64::from(p.queue_capacity))).map_err(|_|"BOUNDED_QUEUE_EXTENT")?;
+   check(unsafe{mgbfs_nccl_exchange_bounded_triplets(self.comm,self.rank,p.world,p.shards,p.queue_capacity,used,p.queue_payload_bytes() as u64,p.state_bytes,bank.counts.ptr,bank.records.ptr,bank.states.ptr,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
    if let Some(cache)=&self.parent_cache{
-    check(unsafe{mgbfs_nccl_all_gather_bytes(self.comm,cache.sources[((self.depth+round)%2) as usize].ptr,cache.received.ptr,u64::from(p.batch)*u64::from(p.elements)*u64::from(p.state_bytes),stream)})?;
+    check(unsafe{mgbfs_nccl_all_gather_bytes(self.comm,cache.sources[((self.depth+round)%2) as usize].ptr,cache.received.ptr,u64::from(batch)*u64::from(p.elements)*u64::from(p.state_bytes),stream)})?;
    }
    check(unsafe{cudaEventRecord(self.ready.ptr,stream)})?;
    for shard in 0..shards{let owner_stream=self.streams[shard%self.streams.len()].ptr;if shard<self.streams.len(){check(unsafe{cudaStreamWaitEvent(owner_stream,self.ready.ptr,0)})?;}
     if let Some(owner)=&self.sorted_owner{
-     let mut input=SortedInput{elements:p.elements,world:p.world,rank:self.rank,shard:shard as u32,shards:p.shards,queue_capacity:p.queue_capacity,state_bytes:p.state_bytes,transport:if p.packed_candidates(){1}else if p.parent_transport{2}else{0},kind:b.kind,rows:b.rows,cols:b.cols,generators:b.generators,parent_stride:p.batch,chunk:batch,hash_bits:b.hash_bits,begin:global_begin,seed:b.seed,local:bank.states.ptr,remote:self.inbox.states.ptr,local_meta:bank.records.ptr,remote_meta:self.inbox.records.ptr,local_counts:bank.counts.ptr,remote_counts:self.inbox.counts.ptr,permutations:b.perms.ptr,matrices:b.matrices.ptr,moduli:b.moduli.ptr,..Default::default()};
+     let mut input=SortedInput{elements:p.elements,world:p.world,rank:self.rank,shard:shard as u32,shards:p.shards,queue_capacity:p.queue_capacity,state_bytes:p.state_bytes,transport:if p.packed_candidates(){1}else if p.parent_transport{2}else{0},kind:b.kind,rows:b.rows,cols:b.cols,generators:b.generators,parent_stride:batch,chunk:batch,hash_bits:b.hash_bits,begin:global_begin,seed:b.seed,local:bank.states.ptr,remote:self.inbox.states.ptr,local_meta:bank.records.ptr,remote_meta:self.inbox.records.ptr,local_counts:bank.counts.ptr,remote_counts:self.inbox.counts.ptr,permutations:b.perms.ptr,matrices:b.matrices.ptr,moduli:b.moduli.ptr,..Default::default()};
      if let Some(cache)=&self.parent_cache{input.parents=cache.received.ptr;input.cursors=cache.cursors.ptr;input.frontiers=cache.frontiers.ptr;}
      let destination=SortedDestination{arena:b.visited.ptr,stride:b.arena_stride,base:if rolling{future_base}else{0},capacity:p.capacity,rolling:u32::from(rolling),row_count:if rolling{b.control.at(4)}else{b.control.at(0)},frontier_count:b.control.at(4),future:b.future.ptr,error:b.control.at(8),..Default::default()};
      owner.accept(&input,destination,if rolling{future_bank as u32}else{0})?;
@@ -178,7 +180,7 @@ impl GenericDistributedBfs{
      check(unsafe{mgbfs_generic_sort_origins(bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,cache.keys.at(offset*8),cache.sorted_keys.at(offset*8),cache.origins.at(offset*4),cache.sorted_origins.at(offset*4),cache.scratch.at::<c_void>(shard*cache.scratch_stride),cache.scratch_stride as u64,b.control.at(8),owner_stream)})?;cache.sorted_origins.at::<u32>(offset*4).cast_const()
     }else{ptr::null()};
     if let Some(cache)=&self.parent_cache{
-     check(unsafe{mgbfs_generic_accept_parent_origin(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),cache.received.ptr,p.batch,batch,global_begin,cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
+     check(unsafe{mgbfs_generic_accept_parent_origin(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),cache.received.ptr,batch,batch,global_begin,cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
     }else if self.sort_cache.is_some(){
      check(unsafe{mgbfs_generic_accept_sorted(p.state_bytes,p.elements,bank.states.ptr, self.inbox.states.ptr,bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr,b.arena_stride,if rolling{future_base}else{0},p.capacity,b.control.at(0),b.future.ptr.cast(),b.control.at(4),self.positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),b.control.at(8),u32::from(rolling),ordered,owner_stream)})?;
     }else if rolling{check(unsafe{mgbfs_generic_accept_rolling_storage(p.state_bytes,p.elements,bank.states.ptr.cast(),self.inbox.states.ptr.cast(),bank.records.ptr.cast(),self.inbox.records.ptr.cast(),bank.counts.ptr.cast(),self.inbox.counts.ptr.cast(),self.rank,p.world,shard as u32,p.shards,p.queue_capacity,b.slots.ptr.cast(),p.table_slots,b.visited.ptr.cast(),b.arena_stride,future_base,p.capacity,b.control.at(4),b.future.ptr.cast(),self.positions.as_ref().unwrap().ptr.cast(),b.control.at(8),owner_stream)})?;}
