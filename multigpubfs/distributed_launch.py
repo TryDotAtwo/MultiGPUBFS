@@ -61,7 +61,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     store.put('identity-ready',True)
    store.get('identity-ready')
    def inventories(label):
-    probe=subprocess.run([str(native),'graph-info',str(definition),str(device),'1'],env=native_env,capture_output=True,text=True)
+    probe=subprocess.run([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
@@ -132,7 +132,12 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      if len(current)>1000 or len(previous)>=1000:raise RuntimeError('EXTERNAL_RETENTION_BOUND')
      states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(layer_seconds=[max(v['layer_seconds'][i] for v in reports) for i in range(len(reports[0]['layer_seconds']))],devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
      store.put(label+'/result',{'report':result,'states':states})
-    result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2));return result['report']
+    result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2))
+    store.put(label+f'/consumed/{rank}',True)
+    if rank==0:
+     for i in range(world):store.get(label+f'/consumed/{i}')
+     store.release_prefix(label+'/')
+    return result['report']
    if shards is None and autotune and max_seconds>=10:
     inventory=inventories('profile-admission')
     variants=[];plans=[]

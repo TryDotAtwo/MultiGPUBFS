@@ -20,6 +20,10 @@ class ControlStore:
        if self.path=='/put':
         if key in values and values[key]!=body['value']:self.send_error(409);return
         values[key]=body['value'];result={'present':True}
+       elif self.path=='/delete-prefix':
+        for old in list(values):
+         if old.startswith(key):del values[old]
+        result={'present':True}
        else:result={'present':key in values,'value':values.get(key),'error':values.get('error')}
       raw=json.dumps(result).encode();self.send_response(200);self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
      except (ValueError,KeyError,TypeError):self.send_error(400)
@@ -50,5 +54,8 @@ class ControlStore:
    except (OSError,urllib.error.URLError):pass
    if time.monotonic()>end:raise RuntimeError('DISTRIBUTED_CONTROL_TIMEOUT_NO_RESTART '+key)
    time.sleep(.05)
+ def release_prefix(self,prefix):
+  if self.rank!=0:raise RuntimeError('CONTROL_RELEASE_REQUIRES_RANK_ZERO')
+  return self._request('/delete-prefix',prefix)
  def close(self):
   if self.server:self.server.shutdown();self.server.server_close();self.thread.join()

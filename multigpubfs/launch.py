@@ -34,6 +34,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
+ from .host_memory import admit
+ admit(graph,int(os.environ.get('WORLD_SIZE','1')),os.environ.get('WORLD_SIZE','1')!='1')
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
