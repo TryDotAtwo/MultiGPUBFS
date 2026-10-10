@@ -9,7 +9,7 @@ template<class State> struct ActionT {
  const int32_t* products=nullptr;uint32_t product_stride=0;
  __device__ uint32_t child(uint32_t i)const{return i;}
  __device__ uint32_t origin_limit()const{return count*generators;}
- __device__ uint32_t bucket(uint64_t h,uint32_t capacity)const{return h&(capacity-1);}
+ __device__ uint64_t bucket(uint64_t h,uint64_t capacity)const{return h&(capacity-1);}
  __device__ bool valid(uint32_t,uint32_t*)const{return true;}
  __device__ int64_t value(uint32_t child,uint32_t element)const {
   const uint32_t parent=child/generators,g=child%generators;

@@ -34,7 +34,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if peer_transport=='lsa' and not backend.startswith('shard_ab_'):raise ValueError('LSA_REQUIRES_SPECIALIZED_BACKEND')
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
- if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
+ if capacity is not None and (type(capacity) is not int or not 1<=capacity<=0x7ffffffe):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)

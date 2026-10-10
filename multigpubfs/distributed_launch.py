@@ -5,9 +5,9 @@ from .process_control import query as native_query
 from .network_control import ControlStore
 from .autotune import _dependency_identity,_transport_variants
 
-def _external_variants(graph,env,allow_gemm=False):
+def _external_variants(graph,env,allow_gemm=False,hardware_shards=None):
  history=env.get('MGBFS_GENERIC_HISTORY')
- base=[v+(history or 'hash',int(env.get('MGBFS_GENERIC_OWNER_LANES','1')) if history=='sorted' else 0) for v in _transport_variants(graph,env)]
+ base=[v+(history or 'hash',int(env.get('MGBFS_GENERIC_OWNER_LANES','1')) if history=='sorted' else 0) for v in _transport_variants(graph,env,hardware_shards)]
  if history is None and env.get('MGBFS_GENERIC_SORT') in (None,'none'):
   packed=graph.action['kind']=='permutation' and graph.state_elements<=24 and all(0<=v<=255 for v in graph.start)
   transport=env.get('MGBFS_GENERIC_TRANSPORT') or ('full' if packed else 'parent')
@@ -41,7 +41,7 @@ def _merge_local_sorted_plans(parts,digest,requested):
   cuts=[0];cumulative=0
   for p in plans:
    cumulative+=p['capacity'];cuts.append((cumulative*(1<<32)+total-1)//total)
- return {'size_profile_capability':1 if all(p.get('size_profile_capability')==1 for p in parts) else 0,'graph_digest':digest,'devices':[v['device'] for v in parts],'inventory':[{k:v[k] for k in ('device','free_bytes','total_bytes')} for v in parts],'plan':first,'rank_plans':plans,'owner_cuts':cuts}
+ return {'size_profile_capability':1 if all(p.get('size_profile_capability')==1 for p in parts) else 0,'graph_digest':digest,'devices':[v['device'] for v in parts],'inventory':[{k:v[k] for k in ('device','free_bytes','total_bytes','sm_count','compute_major','compute_minor','l2_bytes') if k in v} for v in parts],'plan':first,'rank_plans':plans,'owner_cuts':cuts}
 
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune):
  from .launch import _receipt
@@ -156,27 +156,30 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     return result['report']
    if shards is None and autotune and max_seconds>=10:
     inventory=inventories('profile-admission')
+    from .hardware_profiles import startup_policy
+    baseline=admit('hardware-baseline',inventory,1,capacity)
+    hardware_policy=startup_policy(baseline['inventory'],baseline['plan'])
     variants=[];plans=[]
-    for i,(c,f,transport,order,history,lanes,generator) in enumerate(_external_variants(graph,native_env,all(store.get('profile-admission'+f'/gemm/{i}') for i in range(world)))):
+    for i,(c,f,transport,order,history,lanes,generator) in enumerate(_external_variants(graph,native_env,all(store.get('profile-admission'+f'/gemm/{i}') for i in range(world)),hardware_policy['shards'])):
      try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order,history=history,lanes=lanes,generator=generator)['plan']
      except RuntimeError as error:
       if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
       raise
      variants.append((c,f,transport,order,history,lanes,generator));plans.append(plan)
-    common=min(p['capacity'] for p in plans) if plans else 0
+    common=min([p['capacity'] for p in plans]+[hardware_policy['probe_capacity_per_rank']]) if plans else 0
     if rank==0:store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
     proposal=store.get('profile-plan')
     if proposal['run']:
      pilots=[]
      for i,(count,fraction,transport,order,history,lanes,generator) in enumerate(proposal['variants']):
-      if rank==0:store.put('profile-go-'+str(i),i<2 or time.monotonic()-started<min(8.,max_seconds*.1))
+      if rank==0:store.put('profile-go-'+str(i),max_seconds-(time.monotonic()-started)>=3)
       if not store.get('profile-go-'+str(i)):break
       v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,1,128,transport=transport,order=order,history=history,lanes=lanes,generator=generator);pilots.append({'generator_backend':v['plan'].get('generator_backend','cuda'),'history_algorithm':v['plan']['history_algorithm'],'owner_lanes':v['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
      depth=min(len(p['layer_seconds']) for p in pilots);sizes=pilots[0]['layer_sizes'][:depth+1]
      if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('EXTERNAL_PROFILE_PREFIX_MISMATCH')
      scores=[sum(p['layer_seconds'][1:depth]) for p in pilots];winner=min(range(len(pilots)),key=lambda i:scores[i]) if depth>=4 and sum(sizes[2:])>=32768 else 0
      if scores[winner]>=scores[0]*.95:winner=0
-     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','generator_backend':pilots[winner].get('generator_backend','cuda'),'shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'candidate_order':pilots[winner]['candidate_order'],'history_algorithm':pilots[winner]['history_algorithm'],'owner_lanes':pilots[winner]['owner_lanes'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
+     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','generator_backend':pilots[winner].get('generator_backend','cuda'),'shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'candidate_order':pilots[winner]['candidate_order'],'history_algorithm':pilots[winner]['history_algorithm'],'owner_lanes':pilots[winner]['owner_lanes'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common,'scope':'bounded hardware-derived collective prefix, no global optimum claim'}
    if profile:
     from .generation import gemm_supported
     profile['reserve_generator_backend']='gemm' if gemm_supported(graph) and all(store.get('profile-admission'+f'/gemm/{i}') and store.get('profile-admission'+f'/size-profile/{i}') for i in range(world)) else profile.get('generator_backend','cuda')

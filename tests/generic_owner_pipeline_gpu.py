@@ -1,15 +1,16 @@
+import os
 """GPU route/regenerate/exact owner chain; CPU readback only at layer boundary."""
 import ctypes as C,json,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from multigpubfs import GraphDefinition
 p=C.c_void_p;u=C.c_uint32;h=C.c_uint64
-lib=C.CDLL(sys.argv[1]);accept=lib.mgbfs_generic_accept_i64;accept.argtypes=[u,p,u,p,p,u,p,u,p,u,p,p,u,p,p,p];accept.restype=C.c_int
+lib=C.CDLL(sys.argv[1]);accept=lib.mgbfs_generic_accept_i64_wide;accept.argtypes=[u,p,u,p,p,u,p,h,p,u,p,p,u,p,p,p];accept.restype=C.c_int
 route=lib.mgbfs_generic_route_i64;route.argtypes=[u,u,u,u,u,p,u,u,p,p,p,h,u,u,u,u,u,h,p,p,p,p,p,p];route.restype=C.c_int
 regen=lib.mgbfs_generic_regenerate_routes_count_i64;regen.argtypes=[u,u,u,u,u,p,u,u,p,p,p,u,h,p,u,p,p,u,p,p];regen.restype=C.c_int
-seed=lib.mgbfs_generic_seed_i64;seed.argtypes=[u,p,u,u,p,u,h,u,p,p];seed.restype=C.c_int
+seed=lib.mgbfs_generic_seed_i64_wide;seed.argtypes=[u,p,u,u,p,h,h,u,p,p];seed.restype=C.c_int
 gather=lib.mgbfs_generic_gather_i64;gather.argtypes=[u,p,u,p,u,p,u,p];gather.restype=C.c_int
-cuda=C.CDLL('libcudart.so.12');cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaMemset.argtypes=[p,C.c_int,C.c_size_t];cuda.cudaFree.argtypes=[p]
+cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'));cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaMemset.argtypes=[p,C.c_int,C.c_size_t];cuda.cudaFree.argtypes=[p]
 def ck(code):
  if code:raise RuntimeError('CUDA_STATUS_'+str(code))
 def run(g,bits,capacity=1024,resource=False):

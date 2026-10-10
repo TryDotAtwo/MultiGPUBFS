@@ -66,3 +66,9 @@ extern "C" int mgbfs_generic_generate_u8(uint32_t kind,uint32_t elements,uint32_
   permutation_tables,matrix_tables,moduli,selected_children,output_count,output,output_stride,device_error);
  return int(cudaGetLastError());
 }
+
+extern "C" int mgbfs_generic_hardware_info(int device,uint64_t* values){
+ if(!values)return int(cudaErrorInvalidValue);auto e=cudaSetDevice(device);if(e!=cudaSuccess)return int(e);
+ cudaDeviceProp p;e=cudaGetDeviceProperties(&p,device);if(e!=cudaSuccess)return int(e);
+ values[0]=p.multiProcessorCount;values[1]=p.major;values[2]=p.minor;values[3]=p.l2CacheSize;values[4]=p.warpSize;values[5]=p.maxThreadsPerMultiProcessor;values[6]=p.maxThreadsPerBlock;values[7]=p.sharedMemPerMultiprocessor;return 0;
+}

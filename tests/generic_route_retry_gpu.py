@@ -1,7 +1,8 @@
+import os
 """Retry votes must never hide owner or source metadata failures."""
 import ctypes as C,json,sys
 from pathlib import Path
-p=C.c_void_p;u=C.c_uint32;cuda=C.CDLL('libcudart.so.12');lib=C.CDLL(sys.argv[1])
+p=C.c_void_p;u=C.c_uint32;cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'));lib=C.CDLL(sys.argv[1])
 cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
 lib.mgbfs_generic_route_retry_vote.argtypes=[p,p,p,p]
 def ck(code):

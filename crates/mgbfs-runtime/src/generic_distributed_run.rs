@@ -3,6 +3,7 @@ use std::{path::Path,time::{Duration,Instant},sync::atomic::Ordering};
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,native_owner::{cudaSetDevice,cudaMemGetInfo}};
 use crate::{generic_native::check,generic_distributed_memory::GenericDistributedMemoryPlan as Plan,generic_distributed_native::{GenericDistributedBfs,DistributedAdvance},generic_run::{Signals,CANCELLED}};
+extern "C" {fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
 fn graph(path:&str)->Result<GraphDefinitionV2>{let g:GraphDefinitionV2=serde_json::from_reader(std::fs::File::open(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;g.validate()?;Ok(g)}
 fn digest(g:&GraphDefinitionV2)->Result<String>{Ok(g.semantic_digest()?.iter().map(|v|format!("{v:02x}")).collect())}
 fn graph_bytes(g:&GraphDefinitionV2)->u64{match &g.action{GraphAction::Permutation{generators,..}=>generators.iter().map(|v|v.len() as u64*4).sum(),GraphAction::Matrix{generators,..}=>generators.iter().map(|v|v.matrix.len() as u64*8+4).sum()}}
@@ -12,7 +13,7 @@ pub fn info(args:&[String])->Result<()>{
  let mut count=0i32;check(unsafe{cudaGetDeviceCount(&mut count)})?;if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}
  let devices=if args[1]=="auto"{(0..count as u32).collect::<Vec<_>>()}else{args[1].split(',').map(|v|v.parse::<u32>().map_err(|_|"CLI_GRAPH_DEVICES".to_owned())).collect::<Result<Vec<_>>>()?};
  if devices.is_empty()||devices.len()>128||devices.iter().any(|&d|d>=count as u32)||devices.iter().enumerate().any(|(i,d)|devices[..i].contains(d)){return Err("CLI_GRAPH_DEVICE_SELECTION".into());}
- let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{check(unsafe{cudaSetDevice(device as i32)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total}));}
+ let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{check(unsafe{cudaSetDevice(device as i32)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"warp_size":hw[4],"threads_per_sm":hw[5],"threads_per_block":hw[6],"shared_bytes_per_sm":hw[7]}));}
  let requested=if args.len()>3&&args[3]!="auto"{Some(args[3].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?)}else{None};
  let batch=if args.len()>4{Some(args[4].parse::<u32>().map_err(|_|"CLI_GRAPH_BATCH")?)}else{None};
  println!("{}",admit(&g,devices,inventory,shards,requested,batch)?);Ok(())
@@ -27,7 +28,7 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  let (mut rank_plans,owner_cuts)=if sorted{
   let lanes=std::env::var("MGBFS_GENERIC_OWNER_LANES").ok().map(|v|v.parse::<u32>().map_err(|_|"SORTED_OWNER_LANES")).transpose()?.unwrap_or(shards.min(4));
   let upper=requested.map(u64::from).or_else(||crate::generic_memory::state_space_bound(g));
-  let target=batch.unwrap_or(upper.unwrap_or(1<<28).min(1<<28).min(u64::from((1<<20)/(g.generator_count() as u32).max(1))) as u32).max(1);
+  let target=batch.unwrap_or(upper.unwrap_or(u64::from(crate::generic_memory::MAX_ARENA_CAPACITY)).min(u64::from(crate::generic_memory::MAX_ARENA_CAPACITY)).min(u64::from((1<<20)/(g.generator_count() as u32).max(1))) as u32).max(1);
   let mut plans=Vec::new();for(&device,item)in devices.iter().zip(&inventory){plans.push(Plan::automatic_sorted_for_graph(g,device as i32,devices.len() as u32,shards,graph_bytes(g),item["free_bytes"].as_u64().unwrap(),upper,state_bytes,target,history_layers,lanes)?);}
   let common=plans.iter().map(|p|p.batch).min().unwrap();
   if let Some(wanted)=batch{if wanted==0||common!=wanted{return Err("REQUESTED_BATCH_EXCEEDS_SORTED_ADMISSION".into());}}
@@ -62,7 +63,7 @@ pub fn local_info(args:&[String])->Result<()>{
  let upper=requested.map(u64::from).or_else(||crate::generic_memory::state_space_bound(&g));let bytes=crate::generic_memory::preferred_state_bytes(&g);let banks=if g.inverse_closed()?{3}else{1};
  let plan=Plan::automatic_sorted_for_graph(&g,device,world,shards,graph_bytes(&g),free as u64,upper,bytes,target,banks,lanes)?;
  if requested.map_or(false,|v|plan.capacity!=v){return Err("REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION".into());}
- println!("{}",serde_json::json!({"size_profile_capability":1,"graph_digest":digest(&g)?,"device":device,"free_bytes":free,"total_bytes":total,"plan":plan}));Ok(())
+ let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device,hw.as_mut_ptr())})?;println!("{}",serde_json::json!({"size_profile_capability":1,"graph_digest":digest(&g)?,"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"plan":plan}));Ok(())
 }
 pub fn global_info(args:&[String])->Result<()>{
  if args.len()<3{return Err("CLI_GRAPH_GLOBAL_ARGUMENTS".into());}let g=graph(&args[0])?;let inventory:Vec<serde_json::Value>=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;

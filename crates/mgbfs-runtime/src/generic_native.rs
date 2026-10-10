@@ -73,7 +73,7 @@ impl GenericNativeBfs {
   let width=plan.elements as usize;let cap=plan.capacity as usize;let state_bytes=plan.state_bytes as usize;
   let stream=Stream::new(device)?;
   let arena_stride=if rolling{plan.capacity.checked_mul(3).ok_or("GENERIC_ROLLING_STRIDE")?}else{plan.capacity};
-  let table_slots=if !hashed{0}else if rolling{plan.capacity.checked_mul(6).and_then(u32::checked_next_power_of_two).ok_or("GENERIC_ROLLING_TABLE")?}else{plan.table_slots};
+  let table_slots=if !hashed{0}else if rolling{u64::from(plan.capacity).checked_mul(6).and_then(u64::checked_next_power_of_two).ok_or("GENERIC_ROLLING_TABLE")?}else{plan.table_slots};
   let visited=Buffer::new(width*arena_stride as usize*state_bytes,device)?;let readout_capacity=if rolling{plan.capacity.min(1000)}else{plan.capacity};let parents=Buffer::new(width*readout_capacity as usize*state_bytes,device)?;
   let front=Buffer::new(cap*4,device)?;let future=Buffer::new(cap*4,device)?;let slots=Buffer::new(table_slots as usize*8,device)?;let control=Buffer::new(24,device)?;
   let perms=Buffer::new(ps.len()*4,device)?;perms.upload(&ps)?;let matrices=Buffer::new(ms.len()*8,device)?;matrices.upload(&ms)?;let moduli=Buffer::new(mods.len()*4,device)?;moduli.upload(&mods)?;

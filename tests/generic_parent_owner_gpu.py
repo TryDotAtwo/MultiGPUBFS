@@ -5,7 +5,7 @@ from ctypes.util import find_library
 u=C.c_uint32;h=C.c_uint64;p=C.c_void_p
 class Route(C.Structure):_fields_=[('hash',h),('parent',h),('source',u),('generator',u),('shard',u),('reserved',u)]
 lib=C.CDLL(sys.argv[1]);cuda=C.CDLL(find_library('cudart') or 'libcudart.so.13');cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
-fn=lib.mgbfs_generic_accept_parent_origin;fn.argtypes=[u]*6+[p]*4+[u,u,h]+[p]*6+[u]*5+[p,u,p,u,u,u]+[p]*5+[u,p,p];fn.restype=C.c_int
+fn=lib.mgbfs_generic_accept_parent_origin_wide;fn.argtypes=[u]*6+[p]*4+[u,u,h]+[p]*6+[u]*5+[p,h,p,u,u,u]+[p]*5+[u,p,p];fn.restype=C.c_int
 checks=[]
 def ck(x):
  if x:raise RuntimeError('CUDA_STATUS_'+str(x))

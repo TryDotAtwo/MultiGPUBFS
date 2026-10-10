@@ -2,7 +2,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 #[test] fn actual_route_banks_fit_at_1_2_8_128_rank_geometries(){
  for world in [1,2,8,128] {for width in [4,16,257] {for shards in [1,4,16] {
   let p=Plan::automatic(width,world,shards,4,16384,12u64<<30,None).unwrap();p.validate(4).unwrap();
-  assert!(p.device_bytes<=((12u64<<30)*9/10));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.table_slots>=p.capacity*2);
+  assert!(p.device_bytes<=((12u64<<30)*9/10));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.table_slots>=u64::from(p.capacity)*2);
   let mut bad=p.clone();bad.device_bytes-=1;assert!(bad.validate(4).is_err());
  }}}
 }
@@ -46,7 +46,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 #[test]fn rolling_history_accounts_for_three_immutable_banks_and_positions(){
  for bytes in [1,8]{let retained=Plan::with_storage(17,2,4,100,8,3,4096,bytes).unwrap();let rolling=Plan::with_storage_history(17,2,4,100,8,3,4096,bytes,3).unwrap();
  assert_eq!(rolling.table_slots,1024);assert_eq!(rolling.history_layers,3);
- assert_eq!(rolling.device_bytes-retained.device_bytes,17*100*bytes as u64*2+100*12+(1024-256)*8);rolling.validate(3).unwrap();
+ assert_eq!(rolling.device_bytes-retained.device_bytes,17*100*bytes as u64*2+100*24+(1024-256)*8);rolling.validate(3).unwrap();
  let mut bad=rolling.clone();bad.history_layers=1;assert!(bad.validate(3).is_err());}
  assert!(Plan::with_storage_history(4,2,4,100,8,3,4096,1,2).is_err());
 }
@@ -57,7 +57,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 
 #[test]fn rolling_logical_geometry_admission_at_1_2_8_128_ranks(){
  for world in [1,2,8,128]{for shards in [1,4,16]{for (width,bytes) in [(4,1),(16,1),(257,8)]{
-  let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=p.capacity*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
+  let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=u64::from(p.capacity)*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
  }}}
 }
 
@@ -84,7 +84,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
   let reserve=128u64<<20;let owner=123456u64;
   let sorted=legacy.clone().with_sorted_admission(4,owner,reserve).unwrap();
   assert_eq!(sorted.table_slots,0);assert_eq!(sorted.history_algorithm,"SORTED_RUNS");assert!(!sorted.sort_candidates);
-  assert_eq!(sorted.device_bytes,legacy.device_bytes-u64::from(legacy.table_slots)*8-if history==3{12000}else{0}+1+owner+reserve);
+  assert_eq!(sorted.device_bytes,legacy.device_bytes-u64::from(legacy.table_slots)*8-if history==3{24000}else{0}+1+owner+reserve);
   sorted.validate(2).unwrap();let roundtrip:Plan=serde_json::from_str(&serde_json::to_string(&sorted).unwrap()).unwrap();assert_eq!(roundtrip,sorted);
   let mut bad=sorted.clone();bad.device_bytes+=1;assert!(bad.validate(2).is_err());
   let mut bad=sorted.clone();bad.table_slots=1;assert!(bad.validate(2).is_err());

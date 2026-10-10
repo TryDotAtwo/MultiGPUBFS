@@ -34,7 +34,8 @@ def case(name,g,capacity='auto',shards='4',mismatch=False):
  else:assert reports[0]['plan']['history_layers']==1
  if capacity=='auto':assert reports[0]['status']=='COMPLETE'
  else:assert reports[0]['status']=='INCOMPLETE'
- if shards=='auto':assert 'autotune' in reports[0] and len(reports[0]['autotune']['pilots'])==5
+ if shards=='auto':
+  profile=reports[0]['autotune'];assert len(profile['pilots'])>=2 and profile['hardware_policy']['shards'];assert profile['common_depth']>=4
  checks.append({'case':name,'states':sum(reports[0]['layer_sizes']),'status':reports[0]['status'],'all_layer_counts_and_terminal_states_exact':True,'collective_autotune':shards=='auto'})
 g=GraphDefinition.permutation([[1,2,3,4,5,0],[5,0,1,2,3,4],[1,0,2,3,4,5]],list(range(6)))
 case('weighted-network',g);case('resource-network',g,3);case('matrix-network',GraphDefinition.matrix(2,1,[([1,1,0,1],7)],[0,1]));case('mismatch-network',g,mismatch=True)

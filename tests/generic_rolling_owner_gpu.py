@@ -20,13 +20,13 @@ for device in (0,1):
   def read(ptr,count,ty):
    host=(ty*count)();ck(cuda.cudaMemcpy(host,ptr,C.sizeof(host),2));return list(host)
   ty=C.c_uint8 if codec==1 else C.c_int64
-  arena=allocbuf(stride*width,ty);slots=allocbuf(sc,h);positions=allocbuf(stride,u);accepted=allocbuf(1,u);future=allocbuf(cap,u);error=allocbuf(1,u)
+  arena=allocbuf(stride*width,ty);slots=allocbuf(sc,h);positions=allocbuf(stride,h);accepted=allocbuf(1,u);future=allocbuf(cap,u);error=allocbuf(1,u)
   local=allocbuf(boxes*q*width,ty);remote=allocbuf(boxes*q*width,ty);lm=allocbuf(boxes*q,Route);rm=allocbuf(boxes*q,Route);lc=allocbuf(boxes,u);rc=allocbuf(boxes,u)
-  upload(arena,[0]*(stride*width),ty);upload(slots,[(1<<64)-1]*sc,h);upload(positions,[sc]*stride,u);upload(error,[0],u)
+  upload(arena,[0]*(stride*width),ty);upload(slots,[(1<<64)-1]*sc,h);upload(positions,[sc]*stride,h);upload(error,[0],u)
   for _ in range(shards):v=p();ck(cuda.cudaStreamCreateWithFlags(C.byref(v),1));streams.append(v)
-  fn=getattr(lib,'mgbfs_generic_accept_rolling_'+('packed_u8' if packed else 'u8' if codec==1 else 'i64'));fn.argtypes=[u,p,p,p,p,p,p,u,u,u,u,u,p,u,p,u,u,u,p,p,p,p,p];fn.restype=C.c_int
-  retire=lib.mgbfs_generic_retire_rows;retire.argtypes=[p,u,p,u,u,u,p,p];retire.restype=C.c_int
-  seed=getattr(lib,'mgbfs_generic_reseed_rows_'+('u8' if codec==1 else 'i64'));seed.argtypes=[u,p,u,u,u,p,u,p,h,u,p,p];seed.restype=C.c_int
+  fn=getattr(lib,'mgbfs_generic_accept_rolling_'+('packed_u8' if packed else 'u8' if codec==1 else 'i64')+'_wide');fn.argtypes=[u,p,p,p,p,p,p,u,u,u,u,u,p,h,p,u,u,u,p,p,p,p,p];fn.restype=C.c_int
+  retire=lib.mgbfs_generic_retire_rows_wide;retire.argtypes=[p,h,p,u,u,u,p,p];retire.restype=C.c_int
+  seed=getattr(lib,'mgbfs_generic_reseed_rows_'+('u8' if codec==1 else 'i64')+'_wide');seed.argtypes=[u,p,u,u,u,p,h,p,h,u,p,p];seed.restype=C.c_int
   banks={};history=[]
   def mix(x):
    x&=(1<<64)-1;x^=x>>30;x=x*0xbf58476d1ce4e5b9&((1<<64)-1);x^=x>>27;x=x*0x94d049bb133111eb&((1<<64)-1);return x^(x>>31)

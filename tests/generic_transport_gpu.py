@@ -1,7 +1,7 @@
 import ctypes as C,json,sys,time,os
 from pathlib import Path
 rank=int(sys.argv[1]);root=Path(sys.argv[2]);p=C.c_void_p;u=C.c_uint32;h=C.c_uint64
-lib=C.CDLL('/root/universal/native-generic/libmgbfs_cuda.so');cuda=C.CDLL('libcudart.so.12')
+lib=C.CDLL('/root/universal/native-generic/libmgbfs_cuda.so');cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'))
 def ck(code):
  if code:raise RuntimeError('NATIVE_STATUS_'+str(code))
 ck(cuda.cudaSetDevice(rank));cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]

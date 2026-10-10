@@ -1,3 +1,4 @@
+import os
 """Route metadata without materializing children; CPU oracle only in test."""
 import ctypes as C,json,sys,bisect
 from pathlib import Path
@@ -9,7 +10,7 @@ lib=C.CDLL(sys.argv[1]);fn=lib.mgbfs_generic_route_i64
 u=C.c_uint32;h=C.c_uint64;p=C.c_void_p
 fn.argtypes=[u,u,u,u,u,p,u,u,p,p,p,h,u,u,u,u,u,h,p,p,p,p,p,p];fn.restype=C.c_int
 regen=lib.mgbfs_generic_regenerate_routes_i64;regen.argtypes=[u,u,u,u,u,p,u,u,p,p,p,u,h,p,u,p,u,p,p];regen.restype=C.c_int
-cuda=C.CDLL('libcudart.so.12');cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
+cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'));cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
 def ck(n):
  if n:raise RuntimeError('CUDA_STATUS_'+str(n))
 def mix(v):

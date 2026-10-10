@@ -1,9 +1,10 @@
+import os
 """Exact fused owner with logical 1/2/3/8/128-source layouts on actual GPUs."""
 import ctypes as C,json,sys
 from pathlib import Path
 u=C.c_uint32;h=C.c_uint64;p=C.c_void_p
 class Route(C.Structure):_fields_=[('hash',h),('parent',h),('source',u),('generator',u),('shard',u),('reserved',u)]
-lib=C.CDLL(sys.argv[1]);cuda=C.CDLL('libcudart.so.12')
+lib=C.CDLL(sys.argv[1]);cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'))
 cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p]
 def ck(code):
  if code:raise RuntimeError('CUDA_STATUS_'+str(code))

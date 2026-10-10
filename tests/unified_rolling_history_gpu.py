@@ -1,8 +1,9 @@
 import json,os,subprocess,time,traceback,hashlib
 from pathlib import Path
 from multigpubfs import GraphDefinition,run_graph
-r=Path(os.environ.get('MGBFS_GATE_ROOT','/root/universal/rolling-full-graph-gate'));r.mkdir(exist_ok=True)
-identity={name:hashlib.sha256(Path(path).read_bytes()).hexdigest() for name,path in [('cli','/root/universal/src/target/release/mgbfs'),('example','/root/universal/src/target/release/examples/generic_distributed_gate'),('cuda','/root/universal/native-generic/libmgbfs_cuda.so')]}
+r=Path(os.environ.get('MGBFS_GATE_ROOT','/root/universal/rolling-full-graph-gate'));r.mkdir(parents=True,exist_ok=True)
+source=Path(os.environ.get('MGBFS_TEST_SOURCE','/root/universal/src'));native_library=Path(os.environ.get('MGBFS_TEST_CUDA_LIBRARY','/root/universal/native-generic/libmgbfs_cuda.so'))
+identity={name:hashlib.sha256(Path(path).read_bytes()).hexdigest() for name,path in [('cli',str(source/'target/release/mgbfs')),('example',str(source/'target/release/examples/generic_distributed_gate')),('cuda',str(native_library))]}
 identity_path=r/'native-identity.json'
 if identity_path.exists():assert json.loads(identity_path.read_text())==identity,'VALIDATION_ARTIFACT_REUSE_MISMATCH'
 else:identity_path.write_text(json.dumps(identity))
@@ -19,7 +20,7 @@ def ranks(g,name,codec,bits,shards,capacity,batch=2,history=3):
  try:
   for rank in range(2):
    log=(out/f'rank-{rank}.log').open('w');logs.append(log)
-   jobs.append(subprocess.Popen(['/root/universal/src/target/release/examples/generic_distributed_gate',str(rank),str(out),str(definition),str(bits),str(shards),str(capacity),str(codec),str(batch),json.dumps([0,1<<31,1<<32]),str(history)],env=env,stdout=log,stderr=subprocess.STDOUT))
+   jobs.append(subprocess.Popen([str(source/'target/release/examples/generic_distributed_gate'),str(rank),str(out),str(definition),str(bits),str(shards),str(capacity),str(codec),str(batch),json.dumps([0,1<<31,1<<32]),str(history)],env=env,stdout=log,stderr=subprocess.STDOUT))
   started=time.monotonic()
   while any(p.poll() is None for p in jobs):
    if any(p.poll() not in (None,0) for p in jobs):raise RuntimeError('rank failure '+name)

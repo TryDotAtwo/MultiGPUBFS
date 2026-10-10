@@ -1,14 +1,15 @@
+import os
 """Exact all-visited GPU BFS oracle; no CPU dedup or successors in GPU loop."""
 import ctypes as C,json,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from multigpubfs.graph_definition import GraphDefinition
-lib=C.CDLL(sys.argv[1]);expand=lib.mgbfs_generic_expand_i64;seed=lib.mgbfs_generic_seed_i64;gather=lib.mgbfs_generic_gather_i64
+lib=C.CDLL(sys.argv[1]);expand=lib.mgbfs_generic_expand_i64_wide;seed=lib.mgbfs_generic_seed_i64_wide;gather=lib.mgbfs_generic_gather_i64
 u=C.c_uint32;p=C.c_void_p;h=C.c_uint64
-expand.argtypes=[u,u,u,u,u,p,u,u,p,p,p,p,u,p,u,p,p,u,p,h,u,p,p];expand.restype=C.c_int
-seed.argtypes=[u,p,u,u,p,u,h,u,p,p];seed.restype=C.c_int
+expand.argtypes=[u,u,u,u,u,p,u,u,p,p,p,p,h,p,u,p,p,u,p,h,u,p,p];expand.restype=C.c_int
+seed.argtypes=[u,p,u,u,p,h,h,u,p,p];seed.restype=C.c_int
 gather.argtypes=[u,p,u,p,u,p,u,p];gather.restype=C.c_int
-cuda=C.CDLL('libcudart.so.12');cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p];cuda.cudaMemset.argtypes=[p,C.c_int,C.c_size_t]
+cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY','libcudart.so.13'));cuda.cudaMalloc.argtypes=[C.POINTER(p),C.c_size_t];cuda.cudaMemcpy.argtypes=[p,p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[p];cuda.cudaMemset.argtypes=[p,C.c_int,C.c_size_t]
 def ck(status):
  if status:raise RuntimeError('CUDA_STATUS_'+str(status))
 def run(graph,bits,capacity=1024,expect_resource=False):
