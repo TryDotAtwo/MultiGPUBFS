@@ -4,18 +4,19 @@ from pathlib import Path
 from multigpubfs import GraphDefinition
 r=Path(os.environ.get('MGBFS_NETWORK_GATE_ROOT','/root/universal/sorted-network'));r.mkdir(exist_ok=True);checks=[]
 worker=r/'worker.py';worker.write_text("from multigpubfs import GraphDefinition,run_graph\nfrom pathlib import Path\nimport sys,os,json\ng=GraphDefinition.from_dict(json.loads(Path(sys.argv[1]).read_text()))\nv=run_graph(g,sys.argv[2],devices=[int(os.environ['LOCAL_RANK'])],capacity=None if sys.argv[3]=='auto' else int(sys.argv[3]),shards=None if sys.argv[4]=='auto' else int(sys.argv[4]),autotune=sys.argv[4]=='auto',transport='auto' if sys.argv[4]=='auto' else 'parent',max_seconds=30)\nprint(json.dumps(v))\n")
-def case(name,g,capacity='auto',shards='4',mismatch=False):
+def case(name,g,capacity='auto',shards='4',mismatch=False,history_mismatch=False):
  folder=r/name;folder.mkdir();jobs=[];logs=[]
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  try:
   for rank in (0,1):
    local=folder/f'local-{rank}';local.mkdir();definition=local/'definition.json';definition.write_text((GraphDefinition.permutation([[1,0]],[0,1]) if mismatch and rank==1 else g).to_json());env=dict(os.environ,RANK=str(rank),WORLD_SIZE='2',LOCAL_RANK=str(rank),MASTER_ADDR='127.0.0.1',MASTER_PORT=str(port-1),MGBFS_CONTROL_PORT=str(port),MGBFS_RUN_ID=name,MGBFS_CONTROL_TOKEN='fixture-token')
+   if history_mismatch:env['MGBFS_GENERIC_HISTORY']='sorted' if rank==0 else 'hash'
    log=(folder/f'rank-{rank}.log').open('w');logs.append(log);jobs.append(subprocess.Popen(['python3',str(worker),str(definition),str(local/'result'),str(capacity),str(shards)],env=env,stdout=log,stderr=subprocess.STDOUT))
   start=time.monotonic()
   while any(p.poll() is None for p in jobs):
    if time.monotonic()-start>100:raise RuntimeError('NETWORK_GATE_OBSERVATION_TIMEOUT_NO_RESTART '+name)
    time.sleep(.05)
-  if mismatch:
+  if mismatch or history_mismatch:
    assert all(p.returncode!=0 for p in jobs);assert 'MISMATCH' in (folder/'rank-0.log').read_text();checks.append({'case':name,'parameter_mismatch_rejected_all_ranks':True});return
   assert all(p.returncode==0 for p in jobs),[p.returncode for p in jobs]
  finally:
@@ -34,9 +35,18 @@ def case(name,g,capacity='auto',shards='4',mismatch=False):
  else:assert reports[0]['plan']['history_layers']==1
  if capacity=='auto':assert reports[0]['status']=='COMPLETE'
  else:assert reports[0]['status']=='INCOMPLETE'
- if shards=='auto':assert 'autotune' in reports[0] and len(reports[0]['autotune']['pilots'])==(7 if g.state_elements>24 else 5)
+ if shards=='auto':
+  profile=reports[0]['autotune'];pilots=profile['pilots'];assert profile['common_depth']>=4
+  forced=os.environ.get('MGBFS_GENERIC_HISTORY')
+  if forced=='sorted':assert len(pilots)==6 and all(p['history_algorithm']=='SORTED_RUNS' for p in pilots)
+  elif forced is None:
+   assert {p['history_algorithm'] for p in pilots}=={'HASH','SORTED_RUNS'}
+   assert {p['owner_lanes'] for p in pilots if p['history_algorithm']=='SORTED_RUNS'}=={1,2,4,8}
+  assert reports[0]['plan']['history_algorithm']==profile['history_algorithm']
+  if profile['history_algorithm']=='SORTED_RUNS':assert reports[0]['plan']['owner_lanes']==profile['owner_lanes']
  checks.append({'case':name,'states':sum(reports[0]['layer_sizes']),'status':reports[0]['status'],'all_layer_counts_and_terminal_states_exact':True,'collective_autotune':shards=='auto'})
 tail=list(range(6,25));g=GraphDefinition.permutation([[1,2,3,4,5,0]+tail,[5,0,1,2,3,4]+tail,[1,0,2,3,4,5]+tail],list(range(25)))
 case('weighted-network',g);case('resource-network',g,3);case('matrix-network',GraphDefinition.matrix(2,1,[([1,1,0,1],7)],[0,1]));case('mismatch-network',g,mismatch=True)
+case('history-mismatch-network',g,history_mismatch=True)
 case('collective-tuning',GraphDefinition.permutation([[1,2,3,4,5,6,7,0]+list(range(8,25)),[7,0,1,2,3,4,5,6]+list(range(8,25)),[1,0,2,3,4,5,6,7]+list(range(8,25))],list(range(25))),shards='auto')
 receipt={'status':'VERIFIED_ROLLING_NETWORK_EXTERNAL_RANK_TWO_GPU','checks':checks,'scope':'two GPUs and independent worker directories on one host, actual TCP rendezvous and NCCL; physically separate nodes and 8/128 GPUs unverified'};(r/'verification.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt))
