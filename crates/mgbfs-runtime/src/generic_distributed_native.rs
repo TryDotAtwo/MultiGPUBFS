@@ -34,7 +34,7 @@ impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
 #[derive(Debug,PartialEq,Eq)]
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
- gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
+ online_size_tuning:bool,online_bucket:Option<u32>,online_choices:std::collections::BTreeMap<u32,(u32,bool)>,profile_events:Vec<serde_json::Value>,active_batch:u32,use_gemm:bool,gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
  sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,positions:Option<Buffer>,rolling_counts:[u32;3],retired_rows:u64,
 }
@@ -105,8 +105,18 @@ impl GenericDistributedBfs{
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
   let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
-  Ok(Self{gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
+  Ok(Self{online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
+ pub fn enable_online_size_tuning(&mut self){self.online_size_tuning=true;}
+ pub fn size_profile_events(&self)->&[serde_json::Value]{&self.profile_events}
+ pub fn set_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{
+  if batch==0||batch>self.plan.batch||(gemm&&self.gemm.is_none()){return Err("SIZE_PROFILE_EXCEEDS_ADMISSION".into());}
+  let bucket=31-self.max_frontier.max(1).leading_zeros();let(batch,gemm)=self.online_choices.get(&bucket).copied().unwrap_or((batch,gemm));self.active_batch=batch;self.use_gemm=gemm;Ok(())
+ }
+ pub fn cache_current_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{
+  self.set_size_profile(batch,gemm)?;let bucket=31-self.max_frontier.max(1).leading_zeros();self.online_choices.insert(bucket,(batch,gemm));Ok(())
+ }
+ pub fn global_frontier(&self)->u64{self.counts.iter().map(|&v|u64::from(v)).sum()}
  pub fn history_algorithm(&self)->&str{&self.plan.history_algorithm}
  pub fn owner_lanes(&self)->usize{self.streams.len()}
  pub fn source_retries(&self)->u64{self.source_retries}
@@ -142,14 +152,25 @@ impl GenericDistributedBfs{
   // Current remains immutable; generation reads its bank directly.
   let parent_ptr=if rolling{b.visited.at::<i64>(b.current_start as usize*p.state_bytes as usize)}else{b.parents.ptr.cast()};let parent_stride=if rolling{b.arena_stride}else{p.capacity};
   check(unsafe{cudaMemsetAsync(b.control.at::<c_void>(4),0,4,stream)})?;
-  let mut global_begin=0u64;let mut batch=p.batch.min(self.max_frontier);let mut round=0u64;
+  let mut global_begin=0u64;let mut batch=self.active_batch.min(self.max_frontier);let mut round=0u64;
+  // Each trial processes actual new parents once. Only scalar timing/counts
+  // cross the host boundary; states and history stay resident.
+  let bucket=31-self.max_frontier.max(1).leading_zeros();
+  let mut profiling=self.online_size_tuning&&self.online_bucket!=Some(bucket)&&!self.online_choices.contains_key(&bucket)&&self.max_frontier>=p.batch.saturating_mul(5);
+  let mut choices=if profiling{vec![(p.batch,self.use_gemm),((p.batch/4).max(1),self.use_gemm)]}else{vec![]};
+  if profiling&&self.gemm.is_some(){choices.push((p.batch,!self.use_gemm));choices.push(((p.batch/4).max(1),!self.use_gemm));}
+  let schedule=(0..choices.len()).chain((0..choices.len()).rev()).collect::<Vec<_>>();
+  let mut trial_scores=vec![(0u64,0u64);choices.len()];let mut trial=0usize;
   let queues=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;let width=p.elements as usize;let shards=p.shards as usize;let state_bytes=p.state_bytes as usize;
   while global_begin<u64::from(self.max_frontier){
+   if profiling&&trial<schedule.len(){let choice=choices[schedule[trial]];batch=choice.0;self.use_gemm=choice.1;}
+   let trial_started=if profiling&&trial<schedule.len(){Some(std::time::Instant::now())}else{None};
+
    let bank=&self.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
    check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    check(unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
-   if let Some(ctx)=&self.gemm{check(unsafe{mgbfs_generic_route_gemm_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}
-   if !p.packed_candidates()&&!p.parent_transport{for queue in 0..queues{if let Some(ctx)=&self.gemm{check(unsafe{mgbfs_generic_regenerate_gemm_routes_count_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}}
+   if let Some(ctx)=self.gemm.as_ref().filter(|_|self.use_gemm){check(unsafe{mgbfs_generic_route_gemm_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}
+   if !p.packed_candidates()&&!p.parent_transport{for queue in 0..queues{if let Some(ctx)=self.gemm.as_ref().filter(|_|self.use_gemm){check(unsafe{mgbfs_generic_regenerate_gemm_routes_count_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}}
    if let Some(cache)=&self.parent_cache{
     check(unsafe{mgbfs_generic_pack_parent_chunk(p.state_bytes,p.elements,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),parent_stride,count,cache.sources[((self.depth+round)%2) as usize].ptr,batch,stream)})?;
    }
@@ -160,7 +181,7 @@ impl GenericDistributedBfs{
    check(unsafe{mgbfs_generic_route_retry_vote(self.control.at(8),b.control.at(8),self.control.at(12),stream)})?;
    check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,self.control.at(12),self.control.at(0),stream)})?;
    let mut fatal=0u32;check(unsafe{cudaMemcpyAsync((&mut fatal as *mut u32).cast(),self.control.ptr,4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
-   if fatal==1&&batch>1{batch=(batch/2).max(1);self.source_retries+=1;continue;}
+   if fatal==1&&batch>1{profiling=false;self.online_bucket=Some(bucket);batch=(batch/2).max(1);self.source_retries+=1;continue;}
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
    // A single matched NCCL group submits all peer lanes without host count reads.
    let used=u32::try_from((u64::from(batch)*u64::from(b.generators)).min(u64::from(p.queue_capacity))).map_err(|_|"BOUNDED_QUEUE_EXTENT")?;
@@ -191,7 +212,27 @@ impl GenericDistributedBfs{
    for(lane,owner_stream)in self.streams.iter().enumerate(){check(unsafe{cudaEventRecord(self.done[lane].ptr,owner_stream.ptr)})?;}
    // Next round may generate into the other source bank; inbox retirement
    // waits occur after that generation and before the next exchange.
+   if profiling&&trial<schedule.len(){
+    for event in &self.done{check(unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}
+    check(unsafe{cudaStreamSynchronize(stream)})?;
+    let mut owner_error=0u32;check(unsafe{cudaMemcpyAsync((&mut owner_error as *mut u32).cast(),b.control.at::<c_void>(8),4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
+    let micros=if owner_error!=0{u32::MAX}else{trial_started.unwrap().elapsed().as_micros().min(u128::from(u32::MAX-1)) as u32};
+    check(unsafe{cudaMemcpyAsync(self.control.at::<c_void>(16),(&micros as *const u32).cast(),4,1,stream)})?;
+    check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,self.control.at(16),self.control.at(20),stream)})?;
+    let mut maximum=0u32;check(unsafe{cudaMemcpyAsync((&mut maximum as *mut u32).cast(),self.control.at::<c_void>(20),4,2,stream)})?;check(unsafe{cudaStreamSynchronize(stream)})?;
+    let parents=self.counts.iter().map(|&v|u64::from(v).saturating_sub(global_begin).min(u64::from(batch))).sum::<u64>();
+    if maximum==u32::MAX{profiling=false;self.online_bucket=Some(bucket);}
+    let score=&mut trial_scores[schedule[trial]];score.0+=u64::from(maximum);score.1+=parents;trial+=1;
+    if profiling&&trial==schedule.len(){
+     let rate=|i:usize|trial_scores[i].0 as f64/trial_scores[i].1.max(1) as f64;
+     let mut winner=0usize;for i in 1..choices.len(){if rate(i)<rate(winner){winner=i;}}
+     if rate(winner)>=rate(0)*0.90{winner=0;}
+     let choice=choices[winner];self.online_choices.insert(bucket,choice);self.online_bucket=Some(bucket);self.active_batch=choice.0;self.use_gemm=choice.1;
+     self.profile_events.push(serde_json::json!({"frontier_global":self.counts.iter().map(|&v|u64::from(v)).sum::<u64>(),"frontier_max_rank":self.max_frontier,"bucket":bucket,"choices":choices,"microseconds_and_parents":trial_scores,"winner":winner,"scope":"live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay"}));
+    }
+   }
    global_begin+=u64::from(batch);round+=1;
+   if profiling&&trial==schedule.len(){batch=self.active_batch;}
   }
   if round>0{for event in &self.done{check(unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}}
   check(unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm,b.control.at(8),self.control.at(0),stream)})?;

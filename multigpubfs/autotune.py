@@ -112,9 +112,11 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     sorted_admitted.append((lane,shards,transport,admission['plan']))
   if len(admitted)+len(sorted_admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   common_capacity=min([p['capacity'] for _,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted])
-  pilots=[];limit=min(3,max(1,max_seconds//20))
+  pilots=[];limit=1
+  startup_budget=min(8.,max_seconds*.1)
   from .launch import run_graph
   for index,(shards,fraction,transport,order,_) in enumerate(admitted):
+   if index>=2 and time.monotonic()-started>=startup_budget:break
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
@@ -125,7 +127,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   if sorted_admitted:
    for lane,shards,transport,_ in sorted_admitted:
     remaining=max_seconds-(time.monotonic()-started)
-    if remaining<3:break
+    if remaining<3 or time.monotonic()-started>=startup_budget:break
     shards=max(4,lane);transport=default_transport
     candidate_env=dict(env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(lane),MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT='none')
     try:admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
@@ -137,7 +139,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     pilots.append({'backend':'generic','history_algorithm':'SORTED_RUNS','owner_lanes':lane,'candidate_order':'none','transport':transport,'shards':shards,'batch_fraction':1.0,'batch':batch,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Compare generator on the same graph, history, capacity and transport.
   # GEMM has its own explicit workspace admission and a bounded launch batch.
-  if gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=3:
+  if gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=3 and time.monotonic()-started<startup_budget:
    base=pilots[0];candidate_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm',MGBFS_GENERIC_TRANSPORT=base['transport'],MGBFS_GENERIC_SORT=base['candidate_order'],MGBFS_GENERIC_HISTORY='sorted' if base.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(base.get('owner_lanes',1)))
    try:
     admission=_admit(graph,selected,common_capacity,base['shards'],native,candidate_env,temporary)
@@ -150,7 +152,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
 
   # Specialized candidates preserve only a proved identical LRX action/root.
   # Unsupported definitions/topologies remain on the general exact backend.
-  if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and max_seconds-(time.monotonic()-started)>=8:
+  if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and max_seconds-(time.monotonic()-started)>=8 and time.monotonic()-started<startup_budget:
    from .specialized import match_lrx,admit_specialized,run_specialized
    matched=match_lrx(graph)
    if matched is not None and matched['order']>=32768:
@@ -190,6 +192,58 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   if dependency is not None and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True)
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)
+   with os.fdopen(fd,'w') as f:json.dump(result,f)
+   os.replace(path,cache)
+  return result
+
+
+def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
+ """Bounded real-prefix measurements; unknown large tiers remain conservative."""
+ from .size_profiles import select_size_profiles
+ from .generation import gemm_supported
+ started=time.monotonic();env=dict(env)
+ global_profile=choose_profile(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
+ if global_profile.get('backend','generic')!='generic' or max_seconds<10 or global_profile.get('status')=='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE':return global_profile
+ shards=global_profile['shards']
+ env.update(MGBFS_GENERIC_TRANSPORT=global_profile.get('transport','full'),MGBFS_GENERIC_SORT=global_profile.get('candidate_order','none'),MGBFS_GENERIC_HISTORY='sorted' if global_profile.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(global_profile.get('owner_lanes',1)),MGBFS_GENERIC_GENERATOR=global_profile.get('generator_backend','cuda'))
+ with tempfile.TemporaryDirectory(prefix='mgbfs-size-profile-') as temporary:
+  first=_admit(graph,devices,capacity,shards,native,env,temporary);selected=first['devices']
+  if first.get('size_profile_capability')!=1:return dict(global_profile,size_tuning_status='NATIVE_SIZE_PROFILE_CAPABILITY_UNAVAILABLE')
+  default_generator=env.get('MGBFS_GENERIC_GENERATOR','cuda')
+  eligible=default_generator=='gemm' or (gemm_supported(graph) and _gemm_hardware_available())
+  reserve_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm' if eligible else 'cuda')
+  reserve=_admit(graph,selected,capacity,shards,native,reserve_env,temporary)
+  common=min(first['plan']['capacity'],reserve['plan']['capacity'])
+  reserve=_admit(graph,selected,common,shards,native,reserve_env,temporary)
+  large_batch=reserve['plan']['batch'];small_batch=min(4096,large_batch)
+  dependency=_dependency_identity(native,env)
+  hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
+  topology=_system_info(['nvidia-smi','topo','-m'])
+  identity={'schema':1,'graph':graph.digest(),'devices':selected,'capacity':common,'batch':large_batch,'plan':reserve['plan'],'config':_configuration_digest(env),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'selector':hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('size_profiles.py').read_bytes()).hexdigest(),'dependency':dependency,'hardware':hardware.stdout,'topology':topology.stdout}
+  key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+  root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/('size-'+key+'.json')
+  if dependency and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
+   try:result=json.loads(cache.read_text())
+   except (OSError,ValueError):result={}
+   if not isinstance(result,dict):result={}
+   profiles=result.get('size_profiles',[])
+   if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and isinstance(profiles,list) and profiles and all(isinstance(p,dict) and type(p.get('minimum_frontier')) is int and p['minimum_frontier']>=0 and type(p.get('batch')) is int and 0<p['batch']<=large_batch and p.get('generator_backend') in (('cuda','gemm') if eligible else ('cuda',)) for p in profiles) and profiles[0]['minimum_frontier']==0 and all(a['minimum_frontier']<b['minimum_frontier'] for a,b in zip(profiles,profiles[1:])):
+    result=dict(result,cache_hit=True,global_profile=global_profile,seconds=time.monotonic()-started);return result
+  base={'backend':'generic','shards':shards,'batch':large_batch,'batch_fraction':1.,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0),'generator_backend':reserve['plan'].get('generator_backend','cuda'),'size_profiles':[],'seconds':time.monotonic()-started,'measured':False}
+  if max_seconds<10 or common<=4096:return dict(base,status='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE')
+  # Reuse completed matching startup pilots, never rerun the prefix for tiers.
+  pilots=[]
+  chosen={'shards':shards,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0)}
+  for p in global_profile.get('pilots',[]):
+   if all(p.get(k,0 if k=='owner_lanes' else 'HASH' if k=='history_algorithm' else None)==v for k,v in chosen.items()) and p.get('batch',large_batch)<=large_batch:
+    pilots.append(dict(p,batch=p.get('batch',large_batch),generator_backend=p.get('generator_backend','cuda')))
+  pilots.sort(key=lambda p:(p['generator_backend']!=global_profile.get('generator_backend','cuda'),p['batch']!=global_profile.get('batch')))
+  if not pilots:pilots=[dict(batch=large_batch,generator_backend=default_generator,layer_sizes=[1],layer_seconds=[])]
+  budget=0.
+  profiles=select_size_profiles(pilots,len(selected))
+  result=dict(base,online_size_tuning=True,global_profile=global_profile,status='MEASURED_FRONTIER_SIZE_PROFILES',size_profiles=profiles,pilots=pilots,identity=identity,cache_hit=False,measured=any(p['measured'] for p in profiles),seconds=time.monotonic()-started,pilot_budget_seconds=budget,scope='same admitted shard/history/transport geometry; layer-boundary batch and exact generator selection; unmeasured large frontiers are conservative, no extrapolated optimum')
+  if dependency and hardware.returncode==0 and topology.returncode==0:
+   root.mkdir(parents=True,exist_ok=True);fd,path=tempfile.mkstemp(prefix='size-'+key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
    os.replace(path,cache)
   return result
