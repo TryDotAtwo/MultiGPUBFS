@@ -2,6 +2,18 @@
 import hashlib,json,os,shutil,sysconfig
 from pathlib import Path
 
+def _file_digest(path):
+ from .generic_session import _active
+ if _active is None:return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+ from .autotune import _stat_identity
+ key=(str(Path(path).resolve()),_stat_identity(path))
+ cache=getattr(_active,'file_digests',None)
+ if cache is None:cache={};_active.file_digests=cache
+ if key not in cache:
+  if len(cache)>=64:cache.clear()
+  cache[key]=hashlib.sha256(Path(path).read_bytes()).hexdigest()
+ return cache[key]
+
 def native_runtime(explicit=None):
  env=dict(os.environ)
  override=explicit or env.get('MGBFS_EXECUTABLE')
@@ -11,7 +23,7 @@ def native_runtime(explicit=None):
   manifest=json.loads((root/'manifest.json').read_text())
   if manifest.get('schema')!=1:raise RuntimeError('NATIVE_BUNDLE_MANIFEST_SCHEMA')
   for name in ('bin/mgbfs','lib/libmgbfs_cuda.so'):
-   if hashlib.sha256((root/name).read_bytes()).hexdigest()!=manifest['sha256'][name]:raise RuntimeError('NATIVE_BUNDLE_CHECKSUM_'+name)
+   if _file_digest(root/name)!=manifest['sha256'][name]:raise RuntimeError('NATIVE_BUNDLE_CHECKSUM_'+name)
   libraries=[str(root/'lib')];pure=Path(sysconfig.get_paths()['purelib'])
   toolkit=manifest.get('cuda_toolkit')
   if toolkit:
@@ -32,7 +44,7 @@ def native_runtime(explicit=None):
  if binary:return binary,env
  raise RuntimeError('MGBFS_EXECUTABLE_NOT_FOUND: install a Linux CUDA native wheel or build scripts/build_native_wheel.py and install its wheel')
 
-def runtime_identity(native,env):
+def _runtime_identity_uncached(native,env):
  """Cold provenance for the artifacts actually resolved by the launcher."""
  binary=Path(native);digest=hashlib.sha256(binary.read_bytes()).hexdigest()
  python_root=Path(__file__).resolve().parent
@@ -53,3 +65,17 @@ def runtime_identity(native,env):
    if dependency is not None and dependency['cuda_library_sha256']==library_digest:
     identity.update(source_commit=manifest.get('source_commit'),cuda_toolkit=manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
  return identity
+
+_runtime_identity_cache={}
+def runtime_identity(native,env):
+ from .generic_session import _active
+ if _active is None:return _runtime_identity_uncached(native,env)
+ from .autotune import _dependency_identity,_stat_identity
+ dependency=_dependency_identity(native,env)
+ if dependency is None:return _runtime_identity_uncached(native,env)
+ root=Path(__file__).resolve().parent
+ files=[Path(native),*sorted(root.glob('*.py')),Path(native).parent.parent/'manifest.json']
+ key=(tuple((str(p),_stat_identity(p)) for p in files),dependency['cuda_library_sha256'])
+ if key not in _runtime_identity_cache:
+  _runtime_identity_cache.clear();_runtime_identity_cache[key]=_runtime_identity_uncached(native,env)
+ return dict(_runtime_identity_cache[key])

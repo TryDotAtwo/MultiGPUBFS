@@ -1,0 +1,9 @@
+# Resident single-host sweeps
+
+`b300_current_production.py` keeps generic rank processes alive across startup checks, tuning, and the graph grid. Library API users can wrap a sequence of `run_graph` calls in `multigpubfs.generic_session.persistent_graph_workers()`.
+
+Each rank owns its physical GPU, CUDA context, NCCL communicator, streams, and buffers. Live admission counts both free VRAM and reusable cached allocation/pool bytes. Sorted workspace queries execute on each owning rank, not on the coordinator's foreign devices. Changing a graph resets graph state through the normal constructors. Equal buffer sizes reuse addresses; changed geometry returns storage to a bounded CUDA memory pool. Pool retention is limited to the initial free VRAM minus at least 1 GiB or 20 percent. GEMM can trim idle pool storage to make room for its external workspace.
+
+A communicator is parked only after successful result publication and checked device quiescence. A failed rank invalidates the group; there is no automatic rank restart. Device mapping, loader settings, NCCL settings, and resolved dependency identities gate reuse. Dependency and native-bundle checksums are cached only with file identity checks and are recomputed when metadata changes.
+
+The HOST_SIZED_NCCL specialized SHARD_AB bridge also keeps its own rank group resident. Only one backend retains idle state buffers at a time; checked memory handoff releases the other group's buffers while keeping healthy contexts. Query-only MEMORY_QUERY_DONE is a typed recoverable job outcome; its search-only flags are cleared before the next real search. NCCL_LSA continues to use fresh workers until communicator/window reuse receives hardware acceptance. Single-device direct execution and external multi-node ranks retain their existing launch contracts. These changes do not establish a global optimal profile, maximum hardware utilization, or acceptance on untested GPU counts.

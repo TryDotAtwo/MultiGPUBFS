@@ -8,11 +8,11 @@ use crate::generic_memory::GenericMemoryPlan;
 pub(crate) fn check(code:i32)->Result<()> {if code==0{Ok(())}else{Err(format!("GENERIC_CUDA_{code}"))}}
 pub(crate) struct Buffer {pub(crate) ptr:*mut c_void,pub(crate) bytes:usize,pub(crate) device:i32}
 impl Buffer {
- pub(crate) fn new(bytes:usize,device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaMalloc(&mut p,bytes.max(1))})?;Ok(Self{ptr:p,bytes,device})}
+ pub(crate) fn new(bytes:usize,device:i32)->Result<Self>{let p=if let Some(cached)=crate::session_cache::buffer_take(bytes.max(1)){cached}else if let Some(pooled)=crate::generic_pool::allocate(bytes.max(1))?{pooled}else{let mut fresh=ptr::null_mut();check(unsafe{cudaMalloc(&mut fresh,bytes.max(1))})?;fresh};Ok(Self{ptr:p,bytes,device})}
  pub(crate) fn upload<T>(&self,data:&[T])->Result<()> {let bytes=std::mem::size_of_val(data);if bytes>self.bytes{return Err("GENERIC_UPLOAD_BOUNDS".into());}check(unsafe{cudaMemcpy(self.ptr,data.as_ptr().cast(),bytes,1)})}
  pub(crate) fn at<T>(&self,offset:usize)->*mut T{unsafe{self.ptr.cast::<u8>().add(offset).cast()}}
 }
-impl Drop for Buffer {fn drop(&mut self){unsafe{cudaSetDevice(self.device);cudaFree(self.ptr);}}}
+impl Drop for Buffer {fn drop(&mut self){unsafe{cudaSetDevice(self.device);if !crate::session_cache::generic_buffer_put(self.ptr,self.bytes.max(1)){if crate::generic_pool::before_free().is_ok()&&!crate::generic_pool::release(self.ptr){cudaFree(self.ptr);}}}}}
 pub(crate) struct Stream {pub(crate) ptr:*mut c_void,pub(crate) device:i32}
 impl Stream {pub(crate) fn new(device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaStreamCreateWithFlags(&mut p,1)})?;Ok(Self{ptr:p,device})}}
 impl Drop for Stream {fn drop(&mut self){unsafe{cudaSetDevice(self.device);cudaStreamSynchronize(self.ptr);cudaStreamDestroy(self.ptr);}}}

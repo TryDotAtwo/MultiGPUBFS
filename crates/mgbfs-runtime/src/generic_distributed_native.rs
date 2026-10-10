@@ -4,6 +4,7 @@ use std::{ffi::c_void,ptr};
 use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
+extern "C" {fn cudaDeviceSynchronize()->i32;}
 use crate::{generic_native::{GenericNativeBfs,Buffer,Stream,check},generic_memory::GenericMemoryPlan,generic_distributed_memory::GenericDistributedMemoryPlan};
 extern "C" {
  fn mgbfs_nccl_exchange_bounded_triplets(comm:*mut c_void,rank:u32,world:u32,shards:u32,capacity:u32,used:u32,payload:u64,state_bytes:u32,counts:*const c_void,records:*const c_void,states:*const c_void,recv_counts:*mut c_void,recv_records:*mut c_void,recv_states:*mut c_void,stream:*mut c_void)->i32;
@@ -99,7 +100,7 @@ impl GenericDistributedBfs{
    check(unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;Some(owner)
   }else{None};
   let ready=Event::new(d)?;let mut comm=ptr::null_mut();let mut error=[0i8;512];
-  check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;
+  if let Some(cached)=crate::session_cache::comm_take(){comm=cached;}else{check(unsafe{mgbfs_nccl_create(rank,plan.world,device,id.as_ptr().cast(),&mut comm,error.as_mut_ptr(),error.len())})?;}
   let counts=(0..plan.world).map(|r|if r==root_rank{1u32}else{0}).collect::<Vec<_>>();
   let sort_cache=if plan.sort_candidates&&!use_sorted{Some(SortCache::new(&plan,d)?)}else{None};
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
@@ -107,6 +108,7 @@ impl GenericDistributedBfs{
   let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
   Ok(Self{online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
+ pub fn quiesce(&self)->Result<()>{check(unsafe{cudaDeviceSynchronize()})?;check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device)})?;check(unsafe{cudaStreamSynchronize(self.bfs.stream.ptr)})?;for stream in &self.streams{check(unsafe{cudaStreamSynchronize(stream.ptr)})?;}Ok(())}
  pub fn enable_online_size_tuning(&mut self){self.online_size_tuning=true;}
  pub fn size_profile_events(&self)->&[serde_json::Value]{&self.profile_events}
  pub fn set_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{
@@ -257,4 +259,4 @@ impl GenericDistributedBfs{
   Ok(DistributedAdvance::Layer{local,global})
  }
 }
-impl Drop for GenericDistributedBfs{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device);cudaStreamSynchronize(self.bfs.stream.ptr);for stream in &self.streams{cudaStreamSynchronize(stream.ptr);}mgbfs_nccl_destroy(self.comm);}}}
+impl Drop for GenericDistributedBfs{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device);cudaStreamSynchronize(self.bfs.stream.ptr);for stream in &self.streams{cudaStreamSynchronize(stream.ptr);}if !crate::session_cache::comm_put(self.comm){mgbfs_nccl_destroy(self.comm);}}}}

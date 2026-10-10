@@ -119,12 +119,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    for rank in range(len(devices)):
     log=(output/f'rank-{rank}.log').open('w');logs.append(log)
     env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
-    jobs.append(subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env=env,stdout=log,stderr=subprocess.STDOUT))
+    from .generic_session import launch as launch_rank
+    jobs.append(launch_rank([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env,log,devices))
    while any(p.poll() is None for p in jobs):
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
     if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
     if time.monotonic()-started>max_seconds+180:raise RuntimeError('DISTRIBUTED_COMPLETION_TIMEOUT: worker state remains in rank logs; no restart')
-    time.sleep(.02)
+    time.sleep(.002)
    if any(p.returncode for p in jobs):raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED')
   finally:
    for p in jobs:
@@ -142,7 +143,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return finish(_receipt(output,digest))

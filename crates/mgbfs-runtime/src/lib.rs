@@ -84,3 +84,9 @@ pub mod generic_distributed_run;
 
 #[cfg(feature="cuda")]
 mod generic_sorted_native;
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub mod generic_session;
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+mod generic_pool;

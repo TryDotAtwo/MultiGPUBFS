@@ -25,7 +25,7 @@ def _gemm_hardware_available():
  try:return caps.returncode==0 and bool(caps.stdout.strip()) and all(float(v.strip())>=8.0 for v in caps.stdout.splitlines())
  except ValueError:return False
 
-def _dependency_identity(native,env):
+def _dependency_identity_uncached(native,env):
  try:resolved=subprocess.run(['ldd',native],capture_output=True,text=True,env=env,timeout=10)
  except (OSError,subprocess.TimeoutExpired):return None
  dependencies=[]
@@ -39,6 +39,28 @@ def _dependency_identity(native,env):
    path=Path(fields[2])
    if path.is_file():return {'cuda_library_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'resolved_dependencies':dependencies}
  return None
+
+_dependency_cache={}
+def _stat_identity(path):
+ try:
+  s=Path(path).stat();return (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+ except OSError:return None
+
+def _dependency_identity(native,env):
+ from .generic_session import _active
+ if _active is None:return _dependency_identity_uncached(native,env)
+ search=tuple(env.get(k,'') for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT'))
+ directories=tuple((x,_stat_identity(x)) for x in search[0].split(':') if x)
+ key=(str(native),_stat_identity(native),search,directories)
+ cached=_dependency_cache.get(key)
+ if cached is not None:
+  value,stamps=cached
+  if all(_stat_identity(path)==stamp for path,stamp in stamps):return value
+ value=_dependency_identity_uncached(native,env)
+ if value is not None:
+  stamps=tuple((x[1],_stat_identity(x[1])) for x in value['resolved_dependencies'])
+  _dependency_cache.clear();_dependency_cache[key]=(value,stamps)
+ return value
 
 def _transport_variants(graph,env,hardware_shards=None):
  forced=env.get('MGBFS_GENERIC_TRANSPORT')
@@ -187,14 +209,14 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     if transport_decision['selected']=='NCCL_LSA':peer_options.append('NCCL_LSA')
     for mode,backend,peer in [(mode,backend,peer) for peer in peer_options for mode,backend in [('HASH','shard_ab_hash'),('SORT_MERGE','shard_ab_sort_merge')]]:
      remaining=max_seconds-(time.monotonic()-started)
-     if remaining<5:break
+     if remaining<15:break
      candidate_env=dict(env,MGBFS_SPECIALIZED_TRANSPORT=peer)
      if peer=='NCCL_LSA':candidate_env['NCCL_CUMEM_ENABLE']='1'
      label=backend+'-'+peer
      plan=admit_specialized(graph,native,candidate_env,selected,Path(temporary)/('admit-'+label),capacity=capacity,mode=mode,seconds=min(60,remaining))
      remaining=max_seconds-(time.monotonic()-started)
      if remaining<2:break
-     report=run_specialized(graph,Path(temporary)/label,native=native,env=candidate_env,devices=selected,capacity=plan['capacity'],batch=plan['batch'],max_seconds=min(5,max(2,int(remaining))),mode=mode,profile_layers=36)
+     report=run_specialized(graph,Path(temporary)/label,native=native,env=candidate_env,devices=selected,capacity=plan['capacity'],batch=plan['batch'],max_seconds=min(15,max(2,int(remaining))),mode=mode,profile_layers=36)
      if len(report['layer_seconds'])>=4 and sum(report['layer_sizes'][2:])>=32768:
       pilots.append({'backend':backend,'candidate_order':'none' if mode=='HASH' else 'radix','transport':'specialized_key_first_host','shards':1,'batch_fraction':1.0,'batch':plan['batch'],'specialized_capacity':plan['capacity'],'specialized_mode':mode,'specialized_transport':peer,'transport_selection':transport_decision,'state_bytes':1,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason'],'specialized_admission':plan})
   if not pilots:return {'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}

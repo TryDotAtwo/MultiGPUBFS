@@ -111,7 +111,7 @@ class Publisher:
   if self.error:raise RuntimeError('HF_FINAL_FAILED') from self.error
   if not self.receipt or not self.receipt['final']:raise RuntimeError('HF_FINAL_RECEIPT_MISSING')
 
-def main(argv=None):
+def _main(argv=None):
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--root',type=Path,required=True);p.add_argument('--repo-id',required=True);p.add_argument('--deadline-unix',type=float,required=True);p.add_argument('--token-file',type=Path,required=True)
  p.add_argument('--expected-gpus',type=int,choices=(1,2,4,8),default=4);p.add_argument('--n-min',type=int,default=2);p.add_argument('--n-max',type=int,default=128);p.add_argument('--preflight-only',action='store_true');p.add_argument('--allow-development-hardware',action='store_true')
@@ -192,4 +192,8 @@ def main(argv=None):
   path=hf_hub_download(a.repo_id,prefix+'/'+name,repo_type='dataset',revision=info.oid,token=publisher.token,cache_dir=str(a.root/'readback-cache'))
   if hashlib.sha256(Path(path).read_bytes()).hexdigest()!=hashlib.sha256((a.root/name).read_bytes()).hexdigest():raise RuntimeError('HF_REPORT_READBACK_MISMATCH')
  atomic_json(a.root/'final-evidence-receipt.json',dict(repo=a.repo_id,revision=info.oid,prefix=prefix,all_checksums_verified=True,final_report_verified=True,cohort_revision=publisher.receipt['revision']))
+def main(argv=None):
+ from multigpubfs.generic_session import persistent_graph_workers
+ with persistent_graph_workers():return _main(argv)
+
 if __name__=='__main__':main()

@@ -98,7 +98,8 @@ def _workers(native,root,match,devices,batch,env,seconds,query=False):
    log=(root/f'rank-{rank}.log').open('w');logs.append(log);e=dict(env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(device),TORCHELASTIC_RUN_ID=root.name)
    command=[native,'bench','--reference',f"lrx{match['n']}r{match['r']}",str(batch),str(root/'bootstrap'),str(root/'archive'),str(root/'native')]
    if query:command.append('--search-only')
-   jobs.append(subprocess.Popen(command,env=e,stdout=log,stderr=subprocess.STDOUT))
+   from .generic_session import launch_specialized
+   jobs.append(launch_specialized(command,e,log,devices))
   while any(p.poll() is None for p in jobs):
    if time.monotonic()-started>seconds and stop_at is None:
     stop_at=time.monotonic()

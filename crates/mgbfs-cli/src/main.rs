@@ -5,7 +5,7 @@ fn execute() -> Result<(), (i32, String)> {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
         args.first().and_then(|x| x.to_str()),
-        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-local-plan") | Some("graph-rank")
+        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-local-plan") | Some("graph-rank") | Some("graph-session") | Some("graph-count")
     ) {
         match mgbfs_runtime::cuda_loading::configure_cli_before_cuda() {
             Ok(true) => {
@@ -29,6 +29,20 @@ fn execute() -> Result<(), (i32, String)> {
     }
 
     match args.first().and_then(|x| x.to_str()) {
+        Some("graph-count") if args.len()==1 => {
+            #[cfg(all(feature="cuda",target_os="linux"))]
+            mgbfs_runtime::generic_distributed_run::visible_count().map_err(|e|(1,e))?;
+            #[cfg(not(all(feature="cuda",target_os="linux")))]
+            return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
+        }
+        Some("graph-session") if args.len()==4 => {
+            #[cfg(all(feature="cuda",target_os="linux"))]
+            {let rank=args[2].to_str().ok_or((2,"SESSION_RANK_ENCODING".into()))?.parse::<u32>().map_err(|_|(2,"SESSION_RANK".into()))?;
+             let device=args[3].to_str().ok_or((2,"SESSION_DEVICE_ENCODING".into()))?.parse::<u32>().map_err(|_|(2,"SESSION_DEVICE".into()))?;
+             mgbfs_runtime::generic_session::run(&PathBuf::from(&args[1]),rank,device).map_err(|e|(1,e))?;}
+            #[cfg(not(all(feature="cuda",target_os="linux")))]
+            return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
+        }
         Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
 
         Some(command @ ("graph-info" | "graph-plan" | "graph-local-plan" | "graph-rank")) => {

@@ -26,7 +26,7 @@ impl Default for Cache {
 }
 impl Cache {
     fn release_storage(&mut self) {
-        for (ptr, _) in self.buffers.drain(..) { unsafe { cudaFree(ptr); } }
+        for (ptr, _) in self.buffers.drain(..) { if !crate::generic_pool::release(ptr){unsafe { cudaFree(ptr); }} }
         #[cfg(feature = "library-owner")]
         if let Some((ptr, _)) = self.pool.take() {
             unsafe { mgbfs_cuda::library_owner::mgbfs_library_pool_destroy_v1(ptr); }
@@ -183,3 +183,7 @@ mod bootstrap_tests {
         CACHE.with(|cache| { let mut c=cache.borrow_mut();c.enabled=false;c.nccl_id=None; });
     }
 }
+
+pub fn generic_buffer_put(ptr:*mut c_void,bytes:usize)->bool{let allowed=CACHE.with(|c|c.borrow().permit_comm);allowed&&buffer_put(ptr,bytes)}
+
+pub fn release_idle_storage(){CACHE.with(|c|{let mut c=c.borrow_mut();c.release_storage();for(_,_,event,_)in c.pinned.drain(..){unsafe{cudaEventDestroy(event);}}c.shape.clear();});}

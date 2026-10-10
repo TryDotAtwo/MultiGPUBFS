@@ -1257,7 +1257,9 @@ fn run_pass(
     profiler_window_stop(profile_window)?;
     Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped))
     })();
-    if search_result.is_err() {
+    // Query-only admission is a successful control outcome, not peer cancellation.
+    let query_only = search_result.as_ref().err().is_some_and(|e| e == "MEMORY_QUERY_DONE");
+    if search_result.is_err() && !query_only {
         sideband.report_failure();
         // The failed closure no longer owns a BFS: its abort/drop has returned.
         // Constructor errors can also arrive here before a transport reader exists.
