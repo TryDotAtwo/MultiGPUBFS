@@ -72,7 +72,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=profile.get('generator_backend',native_env.get('MGBFS_GENERIC_GENERATOR','cuda')))
    if profile.get('history_algorithm')=='SORTED_RUNS':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(profile['owner_lanes']))
    elif profile.get('history_algorithm')=='HASH':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
-   if profile.get('measured') and profile.get('backend','generic')=='generic':_batch=profile['batch']
+   if (profile.get('measured') or profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE') and profile.get('backend','generic')=='generic':_batch=profile['batch']
    max_seconds=max(1,max_seconds-int(profile['seconds']+.999))
   else:shards=1
  output=Path(output).absolute()

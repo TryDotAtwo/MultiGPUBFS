@@ -80,6 +80,7 @@ class Session:
         self.router = None
         self.world = None
         self.capacity_profiles = {}
+        self.graph_profiles = {}
         self.metadata = {}
         self.memory = self.memory_thread = None
         self.memory_samples = []
@@ -206,6 +207,7 @@ class Session:
         self.process.stdout.close()
         self.process = self.job = None
         self.capacity_profiles.clear()
+        self.graph_profiles.clear()
         self.metadata.clear()
 
     def close(self):

@@ -90,7 +90,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':16,'selector_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':16,'selector_sha256':hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('profile_families.py').read_bytes()+Path(__file__).with_name('size_profiles.py').read_bytes()).hexdigest(),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
@@ -99,7 +99,22 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    from .specialized import match_lrx
    specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and match_lrx(graph) is not None
    if saved.get('generator_backend','cuda') in (('cuda','gemm') if gemm_supported(graph) else ('cuda',)) and saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and type(saved.get('shards')) is int and 1<=saved['shards']<=4096 and saved.get('batch_fraction') in (1.0,.25) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
-    saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;return saved
+    saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;saved['_admission_inventory']=baseline.get('inventory',[]);return saved
+  from .profile_families import identity as family_identity,load as family_load,transferred
+  shared_identity=family_identity(graph,plan,identity)
+  if dependency is not None and hardware.returncode==0 and topology.returncode==0:
+   borrowed=family_load(root,shared_identity)
+   if borrowed is not None:
+    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=borrowed.get('transport','full'),MGBFS_GENERIC_SORT=borrowed.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=borrowed.get('generator_backend','cuda'),MGBFS_GENERIC_HISTORY='sorted' if borrowed.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(borrowed.get('owner_lanes',1)))
+    try:
+     if borrowed['backend']=='generic':fresh=_admit(graph,selected,capacity,borrowed['shards'],native,candidate_env,temporary)['plan']
+     else:
+      from .specialized import admit_specialized
+      specialized_env=dict(env,MGBFS_SPECIALIZED_TRANSPORT=borrowed['specialized_transport'])
+      if borrowed['specialized_transport']=='NCCL_LSA':specialized_env['NCCL_CUMEM_ENABLE']='1'
+      fresh=admit_specialized(graph,native,specialized_env,selected,Path(temporary)/'shared-specialized',capacity=capacity,mode=borrowed['specialized_mode'],seconds=min(60,max_seconds))
+     return dict(transferred(borrowed,identity,fresh,time.monotonic()-started),_admission_inventory=baseline.get('inventory',[]))
+    except (RuntimeError,ValueError):pass
   admitted=[]
   for shards,fraction,transport,order in variants:
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
@@ -196,6 +211,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   chosen=pilots[winner]
   chosen_generator=chosen.get('generator_backend',forced_generator)
   result={'generator_backend':chosen_generator,'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common_capacity,'scope':'hardware-derived prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and exact bounded matrix CUDA/GEMM generators and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
+  result['_admission_inventory']=baseline.get('inventory',[])
   result.update(history_algorithm=chosen.get('history_algorithm','SORTED_RUNS' if env.get('MGBFS_GENERIC_HISTORY')=='sorted' else 'HASH'),owner_lanes=chosen.get('owner_lanes',int(env.get('MGBFS_GENERIC_OWNER_LANES','0'))))
   if chosen['backend']=='generic':result['batch']=chosen['batch']
   if chosen['backend']!='generic':result.update(specialized_capacity=chosen['specialized_capacity'],specialized_mode=chosen['specialized_mode'],specialized_transport=chosen['specialized_transport'],specialized_admission=chosen['specialized_admission'],batch=chosen['batch'])
@@ -204,6 +220,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
    os.replace(path,cache)
+   from .profile_families import store as family_store
+   family_store(root,shared_identity,result)
   return result
 
 
@@ -215,6 +233,7 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
  global_profile=choose_profile(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
  if global_profile.get('backend','generic')!='generic' or max_seconds<10 or global_profile.get('status')=='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE':return global_profile
  shards=global_profile['shards']
+ if global_profile.get('_admission_inventory'):env['_MGBFS_PROFILE_INVENTORY']=json.dumps(global_profile['_admission_inventory'])
  env.update(MGBFS_GENERIC_TRANSPORT=global_profile.get('transport','full'),MGBFS_GENERIC_SORT=global_profile.get('candidate_order','none'),MGBFS_GENERIC_HISTORY='sorted' if global_profile.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(global_profile.get('owner_lanes',1)),MGBFS_GENERIC_GENERATOR=global_profile.get('generator_backend','cuda'))
  with tempfile.TemporaryDirectory(prefix='mgbfs-size-profile-') as temporary:
   first=_admit(graph,devices,capacity,shards,native,env,temporary);selected=first['devices']
@@ -239,6 +258,19 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
    profiles=result.get('size_profiles',[])
    if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and isinstance(profiles,list) and profiles and all(isinstance(p,dict) and type(p.get('minimum_frontier')) is int and p['minimum_frontier']>=0 and type(p.get('batch')) is int and 0<p['batch']<=large_batch and p.get('generator_backend') in (('cuda','gemm') if eligible else ('cuda',)) for p in profiles) and profiles[0]['minimum_frontier']==0 and all(a['minimum_frontier']<b['minimum_frontier'] for a,b in zip(profiles,profiles[1:])):
     result=dict(result,cache_hit=True,global_profile=global_profile,seconds=time.monotonic()-started);return result
+  if global_profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE':
+   source=global_profile.get('source_pilots',[])
+   compatible=[p for p in source if p.get('backend')=='generic' and p.get('history_algorithm','HASH')==global_profile.get('history_algorithm','HASH') and p.get('shards')==shards and p.get('transport')==global_profile.get('transport') and p.get('candidate_order')==global_profile.get('candidate_order')]
+   threshold=len(selected)*max(1024,min(int(i['sm_count']) for i in first['inventory'])*512)
+   compatible=[dict(p,generator_backend=p.get('generator_backend','cuda')) for p in compatible]
+   tiers=select_size_profiles(compatible,len(selected),threshold=threshold) if compatible else []
+   profiles=[]
+   for tier in tiers:
+    donor_batch=next((p.get('batch',1) for p in compatible if p.get('generator_backend','cuda')==tier['generator_backend']),1)
+    batch=max(1,min(large_batch,int(large_batch*tier['batch']/max(1,donor_batch))))
+    profiles.append(dict(minimum_frontier=tier['minimum_frontier'],batch=batch,generator_backend=tier['generator_backend'],measured=False,status='REUSED_SOURCE_SIZE_PROFILE',source_maximum_measured_frontier=tier['maximum_measured_frontier']))
+   if not profiles:profiles=[dict(minimum_frontier=0,batch=max(1,int(large_batch*global_profile['batch_fraction'])),generator_backend=default_generator,measured=False,status='REUSED_SOURCE_CONSERVATIVE_PROFILE')]
+   return dict(global_profile,batch=max(1,int(large_batch*global_profile['batch_fraction'])),size_profiles=profiles,online_size_tuning=True,seconds=time.monotonic()-started,global_profile=global_profile,pilot_budget_seconds=0.,target_pilots_executed=0)
   base={'backend':'generic','shards':shards,'batch':large_batch,'batch_fraction':1.,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0),'generator_backend':reserve['plan'].get('generator_backend','cuda'),'size_profiles':[],'seconds':time.monotonic()-started,'measured':False}
   if max_seconds<10 or common<=4096:return dict(base,status='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE')
   # Reuse completed matching startup pilots, never rerun the prefix for tiers.

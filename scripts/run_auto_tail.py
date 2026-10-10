@@ -305,8 +305,10 @@ def run_adaptive(config, source, case, runtime, *, deadline, cancelled=None):
         allowance = min(ceiling,max(0,remaining*.1))
         calibration_deadline=time.time()+allowance
         calibration_started=time.monotonic()
-        decision=calibrate(cfg,source,case.parent/(case.name+'-graph-calibration'),runtime,
-            deadline=calibration_deadline,cancelled=cancelled)
+        from sweep_graph_profiles import calibrate_or_reuse
+        from resident_session import active_session
+        decision=calibrate_or_reuse(calibrate,cfg,source,case.parent/(case.name+'-graph-calibration'),runtime,
+            deadline=calibration_deadline,cancelled=cancelled,session=active_session())
         cfg['automatic_phase_seconds']['graph_calibration']=time.monotonic()-calibration_started
         decision['startup_budget_seconds']=allowance
         cfg['graph_profile_selection']=decision
