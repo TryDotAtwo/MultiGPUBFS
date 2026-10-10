@@ -1,11 +1,12 @@
 """Standalone CUDA successor gate; full exact comparison, not throughput acceptance."""
-import ctypes as C,json,sys
+import ctypes as C,json,sys,os
+from ctypes.util import find_library
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from multigpubfs.graph_definition import GraphDefinition
 lib=C.CDLL(sys.argv[1]);fn=lib.mgbfs_generic_generate_i64
 fn.argtypes=[C.c_uint32,C.c_uint32,C.c_uint32,C.c_uint32,C.c_uint32,C.c_void_p,C.c_uint32,C.c_uint32,C.c_void_p,C.c_void_p,C.c_void_p,C.c_void_p,C.c_uint32,C.c_void_p,C.c_uint32,C.c_void_p,C.c_void_p];fn.restype=C.c_int
-cuda=C.CDLL('libcudart.so.12');cuda.cudaMalloc.argtypes=[C.POINTER(C.c_void_p),C.c_size_t];cuda.cudaMemcpy.argtypes=[C.c_void_p,C.c_void_p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[C.c_void_p]
+cuda=C.CDLL(os.environ.get('MGBFS_CUDART_LIBRARY') or find_library('cudart') or 'libcudart.so');cuda.cudaMalloc.argtypes=[C.POINTER(C.c_void_p),C.c_size_t];cuda.cudaMemcpy.argtypes=[C.c_void_p,C.c_void_p,C.c_size_t,C.c_int];cuda.cudaFree.argtypes=[C.c_void_p]
 def ck(v):
  if v:raise RuntimeError('CUDA_STATUS_'+str(v))
 def array(values,ty):return (ty*len(values))(*values)
