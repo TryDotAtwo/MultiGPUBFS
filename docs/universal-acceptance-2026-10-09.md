@@ -1,3 +1,5 @@
+> Historical chronological evidence. Later corrections supersede earlier findings. See [current audit](universal-current-audit-2026-10-10.md) for the current acceptance boundaries.
+
 # Current lossless-key update
 
 The earlier fingerprint-only restriction below is historical. Current source admits matched LRX permutation graphs only when their entire normalized state has a proved injective128-bit packed key, and checks native capability before specialized launch. Other graph domains retain general full-state equality. See lossless-shard-keys.md for the proof, producer/allocation contract, current GPU evidence and remaining clean-installed/release gates. Do not infer arbitrary-graph exactness from prior fingerprint fixtures.

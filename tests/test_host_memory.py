@@ -28,4 +28,17 @@ class HostMemoryTests(unittest.TestCase):
   graph=GraphDefinition.permutation([[0]],[0])
   with patch('multigpubfs.host_memory.inventory',return_value={'available_bytes':100,'sources':[]}):
    with self.assertRaisesRegex(RuntimeError,'HOST_MEMORY_ADMISSION_FAILED'):admit(graph)
+ def test_escaped_mount_path(self):
+  tmp,p,m=self.fixture()
+  with tmp:
+   new=m.with_name('mount space');m.rename(new)
+   (p/'proc/self/mountinfo').write_text('1 0 0:1 /root '+str(new).replace(' ','\\040')+' rw - cgroup2 cgroup rw\n')
+   (new/'memory.max').write_text('500');(new/'memory.current').write_text('200')
+   self.assertEqual(inventory(p/'proc')['available_bytes'],300)
+ def test_disk_refusal_before_native(self):
+  graph=GraphDefinition.permutation([[0]],[0])
+  from collections import namedtuple
+  usage=namedtuple('usage','total used free')(100,99,1)
+  with patch('multigpubfs.host_memory.inventory',return_value={'available_bytes':None,'sources':[]}),patch('multigpubfs.host_memory.shutil.disk_usage',return_value=usage):
+   with self.assertRaisesRegex(RuntimeError,'HOST_DISK_ADMISSION_FAILED'):admit(graph,output=Path('/tmp/nonexistent-cold-output'))
 if __name__=='__main__':unittest.main()

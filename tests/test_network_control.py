@@ -14,5 +14,7 @@ class NetworkControlTests(unittest.TestCase):
    with self.assertRaisesRegex(RuntimeError,'403'):ControlStore('127.0.0.1',port,1,'session',.2,'wrong').put('key',0)
    with self.assertRaisesRegex(RuntimeError,'409'):ControlStore('127.0.0.1',port,1,'wrong',.2,'secret').put('key',0)
    with self.assertRaisesRegex(RuntimeError,'TIMEOUT_NO_RESTART'):client.get('missing',timeout=.01)
+   client.put('error','HOST_MEMORY_ADMISSION_FAILED fixture')
+   with self.assertRaisesRegex(RuntimeError,'DISTRIBUTED_PEER_ERROR'):server.get('peer-wait',timeout=.01)
   finally:server.close()
 if __name__=='__main__':unittest.main()

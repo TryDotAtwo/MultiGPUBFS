@@ -35,22 +35,28 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=1<<28):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
- admit(graph,int(os.environ.get('WORLD_SIZE','1')),os.environ.get('WORLD_SIZE','1')!='1')
+ host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
+ def finish(report):
+  from .native_distribution import runtime_identity
+  report['runtime_identity']=runtime_identity(native,native_env)
+  if host_memory is not None:report['host_memory']=[host_memory]
+  path=Path(output)/'report.json';temporary=path.with_name('report.json.tmp');temporary.write_text(json.dumps(report,indent=2));temporary.replace(path)
+  return report
  if transport!='auto':native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport)
  if candidate_order!='auto':native_env=dict(native_env,MGBFS_GENERIC_SORT=candidate_order)
  if os.environ.get('WORLD_SIZE','1')!='1':
   if backend not in ('auto','generic') or peer_transport=='lsa':raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
   from .distributed_launch import run_external
-  return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune)
+  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None
  if backend.startswith('shard_ab_'):
   if shards is not None or transport!='auto' or candidate_order!='auto':raise ValueError('SPECIALIZED_ADAPTIVE_GEOMETRY_OR_GENERIC_OPTION_CONFLICT')
-  return _run_specialized_admitted(graph,output,native,native_env,devices,capacity,max_seconds,backend,_batch,_profile_layers,None)
+  return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,max_seconds,backend,_batch,_profile_layers,None))
  if shards is None:
   if autotune:
    from .autotune import choose_profile
@@ -58,7 +64,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    shards=profile['shards']
    if profile.get('backend','generic')!='generic':
     remaining=max(1,max_seconds-int(profile['seconds']+.999))
-    return _run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile)
+    return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
    native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'))
    if profile.get('history_algorithm')=='SORTED_RUNS':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(profile['owner_lanes']))
    elif profile.get('history_algorithm')=='HASH':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
@@ -95,7 +101,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    result=_receipt(output,digest)
    if profile:
     result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
-   return result
+   return finish(result)
   output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
   try:
    for rank in range(len(devices)):
@@ -127,7 +133,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
-  return _receipt(output,digest)
+  return finish(_receipt(output,digest))
 
 
 def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_seconds,backend,batch,profile_layers,profile):

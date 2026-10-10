@@ -49,6 +49,9 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
  started=time.monotonic();profile=None
  try:
+  from .host_memory import admit as admit_host
+  host_memory=admit_host(graph,world,True,output)
+  store.put(f'host-memory/{rank}',host_memory)
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
    dependency=_dependency_identity(native,native_env)
@@ -130,7 +133,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       if any(v[k]!=reports[0][k] for k in ('status','reason','layer_sizes')):raise RuntimeError('EXTERNAL_LAYER_CONSENSUS_MISMATCH')
      current=[row for v in parts for row in v['states']['current']];previous=[row for v in parts for row in v['states']['previous_small']]
      if len(current)>1000 or len(previous)>=1000:raise RuntimeError('EXTERNAL_RETENTION_BOUND')
-     states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(layer_seconds=[max(v['layer_seconds'][i] for v in reports) for i in range(len(reports[0]['layer_seconds']))],devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
+     states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(layer_seconds=[max(v['layer_seconds'][i] for v in reports) for i in range(len(reports[0]['layer_seconds']))],devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),host_memory=[store.get(f'host-memory/{i}') for i in range(world)],scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
      store.put(label+'/result',{'report':result,'states':states})
     result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2))
     store.put(label+f'/consumed/{rank}',True)
