@@ -2,6 +2,7 @@
 import argparse,hashlib,json,os,random,signal,sys,time,queue,threading,fcntl
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from multigpubfs import GraphDefinition,run_graph
 from multigpubfs.native_distribution import native_runtime
 from bfs_tail_archive import atomic_json
