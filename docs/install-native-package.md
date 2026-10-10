@@ -1,24 +1,15 @@
-# Current local-rank planning and automatic-profile native package
+# Verified compact native package
 
-Verified executable/package source: `a37480a9eb92e479b9eee5d9bc98063c5736e5e9`.
-Linux x86_64, compiled target SM86, CUDA 13.2 runtime, NCCL 2.30.7.
-Actual clean installation: one/two RTX3060 with driver 595.84. Blackwell,
-physical 4/8/128 GPUs and separate hosts remain unverified. Choose an artifact
-compiled for your GPU; this SM86 release is not a B200/B300 acceptance claim.
+Executable/package source: `5998ba54d9e200e5d547ea7a470d88c5505ca9cc`.
+Linux x86_64, SM86, CUDA 13.2 runtime, NCCL 2.30.7; actual one/two RTX3060 with driver 595.84. Physical larger/multi-node configurations and Blackwell remain unverified. The attempted multiarchitecture build hit its explicit time limit; this artifact claims SM86 only. LSA is compiled OFF.
 
 ```bash
-python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/77903224f739334802e3fac139ab3c3ec6487aef/linux-x86_64-sm86-cuda13.2/a37480a9eb92e479b9eee5d9bc98063c5736e5e9/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/97f59974611a904cd0fca74c6b221e73c856feb5/linux-x86_64-sm86-cuda13.2/5998ba54d9e200e5d547ea7a470d88c5505ca9cc/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
 ```
 
-Wheel SHA256: `7851d280da9dff21b510a2c5012ab9764f4f22ad6b32f47f50dd510aa0598961`. Anonymous immutable readback
-verified. The wheel includes the native executable and CUDA library; its
-manifest checks both hashes. No source checkout, toolkit compilation or
-MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. NVIDIA driver
-installation remains a host prerequisite.
+Wheel SHA256: `180b55ed5a4e8892bcd13ecc36443d0e65554e2c9453c32985aff447fdf80d4a`. Anonymous immutable readback verified. Binary/library hashes and source commit are checked from the bundled manifest. No source checkout, local compilation or manual MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. A compatible NVIDIA driver is required.
 
-For CayleyPy definitions, install the optional adapter dependency. Native BFS
-uses its own CUDA kernels; a CPU PyTorch dependency is sufficient for loading
-these definitions and avoids downloading an unrelated GPU PyTorch stack:
+Optional CayleyPy definitions use the CPU adapter:
 
 ```bash
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -31,26 +22,11 @@ from multigpubfs import run_graph
 report = run_graph(PermutationGroups.lrx(8), "new-result-directory")
 ```
 
-All visible GPUs are the default. This release serializes sorted memory/owner
-admission, admits workspace before state allocation, measures HASH versus
-SORTED_RUNS and 1/2/4/8 sorted-owner lanes on bounded common prefixes, and carries
-the exact chosen batch into production. Tiny prefixes keep a conservative
-profile. Prefix selection does not promise a global performance optimum.
+All visible GPUs are the default. Native memory admission and bounded matched-prefix tuning choose admitted batch/shard/history/owner-lane profiles. Tiny prefixes retain a conservative profile; this is not a global optimum guarantee. Public generic output is compact. Cold RAM/cgroup/output/temp disk estimates and collective startup refusal precede GPU work. Reports record actual binary, Python and CUDA library identities.
 
-Clean installed verification covered 12 complete CayleyPy permutation/matrix
-runs and four resource-stop retention cases across HASH/SORTED and one/two GPUs,
-plus the console command. Installed 40320-state automatic profiling, exact CPU
-layer/terminal oracles and cache reuse passed separately. CUDA 13 pip runtime
-namespace discovery is covered; older CUDA namespace ordering remains tested.
-Installed LRX14 comparison also passes nine equal-capacity profiles, a common
-35.6-million-state prefix, and selector cache reuse. Actual buffer allocations
-reach 10015MiB/card (HASH) and 9137MiB/card (SORTED); occupied VRAM causes
-re-admission and oversized requests reject. Full-capacity sustained throughput
-and larger hardware acceptance remain pending.
+This artifact passed a fresh installation with one/two-GPU 120/257-state exact public runs, a 6-state public/console provenance gate, and external-rank TCP/NCCL weighted/resource/matrix/mismatch plus 40320-state collective autotuning on one host. Twenty direct changed-path GPU exact-layer cases covered HASH/SORTED, byte/int64 states, wide full/parent transport, collisions and INCOMPLETE preservation.
 
-External ranks collectively compare HASH/SORTED and owner lanes1/2/4/8. Each rank queries its own native memory shape before common-batch and weighted-capacity negotiation. Clean-installed TCP/NCCL and isolated local-device0 tests passed on two physical cards on one host. Separate physical nodes remain unverified.
-
-Cold host/cgroup admission, consumed pilot snapshot release and forced sorted-lane inventory fixes: [host-control-memory-2026-10-10.md](host-control-memory-2026-10-10.md). Fresh installed one/two GPU public and collective network tests passed for this package.
+Three alternating matched two-GPU 3,628,800-state runs showed completed-layer medians 0.566575350 s before and 0.395965297 s after bounded queue/parent transfer (ratio 1.430871). Background CPU compilation was present in both variants. Two GPUs still underperform one GPU on this fixed case. This is not full-capacity sustained throughput or larger-hardware acceptance. See [current audit](universal-current-audit-2026-10-10.md).
 
 ## Historical immutable artifacts
 
