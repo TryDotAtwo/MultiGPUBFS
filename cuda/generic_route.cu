@@ -161,7 +161,7 @@ extern "C" int mgbfs_generic_route_gemm_i64(void* context,uint32_t kind,uint32_t
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  auto*x=static_cast<GenericGemmContext*>(context);if(kind>1||!x||x->n!=n||x->m!=m||x->g!=generators)return int(cudaErrorInvalidValue);
  if(!count)return 0;int gemm=generic_gemm_compute(x,parents,count,stride,static_cast<cudaStream_t>(stream));if(gemm)return gemm;uint64_t blocks=(uint64_t(count)*generators+255)/256;
- Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};
+ Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};action.byte_products=x->byte_output?reinterpret_cast<const uint8_t*>(x->c):nullptr;
  route<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
  return int(cudaGetLastError());
 }
@@ -175,7 +175,7 @@ extern "C" int mgbfs_generic_regenerate_gemm_routes_count_i64(void* context,uint
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!request_count)return 0;uint64_t blocks=(uint64_t(request_count)*elements+255)/256;
  auto*x=static_cast<GenericGemmContext*>(context);if(kind>1||!x||x->n!=n||x->m!=m||x->g!=generators||count>x->batch)return int(cudaErrorInvalidValue);
- Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};
+ Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};action.byte_products=x->byte_output?reinterpret_cast<const uint8_t*>(x->c):nullptr;
  regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,device_count,output,output_stride,error);
  return int(cudaGetLastError());
 }
@@ -190,7 +190,7 @@ extern "C" int mgbfs_generic_route_gemm_u8(void* context,uint32_t kind,uint32_t 
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  auto*x=static_cast<GenericGemmContext*>(context);if(kind>1||!x||x->n!=n||x->m!=m||x->g!=generators)return int(cudaErrorInvalidValue);
  if(!count)return 0;int gemm=generic_gemm_compute(x,parents,count,stride,static_cast<cudaStream_t>(stream));if(gemm)return gemm;uint64_t blocks=(uint64_t(count)*generators+255)/256;
- ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};
+ ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};action.byte_products=x->byte_output?reinterpret_cast<const uint8_t*>(x->c):nullptr;
  if(kind==0&&elements<=24)route<uint8_t,true><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);else route<uint8_t><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
  return int(cudaGetLastError());
 }
@@ -203,7 +203,7 @@ extern "C" int mgbfs_generic_regenerate_gemm_routes_count_u8(void* context,uint3
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!request_count)return 0;uint64_t blocks=(uint64_t(request_count)*elements+255)/256;
  auto*x=static_cast<GenericGemmContext*>(context);if(kind>1||!x||x->n!=n||x->m!=m||x->g!=generators||count>x->batch)return int(cudaErrorInvalidValue);
- ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};
+ ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};action.byte_products=x->byte_output?reinterpret_cast<const uint8_t*>(x->c):nullptr;
  regenerate_routes<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,source,begin,requests,request_count,device_count,output,output_stride,error);
  return int(cudaGetLastError());
 }

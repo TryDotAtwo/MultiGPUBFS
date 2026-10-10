@@ -42,7 +42,7 @@ def case(count,device,shards=4):
   for i in range(7):
    for which in (('cuda','gemm') if i%2==0 else ('gemm','cuda')):times[which].append(invoke(which))
   med={k:statistics.median(v) for k,v in times.items()}
-  return {'device':device,'parents':count,'children':count*g,'shards':shards,'median_ms':med,'samples_ms':times,'cuda_over_gemm':med['cuda']/med['gemm'],'exact_records_sha256':a}
+  return {'requested_variant':os.environ.get('MGBFS_GEMM_VARIANT','auto'),'device':device,'parents':count,'children':count*g,'shards':shards,'median_ms':med,'samples_ms':times,'cuda_over_gemm':med['cuda']/med['gemm'],'exact_records_sha256':a}
  finally:
   ck(destroy(ctx));ck(cuda.cudaEventDestroy(start));ck(cuda.cudaEventDestroy(end))
   for p in alloc:ck(cuda.cudaFree(p))
@@ -51,4 +51,4 @@ if __name__=='__main__':
  for device in (0,1):
   for count in (33,4096,32768,131072,349525,1048576):
    row=case(count,device);rows.append(row);print(json.dumps(row),flush=True)
- Path('/root/lrx-gemm/generation-check.json').write_text(json.dumps({'status':'VERIFIED_PERMUTATION_GEMM_ROUTE_PARITY','scope':'valid n14 permutations; exact records; event includes pack+GEMM+hash+route; excludes dedup/exchange','runs':rows},indent=2))
+ Path(os.environ.get('MGBFS_GEMM_REPORT','permutation-gemm-check.json')).write_text(json.dumps({'status':'VERIFIED_PERMUTATION_GEMM_ROUTE_PARITY','scope':'valid n14 permutations; exact records; event includes pack+GEMM+hash+route; excludes dedup/exchange','runs':rows},indent=2))
