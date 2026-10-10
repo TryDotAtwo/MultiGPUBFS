@@ -138,10 +138,10 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     sorted_admitted.append((lane,shards,transport,admission['plan']))
   if len(admitted)+len(sorted_admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   common_capacity=min([p['capacity'] for _,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted]+[hardware_policy['probe_capacity_per_rank']])
-  pilots=[];limit=1
+  pilots=[];limit=5
   from .launch import run_graph
   for index,(shards,fraction,transport,order,_) in enumerate(admitted):
-   if max_seconds-(time.monotonic()-started)<2:break
+   if max_seconds-(time.monotonic()-started)<limit+1:break
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
@@ -149,7 +149,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    pilots.append({'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Compare generator on the same graph, history, capacity and transport.
   # GEMM has its own explicit workspace admission and a bounded launch batch.
-  if gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=3 :
+  if pilots and gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=limit+1 :
    base=pilots[0];candidate_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm',MGBFS_GENERIC_TRANSPORT=base['transport'],MGBFS_GENERIC_SORT=base['candidate_order'],MGBFS_GENERIC_HISTORY='sorted' if base.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(base.get('owner_lanes',1)))
    try:
     admission=_admit(graph,selected,common_capacity,base['shards'],native,candidate_env,temporary)
@@ -197,12 +197,13 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      report=run_specialized(graph,Path(temporary)/label,native=native,env=candidate_env,devices=selected,capacity=plan['capacity'],batch=plan['batch'],max_seconds=min(5,max(2,int(remaining))),mode=mode,profile_layers=36)
      if len(report['layer_seconds'])>=4 and sum(report['layer_sizes'][2:])>=32768:
       pilots.append({'backend':backend,'candidate_order':'none' if mode=='HASH' else 'radix','transport':'specialized_key_first_host','shards':1,'batch_fraction':1.0,'batch':plan['batch'],'specialized_capacity':plan['capacity'],'specialized_mode':mode,'specialized_transport':peer,'transport_selection':transport_decision,'state_bytes':1,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason'],'specialized_admission':plan})
+  if not pilots:return {'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
   depth=min(len(p['layer_seconds']) for p in pilots)
   sizes=pilots[0]['layer_sizes'][:depth+1]
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
   # Exclude first collective warmup. Tiny prefixes cannot justify a speed claim.
   if depth<4 or sum(sizes[2:])<32768:
-   return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':pilots,'common_depth':depth,'seconds':time.monotonic()-started}
+   return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':pilots,'common_depth':depth,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
   scores=[sum(p['layer_seconds'][1:depth]) for p in pilots]
   winner=min(range(len(scores)),key=lambda i:scores[i])
   # A single bounded sample cannot justify a marginal switch. Keep baseline
@@ -231,7 +232,7 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
  from .generation import gemm_supported
  started=time.monotonic();env=dict(env)
  global_profile=choose_profile(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
- if global_profile.get('backend','generic')!='generic' or max_seconds<10 or global_profile.get('status')=='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE':return global_profile
+ if global_profile.get('backend','generic')!='generic' or max_seconds<10 or global_profile.get('status') in ('SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE','TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE') or time.monotonic()-started>=max_seconds:return global_profile
  shards=global_profile['shards']
  if global_profile.get('_admission_inventory'):env['_MGBFS_PROFILE_INVENTORY']=json.dumps(global_profile['_admission_inventory'])
  env.update(MGBFS_GENERIC_TRANSPORT=global_profile.get('transport','full'),MGBFS_GENERIC_SORT=global_profile.get('candidate_order','none'),MGBFS_GENERIC_HISTORY='sorted' if global_profile.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(global_profile.get('owner_lanes',1)),MGBFS_GENERIC_GENERATOR=global_profile.get('generator_backend','cuda'))

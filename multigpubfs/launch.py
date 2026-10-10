@@ -64,7 +64,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if shards is None:
   if autotune:
    from .autotune import choose_size_profile
-   profile=choose_size_profile(graph,devices,capacity,max_seconds,native,native_env,allow_specialized=backend=='auto')
+   # Reserve most of the caller's deadline for BFS, not cold tuning.
+   tuning_budget=min(60,max(1,max_seconds//3))
+   profile=choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto')
    shards=profile['shards']
    if profile.get('backend','generic')!='generic':
     remaining=max(1,max_seconds-int(profile['seconds']+.999))
@@ -81,6 +83,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  with tempfile.TemporaryDirectory(prefix='mgbfs-definition-',dir=output.parent) as temporary:
   definition=Path(temporary)/'graph.json';definition.write_text(graph.to_json(),encoding='utf-8')
   selection='auto' if devices is None else ','.join(map(str,devices));command=[str(native),'graph-info',str(definition),selection,str(shards)]
+  # A bounded pilot may reuse the exclusive startup's inventory. Real runs
+  # always query live VRAM again; no shared inventory on production admission.
+  if _profile_layers is not None and native_env.get('_MGBFS_PROFILE_INVENTORY'):
+   cached_inventory=Path(temporary)/'inventory.json';cached_inventory.write_text(native_env['_MGBFS_PROFILE_INVENTORY'])
+   command=[str(native),'graph-plan',str(definition),str(cached_inventory),str(shards)]
   if capacity is not None:command.append(str(capacity))
   if _batch is None and profile and profile.get('batch_fraction',1.0)!=1.0:
    initial=native_query(command,capture_output=True,text=True,env=native_env)

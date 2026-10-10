@@ -38,8 +38,9 @@ def payload(path,inverse):
  return {key:sorted(tuple(inverse[x] for x in row) for row in v[key]) for key in ('current','previous_small')}
 
 def verify_oracle(report,g,path,limit):
+ if report['status']!='COMPLETE':raise RuntimeError('PRODUCTION_STARTUP_INCOMPLETE_'+str(report.get('reason','UNKNOWN')))
  cpu=g.exact_layers(limit)
- if report['status']!='COMPLETE' or report['layer_sizes']!=list(map(len,cpu)):raise RuntimeError('PRODUCTION_CPU_ORACLE_MISMATCH')
+ if report['layer_sizes']!=list(map(len,cpu)):raise RuntimeError('PRODUCTION_CPU_ORACLE_MISMATCH')
  v=json.loads((Path(path)/'states.json').read_text())
  if sorted(map(tuple,v['current']))!=sorted(map(tuple,cpu[-1])):raise RuntimeError('PRODUCTION_TERMINAL_ORACLE_MISMATCH')
  if len(cpu)>1 and len(cpu[-2])<1000 and sorted(map(tuple,v['previous_small']))!=sorted(map(tuple,cpu[-2])):raise RuntimeError('PRODUCTION_PREVIOUS_ORACLE_MISMATCH')
