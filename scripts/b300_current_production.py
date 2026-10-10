@@ -70,7 +70,7 @@ class Publisher:
    directory=self.root/'cohorts';directory.mkdir(exist_ok=True);name=f'cohorts/chunk-{len(self.entries):05d}.tar.gz';path=self.root/name
    with tarfile.open(path,'w:gz',compresslevel=1) as archive:
     for run in runs:
-     for leaf in ('report.json','states.json','launch.json'):
+     for leaf in ['report.json','states.json','launch.json']+[str(q.relative_to(self.root/run)) for q in sorted((self.root/run).glob('rank-*/report.json'))]:
       source=self.root/run/leaf
       if source.exists():
        member=run+'/'+leaf;archive.add(source,arcname=member,recursive=False);members.append(dict(path=member,bytes=source.stat().st_size,sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
