@@ -6,12 +6,14 @@ static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits)
 template<class State> struct ActionT {
  uint32_t kind,elements,n,m,generators,count,stride;
  const State* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
+ const int32_t* products=nullptr;uint32_t product_stride=0;
  __device__ uint32_t child(uint32_t i)const{return i;}
  __device__ uint32_t origin_limit()const{return count*generators;}
  __device__ uint32_t bucket(uint64_t h,uint32_t capacity)const{return h&(capacity-1);}
  __device__ bool valid(uint32_t,uint32_t*)const{return true;}
  __device__ int64_t value(uint32_t child,uint32_t element)const {
   const uint32_t parent=child/generators,g=child%generators;
+  if(products){uint32_t row=element/m,col=element%m;return int64_t(products[uint64_t(g*n+row)*product_stride+uint64_t(col)*count+parent])%moduli[g];}
   if(kind==0)return parents[uint64_t(permutations[uint64_t(g)*elements+element])*stride+parent];
   const uint32_t row=element/m,col=element%m;const int64_t* matrix=matrices+uint64_t(g)*n*n;
   uint64_t sum=0;for(uint32_t k=0;k<n;k++)sum+=uint64_t(matrix[uint64_t(row)*n+k])*uint64_t(parents[uint64_t(k*m+col)*stride+parent]);

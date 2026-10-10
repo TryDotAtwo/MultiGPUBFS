@@ -5,28 +5,34 @@ from .process_control import query as native_query
 from .network_control import ControlStore
 from .autotune import _dependency_identity,_transport_variants
 
-def _external_variants(graph,env):
+def _external_variants(graph,env,allow_gemm=False):
  history=env.get('MGBFS_GENERIC_HISTORY')
  base=[v+(history or 'hash',int(env.get('MGBFS_GENERIC_OWNER_LANES','1')) if history=='sorted' else 0) for v in _transport_variants(graph,env)]
  if history is None and env.get('MGBFS_GENERIC_SORT') in (None,'none'):
   packed=graph.action['kind']=='permutation' and graph.state_elements<=24 and all(0<=v<=255 for v in graph.start)
   transport=env.get('MGBFS_GENERIC_TRANSPORT') or ('full' if packed else 'parent')
   base += [(max(4,lane),1.0,transport,'none','sorted',lane) for lane in (1,2,4,8)]
+ from .generation import gemm_supported
+ forced=env.get('MGBFS_GENERIC_GENERATOR','cuda')
+ if forced not in ('cuda','gemm'):raise ValueError('INVALID_GENERIC_GENERATOR')
+ if forced=='gemm' and not gemm_supported(graph):raise ValueError('GEMM_GRAPH_NOT_EXACTLY_SUPPORTED')
+ base=[v+(forced,) for v in base]
+ if allow_gemm and forced=='cuda' and gemm_supported(graph):base.append(base[0][:-1]+('gemm',))
  return base
 
-def _phase_environment(env,transport=None,order=None,history=None,lanes=None):
+def _phase_environment(env,transport=None,order=None,history=None,lanes=None,generator=None):
  result=dict(env)
- for key,value in [('MGBFS_GENERIC_TRANSPORT',transport),('MGBFS_GENERIC_SORT',order),('MGBFS_GENERIC_HISTORY',history),('MGBFS_GENERIC_OWNER_LANES',lanes)]:
+ for key,value in [('MGBFS_GENERIC_TRANSPORT',transport),('MGBFS_GENERIC_SORT',order),('MGBFS_GENERIC_HISTORY',history),('MGBFS_GENERIC_OWNER_LANES',lanes),('MGBFS_GENERIC_GENERATOR',generator)]:
   if value is not None:result[key]=str(value)
  return result
 
 def _merge_local_sorted_plans(parts,digest,requested):
  if not parts or len(parts)>128:raise RuntimeError('EXTERNAL_LOCAL_PLAN_WORLD')
  plans=[v['plan'] for v in parts];first=plans[0]
- fields=('world','shards','elements','state_bytes','history_layers','history_algorithm','owner_lanes','batch','queue_capacity','generator_bytes','parent_transport','sort_candidates')
+ fields=('world','shards','elements','state_bytes','history_layers','history_algorithm','owner_lanes','batch','queue_capacity','generator_bytes','parent_transport','sort_candidates','generator_backend')
  for item in parts:
   if item['graph_digest']!=digest or item['plan']['world']!=len(parts) or item['plan']['history_algorithm']!='SORTED_RUNS':raise RuntimeError('EXTERNAL_LOCAL_PLAN_IDENTITY')
-  if any(item['plan'][k]!=first[k] for k in fields):raise RuntimeError('EXTERNAL_LOCAL_PLAN_TRANSPORT_GEOMETRY')
+  if any(item['plan'].get(k,'cuda' if k=='generator_backend' else None)!=first.get(k,'cuda' if k=='generator_backend' else None) for k in fields):raise RuntimeError('EXTERNAL_LOCAL_PLAN_TRANSPORT_GEOMETRY')
   if requested is not None and item['plan']['capacity']!=requested:raise RuntimeError('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION')
  cuts=None
  if requested is None:
@@ -56,7 +62,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
    dependency=_dependency_identity(native,native_env)
-   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'cuda':dependency['cuda_library_sha256'] if dependency else None}
+   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'cuda':dependency['cuda_library_sha256'] if dependency else None}
    store.put(f'identity/{rank}',identity)
    if rank==0:
     peers=[store.get(f'identity/{i}') for i in range(world)]
@@ -68,9 +74,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
+    from .autotune import _gemm_hardware_available
+    store.put(label+f'/gemm/{rank}',_gemm_hardware_available() and 'generator_backend' in v['plan'])
     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
-   def admit(label,inventory,count,requested,batch=None,transport=None,order=None,history=None,lanes=None):
-    admission_env=_phase_environment(native_env,transport,order,history,lanes)
+   def admit(label,inventory,count,requested,batch=None,transport=None,order=None,history=None,lanes=None,generator=None):
+    admission_env=_phase_environment(native_env,transport,order,history,lanes,generator)
     if admission_env.get('MGBFS_GENERIC_HISTORY')=='sorted':
      target=batch or max(1,(1<<20)//max(1,len(graph.action['generators'])))
      def local_probe(stage,target):
@@ -95,11 +103,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     result=store.get(label+'/admitted')
     if 'error' in result:raise RuntimeError(result['error'])
     return result['value']
-   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None):
-    phase_env=_phase_environment(native_env,transport,order,history,lanes)
+   def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None,generator=None):
+    phase_env=_phase_environment(native_env,transport,order,history,lanes,generator)
     inventory=inventories(label)
-    config=admit(label,inventory,count,requested,transport=transport,order=order,history=history,lanes=lanes)
-    if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes)
+    config=admit(label,inventory,count,requested,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
+    if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if rank==0:
      config['max_seconds']=seconds
      if depth is not None:config['profile_max_layers']=depth
@@ -145,26 +153,26 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    if shards is None and autotune and max_seconds>=10:
     inventory=inventories('profile-admission')
     variants=[];plans=[]
-    for i,(c,f,transport,order,history,lanes) in enumerate(_external_variants(graph,native_env)):
-     try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order,history=history,lanes=lanes)['plan']
+    for i,(c,f,transport,order,history,lanes,generator) in enumerate(_external_variants(graph,native_env,all(store.get('profile-admission'+f'/gemm/{i}') for i in range(world)))):
+     try:plan=admit('profile-'+str(i),inventory,c,capacity,transport=transport,order=order,history=history,lanes=lanes,generator=generator)['plan']
      except RuntimeError as error:
       if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
       raise
-     variants.append((c,f,transport,order,history,lanes));plans.append(plan)
+     variants.append((c,f,transport,order,history,lanes,generator));plans.append(plan)
     common=min(p['capacity'] for p in plans) if plans else 0
     if rank==0:store.put('profile-plan',{'capacity':common,'run':common>4096 and len(variants)>1,'variants':variants})
     proposal=store.get('profile-plan')
     if proposal['run']:
      pilots=[]
-     for i,(count,fraction,transport,order,history,lanes) in enumerate(proposal['variants']):
-      v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,min(3,max(1,max_seconds//20)),36,transport=transport,order=order,history=history,lanes=lanes);pilots.append({'history_algorithm':v['plan']['history_algorithm'],'owner_lanes':v['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
+     for i,(count,fraction,transport,order,history,lanes,generator) in enumerate(proposal['variants']):
+      v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,min(3,max(1,max_seconds//20)),36,transport=transport,order=order,history=history,lanes=lanes,generator=generator);pilots.append({'generator_backend':v['plan'].get('generator_backend','cuda'),'history_algorithm':v['plan']['history_algorithm'],'owner_lanes':v['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
      depth=min(len(p['layer_seconds']) for p in pilots);sizes=pilots[0]['layer_sizes'][:depth+1]
      if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('EXTERNAL_PROFILE_PREFIX_MISMATCH')
      scores=[sum(p['layer_seconds'][1:depth]) for p in pilots];winner=min(range(len(pilots)),key=lambda i:scores[i]) if depth>=4 and sum(sizes[2:])>=32768 else 0
      if scores[winner]>=scores[0]*.95:winner=0
-     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'candidate_order':pilots[winner]['candidate_order'],'history_algorithm':pilots[winner]['history_algorithm'],'owner_lanes':pilots[winner]['owner_lanes'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
+     profile={'status':'MEASURED_EQUAL_PREFIX_EXTERNAL_PROFILE' if depth>=4 and sum(sizes[2:])>=32768 else 'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','generator_backend':pilots[winner].get('generator_backend','cuda'),'shards':pilots[winner]['shards'],'batch_fraction':pilots[winner]['batch_fraction'],'transport':pilots[winner]['transport'],'candidate_order':pilots[winner]['candidate_order'],'history_algorithm':pilots[winner]['history_algorithm'],'owner_lanes':pilots[winner]['owner_lanes'],'pilots':pilots,'common_depth':depth,'scores_seconds':scores,'scope':'bounded collective prefix, no global optimum claim'}
    shards=shards if shards is not None else (profile['shards'] if profile else 1)
-   remaining=max(1,max_seconds-int(time.monotonic()-started+.999));result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None)
+   remaining=max(1,max_seconds-int(time.monotonic()-started+.999));result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('generator_backend','cuda') if profile else native_env.get('MGBFS_GENERIC_GENERATOR'))
    if profile:result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    store.put(f'finished/{rank}',True)
    if rank==0:

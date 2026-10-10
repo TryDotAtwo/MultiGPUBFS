@@ -45,6 +45,11 @@ extern "C" {
   seed:u64,hash_bits:u32,world:u32,source:u32,local_shards:u32,queue_capacity:u32,parent_begin:u64,
   owner_to_rank:*const u32,owner_cuts:*const u64,queues:*mut GenericRouteRecord,counts:*mut u32,
   error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_route_gemm_i64(context:*mut std::ffi::c_void,kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,
+  parents:*const i64,count:u32,stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
+  seed:u64,hash_bits:u32,world:u32,source:u32,local_shards:u32,queue_capacity:u32,parent_begin:u64,
+  owner_to_rank:*const u32,owner_cuts:*const u64,queues:*mut GenericRouteRecord,counts:*mut u32,
+  error:*mut u32,stream:*mut std::ffi::c_void)->i32;
 }
 
 #[cfg(feature="cuda")]
@@ -68,6 +73,10 @@ extern "C" {
 #[cfg(feature="cuda")]
 extern "C" {
  pub fn mgbfs_generic_regenerate_routes_count_i64(kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,
+  parents:*const i64,parent_count:u32,parent_stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
+  source:u32,parent_begin:u64,requests:*const GenericRouteRecord,request_capacity:u32,device_count:*const u32,
+  output:*mut i64,output_stride:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+ pub fn mgbfs_generic_regenerate_gemm_routes_count_i64(context:*mut std::ffi::c_void,kind:u32,elements:u32,rows:u32,cols:u32,generators:u32,
   parents:*const i64,parent_count:u32,parent_stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
   source:u32,parent_begin:u64,requests:*const GenericRouteRecord,request_capacity:u32,device_count:*const u32,
   output:*mut i64,output_stride:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
@@ -173,3 +182,5 @@ extern "C" {
 pub unsafe fn mgbfs_generic_accept_rolling_storage(state_bytes:u32,elements:u32,local:*const i64,remote:*const i64,local_meta:*const GenericRouteRecord,remote_meta:*const GenericRouteRecord,local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,q:u32,slots:*mut u64,slot_capacity:u32,arena:*mut i64,stride:u32,base:u32,capacity:u32,accepted:*mut u32,future:*mut u32,positions:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>(if elements<=24{mgbfs_generic_accept_rolling_packed_u8}else{mgbfs_generic_accept_rolling_u8})(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,q,slots,slot_capacity,arena.cast(),stride,base,capacity,accepted,future,positions,error,stream),8=>mgbfs_generic_accept_rolling_i64(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,q,slots,slot_capacity,arena.cast(),stride,base,capacity,accepted,future,positions,error,stream),_=>1}}
 #[cfg(feature="cuda")]
 pub unsafe fn mgbfs_generic_reseed_rows_storage(state_bytes:u32,elements:u32,arena:*const i64,stride:u32,base:u32,count:u32,slots:*mut u64,slot_capacity:u32,positions:*mut u32,seed:u64,bits:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>mgbfs_generic_reseed_rows_u8(elements,arena.cast(),stride,base,count,slots,slot_capacity,positions,seed,bits,error,stream),8=>mgbfs_generic_reseed_rows_i64(elements,arena,stride,base,count,slots,slot_capacity,positions,seed,bits,error,stream),_=>1}}
+
+extern "C" {pub fn mgbfs_generic_gemm_create(n:u32,m:u32,g:u32,batch:u32,matrices:*const i64,out:*mut *mut std::ffi::c_void)->i32;pub fn mgbfs_generic_gemm_destroy(context:*mut std::ffi::c_void)->i32;}

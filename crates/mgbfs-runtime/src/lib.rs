@@ -64,6 +64,7 @@ pub mod transport;
 pub mod cuda_loading;
 
 pub mod generic_memory;
+mod generic_gemm;
 
 #[cfg(feature="cuda")]
 pub mod generic_native;

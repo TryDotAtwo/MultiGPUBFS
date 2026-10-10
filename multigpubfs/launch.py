@@ -66,7 +66,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if profile.get('backend','generic')!='generic':
     remaining=max(1,max_seconds-int(profile['seconds']+.999))
     return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
-   native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'))
+   native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=profile.get('generator_backend',native_env.get('MGBFS_GENERIC_GENERATOR','cuda')))
    if profile.get('history_algorithm')=='SORTED_RUNS':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(profile['owner_lanes']))
    elif profile.get('history_algorithm')=='HASH':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
    if profile.get('measured') and profile.get('backend','generic')=='generic':_batch=profile['batch']

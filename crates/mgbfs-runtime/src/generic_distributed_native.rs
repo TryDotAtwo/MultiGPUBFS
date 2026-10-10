@@ -34,7 +34,7 @@ impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{
 #[derive(Debug,PartialEq,Eq)]
 pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
- bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
+ gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
  sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,positions:Option<Buffer>,rolling_counts:[u32;3],retired_rows:u64,
 }
@@ -48,6 +48,7 @@ impl GenericDistributedBfs{
  pub fn new_with_cuts(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32,cuts:Option<&[u64]>)->Result<Self>{
   if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
+  if crate::generic_gemm::requested()?&&!crate::generic_gemm::eligible(graph){return Err("GEMM_GRAPH_NOT_EXACTLY_SUPPORTED".into());}
   let use_sorted=plan.history_algorithm=="SORTED_RUNS";
   if !use_sorted&&std::env::var("MGBFS_GENERIC_HISTORY").as_deref()==Ok("sorted"){return Err("SORTED_HISTORY_REQUIRES_SERIALIZED_ADMISSION".into());}
   let admitted_sorted_shape=if use_sorted{
@@ -103,7 +104,8 @@ impl GenericDistributedBfs{
   let sort_cache=if plan.sort_candidates&&!use_sorted{Some(SortCache::new(&plan,d)?)}else{None};
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
-  Ok(Self{sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
+  let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
+  Ok(Self{gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
  pub fn history_algorithm(&self)->&str{&self.plan.history_algorithm}
  pub fn owner_lanes(&self)->usize{self.streams.len()}
@@ -146,8 +148,8 @@ impl GenericDistributedBfs{
    let bank=&self.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
    check(unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    check(unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
-   check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;
-   if !p.packed_candidates()&&!p.parent_transport{for queue in 0..queues{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}
+   if let Some(ctx)=&self.gemm{check(unsafe{mgbfs_generic_route_gemm_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_route_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),b.seed,b.hash_bits,p.world,self.rank,p.shards,p.queue_capacity,self.parent_cursor+u64::from(begin),self.owner_map.ptr.cast(),self.owner_cuts.as_ref().map_or(ptr::null(),|v|v.ptr.cast()),bank.records.ptr.cast(),bank.counts.ptr.cast(),self.control.at(8),stream)})?;}
+   if !p.packed_candidates()&&!p.parent_transport{for queue in 0..queues{if let Some(ctx)=&self.gemm{check(unsafe{mgbfs_generic_regenerate_gemm_routes_count_i64(ctx.ptr,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}else{check(unsafe{mgbfs_generic_regenerate_routes_count_storage(p.state_bytes,b.kind,p.elements,b.rows,b.cols,b.generators,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),count,parent_stride,b.perms.ptr.cast(),b.matrices.ptr.cast(),b.moduli.ptr.cast(),self.rank,self.parent_cursor+u64::from(begin),bank.records.at(queue*q*32),p.queue_capacity,bank.counts.at(queue*4),bank.states.at(queue*q*width*state_bytes),p.queue_capacity,self.control.at(8),stream)})?;}}}
    if let Some(cache)=&self.parent_cache{
     check(unsafe{mgbfs_generic_pack_parent_chunk(p.state_bytes,p.elements,parent_ptr.cast::<u8>().add(begin as usize*state_bytes).cast(),parent_stride,count,cache.sources[((self.depth+round)%2) as usize].ptr,batch,stream)})?;
    }
