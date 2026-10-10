@@ -1,12 +1,7 @@
-# Current lossless-key update
+# Unified graph launch
 
-The earlier fingerprint-only restriction below is historical. Current source admits matched LRX permutation graphs only when their entire normalized state has a proved injective128-bit packed key, and checks native capability before specialized launch. Other graph domains retain general full-state equality. See lossless-shard-keys.md for the proof, producer/allocation contract, current GPU evidence and remaining clean-installed/release gates. Do not infer arbitrary-graph exactness from prior fingerprint fixtures.
+Current Linux package and immutable installation: [install-native-package.md](install-native-package.md). General permutation/int64-matrix actions use full-state exact equality. Specialized SHARD_AB selection is limited to proved lossless LRX packed-key domains, with a native capability check; other graphs stay on the general exact backend. See [lossless-shard-keys.md](lossless-shard-keys.md).
 
-# Current exact-owner restriction
-
-The exact public API currently selects only the generic full-state-equality backend. Legacy SHARD_AB HASH/SORT_MERGE compare128-bit fingerprints without full-state collision resolution, so they are excluded from automatic profiles and explicit public requests fail with SPECIALIZED_EXACT_EQUALITY_UNAVAILABLE. Earlier small-graph oracles validate those fixtures only; they do not prove hash injectivity for arbitrary graphs. Peer-capability experiments remain bounded private reference tests. The source goal remains incomplete until the specialized owner has full equality or a proved lossless key.
-
-# Unified graph launch (current implementation)
 
 ```python
 from multigpubfs import run_graph
@@ -107,3 +102,9 @@ The installed package exposes `multigpubfs graph.json new-results --devices 0,1 
 `peer_transport="auto"` (CLI `--peer-transport auto`) observes a pure native LSA build flag. An enabled library must pass a bounded fixed exact24-state GPU graph with known layer and terminal-state receipts before LSA enters performance profiles. AUTO retains HOST as an alternative and scores transports on identical graph prefixes. Compiled-off or the exact NCCL unsupported-device/team error selects HOST; timeouts, unknown native errors and oracle failures are errors rather than silent fallback. `peer_transport="host"` skips the LSA gate. Explicit `peer_transport="lsa"` requires a specialized backend and fails if capability cannot be verified. External ranks retain the general backend; explicit LSA is unsupported there. The cached winning transport is retained and LSA capability is rechecked before use.
 
 Both compiled-off and enabled-but-unsupported fallback paths passed complete exact HASH/SORT_MERGE graphs on twoRTX3060; explicit unsupported LSA rejected. The current hardware cannot validate successful LSA data-plane/throughput. CPU policy tests cover adding and choosing LSA profiles after a verified capability; they are not GPU LSA acceptance. No capability queries or CPU successor enumeration run inside the BFS hot loop.
+
+## External-rank planning checkpoint, 2026-10-10
+
+Collective tuning considers HASH and SORTED_RUNS with1/2/4/8 owner lanes, respects explicitly forced history/order, compares common completed prefixes and passes its selected geometry to production. Sorted allocation queries execute on each rank's own local GPU through graph-local-plan. The shared batch is negotiated before final per-rank allocation; automatic capacities define weighted owner hash cuts. Local device IDs may repeat across hosts/process visibility domains.
+
+Actual tests cover two RTX3060 on one host, TCP/NCCL and independent directories, including one visible GPU per process as local device0. Calculated128-rank contracts do not establish physical128-GPU or multi-host performance. No globally optimal profile or arbitrary-hardware throughput guarantee is claimed.
