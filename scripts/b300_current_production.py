@@ -17,6 +17,11 @@ def definition(n,r,seed=0):
  start=list(range(n-r+1))+[n-r]*(r-1)
  return GraphDefinition.permutation([list(range(1,n))+[0],[n-1]+list(range(n-1)),[1,0]+list(range(2,n))],[labels[v] for v in start]),{v:k for k,v in enumerate(labels)}
 
+def paired_status(reports):
+ if len(reports)!=2:return 'PARTIAL_ONE_SEED'
+ if all(v['status']=='COMPLETE' for v in reports):return 'COMPLETE'
+ return 'INCOMPLETE'
+
 def capacity_stop(report):
  # 0x100 marks owner errors; low bits 1/2/4 are table/arena/future capacity.
  # Other native errors, CUDA failures, time limits and cancellations cannot prune.
@@ -148,7 +153,7 @@ def main(argv=None):
     if all(v['status']=='COMPLETE' for v in reports):
      if reports[0]['layer_sizes']!=reports[1]['layer_sizes'] or payload(a.root/runs[0],inverses[0])!=payload(a.root/runs[1],inverses[1]):raise RuntimeError('TWO_SEED_TERMINAL_MISMATCH')
     verified=True
-   record=dict(n=n,r=rr,attempted=True,status=reports[0]['status'] if len(reports)==2 else 'PARTIAL_ONE_SEED',runs=runs,two_seed_prefix_verified=verified,reasons=[v['reason'] for v in reports],layer_sizes=reports[0]['layer_sizes'],bfs_seconds=[v['bfs_seconds'] for v in reports])
+   record=dict(n=n,r=rr,attempted=True,status=paired_status(reports),runs=runs,two_seed_prefix_verified=verified,reasons=[v['reason'] for v in reports],layer_sizes=reports[0]['layer_sizes'],bfs_seconds=[v['bfs_seconds'] for v in reports])
    ledger['cases'][key]=record
    if len(reports)==2 and all(capacity_stop(v) for v in reports):blocked[rr]=n
    ledger['pending']=[list(v) for v in pairs if f'n{v[0]}-r{v[1]}' not in ledger['cases']];atomic_json(a.root/'sweep.json',ledger)
