@@ -1,7 +1,7 @@
 import unittest,sys,tempfile,json,queue
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from b300_current_production import grid,definition,capacity_stop,check_driver,paired_status,payload,verify_oracle,Publisher
+from b300_current_production import grid,definition,capacity_stop,tables,check_driver,paired_status,payload,verify_oracle,Publisher
 from b300_production import inventory
 class ProductionTests(unittest.TestCase):
  def test_mixed_pair_is_incomplete(self):
@@ -11,6 +11,11 @@ class ProductionTests(unittest.TestCase):
  def test_driver_floor(self):
   self.assertEqual(check_driver('580.65.06\n595.45.04\n'),[580,595])
   with self.assertRaises(RuntimeError):check_driver('570.1')
+ def test_tables_keep_incomplete_scope(self):
+  import csv,io
+  result=tables({'cases':{'x':{'n':14,'r':1,'status':'INCOMPLETE','attempted':True,'layer_sizes':[1,3],'bfs_seconds':[2.0],'reasons':['RESOURCE_258']}}})
+  row=list(csv.DictReader(io.StringIO(result['pairs.csv'].decode())))[0];self.assertEqual(row['status'],'INCOMPLETE');self.assertEqual(row['states_in_completed_layers'],'4')
+  self.assertEqual(len(list(csv.DictReader(io.StringIO(result['layers.csv'].decode())))),2)
  def test_all_pairs(self):
   values=grid(2,128);self.assertEqual(len(values),8255);self.assertEqual(values[0],(2,1));self.assertEqual(values[-1],(128,128));self.assertEqual(len(set(values)),8255)
  def test_grid_bounds(self):

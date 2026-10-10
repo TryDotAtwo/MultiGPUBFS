@@ -44,6 +44,17 @@ def verify_oracle(report,g,path,limit):
  if sorted(map(tuple,v['current']))!=sorted(map(tuple,cpu[-1])):raise RuntimeError('PRODUCTION_TERMINAL_ORACLE_MISMATCH')
  if len(cpu)>1 and len(cpu[-2])<1000 and sorted(map(tuple,v['previous_small']))!=sorted(map(tuple,cpu[-2])):raise RuntimeError('PRODUCTION_PREVIOUS_ORACLE_MISMATCH')
 
+def tables(ledger):
+ import csv,io
+ pairs=io.StringIO(newline='');layers=io.StringIO(newline='');pw=csv.writer(pairs);lw=csv.writer(layers)
+ pw.writerow(['n','r','status','attempted','two_seed_prefix_verified','completed_layers','states_in_completed_layers','seed0_bfs_seconds','seed13_bfs_seconds','seed0_reason','seed13_reason'])
+ lw.writerow(['n','r','case_status','depth','states','two_seed_prefix_verified'])
+ for c in ledger['cases'].values():
+  sizes=c.get('layer_sizes',[]);times=c.get('bfs_seconds',[]);reasons=c.get('reasons',[])
+  pw.writerow([c['n'],c['r'],c['status'],c['attempted'],c.get('two_seed_prefix_verified',False),len(sizes),sum(sizes),times[0] if times else '',times[1] if len(times)>1 else '',reasons[0] if reasons else '',reasons[1] if len(reasons)>1 else ''])
+  for depth,count in enumerate(sizes):lw.writerow([c['n'],c['r'],c['status'],depth,count,c.get('two_seed_prefix_verified',False)])
+ return {'pairs.csv':pairs.getvalue().encode(),'layers.csv':layers.getvalue().encode()}
+
 class Publisher:
  def __init__(self,root,repo,token):
   from huggingface_hub import HfApi
@@ -81,10 +92,12 @@ class Publisher:
    source=self.root/name
    if source.exists():new.append((name,source))
   ledger_bytes=json.dumps(ledger,indent=2).encode();manifest_bytes=json.dumps({'cohorts':self.entries,'ledger_sha256':hashlib.sha256(ledger_bytes).hexdigest(),'retention':'compact current up to1000 and previous below1000, two seeds'},indent=2).encode()
-  prefix='runs/'+self.root.name
+  prefix='runs/'+self.root.name;csv_tables=tables(ledger)
   operations=[CommitOperationAdd(path_in_repo=prefix+'/'+name,path_or_fileobj=str(path)) for name,path in new]+[CommitOperationAdd(path_in_repo=prefix+'/sweep.json',path_or_fileobj=ledger_bytes),CommitOperationAdd(path_in_repo=prefix+'/manifest.json',path_or_fileobj=manifest_bytes)]
+  operations += [CommitOperationAdd(path_in_repo=prefix+'/'+name,path_or_fileobj=raw) for name,raw in csv_tables.items()]
   info=self.api.create_commit(repo_id=self.repo,repo_type='dataset',operations=operations,commit_message='Current compact BFS '+('final' if final else 'progress'))
   checks=[dict(path=name,sha256=hashlib.sha256(path.read_bytes()).hexdigest()) for name,path in new]+[{'path':'sweep.json','sha256':hashlib.sha256(ledger_bytes).hexdigest()},{'path':'manifest.json','sha256':hashlib.sha256(manifest_bytes).hexdigest()}]
+  checks += [{'path':name,'sha256':hashlib.sha256(raw).hexdigest()} for name,raw in csv_tables.items()]
   for entry in checks:
    downloaded=hf_hub_download(self.repo,prefix+'/'+entry['path'],repo_type='dataset',revision=info.oid,token=self.token,cache_dir=str(self.root/'readback-cache'))
    if hashlib.sha256(Path(downloaded).read_bytes()).hexdigest()!=entry['sha256']:raise RuntimeError('HF_READBACK_CHECKSUM')

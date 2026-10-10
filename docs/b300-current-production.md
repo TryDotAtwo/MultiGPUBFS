@@ -45,3 +45,5 @@ It produces a DEVELOPMENT receipt and does not validate B300 execution.
 running the pair grid.
 
 CUDA 13.2 native package requires NVIDIA driver branch R580 or newer. Startup checks the branch before launching BFS; actual GPU capability tests remain mandatory. https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html
+
+HF publication includes pairs.csv (status and completed-prefix totals) and layers.csv (per-depth counts). INCOMPLETE totals describe only completed layers, not the whole graph. Pruned rows contain no computed layer counts.
