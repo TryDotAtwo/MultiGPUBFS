@@ -9,3 +9,11 @@ Application device allocations happen before BFS loops. Admission includes a con
 Validation on two RTX3060: 30 native boundary cases checked hashes and every regenerated payload element against ordinary CUDA/CPU arithmetic, including odd batch sizes, rectangular states and moduli 2/251/256. Eight complete 40,320-state BFS runs matched CPU layers and terminal states for one/two GPUs, HASH/SORTED histories and full/parent transport. Shared-host and independent external-rank collective choosers executed the GEMM candidate and completed the same graph. 504 Python tests passed with one conditional skip; Rust library tests passed. Native source compiled for SM86. Blackwell, physically separate nodes and 8/128-rank throughput are not hardware-validated by these tests.
 
 Default use is unchanged: run_graph(graph, output). MGBFS_GENERIC_GENERATOR=gemm forces the bounded exact path; cuda forces its native implementation during a manually configured run. Startup auto may compare the alternative for an eligible graph. The shipped SM86 wheel below contains this feature; the previous portable wheel is not retroactively changed.
+
+## Accepted SM86 wheel
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/21597679aac67c9f98be3ef242ab37f177bc5752/linux-x86_64-sm86-gemm-cuda13.2/8337f111caef0ed5eedda380d34ec92096299a27/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `cc90131cbebfc69774b8e4c39b8acaccb8d9ed636dac532ab50ac0acccf1bfdb`. This wheel targets SM86; use the separately documented portable release or a current source build for other architectures.
