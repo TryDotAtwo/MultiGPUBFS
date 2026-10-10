@@ -40,7 +40,7 @@ __global__ void retire_rows(uint64_t* slots,uint64_t slot_capacity,const uint64_
 template<class State> __global__ void reseed_rows(uint32_t elements,const State* arena,uint32_t stride,uint32_t base,uint32_t count,uint64_t* slots,uint64_t slot_capacity,uint64_t* positions,uint64_t seed,uint32_t bits,uint32_t* error){
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<count;i+=blockDim.x*gridDim.x){
   uint32_t row=base+i;uint64_t hash=seed;for(uint32_t e=0;e<elements;e++)hash=mix64(hash^uint64_t(arena[uint64_t(e)*stride+row])^uint64_t(e));hash=finish_hash(hash,bits);
-  uint64_t slot=__umul64hi(hash,slot_capacity);bool done=false;
+  uint64_t slot=mgbfs_shared_table_bucket(hash,slot_capacity);bool done=false;
   for(uint64_t probe=0;probe<slot_capacity;probe++,slot=(slot+1)&(slot_capacity-1)){if(atomicCAS(reinterpret_cast<unsigned long long*>(slots+slot),EMPTY,(hash&0x7fffffff00000000ULL)|row)==EMPTY){positions[row]=slot;done=true;break;}}
   if(!done)atomicOr(error,1u);
  }

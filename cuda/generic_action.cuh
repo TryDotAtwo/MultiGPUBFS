@@ -2,6 +2,9 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 static __device__ __forceinline__ uint64_t mix64(uint64_t x){x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;return x^(x>>31);}
+// Rank routing consumes high hash bits and shard routing consumes low-word high bits.
+// Re-avalanche for the rank-local shared table so neither partition restricts buckets.
+static __device__ __forceinline__ uint64_t mgbfs_shared_table_bucket(uint64_t hash,uint64_t capacity){return mix64(hash^0x9e3779b97f4a7c15ULL)&(capacity-1);}
 static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
 template<class State> struct ActionT {
  uint32_t kind,elements,n,m,generators,count,stride;

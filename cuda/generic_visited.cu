@@ -10,7 +10,7 @@ template<class State,bool Shared=false> __global__ void seed_table(uint32_t elem
  uint64_t capacity,uint64_t seed,uint32_t bits,uint32_t* error){
  for(uint32_t row=blockIdx.x*blockDim.x+threadIdx.x;row<count;row+=blockDim.x*gridDim.x){
   uint64_t h=seed;for(uint32_t e=0;e<elements;e++)h=mix64(h^uint64_t(states[uint64_t(e)*stride+row])^uint64_t(e));h=finish_hash(h,bits);
-  uint64_t token=(h&0x7fffffff00000000ULL)|row;uint64_t p=Shared?__umul64hi(h,capacity):uint64_t(h&(capacity-1));bool done=false;
+  uint64_t token=(h&0x7fffffff00000000ULL)|row;uint64_t p=Shared?mgbfs_shared_table_bucket(h,capacity):uint64_t(h&(capacity-1));bool done=false;
   for(uint64_t i=0;i<capacity;i++,p=(p+1)&(capacity-1))if(atomicCAS(reinterpret_cast<unsigned long long*>(slots+p),EMPTY,token)==EMPTY){done=true;break;}
   if(!done)atomicOr(error,1u);
  }
