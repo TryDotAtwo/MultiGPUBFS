@@ -27,3 +27,5 @@ python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotA
 ```
 
 SHA256: `e19bd9b3b863309c474d8dec42371efb3e900e968c1a21809442b5eb79e607b8`. This accepted binary package targets SM86. The previous portable binary package is unchanged; use a current source build for this feature on other architectures.
+
+Additional final gate: two complete two-GPU runs with 8x3 rectangular matrix states, parent-origin transport, HASH and SORTED histories, dynamic batches and eligible CUDA/GEMM selection matched CPU layer counts and transformed independent CPU terminal/preceding payloads. These checks exercise wide parent strides and partial chunks during live selection. Installed-package startup was 11.576 seconds on the same host; first-start timings therefore vary around 10–12 seconds for this fixture.
