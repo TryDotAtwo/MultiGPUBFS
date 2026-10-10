@@ -17,6 +17,11 @@ def definition(n,r,seed=0):
  start=list(range(n-r+1))+[n-r]*(r-1)
  return GraphDefinition.permutation([list(range(1,n))+[0],[n-1]+list(range(n-1)),[1,0]+list(range(2,n))],[labels[v] for v in start]),{v:k for k,v in enumerate(labels)}
 
+def check_driver(text):
+ versions=[int(v.strip().split('.')[0]) for v in text.strip().splitlines()]
+ if not versions or min(versions)<580:raise RuntimeError('CUDA13_REQUIRES_DRIVER_R580_OR_NEWER')
+ return versions
+
 def paired_status(reports):
  if len(reports)!=2:return 'PARTIAL_ONE_SEED'
  if all(v['status']=='COMPLETE' for v in reports):return 'COMPLETE'
@@ -71,7 +76,7 @@ class Publisher:
        member=run+'/'+leaf;archive.add(source,arcname=member,recursive=False);members.append(dict(path=member,bytes=source.stat().st_size,sha256=hashlib.sha256(source.read_bytes()).hexdigest()))
    entry=dict(path=name,bytes=path.stat().st_size,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),members=members)
    self.entries.append(entry);new.append((name,path));self.seen.update(runs)
-  for name in ('startup.json','hardware.txt','topology.txt','runtime-identity.json'):
+  for name in ('startup.json','hardware.txt','driver.txt','topology.txt','runtime-identity.json'):
    source=self.root/name
    if source.exists():new.append((name,source))
   ledger_bytes=json.dumps(ledger,indent=2).encode();manifest_bytes=json.dumps({'cohorts':self.entries,'ledger_sha256':hashlib.sha256(ledger_bytes).hexdigest(),'retention':'compact current up to1000 and previous below1000, two seeds'},indent=2).encode()
@@ -105,6 +110,7 @@ def main(argv=None):
  if a.allow_development_hardware:
   if len(text.strip().splitlines())!=a.expected_gpus:raise RuntimeError('DEVELOPMENT_GPU_COUNT')
  else:inventory(text,a.expected_gpus)
+ driver=__import__('subprocess').check_output(['nvidia-smi','--query-gpu=driver_version','--format=csv,noheader'],text=True);check_driver(driver);(a.root/'driver.txt').write_text(driver)
  (a.root/'hardware.txt').write_text(text);(a.root/'topology.txt').write_text(__import__('subprocess').check_output(['nvidia-smi','topo','-m'],text=True))
  from multigpubfs.native_distribution import runtime_identity
  atomic_json(a.root/'runtime-identity.json',runtime_identity(native,env))

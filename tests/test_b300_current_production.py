@@ -1,13 +1,16 @@
 import unittest,sys,tempfile,json,queue
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from b300_current_production import grid,definition,capacity_stop,paired_status,payload,verify_oracle,Publisher
+from b300_current_production import grid,definition,capacity_stop,check_driver,paired_status,payload,verify_oracle,Publisher
 from b300_production import inventory
 class ProductionTests(unittest.TestCase):
  def test_mixed_pair_is_incomplete(self):
   self.assertEqual(paired_status([{'status':'COMPLETE'},{'status':'INCOMPLETE'}]),'INCOMPLETE')
   self.assertEqual(paired_status([{'status':'COMPLETE'},{'status':'COMPLETE'}]),'COMPLETE')
   self.assertEqual(paired_status([{'status':'COMPLETE'}]),'PARTIAL_ONE_SEED')
+ def test_driver_floor(self):
+  self.assertEqual(check_driver('580.65.06\n595.45.04\n'),[580,595])
+  with self.assertRaises(RuntimeError):check_driver('570.1')
  def test_all_pairs(self):
   values=grid(2,128);self.assertEqual(len(values),8255);self.assertEqual(values[0],(2,1));self.assertEqual(values[-1],(128,128));self.assertEqual(len(set(values)),8255)
  def test_grid_bounds(self):

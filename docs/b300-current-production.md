@@ -43,3 +43,5 @@ The flag --allow-development-hardware is only for cheap-host acceptance.
 It produces a DEVELOPMENT receipt and does not validate B300 execution.
 --preflight-only performs startup checks and publishes their evidence without
 running the pair grid.
+
+CUDA 13.2 native package requires NVIDIA driver branch R580 or newer. Startup checks the branch before launching BFS; actual GPU capability tests remain mandatory. https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html
