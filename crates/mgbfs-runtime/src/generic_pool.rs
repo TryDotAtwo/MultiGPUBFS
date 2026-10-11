@@ -17,7 +17,8 @@ pub fn activate(device:i32)->Result<()>{
  let mut pool=ptr::null_mut();let status=unsafe{cudaDeviceGetDefaultMemPool(&mut pool,device)};
  if status==801{return Ok(());}check(status)?;
  let(mut free,mut total)=(0usize,0usize);check(unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
- let threshold=(free as u64).saturating_sub((1u64<<30).max(free as u64/5));
+ // Retention is not admission: retain idle buffers, trim explicitly before external allocations.
+ let threshold=total as u64;
  check(unsafe{cudaMemPoolSetAttribute(pool,4,(&threshold as *const u64).cast())})?;
  POOL.with(|p|p.set(pool));Ok(())
 }

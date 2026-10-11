@@ -77,6 +77,7 @@ pub fn pinned_put(ptr: *mut c_void, bytes: usize, event: *mut c_void, allocation
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
 pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
 pub fn enabled() -> bool { CACHE.with(|c| c.borrow().enabled) }
+pub fn warmed_communicator() -> bool { CACHE.with(|c| {let c=c.borrow();c.enabled && !c.comm.is_null() && c.permit_comm}) }
 pub fn permit_comm(value: bool) { CACHE.with(|c| {
     let mut c=c.borrow_mut();c.permit_comm=value;if !value { c.nccl_id=None; }
 }); }

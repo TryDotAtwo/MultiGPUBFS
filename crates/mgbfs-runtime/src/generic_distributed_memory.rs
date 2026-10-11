@@ -42,7 +42,7 @@ impl GenericDistributedMemoryPlan {
  }
  pub fn automatic(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>)->Result<Self>{Self::automatic_storage(elements,world,shards,generators,generator_bytes,free_bytes,upper_bound,8)}
  pub fn automatic_storage(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32)->Result<Self>{
-  let reserve=(1u64<<30).max(free_bytes/10);let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
+  let reserve=crate::generic_memory::admission_reserve_bytes()?;let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(MAX_ARENA_CAPACITY)) as u32;
   if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   // Reserve at most a quarter for predictable transport, then admit the
@@ -57,7 +57,7 @@ impl GenericDistributedMemoryPlan {
  }
  pub fn automatic_storage_fixed_batch(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32,batch_target:u32)->Result<Self>{
   if batch_target==0{return Err("GENERIC_BATCH_TARGET".into());}
-  let reserve=(1u64<<30).max(free_bytes/10);let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
+  let reserve=crate::generic_memory::admission_reserve_bytes()?;let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(MAX_ARENA_CAPACITY)) as u32;if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   if Self::with_storage(elements,world,shards,1,1,generators,generator_bytes,state_bytes)?.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let mut low=1;let mut high=ceiling;
@@ -88,7 +88,7 @@ impl GenericDistributedMemoryPlan {
   p.history_layers=history_layers;Ok(p)
  }
  pub fn automatic_storage_history(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32,history_layers:u32)->Result<Self>{
-  let reserve=(1u64<<30).max(free_bytes/10);let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
+  let reserve=crate::generic_memory::admission_reserve_bytes()?;let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(if history_layers==3{MAX_ROLLING_CAPACITY}else{MAX_ARENA_CAPACITY})) as u32;
   if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   // Reserve at most a quarter for predictable transport, then admit the
@@ -103,7 +103,7 @@ impl GenericDistributedMemoryPlan {
  }
  pub fn automatic_storage_fixed_batch_history(elements:u32,world:u32,shards:u32,generators:u32,generator_bytes:u64,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32,batch_target:u32,history_layers:u32)->Result<Self>{
   if batch_target==0{return Err("GENERIC_BATCH_TARGET".into());}
-  let reserve=(1u64<<30).max(free_bytes/10);let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
+  let reserve=crate::generic_memory::admission_reserve_bytes()?;let budget=free_bytes.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;
   let ceiling=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(if history_layers==3{MAX_ROLLING_CAPACITY}else{MAX_ARENA_CAPACITY})) as u32;if ceiling==0{return Err("GENERIC_DISTRIBUTED_EMPTY_BOUND".into());}
   if Self::with_storage_history(elements,world,shards,1,1,generators,generator_bytes,state_bytes,history_layers)?.device_bytes>budget{return Err("GENERIC_DISTRIBUTED_NO_CAPACITY".into());}
   let mut low=1;let mut high=ceiling;
@@ -131,7 +131,7 @@ impl GenericDistributedMemoryPlan {
  #[cfg(feature="cuda")]
  pub fn automatic_sorted_for_graph(graph:&mgbfs_core::graph_definition::GraphDefinitionV2,device:i32,world:u32,shards:u32,generator_bytes:u64,free:u64,upper:Option<u64>,bytes:u32,batch_target:u32,banks:u32,lanes:u32)->Result<Self>{
   if batch_target==0{return Err("SORTED_BATCH_TARGET".into());}
-  let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("SORTED_ADMISSION_HEADROOM")?;
+  let budget=free.checked_sub(crate::generic_memory::admission_reserve_bytes()?).ok_or("SORTED_ADMISSION_HEADROOM")?;
   let ceiling=upper.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(if banks==3{MAX_ROLLING_CAPACITY}else{MAX_ARENA_CAPACITY})) as u32;if ceiling==0{return Err("SORTED_EMPTY_BOUND".into());}
   let candidate=|cap:u32|->Result<Self>{Self::with_storage_history(graph.start.len() as u32,world,shards,cap,cap.min(batch_target),graph.generator_count() as u32,generator_bytes,bytes,banks)?.with_sorted_for_graph(graph,device,lanes)};
   if candidate(1)?.device_bytes>budget{return Err("SORTED_ADMISSION_NO_CAPACITY".into());}

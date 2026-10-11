@@ -23,13 +23,15 @@ pub fn info(args:&[String])->Result<()>{
 fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,shards:u32,requested:Option<u32>,batch:Option<u32>)->Result<serde_json::Value>{
  if devices.is_empty()||devices.len()>128||inventory.len()!=devices.len(){return Err("GRAPH_GLOBAL_INVENTORY_SHAPE".into());}
  let mut minimum=u64::MAX;
+ let reserve=crate::generic_memory::admission_reserve_bytes()?;
+ if inventory.iter().any(|v|v.get("additional_reserve_bytes").and_then(|v|v.as_u64()).map_or(false,|bytes|bytes!=reserve)){return Err("GRAPH_GLOBAL_RESERVE_CONSENSUS".into());}
  for v in &inventory{let free=v["free_bytes"].as_u64().ok_or("GRAPH_GLOBAL_FREE_BYTES")?;let total=v["total_bytes"].as_u64().ok_or("GRAPH_GLOBAL_TOTAL_BYTES")?;if free==0||free>total{return Err("GRAPH_GLOBAL_MEMORY_RANGE".into());}minimum=minimum.min(free);}
  let state_bytes=crate::generic_memory::preferred_state_bytes(&g);let history_layers=if g.inverse_closed()?{3}else{1};
  
  let sorted=match std::env::var("MGBFS_GENERIC_HISTORY").as_deref(){Ok("sorted")=>true,Ok("hash")|Err(_)=>false,_=>return Err("GENERIC_HISTORY_MODE".into())};
  let (mut rank_plans,owner_cuts)=if sorted{
   if inventory.iter().all(|v|v.get("local_sorted_plan").is_some()){
-   let mut plans=Vec::new();for item in &inventory{let p:Plan=serde_json::from_value(item["local_sorted_plan"].clone()).map_err(|e|e.to_string())?;p.validate(g.generator_count() as u32)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("SORTED_ADMISSION_HEADROOM")?;
+   let mut plans=Vec::new();for item in &inventory{let p:Plan=serde_json::from_value(item["local_sorted_plan"].clone()).map_err(|e|e.to_string())?;p.validate(g.generator_count() as u32)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub(crate::generic_memory::admission_reserve_bytes()?).ok_or("SORTED_ADMISSION_HEADROOM")?;
     if p.elements!=g.start.len() as u32||p.world!=devices.len() as u32||p.shards!=shards||p.generator_bytes!=graph_bytes(g)||p.state_bytes!=state_bytes||p.history_layers!=history_layers||p.history_algorithm!="SORTED_RUNS"||p.device_bytes>budget||requested.map_or(false,|v|p.capacity!=v)||batch.map_or(false,|v|p.batch!=v){return Err("LOCAL_SORTED_ADMISSION_IDENTITY".into());}plans.push(p);}
    let common=plans.iter().map(|p|p.batch).min().unwrap();if plans.iter().any(|p|p.batch!=common){return Err("LOCAL_SORTED_BATCH_CONSENSUS".into());}
    let cuts=if requested.is_some(){None}else{let total=plans.iter().map(|p|u64::from(p.capacity)).sum::<u64>();let mut cumulative=0u64;let mut cuts=vec![0];for p in &plans{cumulative+=u64::from(p.capacity);cuts.push(((u128::from(cumulative)*(1u128<<32)+u128::from(total)-1)/u128::from(total)) as u64);}Some(cuts)};(plans,cuts)
@@ -53,10 +55,10 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
   let(plans,cuts)=crate::generic_distributed_memory::heterogeneous_plans_history(g.start.len() as u32,shards,g.generator_count() as u32,graph_bytes(&g),&free,crate::generic_memory::state_space_bound(&g),state_bytes,history_layers)?;(plans,Some(cuts))
  };
  if let Some(batch)=batch.filter(|_|!sorted){
-  for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage_history(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes,history_layers)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub((1u64<<30).max(free/10)).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if candidate.device_bytes>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
+  for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage_history(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes,history_layers)?;let free=item["free_bytes"].as_u64().unwrap();let budget=free.checked_sub(crate::generic_memory::admission_reserve_bytes()?).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if candidate.device_bytes>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
  }
  let plan=rank_plans.iter().min_by_key(|p|p.capacity).unwrap().clone();
- Ok(serde_json::json!({"size_profile_capability":1,"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
+ Ok(serde_json::json!({"size_profile_capability":1,"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"owner_cuts":owner_cuts,"additional_reserve_bytes":crate::generic_memory::admission_reserve_bytes()?,"reserve_policy":"ABSOLUTE_BYTES_COLD_2GIB_WARM_256MIB","profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
 }
 /// Query only this rank's physical GPU; remote IDs must never be queried here.
 pub fn local_info(args:&[String])->Result<()>{println!("{}",local_plan(args)?);Ok(())}

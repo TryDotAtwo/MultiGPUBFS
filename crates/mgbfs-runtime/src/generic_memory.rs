@@ -1,5 +1,32 @@
 pub const MAX_ARENA_CAPACITY:u32=0x7fff_fffe;
 use mgbfs_core::Result;
+/// Additional unplanned allocation allowance, in bytes, never a VRAM percentage.
+/// CUDA context allocations are already excluded by cudaMemGetInfo. A parked
+/// healthy communicator has completed collective traffic; its NCCL allocations
+/// are already excluded too. Cold distributed admission retains 2 GiB until
+/// that condition is proved. Explicit buffers and sorted driver graph storage
+/// remain in device_bytes and are not charged here again.
+pub fn reserve_for_communicator(warmed:bool)->u64 {if warmed {256u64<<20}else{2u64<<30}}
+pub fn admission_reserve_bytes()->Result<u64> {
+ if let Ok(value)=std::env::var("MGBFS_GENERIC_VRAM_RESERVE_BYTES") {
+  return value.parse::<u64>().map_err(|_|"GENERIC_VRAM_RESERVE_BYTES".into());
+ }
+ #[cfg(all(feature="cuda",target_os="linux"))]
+ let warmed=crate::session_cache::warmed_communicator();
+ #[cfg(not(all(feature="cuda",target_os="linux")))]
+ let warmed=false;
+ Ok(reserve_for_communicator(warmed))
+}
+#[cfg(test)]mod reserve_tests {
+ #[test]fn reserve_is_absolute_and_warm_nccl_is_not_charged_twice(){
+  assert_eq!(super::reserve_for_communicator(false),2u64<<30);
+  assert_eq!(super::reserve_for_communicator(true),256u64<<20);
+  for free in [12u64<<30,80u64<<30,288u64<<30] {
+   assert_eq!(free-(free-super::reserve_for_communicator(false)),2u64<<30);
+  }
+ }
+}
+
 /// Exact retained-history arena for general directed CayleyPy graphs.
 /// Separate from the compact inverse-closed specialized SHARD_AB layout.
 #[derive(Clone,Debug)]
@@ -14,7 +41,7 @@ impl GenericMemoryPlan {
  }
  pub fn automatic(elements:u32,free_bytes:u64,upper_bound:Option<u64>)->Result<Self>{Self::automatic_storage(elements,free_bytes,upper_bound,8)}
  pub fn automatic_storage(elements:u32,free_bytes:u64,upper_bound:Option<u64>,state_bytes:u32)->Result<Self>{
-  let reserve=(1u64<<30).max(free_bytes/10);let available=free_bytes.checked_sub(reserve).ok_or("GENERIC_VRAM_HEADROOM")?;
+  let reserve=admission_reserve_bytes()?;let available=free_bytes.checked_sub(reserve).ok_or("GENERIC_VRAM_HEADROOM")?;
   let mut low=1u32;let mut high=upper_bound.unwrap_or(u64::from(MAX_ARENA_CAPACITY)).min(u64::from(MAX_ARENA_CAPACITY)) as u32;
   if high==0||Self::with_storage(elements,1,state_bytes)?.device_bytes>available{return Err("GENERIC_VRAM_CAPACITY".into());}
   while low<high {let mid=low+(high-low+1)/2;if Self::with_storage(elements,mid,state_bytes)?.device_bytes<=available{low=mid;}else{high=mid-1;}}
@@ -83,4 +110,16 @@ pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)
 /// Permutations preserve the value alphabet exactly; matrix arithmetic does not.
 pub fn preferred_state_bytes(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)->u32{
  if matches!(graph.action,mgbfs_core::graph_definition::GraphAction::Permutation{..})&&graph.start.iter().all(|v|(0..=255).contains(v)){1}else{8}
+}
+
+#[cfg(test)]mod capacity_budget_tests {
+ #[test]fn synthetic_large_cards_fill_the_absolute_budget(){
+  for free in [12u64<<30,80u64<<30,288u64<<30] {
+   let p=super::GenericMemoryPlan::automatic(24,free,None).unwrap();
+   let budget=free-(2u64<<30);assert!(p.device_bytes<=budget);
+   if p.capacity<super::MAX_ARENA_CAPACITY {
+    assert!(super::GenericMemoryPlan::new(24,p.capacity+1).unwrap().device_bytes>budget);
+   }
+  }
+ }
 }
