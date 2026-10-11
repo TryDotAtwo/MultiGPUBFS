@@ -17,8 +17,41 @@ def _admit(graph,devices,capacity,shards,native,env,directory):
  return json.loads(p.stdout)
 
 def _system_info(command):
- try:return subprocess.run(command,capture_output=True,text=True,timeout=10)
+ # Only immutable hardware metadata is cached. Free VRAM and rank health
+ # remain live native admission queries on every production launch.
+ from .generic_session import _active
+ immutable=tuple(command) in (
+  ('nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'),
+  ('nvidia-smi','topo','-m'),
+  ('nvidia-smi','--query-gpu=compute_cap','--format=csv,noheader'))
+ cache=None
+ if _active is not None and immutable:
+  cache=getattr(_active,'hardware_metadata',None)
+  if cache is None:cache={};_active.hardware_metadata=cache
+  key=(tuple(command),tuple(os.environ.get(k) for k in ('CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER')), _active.generation)
+  if key in cache:return subprocess.CompletedProcess(command,0,cache[key],'')
+ try:result=subprocess.run(command,capture_output=True,text=True,timeout=10)
  except (OSError,subprocess.TimeoutExpired):return subprocess.CompletedProcess(command,1,'unavailable','')
+ if cache is not None and result.returncode==0:
+  if len(cache)>=32:cache.clear()
+  cache[key]=result.stdout
+ return result
+
+def _content_digest(*paths):
+ from .generic_session import _active
+ cache=None
+ if _active is not None:
+  cache=getattr(_active,'selector_digests',None)
+  if cache is None:cache={};_active.selector_digests=cache
+  key=tuple((str(Path(p).resolve()),_stat_identity(p)) for p in paths)
+  if key in cache:return cache[key]
+ digest=hashlib.sha256()
+ for path in paths:digest.update(Path(path).read_bytes())
+ result=digest.hexdigest()
+ if cache is not None:
+  if len(cache)>=32:cache.clear()
+  cache[key]=result
+ return result
 
 def _gemm_hardware_available():
  caps=_system_info(['nvidia-smi','--query-gpu=compute_cap','--format=csv,noheader'])
@@ -112,7 +145,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':16,'selector_sha256':hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('profile_families.py').read_bytes()+Path(__file__).with_name('size_profiles.py').read_bytes()).hexdigest(),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':16,'selector_sha256':_content_digest(__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py')),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':_content_digest(native),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
@@ -248,7 +281,50 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   return result
 
 
+def _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized):
+ dependency=_dependency_identity(native,env)
+ if dependency is None:return None
+ files=(native,__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py'))
+ return (pool.generation,graph.digest(),None if devices is None else tuple(devices),capacity,max_seconds,allow_specialized,_configuration_digest(env),tuple(env.get(k) for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_DEVICE_ORDER','CUDA_DISABLE_PTX_JIT')),tuple((str(p),_stat_identity(p)) for p in files),tuple((d[1],_stat_identity(d[1])) for d in dependency['resolved_dependencies']))
+
+def _profile_environment(env,result):
+ selected=dict(env,MGBFS_GENERIC_TRANSPORT=result.get('transport','full'),MGBFS_GENERIC_SORT=result.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=result.get('generator_backend','cuda'))
+ if result.get('history_algorithm')=='SORTED_RUNS':selected.update(MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(result['owner_lanes']))
+ elif result.get('history_algorithm')=='HASH':selected['MGBFS_GENERIC_HISTORY']='hash'
+ return selected
+
+def _profile_geometry(admission):
+ return {k:admission.get(k) for k in ('devices','plan','rank_plans','size_profile_capability','owner_cuts')}
+
 def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
+ # Session reuse skips selector work, never live memory admission. A changed
+ # geometry, runtime, environment or rank generation takes the full path.
+ import copy
+ from .generic_session import _active
+ started=time.monotonic();env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
+ pool=_active;key=None if pool is None else _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
+ cache=None if pool is None else getattr(pool,'size_profile_results',None)
+ if key is not None and cache is not None and key in cache:
+  saved,geometry=cache[key];selected=_profile_environment(env,saved)
+  with _evidence_directory(env,'mgbfs-session-profile-') as temporary:
+   fresh=_admit(graph,devices,capacity,saved['shards'],native,selected,temporary)
+  if key==_session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized) and _profile_geometry(fresh)==geometry:
+   result=copy.deepcopy(saved);result.update(cache_hit=True,session_profile_hit=True,seconds=time.monotonic()-started,_admission_inventory=fresh.get('inventory',[]));return result
+  del cache[key]
+ result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
+ if pool is not None and result.get('backend','generic')=='generic' and result.get('size_profiles') and (result.get('measured') or result.get('cache_hit')):
+  selected=_profile_environment(env,result)
+  with _evidence_directory(env,'mgbfs-session-profile-store-') as temporary:
+   admitted=_admit(graph,devices,capacity,result['shards'],native,selected,temporary)
+  key=_session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
+  if key is not None:
+   if cache is None:cache={};pool.size_profile_results=cache
+   if len(cache)>=256:cache.clear()
+   saved=copy.deepcopy(result);saved.pop('_admission_inventory',None);cache[key]=(saved,_profile_geometry(admitted))
+ result['seconds']=time.monotonic()-started
+ return result
+
+def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  """Bounded real-prefix measurements; unknown large tiers remain conservative."""
  from .size_profiles import select_size_profiles
  from .generation import gemm_supported
@@ -264,14 +340,14 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
   default_generator=env.get('MGBFS_GENERIC_GENERATOR','cuda')
   eligible=default_generator=='gemm' or (gemm_supported(graph) and _gemm_hardware_available())
   reserve_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm' if eligible else 'cuda')
-  reserve=_admit(graph,selected,capacity,shards,native,reserve_env,temporary)
+  reserve=first if reserve_env['MGBFS_GENERIC_GENERATOR']==env['MGBFS_GENERIC_GENERATOR'] else _admit(graph,selected,capacity,shards,native,reserve_env,temporary)
   common=min(first['plan']['capacity'],reserve['plan']['capacity'])
-  reserve=_admit(graph,selected,common,shards,native,reserve_env,temporary)
+  reserve=reserve if capacity==common else _admit(graph,selected,common,shards,native,reserve_env,temporary)
   large_batch=reserve['plan']['batch'];small_batch=min(4096,large_batch)
   dependency=_dependency_identity(native,env)
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
-  identity={'schema':1,'graph':graph.digest(),'devices':selected,'capacity':common,'batch':large_batch,'plan':reserve['plan'],'config':_configuration_digest(env),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'selector':hashlib.sha256(Path(__file__).read_bytes()+Path(__file__).with_name('size_profiles.py').read_bytes()).hexdigest(),'dependency':dependency,'hardware':hardware.stdout,'topology':topology.stdout}
+  identity={'schema':1,'graph':graph.digest(),'devices':selected,'capacity':common,'batch':large_batch,'plan':reserve['plan'],'config':_configuration_digest(env),'native':_content_digest(native),'selector':_content_digest(__file__,Path(__file__).with_name('size_profiles.py')),'dependency':dependency,'hardware':hardware.stdout,'topology':topology.stdout}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/('size-'+key+'.json')
   if dependency and hardware.returncode==0 and topology.returncode==0 and cache.is_file():

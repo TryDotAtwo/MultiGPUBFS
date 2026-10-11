@@ -95,10 +95,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
    _batch=max(1,int(json.loads(initial.stdout)['plan']['batch']*profile['batch_fraction']))
   if _batch is not None:
-   if capacity is None:
-    initial=native_query(command,capture_output=True,text=True,env=native_env)
-    if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
-    command.append('auto')
+   if capacity is None:command.append('auto')
    command.append(str(_batch))
   probe=native_query(command,capture_output=True,text=True,env=native_env)
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
