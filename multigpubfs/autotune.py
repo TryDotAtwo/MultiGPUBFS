@@ -81,7 +81,7 @@ def _transport_variants(graph,env,hardware_shards=None):
 
 def _configuration_digest(env):
  # Values are hashed, never copied into a public receipt (tokens may coexist).
- ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID'}
+ ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID','MGBFS_TUNING_EVIDENCE_ROOT','MGBFS_JOB_PHASE_PATH','MGBFS_JOB_SEQUENCE','MGBFS_JOB_CANCEL_PATH'}
  values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')) and k not in ignored}
  return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 

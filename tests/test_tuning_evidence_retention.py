@@ -15,3 +15,11 @@ class EvidenceRetention(unittest.TestCase):
  def test_success_cleans_temporary_workspace(self):
   with _evidence_directory({},'test-') as temporary:Path(temporary,'receipt').write_text('ok')
   self.assertFalse(Path(temporary).exists())
+
+class EvidenceCacheIdentity(unittest.TestCase):
+ def test_evidence_and_job_paths_do_not_invalidate_compute_profile(self):
+  from multigpubfs.autotune import _configuration_digest
+  a={'MGBFS_SHARDS':'8','MGBFS_TUNING_EVIDENCE_ROOT':'first','MGBFS_JOB_PHASE_PATH':'first','MGBFS_JOB_SEQUENCE':'1','MGBFS_JOB_CANCEL_PATH':'first'}
+  b=dict(a,MGBFS_TUNING_EVIDENCE_ROOT='second',MGBFS_JOB_PHASE_PATH='second',MGBFS_JOB_SEQUENCE='2',MGBFS_JOB_CANCEL_PATH='second')
+  self.assertEqual(_configuration_digest(a),_configuration_digest(b))
+  self.assertNotEqual(_configuration_digest(a),_configuration_digest(dict(b,MGBFS_SHARDS='16')))
