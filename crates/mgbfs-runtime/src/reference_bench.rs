@@ -1189,10 +1189,15 @@ fn run_pass(
     let setup_seconds = setup.elapsed().as_secs_f64();
     let trace = std::env::var_os("MGBFS_TRACE_DEPTHS").is_some();
     let profile_window = if is_measure { profiler_window_start()? } else { false };
+    crate::job_phase::set("bfs")?;
     let start = Instant::now();
     let mut layers = Vec::new();
     let mut times = Vec::new();
     let mut calibration_stopped = false;
+    let mut job_stop_reason=None::<String>;
+    let job_seconds=std::env::var("MGBFS_JOB_BFS_SECONDS").ok().map(|v|v.parse::<f64>().map_err(|_|"JOB_BFS_SECONDS")).transpose()?;
+    if job_seconds.is_some_and(|v|!v.is_finite()||v<=0.0){return Err("JOB_BFS_SECONDS".into());}
+    let controlled=job_seconds.is_some()||std::env::var_os("MGBFS_JOB_CANCEL_PATH").is_some();
     loop {
         let tick = Instant::now();
         let depth = bfs.depth();
@@ -1204,6 +1209,15 @@ fn run_pass(
             std::io::Write::write_all(&mut std::io::stderr(),
                 format!("MGBFS_DEPTH_BEGIN rank={rank} depth={depth} count={count} unix={unix:.6}\n").as_bytes())
                 .map_err(|e| e.to_string())?;
+        }
+        if controlled {
+            let local=if crate::job_phase::cancelled(){2}else if job_seconds.is_some_and(|v|start.elapsed().as_secs_f64()>=v){1}else{0};
+            let stop=bfs.boundary_job_stop(local)?;
+            if stop!=0 {
+                if let Some(archive)=archive.as_mut(){if archive.selected_whole||archive.selected_prefix{bfs.archive_selected_terminal_snapshot(archive)?;}}
+                job_stop_reason=Some(if stop==2{"job cancelled"}else{"BFS deadline"}.to_owned());
+                break;
+            }
         }
         let advance = if sideband.cancel_requested() {
             if let Some(archive)=archive.as_mut(){
@@ -1255,7 +1269,7 @@ fn run_pass(
     }
     let search = start.elapsed().as_secs_f64();
     profiler_window_stop(profile_window)?;
-    Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped))
+    Ok((bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped, job_stop_reason))
     })();
     // Query-only admission is a successful control outcome, not peer cancellation.
     let query_only = search_result.as_ref().err().is_some_and(|e| e == "MEMORY_QUERY_DONE");
@@ -1288,7 +1302,8 @@ fn run_pass(
             .err()
             .unwrap_or_else(|| "REMOTE_SEARCH_FATAL".into()));
     }
-    let (mut bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped) = search_result?;
+    let (mut bfs, allocated, setup_seconds, search, layers, times, start, calibration_stopped, job_stop_reason) = search_result?;
+    crate::job_phase::set("retiring")?;
     let archive_ram_ring = archive.as_ref().map(PinnedArchive::ring_stats);
     let archive_commit = archive.take().map_or(Ok(()), PinnedArchive::finish);
     #[cfg(debug_assertions)]
@@ -1348,6 +1363,11 @@ fn run_pass(
             }
             value["batch_graph"] = serde_json::json!(bfs.batch_graph_stats()?);
             value["calibration_layers"] = serde_json::json!(calibration_layers);
+            if let Some(reason)=&job_stop_reason {
+                value["status"]=serde_json::json!("INCOMPLETE");value["stop_reason"]=serde_json::json!(reason);
+                value["last_completed_layer"]=serde_json::json!(layers.len()-1);value["search_prefix_seconds"]=serde_json::json!(search);
+                value.as_object_mut().ok_or("RECORD_JSON_OBJECT")?.remove("search_complete_seconds");
+            }
             if calibration_stopped {
                 value["status"] = serde_json::json!("INCOMPLETE");
                 value["stop_reason"] = serde_json::json!("calibration layer limit");
@@ -1471,7 +1491,9 @@ fn run_pass(
     }
     output?;
     let publication = if rank == 0 && is_measure {
-        if calibration_stopped {
+        if let Some(reason)=&job_stop_reason {
+            crate::group_commit::write_job_stop_commit(Path::new(&args[5]),world,bootstrap_digest,reason)
+        } else if calibration_stopped {
             crate::group_commit::write_calibration_commit(Path::new(&args[5]), world,
                 bootstrap_digest,calibration_layers.ok_or("CALIBRATION_LIMIT_MISSING")?)
         } else {

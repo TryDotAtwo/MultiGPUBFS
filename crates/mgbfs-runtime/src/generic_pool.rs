@@ -28,4 +28,4 @@ pub fn external_headroom(required:u64)->Result<()>{POOL.with(|p|{let pool=p.get(
 
 pub fn trim_idle()->Result<()>{check(FAILED.with(|v|v.get()))?;if !POOL.with(|p|p.get().is_null()){check(unsafe{mgbfs_cuda::ffi::cudaStreamSynchronize(ptr::null_mut())})?;}POOL.with(|p|if p.get().is_null(){Ok(())}else{check(unsafe{cudaMemPoolTrimTo(p.get(),0)})})}
 
-pub fn release(pointer:*mut c_void)->bool{let owned=OWNED.with(|p|p.borrow_mut().remove(&(pointer as usize)));if !owned{return false;}let status=unsafe{cudaFreeAsync(pointer,ptr::null_mut())};if status!=0{FAILED.with(|v|v.set(status));}true}
+pub fn release(pointer:*mut c_void)->bool{let owned=OWNED.try_with(|p|p.borrow_mut().remove(&(pointer as usize))).unwrap_or(false);if !owned{return false;}let status=unsafe{cudaFreeAsync(pointer,ptr::null_mut())};if status!=0{FAILED.with(|v|v.set(status));}true}

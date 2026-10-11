@@ -95,7 +95,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
  if forced_generator not in ('cuda','gemm'):raise ValueError('INVALID_GENERIC_GENERATOR')
  if forced_generator=='gemm' and not gemm_supported(graph):raise ValueError('GEMM_GRAPH_NOT_EXACTLY_SUPPORTED')
  started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
- with tempfile.TemporaryDirectory(prefix='mgbfs-profile-') as temporary:
+ with _evidence_directory(env,'mgbfs-profile-') as temporary:
   baseline_shards=variants[0][0]
   baseline=_admit(graph,devices,capacity,baseline_shards,native,env,temporary)
   selected=baseline['devices'];plan=baseline['plan']
@@ -258,7 +258,7 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
  shards=global_profile['shards']
  if global_profile.get('_admission_inventory'):env['_MGBFS_PROFILE_INVENTORY']=json.dumps(global_profile['_admission_inventory'])
  env.update(MGBFS_GENERIC_TRANSPORT=global_profile.get('transport','full'),MGBFS_GENERIC_SORT=global_profile.get('candidate_order','none'),MGBFS_GENERIC_HISTORY='sorted' if global_profile.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(global_profile.get('owner_lanes',1)),MGBFS_GENERIC_GENERATOR=global_profile.get('generator_backend','cuda'))
- with tempfile.TemporaryDirectory(prefix='mgbfs-size-profile-') as temporary:
+ with _evidence_directory(env,'mgbfs-size-profile-') as temporary:
   first=_admit(graph,devices,capacity,shards,native,env,temporary);selected=first['devices']
   if first.get('size_profile_capability')!=1:return dict(global_profile,size_tuning_status='NATIVE_SIZE_PROFILE_CAPABILITY_UNAVAILABLE')
   default_generator=env.get('MGBFS_GENERIC_GENERATOR','cuda')
@@ -312,3 +312,21 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
    with os.fdopen(fd,'w') as f:json.dump(result,f)
    os.replace(path,cache)
   return result
+
+
+@__import__('contextlib').contextmanager
+def _evidence_directory(env,prefix):
+ import shutil,traceback
+ temporary=tempfile.TemporaryDirectory(prefix=prefix)
+ try:
+  yield temporary.name
+ except BaseException as error:
+  root=Path(env.get('MGBFS_TUNING_EVIDENCE_ROOT',str(Path.cwd()/'mgbfs-tuning-failures')))
+  root.mkdir(parents=True,exist_ok=True)
+  destination=Path(tempfile.mkdtemp(prefix=prefix,dir=root))
+  shutil.copytree(temporary.name,destination,dirs_exist_ok=True)
+  (destination/'failure-context.json').write_text(json.dumps(dict(schema=1,error_type=type(error).__name__,error=str(error),trace=traceback.format_exc())))
+  if hasattr(error,'add_note'):error.add_note('Tuning evidence: '+str(destination))
+  raise
+ finally:
+  temporary.cleanup()

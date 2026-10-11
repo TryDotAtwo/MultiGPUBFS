@@ -4,7 +4,7 @@ use std::{path::Path,time::Duration,collections::BTreeMap};
 use mgbfs_cuda::native_owner::{cudaSetDevice,cudaMemGetInfo};
 extern "C" {fn cudaDeviceSynchronize()->i32;fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
 pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
- crate::session_cache::enable();let bench_mode=std::env::var("MGBFS_SESSION_KIND").as_deref()==Ok("bench");if !bench_mode{crate::generic_pool::activate(device as i32)?;}
+ crate::session_cache::enable();crate::generic_pool::activate(device as i32)?;
  let mut previous=BTreeMap::<String,Option<String>>::new();
  for sequence in 0u64.. {
   let path=root.join(format!("job-{sequence:08}.json"));
@@ -16,12 +16,16 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
    let env:BTreeMap<String,String>=serde_json::from_value(v["env"].clone()).map_err(|e|e.to_string())?;
    if env.keys().any(|k|!k.starts_with("MGBFS_")&&!k.starts_with("NCCL_")){return Err("GENERIC_SESSION_ENV".into());}
    for(k,value)in env{previous.insert(k.clone(),std::env::var(&k).ok());std::env::set_var(k,value);}
+   crate::job_phase::set("preparing")?;
+   let _job_control=crate::job_phase::Control::start();
    match v["command"].as_str(){
     Some("release-memory")=>{crate::generic_native::check(unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::check(unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
     Some("bench")=>{
-     if !bench_mode{return Err("GENERIC_SESSION_BACKEND".into());}
+     // Generic and host-NCCL reference jobs share the same healthy rank.
+     std::env::set_var("WORLD_SIZE",std::env::var("MGBFS_BENCH_WORLD_SIZE").map_err(|_|"ENV_WORLD_SIZE")?);
      let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;
      if args.len()!=6||!args[1].starts_with("lrx"){return Err("GENERIC_SESSION_BENCH_ARGS".into());}
+     std::env::set_var("TORCHELASTIC_RUN_ID",&args[3]);
      match crate::reference_bench::run(args){Ok(())=>Ok(serde_json::json!({"pid":std::process::id(),"exit_code":0})),Err(error) if error=="MEMORY_QUERY_DONE"=>{eprintln!("{}",serde_json::json!({"status":"ERROR","rank":rank,"error":error}));Ok(serde_json::json!({"pid":std::process::id(),"exit_code":1,"query_only":true}))},Err(error)=>Err(error)}
     },
     Some("inventory")=>{
@@ -33,7 +37,7 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
     Some("graph-local-plan")=>{let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;if args.get(1)!=Some(&device.to_string()){return Err("GENERIC_SESSION_LOCAL_PLAN_DEVICE".into());}crate::generic_distributed_run::local_plan(&args)},
     Some("graph-plan")=>{let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;crate::generic_distributed_run::global_plan(&args)},
     Some("graph-rank")=>{
-     if bench_mode{return Err("GENERIC_SESSION_BACKEND".into());}
+     // Backend-specific buffers are retired at shape changes, not contexts.
      let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;
      if args.len()!=6||args[2]!=rank.to_string(){return Err("GENERIC_SESSION_RANK".into());}
      let launch:serde_json::Value=serde_json::from_slice(&std::fs::read(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
@@ -42,7 +46,8 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
     },_=>Err("GENERIC_SESSION_COMMAND".into())
    }
   })();
-  let response=match &outcome{Ok(v)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":true,"result":v}),Err(e)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":false,"error":e})};
+  crate::job_phase::set(if outcome.is_ok(){"done"}else{"failed"})?;
+  let response=match &outcome{Ok(v)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":true,"result":v,"cache":crate::session_cache::stats()}),Err(e)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":false,"error":e})};
   let destination=root.join(format!("response-{sequence:08}.json"));let temporary=destination.with_extension("tmp");
   std::fs::write(&temporary,serde_json::to_vec(&response).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(temporary,destination).map_err(|e|e.to_string())?;
   outcome?; // Errors terminate the worker; never reuse failed CUDA/NCCL state.

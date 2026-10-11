@@ -20,17 +20,21 @@ pub fn write_rank_result(dir: &Path, rank: u32, bytes: &[u8]) -> Result<()> {
 }
 
 pub fn write_group_commit(dir: &Path, world: u32, bootstrap_digest: [u8; 32]) -> Result<()> {
-    write_commit(dir,world,bootstrap_digest,None)
+    write_commit(dir,world,bootstrap_digest,None,None)
 }
 
 pub fn write_calibration_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], layers: u32) -> Result<()> {
     if layers == 0 { return Err("CALIBRATION_COMMIT_LIMIT".into()); }
-    write_commit(dir,world,bootstrap_digest,Some(layers))
+    write_commit(dir,world,bootstrap_digest,Some(layers),None)
 }
 
-fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option<u32>) -> Result<()> {
-    let name = if limit.is_some() { "group-calibration.json" } else { "group-complete.json" };
-    let status = if limit.is_some() { "INCOMPLETE" } else { "COMPLETE" };
+pub fn write_job_stop_commit(dir:&Path,world:u32,bootstrap_digest:[u8;32],reason:&str)->Result<()> {
+ if !matches!(reason,"job cancelled"|"BFS deadline"){return Err("JOB_STOP_REASON".into());}
+ write_commit(dir,world,bootstrap_digest,None,Some(reason))
+}
+fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option<u32>, reason:Option<&str>) -> Result<()> {
+    let name = if reason.is_some(){"group-job-stop.json"}else if limit.is_some() { "group-calibration.json" } else { "group-complete.json" };
+    let status = if reason.is_some()||limit.is_some() { "INCOMPLETE" } else { "COMPLETE" };
     if world == 0 || world > 8 || dir.join(name).exists() {
         return Err("GROUP_COMMIT_CONFIG_OR_EXISTS".into());
     }
@@ -62,6 +66,10 @@ fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option
                 || value["local_layer_sizes"].as_array().map(Vec::len) != Some(layers as usize)
             { return Err(format!("CALIBRATION_RANK_MISMATCH_{rank}")); }
         }
+        if let Some(reason)=reason {
+            let layers=value["local_layer_sizes"].as_array().ok_or("JOB_STOP_LAYERS")?.len();
+            if layers==0||value["stop_reason"]!=reason||value["last_completed_layer"]!=layers-1{return Err(format!("JOB_STOP_RANK_MISMATCH_{rank}"));}
+        }
         let scope = value["archive_commit_scope"]
             .as_str()
             .ok_or("GROUP_COMMIT_SCOPE")?;
@@ -79,6 +87,7 @@ fn write_commit(dir: &Path, world: u32, bootstrap_digest: [u8;32], limit: Option
         "schema": "mgbfs-group-run-commit-v1",
         "status": status,
         "calibration_layers": limit,
+        "stop_reason":reason,
         "world_size": world,
         "bootstrap_digest": bootstrap_digest,
         "archive_commit_scope": commit_scope,

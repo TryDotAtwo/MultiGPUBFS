@@ -24,6 +24,13 @@ class Job:
    if timeout is not None and time.monotonic()-start>timeout:raise subprocess.TimeoutExpired('generic resident job',timeout)
    time.sleep(.001)
   return self.returncode
+ def phase(self):
+  path=self.worker.root/f'phase-{self.sequence:08}.json'
+  if not path.exists():return None
+  value=json.loads(path.read_text())
+  if value.get('schema')!=1 or value.get('pid')!=self.pid or value.get('sequence')!=str(self.sequence):raise RuntimeError('GENERIC_SESSION_PHASE_IDENTITY')
+  return value
+ def request_cancel(self):(self.worker.root/f'cancel-{self.sequence:08}').touch()
  def terminate(self):self.worker.process.terminate()
  def kill(self):self.worker.process.kill()
 
@@ -38,6 +45,7 @@ class Worker:
   if self.process.poll() is not None or self.job is not None and self.job.returncode and not (self.job.response or {}).get('result',{}).get('query_only'):raise RuntimeError('GENERIC_SESSION_FAILED_NO_RESTART')
   job=Job(self,self.sequence);self.job=job
   path=self.root/f'job-{self.sequence:08}.json';tmp=path.with_suffix('.tmp')
+  env=dict(env,MGBFS_JOB_PHASE_PATH=str(self.root/f'phase-{self.sequence:08}.json'),MGBFS_JOB_SEQUENCE=str(self.sequence),MGBFS_JOB_CANCEL_PATH=str(self.root/f'cancel-{self.sequence:08}'))
   tmp.write_text(json.dumps(dict(schema=1,sequence=self.sequence,command=command,args=args,env={k:v for k,v in env.items() if k.startswith(('MGBFS_','NCCL_'))})));os.replace(tmp,path);self.sequence+=1
   return job
  def close(self):
@@ -136,8 +144,7 @@ def launch_specialized(command,env,log,devices):
   _active.release_memory()
   if _active.special is not None:_active.special.release_memory()
   return subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
- if _active.special is None:_active.special=Pool(kind='bench',owner=_active)
- pool=_active.special;pool.select(command[0],devices,env);rank=int(env['RANK']);worker=pool.workers[rank];offset=(worker.root/'worker.log').stat().st_size
+ pool=_active;pool.select(command[0],devices,env);rank=int(env['RANK']);worker=pool.workers[rank];offset=(worker.root/'worker.log').stat().st_size
  job_env=dict(env)
  if command[-1]=='--search-only':job_env.update(MGBFS_SEARCH_ONLY='1',MGBFS_BENCH_SKIP_ARCHIVE='1',MGBFS_ARCHIVE_STREAM='0')
  else:job_env.pop('MGBFS_SEARCH_ONLY',None)

@@ -90,3 +90,6 @@ pub mod generic_session;
 
 #[cfg(all(feature="cuda",target_os="linux"))]
 mod generic_pool;
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+mod job_phase;

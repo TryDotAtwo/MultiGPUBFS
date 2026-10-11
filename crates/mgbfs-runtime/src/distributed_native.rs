@@ -783,7 +783,7 @@ fn admit_device_group(
         }
         println!("MGBFS_MEMORY_QUERY {}", serde_json::json!({
             "schema": 1, "rank": rank, "required_bytes": required, "reserve_bytes": reserve,
-            "free_after_nccl_warmup_bytes": (free as u64 + crate::session_cache::reusable_bytes()).min(total as u64), "total_bytes": total,
+            "free_after_nccl_warmup_bytes": (free as u64 + crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64), "total_bytes": total,
             "session_reusable_bytes": crate::session_cache::reusable_bytes(),
             "scope": "explicit_device_allocations_including_fixed_library_pool",
             "library_pool_bytes": pool_bytes,
@@ -804,7 +804,7 @@ fn admit_device_group(
     }
     let local = check(unsafe { cudaMemGetInfo(&mut free, &mut total) })
         .and_then(|_| crate::distributed_memory::device_admission(required, reserve,
-            (free as u64 + crate::session_cache::reusable_bytes()).min(total as u64)));
+            (free as u64 + crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64)));
     if vote(u32::from(local.is_err()))? != 0 {
         return Err(format!(
             "VRAM_PREFLIGHT_GROUP: {}",
@@ -834,7 +834,7 @@ fn setup_failure_vote(
 impl Buffer {
     fn new(bytes: usize, stream: *mut c_void) -> Result<Self> {
         let mut ptr = crate::session_cache::buffer_take(bytes).unwrap_or(std::ptr::null_mut());
-        if ptr.is_null() { check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?; }
+        if ptr.is_null() { if let Some(pooled)=crate::generic_pool::allocate(bytes.max(1))? {ptr=pooled;} else {check(unsafe { cudaMalloc(&mut ptr, bytes.max(1)) })?;} }
         let x = Self { ptr, bytes, stream };
         check(unsafe { cudaMemsetAsync(ptr, 0, bytes.max(1), stream) })?;
         Ok(x)
@@ -4562,6 +4562,7 @@ if lossless_bits.is_none(){
         *produced = produced.checked_add(1).ok_or("GENERATION_ROUTE_SEQUENCE")?;
         Ok(true)
     }
+    pub fn boundary_job_stop(&self,value:u32)->Result<u32>{self.all_max(value)}
     fn all_max(&self, value: u32) -> Result<u32> {
         let _native_scope = NativeCallMarker::enter(line!());
         self.collective_send.put_u32(value)?;

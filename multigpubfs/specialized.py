@@ -101,16 +101,27 @@ def _workers(native,root,match,devices,batch,env,seconds,query=False):
    from .generic_session import launch_specialized
    jobs.append(launch_specialized(command,e,log,devices))
   while any(p.poll() is None for p in jobs):
-   if time.monotonic()-started>seconds and stop_at is None:
+   phases=[p.phase() if hasattr(p,'phase') else None for p in jobs]
+   controlled=not query and all(phase is not None for phase in phases)
+   elapsed=time.monotonic()-started
+   timeout=(elapsed>max(600,seconds)) if not controlled else any(
+    (phase['phase']=='preparing' and time.time()-phase['entered']['preparing']>600) or
+    (phase['phase']=='bfs' and time.time()-phase['entered']['bfs']>seconds+60) or
+    (phase['phase']=='retiring' and time.time()-phase['entered']['retiring']>600) for phase in phases)
+   if timeout and stop_at is None:
     stop_at=time.monotonic()
     for p in jobs:
-     if p.poll() is None:p.terminate()
-   if stop_at is not None and time.monotonic()-stop_at>10:
+     if p.poll() is None:
+      if hasattr(p,'request_cancel'):p.request_cancel()
+      else:p.terminate()
+   if stop_at is not None and time.monotonic()-stop_at>600:
     raise RuntimeError('SPECIALIZED_COMPLETION_TIMEOUT_NO_RESTART')
    if any(p.poll() not in (None,0,1) for p in jobs) and stop_at is None:
     stop_at=time.monotonic()
     for p in jobs:
-     if p.poll() is None:p.terminate()
+     if p.poll() is None:
+      if hasattr(p,'request_cancel'):p.request_cancel()
+      else:p.terminate()
    time.sleep(.02)
   return [p.returncode for p in jobs],time.monotonic()-started,stop_at is not None
  finally:
@@ -154,12 +165,24 @@ def run_specialized(graph,output,*,native,env,devices,capacity,batch,max_seconds
     except BaseException as error:errors[rank]=str(error)
    t=threading.Thread(target=read,daemon=True);threads.append(t);t.start()
   e=_environment(env,match,devices,capacity,batch,mode,profile_layers=profile_layers,shard_target=shard_target)
+  e['MGBFS_JOB_BFS_SECONDS']=str(max_seconds)
   codes,wall,deadline=_workers(native,output,match,devices,batch,e,max_seconds)
  finally:
   stopped.set()
   for t in threads:t.join(timeout=10)
   for pipe in pipes:pipe.close()
- if errors or len(receipts)!=len(devices) or any(t.is_alive() for t in threads):raise RuntimeError('SPECIALIZED_COMMITTED_SNAPSHOT_MISSING '+repr(errors))
+ if errors or len(receipts)!=len(devices) or any(t.is_alive() for t in threads):
+  producer=[]
+  for rank in range(len(devices)):
+   log=output/f'rank-{rank}.log';text=log.read_text() if log.exists() else '';messages=[]
+   for line in text.splitlines():
+    try:value=json.loads(line)
+    except ValueError:continue
+    if isinstance(value,dict) and value.get('status')=='ERROR':messages.append(value.get('error'))
+   producer.append(dict(rank=rank,exit_code=codes[rank],errors=messages,log=str(log),tail=text[-8192:]))
+  diagnostic=dict(schema=1,status='FAILED',kind='SPECIALIZED_COMMITTED_SNAPSHOT_MISSING',producer=producer,archive_errors=errors,committed_ranks=sorted(receipts),reader_threads_alive=[i for i,t in enumerate(threads) if t.is_alive()])
+  (output/'failure.json').write_text(json.dumps(diagnostic,indent=2))
+  raise RuntimeError('SPECIALIZED_COMMITTED_SNAPSHOT_MISSING '+repr(errors)+' PRODUCER_ERRORS '+repr([x['errors'] for x in producer])+' EVIDENCE '+str(output/'failure.json'))
  if len({v['config_digest'] for v in receipts.values()})!=1:raise RuntimeError('SPECIALIZED_ARCHIVE_IDENTITY_MISMATCH')
  native_parts=[];traces=[]
  for rank in range(len(devices)):
@@ -176,11 +199,13 @@ def run_specialized(graph,output,*,native,env,devices,capacity,batch,max_seconds
  sizes=[sum(c[i] for c,_,_ in traces) for i in range(depth)]
  complete=all(code==0 for code in codes) and all(p and p['status']=='COMPLETE' for p in native_parts)
  calibration=all(code==0 for code in codes) and all(p and p['status']=='INCOMPLETE' and p.get('stop_reason')=='calibration layer limit' for p in native_parts)
- if not complete and not calibration:
+ job_stop=all(code==0 for code in codes) and all(p and p['status']=='INCOMPLETE' and p.get('stop_reason') in ('job cancelled','BFS deadline') for p in native_parts)
+ if job_stop and len({p['stop_reason'] for p in native_parts})!=1:raise RuntimeError('SPECIALIZED_STOP_REASON_CONSENSUS')
+ if not complete and not calibration and not job_stop:
   allowed=('GROUP_STATE_RING_RETIRE_FATAL_16','GROUP_STATE_RING_RETIRE_FATAL_112','SHARD_AB_PREPARE_FATAL_16','SHARD_AB_PREPARE_FATAL_112','GROUP_STATE_RING_RETIRE_FATAL_11','GROUP_STATE_RING_RETIRE_FATAL_12','SHARD_AB_PREPARE_FATAL_11','SHARD_AB_PREPARE_FATAL_12','REMOTE_SEARCH_CANCELLED')
   if not all(any(code in text for code in allowed) for _,_,text in traces):raise RuntimeError('SPECIALIZED_FATAL_NOT_RESOURCE_OR_CANCEL')
- if complete or calibration:
-  marker=output/'native'/('group-complete.json' if complete else 'group-calibration.json');m=json.loads(marker.read_text())
+ if complete or calibration or job_stop:
+  marker=output/'native'/('group-complete.json' if complete else ('group-job-stop.json' if job_stop else 'group-calibration.json'));m=json.loads(marker.read_text())
   if m['world_size']!=len(devices):raise RuntimeError('SPECIALIZED_GROUP_GEOMETRY')
   for rank in range(len(devices)):
    if list(hashlib.sha256((output/'native'/f'rank-{rank}.json').read_bytes()).digest())!=m['rank_sha256'][rank]:raise RuntimeError('SPECIALIZED_GROUP_CHECKSUM')
@@ -190,11 +215,11 @@ def run_specialized(graph,output,*,native,env,devices,capacity,batch,max_seconds
   if any(v>=len(match['labels']) for v in raw):raise RuntimeError('SPECIALIZED_STATE_ALPHABET')
   return [[match['labels'][v] for v in raw[i:i+n]] for i in range(0,len(raw),n)]
  current=decode(depth-1);previous=decode(depth-2) if depth>1 and sizes[-2]<1000 else []
- if (complete or calibration) and len(current)!=min(sizes[-1],1000):raise RuntimeError('SPECIALIZED_TERMINAL_PREFIX_SHAPE')
+ if (complete or calibration or job_stop) and len(current)!=min(sizes[-1],1000):raise RuntimeError('SPECIALIZED_TERMINAL_PREFIX_SHAPE')
  if len(previous)!=(sizes[-2] if depth>1 and sizes[-2]<1000 else 0):raise RuntimeError('SPECIALIZED_PREVIOUS_SHAPE')
  state={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(state).encode();(output/'states.json').write_bytes(raw)
  layer_seconds=[max(t[i] for _,t,_ in traces) for i in range(depth-1)]
- report={'status':'COMPLETE' if complete else 'INCOMPLETE','reason':'GRAPH_EXHAUSTED' if complete else ('PROFILE_LAYER_LIMIT' if calibration else ('DEADLINE' if deadline else 'RESOURCE_STOP')),'backend':'SHARD_AB_'+mode,'graph_digest':graph.digest(),'devices':list(devices),'world':len(devices),'layer_sizes':sizes,'layer_seconds':layer_seconds,'bfs_seconds':sum(layer_seconds),'launch_wall_seconds':wall,'states_sha256':hashlib.sha256(raw).hexdigest(),'plan':{'capacity':capacity,'batch':batch,'history_layers':3,'state_bytes':1,'shard_target':shard_target,'peer_transport':e['MGBFS_TRANSPORT_BACKEND']},'native_rank_receipts':[str(p.relative_to(output)) for p in (output/'native').glob('rank-*.json')],'terminal_wire_committed':True,'sample_of_unprocessed_current':not(complete or calibration),'scope':'lossless LRX definition bridge; existing GPU key-first SHARD_AB with admitted peer transport; bounded RAM-only prefix snapshots; physical ranks limited to1/2/4/8 by reference owner'}
+ report={'status':'COMPLETE' if complete else 'INCOMPLETE','reason':'GRAPH_EXHAUSTED' if complete else ('PROFILE_LAYER_LIMIT' if calibration else (('CANCELLED' if native_parts[0]['stop_reason']=='job cancelled' else 'DEADLINE') if job_stop else ('DEADLINE' if deadline else 'RESOURCE_STOP'))),'backend':'SHARD_AB_'+mode,'graph_digest':graph.digest(),'devices':list(devices),'world':len(devices),'layer_sizes':sizes,'layer_seconds':layer_seconds,'bfs_seconds':sum(layer_seconds),'launch_wall_seconds':wall,'states_sha256':hashlib.sha256(raw).hexdigest(),'plan':{'capacity':capacity,'batch':batch,'history_layers':3,'state_bytes':1,'shard_target':shard_target,'peer_transport':e['MGBFS_TRANSPORT_BACKEND']},'native_rank_receipts':[str(p.relative_to(output)) for p in (output/'native').glob('rank-*.json')],'terminal_wire_committed':True,'sample_of_unprocessed_current':not(complete or calibration or job_stop),'scope':'lossless LRX definition bridge; existing GPU key-first SHARD_AB with admitted peer transport; bounded RAM-only prefix snapshots; physical ranks limited to1/2/4/8 by reference owner'}
  (output/'report.json').write_text(json.dumps(report,indent=2));return report
 
 

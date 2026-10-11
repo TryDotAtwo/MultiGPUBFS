@@ -66,6 +66,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    from .autotune import choose_size_profile
    # Reserve most of the caller's deadline for BFS, not cold tuning.
    tuning_budget=min(60,max(1,max_seconds//3))
+   native_env=dict(native_env,MGBFS_TUNING_EVIDENCE_ROOT=str(Path(output).parent/(Path(output).name+'-tuning-evidence')))
    profile=choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto')
    shards=profile['shards']
    if profile.get('backend','generic')!='generic':
@@ -124,7 +125,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    while any(p.poll() is None for p in jobs):
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
     if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
-    if time.monotonic()-started>max_seconds+180:raise RuntimeError('DISTRIBUTED_COMPLETION_TIMEOUT: worker state remains in rank logs; no restart')
+    phases=[p.phase() if hasattr(p,'phase') else None for p in jobs]
+    timed_out=any(
+     (phase['phase']=='preparing' and time.time()-phase['entered']['preparing']>600) or
+     (phase['phase']=='bfs' and time.time()-phase['entered']['bfs']>max_seconds+60) or
+     (phase['phase']=='retiring' and time.time()-phase['entered']['retiring']>600)
+     for phase in phases if phase is not None)
+    if timed_out or (not all(phases) and time.monotonic()-started>max_seconds+1200):raise RuntimeError('DISTRIBUTED_COMPLETION_TIMEOUT: worker state remains in rank logs; no restart')
     time.sleep(.002)
    if any(p.returncode for p in jobs):raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED')
   finally:
