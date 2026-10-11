@@ -130,9 +130,17 @@ def query(command,env,seconds,kwargs):
   if job.wait(max(.001,seconds-(time.monotonic()-started))):raise RuntimeError('GENERIC_SESSION_PLAN_FAILED '+repr(job.response))
   return subprocess.CompletedProcess(command,0,json.dumps(job.response['result']), '')
 
-def launch(command,env,log,devices):
+def launch_group_selection(native,devices,env):
+ if _active is None:return None
+ _active.select(native,devices,env)
+ return (_active,_active.generation,tuple(_active.workers),str(native),tuple(devices))
+
+def launch(command,env,log,devices,*,_selection=None):
  if _active is None:return subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
- _active.select(command[0],devices,env);rank=int(command[4])
+ if _selection is None:_active.select(command[0],devices,env)
+ elif _selection!=(_active,_active.generation,tuple(_active.workers),str(command[0]),tuple(devices)):raise RuntimeError('GENERIC_LAUNCH_GROUP_SELECTION_CHANGED')
+ elif any(w.process.poll() is not None for w in _active.workers):raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
+ rank=int(command[4])
  worker=_active.workers[rank];offset=(worker.root/'worker.log').stat().st_size
  job=worker.submit('graph-rank',command[2:],env);job.receipt_log=log;job.log_offset=offset
  log.write(json.dumps({'resident_pid':job.pid,'sequence':job.sequence,'worker_log':str(job.worker.root/'worker.log')})+'\n');log.flush()
@@ -150,3 +158,47 @@ def launch_specialized(command,env,log,devices):
  else:job_env.pop('MGBFS_SEARCH_ONLY',None)
  job=worker.submit('bench',['resident-bench',*command[3:8]],job_env);job.receipt_log=log;job.log_offset=offset
  log.write(json.dumps({'resident_pid':job.pid,'sequence':job.sequence})+'\n');log.flush();return job
+
+
+def _admission_transaction_key(pool,graph,native,env,devices,capacity,shards,batch):
+ from .autotune import _configuration_digest,_stat_identity
+ return (pool.generation,pool.identity,str(native),_stat_identity(native),graph.to_json(),None if devices is None else tuple(devices),capacity,shards,batch,_configuration_digest(env),tuple((w.process.pid,w.sequence) for w in pool.workers))
+
+def remember_launch_admission(graph,native,env,devices,capacity,shards,batch,admission):
+ if _active is None or not getattr(_active,'workers',[]):return
+ if admission.get('plan',{}).get('batch')!=batch:return
+ import copy
+ key=_admission_transaction_key(_active,graph,native,env,devices,capacity,shards,batch)
+ _active.launch_admission=(key,copy.deepcopy(admission))
+
+def take_launch_admission(graph,native,env,devices,capacity,shards,batch):
+ if _active is None:return None
+ ticket=getattr(_active,'launch_admission',None);_active.launch_admission=None
+ if ticket is None:return None
+ saved,admission=ticket
+ # Selection checks native/dependency identity and all-rank health; it does
+ # not query memory or submit a native job. Any job/release consumes the epoch.
+ _active.select(native,admission['devices'],env)
+ if saved!=_admission_transaction_key(_active,graph,native,env,devices,capacity,shards,batch):return None
+ return admission
+
+
+def owned_resource_admission(graph,native,env,geometry):
+ """Use physically parked raw buffers; fresh private workspaces check VRAM natively."""
+ if _active is None or not getattr(_active,'workers',[]):return None
+ plan=geometry.get('plan',{})
+ if plan.get('history_algorithm')!='HASH':return None
+ devices=geometry.get('devices',[]);plans=geometry.get('rank_plans') or [plan]*len(devices)
+ if len(plans)!=len(devices):return None
+ _active.select(native,devices,env)
+ if len(_active.workers)!=len(plans):return None
+ for worker,expected in zip(_active.workers,plans):
+  job=worker.job
+  if job is None or job.poll()!=0 or (job.response or {}).get('ok') is not True:return None
+  cache=job.response.get('cache',{})
+  sync_count=1+expected.get('shards',1)
+  if cache.get('cached_streams',0)<sync_count or cache.get('cached_events',0)<sync_count:return None
+  if cache.get('owned_raw_complete') is not True or cache.get('owned_raw_plan')!=expected or cache.get('owned_raw_generator')!=env.get('MGBFS_GENERIC_GENERATOR','cuda'):return None
+ import copy
+ admitted=copy.deepcopy(geometry);admitted.update(graph_digest=graph.digest(),owned_resource_admission=True,admission_scope='physically owned exact raw extents and healthy rank group; private workspace headroom revalidated natively before allocation')
+ return admitted

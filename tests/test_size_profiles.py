@@ -20,9 +20,9 @@ class SizeProfiles(unittest.TestCase):
  def test_live_cache_keeps_small_profile(self):
   with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,MGBFS_PROFILE_CACHE=d):
    profile={'status':'MEASURED_FRONTIER_SIZE_PROFILES','identity':{'fixture':1},'batch':256,'size_profiles':[{'minimum_frontier':0,'batch':64,'generator_backend':'cuda'}]}
-   report={'autotune':profile,'online_size_profile_events':[{'winner':1,'choices':[[256,False],[64,True]],'frontier_global':40000}]}
+   report={'autotune':profile,'online_size_profile_events':[{'winner':1,'choices':[[256,False],[64,True]],'frontier_global':40000,'frontier_max_rank':20000,'bucket':14}]}
    save_online_profiles(report);p=json.loads(next(Path(d).glob('size-*.json')).read_text())
-   self.assertEqual(p['size_profiles'][0]['batch'],64);self.assertEqual(p['size_profiles'][1]['generator_backend'],'gemm');self.assertEqual(p['size_profiles'][1]['status'],'LIVE_CHUNK_EMPIRICAL_PROFILE')
+   self.assertEqual(p['size_profiles'][0]['batch'],64);self.assertEqual(p['size_profiles'][1]['generator_backend'],'gemm');self.assertEqual(p['size_profiles'][1]['status'],'LIVE_CHUNK_EMPIRICAL_PROFILE');self.assertEqual(p['size_profiles'][1]['frontier_max_rank_bucket'],14)
 class SizeBackendPolicy(unittest.TestCase):
  def test_explicit_generic_never_enters_specialized(self):
   from multigpubfs import GraphDefinition

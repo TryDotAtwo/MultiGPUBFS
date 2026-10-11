@@ -1,14 +1,15 @@
 //! Resident generic rank: fresh per-job buffers and live device inventory.
 use mgbfs_core::Result;
-use std::{path::Path,time::Duration,collections::BTreeMap};
+use std::{path::Path,collections::BTreeMap};
 use mgbfs_cuda::native_owner::{cudaSetDevice,cudaMemGetInfo};
 extern "C" {fn cudaDeviceSynchronize()->i32;fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
 pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
  crate::session_cache::enable();crate::generic_pool::activate(device as i32)?;
+ let waiter=crate::session_wait::FileWaiter::new(root);let shutdown=root.join("shutdown");
  let mut previous=BTreeMap::<String,Option<String>>::new();
  for sequence in 0u64.. {
   let path=root.join(format!("job-{sequence:08}.json"));
-  while !path.exists(){if root.join("shutdown").exists(){return Ok(());}std::thread::sleep(Duration::from_millis(2));}
+  if !waiter.wait(&path,Some(&shutdown),None)?{return Ok(());}
   let outcome=(||->Result<serde_json::Value>{
    let v:serde_json::Value=serde_json::from_slice(&std::fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
    if v["schema"]!=1||v["sequence"].as_u64()!=Some(sequence){return Err("GENERIC_SESSION_SEQUENCE".into());}

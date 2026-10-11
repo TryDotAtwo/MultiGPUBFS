@@ -97,9 +97,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if _batch is not None:
    if capacity is None:command.append('auto')
    command.append(str(_batch))
-  probe=native_query(command,capture_output=True,text=True,env=native_env)
+  from .generic_session import take_launch_admission
+  accepted=take_launch_admission(graph,native,native_env,devices,capacity,shards,_batch) if profile is not None and _profile_layers is None else None
+  probe=subprocess.CompletedProcess(command,0,json.dumps(accepted),'') if accepted is not None else native_query(command,capture_output=True,text=True,env=native_env)
+  if profile is not None:profile['launch_admission_reused']=accepted is not None
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
+  if admission.get('owned_resource_admission'):native_env=dict(native_env,MGBFS_REQUIRE_OWNED_RAW='1')
   if profile and profile.get('size_profiles'):admission.update(size_profiles=profile['size_profiles'],online_size_tuning=profile.get('online_size_tuning',False))
   if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
@@ -114,11 +118,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    return finish(result)
   output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
   try:
+   from .generic_session import launch_group_selection
+   selection=launch_group_selection(str(native),devices,native_env)
    for rank in range(len(devices)):
     log=(output/f'rank-{rank}.log').open('w');logs.append(log)
     env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
     from .generic_session import launch as launch_rank
-    jobs.append(launch_rank([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env,log,devices))
+    jobs.append(launch_rank([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env,log,devices,_selection=selection))
    while any(p.poll() is None for p in jobs):
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
     if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))

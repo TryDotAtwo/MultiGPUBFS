@@ -28,8 +28,8 @@ impl ParentCache{fn new(p:&GenericDistributedMemoryPlan,device:i32,counts:&[u32]
  let frontiers=Buffer::new(p.world as usize*4,device)?;frontiers.upload(counts)?;Ok(Self{sources,received,cursors,frontiers})
 }}
 struct Event{ptr:*mut c_void,device:i32}
-impl Event{fn new(device:i32)->Result<Self>{let mut p=ptr::null_mut();check(unsafe{cudaEventCreateWithFlags(&mut p,2)})?;Ok(Self{ptr:p,device})}}
-impl Drop for Event{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.device);cudaEventDestroy(self.ptr);}}}
+impl Event{fn new(device:i32)->Result<Self>{let mut p=crate::session_cache::event_take(device).unwrap_or(ptr::null_mut());if p.is_null(){check(unsafe{cudaEventCreateWithFlags(&mut p,2)})?;}Ok(Self{ptr:p,device})}}
+impl Drop for Event{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.device);if !crate::session_cache::event_put(self.ptr,self.device){cudaEventDestroy(self.ptr);}}}}
 struct QueueBank{records:Buffer,counts:Buffer,states:Buffer}
 impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{let boxes=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;Ok(Self{records:Buffer::new(boxes*q*32,device)?,counts:Buffer::new(boxes*4,device)?,states:Buffer::new(boxes*q*p.queue_payload_bytes(),device)?})}}
 #[derive(Debug,PartialEq,Eq)]
@@ -41,6 +41,29 @@ pub struct GenericDistributedBfs{
 }
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
 impl GenericDistributedBfs{
+ /// Raw-buffer extents for exact idle-storage reuse across graph geometry.
+ /// SORTED_RUNS owns additional queried native shapes and keeps its existing
+ /// exact-layout admission. HASH/parent/radix paths have explicit extents.
+ pub fn buffer_requirements(g:&GraphDefinitionV2,p:&GenericDistributedMemoryPlan,cuts:Option<&[u64]>)->Result<Vec<usize>> {
+  if p.history_algorithm!="HASH" {return Err("GENERIC_REUSE_REQUIRES_HASH_LAYOUT".into());}
+  g.validate()?;p.validate(g.generator_count() as u32)?;if p.elements as usize!=g.start.len(){return Err("GENERIC_REUSE_GRAPH_WIDTH".into());}
+  // validate recomputes checked u64 byte extents and the rolling u32 stride.
+  // CUDA resident workers are 64-bit; each raw extent is a term of that plan.
+  let n=p.elements as usize;let cap=p.capacity as usize;let w=p.world as usize;let shards=p.shards as usize;let b=p.batch as usize;let bytes=p.state_bytes as usize;let rolling=p.history_layers==3;
+  let stride=cap*if rolling{3}else{1};let readout=if rolling{cap.min(1000)}else{cap};
+  let (perms,matrices,moduli)=match &g.action {
+   GraphAction::Permutation{generators,..}=>(generators.iter().map(|v|v.len()).sum::<usize>()*4,0,0),
+   GraphAction::Matrix{generators,..}=>(0,generators.iter().map(|v|v.matrix.len()).sum::<usize>()*8,generators.len()*4),
+  };
+  let mut sizes=vec![n*stride*bytes,n*readout*bytes,cap*4,cap*4,p.table_slots as usize*8,24,perms,matrices,moduli,w*4,64+w*8];
+  if cuts.is_some(){sizes.push((w+1)*8);}
+  if rolling{sizes.push(stride*8);}
+  for _ in 0..3{sizes.extend([w*shards*p.queue_capacity as usize*32,w*shards*4,w*shards*p.queue_capacity as usize*p.queue_payload_bytes()]);}
+  if p.sort_candidates{let count=w*p.queue_capacity as usize;let size=count*shards;sizes.extend([size*8,size*8,size*4,size*4,(count*64+65536)*shards]);}
+  if p.parent_transport{let size=b*n*bytes;sizes.extend([size,size,size*w,w*8,w*4]);}
+  for value in &mut sizes{*value=(*value).max(1);}
+  Ok(sizes)
+ }
  /// All ranks must agree on graph, seed, hash bits, batch/queue geometry and
  /// rank map before entering this constructor. The launcher owns that gate.
  pub fn new(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32)->Result<Self>{
@@ -107,6 +130,7 @@ impl GenericDistributedBfs{
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
   let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
+  crate::session_cache::generic_requirements_consumed()?;
   Ok(Self{online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,banks,inbox,control,owner_map,owner_cuts,streams,ready,done,depth:0,parent_cursor:0,max_frontier:1,counts,source_retries:0})
  }
  pub fn quiesce(&self)->Result<()>{check(unsafe{cudaDeviceSynchronize()})?;check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device)})?;check(unsafe{cudaStreamSynchronize(self.bfs.stream.ptr)})?;for stream in &self.streams{check(unsafe{cudaStreamSynchronize(stream.ptr)})?;}Ok(())}
@@ -116,6 +140,7 @@ impl GenericDistributedBfs{
   if batch==0||batch>self.plan.batch||(gemm&&self.gemm.is_none()){return Err("SIZE_PROFILE_EXCEEDS_ADMISSION".into());}
   let bucket=31-self.max_frontier.max(1).leading_zeros();let(batch,gemm)=self.online_choices.get(&bucket).copied().unwrap_or((batch,gemm));self.active_batch=batch;self.use_gemm=gemm;Ok(())
  }
+ pub fn frontier_bucket(&self)->u32{31-self.max_frontier.max(1).leading_zeros()}
  pub fn cache_current_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{
   self.set_size_profile(batch,gemm)?;let bucket=31-self.max_frontier.max(1).leading_zeros();self.online_choices.insert(bucket,(batch,gemm));Ok(())
  }

@@ -26,15 +26,17 @@ def save_online_profiles(report):
  from pathlib import Path
  profile=report.get('autotune',{})
  identity=profile.get('identity');events=report.get('online_size_profile_events',[])
- if not identity or not events or profile.get('status')!='MEASURED_FRONTIER_SIZE_PROFILES':return
+ if not identity or not events or profile.get('status') not in ('MEASURED_FRONTIER_SIZE_PROFILES','REUSED_COMPATIBLE_GPU_PROFILE'):return
  entries=list(profile.get('size_profiles',[]))
  for e in events:
   winner=e.get('winner');choices=e.get('choices',[])
   if type(winner) is not int or not 0<=winner<len(choices):continue
   batch,gemm=choices[winner];frontier=e.get('frontier_global',0)
   if type(batch) is not int or not 0<batch<=profile['batch'] or type(frontier) is not int or frontier<=0:continue
-  entries=[p for p in entries if p['minimum_frontier']!=frontier]
-  entries.append(dict(minimum_frontier=frontier,batch=batch,generator_backend='gemm' if gemm else 'cuda',measured=True,status='LIVE_CHUNK_EMPIRICAL_PROFILE',maximum_measured_frontier=frontier))
+  maximum=e.get('frontier_max_rank');bucket=e.get('bucket')
+  if type(maximum) is not int or not 0<maximum<=0xffffffff or type(bucket) is not int or bucket!=maximum.bit_length()-1:continue
+  entries=[p for p in entries if p.get('frontier_max_rank_bucket')!=bucket and (p.get('frontier_max_rank_bucket') is not None or p['minimum_frontier']!=frontier)]
+  entries.append(dict(minimum_frontier=frontier,batch=batch,generator_backend='gemm' if gemm else 'cuda',measured=True,status='LIVE_CHUNK_EMPIRICAL_PROFILE',maximum_measured_frontier=frontier,frontier_max_rank_bucket=bucket))
  entries.sort(key=lambda p:p['minimum_frontier'])
  saved=dict(profile,size_profiles=entries,online_profile_evidence=events)
  root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')))
@@ -42,3 +44,18 @@ def save_online_profiles(report):
  fd,path=tempfile.mkstemp(prefix='size-'+key+'-',suffix='.tmp',dir=root)
  with os.fdopen(fd,'w') as f:json.dump(saved,f)
  os.replace(path,root/('size-'+key+'.json'))
+
+
+def valid_profile_entries(profiles, maximum_batch, generators):
+ if not isinstance(profiles,list) or not profiles:return False
+ previous=None;buckets=set()
+ for p in profiles:
+  if not isinstance(p,dict) or type(p.get('minimum_frontier')) is not int or p['minimum_frontier']<0 or type(p.get('batch')) is not int or not 0<p['batch']<=maximum_batch or p.get('generator_backend') not in generators:return False
+  bucket=p.get('frontier_max_rank_bucket')
+  if bucket is None:
+   if previous is None and p['minimum_frontier']!=0 or previous is not None and p['minimum_frontier']<=previous:return False
+   previous=p['minimum_frontier']
+  else:
+   if type(bucket) is not int or not 0<=bucket<=31 or bucket in buckets or p.get('status') not in ('LIVE_CHUNK_EMPIRICAL_PROFILE','REUSED_SOURCE_LIVE_BUCKET'):return False
+   buckets.add(bucket)
+ return previous is not None

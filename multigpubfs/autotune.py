@@ -3,7 +3,7 @@ import hashlib,json,os,subprocess,tempfile,time
 from pathlib import Path
 from .process_control import query as native_query
 
-def _admit(graph,devices,capacity,shards,native,env,directory):
+def _admit(graph,devices,capacity,shards,native,env,directory,*,batch=None):
  path=Path(directory)/'definition.json';path.write_text(graph.to_json())
  inventory=env.get('_MGBFS_PROFILE_INVENTORY')
  if inventory:
@@ -12,6 +12,9 @@ def _admit(graph,devices,capacity,shards,native,env,directory):
  else:
   command=[native,'graph-info',str(path),'auto' if devices is None else ','.join(map(str,devices)),str(shards)]
   if capacity is not None:command.append(str(capacity))
+ if batch is not None:
+  if capacity is None and command[1]=='graph-info':command.append('auto')
+  command.append(str(batch))
  p=native_query(command,capture_output=True,text=True,env=env)
  if p.returncode:raise RuntimeError('PROFILE_ADMISSION_FAILED: '+p.stderr[-2000:])
  return json.loads(p.stdout)
@@ -285,7 +288,7 @@ def _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allo
  dependency=_dependency_identity(native,env)
  if dependency is None:return None
  files=(native,__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py'))
- return (pool.generation,graph.digest(),None if devices is None else tuple(devices),capacity,max_seconds,allow_specialized,_configuration_digest(env),tuple(env.get(k) for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_DEVICE_ORDER','CUDA_DISABLE_PTX_JIT')),tuple((str(p),_stat_identity(p)) for p in files),tuple((d[1],_stat_identity(d[1])) for d in dependency['resolved_dependencies']))
+ return (pool.generation,graph.digest(),None if devices is None else tuple(devices),capacity,allow_specialized,_configuration_digest(env),tuple(env.get(k) for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_DEVICE_ORDER','CUDA_DISABLE_PTX_JIT')),tuple((str(p),_stat_identity(p)) for p in files),tuple((d[1],_stat_identity(d[1])) for d in dependency['resolved_dependencies']))
 
 def _profile_environment(env,result):
  selected=dict(env,MGBFS_GENERIC_TRANSPORT=result.get('transport','full'),MGBFS_GENERIC_SORT=result.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=result.get('generator_backend','cuda'))
@@ -296,6 +299,24 @@ def _profile_environment(env,result):
 def _profile_geometry(admission):
  return {k:admission.get(k) for k in ('devices','plan','rank_plans','size_profile_capability','owner_cuts')}
 
+def _lrx_resource_alias_key(key,graph):
+ from .specialized import match_lrx
+ match=match_lrx(graph)
+ if key is None or match is None:return None
+ preferred=1 if all(0<=v<=255 for v in graph.start) else 8
+ return (key[:1]+key[2:],json.dumps(graph.action,sort_keys=True),preferred)
+
+def _rebase_owned_profile(saved,graph):
+ import copy
+ result=copy.deepcopy(saved);source=result.get('source_graph_digest',result.get('identity',{}).get('graph'))
+ result.update(status='REUSED_COMPATIBLE_GPU_PROFILE',measured=False,cache_hit=True,source_graph_digest=source,source_profile_identity=copy.deepcopy(saved.get('identity')),online_size_tuning=True,scope='same LRX action and physically owned exact allocation geometry; source measured size choices reused, target optimum not claimed')
+ if result.get('identity'):result['identity']['graph']=graph.digest()
+ for profile in result.get('size_profiles',[]):
+  if profile.get('status')=='LIVE_CHUNK_EMPIRICAL_PROFILE':profile['status']='REUSED_SOURCE_LIVE_BUCKET'
+  else:profile['status']='REUSED_SOURCE_SIZE_PROFILE'
+  profile['measured']=False
+ return result
+
 def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  # Session reuse skips selector work, never live memory admission. A changed
  # geometry, runtime, environment or rank generation takes the full path.
@@ -304,29 +325,57 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
  started=time.monotonic();env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
  pool=_active;key=None if pool is None else _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
  cache=None if pool is None else getattr(pool,'size_profile_results',None)
+ alias_key=_lrx_resource_alias_key(key,graph)
+ aliases={} if pool is None else getattr(pool,'size_profile_aliases',{})
+ if alias_key in aliases and (cache is None or key not in cache):
+  saved,geometry=aliases[alias_key]
+  from .specialized import match_lrx
+  bound=match_lrx(graph)['order'];explicit=graph.to_dict()['expected_max_unique_states']
+  if explicit is not None:bound=min(bound,explicit)
+  if all(p['capacity']<=bound for p in geometry.get('rank_plans') or [geometry['plan']]):
+   from .generic_session import owned_resource_admission,remember_launch_admission
+   selected=_profile_environment(env,saved);fresh=owned_resource_admission(graph,native,selected,geometry)
+   if fresh is not None:
+    result=_rebase_owned_profile(saved,graph);result.update(session_profile_hit=True,owned_resource_hit=True,seconds=time.monotonic()-started)
+    remember_launch_admission(graph,native,selected,devices,capacity,result['shards'],result['batch'],fresh)
+    if cache is None:cache={};pool.size_profile_results=cache
+    cache[key]=(copy.deepcopy(result),geometry)
+    return result
  if key is not None and cache is not None and key in cache:
   saved,geometry=cache[key];selected=_profile_environment(env,saved)
-  with _evidence_directory(env,'mgbfs-session-profile-') as temporary:
-   fresh=_admit(graph,devices,capacity,saved['shards'],native,selected,temporary)
+  from .generic_session import owned_resource_admission
+  fresh=owned_resource_admission(graph,native,selected,geometry)
+  if fresh is None:
+   with _evidence_directory(env,'mgbfs-session-profile-') as temporary:
+    fresh=_admit(graph,devices,capacity,saved['shards'],native,selected,temporary,batch=saved['batch'])
   if key==_session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized) and _profile_geometry(fresh)==geometry:
-   result=copy.deepcopy(saved);result.update(cache_hit=True,session_profile_hit=True,seconds=time.monotonic()-started,_admission_inventory=fresh.get('inventory',[]));return result
+   from .generic_session import remember_launch_admission
+   remember_launch_admission(graph,native,selected,devices,capacity,saved['shards'],saved['batch'],fresh)
+   result=copy.deepcopy(saved);result.update(cache_hit=True,session_profile_hit=True,owned_resource_hit=fresh.get('owned_resource_admission',False),seconds=time.monotonic()-started,_admission_inventory=fresh.get('inventory',[]));return result
   del cache[key]
  result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
  if pool is not None and result.get('backend','generic')=='generic' and result.get('size_profiles') and (result.get('measured') or result.get('cache_hit')):
   selected=_profile_environment(env,result)
   with _evidence_directory(env,'mgbfs-session-profile-store-') as temporary:
-   admitted=_admit(graph,devices,capacity,result['shards'],native,selected,temporary)
+   admitted=_admit(graph,devices,capacity,result['shards'],native,selected,temporary,batch=result['batch'])
   key=_session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
   if key is not None:
    if cache is None:cache={};pool.size_profile_results=cache
    if len(cache)>=256:cache.clear()
    saved=copy.deepcopy(result);saved.pop('_admission_inventory',None);cache[key]=(saved,_profile_geometry(admitted))
+   alias_key=_lrx_resource_alias_key(key,graph)
+   if alias_key is not None:
+    aliases=getattr(pool,'size_profile_aliases',{})
+    if len(aliases)>=256:aliases.clear()
+    aliases[alias_key]=(copy.deepcopy(saved),_profile_geometry(admitted));pool.size_profile_aliases=aliases
+   from .generic_session import remember_launch_admission
+   remember_launch_admission(graph,native,selected,devices,capacity,result['shards'],result['batch'],admitted)
  result['seconds']=time.monotonic()-started
  return result
 
 def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  """Bounded real-prefix measurements; unknown large tiers remain conservative."""
- from .size_profiles import select_size_profiles
+ from .size_profiles import select_size_profiles,valid_profile_entries
  from .generation import gemm_supported
  started=time.monotonic();env=dict(env)
  global_profile=choose_profile(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
@@ -355,7 +404,7 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
    except (OSError,ValueError):result={}
    if not isinstance(result,dict):result={}
    profiles=result.get('size_profiles',[])
-   if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and isinstance(profiles,list) and profiles and all(isinstance(p,dict) and type(p.get('minimum_frontier')) is int and p['minimum_frontier']>=0 and type(p.get('batch')) is int and 0<p['batch']<=large_batch and p.get('generator_backend') in (('cuda','gemm') if eligible else ('cuda',)) for p in profiles) and profiles[0]['minimum_frontier']==0 and all(a['minimum_frontier']<b['minimum_frontier'] for a,b in zip(profiles,profiles[1:])):
+   if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and valid_profile_entries(profiles,large_batch,('cuda','gemm') if eligible else ('cuda',)):
     result=dict(result,cache_hit=True,global_profile=global_profile,seconds=time.monotonic()-started);return result
   if global_profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE':
    source=global_profile.get('source_pilots',[])

@@ -93,3 +93,6 @@ mod generic_pool;
 
 #[cfg(all(feature="cuda",target_os="linux"))]
 mod job_phase;
+
+#[cfg(target_os="linux")]
+mod session_wait;

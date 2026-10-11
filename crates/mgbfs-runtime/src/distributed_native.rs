@@ -8838,6 +8838,11 @@ mod weighted_producer_tests {
 
     #[test]
     fn weighted_advance_preserves_original_depth_full_state_layers() {
+        // BMMA v1 is explicitly SM75-only; run its cases only on that
+        // hardware, while retaining all CUB oracle cases on other GPUs.
+        extern "C" {fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
+        let mut hardware=[0u64;8];assert_eq!(unsafe{mgbfs_generic_hardware_info(0,hardware.as_mut_ptr())},0);
+        let bmma_supported=hardware[1]==7&&hardware[2]==5;
         // Calling the real public advance path catches a missing settlement
         // driver, treating composed moves as unit cost, and future arrivals
         // incorrectly suppressing an earlier shortest-path discovery.
@@ -8858,6 +8863,7 @@ mod weighted_producer_tests {
             (2, OwnerBackend::BmmaBucket, "bmma", 20260828u128),
             (10, OwnerBackend::BmmaBucket, "bmma", 20260828u128),
         ] {
+            if backend==OwnerBackend::BmmaBucket&&!bmma_supported{continue;}
             let seed = seed_id.to_le_bytes();
             let schedule = MacroGeneratorSet::compile_bounded(&graph, macro_depth, 128).unwrap();
             for prededup in [false, true] {

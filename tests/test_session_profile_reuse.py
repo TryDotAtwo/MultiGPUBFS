@@ -4,7 +4,8 @@ from unittest.mock import patch
 from multigpubfs import autotune as a,generic_session as g
 class Reuse(unittest.TestCase):
  def test_live_geometry_generation_and_environment(self):
-  pool=SimpleNamespace(generation=1);graph=SimpleNamespace(digest=lambda:'graph')
+  from multigpubfs import GraphDefinition
+  pool=SimpleNamespace(generation=1);graph=GraphDefinition.permutation([[1,0]],[0,1])
   profile={'backend':'generic','shards':1,'size_profiles':[{'minimum_frontier':0,'batch':8,'generator_backend':'cuda'}],'measured':True,'batch':8,'generator_backend':'cuda','history_algorithm':'HASH'}
   admission={'devices':[0,1],'plan':{'capacity':100,'batch':8},'rank_plans':[],'inventory':[]}
   with patch.object(g,'_active',pool),patch.object(a,'_dependency_identity',return_value={'resolved_dependencies':[]}),patch.object(a,'_choose_size_profile_uncached',side_effect=lambda *args,**kw:dict(profile)) as choose,patch.object(a,'_admit',return_value=admission) as admit:
