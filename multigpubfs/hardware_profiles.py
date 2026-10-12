@@ -11,3 +11,16 @@ def startup_policy(inventory,plan):
  shards=shard_candidates(inventory,plan)
  sm=min((int(i.get('sm_count',1)) for i in inventory),default=1)
  return {'shards':shards,'size_threshold_per_rank':max(1024,sm*512),'probe_capacity_per_rank':min(int(plan['capacity']),max(32768,sm*16384)),'scope':'real selected-device SM,L2,VRAM and exact admitted state bytes; configuration candidates require GPU measurement'}
+
+def small_permutation_workload(graph,inventory):
+ """Bound the entire orbit, not the current layer or admitted VRAM capacity."""
+ if graph.action['kind']!='permutation' or not inventory:return False
+ from collections import Counter
+ from math import comb
+ # One modest wave per SM; tiny GPU graphs do not amortize cold pilots.
+ limit=sum(max(1,int(i.get('sm_count',1)))*1024 for i in inventory)
+ bound=1;used=0
+ for count in Counter(graph.start).values():
+  bound*=comb(used+count,count);used+=count
+  if bound>limit:return False
+ return bound<=limit

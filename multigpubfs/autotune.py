@@ -142,7 +142,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   # release their allocations before the next admission. Production queries live VRAM again.
   if baseline.get('inventory'):env['_MGBFS_PROFILE_INVENTORY']=json.dumps(baseline['inventory'])
   if forced_generator=='gemm' and plan.get('generator_backend')!='gemm':raise RuntimeError('NATIVE_GEMM_CAPABILITY_REQUIRED')
-  if plan['capacity']<=4096 or max_seconds<10:
+  from .hardware_profiles import small_permutation_workload
+  if plan['capacity']<=4096 or max_seconds<10 or small_permutation_workload(graph,baseline.get('inventory',[])):
    return {'status':'SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   # Native content, graph and driver/topology identity prevent stale reuse.
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])

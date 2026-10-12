@@ -102,8 +102,16 @@ def _search(original, graph, backend, options, output, kwargs):
         # The parent persists for the receipt; run_graph creates its child.
         output = Path(tempfile.mkdtemp(prefix="run-", dir=root)) / "result"
     output = Path(output).absolute()
-    report = run_graph(definition, output, devices=options.devices,
-                       max_seconds=options.max_seconds, autotune=options.autotune)
+    from . import generic_session
+    import contextlib
+    # Share rank contexts between admission, pilots and the final BFS.
+    # An existing sweep owns its pool; a single API call owns a scoped pool.
+    scope = (generic_session.persistent_graph_workers()
+             if options.autotune and generic_session._active is None
+             else contextlib.nullcontext())
+    with scope:
+        report = run_graph(definition, output, devices=options.devices,
+                           max_seconds=options.max_seconds, autotune=options.autotune)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]
