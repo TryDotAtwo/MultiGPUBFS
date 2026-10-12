@@ -1,6 +1,6 @@
 # MultiGPUBFS
 
-[Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and optional checksummed HF publication.
+[Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and checksummed local outputs. Source and native wheels come from GitHub; no Kaggle Inputs are required.
 
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 

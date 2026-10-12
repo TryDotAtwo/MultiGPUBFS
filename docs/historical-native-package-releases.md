@@ -1,0 +1,191 @@
+# Historical native package receipts
+
+These preserved release receipts are not the current installation route. Use install-native-package.md for the GitHub release.
+
+# Historical portable native package (no CayleyPy BFS adapter)
+
+Package source: `bdb8565a20f3a3c341b56fb386ed0ec9bd13e5a9`. Linux x86_64; CUDA13.2 runtime and NCCL2.30.7. Compiled SASS:75/80/86/89/90/100/103/120; PTX120. Actual acceptance is one/two RTX3060 only. B200/B300, separate physical nodes and8/128 GPUs remain unverified. This is an installation artifact, not a universal hardware/performance guarantee.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/35959488089604ce6d1fbafa3297e5dbd46eaee2/linux-x86_64-portable-cuda13.2/bdb8565a20f3a3c341b56fb386ed0ec9bd13e5a9/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `27b8925fce018c1be6130347e4ce69269bf67df7290225d6a770e7a6a8591f95`. Anonymous immutable readback passed. Host ELF requirements: GLIBC>=2.34, GLIBCXX>=3.4.32 and CXXABI>=1.3.9; compatible driver required. No checkout, compiler, token or native path override is needed. Install CPU PyTorch and pinned `cayleypy==0.2.0` only for the optional named catalog adapter.
+
+The fresh isolated installation passed permutation, directed width257, matrix and console exact BFS on one/two GPUs. Source tests additionally passed forced collisions, HASH/SORTED history, network rank control on one host, compact resource retention and eleven-profile tuning. LSA is compiled on; these RTX3060 reject its actual topology capability and automatically select HOST_SIZED_NCCL. Compiled-on does not establish Blackwell acceptance.
+
+Compared with the prior accepted native library on the same complete 3,628,800-state graph and the same executable, three alternating runs gave completed-layer medians: HASH old0.396823479/new0.396122526s; SORTED old0.644649058/new0.599724539s. Ratios old/new1.00177 and1.07491. This is a compiler-build comparison, not a new algorithmic speedup or maximal-frontier benchmark. The sorted translation unit used optional Ofast-compile=mid; default source build policy remains0.
+
+All visible GPUs remain the default; admitted bounded profiles are selected from matched graph prefixes, not a guarantee of globally optimal utilization. General public output remains compact. See [acceptance audit](portable-native-acceptance-2026-10-10.md).
+
+## Historical SM86-only release
+
+# Verified compact native package
+
+Executable/package source: `5998ba54d9e200e5d547ea7a470d88c5505ca9cc`.
+Linux x86_64, SM86, CUDA 13.2 runtime, NCCL 2.30.7; actual one/two RTX3060 with driver 595.84. Physical larger/multi-node configurations and Blackwell remain unverified. The attempted multiarchitecture build hit its explicit time limit; this artifact claims SM86 only. LSA is compiled OFF.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/97f59974611a904cd0fca74c6b221e73c856feb5/linux-x86_64-sm86-cuda13.2/5998ba54d9e200e5d547ea7a470d88c5505ca9cc/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-cuda-runtime==13.2.86" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `180b55ed5a4e8892bcd13ecc36443d0e65554e2c9453c32985aff447fdf80d4a`. Anonymous immutable readback verified. Binary/library hashes and source commit are checked from the bundled manifest. No source checkout, local compilation or manual MGBFS_EXECUTABLE/PYTHONPATH/LD_LIBRARY_PATH override is needed. A compatible NVIDIA driver is required.
+
+Optional CayleyPy definitions use the CPU adapter:
+
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install cayleypy
+```
+
+```python
+from cayleypy import PermutationGroups
+from multigpubfs import run_graph
+report = run_graph(PermutationGroups.lrx(8), "new-result-directory")
+```
+
+All visible GPUs are the default. Native memory admission and bounded matched-prefix tuning choose admitted batch/shard/history/owner-lane profiles. Tiny prefixes retain a conservative profile; this is not a global optimum guarantee. Public generic output is compact. Cold RAM/cgroup/output/temp disk estimates and collective startup refusal precede GPU work. Reports record actual binary, Python and CUDA library identities.
+
+This artifact passed a fresh installation with one/two-GPU 120/257-state exact public runs, a 6-state public/console provenance gate, and external-rank TCP/NCCL weighted/resource/matrix/mismatch plus 40320-state collective autotuning on one host. Twenty direct changed-path GPU exact-layer cases covered HASH/SORTED, byte/int64 states, wide full/parent transport, collisions and INCOMPLETE preservation.
+
+Three alternating matched two-GPU 3,628,800-state runs showed completed-layer medians 0.566575350 s before and 0.395965297 s after bounded queue/parent transfer (ratio 1.430871). Background CPU compilation was present in both variants. Two GPUs still underperform one GPU on this fixed case. This is not full-capacity sustained throughput or larger-hardware acceptance. See [current audit](universal-current-audit-2026-10-10.md).
+
+## Historical immutable artifacts
+
+The sections below retain older receipts. Their words 'current/latest' refer to
+their original recording dates; use the release above for the current package.
+
+# Historical exact key-domain and cache release
+
+Latest source `407a5d7c796e548f6cf88de58c10c345a864475c`. This adds consistent omitted/auto peer-policy cache identity to the full-key-domain/NCCL repair below. One/two RTX3060 clean installed general matrices/permutations, compact stop boundaries, local external TCP/NCCL and bounded tuning/cache passed. Freshly reinstalled immutable wheel passed cold production plus cached direct tuning with equal identity. SM86/CUDA runtime12; native binary built12.6 and library12.8. Physical4/8/128, separate hosts and Blackwell remain unverified. Broader general sorted-history integration remains unfinished.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/a219a76e8966240e1c811b85b07d2d78e8b4c658/linux-x86_64-sm86-cuda12.8/407a5d7c796e548f6cf88de58c10c345a864475c/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256 `379ae09bf0ed325b3ef769a4ea9fcbd61814d31d6ec2fd736c2bb5e438dc6c0c`, anonymous readback verified. Earlier immutable packages below are historical.
+
+# Historical full-domain repaired native package
+
+Use this immutable release; the earlier fa4883c package below is superseded because it rejects some legal exact keys. Linux x86_64, SM86, CUDA runtime12, compatible driver; actual acceptance2RTX3060 driver570.211.01. Library builtCUDA12.8, unchanged executable builtCUDA12.6. B200/B300 and physical4/8/128GPU unverified.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/017880f66fd1f41bb18b6a7330750ed9ee09c920/linux-x86_64-sm86-cuda12.8/cfae5a1ae6ebb3451db9fa9e454b0b746f3afd3d/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256 `7527a3ab4fdc4e32959b5d01e84b00b7ad96576f768eae857c3486cdad9ac893`; anonymous readback and fresh installation passed. See [failure, repair and measured prefix](exact-key-domain-repair-2026-10-09.md).
+
+# Historical lossless-key native package
+
+Latest executable/library source: `fa4883cf0bacb06e3898f359b31aba86649bc354`. Tested Linux x86_64, CUDA12.6 toolkit/runtime12, NCCL2.30.7, driver565.57.01 and twoRTX3060. Compiled targetSM86; physical4/8/128GPU and Blackwell acceptance remain unverified. LSA is compiledOFF in this wheel; the public planner observes this and selects the verified host-count NCCL transport. This does not prove LSA incompatibility on other hardware.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/2b666d0eff4892847ffb5c1116c4a8392dc531fe/linux-x86_64-sm86-cuda12.6/fa4883cf0bacb06e3898f359b31aba86649bc354/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu12==2.30.7"
+```
+
+Wheel SHA256: `94ec9059abf2e02e7d93417dacc460671d265605c562a7b4c1206e300db67cd3`. Anonymous public readback matched. A fresh virtual environment passed exact small and25-byte-wide full-graph terminal/layer oracles, unsupported packed-key domain rejection, and cold/cached automatic selection. AUTO measured7profiles and chose the general exact path for n8r1 on this machine. No global optimum claim is made.
+
+Exact SHARD_AB is eligible only for matched LRX whose complete normalized state fits128bits, with native capability checked. Other supported graphs use full-state equality. See [lossless key proof and acceptance](lossless-shard-keys.md). The installation command below is historical and superseded.
+
+# Install the verified native development package
+
+Latest implementation: `73cdef732ba116c4540491b405d659a103ee91e4`. Linux x86_64, CUDA13 runtime and a compatible driver are required. The wheel contains SM86 and PTX targets; actual acceptance is one/two RTX3060, not Blackwell or physical8/128GPU scaling.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/bd87478b1df62b573f655a25bb25cd2efd6ac7f6/linux-x86_64-sm86-cuda13.2/73cdef732ba116c4540491b405d659a103ee91e4/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu13==2.30.7"
+```
+
+Wheel SHA256: `dc6f7215d18d757c58895f094c7fc02c6cc0b5151ae51a5798b61e994cb4be66`. Anonymous public readback matched the hash. Native artifact identity is checked before launch. Development wheels share a version, so force reinstall is required when changing immutable artifacts.
+
+```python
+from multigpubfs import run_graph
+report = run_graph(cayleypy_graph, "results")
+```
+
+Pass either a CayleyPy0.2.0 CayleyGraph object, its CayleyGraphDef, or multigpubfs.GraphDefinition. CayleyPy itself is optional for explicit GraphDefinition use; install `cayleypy==0.2.0` separately for its catalog. All visible local GPUs are selected by default. Use the same API under the external rank environment for cluster launch. See [unified launch](unified-launch.md), [external ranks](external-rank-launch.md), and [current acceptance audit](universal-acceptance-2026-10-09.md).
+
+The fresh installation passed one/two-GPU exact graph, deadline/cancel/resource, network and collective tuning gates. Actual CayleyPy wrappers passed CPU neighbor comparisons and installed native complete BFS for inverse-closed permutations, directed permutations and modular rectangular matrices. General graph state identity is the exact integer vector, not its hash. Compact output contains a maximum1000-state last-layer sample and the previous layer only if globally smaller than1000. INCOMPLETE means enumeration stopped before frontier exhaustion.
+
+## Historical artifact records
+
+The records below preserve previous versions and their measured acceptance. Use the latest artifact above for the current implementation.
+
+# Install the verified development wheel
+
+Linux x86_64 with compatible NVIDIA driver, CUDA runtime12 and NCCL2 shared libraries:
+
+```sh
+python -m pip install "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/8b2680daf1cd1f932cde41204bec76b2a8b3c3fd/linux-x86_64-sm86/3aaf1862dab3d6cf7dc8f6e9d3642d27ebf25c2d/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl"
+```
+
+```python
+from multigpubfs import run_graph
+report = run_graph(cayleypy_graph, "results")
+```
+
+The package contains the native executable, CUDA library and manifest. It verifies their SHA256 before launch and requires no Rust/CUDA compilation on the target machine. Default placement inventories local visible GPUs, independently admits free VRAM, and measures bounded shard/batch profiles. External-rank environments use the same API with network bootstrap; see external-rank-launch.md.
+
+Artifact SHA256: `8623ffbf9908d79971dae96ea56a357de2fb5f1c0476878a43e587b59eae1c6a`.
+Source compiled/packaged functional checkpoint: `3aaf1862dab3d6cf7dc8f6e9d3642d27ebf25c2d`.
+The public URL was downloaded without credentials and checked against the on-rental wheel checksum. A clean installation outside the source checkout passed native GPU smoke, regular tuning and external network tuning gates. CUTLASS redistribution notice is bundled.
+
+Actual GPU acceptance is one/two RTX3060. The library contains SM86 code and PTX; this is not B200/B300 or other-architecture hardware acceptance. Separate physical nodes and8/128 GPU configurations are unverified. Native runtime dependencies are external; this wheel does not install drivers. General directed retained-history, automatic specialized compact-history dispatch and survivor-only transport boundaries are documented in unified-launch.md.
+
+## Packed-candidate CUDA13 release
+
+For Linux x86_64 with CUDA runtime13, NCCL2 and a compatible driver, the updated packed-candidate wheel is available without a token:
+
+```bash
+python -m pip install "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/34b7b907773f83dadf89976ef1743e7f3a626f83/linux-x86_64-sm86-cuda13.2/ceb125a47bd4d5c0224404c9835a57c9e8de8bfa/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl"
+```
+
+SHA256: `85f8570c1e2753d7a21833a439e4d76c4baebc5a94f3dcd4ada94b8f6ef3c998`. The CUDA12 wheel above remains the earlier implementation. The updated wheel passed clean two-RTX3060 installation, exact layer/resource/collision tests, network rank control and four-profile autotuning. CUDA13 compatibility and these GPU tests do not establish acceptance on Blackwell or physical multihost clusters.
+
+## Automatic three-bank build (historical checkpoint)
+
+Source implementation: `9a30c0212063a6f595b251ef1733ef0a80c20b49`. This CUDA13.2/SM86+PTX artifact passed clean installed one/two-GPU exact graph, resource/deadline/cancel, external-rank network and collective tuning gates. Other GPU models and physical multi-host configurations remain unverified.
+
+```bash
+python -m pip install --force-reinstall "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/a04c7ba9b108981678c3140de7258c865fe66fad/linux-x86_64-sm86-cuda13.2/9a30c0212063a6f595b251ef1733ef0a80c20b49/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl" "nvidia-nccl-cu13==2.30.7"
+```
+
+The host must already provide compatible CUDA runtime13 and an NVIDIA driver. Wheel SHA256: `9f62296da744202d46e76743b7af88ec8769b03a96fffbd41a92f9913e090a11`. The embedded manifest checks the executable and native library before launch. Force reinstall is intentional because these development artifacts share a package version; immutable URLs and source manifests distinguish builds.
+
+
+## Historical recovered cyclic admission package
+
+Verified source: `2cdfdc30b88dba7fb69c9458393131157bf71ca7`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/7b071f7c457bbe38bbefadd9432a5571d177afc2/linux-x86_64-sm86-cuda13.2/2cdfdc30b88dba7fb69c9458393131157bf71ca7/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256: `09a264b12d9905cee7389604a5fc05668f838fdfd15f76909e7ea06403c12e53`. Clean installation passed cyclic admission, exact rolling terminal states, cancellation/resource boundaries and two-rank TCP/NCCL tests on one/two RTX3060. CUDA13 and NCCL2 runtimes are required. Blackwell and physical8/128 GPU acceptance remain unverified.
+
+
+## Historical Packed24 package
+
+Source `a7198174dd778e59dcf234c04c4837e51d6e30b3`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/c62cf77656974326df3c76a2e5f4561f5be11d57/linux-x86_64-sm86-cuda13.2/a7198174dd778e59dcf234c04c4837e51d6e30b3/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `ce554b0d13b55ff0df83bd3d897d27864f28356285412dd4517009bdbcb0758f`. Fresh installation outside checkout passed width16/17/23/24/25 boundaries, rolling retention/cancellation and external-rank TCP/NCCL tests on one/twoRTX3060. CUDA13/NCCL2 required. Larger hardware remains unverified.
+
+
+## Historical wide parent/radix package
+
+Source `fde169f6e5ae9ba11d6176c14fe7a17448133665`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/fc4ccf023fe30b11ec4b3f1b93a972c0d6c1e5f4/linux-x86_64-sm86-cuda13.2/fde169f6e5ae9ba11d6176c14fe7a17448133665/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `9142e3cf32af04f61fe3f825b176006231a2bddefdf5bd1601a12baee83bec10`. Clean installation outside checkout passed parent/full transport, packed and wide states, terminal snapshots, local tuning/cache and external two-rank TCP/NCCL tuning. CUDA13/NCCL2 required. Physical8/128GPUs, multi-host and Blackwell remain unverified. Radix ordering lost the matched3628800-state benchmark; it is optional and automatically selected only on a measured prefix win.
+
+
+## Unified command and specialized measured owner package
+
+Source `68f6195985dfcbff1e7260fe0fe5e3b97fca03c4`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/0b424872f9e111123d3090e613cbd4cbc5a6c5a2/linux-x86_64-sm86-cuda13.2/68f6195985dfcbff1e7260fe0fe5e3b97fca03c4/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `8803d929d350bd6c9f6c592fa9146ab5172528979cc87fa03d4e76bb867d5fdf`. Clean package outside checkout passed exact public HASH/SORT_MERGE on two RTX3060, seven-profile selection and cache, and installed module/console commands. Compact samples pass independent oracles including resource/SIGTERM. LSA, physical4/8/128 and multi-host specialized owners remain unverified.
+
+
+## Capability-gated peer transport package
+
+Source `c7d399f3d02e1985f0327432c62a438d1f30f45f`. Immutable wheel: https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/2eaa1b475286b03a360a6452f770bc4b124e0126/linux-x86_64-sm86-cuda13.2/c7d399f3d02e1985f0327432c62a438d1f30f45f/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl
+
+SHA256 `907026c228f3eb8eed5ad423432ee2f33b34686b54db7928cb91f8ddd0b616a2`. CUDA13/NCCL2.30.7 and compatible host driver required. This SM86 package contains LSA-enabled code, but the allowed twoRTX3060 host cannot provide LSA device/team capability: automatic fallback to HOST is GPU-verified, explicit LSA rejects. Clean installed public selection/cache, CLI, wide deadline/cancel/resource snapshots and separate TCP/NCCL ranks passed. Successful LSA, physically separate nodes and physical4/8/128/Blackwell remain unverified.
+
+### ELF runtime compatibility
+
+The currently measured binaries require GLIBC2.34 and GLIBCXX3.4.32 (CXXABI1.3.9). The native manifest records `elf_runtime_requirements` from the actual executable/library for subsequent packages. GPU architecture support and CUDA driver compatibility are separate checks. A Linux x86_64 wheel is not a promise of compatibility with every Linux distribution; a host with older libstdc++ must use a suitable runtime/container or build natively. These symbol requirements are inspected metadata, not tests on every operating system.
