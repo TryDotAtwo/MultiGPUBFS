@@ -1,4 +1,44 @@
-# Current portable native package
+# Install the current native CayleyPy package
+
+## Kaggle: use the public utility, not global CUDA/NCCL replacement
+
+Open [CayleyPy + MultiGPUBFS](https://www.kaggle.com/code/trydotatwo/cayleypy-multigpubfs), choose **Copy & Edit**, enable **Internet** and **GPU (2×T4)**, and keep the `trydotatwo/multigpubfs` utility input attached. The utility version5 installs the pinned `419fa34f` wheel and isolates native runtime/NCCL libraries under `/tmp`; it does not replace PyTorch's NCCL package. For an existing notebook, add the public `trydotatwo/multigpubfs` utility notebook through Input/Add Input and use a fresh Python session before importing it.
+
+```python
+import multigpubfs, cayleypy
+multigpubfs.enable_native()
+graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5), device="cpu")
+result = graph.bfs()
+```
+
+`device="cpu"` constructs the graph definition; native BFS selects all visible GPUs by default. For selected GPUs, pass `native_options=multigpubfs.NativeOptions(devices=(0,1))`. The adapter supports native permutation and int64 matrix actions; unsupported CayleyPy options raise explicitly. See [API integration](cayleypy-native-integration.md) and [pair sweeps](reproduce-pair-sweeps.md).
+
+If you already followed the older global pip command in Kaggle, start a fresh notebook session/environment with the utility attached. A Python-only restart clears stale imports but does not undo changed installed dependencies. The old command replaces Kaggle's Torch-pinned NCCL and can produce a dependency conflict. Do not install CPU PyTorch over Kaggle's supplied GPU PyTorch.
+
+The package+loader were executed in a private 2×T4 gate: LRX5, LRX8 and Rapaport M2 six-coordinate cases all completed with every layer equal to an independent CPU oracle. LRX8 tuning was1.064s and complete API call3.822s. A separate import-through-public-utility integration run remains pending; do not equate publication with its completion. One/two RTX3060 clean installation also passed. This artifact has SM75/SM86 only; it is not a B200/B300 wheel.
+
+## Standalone Linux: use a fresh virtual environment
+
+This route is for a separate Linux environment, **not the Kaggle base environment**. CPU Torch here is only for CayleyPy graph definitions; the native executable performs GPU BFS.
+
+```bash
+python -m venv bfs-venv
+source bfs-venv/bin/activate
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install "cayleypy==0.2.0" "nvidia-cuda-runtime-cu12==12.9.79" "nvidia-nccl-cu12==2.30.7"
+python -m pip install --no-deps "https://huggingface.co/datasets/TryDotAtwo/multigpubfs-native-releases/resolve/94dc513b034b3fa48636ff06b7025638bc25c0bd/linux-x86_64-fast-cayleypy-cuda12.9/419fa34f/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl"
+python -c "import pathlib,sysconfig; (pathlib.Path(sysconfig.get_paths()['purelib'])/'multigpubfs/_native/bin/mgbfs').chmod(0o755)"
+```
+
+Wheel source `419fa34f`; CUDA12.9; Linux x86_64; SASS SM75/SM86. Wheel SHA256 `f85b5d3f90bb6c870bc60b3fbc76ef920284a83a443185090aa81643f3bee9aa`. Public immutable readback verified. The bundled executable and CUDA library identities are verified at launch. No compilation is needed; a compatible NVIDIA driver and Linux host libraries are required. CayleyPy `0.2.0` is the tested API dependency; an arbitrary GitHub HEAD is not the same validation target.
+
+## Why the old instructions failed
+
+The historical portable wheel `bdb8565...` exposes `run_graph`, `from_cayleypy` and the catalog, but has **no `enable_native()`**. A document URL containing commit `165e6c499bea5c324ec22c5e3c9d75a8a25d4b93` is an immutable old snapshot: it cannot receive this correction. Use this current branch document or the public Kaggle example.
+
+The historical releases below retain their original provenance and acceptance scope. They are not the recommended Kaggle installation.
+
+# Historical portable native package (no CayleyPy BFS adapter)
 
 Package source: `bdb8565a20f3a3c341b56fb386ed0ec9bd13e5a9`. Linux x86_64; CUDA13.2 runtime and NCCL2.30.7. Compiled SASS:75/80/86/89/90/100/103/120; PTX120. Actual acceptance is one/two RTX3060 only. B200/B300, separate physical nodes and8/128 GPUs remain unverified. This is an installation artifact, not a universal hardware/performance guarantee.
 
