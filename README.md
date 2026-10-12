@@ -1,5 +1,7 @@
 # MultiGPUBFS
 
+CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
+
 Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Actual acceptance: one/two RTX3060; larger/Blackwell and physical multi-host configurations remain unverified.
 
 Research workspace for understanding exact breadth-first search, from a small
