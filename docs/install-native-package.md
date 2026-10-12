@@ -15,7 +15,7 @@ result = graph.bfs()
 
 If you already followed the older global pip command in Kaggle, start a fresh notebook session/environment with the utility attached. A Python-only restart clears stale imports but does not undo changed installed dependencies. The old command replaces Kaggle's Torch-pinned NCCL and can produce a dependency conflict. Do not install CPU PyTorch over Kaggle's supplied GPU PyTorch.
 
-The package+loader were executed in a private 2×T4 gate: LRX5, LRX8 and Rapaport M2 six-coordinate cases all completed with every layer equal to an independent CPU oracle. LRX8 tuning was1.064s and complete API call3.822s. A separate import-through-public-utility integration run remains pending; do not equate publication with its completion. One/two RTX3060 clean installation also passed. This artifact has SM75/SM86 only; it is not a B200/B300 wheel.
+The package+loader were executed in a private 2×T4 gate: LRX5, LRX8 and Rapaport M2 six-coordinate cases all completed with every layer equal to an independent CPU oracle. LRX8 tuning was1.064s and complete API call3.822s. Import through the published utility also passed the full28-pair LRX/M2 notebook gate on physical2×T4, including all111 CPU-reference layer counts. One/two RTX3060 clean installation also passed. This artifact has SM75/SM86 only; it is not a B200/B300 wheel.
 
 ## Standalone Linux: use a fresh virtual environment
 

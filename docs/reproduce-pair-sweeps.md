@@ -1,6 +1,6 @@
 # Reproduce the GPU pair sweeps
 
-Validation status (2026-10-12): the pinned native package passed independent CPU-layer comparisons on physical 2×T4 for LRX and M2. This new multi-pair notebook is undergoing private Kaggle validation; it has not yet been accepted end to end. Its Kaggle page remains private until the gate finishes.
+Validation status (2026-10-12): the exact public run cells passed a private physical2×T4 gate for all14 LRX and14 M2 pairs at n=2..5. Every111 layer count matched an independent CPU oracle; all28 cases were COMPLETE. Each family used one resident worker PID group. Total API-call times were3.376s LRX and3.614s M2 (tiny graphs, not a large-graph throughput benchmark). Optional HF upload was not executed in this gate because no Kaggle write secret was supplied. Public notebook version3 contains the accepted run cells without the private CPU-oracle checker.
 
 [Open the Kaggle notebook](https://www.kaggle.com/code/trydotatwo/multigpubfs-pair-sweep), choose **Copy & Edit**, enable **GPU (2×T4)** and **Internet**, and Run All. No compilation or manual package installation is needed: the attached public `trydotatwo/multigpubfs` utility installs the immutable checksummed native release.
 
@@ -8,7 +8,7 @@ The [notebook source](../examples/cayleypy_pair_sweep.ipynb) is also in this rep
 
 ## What we compute
 
-For each pair the canonical start is `[0,...,n-r] + [n-r]*(r-1)`: one symbol appears `r` times. Generator definitions come from the actual CayleyPy family, not a replacement generator implementation. `device="cpu"` only constructs the graph definition; the native traversal executes on GPUs. `multigpubfs.enable_native()` explicitly installs the native `graph.bfs()` adapter; import alone does not patch CayleyPy.
+For each pair the canonical start is `[0,...,n-r] + [n-r]*(r-1)`: one symbol appears `r` times. Generator definitions come from the actual CayleyPy family. CayleyPy lrx(n) rejects n=2; for that degenerate case the notebook explicitly extends the same L/R/X definition with three identical permutations [1,0]. M2 uses its original constructor for n=2 as well. `device="cpu"` only constructs the graph definition; the native traversal executes on GPUs. `multigpubfs.enable_native()` explicitly installs the native `graph.bfs()` adapter; import alone does not patch CayleyPy.
 
 A single `persistent_graph_workers()` scope owns the entire sweep. Healthy resident ranks and compatible allocations/profile decisions can be reused across pairs; hardware/resource/geometry checks still apply. Tiny complete-orbit bounds skip expensive pilots, while larger graphs use bounded measured profiles. These are bounded choices, not proof of a globally fastest profile. Changed geometries can require new admission or tuning; zero-cost transitions are not promised.
 
@@ -16,8 +16,8 @@ A single `persistent_graph_workers()` scope owns the entire sweep. Healthy resid
 
 | File | Contents |
 |---|---|
-| `results.csv` | n, r, COMPLETE/INCOMPLETE/PENDING, canonical-start eccentricity when complete, completed depth, visited count, API/BFS/tuning seconds |
-| `layers.csv` | Every committed layer's depth, state count, cumulative count and expansion time (no expansion for depth zero) |
+| `FAMILY/results.csv` | n, r, COMPLETE/INCOMPLETE/PENDING, canonical-start eccentricity when complete, completed depth, visited count, API/BFS/tuning seconds |
+| `FAMILY/layers.csv` | Every committed layer's depth, state count, cumulative count and expansion time (no expansion for depth zero) |
 | `nN-rR/report.json` | Full native status/reason, layer vectors, chosen profile, memory plan, devices and runtime hashes |
 | `nN-rR/states.json` and native receipts | Compact terminal state data and exact runtime evidence; not every state of every layer |
 | `configuration.json`, `checksums.json` | Reproducible grid settings and SHA256 for every saved file |
