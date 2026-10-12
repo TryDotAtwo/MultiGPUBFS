@@ -1,5 +1,7 @@
 # MultiGPUBFS
 
+[Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and optional checksummed HF publication.
+
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
 Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Actual acceptance: one/two RTX3060; larger/Blackwell and physical multi-host configurations remain unverified.
