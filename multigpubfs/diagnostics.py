@@ -121,11 +121,11 @@ def _component(stage,root,devices,device,seconds):
  if stage=='persistent':
   from .generic_session import Pool
   from .native_distribution import native_runtime
- native,env=native_runtime();log_root=root/'persistent-runtime';log_root.mkdir();previous=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT');os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=str(log_root)
- try:pool=Pool()
- finally:
-  if previous is None:os.environ.pop('MGBFS_GENERIC_SESSION_LOG_ROOT',None)
-  else:os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=previous
+  native,env=native_runtime();log_root=root/'persistent-runtime';log_root.mkdir();previous=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT');os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=str(log_root)
+  try:pool=Pool()
+  finally:
+   if previous is None:os.environ.pop('MGBFS_GENERIC_SESSION_LOG_ROOT',None)
+   else:os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=previous
   try:
    _phase('persistent worker first file request');first=pool.inventory(native,[device],env,max(.1,seconds*.5));pid=pool.workers[0].process.pid
    _phase('persistent worker second file request');second=pool.inventory(native,[device],env,max(.1,seconds*.2));assert pid==pool.workers[0].process.pid and second[0]['device']==device

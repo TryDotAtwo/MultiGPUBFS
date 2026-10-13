@@ -2,6 +2,15 @@ import json,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 from multigpubfs.diagnostics import Runner
 class DiagnosticFramework(unittest.TestCase):
+ def test_bfs_component_dispatch_does_not_start_persistent_worker(self):
+  from unittest.mock import patch
+  from multigpubfs.diagnostics import _component
+  with tempfile.TemporaryDirectory() as tmp,patch('multigpubfs.launch.run_graph',return_value={'status':'COMPLETE','layer_sizes':[1,2,2,1],'bfs_seconds':.01}) as run:
+   result=_component('bfs',Path(tmp),[0],None,60)
+   self.assertTrue(result['exact_oracle_verified']);run.assert_called_once()
+ def test_unknown_component_rejected(self):
+  from multigpubfs.diagnostics import _component
+  with self.assertRaisesRegex(ValueError,'Unknown diagnostic component'):_component('invalid',Path('.'),[],None,60)
  def runner(self,timeout=3):
   tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup);return Runner(Path(tmp.name)/'report',timeout)
  def test_success_and_manifest(self):
