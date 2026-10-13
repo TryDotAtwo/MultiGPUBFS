@@ -3,9 +3,10 @@ from pathlib import Path
 
 DRIVER=r"""
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 int cuDriverGetVersion(int*p){*p=11080;return 0;}
-int cuInit(unsigned x){char*p=getenv("FAKE_INIT");return p?atoi(p):0;}
+int cuInit(unsigned x){if(getenv("FAKE_HANG"))sleep(30);char*p=getenv("FAKE_INIT");return p?atoi(p):0;}
 int cuDeviceGetCount(int*p){char*v=getenv("FAKE_COUNT");*p=v?atoi(v):2;return 0;}
 int cuDeviceGetName(char*p,int n,int d){strncpy(p,"Fixture GPU",n);return 0;}
 int cuDeviceGetAttribute(int*p,int a,int d){*p=a==75?7:5;return 0;}
@@ -14,6 +15,7 @@ int cuGetErrorString(int c,const char**p){*p="controlled fixture response";retur
 """
 RUNTIME=r"""
 #include <stdlib.h>
+#include <unistd.h>
 int cudaRuntimeGetVersion(int*p){*p=12090;return 0;}
 int cudaDriverGetVersion(int*p){*p=11080;return 0;}
 int cudaGetDeviceCount(int*p){*p=2;return 35;}
@@ -33,3 +35,7 @@ class ActualDriverLoaderTests(unittest.TestCase):
     self.assertEqual(run.returncode,0,run.stderr);data=json.loads(output.read_text());self.assertEqual(data['classification'],expected)
     self.assertEqual(data['driver']['resolved_library'],str(root/'libcuda.so.1'));self.assertEqual(data['status'],'FAIL')
     self.assertEqual(data['runtime']['cudaGetDeviceCount']['code'],35)
+
+   output=root/'partial.json';env=dict(os.environ,LD_LIBRARY_PATH=str(root),FAKE_HANG='1');env.pop('LD_PRELOAD',None)
+   with self.assertRaises(subprocess.TimeoutExpired):subprocess.run([sys.executable,'-m','multigpubfs.driver_diagnostics','--output',str(output)],env=env,capture_output=True,text=True,timeout=2)
+   partial=json.loads(output.read_text());self.assertEqual(partial['status'],'RUNNING');self.assertEqual(partial['driver']['api_version'],11080);self.assertEqual(partial['driver']['resolved_library'],str(root/'libcuda.so.1'))
