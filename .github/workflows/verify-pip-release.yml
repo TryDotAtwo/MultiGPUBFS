@@ -1,0 +1,55 @@
+name: Verify public native pip wheel
+on:
+  workflow_dispatch:
+    inputs:
+      wheel_url:
+        required: true
+      sha256:
+        required: true
+permissions:
+  contents: read
+jobs:
+  clean-url-install:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      WHEEL_URL: ${{ inputs.wheel_url }}
+      WHEEL_SHA: ${{ inputs.sha256 }}
+      PIP_NO_CACHE_DIR: '1'
+    steps:
+      - name: Anonymous wheel readback and clean one-command extras installation
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,re,subprocess,urllib.request,textwrap
+          from pathlib import Path
+          url=os.environ['WHEEL_URL'];sha=os.environ['WHEEL_SHA']
+          assert url.startswith('https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/')
+          assert re.fullmatch('[0-9a-f]{64}',sha)
+          wheel=Path('/tmp/anonymous-readback.whl')
+          urllib.request.urlretrieve(url,wheel)
+          assert hashlib.sha256(wheel.read_bytes()).hexdigest()==sha
+          subprocess.run(['python3','-m','venv','/tmp/github-pip-clean'],check=True)
+          python='/tmp/github-pip-clean/bin/python'
+          subprocess.run([python,'-m','pip','install','multigpubfs[cayleypy] @ '+url+'#sha256='+sha],check=True)
+          check="""import importlib.metadata,json,os,subprocess
+          from pathlib import Path
+          import multigpubfs,cayleypy
+          from multigpubfs.native_distribution import native_runtime
+          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev2'
+          multigpubfs.enable_native()
+          graph=cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5),device='cpu')
+          assert hasattr(multigpubfs,'enable_native')
+          native,env=native_runtime()
+          assert os.access(native,os.X_OK)
+          result=subprocess.run(['ldd',native],env=env,capture_output=True,text=True,check=True)
+          missing=[line for line in result.stdout.splitlines() if 'not found' in line and 'libcuda.so.1' not in line]
+          assert not missing,missing
+          for name in ('libnccl.so.2','libcudart.so.12','libmgbfs_cuda.so'):
+              line=next(line for line in result.stdout.splitlines() if name+' =>' in line)
+              assert '/site-packages/multigpubfs/_native/lib/' in line,line
+          print(result.stdout)
+          print('VERIFIED_GITHUB_SINGLE_PIP_CAYLEYPY_EXTRAS_CLEAN_UBUNTU2204_NO_GPU')
+          """
+          subprocess.run([python,'-c',textwrap.dedent(check)],cwd='/tmp',check=True)
+          subprocess.run([python,'-m','pip','check'],check=True)
+          PY
