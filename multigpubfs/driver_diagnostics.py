@@ -26,17 +26,18 @@ def _driver_status(lib,code):
   except (AttributeError,OSError):pass
  return result
 
-def _driver():
+def _driver(checkpoint=lambda data:None):
  _phase('load libcuda.so.1 through the native process loader environment')
  try:lib=C.CDLL('libcuda.so.1')
  except OSError as e:return {'loaded':False,'error':str(e)}
  data={'loaded':True}
  try:
-  lib.cuInit.argtypes=[C.c_uint];lib.cuInit.restype=C.c_int;data['resolved_library']=_resolved(lib.cuInit)
+  lib.cuInit.argtypes=[C.c_uint];lib.cuInit.restype=C.c_int;data['resolved_library']=_resolved(lib.cuInit);checkpoint(data)
   lib.cuDriverGetVersion.argtypes=[C.POINTER(C.c_int)];lib.cuDriverGetVersion.restype=C.c_int;version=C.c_int()
   _phase('cuDriverGetVersion');data['version_query']=_driver_status(lib,lib.cuDriverGetVersion(C.byref(version)))
   if data['version_query']['code']==0:data['api_version']=version.value
-  _phase('cuInit');data['initialization']=_driver_status(lib,lib.cuInit(0))
+  checkpoint(data)
+  _phase('cuInit');data['initialization']=_driver_status(lib,lib.cuInit(0));checkpoint(data)
   if data['initialization']['code']==0:
    lib.cuDeviceGetCount.argtypes=[C.POINTER(C.c_int)];lib.cuDeviceGetCount.restype=C.c_int;count=C.c_int()
    _phase('cuDeviceGetCount');data['device_query']=_driver_status(lib,lib.cuDeviceGetCount(C.byref(count)))
@@ -55,7 +56,7 @@ def _driver():
  except (AttributeError,OSError) as e:data['probe_error']=str(e)
  return data
 
-def _runtime():
+def _runtime(checkpoint=lambda data:None):
  _phase('CUDA runtime version and independent cudaGetDeviceCount')
  try:lib=C.CDLL('libcudart.so.12')
  except OSError as e:return {'loaded':False,'error':str(e)}
@@ -66,6 +67,7 @@ def _runtime():
    f=getattr(lib,fn);f.argtypes=[C.POINTER(C.c_int)];f.restype=C.c_int;value=C.c_int();code=f(C.byref(value));description=lib.cudaGetErrorString(code)
    data[fn]={'code':code,'description':description.decode(errors='replace') if description else ''}
    if code==0:data[key]=value.value
+   checkpoint(data)
   data['resolved_library']=_resolved(lib.cudaGetDeviceCount)
  except (AttributeError,OSError) as e:data['probe_error']=str(e)
  return data
@@ -89,8 +91,15 @@ def classify(data):
  if r.get('visible_devices')!=count:return 'DRIVER_RUNTIME_DEVICE_COUNT_MISMATCH','Driver and runtime report different visible GPU counts.'
  return 'DRIVER_RUNTIME_READY','Driver and runtime both initialize and agree on the visible GPU count. Native kernels/NCCL are checked separately.'
 
-def probe():
+def probe(output=None):
  data={'schema':1,'scope':'read-only driver/runtime evidence, not a kernel or NCCL test','environment':{k:os.environ[k] for k in ('CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','LD_LIBRARY_PATH','LD_PRELOAD') if k in os.environ},'scheduler_variables_present':[k for k in ('SLURM_JOB_ID','SLURM_JOB_GPUS','PBS_JOBID','LSB_JOBID') if k in os.environ]}
+ def save():
+  if output is not None:
+   temporary=Path(output).with_suffix('.tmp')
+   with temporary.open('w',encoding='utf-8') as f:json.dump(data,f,indent=2);f.flush();os.fsync(f.fileno())
+   temporary.replace(output)
+ def update(key,value):data[key]=value;save()
+ data['status']='RUNNING';save()
  _phase('read NVIDIA kernel-driver metadata and device-node access')
  data['kernel_driver']=_read('/proc/driver/nvidia/version');data['device_nodes']=[]
  paths=set(Path('/dev').glob('nvidia[0-9]*'))|{Path('/dev/nvidiactl'),Path('/dev/nvidia-uvm')}
@@ -100,14 +109,14 @@ def probe():
    info=path.stat();item.update(character_device=stat.S_ISCHR(info.st_mode),read_access=os.access(path,os.R_OK),write_access=os.access(path,os.W_OK))
   except OSError as e:item['error']=str(e)
   data['device_nodes'].append(item)
- data['driver']=_driver();data['runtime']=_runtime()
+ save();data['driver']=_driver(lambda value:update('driver',value));save();data['runtime']=_runtime(lambda value:update('runtime',value));save()
  data['classification'],data['summary']=classify(data);data['status']='PASS' if data['classification']=='DRIVER_RUNTIME_READY' else 'FAIL'
  data['access_note']='Device-node visibility and os.access do not prove cgroup/security-policy permission; the API result is the actual observation. No GPU allocation is inferred from scheduler-variable presence alone.'
- return data
+ save();return data
 
 def main(argv=None):
  parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);args=parser.parse_args(argv)
- data=probe();temporary=args.output.with_suffix('.tmp');temporary.write_text(json.dumps(data,indent=2),encoding='utf-8');temporary.replace(args.output)
+ data=probe(args.output);temporary=args.output.with_suffix('.tmp');temporary.write_text(json.dumps(data,indent=2),encoding='utf-8');temporary.replace(args.output)
  print(data['classification']+': '+data['summary'],flush=True)
  return 0
 
