@@ -10,7 +10,8 @@ def query(command,*,env=None,**kwargs):
   response=resident_query(command,env if env is not None else dict(os.environ),seconds,kwargs)
   return response if response is not None else subprocess.run(command,env=env,timeout=seconds,**kwargs)
  except subprocess.TimeoutExpired as error:
-  raise RuntimeError('NATIVE_STARTUP_QUERY_TIMEOUT: child terminated; no completed result and no restart') from error
+  scope='persistent worker wait expired; worker termination is not implied' if error.cmd=='generic resident job' else 'standalone query child terminated by subprocess timeout'
+  raise RuntimeError('NATIVE_STARTUP_QUERY_TIMEOUT: '+scope+'; no completed result and no restart; command='+repr(error.cmd)) from error
 
 def run(command,*,timeout,env=None,**kwargs):
  try:return subprocess.run(command,env=env,timeout=timeout,**kwargs)

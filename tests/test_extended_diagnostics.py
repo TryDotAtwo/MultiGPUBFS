@@ -89,3 +89,23 @@ class ExtendedDiagnosticTests(unittest.TestCase):
   a=analyze({'steps':[step('environment-evidence',{'native_executable_mount':{'options':['rw','noexec']}}),native]});self.assertEqual(a['confirmed_findings'][0]['code'],'NATIVE_EXEC_ON_NOEXEC_MOUNT')
  def test_shm_denial_is_not_cuda_discovery_cause(self):
   a=analyze({'steps':[step('environment-evidence',{'filesystems':{'/dev/shm':{'error':'denied'}}}),step('cuda-discovery',status='FAIL')]});self.assertEqual(a['confirmed_findings'][0]['code'],'SHARED_MEMORY_WRITE_CHECK_FAILED');self.assertFalse(a['hypotheses'])
+
+ def test_dependency_paths_with_spaces(self):
+  from multigpubfs.diagnostics import _paths
+  with tempfile.TemporaryDirectory(prefix='with spaces ') as tmp:
+   root=Path(tmp);lines=[]
+   for name in ('libmgbfs_cuda.so','libcudart.so.12','libnccl.so.2'):
+    file=root/name;file.write_bytes(b'fixture');lines.append(name+' => '+str(file)+' (0x0000)')
+   with patch('multigpubfs.native_distribution.native_runtime',return_value=('/fixture/native',{})),patch('multigpubfs.diagnostics.subprocess.run',return_value=subprocess.CompletedProcess([],0,'\n'.join(lines),'')):
+    _,_,libraries=_paths();self.assertEqual(libraries['libnccl.so.2'],str(root/'libnccl.so.2'))
+ def test_abi_loader_error_is_not_driver_age(self):
+  a=analyze({'steps':[step('native-runtime',status='FAIL',log_tail="libstdc++.so.6: version GLIBCXX_3.4.32 not found")]});self.assertEqual(a['confirmed_findings'][0]['code'],'ABI_VERSION_UNAVAILABLE')
+
+ def test_persistent_timeout_does_not_claim_worker_killed(self):
+  from multigpubfs.process_control import query
+  with patch('multigpubfs.generic_session.query',side_effect=subprocess.TimeoutExpired('generic resident job',60)):
+   with self.assertRaisesRegex(RuntimeError,'worker termination is not implied'):query(['native','graph-info'],env={})
+ def test_standalone_timeout_identifies_its_command(self):
+  from multigpubfs.process_control import query
+  with patch('multigpubfs.generic_session.query',return_value=None),patch('multigpubfs.process_control.subprocess.run',side_effect=subprocess.TimeoutExpired(['native','graph-count'],60)):
+   with self.assertRaisesRegex(RuntimeError,'standalone query child terminated.*graph-count'):query(['native','graph-count'],env={})

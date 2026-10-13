@@ -26,8 +26,9 @@ def _paths():
  if query.returncode:raise RuntimeError('DEPENDENCY_INSPECTION_FAILED: '+(query.stdout+query.stderr)[-6000:])
  libs={}
  for line in query.stdout.splitlines():
-  fields=line.split()
-  if len(fields)>=3 and fields[1]=='=>' and Path(fields[2]).is_file():libs[fields[0]]=str(Path(fields[2]).resolve())
+  if '=>' not in line:continue
+  name,location=line.split('=>',1);location=location.strip().rsplit(' (',1)[0]
+  if Path(location).is_file():libs[name.strip()]=str(Path(location).resolve())
  for name in ('libmgbfs_cuda.so','libcudart.so.12','libnccl.so.2'):
   if name not in libs:raise RuntimeError('DEPENDENCY_RESOLUTION_FAILED: '+name+'; loader output: '+(query.stdout+query.stderr)[-6000:])
  return native,env,libs

@@ -85,6 +85,11 @@ def analyze(report):
   if step.get('errno') in (errno.EAGAIN,errno.EACCES,errno.EPERM,errno.ENOMEM,errno.EMFILE):
    fact('DIAGNOSTIC_PROCESS_SPAWN_FAILED',step['name']+' could not create its diagnostic process: '+step.get('error','')+'. Parent resource limits are retained; exact restriction may remain unknown.',['steps/'+step['name'],'parent_resource_limits'])
   messages=step.get('log_tail','')+' '+step.get('result',{}).get('error','')
+  lower=messages.lower()
+  if step.get('status')=='FAIL' and ('GLIBC_' in messages or 'GLIBCXX_' in messages or 'CXXABI_' in messages) and 'not found' in lower:
+   fact('ABI_VERSION_UNAVAILABLE','The loader reports an unavailable required system/compiler ABI version. This is a library/binary compatibility failure, not proof of absent GPU hardware.',['steps/'+step['name']]);actions.append('Use a binary built for the observed Linux ABI or the correct existing compiler-library module. Preserve the exact missing version and loaded-library paths.')
+  if step.get('status')=='FAIL' and 'cannot open shared object file' in lower:
+   fact('SHARED_LIBRARY_LOAD_FAILED','A required shared library could not be opened; inspect the exact library name and loader trace, not an assumed CUDA-driver age.',['steps/'+step['name']])
   if step.get('status')=='FAIL' and 'no kernel image' in messages.lower():
    fact('NATIVE_KERNEL_IMAGE_UNAVAILABLE','The CUDA kernel launch reports no executable image for this GPU. Driver discovery alone is not sufficient; inspect actual GPU compute capability and the declared build targets.',['steps/'+step['name'],'driver-api/result/data/driver/devices','environment-evidence/result/data/native_build_declaration']);actions.append('Install a build targeting the observed GPU architecture; do not equate this kernel-image error with missing GPU hardware.')
   if step.get('exit_code')==-9:
@@ -95,7 +100,7 @@ def analyze(report):
   if case['status'] in ('TIMEOUT','SKIPPED','INCOMPLETE'):unknown.append('Loader contrast '+case['name']+': '+case.get('reason',case.get('error','not completed')))
  failures=[x['name'] for x in steps if x['status'] in ('FAIL','TIMEOUT')]
  if failures and not actions:actions.append('Return report.json and diagnostics.zip from the same job. Use the evidence paths and failure-specific library versions to choose a user-level environment fix; do not blindly increase timeouts or install a driver with pip.')
- priority=('LOADER_CONTRAST_REPRODUCED','DRIVER_STUB_LOADED','DRIVER_KERNEL_LIBRARY_MISMATCH','DRIVER_MAJOR_TOO_OLD','CUDA_VISIBILITY_DISABLED','DRIVER_LIBRARY_UNAVAILABLE','NO_VISIBLE_GPU','NATIVE_KERNEL_IMAGE_UNAVAILABLE','DIAGNOSTIC_PROCESS_SPAWN_FAILED')
+ priority=('LOADER_CONTRAST_REPRODUCED','DRIVER_STUB_LOADED','DRIVER_KERNEL_LIBRARY_MISMATCH','DRIVER_MAJOR_TOO_OLD','CUDA_VISIBILITY_DISABLED','DRIVER_LIBRARY_UNAVAILABLE','NO_VISIBLE_GPU','NATIVE_KERNEL_IMAGE_UNAVAILABLE','DIAGNOSTIC_PROCESS_SPAWN_FAILED','ABI_VERSION_UNAVAILABLE','SHARED_LIBRARY_LOAD_FAILED','RUNTIME_DRIVER_COMPATIBILITY_FAILED')
  best=next((item for code in priority for item in confirmed if item['code']==code),None) if failures else None
  explanation={'confidence':'observed','statement':best['statement'],'evidence':best['evidence']} if best else {'confidence':'unresolved' if failures else 'tested-required-components-passed','statement':'No single cause is established; inspect recorded hypotheses and missing evidence.' if failures else 'Required checks reported no failure. Optional evidence and untested policies remain explicitly limited.','evidence':failures}
  return {'schema':1,'best_supported_explanation':explanation,'primary_failure':failures[0] if failures else None,'confirmed_findings':confirmed,'hypotheses':hypotheses,'ruled_out_for_this_observation':excluded,'unknowns':unknown,'user_next_actions':actions,'operator_boundary':'Kernel-driver replacement, kernel errors and enforced GPU permissions cannot be repaired by a user-space library. If evidence stops at inaccessible policy, that uncertainty remains explicit.'}
