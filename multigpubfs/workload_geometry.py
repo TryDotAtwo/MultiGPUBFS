@@ -17,3 +17,20 @@ def coxeter_frontier_bound(graph):
    out.append(window)
   sizes=out
  return {'kind':'CERTIFIED_COXETER_GLOBAL_FRONTIER','maximum_frontier':max(sizes),'order':sum(sizes),'depth':len(sizes)-1,'scope':'global peak is a safe per-rank upper bound, independent of hash balance'}
+
+def certified_frontier_bound(graph):
+ bound=coxeter_frontier_bound(graph)
+ if bound is not None:return bound
+ a=graph.action
+ if a['kind']!='matrix':return None
+ moduli={g['modulo'] for g in a['generators']}
+ if len(moduli)!=1:return None
+ modulo=next(iter(moduli))
+ if modulo<=0 or any(not 0<=v<modulo for v in graph.start):return None
+ # Every canonical entry remains in [0,m). This bounds the full orbit,
+ # hence every layer, without identifying a particular matrix group.
+ order=1
+ for _ in graph.start:
+  order*=modulo
+  if order>0x7ffffffe:return None
+ return {'kind':'CERTIFIED_MODULAR_MATRIX_ORBIT','maximum_frontier':order,'order_upper_bound':order,'scope':'canonical same-modulus entry-space bound; not exact group order'}

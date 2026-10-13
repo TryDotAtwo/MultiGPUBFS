@@ -40,8 +40,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  native,native_env=native_runtime(executable)
  geometry_bound=None
  if capacity is None and _profile_layers is None and not backend.startswith('shard_ab_'):
-  from .workload_geometry import coxeter_frontier_bound
-  geometry_bound=coxeter_frontier_bound(graph)
+  from .workload_geometry import certified_frontier_bound
+  geometry_bound=certified_frontier_bound(graph)
   if geometry_bound is not None:
    from .autotune import _admit
    with tempfile.TemporaryDirectory(prefix='mgbfs-bound-') as bound_dir:

@@ -381,16 +381,17 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
  started=time.monotonic();env=dict(env)
  # Avoid replaying an entire prefix for bounded modest permutation orbits.
  # Large unknown families retain measured selection; matrix GEMM is unchanged.
- from .workload_geometry import coxeter_frontier_bound
+ from .workload_geometry import certified_frontier_bound
  from .hardware_profiles import small_permutation_workload
  from .specialized import match_lrx
  forced=any(env.get(k) for k in ('MGBFS_GENERIC_HISTORY','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_GENERIC_GENERATOR'))
- if graph.action['kind']=='permutation' and match_lrx(graph) is None and not forced:
+ matrix_fast=graph.action['kind']=='matrix' and certified_frontier_bound(graph) is not None and (not gemm_supported(graph) or not _gemm_hardware_available())
+ if (graph.action['kind']=='permutation' and match_lrx(graph) is None or matrix_fast) and not forced:
   with _evidence_directory(env,'mgbfs-fast-profile-') as directory:
    baseline=_admit(graph,devices,capacity,1,native,env,directory)
   inventory=baseline.get('inventory',[])
   modest=[dict(i,sm_count=max(1,int(i.get('sm_count',1)))*128) for i in inventory]
-  if coxeter_frontier_bound(graph) is not None or small_permutation_workload(graph,modest):
+  if certified_frontier_bound(graph) is not None or small_permutation_workload(graph,modest):
    plan=baseline['plan'];batch=plan['batch']
    return {'backend':'generic','status':'FAST_START_LIVE_SIZE_TUNING','shards':1,'batch':batch,'batch_fraction':1.,'transport':'full','candidate_order':'none','history_algorithm':'HASH','generator_backend':'cuda','measured':False,'online_size_tuning':True,'size_profiles':[{'minimum_frontier':0,'batch':batch,'generator_backend':'cuda','measured':False,'status':'CONSERVATIVE_LIVE_TUNING_SEED'}],'seconds':time.monotonic()-started,'scope':'cold prefix replay skipped; actual disjoint GPU chunks tune batch online; no global optimum claim'}
  global_profile=choose_profile(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
