@@ -1,0 +1,713 @@
+[
+  {
+    "mode": "automatic",
+    "wall": 35.931570335,
+    "report": {
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "bfs_seconds": 35.851595624,
+      "graph_digest": "9444d8fa3f2a3f874d624211091512a343a7d8825a06be7c2b12462d523c2270",
+      "layer_seconds": [
+        0.00075005,
+        0.00064447,
+        0.000605836,
+        0.000631351,
+        0.000631601,
+        0.000701867,
+        0.001012518,
+        0.001460605,
+        0.002432522,
+        0.004436738,
+        0.007553657,
+        0.022118501,
+        0.025139939,
+        0.038597543,
+        0.064768222,
+        0.091894391,
+        0.133467593,
+        0.184610924,
+        0.245052708,
+        0.327636531,
+        0.421707566,
+        0.525319452,
+        0.665943145,
+        0.801363868,
+        0.956002433,
+        1.105426747,
+        1.261258736,
+        1.425117908,
+        1.5687715180000001,
+        1.69175873,
+        1.780900216,
+        1.887790834,
+        1.899975157,
+        1.931508484,
+        1.900809813,
+        1.837034101,
+        1.768158017,
+        1.697644225,
+        1.530810963,
+        1.381224659,
+        1.229167254,
+        1.070180638,
+        0.916369015,
+        0.768621831,
+        0.63682502,
+        0.534142328,
+        0.400969457,
+        0.309411489,
+        0.235740825,
+        0.171938747,
+        0.124061382,
+        0.086530306,
+        0.058332789,
+        0.035128777,
+        0.023114216,
+        0.020845231,
+        0.007027512,
+        0.003950731,
+        0.00211684,
+        0.001273756,
+        0.001228232,
+        0.000663743,
+        0.000618464,
+        0.001065032,
+        0.000672048,
+        0.001078124
+      ],
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "online_size_profile_events": [
+        {
+          "bucket": 19,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 1200626,
+          "frontier_max_rank": 600797,
+          "microseconds_and_parents": [
+            [
+              27824,
+              381300
+            ],
+            [
+              7353,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 20,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 2411747,
+          "frontier_max_rank": 1206085,
+          "microseconds_and_parents": [
+            [
+              26408,
+              381300
+            ],
+            [
+              6762,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 21,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 4342688,
+          "frontier_max_rank": 2171927,
+          "microseconds_and_parents": [
+            [
+              27110,
+              381300
+            ],
+            [
+              6763,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 22,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 8775209,
+          "frontier_max_rank": 4387696,
+          "microseconds_and_parents": [
+            [
+              29177,
+              381300
+            ],
+            [
+              7274,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 23,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 18757500,
+          "frontier_max_rank": 9378921,
+          "microseconds_and_parents": [
+            [
+              27622,
+              381300
+            ],
+            [
+              6761,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        }
+      ],
+      "plan": {
+        "batch": 95325,
+        "capacity": 25598186,
+        "device_bytes": 4089499389,
+        "driver_graph_reserve_bytes": 0,
+        "elements": 12,
+        "generator_backend": "cuda",
+        "generator_bytes": 528,
+        "history_algorithm": "HASH",
+        "history_layers": 3,
+        "owner_lanes": 0,
+        "parent_transport": false,
+        "queue_capacity": 1048575,
+        "shards": 1,
+        "sort_candidates": false,
+        "sorted_owner_bytes": 0,
+        "state_bytes": 1,
+        "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+        "table_slots": 268435456,
+        "world": 2
+      },
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING",
+      "reason": "FRONTIER_EXHAUSTED",
+      "schema": 2,
+      "setup_seconds": 0.020703475,
+      "size_profile_count": 1,
+      "source_retries": 0,
+      "states_sha256": "e2ee79b1c6e0806e3084e7eadfa43473638869386deceb84e1d2cd5b67fea896",
+      "status": "COMPLETE",
+      "world": 2,
+      "rank_plans": [
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        },
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        }
+      ],
+      "owner_cuts": null,
+      "devices": [
+        0,
+        1
+      ],
+      "rank_receipts": [
+        "rank-0/report.json",
+        "rank-1/report.json"
+      ],
+      "launch_wall_seconds": 35.88415602499998,
+      "rank_worker_pids": [
+        75,
+        76
+      ],
+      "scope": "single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified",
+      "autotune": {
+        "backend": "generic",
+        "status": "FAST_START_LIVE_SIZE_TUNING",
+        "shards": 1,
+        "batch": 95325,
+        "batch_fraction": 1.0,
+        "transport": "full",
+        "candidate_order": "none",
+        "history_algorithm": "HASH",
+        "generator_backend": "cuda",
+        "measured": false,
+        "online_size_tuning": true,
+        "size_profiles": [
+          {
+            "minimum_frontier": 0,
+            "batch": 95325,
+            "generator_backend": "cuda",
+            "measured": false,
+            "status": "CONSERVATIVE_LIVE_TUNING_SEED"
+          }
+        ],
+        "seconds": 0.014411187999996855,
+        "scope": "cold prefix replay skipped; actual disjoint GPU chunks tune batch online; no global optimum claim",
+        "launch_admission_reused": false
+      },
+      "workload_geometry_bound": {
+        "kind": "CERTIFIED_COXETER_GLOBAL_FRONTIER",
+        "maximum_frontier": 25598186,
+        "order": 479001600,
+        "depth": 66,
+        "scope": "global peak is a safe per-rank upper bound, independent of hash balance"
+      },
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "2f852c3f81e2e4a00608a56b018012357245f0ff517cd0585d3161ec905e5f4f",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      },
+      "host_memory": [
+        {
+          "available_bytes": 28845072384,
+          "sources": [
+            "MemAvailable",
+            "/sys/fs/cgroup"
+          ],
+          "estimated_control_bytes": 71721504,
+          "disk": [
+            {
+              "free_bytes": 20940500992,
+              "estimated_required_bytes": 74466064
+            },
+            {
+              "free_bytes": 1147949576192,
+              "estimated_required_bytes": 74466064
+            }
+          ],
+          "scope": "cold compact control/output estimate; excludes native pinned transfer allocations"
+        }
+      ]
+    }
+  },
+  {
+    "mode": "fixed",
+    "wall": 35.84342872499997,
+    "report": {
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "bfs_seconds": 35.78212545,
+      "graph_digest": "9444d8fa3f2a3f874d624211091512a343a7d8825a06be7c2b12462d523c2270",
+      "layer_seconds": [
+        0.000809944,
+        0.000699659,
+        0.000780542,
+        0.000860294,
+        0.000879233,
+        0.00067025,
+        0.00084448,
+        0.001304984,
+        0.002101736,
+        0.003893652,
+        0.007032006,
+        0.020682029,
+        0.021995778,
+        0.03709031,
+        0.060391553,
+        0.089695243,
+        0.129753152,
+        0.17363138,
+        0.246294989,
+        0.321544812,
+        0.423101353,
+        0.531676378,
+        0.663424215,
+        0.803584202,
+        0.954744517,
+        1.106323505,
+        1.254754586,
+        1.422661353,
+        1.564352275,
+        1.691687779,
+        1.786491749,
+        1.89224062,
+        1.9009598109999999,
+        1.914809776,
+        1.8993357849999999,
+        1.840693671,
+        1.763499294,
+        1.688655901,
+        1.522249762,
+        1.382951252,
+        1.228085345,
+        1.073123211,
+        0.921507455,
+        0.770830658,
+        0.637696237,
+        0.533759722,
+        0.399397009,
+        0.30439913,
+        0.23387232,
+        0.169379972,
+        0.122478837,
+        0.085729109,
+        0.058929059,
+        0.035387537,
+        0.02182167,
+        0.019662434,
+        0.006469222,
+        0.003930034,
+        0.002058656,
+        0.001375468,
+        0.00086826,
+        0.000686466,
+        0.000759425,
+        0.000735381,
+        0.000694785,
+        0.000852807
+      ],
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "online_size_profile_events": [],
+      "plan": {
+        "batch": 95325,
+        "capacity": 25598186,
+        "device_bytes": 4089499389,
+        "driver_graph_reserve_bytes": 0,
+        "elements": 12,
+        "generator_backend": "cuda",
+        "generator_bytes": 528,
+        "history_algorithm": "HASH",
+        "history_layers": 3,
+        "owner_lanes": 0,
+        "parent_transport": false,
+        "queue_capacity": 1048575,
+        "shards": 1,
+        "sort_candidates": false,
+        "sorted_owner_bytes": 0,
+        "state_bytes": 1,
+        "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+        "table_slots": 268435456,
+        "world": 2
+      },
+      "profile_status": "MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED",
+      "reason": "FRONTIER_EXHAUSTED",
+      "schema": 2,
+      "setup_seconds": 0.009462965,
+      "size_profile_count": 0,
+      "source_retries": 0,
+      "states_sha256": "bfd1d0fd506f19aecd98b2b0a90288168e46b62e7796317dc3996329327d12ae",
+      "status": "COMPLETE",
+      "world": 2,
+      "rank_plans": [
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        },
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        }
+      ],
+      "owner_cuts": null,
+      "devices": [
+        0,
+        1
+      ],
+      "rank_receipts": [
+        "rank-0/report.json",
+        "rank-1/report.json"
+      ],
+      "launch_wall_seconds": 35.80727767099995,
+      "rank_worker_pids": [
+        75,
+        76
+      ],
+      "scope": "single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified",
+      "workload_geometry_bound": {
+        "kind": "CERTIFIED_COXETER_GLOBAL_FRONTIER",
+        "maximum_frontier": 25598186,
+        "order": 479001600,
+        "depth": 66,
+        "scope": "global peak is a safe per-rank upper bound, independent of hash balance"
+      },
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "2f852c3f81e2e4a00608a56b018012357245f0ff517cd0585d3161ec905e5f4f",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      },
+      "host_memory": [
+        {
+          "available_bytes": 28324642816,
+          "sources": [
+            "MemAvailable",
+            "/sys/fs/cgroup"
+          ],
+          "estimated_control_bytes": 71721504,
+          "disk": [
+            {
+              "free_bytes": 20940423168,
+              "estimated_required_bytes": 74466064
+            },
+            {
+              "free_bytes": 1147949441024,
+              "estimated_required_bytes": 74466064
+            }
+          ],
+          "scope": "cold compact control/output estimate; excludes native pinned transfer allocations"
+        }
+      ]
+    }
+  }
+]

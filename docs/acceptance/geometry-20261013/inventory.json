@@ -1,0 +1,64 @@
+{
+  "cayleypy": "0.2.0",
+  "factories": {
+    "PermutationGroups": [
+      "all_cycles",
+      "all_transpositions",
+      "block_interchange",
+      "burnt_pancake",
+      "conjugacy_classes",
+      "consecutive_k_cycles",
+      "coxeter",
+      "coxeter_b",
+      "coxeter_d",
+      "cubic_pancake",
+      "cyclic_coxeter",
+      "derangements",
+      "down_cycles",
+      "full_reversals",
+      "generalized_stars",
+      "increasing_k_cycles",
+      "involutive_derangements",
+      "koltsov3",
+      "larx",
+      "lrx",
+      "lsl_cycles",
+      "lx",
+      "pancake",
+      "prefix_cycles",
+      "rand_generators",
+      "rapaport_m1",
+      "rapaport_m2",
+      "sheveleva2",
+      "signed_reversals",
+      "stars",
+      "three_cycles",
+      "three_cycles_01i",
+      "three_cycles_0ij",
+      "top_spin",
+      "transposons",
+      "wrapped_k_cycles"
+    ],
+    "MatrixGroups": [
+      "heisenberg",
+      "special_linear_fundamental_roots",
+      "special_linear_root_weyl"
+    ],
+    "Puzzles": [
+      "globe_puzzle",
+      "hungarian_rings",
+      "megaminx",
+      "mini_pyramorphix",
+      "picture_cube333",
+      "pyraminx",
+      "rubik_cube",
+      "starminx",
+      "starminx_2"
+    ],
+    "MatrixGroupsUnbounded": [
+      "heisenberg",
+      "special_linear_fundamental_roots",
+      "special_linear_root_weyl"
+    ]
+  }
+}

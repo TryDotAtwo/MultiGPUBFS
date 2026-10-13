@@ -1,0 +1,945 @@
+[
+  {
+    "n": 3,
+    "wall_seconds": 3.8542873339999915,
+    "report": {
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "bfs_seconds": 0.178401653,
+      "graph_digest": "c05315a039235dd008b2c14e1776035cde23c8d709be8f30c9f62e42497b23d6",
+      "layer_seconds": [
+        0.088193176,
+        0.000650911,
+        0.000677939
+      ],
+      "layer_sizes": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "online_size_profile_events": [],
+      "plan": {
+        "batch": 2,
+        "capacity": 2,
+        "device_bytes": 1173,
+        "driver_graph_reserve_bytes": 0,
+        "elements": 3,
+        "generator_backend": "cuda",
+        "generator_bytes": 24,
+        "history_algorithm": "HASH",
+        "history_layers": 3,
+        "owner_lanes": 0,
+        "parent_transport": false,
+        "queue_capacity": 4,
+        "shards": 1,
+        "sort_candidates": false,
+        "sorted_owner_bytes": 0,
+        "state_bytes": 1,
+        "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+        "table_slots": 16,
+        "world": 2
+      },
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING",
+      "reason": "FRONTIER_EXHAUSTED",
+      "schema": 2,
+      "setup_seconds": 0.391963579,
+      "size_profile_count": 1,
+      "source_retries": 0,
+      "states_sha256": "830639cbe798cc793d174cd9b5bdcbbbad562cb49277286b0178c3dcafa857d6",
+      "status": "COMPLETE",
+      "world": 2,
+      "rank_plans": [
+        {
+          "batch": 2,
+          "capacity": 2,
+          "device_bytes": 1173,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 3,
+          "generator_backend": "cuda",
+          "generator_bytes": 24,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 4,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 16,
+          "world": 2
+        },
+        {
+          "batch": 2,
+          "capacity": 2,
+          "device_bytes": 1173,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 3,
+          "generator_backend": "cuda",
+          "generator_bytes": 24,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 4,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 16,
+          "world": 2
+        }
+      ],
+      "owner_cuts": null,
+      "devices": [
+        0,
+        1
+      ],
+      "rank_receipts": [
+        "rank-0/report.json",
+        "rank-1/report.json"
+      ],
+      "launch_wall_seconds": 0.5826341179999872,
+      "rank_worker_pids": [
+        77,
+        78
+      ],
+      "scope": "single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified",
+      "autotune": {
+        "backend": "generic",
+        "status": "FAST_START_LIVE_SIZE_TUNING",
+        "shards": 1,
+        "batch": 2,
+        "batch_fraction": 1.0,
+        "transport": "full",
+        "candidate_order": "none",
+        "history_algorithm": "HASH",
+        "generator_backend": "cuda",
+        "measured": false,
+        "online_size_tuning": true,
+        "size_profiles": [
+          {
+            "minimum_frontier": 0,
+            "batch": 2,
+            "generator_backend": "cuda",
+            "measured": false,
+            "status": "CONSERVATIVE_LIVE_TUNING_SEED"
+          }
+        ],
+        "seconds": 0.10875949000001128,
+        "scope": "cold prefix replay skipped; actual disjoint GPU chunks tune batch online; no global optimum claim",
+        "launch_admission_reused": false
+      },
+      "workload_geometry_bound": {
+        "kind": "CERTIFIED_COXETER_GLOBAL_FRONTIER",
+        "maximum_frontier": 2,
+        "order": 6,
+        "depth": 3,
+        "scope": "global peak is a safe per-rank upper bound, independent of hash balance"
+      },
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "2f852c3f81e2e4a00608a56b018012357245f0ff517cd0585d3161ec905e5f4f",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      },
+      "host_memory": [
+        {
+          "available_bytes": 29698535424,
+          "sources": [
+            "MemAvailable",
+            "/sys/fs/cgroup"
+          ],
+          "estimated_control_bytes": 68262392,
+          "disk": [
+            {
+              "free_bytes": 20940521472,
+              "estimated_required_bytes": 72880508
+            },
+            {
+              "free_bytes": 1147949740032,
+              "estimated_required_bytes": 72880508
+            }
+          ],
+          "scope": "cold compact control/output estimate; excludes native pinned transfer allocations"
+        }
+      ]
+    }
+  },
+  {
+    "n": 11,
+    "wall_seconds": 2.7733511410000062,
+    "report": {
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "bfs_seconds": 2.708354127,
+      "graph_digest": "a968efd7e050eedfdbb5273dcd92634a4a1e17b428e0bb17ed41f646fcdd79bc",
+      "layer_seconds": [
+        0.000773619,
+        0.000743625,
+        0.000769123,
+        0.000719369,
+        0.001105278,
+        0.00081006,
+        0.001055427,
+        0.00099315,
+        0.001497436,
+        0.002290078,
+        0.003504465,
+        0.005629893,
+        0.008236965,
+        0.012097328,
+        0.023457628,
+        0.025689699,
+        0.038231655,
+        0.050066441,
+        0.06534727,
+        0.075048212,
+        0.087825506,
+        0.100900602,
+        0.116925203,
+        0.128860287,
+        0.143546639,
+        0.146103398,
+        0.15855536,
+        0.161045277,
+        0.159513753,
+        0.155415689,
+        0.145741572,
+        0.144012017,
+        0.131672082,
+        0.116183902,
+        0.096335682,
+        0.088344948,
+        0.073850146,
+        0.061421384,
+        0.045571084,
+        0.033250272,
+        0.022724118,
+        0.020772375,
+        0.010393148,
+        0.006779335,
+        0.004804714,
+        0.003073555,
+        0.001813642,
+        0.00129692,
+        0.0008483,
+        0.000627531,
+        0.000969559,
+        0.000637898,
+        0.000649745,
+        0.000871165,
+        0.000881936
+      ],
+      "layer_sizes": [
+        1,
+        10,
+        54,
+        209,
+        649,
+        1717,
+        4015,
+        8504,
+        16599,
+        30239,
+        51909,
+        84591,
+        131625,
+        196470,
+        282369,
+        391939,
+        526724,
+        686763,
+        870233,
+        1073227,
+        1289718,
+        1511742,
+        1729808,
+        1933514,
+        2112319,
+        2256396,
+        2357475,
+        2409581,
+        2409581,
+        2357475,
+        2256396,
+        2112319,
+        1933514,
+        1729808,
+        1511742,
+        1289718,
+        1073227,
+        870233,
+        686763,
+        526724,
+        391939,
+        282369,
+        196470,
+        131625,
+        84591,
+        51909,
+        30239,
+        16599,
+        8504,
+        4015,
+        1717,
+        649,
+        209,
+        54,
+        10,
+        1
+      ],
+      "online_size_profile_events": [
+        {
+          "bucket": 19,
+          "choices": [
+            [
+              104857,
+              false
+            ],
+            [
+              26214,
+              false
+            ]
+          ],
+          "frontier_global": 1073227,
+          "frontier_max_rank": 536974,
+          "microseconds_and_parents": [
+            [
+              27832,
+              419428
+            ],
+            [
+              7072,
+              104856
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 20,
+          "choices": [
+            [
+              104857,
+              false
+            ],
+            [
+              26214,
+              false
+            ]
+          ],
+          "frontier_global": 2112319,
+          "frontier_max_rank": 1056809,
+          "microseconds_and_parents": [
+            [
+              25129,
+              419428
+            ],
+            [
+              6635,
+              104856
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        }
+      ],
+      "plan": {
+        "batch": 104857,
+        "capacity": 2409581,
+        "device_bytes": 492177538,
+        "driver_graph_reserve_bytes": 0,
+        "elements": 11,
+        "generator_backend": "cuda",
+        "generator_bytes": 440,
+        "history_algorithm": "HASH",
+        "history_layers": 3,
+        "owner_lanes": 0,
+        "parent_transport": false,
+        "queue_capacity": 1048570,
+        "shards": 1,
+        "sort_candidates": false,
+        "sorted_owner_bytes": 0,
+        "state_bytes": 1,
+        "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+        "table_slots": 16777216,
+        "world": 2
+      },
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING",
+      "reason": "FRONTIER_EXHAUSTED",
+      "schema": 2,
+      "setup_seconds": 0.001855794,
+      "size_profile_count": 1,
+      "source_retries": 0,
+      "states_sha256": "93c996a5a3f5d6c1b1ad6da42b018b06caf5a57d4ebdefaa106d799cdbf47e78",
+      "status": "COMPLETE",
+      "world": 2,
+      "rank_plans": [
+        {
+          "batch": 104857,
+          "capacity": 2409581,
+          "device_bytes": 492177538,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 11,
+          "generator_backend": "cuda",
+          "generator_bytes": 440,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048570,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 16777216,
+          "world": 2
+        },
+        {
+          "batch": 104857,
+          "capacity": 2409581,
+          "device_bytes": 492177538,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 11,
+          "generator_backend": "cuda",
+          "generator_bytes": 440,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048570,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 16777216,
+          "world": 2
+        }
+      ],
+      "owner_cuts": null,
+      "devices": [
+        0,
+        1
+      ],
+      "rank_receipts": [
+        "rank-0/report.json",
+        "rank-1/report.json"
+      ],
+      "launch_wall_seconds": 2.722805784000002,
+      "rank_worker_pids": [
+        77,
+        78
+      ],
+      "scope": "single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified",
+      "autotune": {
+        "backend": "generic",
+        "status": "FAST_START_LIVE_SIZE_TUNING",
+        "shards": 1,
+        "batch": 104857,
+        "batch_fraction": 1.0,
+        "transport": "full",
+        "candidate_order": "none",
+        "history_algorithm": "HASH",
+        "generator_backend": "cuda",
+        "measured": false,
+        "online_size_tuning": true,
+        "size_profiles": [
+          {
+            "minimum_frontier": 0,
+            "batch": 104857,
+            "generator_backend": "cuda",
+            "measured": false,
+            "status": "CONSERVATIVE_LIVE_TUNING_SEED"
+          }
+        ],
+        "seconds": 0.01577108499998303,
+        "scope": "cold prefix replay skipped; actual disjoint GPU chunks tune batch online; no global optimum claim",
+        "launch_admission_reused": false
+      },
+      "workload_geometry_bound": {
+        "kind": "CERTIFIED_COXETER_GLOBAL_FRONTIER",
+        "maximum_frontier": 2409581,
+        "order": 39916800,
+        "depth": 55,
+        "scope": "global peak is a safe per-rank upper bound, independent of hash balance"
+      },
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "2f852c3f81e2e4a00608a56b018012357245f0ff517cd0585d3161ec905e5f4f",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      },
+      "host_memory": [
+        {
+          "available_bytes": 28830375936,
+          "sources": [
+            "MemAvailable",
+            "/sys/fs/cgroup"
+          ],
+          "estimated_control_bytes": 71336936,
+          "disk": [
+            {
+              "free_bytes": 20940455936,
+              "estimated_required_bytes": 74289780
+            },
+            {
+              "free_bytes": 1147949576192,
+              "estimated_required_bytes": 74289780
+            }
+          ],
+          "scope": "cold compact control/output estimate; excludes native pinned transfer allocations"
+        }
+      ]
+    }
+  },
+  {
+    "n": 12,
+    "wall_seconds": 35.993745493999995,
+    "report": {
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "bfs_seconds": 35.911917385,
+      "graph_digest": "9444d8fa3f2a3f874d624211091512a343a7d8825a06be7c2b12462d523c2270",
+      "layer_seconds": [
+        0.000734723,
+        0.00072076,
+        0.000774004,
+        0.000653467,
+        0.000763717,
+        0.000713144,
+        0.000764467,
+        0.001283458,
+        0.00213883,
+        0.003521323,
+        0.006820611,
+        0.019979092,
+        0.022512519,
+        0.03665222,
+        0.061208557,
+        0.086075264,
+        0.128929893,
+        0.183922002,
+        0.247825605,
+        0.329509885,
+        0.420003372,
+        0.539457545,
+        0.665595307,
+        0.803579061,
+        0.961554454,
+        1.105924712,
+        1.268547125,
+        1.423095955,
+        1.5697188,
+        1.692007601,
+        1.7939993749999998,
+        1.892087009,
+        1.9129456409999999,
+        1.9252209439999999,
+        1.909387541,
+        1.844885724,
+        1.7673036899999999,
+        1.684122133,
+        1.537909575,
+        1.391290228,
+        1.2362495629999999,
+        1.072048932,
+        0.919028437,
+        0.76923226,
+        0.638365733,
+        0.535581904,
+        0.395765304,
+        0.308428941,
+        0.236749574,
+        0.167233146,
+        0.126498987,
+        0.086657455,
+        0.058110328,
+        0.035255576,
+        0.02319476,
+        0.019981772,
+        0.006962352,
+        0.003715535,
+        0.002011139,
+        0.001280077,
+        0.000773091,
+        0.000654515,
+        0.000627589,
+        0.000777227,
+        0.001044612,
+        0.000619006
+      ],
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "online_size_profile_events": [
+        {
+          "bucket": 19,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 1200626,
+          "frontier_max_rank": 600797,
+          "microseconds_and_parents": [
+            [
+              27006,
+              381300
+            ],
+            [
+              6569,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 20,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 2411747,
+          "frontier_max_rank": 1206085,
+          "microseconds_and_parents": [
+            [
+              26349,
+              381300
+            ],
+            [
+              6672,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 21,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 4342688,
+          "frontier_max_rank": 2171927,
+          "microseconds_and_parents": [
+            [
+              25878,
+              381300
+            ],
+            [
+              6666,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 22,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 8775209,
+          "frontier_max_rank": 4387696,
+          "microseconds_and_parents": [
+            [
+              27393,
+              381300
+            ],
+            [
+              7056,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        },
+        {
+          "bucket": 23,
+          "choices": [
+            [
+              95325,
+              false
+            ],
+            [
+              23831,
+              false
+            ]
+          ],
+          "frontier_global": 18757500,
+          "frontier_max_rank": 9378921,
+          "microseconds_and_parents": [
+            [
+              27281,
+              381300
+            ],
+            [
+              7086,
+              95324
+            ]
+          ],
+          "scope": "live disjoint parent chunks, full generation/route/exchange/dedup, synchronized pilot boundary; sampling heuristic, not identical-work replay",
+          "winner": 0
+        }
+      ],
+      "plan": {
+        "batch": 95325,
+        "capacity": 25598186,
+        "device_bytes": 4089499389,
+        "driver_graph_reserve_bytes": 0,
+        "elements": 12,
+        "generator_backend": "cuda",
+        "generator_bytes": 528,
+        "history_algorithm": "HASH",
+        "history_layers": 3,
+        "owner_lanes": 0,
+        "parent_transport": false,
+        "queue_capacity": 1048575,
+        "shards": 1,
+        "sort_candidates": false,
+        "sorted_owner_bytes": 0,
+        "state_bytes": 1,
+        "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+        "table_slots": 268435456,
+        "world": 2
+      },
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING",
+      "reason": "FRONTIER_EXHAUSTED",
+      "schema": 2,
+      "setup_seconds": 0.019234614,
+      "size_profile_count": 1,
+      "source_retries": 0,
+      "states_sha256": "44fbcd75ef90c67a446af8f023c138c5f9aaed8f2621aadac3162173fa9655ef",
+      "status": "COMPLETE",
+      "world": 2,
+      "rank_plans": [
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        },
+        {
+          "batch": 95325,
+          "capacity": 25598186,
+          "device_bytes": 4089499389,
+          "driver_graph_reserve_bytes": 0,
+          "elements": 12,
+          "generator_backend": "cuda",
+          "generator_bytes": 528,
+          "history_algorithm": "HASH",
+          "history_layers": 3,
+          "owner_lanes": 0,
+          "parent_transport": false,
+          "queue_capacity": 1048575,
+          "shards": 1,
+          "sort_candidates": false,
+          "sorted_owner_bytes": 0,
+          "state_bytes": 1,
+          "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+          "table_slots": 268435456,
+          "world": 2
+        }
+      ],
+      "owner_cuts": null,
+      "devices": [
+        0,
+        1
+      ],
+      "rank_receipts": [
+        "rank-0/report.json",
+        "rank-1/report.json"
+      ],
+      "launch_wall_seconds": 35.94437422199999,
+      "rank_worker_pids": [
+        77,
+        78
+      ],
+      "scope": "single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified",
+      "autotune": {
+        "backend": "generic",
+        "status": "FAST_START_LIVE_SIZE_TUNING",
+        "shards": 1,
+        "batch": 95325,
+        "batch_fraction": 1.0,
+        "transport": "full",
+        "candidate_order": "none",
+        "history_algorithm": "HASH",
+        "generator_backend": "cuda",
+        "measured": false,
+        "online_size_tuning": true,
+        "size_profiles": [
+          {
+            "minimum_frontier": 0,
+            "batch": 95325,
+            "generator_backend": "cuda",
+            "measured": false,
+            "status": "CONSERVATIVE_LIVE_TUNING_SEED"
+          }
+        ],
+        "seconds": 0.01505038600001285,
+        "scope": "cold prefix replay skipped; actual disjoint GPU chunks tune batch online; no global optimum claim",
+        "launch_admission_reused": false
+      },
+      "workload_geometry_bound": {
+        "kind": "CERTIFIED_COXETER_GLOBAL_FRONTIER",
+        "maximum_frontier": 25598186,
+        "order": 479001600,
+        "depth": 66,
+        "scope": "global peak is a safe per-rank upper bound, independent of hash balance"
+      },
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "2f852c3f81e2e4a00608a56b018012357245f0ff517cd0585d3161ec905e5f4f",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      },
+      "host_memory": [
+        {
+          "available_bytes": 28829650944,
+          "sources": [
+            "MemAvailable",
+            "/sys/fs/cgroup"
+          ],
+          "estimated_control_bytes": 71721504,
+          "disk": [
+            {
+              "free_bytes": 20940390400,
+              "estimated_required_bytes": 74466064
+            },
+            {
+              "free_bytes": 1147949441024,
+              "estimated_required_bytes": 74466064
+            }
+          ],
+          "scope": "cold compact control/output estimate; excludes native pinned transfer allocations"
+        }
+      ]
+    }
+  }
+]
