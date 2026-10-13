@@ -10,7 +10,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 
 ## Kaggle
 
-Enable **Internet** and **GPU (2Р“вЂ”T4)**, then run:
+Enable **Internet** and **GPU (2Г—T4)**, then run:
 
 ```python
 %pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261013-v7/multigpubfs-0.2.0.dev7-py3-none-linux_x86_64.whl#sha256=3f2bb77f724efc2c3121433a30d4f4a0e1f54d26569e7581994d74748771318e"
