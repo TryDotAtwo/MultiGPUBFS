@@ -87,6 +87,9 @@ def _rank(stage,root,devices,rank):
  return {'rank':rank,'device':devices[rank],'world':len(devices),'exchange_verified':stage=='nccl_exchange'}
 
 def _component(stage,root,devices,device,seconds):
+ if stage in ('environment','nvml','torch','contrasts','loader-trace'):
+  from .system_diagnostics import survey,nvml,torch_probe,contrasts,loader_trace
+  return {'environment':lambda:survey(root),'nvml':nvml,'torch':torch_probe,'contrasts':lambda:contrasts(root,seconds),'loader-trace':lambda:loader_trace(root,seconds)}[stage]()
  if stage=='driver':
   from .native_distribution import native_runtime
   try:native,env=native_runtime();context='native_runtime loader environment'
@@ -230,11 +233,12 @@ class Runner:
   return self.run(name,command,optional=optional)
  def finish(self):
   failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
-  self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.save()
+  from .diagnostic_analysis import analyze,render
+  self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report);self.save();_write(self.root/'analysis.json',self.report['analysis']);(self.root/'analysis.txt').write_text(render(self.report['analysis']),encoding='utf-8')
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
-  (self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','analysis.json','analysis.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
@@ -247,10 +251,11 @@ def run_diagnostics(output=None,devices=None,timeout=60):
  if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
-  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('driver-api','driver')
+  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);runner.component('driver-api','driver')
   runtime=runner.component('native-runtime','runtime')
-  if runtime['status']!='PASS':runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
+  if runtime['status']!='PASS':runner.component('native-loader-trace','loader-trace',optional=True);runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
   count=runner.component('cuda-discovery','count')
+  runner.component('loader-contrasts','contrasts',optional=True);runner.component('native-loader-trace','loader-trace',optional=True)
   if count['status']!='PASS':runner.skip('gpu-components','CUDA discovery failed');return runner.finish()
   selected=devices or list(range(count['result']['data']['visible_devices']))
   if any(d>=count['result']['data']['visible_devices'] for d in selected):
@@ -291,6 +296,7 @@ def main(argv=None):
     data=_rank(args._child,root,devices,args._rank) if args._rank is not None else _component(args._child,root,devices,args._device,args.stage_timeout)
     result={'status':'PASS','data':data};code=0
     if args._child=='driver' and data['status']!='PASS':result.update(status='FAIL',error=data['summary']);code=1
+    if args._child in ('nvml','torch','contrasts','loader-trace') and data.get('status')=='FAIL':result.update(status='FAIL',error=data.get('error','Auxiliary probe failed'));code=1
    except Exception as error:
     result={'status':'FAIL','error':str(error),'exception_type':type(error).__name__,'traceback':traceback.format_exc()}
     for key in ('stdout','stderr'):
