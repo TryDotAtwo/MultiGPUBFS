@@ -7,17 +7,18 @@ BASE_SHA = 'f85b5d3f90bb6c870bc60b3fbc76ef920284a83a443185090aa81643f3bee9aa'
 RUNTIMES = ('nvidia-cuda-runtime-cu12==12.9.79', 'nvidia-nccl-cu12==2.30.7')
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--output', type=Path, required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--output', type=Path, required=True);p.add_argument('--binary',type=Path,required=True);p.add_argument('--library',type=Path,required=True);a=p.parse_args()
     root=Path(__file__).resolve().parents[1];stage=root/'multigpubfs/_native'
     if stage.exists():raise RuntimeError('Refusing to replace existing native staging')
     with tempfile.TemporaryDirectory() as temp:
         temp=Path(temp);base=temp/'accepted.whl'
-        urllib.request.urlretrieve(BASE_URL, base)
-        if hashlib.sha256(base.read_bytes()).hexdigest()!=BASE_SHA:raise RuntimeError('BASE_WHEEL_CHECKSUM')
-        with zipfile.ZipFile(base) as z:
-            for name in z.namelist():
-                if 'multigpubfs/_native/' in name and not name.endswith('/'):
-                    target=root/name[name.index('multigpubfs/_native/'):];target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(z.read(name))
+        if a.binary and a.library:
+            (stage/'bin').mkdir(parents=True);(stage/'lib').mkdir()
+            shutil.copy2(a.binary,stage/'bin/mgbfs');shutil.copy2(a.library,stage/'lib/libmgbfs_cuda.so')
+            manifest=dict(schema=1,cuda_toolkit='12.9.86',architectures=[75,86],platform='linux_x86_64',source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),hardware_acceptance='Build targets; see separate GPU acceptance receipt')
+            (stage/'manifest.json').write_text(json.dumps(manifest))
+        else:
+            raise RuntimeError('Explicit portable rebuilt binary and library required')
         (stage/'bin/mgbfs').chmod(0o755)
         deps=temp/'deps';deps.mkdir()
         subprocess.run([sys.executable,'-m','pip','download','--no-deps','--only-binary=:all:','-d',str(deps),*RUNTIMES],check=True)

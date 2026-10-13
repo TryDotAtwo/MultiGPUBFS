@@ -11,7 +11,7 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -19,12 +19,15 @@ jobs:
       - name: Prepare packaging tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y patchelf
+          sudo apt-get install -y patchelf cmake ninja-build g++
+          rustup toolchain install 1.75.0 --profile minimal
           python3 -m pip install build wheel
       - name: Check private runtime contracts
         run: python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
-      - name: Assemble wheel from pinned GitHub native release
-        run: python3 scripts/package_github_wheel.py --output dist-native
+      - name: Build portable native binaries on Ubuntu 22.04
+        run: python3 scripts/build_portable_native.py
+      - name: Assemble wheel with private redistributables
+        run: python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so
       - name: Test clean Linux pip install without setup script
         run: |
           python3 -m venv /tmp/pip-native-clean
