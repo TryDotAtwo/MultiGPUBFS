@@ -13,7 +13,7 @@ def device_access(path):
  item={'path':str(path)}
  try:
   s=path.stat();item.update(exists=True,character_device=stat.S_ISCHR(s.st_mode),major=os.major(s.st_rdev),minor=os.minor(s.st_rdev),mode=oct(stat.S_IMODE(s.st_mode)),read_access=os.access(path,os.R_OK),write_access=os.access(path,os.W_OK))
- except OSError as error:item.update(exists=False,error=str(error),errno=error.errno);return item
+ except OSError as error:item.update(exists=False if error.errno==errno.ENOENT else None,error=str(error),errno=error.errno);return item
  if path.name in ('nvidiactl','nvidia-uvm') and item['character_device']:
   _phase('open and immediately close '+str(path)+'; no ioctl or GPU allocation')
   try:
@@ -73,7 +73,7 @@ def mount_for(path):
  for line in data['text'].splitlines():
   fields=line.split();
   if len(fields)<10 or '-' not in fields:continue
-  point=fields[4].replace('\\040',' ');sep=fields.index('-')
+  point=fields[4].replace('\040',' ');sep=fields.index('-')
   if path==point or path.startswith(point.rstrip('/')+'/'):
    if best is None or len(point)>len(best['mountpoint']):best={'mountpoint':point,'options':fields[5].split(','),'filesystem':fields[sep+1]}
  return best or {'status':'UNKNOWN'}
@@ -105,7 +105,7 @@ def survey(root):
  try:
   with socket.socket() as server,socket.socket() as client:
    server.settimeout(2);client.settimeout(2);server.bind(('127.0.0.1',0));server.listen(1);client.connect(server.getsockname());conn,_=server.accept()
-   with conn:conn.settimeout(2);conn.sendall(b'OK');assert client.recv(2)==b'OK'
+   with conn:conn.settimeout(2);conn.sendall(b'OK');assert client.recv(2,socket.MSG_WAITALL)==b'OK'
   data['loopback']={'status':'PASS'}
  except (OSError,AssertionError) as error:data['loopback']={'status':'FAIL','error':str(error),'errno':getattr(error,'errno',None)}
  data['network_interfaces']=[]
@@ -183,6 +183,7 @@ def contrasts(root,seconds):
   except subprocess.TimeoutExpired as error:item.update(status='TIMEOUT',error=str(error))
   except (OSError,ValueError) as error:item.update(status='FAIL',error=str(error))
   return item
+ if not variants:return {'status':'UNAVAILABLE','reason':'No eligible distinct driver libraries or active loader overrides were found.'}
  for name,env,extra,changed in variants[:4]:
   results.append(run(name,env,extra,changed))
   if results[-1]['status']=='PASS':results.append(run('baseline-recheck',original,[],[]));break

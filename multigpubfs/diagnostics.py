@@ -206,11 +206,20 @@ class Runner:
   entry['seconds']=time.monotonic()-started
   if optional and entry['status'] in ('FAIL','TIMEOUT'):entry['status']='WARNING'
   entry['log_tail']=(self.root/(name+'.log')).read_text(encoding='utf-8',errors='replace')[-6000:] if (self.root/(name+'.log')).exists() else ''
+  phases=[line[6:] for line in entry['log_tail'].splitlines() if line.startswith('PHASE ')]
+  if phases:entry['last_phase']=phases[-1]
+  for file in ('driver.json','environment.json'):
+   snapshot=self.root/name/file
+   if snapshot.is_file():
+    try:entry.setdefault('partial_evidence',{})[file]=json.loads(snapshot.read_text())
+    except (OSError,ValueError):pass
   result=self.root/name/'result.json'
   if result.is_file():
    try:entry['result']=json.loads(result.read_text())
    except (OSError,ValueError) as error:entry.update(status='FAIL',error='Invalid component result: '+str(error))
   if entry.get('result',{}).get('error'):entry['error']=entry['result']['error']
+  data=entry.get('result',{}).get('data',{})
+  if entry['status']=='PASS' and data.get('status')=='UNAVAILABLE':entry.update(status='SKIPPED',reason=data.get('reason',data.get('error','Auxiliary component unavailable')))
   self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
  @staticmethod
  def stop(process):

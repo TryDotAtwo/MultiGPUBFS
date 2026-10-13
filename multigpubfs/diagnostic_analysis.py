@@ -3,7 +3,9 @@ import errno
 
 def analyze(report):
  steps=report.get('steps',[]);by={s['name']:s for s in steps}
- def data(name):return by.get(name,{}).get('result',{}).get('data',{})
+ def data(name):
+  step=by.get(name,{})
+  return step.get('result',{}).get('data') or next(iter(step.get('partial_evidence',{}).values()),{})
  confirmed=[];hypotheses=[];actions=[];unknown=[];excluded=[]
  def fact(code,text,evidence):confirmed.append({'code':code,'statement':text,'evidence':evidence})
  def hypothesis(code,text,evidence):hypotheses.append({'code':code,'statement':text,'evidence':evidence})
@@ -42,7 +44,7 @@ def analyze(report):
  if by.get('filesystem',{}).get('status')=='PASS':excluded.append({'statement':'The tested atomic file-exchange paths worked; this does not verify every filesystem or IPC mechanism.','evidence':['filesystem']})
  for name,step in by.items():
   if step.get('status')=='SKIPPED':unknown.append(name+': '+step.get('reason','not tested'))
-  if step.get('status')=='TIMEOUT':unknown.append(name+' timed out; preserved partial evidence is not acceptance.')
+  if step.get('status')=='TIMEOUT':unknown.append(name+' timed out at '+step.get('last_phase','unknown phase')+'; preserved partial evidence is not acceptance.')
  if by.get('cuda-discovery',{}).get('status') in ('FAIL','TIMEOUT'):
   excluded.append({'statement':'BFS and NCCL were not reached; their performance, graph capacity and dedup cannot be blamed for this startup observation.','evidence':['cuda-discovery']})
  if env.get('loopback',{}).get('status')=='FAIL':
