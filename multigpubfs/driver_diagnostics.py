@@ -75,7 +75,7 @@ def _runtime(checkpoint=lambda data:None):
 def classify(data):
  d=data['driver'];r=data['runtime'];init=d.get('initialization',{});count=d.get('visible_devices',0);runtime_count=r.get('cudaGetDeviceCount',{});path=d.get('resolved_library','') or ''
  if not d.get('loaded'):return 'DRIVER_LIBRARY_UNAVAILABLE','libcuda.so.1 could not be loaded. GPU allocation, container driver exposure and loader paths remain to be checked.'
- if '/stubs/' in path or init.get('name')=='CUDA_ERROR_STUB_LIBRARY':return 'DRIVER_STUB_LOADED','A CUDA driver stub was loaded instead of a usable NVIDIA driver.'
+ if init.get('name')=='CUDA_ERROR_STUB_LIBRARY' or init.get('code')==34:return 'DRIVER_STUB_LOADED','A CUDA driver stub was loaded instead of a usable NVIDIA driver.'
  if init.get('name')=='CUDA_ERROR_SYSTEM_DRIVER_MISMATCH':return 'DRIVER_KERNEL_LIBRARY_MISMATCH','Driver API reports a mismatch between the loaded driver library and system driver.'
  if init.get('code') not in (None,0):return 'DRIVER_INITIALIZATION_FAILED','cuInit failed: '+init.get('name',str(init.get('code')))+'; inspect driver/device-node evidence. This does not establish an old driver by itself.'
  if 'probe_error' in d:return 'DRIVER_API_PROBE_FAILED',d['probe_error']
@@ -110,6 +110,7 @@ def probe(output=None):
   except OSError as e:item['error']=str(e)
   data['device_nodes'].append(item)
  save();data['driver']=_driver(lambda value:update('driver',value));save();data['runtime']=_runtime(lambda value:update('runtime',value));save()
+ if '/stubs/' in (data['driver'].get('resolved_library') or ''):data['warnings']=['Driver library is in a stubs directory; directory name alone does not prove stub contents. Initialization/API results determine status.']
  data['classification'],data['summary']=classify(data);data['status']='PASS' if data['classification']=='DRIVER_RUNTIME_READY' else 'FAIL'
  data['access_note']='Device-node visibility and os.access do not prove cgroup/security-policy permission; the API result is the actual observation. No GPU allocation is inferred from scheduler-variable presence alone.'
  save();return data

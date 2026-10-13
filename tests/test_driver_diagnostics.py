@@ -9,7 +9,7 @@ class DriverDiagnosticTests(unittest.TestCase):
  def test_older_major_and_35(self):
   data=self.sample();data['driver']['api_version']=11080;data['runtime']['cudaGetDeviceCount']['code']=35;self.assertEqual(classify(data)[0],'DRIVER_MAJOR_TOO_OLD')
  def test_stub_and_kernel_mismatch(self):
-  data=self.sample();data['driver']['resolved_library']='/cuda/stubs/libcuda.so.1';self.assertEqual(classify(data)[0],'DRIVER_STUB_LOADED')
+  data=self.sample();data['driver']['resolved_library']='/cuda/stubs/libcuda.so.1';data['driver']['initialization']={'code':34,'name':'CUDA_ERROR_STUB_LIBRARY'};self.assertEqual(classify(data)[0],'DRIVER_STUB_LOADED')
   data=self.sample();data['driver']['initialization']={'code':803,'name':'CUDA_ERROR_SYSTEM_DRIVER_MISMATCH'};self.assertEqual(classify(data)[0],'DRIVER_KERNEL_LIBRARY_MISMATCH')
  def test_no_gpu_and_missing_driver(self):
   data=self.sample();data['driver']['visible_devices']=0;self.assertEqual(classify(data)[0],'NO_VISIBLE_GPU')
@@ -19,3 +19,6 @@ class DriverDiagnosticTests(unittest.TestCase):
    self.assertEqual(_driver()['error'],'missing driver fixture')
  def test_runtime_failure_retained(self):
   data=self.sample();data['runtime']['cudaGetDeviceCount']={'code':999,'description':'unknown driver error'};self.assertEqual(classify(data)[0],'RUNTIME_DEVICE_QUERY_FAILED')
+
+ def test_directory_name_alone_does_not_prove_stub(self):
+  data=self.sample();data['driver']['resolved_library']='/custom/stubs/libcuda.so.1';self.assertEqual(classify(data)[0],'DRIVER_RUNTIME_READY')
