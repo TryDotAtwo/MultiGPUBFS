@@ -2,6 +2,12 @@ import json,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 from multigpubfs.diagnostics import Runner
 class DiagnosticFramework(unittest.TestCase):
+ def test_child_preserves_captured_loader_error(self):
+  from unittest.mock import patch
+  from multigpubfs.diagnostics import main
+  with tempfile.TemporaryDirectory() as tmp,patch('multigpubfs.diagnostics._component',side_effect=subprocess.CalledProcessError(127,['native'],output='loader stdout',stderr='libmissing.so: cannot open shared object file')):
+   self.assertEqual(main(['--_child','runtime','--output',tmp]),1)
+   result=json.loads((Path(tmp)/'result.json').read_text());self.assertIn('libmissing.so',result['stderr']);self.assertEqual(result['stdout'],'loader stdout')
  def test_bfs_component_dispatch_does_not_start_persistent_worker(self):
   from unittest.mock import patch
   from multigpubfs.diagnostics import _component

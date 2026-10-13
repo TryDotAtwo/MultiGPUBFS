@@ -282,7 +282,14 @@ def main(argv=None):
    try:
     data=_rank(args._child,root,devices,args._rank) if args._rank is not None else _component(args._child,root,devices,args._device,args.stage_timeout)
     result={'status':'PASS','data':data};code=0
-   except Exception as error:result={'status':'FAIL','error':str(error),'exception_type':type(error).__name__,'traceback':traceback.format_exc()};print(result['traceback'],flush=True);code=1
+   except Exception as error:
+    result={'status':'FAIL','error':str(error),'exception_type':type(error).__name__,'traceback':traceback.format_exc()}
+    for key in ('stdout','stderr'):
+     value=getattr(error,key,None)
+     if value:
+      value=value.decode(errors='replace') if isinstance(value,bytes) else str(value)
+      result[key]=value[-12000:];print(key.upper()+': '+result[key],flush=True)
+    print(result['traceback'],flush=True);code=1
    name='result.json' if args._rank is None else 'rank-'+str(args._rank)+('.json' if code==0 else '-error.json')
    _write(root/name,result);return code
   report=run_diagnostics(args.output,devices,args.stage_timeout);return 0 if report['status']=='PASS' else 1
