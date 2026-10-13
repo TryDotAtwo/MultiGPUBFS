@@ -35,7 +35,7 @@ jobs:
           from pathlib import Path
           import multigpubfs,cayleypy
           from multigpubfs.native_distribution import native_runtime
-          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev2'
+          assert importlib.metadata.version('multigpubfs')==os.environ['WHEEL_URL'].rsplit('/',1)[-1].split('-')[1]
           multigpubfs.enable_native()
           graph=cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5),device='cpu')
           assert hasattr(multigpubfs,'enable_native')
