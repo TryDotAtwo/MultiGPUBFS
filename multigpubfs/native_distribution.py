@@ -22,14 +22,14 @@ def native_runtime(explicit=None):
  if binary.is_file():
   manifest=json.loads((root/'manifest.json').read_text())
   if manifest.get('schema')!=1:raise RuntimeError('NATIVE_BUNDLE_MANIFEST_SCHEMA')
-  for name in ('bin/mgbfs','lib/libmgbfs_cuda.so'):
+  for name in manifest['sha256']:
    if _file_digest(root/name)!=manifest['sha256'][name]:raise RuntimeError('NATIVE_BUNDLE_CHECKSUM_'+name)
   libraries=[str(root/'lib')];pure=Path(sysconfig.get_paths()['purelib'])
-  toolkit=manifest.get('cuda_toolkit')
+  toolkit=None if manifest.get('bundled_runtime') else manifest.get('cuda_toolkit')
   if toolkit:
    major=int(toolkit.split('.')[0]);location=pure/'nvidia'/('cu'+str(major))/'lib'
    if location.is_dir():libraries.append(str(location))
-  for name in ('cuda_runtime','nccl'):
+  for name in (() if manifest.get('bundled_runtime') else ('cuda_runtime','nccl')):
    location=pure/'nvidia'/name/'lib'
    if location.is_dir():libraries.append(str(location))
   # Packaged NCCL/runtime must precede unrelated system versions.
@@ -63,7 +63,7 @@ def _runtime_identity_uncached(native,env):
    if library_digest!=manifest['sha256'].get('lib/libmgbfs_cuda.so'):raise RuntimeError('NATIVE_IDENTITY_LIBRARY_CHECKSUM')
    # Package provenance applies only if the actual loader resolves its bytes.
    if dependency is not None and dependency['cuda_library_sha256']==library_digest:
-    identity.update(source_commit=manifest.get('source_commit'),cuda_toolkit=manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
+    identity.update(source_commit=manifest.get('source_commit'),cuda_toolkit=None if manifest.get('bundled_runtime') else manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
  return identity
 
 _runtime_identity_cache={}

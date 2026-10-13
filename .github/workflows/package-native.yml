@@ -1,0 +1,55 @@
+name: Package native pip wheel
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag for the verified packaging candidate
+        required: true
+        default: native-pip-20261013
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf
+          python3 -m pip install build wheel
+      - name: Check private runtime contracts
+        run: python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
+      - name: Assemble wheel from pinned GitHub native release
+        run: python3 scripts/package_github_wheel.py --output dist-native
+      - name: Test clean Linux pip install without setup script
+        run: |
+          python3 -m venv /tmp/pip-native-clean
+          /tmp/pip-native-clean/bin/python -m pip install dist-native/*.whl
+          cd /tmp
+          /tmp/pip-native-clean/bin/python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from multigpubfs.native_distribution import native_runtime
+          native, env = native_runtime()
+          assert os.access(native, os.X_OK), 'Wheel must preserve executable permissions'
+          assert Path(native).is_relative_to(Path('/tmp/pip-native-clean'))
+          manifest=json.loads((Path(native).parents[1]/'manifest.json').read_text())
+          assert manifest['bundled_runtime']
+          result=subprocess.run(['ldd',native],env=env,text=True,capture_output=True,check=True)
+          missing=[line for line in result.stdout.splitlines() if 'not found' in line and 'libcuda.so.1' not in line]
+          assert not missing, missing
+          assert '/tmp/pip-native-clean/' in result.stdout
+          print(result.stdout)
+          print('VERIFIED_CLEAN_LINUX_PIP_INSTALL_NO_GPU')
+          PY
+          /tmp/pip-native-clean/bin/python -m pip check
+      - name: Publish packaging candidate for GPU gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --prerelease --title "Single-command pip native wheel (GPU acceptance pending)" --notes "Private bundled CUDA/NCCL; clean Linux pip install checked. SM75/SM86 only. GPU acceptance and final instructions follow separately." dist-native/*
