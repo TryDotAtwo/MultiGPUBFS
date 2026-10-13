@@ -59,7 +59,7 @@ def main():
         (stage/'manifest.json').write_text(json.dumps(manifest,indent=2))
         a.output.mkdir(parents=True,exist_ok=True)
         subprocess.run([sys.executable,'-m','build','--wheel','--outdir',str(a.output.resolve())],cwd=root,check=True)
-        wheel=next(a.output.glob('multigpubfs-0.2.0.dev2-*.whl'))
+        wheel=next(a.output.glob('multigpubfs-*.whl'))
         sha=hashlib.sha256(wheel.read_bytes()).hexdigest()
         (a.output/'SHA256SUMS').write_text(sha+'  '+wheel.name+'\n')
         receipt=dict(schema=1,wheel=wheel.name,sha256=sha,size=wheel.stat().st_size,manifest=manifest,status='BUILT_NEEDS_GPU_ACCEPTANCE')
