@@ -9,15 +9,29 @@ def _write(path,value):
 
 def _phase(value):print('PHASE '+value,flush=True)
 
+def _tool(name):
+ found=shutil.which(name)
+ if found:return found
+ for prefix in ('/usr/bin','/bin','/usr/sbin','/sbin','/usr/local/nvidia/bin'):
+  path=Path(prefix)/name
+  if path.is_file() and os.access(path,os.X_OK):return str(path)
+ return name
+
 def _paths():
  from .native_distribution import native_runtime
- from .autotune import _dependency_identity
- native,env=native_runtime();dep=_dependency_identity(native,env)
- if dep is None:raise RuntimeError('Could not resolve libmgbfs_cuda.so; inspect loader output')
- libs={x[0]:x[1] for x in dep['resolved_dependencies']}
+ native,env=native_runtime()
+ try:query=subprocess.run([_tool('ldd'),native],env=env,capture_output=True,text=True,timeout=10)
+ except OSError as error:raise RuntimeError('DEPENDENCY_INSPECTION_UNAVAILABLE: cannot execute ldd: '+str(error)) from error
+ except subprocess.TimeoutExpired as error:raise RuntimeError('DEPENDENCY_INSPECTION_TIMEOUT: ldd did not finish; this is not a GPU calculation timeout') from error
+ if query.returncode:raise RuntimeError('DEPENDENCY_INSPECTION_FAILED: '+(query.stdout+query.stderr)[-6000:])
+ libs={}
+ for line in query.stdout.splitlines():
+  fields=line.split()
+  if len(fields)>=3 and fields[1]=='=>' and Path(fields[2]).is_file():libs[fields[0]]=str(Path(fields[2]).resolve())
  for name in ('libmgbfs_cuda.so','libcudart.so.12','libnccl.so.2'):
-  if name not in libs:raise RuntimeError('Native dependency not resolved: '+name)
+  if name not in libs:raise RuntimeError('DEPENDENCY_RESOLUTION_FAILED: '+name+'; loader output: '+(query.stdout+query.stderr)[-6000:])
  return native,env,libs
+
 
 def _cuda(device=None,engine=False):
  _phase('resolve and load CUDA runtime')
@@ -99,7 +113,7 @@ def _component(stage,root,devices,device,seconds):
   data=json.loads((root/'driver.json').read_text());data['loader_context']=context;return data
  if stage=='system':
   _phase('query nvidia-smi')
-  r=subprocess.run(['nvidia-smi','--query-gpu=name,driver_version,memory.total','--format=csv,noheader'],text=True,capture_output=True,check=True,timeout=min(10,seconds*.8));print(r.stdout,flush=True);return {'nvidia_smi':r.stdout.strip()}
+  r=subprocess.run([_tool('nvidia-smi'),'--query-gpu=name,driver_version,memory.total','--format=csv,noheader'],text=True,capture_output=True,check=True,timeout=min(10,seconds*.8));print(r.stdout,flush=True);return {'nvidia_smi':r.stdout.strip()}
  if stage=='filesystem':
   roots=[root,Path(os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT') or tempfile.gettempdir())]
   for directory in roots:
@@ -112,7 +126,7 @@ def _component(stage,root,devices,device,seconds):
   _phase('verify native bundle checksums and executable');native,env=native_runtime()
   if not os.access(native,os.X_OK):raise RuntimeError('Native executable has no execute permission')
   _phase('native binary loader/key-info');r=subprocess.run([native,'key-info'],env=env,capture_output=True,text=True,check=True)
-  info=json.loads(r.stdout);_phase('resolve native dependencies');_,_,libs=_paths()
+  info=json.loads(r.stdout);_write(root/'runtime.json',{'status':'RUNNING','native':native,'key_info':info,'binary_executed':True});_phase('resolve native dependencies');_,_,libs=_paths()
   return {'native':native,'libraries':libs,'key_info':info}
  if stage=='count':
   from .native_distribution import native_runtime
@@ -212,7 +226,7 @@ class Runner:
   entry['log_tail']=(self.root/(name+'.log')).read_text(encoding='utf-8',errors='replace')[-6000:] if (self.root/(name+'.log')).exists() else ''
   phases=[line[6:] for line in entry['log_tail'].splitlines() if line.startswith('PHASE ')]
   if phases:entry['last_phase']=phases[-1]
-  for file in ('driver.json','environment.json'):
+  for file in ('driver.json','environment.json','runtime.json'):
    snapshot=self.root/name/file
    if snapshot.is_file():
     try:entry.setdefault('partial_evidence',{})[file]=json.loads(snapshot.read_text())
@@ -251,7 +265,7 @@ class Runner:
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','analysis.json','analysis.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})

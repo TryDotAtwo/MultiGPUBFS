@@ -61,6 +61,15 @@ def analyze(report):
  elif good:
   hypothesis('TRANSIENT_OR_LOADER_FAILURE','A variant passed but baseline failure was not reproduced; loader causality remains unconfirmed.',['loader-contrasts/result/data/results'])
  if by.get('native-runtime',{}).get('status')=='PASS':excluded.append({'statement':'The native binary executed and packaged integrity/dependency checks passed. An execute-permission or basic native-loader failure does not explain this later CUDA-discovery failure.','evidence':['native-runtime']})
+ runtime=data('native-runtime')
+ if runtime.get('binary_executed'):
+  fact('NATIVE_EXECUTED_BEFORE_INSPECTION_FAILURE','The native binary executed key-info; subsequent dependency inspection is a separate failure.',['native-runtime/partial_evidence/runtime.json'])
+ if 'noexec' in env.get('native_executable_mount',{}).get('options',[]) and by.get('native-runtime',{}).get('result',{}).get('exception_type')=='PermissionError':
+  fact('NATIVE_EXEC_ON_NOEXEC_MOUNT','Native execution was denied and its resolved mount is marked noexec.',['environment-evidence/result/data/native_executable_mount','native-runtime'])
+ shm=env.get('filesystems',{}).get('/dev/shm',{})
+ if shm.get('error'):
+  fact('SHARED_MEMORY_WRITE_CHECK_FAILED','The /dev/shm write/read test failed; CUDA discovery and actual NCCL results are evaluated independently.',['environment-evidence/result/data/filesystems'])
+  if any(name.startswith('nccl') and value.get('status') in ('FAIL','TIMEOUT') for name,value in by.items()):hypothesis('NCCL_IPC_RESTRICTION','Shared-memory restrictions may contribute to the observed NCCL failure; transport and native logs are required for attribution.',['environment-evidence/result/data/filesystems','nccl-init','nccl-exchange'])
  if by.get('filesystem',{}).get('status')=='PASS':excluded.append({'statement':'The tested atomic file-exchange paths worked; this does not verify every filesystem or IPC mechanism.','evidence':['filesystem']})
  for name,step in by.items():
   if step.get('status')=='SKIPPED':unknown.append(name+': '+step.get('reason','not tested'))

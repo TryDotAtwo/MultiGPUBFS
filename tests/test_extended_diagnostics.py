@@ -77,3 +77,15 @@ class ExtendedDiagnosticTests(unittest.TestCase):
  def test_optional_torch_respects_memory_headroom(self):
   from multigpubfs.system_diagnostics import torch_probe
   with patch('multigpubfs.system_diagnostics.importlib.util.find_spec',return_value=object()),patch('multigpubfs.system_diagnostics.cgroups',return_value={'records':[{'files':{'memory.max':'1024','memory.current':'1000'}}]}):self.assertEqual(torch_probe()['status'],'UNAVAILABLE')
+
+ def test_dependency_tool_error_is_not_hidden_as_gpu_error(self):
+  from multigpubfs.diagnostics import _paths
+  with patch('multigpubfs.native_distribution.native_runtime',return_value=('/fixture/native',{})),patch('multigpubfs.diagnostics.subprocess.run',side_effect=FileNotFoundError('ldd missing')):
+   with self.assertRaisesRegex(RuntimeError,'DEPENDENCY_INSPECTION_UNAVAILABLE'):_paths()
+ def test_runtime_snapshot_proves_only_cpu_execution(self):
+  a=analyze({'steps':[step('native-runtime',status='FAIL',partial_evidence={'runtime.json':{'binary_executed':True}})]});self.assertEqual(a['confirmed_findings'][0]['code'],'NATIVE_EXECUTED_BEFORE_INSPECTION_FAILURE')
+ def test_noexec_with_observed_exec_denial(self):
+  native=step('native-runtime',status='FAIL');native['result']={'exception_type':'PermissionError'}
+  a=analyze({'steps':[step('environment-evidence',{'native_executable_mount':{'options':['rw','noexec']}}),native]});self.assertEqual(a['confirmed_findings'][0]['code'],'NATIVE_EXEC_ON_NOEXEC_MOUNT')
+ def test_shm_denial_is_not_cuda_discovery_cause(self):
+  a=analyze({'steps':[step('environment-evidence',{'filesystems':{'/dev/shm':{'error':'denied'}}}),step('cuda-discovery',status='FAIL')]});self.assertEqual(a['confirmed_findings'][0]['code'],'SHARED_MEMORY_WRITE_CHECK_FAILED');self.assertFalse(a['hypotheses'])
