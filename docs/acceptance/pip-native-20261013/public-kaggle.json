@@ -1,0 +1,38 @@
+{
+  "status": "VERIFIED_PUBLIC_KAGGLE_RUN_ALL",
+  "basic": {
+    "slug": "trydotatwo/cayleypy-multigpubfs",
+    "version": 6,
+    "status": "COMPLETE",
+    "gpu_count": 2,
+    "layer_sizes": [
+      1,
+      3,
+      6,
+      10,
+      16,
+      24,
+      29,
+      21,
+      6,
+      3,
+      1
+    ],
+    "bfs_seconds": 0.184017635
+  },
+  "sweep": {
+    "slug": "trydotatwo/multigpubfs-pair-sweep",
+    "version": 4,
+    "status": "COMPLETE",
+    "gpu_count": 2,
+    "family": "lrx",
+    "pairs": 14
+  },
+  "inputs": {
+    "dataset_sources": [],
+    "kernel_sources": [],
+    "competition_sources": [],
+    "model_sources": []
+  },
+  "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd"
+}

@@ -35,4 +35,15 @@ The wheel targets Linux x86_64, Python3.10+, Ubuntu22.04 ABI and SM75/SM86. This
 
 Gatev1 passed the28 GPU pairs but failed while Kaggle's `ensurepip` created an extra test venv. Gatev2 then failed after the test artificially removed the host's standard `LD_LIBRARY_PATH`, hiding driver library discovery. Gatev4 uses the normal host environment and ordinary pip, and passed the full test. The package was unchanged between these gates. No user needs to set a library path.
 
-GPU result receipts contain metadata and layer counts, not state payloads. Public basic/sweep notebook publication and execution are recorded separately; the private gate already validates their calculation path.
+GPU result receipts contain metadata and layer counts, not state payloads.
+
+## Public notebook Run All acceptance
+
+Both public examples subsequently completed with their normal `%pip install` cell and no attached Inputs:
+
+- [Basic notebook, version6](https://www.kaggle.com/code/trydotatwo/cayleypy-multigpubfs): COMPLETE LRX5,120states,2GPU; BFS0.184seconds.
+- [Pair sweep, version4](https://www.kaggle.com/code/trydotatwo/multigpubfs-pair-sweep): all14 LRX pairs n2..5 COMPLETE. The corresponding result and layer CSVs are included in `docs/acceptance/pip-native-20261013/`.
+- [Reproducible extended acceptance notebook](../examples/native_pip_acceptance.ipynb) contains both CPU-oracle families and the isolated-shell GPU tests.
+
+These are execution results, not only successful publication/submission.
+
