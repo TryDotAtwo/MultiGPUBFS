@@ -28,6 +28,8 @@ jobs:
           python3 -m pip install build wheel
       - name: Check private runtime contracts
         run: python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
+      - name: Check certified workload bounds
+        run: python3 -m unittest discover -s tests -p test_workload_geometry.py
       - name: Build portable native binaries on Ubuntu 22.04
         if: inputs.reuse_release == ''
         run: python3 scripts/build_portable_native.py

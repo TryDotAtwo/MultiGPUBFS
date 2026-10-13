@@ -38,9 +38,20 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  from .host_memory import admit
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
+ geometry_bound=None
+ if capacity is None and _profile_layers is None and not backend.startswith('shard_ab_'):
+  from .workload_geometry import coxeter_frontier_bound
+  geometry_bound=coxeter_frontier_bound(graph)
+  if geometry_bound is not None:
+   from .autotune import _admit
+   with tempfile.TemporaryDirectory(prefix='mgbfs-bound-') as bound_dir:
+    bound_admission=_admit(graph,devices,None,shards or 1,native,native_env,bound_dir)
+   capacity=min(geometry_bound['maximum_frontier'],bound_admission['plan']['capacity'])
+
  if _native_env is not None:native_env=dict(_native_env)
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  def finish(report):
+  if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   from .size_profiles import save_online_profiles
   try:save_online_profiles(report)
   except OSError:report['profile_cache_write_status']='UNAVAILABLE'
