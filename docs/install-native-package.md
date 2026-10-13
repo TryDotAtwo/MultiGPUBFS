@@ -5,7 +5,7 @@ The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v9/multigpubfs-0.2.0.dev9-py3-none-linux_x86_64.whl#sha256=eb26ead19851f7f627625b97208707772482a2e605926675e2885aff8c01b30a"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v10/multigpubfs-0.2.0.dev10-py3-none-linux_x86_64.whl#sha256=f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2Г—T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v9/multigpubfs-0.2.0.dev9-py3-none-linux_x86_64.whl#sha256=eb26ead19851f7f627625b97208707772482a2e605926675e2885aff8c01b30a"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v10/multigpubfs-0.2.0.dev10-py3-none-linux_x86_64.whl#sha256=f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49"
 ```
 
 Use the package after installation:
@@ -31,7 +31,7 @@ The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies us
 
 ## Scope and identity
 
-Release: [native-pip-20261014-v9](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261014-v9). Package `0.2.0.dev9`; SHA256 `eb26ead19851f7f627625b97208707772482a2e605926675e2885aff8c01b30a`. Pip verifies this hash through the URL fragment.
+Release: [native-pip-20261014-v10](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261014-v10). Package `0.2.0.dev10`; SHA256 `f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49`. Pip verifies this hash through the URL fragment.
 
 Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. This wheel compiles SM75/SM86 (T4/RTX3060); it does not claim B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
 
@@ -50,3 +50,5 @@ For a sweep over different graphs, keep one `persistent_graph_workers()` context
 Run `multigpubfs doctor` after installation. It checks each visible local GPU, CUDA/native libraries, resident-worker file requests, NCCL and a tiny exact BFS, then writes a readable report and diagnostic ZIP. For Python-only submissions use `from multigpubfs.diagnostics import run_diagnostics; run_diagnostics()`. [Instructions](diagnostics.md) and [measured acceptance](diagnostics-acceptance-2026-10-13.md).
 
 The current diagnostic also probes NVIDIA Driver API directly without `nvidia-smi`. [Driver diagnostic acceptance](driver-diagnostics-acceptance-2026-10-14.md). After upgrading inside an already-running Python session, invoke `multigpubfs doctor` in a fresh process; previously imported Python code may otherwise remain cached. Python-only job submissions can use `subprocess.run([sys.executable, "-m", "multigpubfs.diagnostics"])`.
+
+The current `doctor` includes broad user-space evidence, isolated loader contrasts and `analysis.json`/`analysis.txt`: [forensic diagnostic guide](forensic-diagnostics.md), [acceptance](forensic-diagnostics-acceptance-2026-10-14.md). The primary failure, observed findings, hypotheses, exclusions and inaccessible evidence are separate.

@@ -53,7 +53,7 @@ The ZIP contains diagnostic metadata and logs, not BFS state payloads, raw worke
 
 ## Diagnosing CUDA error 35 without server administration
 
-Version `0.2.0.dev9` adds `driver-api` to the same `multigpubfs doctor` command. This stage runs even when native GPU discovery subsequently fails. It gathers:
+Version `0.2.0.dev10` adds `driver-api` to the same `multigpubfs doctor` command. This stage runs even when native GPU discovery subsequently fails. It gathers:
 
 - The actual `libcuda.so.1` path determined from the loaded `cuInit` symbol, not merely an installed-file search.
 - `cuDriverGetVersion`, `cuInit`, `cuDeviceGetCount`, symbolic Driver API errors and descriptions, visible GPU names and compute capabilities.
@@ -70,3 +70,5 @@ Classification distinguishes an unavailable driver library, a loaded stub, an AP
 Failure summaries now include the child's original error. Return the new `report.json` or `diagnostics.zip`; the driver evidence may be enough to diagnose the environment without administrator access. No particular GPU allocation or root cause is inferred merely from a missing nvidia-smi.
 
 References: [Driver API initialization](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__INITIALIZE.html), [Driver API version](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__VERSION.html), [CUDA minor-version compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html).
+
+For the current extended environment/NVML/Torch/security/loader analysis and its evidence limits, see [broad user-space diagnosis](forensic-diagnostics.md). The report now includes `analysis.json` and `analysis.txt`; no administrator credentials are requested.
