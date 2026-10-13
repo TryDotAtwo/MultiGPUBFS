@@ -87,6 +87,13 @@ def _rank(stage,root,devices,rank):
  return {'rank':rank,'device':devices[rank],'world':len(devices),'exchange_verified':stage=='nccl_exchange'}
 
 def _component(stage,root,devices,device,seconds):
+ if stage=='driver':
+  from .native_distribution import native_runtime
+  try:native,env=native_runtime();context='native_runtime loader environment'
+  except Exception as error:env=dict(os.environ);context='inherited environment; native runtime unavailable: '+str(error)
+  _phase('direct NVIDIA driver/runtime API probe; no nvidia-smi needed')
+  subprocess.run([sys.executable,'-m','multigpubfs.driver_diagnostics','--output',str(root/'driver.json')],env=env,check=True)
+  data=json.loads((root/'driver.json').read_text());data['loader_context']=context;return data
  if stage=='system':
   _phase('query nvidia-smi')
   r=subprocess.run(['nvidia-smi','--query-gpu=name,driver_version,memory.total','--format=csv,noheader'],text=True,capture_output=True,check=True,timeout=min(10,seconds*.8));print(r.stdout,flush=True);return {'nvidia_smi':r.stdout.strip()}
@@ -200,6 +207,7 @@ class Runner:
   if result.is_file():
    try:entry['result']=json.loads(result.read_text())
    except (OSError,ValueError) as error:entry.update(status='FAIL',error='Invalid component result: '+str(error))
+  if entry.get('result',{}).get('error'):entry['error']=entry['result']['error']
   self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
  @staticmethod
  def stop(process):
@@ -226,7 +234,7 @@ class Runner:
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   (self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
@@ -239,7 +247,7 @@ def run_diagnostics(output=None,devices=None,timeout=60):
  if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
-  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem')
+  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('driver-api','driver')
   runtime=runner.component('native-runtime','runtime')
   if runtime['status']!='PASS':runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
   count=runner.component('cuda-discovery','count')
@@ -282,6 +290,7 @@ def main(argv=None):
    try:
     data=_rank(args._child,root,devices,args._rank) if args._rank is not None else _component(args._child,root,devices,args._device,args.stage_timeout)
     result={'status':'PASS','data':data};code=0
+    if args._child=='driver' and data['status']!='PASS':result.update(status='FAIL',error=data['summary']);code=1
    except Exception as error:
     result={'status':'FAIL','error':str(error),'exception_type':type(error).__name__,'traceback':traceback.format_exc()}
     for key in ('stdout','stderr'):
