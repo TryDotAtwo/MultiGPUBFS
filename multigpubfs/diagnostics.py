@@ -1,0 +1,291 @@
+"""Isolated, bounded single-host native diagnostics. No BFS restart or GPU reset."""
+import argparse,ctypes as C,datetime,hashlib,importlib.metadata,json,math,os,platform,shutil,signal,subprocess,sys,tempfile,threading,time,traceback,zipfile
+from pathlib import Path
+
+def _write(path,value):
+ path=Path(path);tmp=path.with_suffix(path.suffix+'.tmp')
+ with tmp.open('w',encoding='utf-8') as f:json.dump(value,f,indent=2);f.flush();os.fsync(f.fileno())
+ os.replace(tmp,path)
+
+def _phase(value):print('PHASE '+value,flush=True)
+
+def _paths():
+ from .native_distribution import native_runtime
+ from .autotune import _dependency_identity
+ native,env=native_runtime();dep=_dependency_identity(native,env)
+ if dep is None:raise RuntimeError('Could not resolve libmgbfs_cuda.so; inspect loader output')
+ libs={x[0]:x[1] for x in dep['resolved_dependencies']}
+ for name in ('libmgbfs_cuda.so','libcudart.so.12','libnccl.so.2'):
+  if name not in libs:raise RuntimeError('Native dependency not resolved: '+name)
+ return native,env,libs
+
+def _cuda(device=None,engine=False):
+ _phase('resolve and load CUDA runtime')
+ native,env,paths=_paths();cuda=C.CDLL(paths['libcudart.so.12'],mode=C.RTLD_GLOBAL)
+ cuda.cudaGetErrorString.argtypes=[C.c_int];cuda.cudaGetErrorString.restype=C.c_char_p
+ cuda.cudaSetDevice.argtypes=[C.c_int];cuda.cudaFree.argtypes=[C.c_void_p]
+ cuda.cudaMalloc.argtypes=[C.POINTER(C.c_void_p),C.c_size_t]
+ cuda.cudaMemcpy.argtypes=[C.c_void_p,C.c_void_p,C.c_size_t,C.c_int]
+ def ck(code):
+  if code:raise RuntimeError('CUDA status '+str(code)+': '+cuda.cudaGetErrorString(code).decode(errors='replace'))
+ if device is not None:
+  _phase('create CUDA context on device '+str(device));ck(cuda.cudaSetDevice(device));ck(cuda.cudaFree(None))
+ lib=None
+ if engine:
+  C.CDLL(paths['libnccl.so.2'],mode=C.RTLD_GLOBAL);lib=C.CDLL(paths['libmgbfs_cuda.so'],mode=C.RTLD_GLOBAL)
+ return cuda,lib,ck
+
+def _kernel(device):
+ cuda,lib,ck=_cuda(device,True);alloc=[]
+ def upload(values,ty):
+  host=(ty*len(values))(*values);ptr=C.c_void_p();ck(cuda.cudaMalloc(C.byref(ptr),C.sizeof(host)));alloc.append(ptr);ck(cuda.cudaMemcpy(ptr,host,C.sizeof(host),1));return ptr
+ try:
+  _phase('allocate kernel input/output');parents=upload([0,1],C.c_int64);perms=upload([1,0],C.c_uint32);out=upload([0,0],C.c_int64);error=upload([0],C.c_uint32)
+  fn=lib.mgbfs_generic_generate_i64;fn.argtypes=[C.c_uint32]*5+[C.c_void_p,C.c_uint32,C.c_uint32]+[C.c_void_p]*4+[C.c_uint32,C.c_void_p,C.c_uint32,C.c_void_p,C.c_void_p];fn.restype=C.c_int
+  _phase('launch real native successor CUDA kernel');ck(fn(0,2,2,1,1,parents,1,1,perms,None,None,None,1,out,1,error,None));ck(cuda.cudaDeviceSynchronize())
+  host=(C.c_int64*2)();err=C.c_uint32();ck(cuda.cudaMemcpy(host,out,16,2));ck(cuda.cudaMemcpy(C.byref(err),error,4,2))
+  if list(host)!=[1,0] or err.value:raise RuntimeError('Native CUDA successor mismatch')
+  return {'device':device,'kernel':'mgbfs_generic_generate_i64','exact_output_verified':True}
+ finally:
+  for ptr in alloc:cuda.cudaFree(ptr)
+
+def _save_pool(pool,root):
+ for f in pool.root.rglob('*'):
+  if f.is_file() and (f.name=='worker.log' or f.name.startswith(('phase-','response-'))):
+   dest=root/'persistent-logs'/f.relative_to(pool.root);dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(f,dest)
+
+def _rank(stage,root,devices,rank):
+ cuda,lib,ck=_cuda(devices[rank],True);comm=C.c_void_p();error=C.create_string_buffer(4096);uid=C.create_string_buffer((root/'nccl-id.bin').read_bytes(),128)
+ lib.mgbfs_nccl_create.argtypes=[C.c_uint32,C.c_uint32,C.c_uint32,C.c_void_p,C.POINTER(C.c_void_p),C.c_void_p,C.c_size_t];lib.mgbfs_nccl_create.restype=C.c_int
+ lib.mgbfs_nccl_destroy.argtypes=[C.c_void_p];lib.mgbfs_nccl_destroy.restype=None
+ _phase('rank '+str(rank)+' NCCL communicator initialization')
+ code=lib.mgbfs_nccl_create(rank,len(devices),devices[rank],uid,C.byref(comm),error,len(error))
+ if code:raise RuntimeError('NCCL initialization status '+str(code)+': '+error.value.decode(errors='replace'))
+ alloc=[]
+ def barrier(suffix):
+  (root/('rank-'+str(rank)+suffix)).touch()
+  _phase('rank '+str(rank)+' wait for all ranks '+suffix)
+  while not all((root/('rank-'+str(r)+suffix)).exists() for r in range(len(devices))):
+   if any((root/('rank-'+str(r)+'-error.json')).exists() for r in range(len(devices))):raise RuntimeError('Another NCCL rank failed; inspect rank logs')
+   time.sleep(.02)
+ try:
+  barrier('-ready')
+  if stage=='nccl_exchange':
+   send=C.c_void_p();receive=C.c_void_p()
+   for ptr in (send,receive):ck(cuda.cudaMalloc(C.byref(ptr),4));alloc.append(ptr)
+   value=C.c_uint32(rank+1);ck(cuda.cudaMemcpy(send,C.byref(value),4,1))
+   fn=lib.mgbfs_nccl_all_reduce_max_u32;fn.argtypes=[C.c_void_p]*4;fn.restype=C.c_int
+   _phase('rank '+str(rank)+' NCCL all-reduce')
+   code=fn(comm,send,receive,None)
+   if code:raise RuntimeError('NCCL collective returned status '+str(code))
+   ck(cuda.cudaDeviceSynchronize());value=C.c_uint32();ck(cuda.cudaMemcpy(C.byref(value),receive,4,2))
+   if value.value!=len(devices):raise RuntimeError('NCCL all-reduce value mismatch')
+  barrier('-done');_phase('rank '+str(rank)+' destroy NCCL communicator')
+ finally:
+  for ptr in alloc:cuda.cudaFree(ptr)
+  lib.mgbfs_nccl_destroy(comm)
+ return {'rank':rank,'device':devices[rank],'world':len(devices),'exchange_verified':stage=='nccl_exchange'}
+
+def _component(stage,root,devices,device,seconds):
+ if stage=='system':
+  _phase('query nvidia-smi')
+  r=subprocess.run(['nvidia-smi','--query-gpu=name,driver_version,memory.total','--format=csv,noheader'],text=True,capture_output=True,check=True,timeout=min(10,seconds*.8));print(r.stdout,flush=True);return {'nvidia_smi':r.stdout.strip()}
+ if stage=='filesystem':
+  roots=[root,Path(os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT') or tempfile.gettempdir())]
+  for directory in roots:
+   _phase('atomic file exchange in '+str(directory))
+   with tempfile.TemporaryDirectory(prefix='mgbfs-doctor-',dir=directory) as tmp:
+    f=Path(tmp)/'probe.json';_write(f,{'sequence':1});assert json.loads(f.read_text())=={'sequence':1}
+  return {'atomic_write_read_verified':True,'directories':list(map(str,roots))}
+ if stage=='runtime':
+  from .native_distribution import native_runtime
+  _phase('verify native bundle checksums and executable');native,env=native_runtime()
+  if not os.access(native,os.X_OK):raise RuntimeError('Native executable has no execute permission')
+  _phase('native binary loader/key-info');r=subprocess.run([native,'key-info'],env=env,capture_output=True,text=True,check=True)
+  info=json.loads(r.stdout);_phase('resolve native dependencies');_,_,libs=_paths()
+  return {'native':native,'libraries':libs,'key_info':info}
+ if stage=='count':
+  from .native_distribution import native_runtime
+  native,env=native_runtime();_phase('native graph-count / CUDA device discovery');r=subprocess.run([native,'graph-count'],env=env,capture_output=True,text=True,check=True);count=int(r.stdout.strip())
+  if count<1:raise RuntimeError('No CUDA devices visible to the native engine')
+  return {'visible_devices':count}
+ if stage=='context':
+  _cuda(device);return {'device':device,'cuda_context_verified':True}
+ if stage=='memory':
+  cuda,_,ck=_cuda(device);ptr=C.c_void_p();_phase('allocate/copy/read back 4096 bytes');ck(cuda.cudaMalloc(C.byref(ptr),4096))
+  try:
+   source=(C.c_uint32*1024)(*range(1024));out=(C.c_uint32*1024)();ck(cuda.cudaMemcpy(ptr,source,4096,1));ck(cuda.cudaMemcpy(out,ptr,4096,2));assert list(out)==list(source)
+  finally:cuda.cudaFree(ptr)
+  return {'device':device,'allocated_bytes':4096,'readback_verified':True}
+ if stage=='kernel':return _kernel(device)
+ if stage=='persistent':
+  from .generic_session import Pool
+  from .native_distribution import native_runtime
+ native,env=native_runtime();log_root=root/'persistent-runtime';log_root.mkdir();previous=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT');os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=str(log_root)
+ try:pool=Pool()
+ finally:
+  if previous is None:os.environ.pop('MGBFS_GENERIC_SESSION_LOG_ROOT',None)
+  else:os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=previous
+  try:
+   _phase('persistent worker first file request');first=pool.inventory(native,[device],env,max(.1,seconds*.5));pid=pool.workers[0].process.pid
+   _phase('persistent worker second file request');second=pool.inventory(native,[device],env,max(.1,seconds*.2));assert pid==pool.workers[0].process.pid and second[0]['device']==device
+   return {'device':device,'worker_pid':pid,'requests':2,'same_worker_verified':True}
+  finally:
+   _save_pool(pool,root);_phase('close diagnostic persistent worker');pool.close()
+ if stage in ('nccl_init','nccl_exchange'):
+  _,lib,ck=_cuda(engine=True);uid=C.create_string_buffer(128);lib.mgbfs_nccl_unique_id.argtypes=[C.c_void_p];lib.mgbfs_nccl_unique_id.restype=C.c_int
+  if lib.mgbfs_nccl_unique_id(uid):raise RuntimeError('NCCL unique ID creation failed')
+  (root/'nccl-id.bin').write_bytes(uid.raw);jobs=[];logs=[]
+  try:
+   for rank in range(len(devices)):
+    log=(root/('rank-'+str(rank)+'.log')).open('w');logs.append(log)
+    command=[sys.executable,'-m','multigpubfs.diagnostics','--_rank',str(rank),'--_child',stage,'--output',str(root),'--devices',','.join(map(str,devices))]
+    env=dict(os.environ);env.setdefault('NCCL_DEBUG','INFO');jobs.append(subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL));_phase('NCCL rank '+str(rank)+' started PID '+str(jobs[-1].pid))
+   while any(p.poll() is None for p in jobs):
+    if any(p.poll() not in (None,0) for p in jobs):raise RuntimeError('NCCL rank process failed; inspect rank logs')
+    time.sleep(.02)
+   if any(p.returncode for p in jobs):raise RuntimeError('NCCL rank process failed')
+   return {'devices':devices,'ranks':[json.loads((root/('rank-'+str(r)+'.json')).read_text()) for r in range(len(devices))]}
+  finally:
+   for job in jobs:
+    if job.poll() is None:job.terminate()
+   for log in logs:log.close()
+ if stage=='bfs':
+  from .graph_definition import GraphDefinition
+  from .launch import run_graph
+  g=GraphDefinition.permutation([[1,0,2],[0,2,1]],[0,1,2]);_phase('native BFS, known S3 layers')
+  report=run_graph(g,root/'bfs',devices=devices,capacity=64,shards=1,autotune=False,max_seconds=max(1,min(10,int(seconds*.4))))
+  if report['status']!='COMPLETE' or report['layer_sizes']!=[1,2,2,1]:raise RuntimeError('Tiny BFS did not match exact S3 oracle: '+repr(report))
+  return {'devices':devices,'layer_sizes':report['layer_sizes'],'bfs_seconds':report['bfs_seconds'],'exact_oracle_verified':True}
+ raise ValueError('Unknown diagnostic component '+stage)
+
+class Runner:
+ def __init__(self,root,timeout):
+  self.root=Path(root);self.root.mkdir(parents=True,exist_ok=False);self.timeout=timeout
+  try:version=importlib.metadata.version('multigpubfs')
+  except importlib.metadata.PackageNotFoundError:version='source-checkout'
+  self.report={'schema':1,'status':'RUNNING','scope':'single-host diagnostic; no multi-node acceptance or automatic BFS restart','python':sys.version,'platform':platform.platform(),'package':version,'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'stage_timeout_seconds':timeout,'environment':{k:os.environ[k] for k in ('MGBFS_NATIVE_QUERY_SECONDS','CUDA_MODULE_LOADING','CUDA_DISABLE_PTX_JIT','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_IB_DISABLE','NCCL_SOCKET_IFNAME') if k in os.environ},'steps':[]}
+  self.save()
+ def save(self):_write(self.root/'report.json',self.report)
+ def skip(self,name,reason):
+  self.report['steps'].append({'name':name,'status':'SKIPPED','reason':reason});self.save();print('SKIP '+name+': '+reason,flush=True)
+ def run(self,name,command,*,optional=False):
+  entry={'name':name,'status':'RUNNING','command':command,'timeout_seconds':self.timeout,'log':name+'.log'};self.report['steps'].append(entry);self.save();print('START '+name,flush=True)
+  started=time.monotonic();process=None;thread=None
+  try:
+   with (self.root/(name+'.log')).open('w',encoding='utf-8') as log:
+    env=dict(os.environ)
+    for key in ('RANK','LOCAL_RANK','WORLD_SIZE','MASTER_ADDR','MASTER_PORT','TORCHELASTIC_RUN_ID'):env.pop(key,None)
+    process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',start_new_session=os.name=='posix')
+    entry['pid']=process.pid;self.save()
+    def pump():
+     for line in process.stdout:
+      log.write(line);log.flush()
+      if line.startswith('PHASE '):print('  '+name+': '+line.strip()[6:],flush=True)
+    thread=threading.Thread(target=pump,daemon=True);thread.start()
+    try:process.wait(timeout=self.timeout)
+    except subprocess.TimeoutExpired:
+     entry['status']='TIMEOUT';entry['error']='Stage deadline exceeded; only this diagnostic process group is terminated'
+     self.stop(process)
+    except BaseException:self.stop(process);raise
+    self.stop(process);thread.join(timeout=2)
+    if entry['status']=='RUNNING':
+     entry['exit_code']=process.returncode;entry['status']='PASS' if process.returncode==0 else 'FAIL'
+     if process.returncode:entry['error']='Component process exited with code '+str(process.returncode)
+  except (OSError,ValueError) as error:entry.update(status='FAIL',error=str(error))
+  entry['seconds']=time.monotonic()-started
+  if optional and entry['status'] in ('FAIL','TIMEOUT'):entry['status']='WARNING'
+  entry['log_tail']=(self.root/(name+'.log')).read_text(encoding='utf-8',errors='replace')[-6000:] if (self.root/(name+'.log')).exists() else ''
+  result=self.root/name/'result.json'
+  if result.is_file():
+   try:entry['result']=json.loads(result.read_text())
+   except (OSError,ValueError) as error:entry.update(status='FAIL',error='Invalid component result: '+str(error))
+  self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
+ @staticmethod
+ def stop(process):
+  if os.name=='posix':
+   try:os.killpg(process.pid,signal.SIGTERM)
+   except ProcessLookupError:pass
+  elif process.poll() is None:process.terminate()
+  try:process.wait(timeout=1)
+  except subprocess.TimeoutExpired:pass
+  if os.name=='posix':
+   try:os.killpg(process.pid,signal.SIGKILL)
+   except ProcessLookupError:pass
+  elif process.poll() is None:process.kill()
+  process.wait()
+ def component(self,name,stage,*,devices=None,device=None,optional=False):
+  folder=self.root/name;folder.mkdir()
+  command=[sys.executable,'-m','multigpubfs.diagnostics','--_child',stage,'--output',str(folder),'--stage-timeout',str(self.timeout)]
+  if devices is not None:command+=['--devices',','.join(map(str,devices))]
+  if device is not None:command+=['--_device',str(device)]
+  return self.run(name,command,optional=optional)
+ def finish(self):
+  failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
+  self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.save()
+  lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
+  for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
+  (self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  manifest=[]
+  for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
+  _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
+  with zipfile.ZipFile(self.root/'diagnostics.zip','w',zipfile.ZIP_DEFLATED) as archive:
+   for f in files+[self.root/'manifest.json']:archive.write(f,str(f.relative_to(self.root)))
+  print('\n'.join(lines),flush=True);print('BUNDLE '+str(self.root/'diagnostics.zip'),flush=True);return self.report
+
+def run_diagnostics(output=None,devices=None,timeout=60):
+ if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
+ if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
+ root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
+ try:
+  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem')
+  runtime=runner.component('native-runtime','runtime')
+  if runtime['status']!='PASS':runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
+  count=runner.component('cuda-discovery','count')
+  if count['status']!='PASS':runner.skip('gpu-components','CUDA discovery failed');return runner.finish()
+  selected=devices or list(range(count['result']['data']['visible_devices']))
+  if any(d>=count['result']['data']['visible_devices'] for d in selected):
+   runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU ID is not visible'});runner.save();return runner.finish()
+  runner.report['devices']=selected;runner.save();healthy=[]
+  for device in selected:
+   context=runner.component('gpu-'+str(device)+'-context','context',device=device)
+   if context['status']!='PASS':runner.skip('gpu-'+str(device)+'-remaining','CUDA context failed');continue
+   memory=runner.component('gpu-'+str(device)+'-memory','memory',device=device)
+   kernel=runner.component('gpu-'+str(device)+'-kernel','kernel',device=device) if memory['status']=='PASS' else None
+   if kernel is None:runner.skip('gpu-'+str(device)+'-kernel','Memory allocation/readback failed')
+   runner.component('gpu-'+str(device)+'-persistent','persistent',device=device)
+   if kernel is not None and kernel['status']=='PASS':healthy.append(device);runner.component('gpu-'+str(device)+'-bfs','bfs',devices=[device])
+  if len(selected)>1 and healthy==selected:
+   init=runner.component('nccl-init','nccl_init',devices=selected)
+   if init['status']=='PASS':
+    exchange=runner.component('nccl-exchange','nccl_exchange',devices=selected)
+    if exchange['status']=='PASS':runner.component('multi-gpu-bfs','bfs',devices=selected)
+    else:runner.skip('multi-gpu-bfs','NCCL exchange failed')
+   else:runner.skip('nccl-exchange','NCCL initialization failed');runner.skip('multi-gpu-bfs','NCCL initialization failed')
+  else:runner.skip('multi-gpu-checks','Need at least two healthy selected GPUs')
+  return runner.finish()
+ except KeyboardInterrupt:
+  runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'});return runner.finish()
+ except Exception as error:
+  runner.report['steps'].append({'name':'diagnostic-controller','status':'FAIL','error':str(error),'traceback':traceback.format_exc()});return runner.finish()
+
+def main(argv=None):
+ parser=argparse.ArgumentParser(description='Check native loader, filesystem, every visible GPU, kernel, persistent workers, NCCL and tiny exact BFS; write report/log bundle. No GPU reset or automatic retry.')
+ parser.add_argument('--output',type=Path,help='New diagnostic directory (must not already exist)');parser.add_argument('--devices',help='Logical local IDs, e.g. 0,1; default all visible GPUs');parser.add_argument('--stage-timeout',type=float,default=60)
+ parser.add_argument('--_child',help=argparse.SUPPRESS);parser.add_argument('--_device',type=int,help=argparse.SUPPRESS);parser.add_argument('--_rank',type=int,help=argparse.SUPPRESS)
+ args=parser.parse_args(argv)
+ try:
+  devices=None if args.devices is None else [int(v) for v in args.devices.split(',')]
+  if args._child:
+   root=args.output
+   try:
+    data=_rank(args._child,root,devices,args._rank) if args._rank is not None else _component(args._child,root,devices,args._device,args.stage_timeout)
+    result={'status':'PASS','data':data};code=0
+   except Exception as error:result={'status':'FAIL','error':str(error),'exception_type':type(error).__name__,'traceback':traceback.format_exc()};print(result['traceback'],flush=True);code=1
+   name='result.json' if args._rank is None else 'rank-'+str(args._rank)+('.json' if code==0 else '-error.json')
+   _write(root/name,result);return code
+  report=run_diagnostics(args.output,devices,args.stage_timeout);return 0 if report['status']=='PASS' else 1
+ except (OSError,ValueError) as error:print('Diagnostic setup error: '+str(error),file=sys.stderr);return 2
+
+if __name__=='__main__':raise SystemExit(main())
