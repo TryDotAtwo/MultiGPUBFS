@@ -16,8 +16,8 @@ def main():
         if hashlib.sha256(base.read_bytes()).hexdigest()!=BASE_SHA:raise RuntimeError('BASE_WHEEL_CHECKSUM')
         with zipfile.ZipFile(base) as z:
             for name in z.namelist():
-                if name.startswith('multigpubfs/_native/') and not name.endswith('/'):
-                    target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(z.read(name))
+                if 'multigpubfs/_native/' in name and not name.endswith('/'):
+                    target=root/name[name.index('multigpubfs/_native/'):];target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(z.read(name))
         (stage/'bin/mgbfs').chmod(0o755)
         deps=temp/'deps';deps.mkdir()
         subprocess.run([sys.executable,'-m','pip','download','--no-deps','--only-binary=:all:','-d',str(deps),*RUNTIMES],check=True)
