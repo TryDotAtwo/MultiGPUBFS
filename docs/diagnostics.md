@@ -53,7 +53,7 @@ The ZIP contains diagnostic metadata and logs, not BFS state payloads, raw worke
 
 ## Diagnosing CUDA error 35 without server administration
 
-Version `0.2.0.dev8` adds `driver-api` to the same `multigpubfs doctor` command. This stage runs even when native GPU discovery subsequently fails. It gathers:
+Version `0.2.0.dev9` adds `driver-api` to the same `multigpubfs doctor` command. This stage runs even when native GPU discovery subsequently fails. It gathers:
 
 - The actual `libcuda.so.1` path determined from the loaded `cuInit` symbol, not merely an installed-file search.
 - `cuDriverGetVersion`, `cuInit`, `cuDeviceGetCount`, symbolic Driver API errors and descriptions, visible GPU names and compute capabilities.
