@@ -6,6 +6,10 @@ on:
         description: GitHub release tag for the verified packaging candidate
         required: true
         default: native-pip-20261013
+      reuse_release:
+        description: Optional immutable portable native release (Python-only repack)
+        required: false
+        default: ""
 permissions:
   contents: write
 jobs:
@@ -25,9 +29,20 @@ jobs:
       - name: Check private runtime contracts
         run: python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
       - name: Build portable native binaries on Ubuntu 22.04
+        if: inputs.reuse_release == ''
         run: python3 scripts/build_portable_native.py
+      - name: Reuse checked portable native artifacts for Python-only updates
+        if: inputs.reuse_release != ''
+        env:
+          REUSE_RELEASE: ${{ inputs.reuse_release }}
+        run: python3 scripts/reuse_portable_native.py "$REUSE_RELEASE"
       - name: Assemble wheel with private redistributables
-        run: python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so
+        run: |
+          if [ -f /tmp/mgbfs-portable/native-manifest.json ]; then
+            python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json
+          else
+            python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so
+          fi
       - name: Test clean Linux pip install without setup script
         run: |
           python3 -m venv /tmp/pip-native-clean
