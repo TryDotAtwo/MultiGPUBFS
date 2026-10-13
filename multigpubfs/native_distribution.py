@@ -2,16 +2,22 @@
 import hashlib,json,os,shutil,sysconfig
 from pathlib import Path
 
+def _stream_digest(path):
+ digest=hashlib.sha256()
+ with Path(path).open('rb') as stream:
+  for chunk in iter(lambda:stream.read(4<<20),b''):digest.update(chunk)
+ return digest.hexdigest()
+
 def _file_digest(path):
  from .generic_session import _active
- if _active is None:return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+ if _active is None:return _stream_digest(path)
  from .autotune import _stat_identity
  key=(str(Path(path).resolve()),_stat_identity(path))
  cache=getattr(_active,'file_digests',None)
  if cache is None:cache={};_active.file_digests=cache
  if key not in cache:
   if len(cache)>=64:cache.clear()
-  cache[key]=hashlib.sha256(Path(path).read_bytes()).hexdigest()
+  cache[key]=_stream_digest(path)
  return cache[key]
 
 def native_runtime(explicit=None):
