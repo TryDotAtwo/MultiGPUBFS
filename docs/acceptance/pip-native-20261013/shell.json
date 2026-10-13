@@ -1,0 +1,141 @@
+{
+  "status": "VERIFIED_FRESH_LINUX_SHELL_ONE_TWO_GPU",
+  "python": "/tmp/multigpubfs-clean-shell/bin/python",
+  "module": "/tmp/multigpubfs-clean-shell/lib/python3.13/site-packages/multigpubfs/__init__.py",
+  "cases": [
+    {
+      "devices": [
+        0
+      ],
+      "layer_sizes": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "6eb08ae2c30e74ee91eb7bc7c8b9e3e92588a33265d25d050e0dfcf6df1c8929",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      }
+    },
+    {
+      "devices": [
+        0,
+        1
+      ],
+      "layer_sizes": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "6eb08ae2c30e74ee91eb7bc7c8b9e3e92588a33265d25d050e0dfcf6df1c8929",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      }
+    },
+    {
+      "family": "matrix",
+      "devices": [
+        0
+      ],
+      "layer_sizes": [
+        1,
+        4,
+        8,
+        10,
+        1
+      ],
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "6eb08ae2c30e74ee91eb7bc7c8b9e3e92588a33265d25d050e0dfcf6df1c8929",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      }
+    },
+    {
+      "family": "matrix",
+      "devices": [
+        0,
+        1
+      ],
+      "layer_sizes": [
+        1,
+        4,
+        8,
+        10,
+        1
+      ],
+      "runtime_identity": {
+        "native_sha256": "b9a2cd303eb315dab3a0c28dd366a3739db439470380e77db4fc7c6cdda0772f",
+        "python_runtime_sha256": "6eb08ae2c30e74ee91eb7bc7c8b9e3e92588a33265d25d050e0dfcf6df1c8929",
+        "source_commit": "7046577446e546b86317f6e2e24cf319552b29cd",
+        "cuda_library_sha256": "27a2a4f68710e9599b84db853f4f9b8917468e7e641ef8d7a70585b1956299af",
+        "cuda_toolkit": null,
+        "architectures": [
+          75,
+          86
+        ]
+      }
+    },
+    {
+      "family": "resource",
+      "devices": [
+        0,
+        1
+      ],
+      "layer_sizes": [
+        1,
+        3
+      ],
+      "status": "INCOMPLETE",
+      "reason": "RESOURCE_2"
+    }
+  ],
+  "cli_layer_sizes": [
+    1,
+    3,
+    6,
+    10,
+    16,
+    24,
+    29,
+    21,
+    6,
+    3,
+    1
+  ]
+}

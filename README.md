@@ -4,7 +4,7 @@
 
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
-Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Actual acceptance: one/two RTX3060; larger/Blackwell and physical multi-host configurations remain unverified.
+Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Single-command GitHub wheel acceptance: clean Linux installation and physical one/twoT4 GPU tests. Larger/Blackwell and physical multi-host configurations remain unverified.
 
 Research workspace for understanding exact breadth-first search, from a small
 CPU reference to conceptual and measurement-based study of GPU and multi-GPU
@@ -81,7 +81,7 @@ bottlenecks are not interchangeable.
 - [Reverse BFS, postdominators, and inevitable targets](docs/notes/91-reverse-bfs-postdominators-and-inevitable-targets.md)
 - [Reachability-preserving graphs, BFS metric, and generators](docs/notes/92-reachability-preserving-graphs-bfs-metric-and-generators.md)
 - [Cayley word metrics, generator changes, and BFS growth](docs/notes/93-cayley-word-metrics-generator-changes-and-bfs-growth.md)
-- [BFS boundaries, Følner sets, and Cayley amenability](docs/notes/94-bfs-boundaries-folner-sets-and-cayley-amenability.md)
+- [BFS boundaries, FГёlner sets, and Cayley amenability](docs/notes/94-bfs-boundaries-folner-sets-and-cayley-amenability.md)
 - [BFS versus random-walk hitting and cover time](docs/notes/95-bfs-versus-random-walk-hitting-and-cover-time.md)
 - [BFS, flooding, rumor spreading, and message time](docs/notes/96-bfs-flooding-rumor-spreading-and-message-time.md)
 - [BFS balls, separators, and ends of Cayley graphs](docs/notes/97-bfs-balls-separators-and-ends-of-cayley-graphs.md)

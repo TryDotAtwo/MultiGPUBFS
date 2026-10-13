@@ -1,8 +1,8 @@
 # Reproduce the GPU pair sweeps
 
-Validation status (2026-10-12): the exact public run cells passed a private physical2×T4 gate for all14 LRX and14 M2 pairs at n=2..5. Every111 layer count matched an independent CPU oracle; all28 cases were COMPLETE. Each family used one resident worker PID group. Total API-call times were3.376s LRX and3.614s M2 (tiny graphs, not a large-graph throughput benchmark). Public notebook version3 contains the accepted run cells without the private CPU-oracle checker.
+Validation status (2026-10-12): the exact public run cells passed a private physical2Г—T4 gate for all14 LRX and14 M2 pairs at n=2..5. Every111 layer count matched an independent CPU oracle; all28 cases were COMPLETE. Each family used one resident worker PID group. Total API-call times were3.376s LRX and3.614s M2 (tiny graphs, not a large-graph throughput benchmark). Public notebook version3 contains the accepted run cells without the private CPU-oracle checker.
 
-[Open the Kaggle notebook](https://www.kaggle.com/code/trydotatwo/multigpubfs-pair-sweep), choose **Copy & Edit**, enable **GPU (2×T4)** and **Internet**, and Run All. No compilation or manual package installation is needed: the setup cell loads a pinned bootstrap from GitHub and installs the checksummed native GitHub Release. No Kaggle Inputs are attached. The complete notebook source is also available directly in this repository for import into Kaggle.
+[Open the Kaggle notebook](https://www.kaggle.com/code/trydotatwo/multigpubfs-pair-sweep), choose **Copy & Edit**, enable **GPU (2Г—T4)** and **Internet**, and Run All. No compilation or manual package installation is needed: one pip command installs the checksummed wheel from GitHub Releases. No Kaggle Inputs are attached. The complete notebook source is also available directly in this repository for import into Kaggle.
 
 The [notebook source](../examples/cayleypy_pair_sweep.ipynb) is also in this repository. Its default grid is intentionally small (`n=2..5`, `r=1..n`). Change `FAMILY` to `lrx` or `rapaport_m2`, the range, per-pair seconds and total work seconds. All visible GPUs are selected automatically. There is no provisioning or billing control in the notebook; on rented machines the platform must enforce a separate spending/deletion limit.
 
@@ -32,6 +32,6 @@ All outputs remain under `/kaggle/working/pair-sweep/FAMILY` (or the correspondi
 
 ## Hardware and provenance
 
-The pinned GitHub release is source `419fa34f`, CUDA12.9, SM75/SM86. It was verified on physical 2×T4 and 2×RTX3060. It is **not a B300 binary**; Blackwell requires a separately compatible native artifact and actual hardware acceptance. Large production timing and memory coverage must be established on the target hardware; a small successful notebook does not demonstrate that a large graph fits.
+The pinned GitHub release is source `419fa34f`, CUDA12.9, SM75/SM86. It was verified on physical 2Г—T4 and 2Г—RTX3060. It is **not a B300 binary**; Blackwell requires a separately compatible native artifact and actual hardware acceptance. Large production timing and memory coverage must be established on the target hardware; a small successful notebook does not demonstrate that a large graph fits.
 
 Our earlier large rented-host campaigns used the repository's `scripts/run_auto_tail.py` orchestration, deadline/lease guards, saved ledgers and separately checked publication receipts. Those scripts require a matching source/native runtime environment and campaign configuration. This notebook publishes a simpler current CayleyPy API workflow with the same canonical pair definition and compact-output purpose; it is not a promise of identical historical production scheduling or timing.

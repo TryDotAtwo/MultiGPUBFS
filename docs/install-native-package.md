@@ -1,25 +1,22 @@
-# Install MultiGPUBFS from GitHub
+# Install MultiGPUBFS with one pip command
 
-Our source, notebook setup and native wheel are published in this GitHub repository and its Releases. No Kaggle utility, datasets or external artifact-storage account is needed. Standard Python dependencies (CayleyPy and NVIDIA runtime packages) are installed using pip.
+The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed through SSH. No bootstrap, compiler, separate CUDA toolkit installation, manual library paths, chmod, HF account or Kaggle Inputs are needed.
 
-## Kaggle: no inputs, no compilation
+## Linux / SSH
 
-Use [the basic notebook source](../examples/cayleypy_basic.ipynb) or [the pair-sweep notebook source](../examples/cayleypy_pair_sweep.ipynb). Import the GitHub notebook into Kaggle (File → Import Notebook), enable **Internet** and **GPU (2×T4)**, and Run All. The notebook has a setup cell that fetches the bootstrap at a pinned GitHub commit, checks its SHA256 and installs the checksummed wheel from GitHub Releases. All dataset/kernel/competition/model source lists are empty.
-
-For an existing Kaggle notebook, run this setup cell in a fresh environment before importing the package:
-
-```python
-import hashlib, urllib.request
-url = "https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/591efb9136c25e269c4ac1d36bc391b87f285997/examples/kaggle_native_setup.py"
-with urllib.request.urlopen(url, timeout=90) as response:
-    source = response.read()
-assert hashlib.sha256(source).hexdigest() == "d528afd0422f8fde9c614b79b81df14404cd7a7737e6ccc14700522a3305870b", "GitHub bootstrap checksum mismatch"
-namespace = {}
-exec(compile(source, "github-native-setup", "exec"), namespace)
-namespace["setup"]()
+```bash
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261013-v2/multigpubfs-0.2.0.dev2-py3-none-linux_x86_64.whl#sha256=ddcbca720876f87fc048c107fb8227d42bc3f6e3ebb9894e87d34db0e405ffac"
 ```
 
-Then use the CayleyPy API:
+## Kaggle
+
+Enable **Internet** and **GPU (2×T4)**, then run:
+
+```python
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261013-v2/multigpubfs-0.2.0.dev2-py3-none-linux_x86_64.whl#sha256=ddcbca720876f87fc048c107fb8227d42bc3f6e3ebb9894e87d34db0e405ffac"
+```
+
+Use the package after installation:
 
 ```python
 import multigpubfs, cayleypy
@@ -28,31 +25,20 @@ graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5), device="cpu")
 result = graph.bfs()
 ```
 
-The setup isolates native CUDA/NCCL under `/tmp/multigpubfs-runtime`; it preserves Kaggle's Torch-pinned NCCL installation. `device="cpu"` creates graph definitions; the native BFS uses all visible GPUs. Select GPUs explicitly with `native_options=multigpubfs.NativeOptions(devices=(0,1))`. Activation is explicit; import alone does not patch CayleyPy.
+`device="cpu"` creates the graph definition. Native BFS uses the visible GPUs. To select them explicitly, pass `native_options=multigpubfs.NativeOptions(devices=(0,1))` to `graph.bfs()`. Activation is explicit and reversible; importing the package alone does not replace CayleyPy methods.
 
-If the older global pip command already changed Kaggle's dependencies, use a fresh notebook session/environment. A Python-only kernel restart does not restore installed dependencies. Do not replace Kaggle's GPU Torch with CPU Torch.
+The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies using pip. CUDA runtime12.9.79 and NCCL2.30.7 are bundled under `multigpubfs/_native/lib`, with licenses and checked hashes. They are used only by native child processes; the wheel does not declare NVIDIA runtime package dependencies or replace Torch's pinned NCCL. Executable permissions are carried by the wheel.
 
-## Release identity and supported hardware
+## Scope and identity
 
-[Native release](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-419fa34f-cuda12.9-sm75-sm86): source `419fa34f6ab4f35543bbd37f918faca85aed6c8f`, Linux x86_64, CUDA12.9, SM75/SM86 (T4/RTX3060). Wheel SHA256 `f85b5d3f90bb6c870bc60b3fbc76ef920284a83a443185090aa81643f3bee9aa`. Anonymous GitHub asset readback matched this checksum. The runtime also verifies native executable/library hashes. This artifact is not a B200/B300 binary. A compatible NVIDIA driver and host libraries are required.
+Release: [native-pip-20261013-v2](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261013-v2). Package `0.2.0.dev2`; SHA256 `ddcbca720876f87fc048c107fb8227d42bc3f6e3ebb9894e87d34db0e405ffac`. Pip verifies this hash through the URL fragment.
 
-The unchanged native wheel passed clean one/twoRTX3060 acceptance and physical2×T4 independent CPU comparisons for LRX/M2. The GitHub-only distribution path is separately checked on Kaggle; its current receipt is recorded in [the pair-sweep acceptance report](pair-sweep-acceptance-2026-10-12.md). Publication is not itself a new target-hardware acceptance.
+Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. This wheel compiles SM75/SM86 (T4/RTX3060); it does not claim B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
 
-## Standalone Linux: fresh virtual environment
+The native binaries were rebuilt on Ubuntu22.04 to avoid the old artifact's GLIBC2.38/GLIBCXX3.4.32 dependency. Exact runtime requirements and source/build hashes are recorded in the release manifest. [Acceptance evidence](pip-install-acceptance-2026-10-13.md) separates clean Linux installation, GPU results and hardware limits.
 
-This route is for a separate Linux environment, not Kaggle's preinstalled environment. CPU Torch here is only for graph definitions; native BFS runs on GPUs.
+## Examples
 
-```bash
-python -m venv bfs-venv
-source bfs-venv/bin/activate
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install "cayleypy==0.2.0" "nvidia-cuda-runtime-cu12==12.9.79" "nvidia-nccl-cu12==2.30.7"
-python -m pip install --no-deps "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-419fa34f-cuda12.9-sm75-sm86/multigpubfs-0.2.0.dev0-py3-none-linux_x86_64.whl"
-python -c "import pathlib,sysconfig; (pathlib.Path(sysconfig.get_paths()['purelib'])/'multigpubfs/_native/bin/mgbfs').chmod(0o755)"
-```
+Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from this GitHub repository into Kaggle. Their dataset/kernel/competition/model input lists are empty. Results are written locally; no external artifact-storage account is needed.
 
-CayleyPy0.2.0 is the tested API dependency; arbitrary GitHub HEAD is not the same validation target. See [adapter details](cayleypy-native-integration.md) for option and result contracts.
-
-## Older document links
-
-The document URL pinned to commit165e6c499bea5c324ec22c5e3c9d75a8a25d4b93 is immutable and references an older wheel without enable_native(). Use this current document and the GitHub Release above. Historical release provenance is retained in a separate archive document; it is not an installation requirement.
+The earlier pinned documentation and release are historical. Use this version's command; do not combine it with old global CUDA/NCCL installation commands. If an earlier command already changed the notebook environment, start a fresh Kaggle session/environment before testing this version.
