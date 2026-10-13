@@ -48,3 +48,32 @@ class ExtendedDiagnosticTests(unittest.TestCase):
  def test_local_survey_needs_no_gpu_or_tools(self):
   with tempfile.TemporaryDirectory() as tmp,patch('multigpubfs.system_diagnostics.library_candidates',return_value=[]):
    result=survey(Path(tmp));self.assertEqual(result['status'],'PASS');self.assertEqual(result['loopback']['status'],'PASS');self.assertTrue((Path(tmp)/'environment.json').is_file())
+
+ def test_spawn_failure_is_not_cuda_failure(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   r=Runner(Path(tmp)/'report',3)
+   with patch('multigpubfs.diagnostics.subprocess.Popen',side_effect=PermissionError(errno.EPERM,'spawn denied')):result=r.run('blocked',[sys.executable,'-c','pass'])
+   self.assertEqual(result['errno'],errno.EPERM);report=r.finish();self.assertEqual(report['analysis']['confirmed_findings'][0]['code'],'DIAGNOSTIC_PROCESS_SPAWN_FAILED');self.assertIn('parent_resource_limits',report)
+ def test_v1_wildcards_and_malformed_policy(self):
+  from multigpubfs.diagnostic_analysis import v1_device_allows
+  self.assertTrue(v1_device_allows('a *:* rwm',195,255));self.assertTrue(v1_device_allows('c 195:* rw',195,255));self.assertFalse(v1_device_allows('c 195:0 rw',195,255));self.assertIsNone(v1_device_allows('malformed',195,0))
+ def test_visibility_contrast_reproduces_original_failure(self):
+  from multigpubfs.system_diagnostics import contrasts
+  original={'CUDA_VISIBLE_DEVICES':'1','NVIDIA_VISIBLE_DEVICES':'restricted','LD_PRELOAD':'fake.so'}
+  with tempfile.TemporaryDirectory() as tmp:
+   parent=Path(tmp);root=parent/'matrix';root.mkdir();count=parent/'cuda-discovery';count.mkdir();(count/'result.json').write_text('{"status":"FAIL"}')
+   def fake(command,**kwargs):
+    good='LD_PRELOAD' not in kwargs['env'];self.assertEqual(kwargs['env']['CUDA_VISIBLE_DEVICES'],'1');self.assertEqual(kwargs['env']['NVIDIA_VISIBLE_DEVICES'],'restricted')
+    if '--output' in command:Path(command[command.index('--output')+1]).write_text(json.dumps({'status':'PASS' if good else 'FAIL'}));return subprocess.CompletedProcess(command,0,'','')
+    return subprocess.CompletedProcess(command,0 if good else 1,'2' if good else '', 'fixture failure' if not good else '')
+   with patch('multigpubfs.native_distribution.native_runtime',return_value=('/fixture/native',original)),patch('multigpubfs.system_diagnostics.subprocess.run',side_effect=fake):result=contrasts(root,60)
+   self.assertEqual([x['status'] for x in result['results']],['PASS','FAIL']);self.assertEqual(original['LD_PRELOAD'],'fake.so')
+ def test_kernel_image_error_has_own_explanation(self):
+  a=analyze({'steps':[step('gpu-0-kernel',status='FAIL',log_tail='CUDA status 209: no kernel image is available for execution on the device')]});self.assertEqual(a['confirmed_findings'][0]['code'],'NATIVE_KERNEL_IMAGE_UNAVAILABLE')
+ def test_sigkill_is_not_proof_of_oom(self):
+  a=analyze({'steps':[step('torch-evidence',status='WARNING',exit_code=-9)]});self.assertFalse(a['confirmed_findings']);self.assertEqual(a['hypotheses'][0]['code'],'PROCESS_KILLED_NOT_GPU_PROOF')
+ def test_driver_version_difference_is_not_automatic_mismatch(self):
+  a=analyze({'steps':[step('driver-api',{'status':'PASS','driver':{'resolved_library':'/compat/libcuda.so.580.178.04'}}),step('nvml-evidence',{'status':'PASS','driver_version':'535.129.03'})]});self.assertEqual(a['confirmed_findings'][0]['code'],'DRIVER_LIBRARY_MANAGEMENT_VERSION_DIFFERENCE');self.assertIn('valid forward compatibility',a['confirmed_findings'][0]['statement']);self.assertIsNone(a['primary_failure'])
+ def test_optional_torch_respects_memory_headroom(self):
+  from multigpubfs.system_diagnostics import torch_probe
+  with patch('multigpubfs.system_diagnostics.importlib.util.find_spec',return_value=object()),patch('multigpubfs.system_diagnostics.cgroups',return_value={'records':[{'files':{'memory.max':'1024','memory.current':'1000'}}]}):self.assertEqual(torch_probe()['status'],'UNAVAILABLE')

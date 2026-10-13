@@ -175,6 +175,10 @@ class Runner:
   try:version=importlib.metadata.version('multigpubfs')
   except importlib.metadata.PackageNotFoundError:version='source-checkout'
   self.report={'schema':1,'status':'RUNNING','scope':'single-host diagnostic; no multi-node acceptance or automatic BFS restart','python':sys.version,'platform':platform.platform(),'package':version,'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'stage_timeout_seconds':timeout,'environment':{k:os.environ[k] for k in ('MGBFS_NATIVE_QUERY_SECONDS','CUDA_MODULE_LOADING','CUDA_DISABLE_PTX_JIT','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_IB_DISABLE','NCCL_SOCKET_IFNAME') if k in os.environ},'steps':[]}
+  try:
+   from .system_diagnostics import limits
+   self.report['parent_resource_limits']=limits()
+  except (ImportError,OSError):self.report['parent_resource_limits']={'status':'UNAVAILABLE'}
   self.save()
  def save(self):_write(self.root/'report.json',self.report)
  def skip(self,name,reason):
@@ -202,7 +206,7 @@ class Runner:
     if entry['status']=='RUNNING':
      entry['exit_code']=process.returncode;entry['status']='PASS' if process.returncode==0 else 'FAIL'
      if process.returncode:entry['error']='Component process exited with code '+str(process.returncode)
-  except (OSError,ValueError) as error:entry.update(status='FAIL',error=str(error))
+  except (OSError,ValueError) as error:entry.update(status='FAIL',error=str(error),errno=getattr(error,'errno',None),exception_type=type(error).__name__)
   entry['seconds']=time.monotonic()-started
   if optional and entry['status'] in ('FAIL','TIMEOUT'):entry['status']='WARNING'
   entry['log_tail']=(self.root/(name+'.log')).read_text(encoding='utf-8',errors='replace')[-6000:] if (self.root/(name+'.log')).exists() else ''

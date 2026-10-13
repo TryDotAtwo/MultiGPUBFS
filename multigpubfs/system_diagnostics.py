@@ -12,7 +12,7 @@ def limits():
 def device_access(path):
  item={'path':str(path)}
  try:
-  s=path.stat();item.update(exists=True,character_device=stat.S_ISCHR(s.st_mode),major=os.major(s.st_rdev),minor=os.minor(s.st_rdev),mode=oct(stat.S_IMODE(s.st_mode)),read_access=os.access(path,os.R_OK),write_access=os.access(path,os.W_OK))
+  s=path.stat();item.update(exists=True,character_device=stat.S_ISCHR(s.st_mode),major=os.major(s.st_rdev),minor=os.minor(s.st_rdev),mode=oct(stat.S_IMODE(s.st_mode)),owner_uid=s.st_uid,owner_gid=s.st_gid,read_access=os.access(path,os.R_OK),write_access=os.access(path,os.W_OK))
  except OSError as error:item.update(exists=False if error.errno==errno.ENOENT else None,error=str(error),errno=error.errno);return item
  if path.name in ('nvidiactl','nvidia-uvm') and item['character_device']:
   _phase('open and immediately close '+str(path)+'; no ioctl or GPU allocation')
@@ -91,8 +91,15 @@ def survey(root):
    if key in ('NoNewPrivs','Seccomp','Seccomp_filters','CapEff','Threads','VmRSS','VmPeak'):data['process_security'][key]=value.strip()
  data['lsm_context']=_read('/proc/self/attr/current',1024);data['cgroups']=cgroups();data['container_markers']={p:Path(p).exists() for p in ('/.dockerenv','/run/.containerenv')};save()
  _phase('record NVIDIA device-node permission evidence');data['device_nodes']=[]
- for path in (Path('/dev/nvidiactl'),Path('/dev/nvidia-uvm')):data['device_nodes'].append(device_access(path));save()
+ nodes=[Path('/dev/nvidiactl'),Path('/dev/nvidia-uvm')]
+ try:nodes += sorted(Path('/dev').glob('nvidia[0-9]*'))[:32]+sorted(Path('/dev/nvidia-caps').glob('nvidia-cap*'))[:32]
+ except OSError as error:data['device_listing_error']=str(error)
+ for path in nodes:data['device_nodes'].append(device_access(path));save()
  _phase('inventory bounded existing driver library candidates and ELF headers');data['driver_candidates']=library_candidates();save()
+ manifest=Path(__file__).parent/'_native/manifest.json'
+ try:
+  declared=json.loads(manifest.read_text());data['native_build_declaration']={k:declared.get(k) for k in ('architectures','cuda_toolkit','source_commit','package_source_commit','elf_runtime_requirements')};data['native_executable_mount']=mount_for(manifest.parent/'bin/mgbfs')
+ except (OSError,ValueError):data['native_build_declaration']={'status':'UNAVAILABLE'}
  data['filesystems']={}
  for path in (str(root),tempfile.gettempdir(),'/dev/shm'):
   item={'mount':mount_for(path)}
@@ -112,6 +119,11 @@ def survey(root):
  try:
   for path in Path('/sys/class/net').iterdir():data['network_interfaces'].append(path.name)
  except OSError as error:data['network_interfaces_error']=str(error)
+ tools=[shutil.which('systemctl')];data['fabric_manager']={'status':'UNAVAILABLE','scope':'Daemon status does not prove Fabric Manager is required on this hardware.'}
+ if tools[0]:
+  try:
+   state=subprocess.run([tools[0],'is-active','nvidia-fabricmanager'],capture_output=True,text=True,timeout=2);data['fabric_manager'].update(status='OBSERVED',exit_code=state.returncode,state=state.stdout.strip()[:256],error=state.stderr.strip()[:1024])
+  except (OSError,subprocess.TimeoutExpired) as error:data['fabric_manager']['error']=str(error)
  data['status']='PASS';data['limitations']=['Security flags or cgroup membership alone do not prove a denial.','No device ioctl, GPU reset, scheduler modification, privileged BPF query or visibility-mask change is performed.'];save();return data
 
 def nvml():
@@ -133,6 +145,9 @@ def nvml():
 
 def torch_probe():
  if importlib.util.find_spec('torch') is None:return {'status':'UNAVAILABLE','reason':'PyTorch is not installed; native BFS does not require it.'}
+ for group in cgroups().get('records',[]):
+  files=group.get('files',{});maximum=files.get('memory.max','max');current=files.get('memory.current','0')
+  if maximum.isdigit() and current.isdigit() and int(maximum)-int(current)<768*(1<<20):return {'status':'UNAVAILABLE','reason':'Less than 768 MiB of observed cgroup memory headroom; optional Torch import skipped to avoid exhausting the job. This is not a measured Torch peak requirement.'}
  _phase('import installed PyTorch in the original client environment')
  import torch
  data={'torch_version':str(torch.__version__),'torch_cuda_build':torch.version.cuda}
