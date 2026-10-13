@@ -1,0 +1,32 @@
+name: Upload existing native Release
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        required: true
+      release_tag:
+        required: true
+permissions:
+  contents: write
+  actions: read
+jobs:
+  upload:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Download checksummed Actions artifact on runner
+        run: |
+          gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name native-pip-wheel --dir /tmp/native-release
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('/tmp/native-release');r=json.loads((p/'manifest.json').read_text())
+          assert hashlib.sha256((p/r['wheel']).read_bytes()).hexdigest()==r['sha256']
+          print('VERIFIED_WHEEL_FOR_EXISTING_RELEASE',r['sha256'])
+          PY
+      - name: Upload assets to existing draft without creating a tag
+        run: gh release upload "$RELEASE_TAG" /tmp/native-release/* --repo "$GITHUB_REPOSITORY"
