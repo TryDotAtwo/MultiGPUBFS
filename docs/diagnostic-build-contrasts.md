@@ -1,5 +1,8 @@
 # One-run CUDA startup investigation
 
+Install the [pinned GitHub package](install-native-package.md) and read the
+[measured diagnostic acceptance](diagnostic-build-acceptance-2026-10-14.md).
+
 The extended `doctor --deep` package carries four CUDA libraries from the
 same CUDA source tree. Only isolated diagnostic child processes select them.
 The ordinary executable and default CUDA library remain byte-identical to

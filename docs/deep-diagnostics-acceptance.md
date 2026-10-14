@@ -1,5 +1,7 @@
 # Comprehensive diagnostic acceptance
 
+Current extended package: [v15 runtime/SM120 comparison acceptance](diagnostic-build-acceptance-2026-10-14.md). The v14 measurements below are retained as historical evidence.
+
 Final package: 0.2.0.dev14, release native-pip-20261014-v14.
 Wheel SHA256: 5fa2adb9d048e2025b873f3b616cb1530c01ad4a5cb8877348e7da993181fa69.
 Native checkpoint source ec67761ed67e2ced650b600c2d0a2cc232e840d1;
