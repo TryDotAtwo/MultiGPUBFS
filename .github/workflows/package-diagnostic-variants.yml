@@ -10,7 +10,7 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       GH_TOKEN: ${{ github.token }}
       VARIANT_RUN: ${{ inputs.variant_build_run }}
@@ -47,10 +47,18 @@ jobs:
           from pathlib import Path
           assert hashlib.sha256(Path('/tmp/mgbfs-portable/accepted.whl').read_bytes()).hexdigest()=='5fa2adb9d048e2025b873f3b616cb1530c01ad4a5cb8877348e7da993181fa69'
           PY
-          gh run view "$VARIANT_RUN" --repo "$GITHUB_REPOSITORY" --json headSha,status,conclusion > /tmp/variant-build-run.json
           python3 - <<'PY'
-          import json
-          r=json.load(open('/tmp/variant-build-run.json'));assert r['status']=='completed' and r['conclusion']=='success',r
+          import json,subprocess,os,time
+          from pathlib import Path
+          deadline=time.monotonic()+900
+          while True:
+            q=subprocess.check_output(['gh','run','view',os.environ['VARIANT_RUN'],'--repo',os.environ['GITHUB_REPOSITORY'],'--json','headSha,status,conclusion'],text=True,timeout=30)
+            r=json.loads(q)
+            if r['status']=='completed':
+              assert r['conclusion']=='success',r
+              Path('/tmp/variant-build-run.json').write_text(q);break
+            if time.monotonic()>deadline:raise RuntimeError('Diagnostic build prerequisite did not finish within package wait budget')
+            print('Waiting for diagnostic build prerequisite',flush=True);time.sleep(60)
           PY
           for id in shared-legacy static-sm120 shared-sm120; do
             gh run download "$VARIANT_RUN" --repo "$GITHUB_REPOSITORY" --name "diagnostic-variant-$id" --dir "/tmp/diagnostic-builds/$id"
