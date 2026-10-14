@@ -1,5 +1,8 @@
 # Comprehensive opt-in diagnostics
 
+See [the one-run CUDA build contrast](diagnostic-build-contrasts.md) for the
+static/shared and native-SM120 comparison carried by the extended package.
+
 Run `multigpubfs doctor --deep` in a fresh process inside the assigned GPU job.
 The execution budget defaults to 1800 seconds. `--total-timeout` changes it;
 `--stage-timeout` bounds an individual synthetic stage. Metadata finalization
