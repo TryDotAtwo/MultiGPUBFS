@@ -54,3 +54,14 @@ class DeepDiagnostics(unittest.TestCase):
    r.finish()
    with zipfile.ZipFile(r.root/'diagnostics.zip') as z:
     self.assertIn('case/probe.json',z.namelist());self.assertIn('case/process-snapshot.json',z.namelist());self.assertNotIn('case/case-input.json',z.namelist())
+
+ def test_specialized_probe_uses_specialized_api_options(self):
+  options=deep.bfs_options({'devices':[0,1],'backend':'shard_ab_hash','shards':1,'transport':'full','candidate_order':'none'})
+  self.assertIsNone(options['shards']);self.assertEqual(options['transport'],'auto');self.assertEqual(options['candidate_order'],'auto')
+ def test_sm75_gemm_is_reported_unsupported(self):
+  with tempfile.TemporaryDirectory() as d,patch.object(deep,'compute_majors',return_value=[7,7]),patch.object(deep,'bfs_probe',side_effect=AssertionError('Must not launch unsupported native GEMM')):
+   result=deep.component({'kind':'bfs','generator':'gemm','devices':[0,1]},Path(d))
+  self.assertEqual(result['status'],'UNAVAILABLE');self.assertEqual(result['observed_compute_majors'],[7,7])
+ def test_sm80_gemm_still_runs_actual_test(self):
+  with tempfile.TemporaryDirectory() as d,patch.object(deep,'compute_majors',return_value=[8]),patch.object(deep,'bfs_probe',return_value={'executed':True}):
+   self.assertTrue(deep.component({'kind':'bfs','generator':'gemm','devices':[0]},Path(d))['executed'])
