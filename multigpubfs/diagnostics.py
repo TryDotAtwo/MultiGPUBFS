@@ -102,6 +102,21 @@ def _rank(stage,root,devices,rank):
  return {'rank':rank,'device':devices[rank],'world':len(devices),'exchange_verified':stage=='nccl_exchange'}
 
 def _component(stage,root,devices,device,seconds):
+ os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
+ if stage=='thread':
+  _phase('start and join Python control thread')
+  event=threading.Event();worker=threading.Thread(target=event.set);worker.start();worker.join(timeout=5)
+  if worker.is_alive() or not event.is_set():raise RuntimeError('CONTROL_THREAD_JOIN_FAILED')
+  return {'thread_start_join_verified':True}
+ if stage in ('meminfo','hardware'):
+  cuda,lib,ck=_cuda(device,stage=='hardware')
+  if stage=='meminfo':
+   _phase('cudaMemGetInfo independent native-runtime call')
+   free=C.c_size_t();total=C.c_size_t();ck(cuda.cudaMemGetInfo(C.byref(free),C.byref(total)))
+   return {'device':device,'free_bytes':free.value,'total_bytes':total.value}
+  _phase('mgbfs_generic_hardware_info / cudaGetDeviceProperties independent wrapper')
+  values=(C.c_uint64*8)();fn=lib.mgbfs_generic_hardware_info;fn.argtypes=[C.c_int,C.POINTER(C.c_uint64)];fn.restype=C.c_int
+  ck(fn(device,values));return {'device':device,'hardware_values':list(values)}
  if stage in ('environment','nvml','torch','contrasts','loader-trace'):
   from .system_diagnostics import survey,nvml,torch_probe,contrasts,loader_trace
   return {'environment':lambda:survey(root),'nvml':nvml,'torch':torch_probe,'contrasts':lambda:contrasts(root,seconds),'loader-trace':lambda:loader_trace(root,seconds)}[stage]()
@@ -279,7 +294,7 @@ def run_diagnostics(output=None,devices=None,timeout=60):
  if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
-  runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);runner.component('driver-api','driver')
+  runner.component('control-thread','thread');runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);runner.component('driver-api','driver')
   runtime=runner.component('native-runtime','runtime')
   if runtime['status']!='PASS':runner.component('native-loader-trace','loader-trace',optional=True);runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
   count=runner.component('cuda-discovery','count')
@@ -292,6 +307,8 @@ def run_diagnostics(output=None,devices=None,timeout=60):
   for device in selected:
    context=runner.component('gpu-'+str(device)+'-context','context',device=device)
    if context['status']!='PASS':runner.skip('gpu-'+str(device)+'-remaining','CUDA context failed');continue
+   runner.component('gpu-'+str(device)+'-meminfo','meminfo',device=device)
+   runner.component('gpu-'+str(device)+'-hardware','hardware',device=device)
    memory=runner.component('gpu-'+str(device)+'-memory','memory',device=device)
    kernel=runner.component('gpu-'+str(device)+'-kernel','kernel',device=device) if memory['status']=='PASS' else None
    if kernel is None:runner.skip('gpu-'+str(device)+'-kernel','Memory allocation/readback failed')

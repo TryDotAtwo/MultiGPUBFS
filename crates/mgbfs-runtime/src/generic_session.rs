@@ -18,7 +18,9 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
    if env.keys().any(|k|!k.starts_with("MGBFS_")&&!k.starts_with("NCCL_")){return Err("GENERIC_SESSION_ENV".into());}
    for(k,value)in env{previous.insert(k.clone(),std::env::var(&k).ok());std::env::set_var(k,value);}
    crate::job_phase::set("preparing")?;
+   crate::job_phase::set("control-thread-start")?;
    let _job_control=crate::job_phase::Control::start();
+   crate::job_phase::set("control-thread-ready")?;
    match v["command"].as_str(){
     Some("release-memory")=>{crate::generic_native::check(unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::check(unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
     Some("bench")=>{
@@ -30,9 +32,13 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
      match crate::reference_bench::run(args){Ok(())=>Ok(serde_json::json!({"pid":std::process::id(),"exit_code":0})),Err(error) if error=="MEMORY_QUERY_DONE"=>{eprintln!("{}",serde_json::json!({"status":"ERROR","rank":rank,"error":error}));Ok(serde_json::json!({"pid":std::process::id(),"exit_code":1,"query_only":true}))},Err(error)=>Err(error)}
     },
     Some("inventory")=>{
+     crate::job_phase::set("inventory-cudaSetDevice")?;
      crate::generic_native::check(unsafe{cudaSetDevice(device as i32)})?;
+     crate::job_phase::set("inventory-cudaMemGetInfo")?;
      let(mut free,mut total)=(0usize,0usize);crate::generic_native::check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
+     crate::job_phase::set("inventory-hardware-info")?;
      let mut hw=[0u64;8];crate::generic_native::check(unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;
+     crate::job_phase::set("inventory-pool-accounting")?;
      Ok(serde_json::json!({"device":device,"free_bytes":(free as u64+crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64),"additional_reserve_bytes":crate::generic_memory::admission_reserve_bytes()?,"nccl_warmed":crate::session_cache::warmed_communicator(),"cached_reusable_bytes":crate::session_cache::reusable_bytes(),"pool_reusable_bytes":crate::generic_pool::available()?,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"warp_size":hw[4],"threads_per_sm":hw[5],"threads_per_block":hw[6],"shared_bytes_per_sm":hw[7]}))
     },
     Some("graph-local-plan")=>{let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;if args.get(1)!=Some(&device.to_string()){return Err("GENERIC_SESSION_LOCAL_PLAN_DEVICE".into());}crate::generic_distributed_run::local_plan(&args)},

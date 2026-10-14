@@ -11,14 +11,15 @@ extern "C"{fn cudaGetDeviceCount(count:*mut i32)->i32;}
 pub fn visible_count()->Result<()>{let mut count=0;check(unsafe{cudaGetDeviceCount(&mut count)})?;if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}println!("{count}");Ok(())}
 
 pub fn info(args:&[String])->Result<()>{
+ crate::job_phase::set("graph-info-read-definition")?;
  if args.len()<3{return Err("CLI_GRAPH_INFO_ARGUMENTS".into());}let g=graph(&args[0])?;let shards:u32=args[2].parse().map_err(|_|"CLI_GRAPH_SHARDS")?;
  let mut count=0i32;check(unsafe{cudaGetDeviceCount(&mut count)})?;if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}
  let devices=if args[1]=="auto"{(0..count as u32).collect::<Vec<_>>()}else{args[1].split(',').map(|v|v.parse::<u32>().map_err(|_|"CLI_GRAPH_DEVICES".to_owned())).collect::<Result<Vec<_>>>()?};
  if devices.is_empty()||devices.len()>128||devices.iter().any(|&d|d>=count as u32)||devices.iter().enumerate().any(|(i,d)|devices[..i].contains(d)){return Err("CLI_GRAPH_DEVICE_SELECTION".into());}
- let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{check(unsafe{cudaSetDevice(device as i32)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"warp_size":hw[4],"threads_per_sm":hw[5],"threads_per_block":hw[6],"shared_bytes_per_sm":hw[7]}));}
+ let mut inventory=vec![];let mut minimum=u64::MAX;for &device in &devices{crate::job_phase::set("graph-info-cudaSetDevice")?;check(unsafe{cudaSetDevice(device as i32)})?;crate::job_phase::set("graph-info-cudaMemGetInfo")?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;minimum=minimum.min(free as u64);crate::job_phase::set("graph-info-hardware-info")?;let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;inventory.push(serde_json::json!({"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"warp_size":hw[4],"threads_per_sm":hw[5],"threads_per_block":hw[6],"shared_bytes_per_sm":hw[7]}));}
  let requested=if args.len()>3&&args[3]!="auto"{Some(args[3].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?)}else{None};
  let batch=if args.len()>4{Some(args[4].parse::<u32>().map_err(|_|"CLI_GRAPH_BATCH")?)}else{None};
- println!("{}",admit(&g,devices,inventory,shards,requested,batch)?);Ok(())
+ crate::job_phase::set("graph-info-memory-admission")?;println!("{}",admit(&g,devices,inventory,shards,requested,batch)?);Ok(())
 }
 fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,shards:u32,requested:Option<u32>,batch:Option<u32>)->Result<serde_json::Value>{
  if devices.is_empty()||devices.len()>128||inventory.len()!=devices.len(){return Err("GRAPH_GLOBAL_INVENTORY_SHAPE".into());}
@@ -70,12 +71,12 @@ pub fn local_plan(args:&[String])->Result<serde_json::Value>{
  if std::env::var("MGBFS_GENERIC_HISTORY").as_deref()!=Ok("sorted"){return Err("LOCAL_SORTED_PLAN_REQUIRES_SORTED_HISTORY".into());}
  let requested=if args[4]=="auto"{None}else{Some(args[4].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?)};
  let target=args[5].parse::<u32>().map_err(|_|"CLI_GRAPH_BATCH")?;if target==0{return Err("CLI_GRAPH_BATCH".into());}
- check(unsafe{cudaSetDevice(device)})?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
+ check(unsafe{cudaSetDevice(device)})?;crate::job_phase::set("graph-info-cudaMemGetInfo")?;let(mut free,mut total)=(0usize,0usize);check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
  let free=free as u64+crate::session_cache::reusable_bytes()+crate::generic_pool::available()?;let lanes=std::env::var("MGBFS_GENERIC_OWNER_LANES").ok().map(|v|v.parse::<u32>().map_err(|_|"SORTED_OWNER_LANES")).transpose()?.unwrap_or(shards.min(4));
  let upper=requested.map(u64::from).or_else(||crate::generic_memory::state_space_bound(&g));let bytes=crate::generic_memory::preferred_state_bytes(&g);let banks=if g.inverse_closed()?{3}else{1};
  let plan=Plan::automatic_sorted_for_graph(&g,device,world,shards,graph_bytes(&g),free as u64,upper,bytes,target,banks,lanes)?;
  if requested.map_or(false,|v|plan.capacity!=v){return Err("REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION".into());}
- let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device,hw.as_mut_ptr())})?;Ok(serde_json::json!({"size_profile_capability":1,"graph_digest":digest(&g)?,"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"plan":plan}))
+ crate::job_phase::set("graph-info-hardware-info")?;let mut hw=[0u64;8];check(unsafe{mgbfs_generic_hardware_info(device,hw.as_mut_ptr())})?;Ok(serde_json::json!({"size_profile_capability":1,"graph_digest":digest(&g)?,"device":device,"free_bytes":free,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"plan":plan}))
 }
 pub fn global_info(args:&[String])->Result<()>{println!("{}",global_plan(args)?);Ok(())}
 pub fn global_plan(args:&[String])->Result<serde_json::Value>{

@@ -1,6 +1,12 @@
 //! Job-boundary telemetry; never called inside GPU batch dispatch.
 use mgbfs_core::Result;
 pub fn set(phase:&str)->Result<()> {
+ if let Some(path)=std::env::var_os("MGBFS_DIAGNOSTIC_TRACE_FILE") {
+  use std::io::Write;
+  let mut file=std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e|e.to_string())?;
+  writeln!(file,"PHASE pid={} {}",std::process::id(),phase).map_err(|e|e.to_string())?;
+  file.flush().map_err(|e|e.to_string())?;
+ }
  let Some(path)=std::env::var_os("MGBFS_JOB_PHASE_PATH") else{return Ok(());};
  let path=std::path::PathBuf::from(path);
  let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs_f64();
