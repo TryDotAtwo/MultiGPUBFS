@@ -1,6 +1,8 @@
 #include "generic_graph.h"
 #include <cuda_runtime.h>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 template<class State> __global__ void generic_successors(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
  const State* parents,uint32_t parent_count,uint32_t parent_stride,const uint32_t* permutations,
@@ -67,8 +69,14 @@ extern "C" int mgbfs_generic_generate_u8(uint32_t kind,uint32_t elements,uint32_
  return int(cudaGetLastError());
 }
 
+// Diagnostic-only entry/exit markers. No algorithm or loading policy change.
+static void diagnostic_hardware_phase(const char* phase){
+ const char* path=std::getenv("MGBFS_DIAGNOSTIC_TRACE_FILE");if(!path)return;
+ FILE* f=std::fopen(path,"a");if(!f)return;
+ std::fprintf(f,"PHASE hardware-%s\n",phase);std::fflush(f);std::fclose(f);
+}
 extern "C" int mgbfs_generic_hardware_info(int device,uint64_t* values){
- if(!values)return int(cudaErrorInvalidValue);auto e=cudaSetDevice(device);if(e!=cudaSuccess)return int(e);
- cudaDeviceProp p;e=cudaGetDeviceProperties(&p,device);if(e!=cudaSuccess)return int(e);
+ if(!values)return int(cudaErrorInvalidValue);diagnostic_hardware_phase("cudaSetDevice-enter");auto e=cudaSetDevice(device);diagnostic_hardware_phase("cudaSetDevice-return");if(e!=cudaSuccess)return int(e);
+ cudaDeviceProp p;diagnostic_hardware_phase("cudaGetDeviceProperties-enter");e=cudaGetDeviceProperties(&p,device);diagnostic_hardware_phase("cudaGetDeviceProperties-return");if(e!=cudaSuccess)return int(e);
  values[0]=p.multiProcessorCount;values[1]=p.major;values[2]=p.minor;values[3]=p.l2CacheSize;values[4]=p.warpSize;values[5]=p.maxThreadsPerMultiProcessor;values[6]=p.maxThreadsPerBlock;values[7]=p.sharedMemPerMultiprocessor;return 0;
 }

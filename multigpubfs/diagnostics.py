@@ -230,6 +230,9 @@ class Runner:
     try:process.wait(timeout=self.timeout)
     except subprocess.TimeoutExpired:
      entry['status']='TIMEOUT';entry['error']='Stage deadline exceeded; only this diagnostic process group is terminated'
+     if getattr(self,'deep_capture',False):
+      from .deep_diagnostics import process_snapshot
+      folder=self.root/name;folder.mkdir(exist_ok=True);process_snapshot(process.pid,folder/'process-snapshot.json')
      self.stop(process)
     except BaseException:self.stop(process);raise
     self.stop(process);thread.join(timeout=2)
@@ -277,11 +280,13 @@ class Runner:
  def finish(self):
   failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
   from .diagnostic_analysis import analyze,render
-  self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report);self.save();_write(self.root/'analysis.json',self.report['analysis']);(self.root/'analysis.txt').write_text(render(self.report['analysis']),encoding='utf-8')
+  self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report)
+  if not failures and any(x.get('reason')=='GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED' for x in self.report['steps']):self.report['status']='INCOMPLETE'
+  self.save();_write(self.root/'analysis.json',self.report['analysis']);(self.root/'analysis.txt').write_text(render(self.report['analysis']),encoding='utf-8')
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
@@ -289,7 +294,10 @@ class Runner:
    for f in files+[self.root/'manifest.json']:archive.write(f,str(f.relative_to(self.root)))
   print('\n'.join(lines),flush=True);print('BUNDLE '+str(self.root/'diagnostics.zip'),flush=True);return self.report
 
-def run_diagnostics(output=None,devices=None,timeout=60):
+def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeout=1800):
+ if deep:
+  from .deep_diagnostics import run_deep
+  return run_deep(output,devices,timeout,total_timeout)
  if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
  if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
@@ -331,6 +339,7 @@ def run_diagnostics(output=None,devices=None,timeout=60):
 def main(argv=None):
  parser=argparse.ArgumentParser(description='Check native loader, filesystem, every visible GPU, kernel, persistent workers, NCCL and tiny exact BFS; write report/log bundle. No GPU reset or automatic retry.')
  parser.add_argument('--output',type=Path,help='New diagnostic directory (must not already exist)');parser.add_argument('--devices',help='Logical local IDs, e.g. 0,1; default all visible GPUs');parser.add_argument('--stage-timeout',type=float,default=60)
+ parser.add_argument('--deep',action='store_true',help='Isolated comprehensive synthetic diagnostic suite; no production retries or GPU resets');parser.add_argument('--total-timeout',type=float,default=1800,help='Deep suite total execution budget, seconds (default 30 minutes)')
  parser.add_argument('--_child',help=argparse.SUPPRESS);parser.add_argument('--_device',type=int,help=argparse.SUPPRESS);parser.add_argument('--_rank',type=int,help=argparse.SUPPRESS)
  args=parser.parse_args(argv)
  try:
@@ -352,7 +361,7 @@ def main(argv=None):
     print(result['traceback'],flush=True);code=1
    name='result.json' if args._rank is None else 'rank-'+str(args._rank)+('.json' if code==0 else '-error.json')
    _write(root/name,result);return code
-  report=run_diagnostics(args.output,devices,args.stage_timeout);return 0 if report['status']=='PASS' else 1
+  report=run_diagnostics(args.output,devices,args.stage_timeout,deep=args.deep,total_timeout=args.total_timeout);return 0 if report['status']=='PASS' else 1
  except (OSError,ValueError) as error:print('Diagnostic setup error: '+str(error),file=sys.stderr);return 2
 
 if __name__=='__main__':raise SystemExit(main())
