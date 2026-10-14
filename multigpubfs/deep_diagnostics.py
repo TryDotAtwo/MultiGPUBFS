@@ -78,7 +78,7 @@ def api_probe(config,root):
   state['last_operation']=name;state['operations'].append({'name':name,'status':'ENTERED','monotonic':time.monotonic()});write(root/'probe.json',state);print('PHASE '+name,flush=True)
  def done(code=0):
   state['operations'][-1].update(status='PASS' if code==0 else 'FAIL',code=code,finished_monotonic=time.monotonic());write(root/'probe.json',state)
-  if code:raise RuntimeError('CUDA_API_STATUS_'+str(code)+' at '+state['last_operation'])
+  if code:state['failed_operation']=state['last_operation'];write(root/'probe.json',state);raise RuntimeError('CUDA_API_STATUS_'+str(code)+' at '+state['last_operation'])
  phase('resolve private loader paths');native,env,paths=_paths();state['resolved_libraries']=paths;done()
  loaded={};stop=threading.Event();worker=None
  if config.get('control_thread'):
@@ -159,11 +159,74 @@ def bfs_probe(config,root):
  else:run(0)
  return {'cpu_layers_and_terminal_states_verified':True,'fixture':config['fixture'],'reports':reports}
 
+
+def catalog_configurations():
+ """Finite known representative constructor arguments; no arbitrary evaluation."""
+ try:import cayleypy
+ except ImportError:return []
+ import inspect
+ cases=[]
+ special={'conjugacy_classes':{'n':4,'classes':'diagnostic'},'cubic_pancake':{'n':4,'subset':2},'koltsov3':{'n':6},'sheveleva2':{'n':4,'k':1},'top_spin':{'n':4,'k':3}}
+ puzzles={'globe_puzzle':{'a':2,'b':3},'hungarian_rings':{'left_size':5,'left_index':2,'right_size':5,'right_index':2},'rubik_cube':{'cube_size':2,'metric':'QTM'}}
+ for family in ('PermutationGroups','MatrixGroups','Puzzles'):
+  obj=getattr(cayleypy,family,None)
+  if obj is None:continue
+  for name in dir(obj):
+   if name.startswith('_') or not callable(getattr(obj,name)):continue
+   kwargs={};unavailable=None
+   if family=='PermutationGroups':
+    kwargs=special.get(name,{}).copy()
+    if not kwargs:
+     try:
+      for key,param in inspect.signature(getattr(obj,name)).parameters.items():
+       if param.default is inspect.Parameter.empty:
+        if key not in ('n','k'):unavailable='No bounded representative for required parameter '+key;break
+        kwargs[key]={'n':4,'k':2}[key]
+     except (ValueError,TypeError):unavailable='Constructor signature unavailable'
+   elif family=='MatrixGroups':kwargs={'n':3,'modulo':3}
+   else:
+    kwargs=puzzles.get(name,{}).copy()
+    if name not in puzzles:unavailable='No bounded representative for puzzle constructor'
+   cases.append({'family':family,'constructor':name,'kwargs':kwargs,'unsupported':unavailable})
+ return cases
+
+def catalog_probe(config,root):
+ from .diagnostics import _cuda
+ from .graph_definition import from_cayleypy
+ import cayleypy
+ selected=config['catalog'];kwargs=dict(selected['kwargs'])
+ if kwargs.get('classes')=='diagnostic':kwargs['classes']={(2,1,1):None}
+ print('PHASE construct finite catalog definition '+selected['family']+'.'+selected['constructor'],flush=True)
+ graph=from_cayleypy(getattr(getattr(cayleypy,selected['family']),selected['constructor'])(**kwargs));a=graph.action
+ if graph.state_elements*graph.generator_count>16384:raise ValueError('CATALOG_REPRESENTATIVE_EXCEEDS_DIAGNOSTIC_BOUND')
+ cuda,lib,ck=_cuda(config['device'],True);alloc=[]
+ def upload(values,ty):
+  host=(ty*len(values))(*values);ptr=C.c_void_p();ck(cuda.cudaMalloc(C.byref(ptr),C.sizeof(host)));alloc.append(ptr);ck(cuda.cudaMemcpy(ptr,host,C.sizeof(host),1));return ptr
+ try:
+  parent=upload(graph.start,C.c_int64);elements=graph.state_elements;count=graph.generator_count
+  output=upload([0]*(elements*count),C.c_int64);error=upload([0],C.c_uint32)
+  if a['kind']=='permutation':
+   kind=0;rows=elements;cols=1;perms=upload([x for g in a['generators'] for x in g],C.c_uint32);matrices=None;moduli=None
+  else:
+   kind=1;rows=a['rows'];cols=a['cols'];perms=None;matrices=upload([x for g in a['generators'] for x in g['matrix']],C.c_int64);moduli=upload([g['modulo'] for g in a['generators']],C.c_uint32)
+  fn=lib.mgbfs_generic_generate_i64;fn.argtypes=[C.c_uint32]*5+[C.c_void_p,C.c_uint32,C.c_uint32]+[C.c_void_p]*4+[C.c_uint32,C.c_void_p,C.c_uint32,C.c_void_p,C.c_void_p];fn.restype=C.c_int
+  print('PHASE catalog successor GPU kernel and exact readback',flush=True)
+  ck(fn(kind,elements,rows,cols,count,parent,1,1,perms,matrices,moduli,None,count,output,count,error,None));ck(cuda.cudaDeviceSynchronize())
+  host=(C.c_int64*(elements*count))();err=C.c_uint32();ck(cuda.cudaMemcpy(host,output,C.sizeof(host),2));ck(cuda.cudaMemcpy(C.byref(err),error,4,2))
+  if err.value:raise RuntimeError('CATALOG_KERNEL_DEVICE_ERROR_'+str(err.value))
+  for generator in range(count):
+   observed=[host[element*count+generator] for element in range(elements)]
+   if observed!=graph.successor(graph.start,generator):raise RuntimeError('CATALOG_SUCCESSOR_ORACLE_MISMATCH')
+  return {'family':selected['family'],'constructor':selected['constructor'],'device':config['device'],'elements':elements,'generators':count,'all_generators_exact_readback_verified':True,'scope':'finite representative successor semantics, not full puzzle BFS'}
+ finally:
+  for pointer in alloc:cuda.cudaFree(pointer)
+
 def component(config,root):
  root=Path(root);os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
  for key in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING'):
   setting=config.get('module' if key=='CUDA_MODULE_LOADING' else 'data_loading','inherited')
   if setting!='inherited':os.environ[key]=setting
+ if config['kind']=='catalog':return catalog_probe(config,root)
  if config['kind']=='inventory':return inventory(root)
  if config['kind']=='api':return api_probe(config,root)
  if config['kind']=='bfs':return bfs_probe(config,root)
@@ -267,6 +330,13 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     variants=[('base',{}),('sorted',{'history':'sorted'}),('gemm',{'generator':'gemm'}),('parent',{'transport':'parent'}),('radix',{'candidate_order':'radix'}),('shards4',{'shards':4}),('persistent',{'persistent':True}),('tuner',{'autotune':True,'shards':None}),('repeated',{'fixture':'repeated'}),('matrix',{'fixture':'matrix'}),('matrix-gemm',{'fixture':'matrix-gemm','generator':'gemm'}),('wide',{'fixture':'wide'}),('shard-ab-hash',{'fixture':'lrx','backend':'shard_ab_hash'}),('shard-ab-sort',{'fixture':'lrx','backend':'shard_ab_sort_merge'})]
     if len(selected)>1:variants.extend([('multi',{'devices':selected}),('multi-sorted',{'devices':selected,'history':'sorted'}),('multi-parent',{'devices':selected,'transport':'parent'}),('multi-gemm',{'devices':selected,'generator':'gemm'}),('multi-persistent',{'devices':selected,'persistent':True}),('multi-shard-ab',{'devices':selected,'fixture':'lrx','backend':'shard_ab_hash'}),('multi-shard-ab-sort',{'devices':selected,'fixture':'lrx','backend':'shard_ab_sort_merge'})])
     for label,changes in variants:run_case(runner,{'name':'deep-bfs-'+label,'config':dict(base,**changes),'seconds':min(timeout,45)},deadline)
+    catalog=catalog_configurations()
+    if not catalog:runner.skip('deep-catalog-successors','CayleyPy optional dependency unavailable')
+    for case in catalog:
+     for device in selected:
+      name='deep-catalog-'+case['family']+'-'+case['constructor']+'-gpu'+str(device)
+      if case['unsupported']:runner.skip(name,case['unsupported'])
+      else:run_case(runner,{'name':name,'config':{'kind':'catalog','catalog':case,'device':device},'seconds':20},deadline)
   else:runner.skip('deep-gpu-suite','Native runtime or CUDA discovery failed')
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})
  except Exception as e:runner.report['steps'].append({'name':'deep-controller','status':'FAIL','error':str(e)})
