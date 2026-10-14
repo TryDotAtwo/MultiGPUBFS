@@ -1,0 +1,105 @@
+"""Verified build contrasts for isolated diagnostic children only.
+
+Nothing in the production launcher imports this module or selects these builds.
+"""
+import hashlib,json,os
+from pathlib import Path
+
+BASELINE='baseline-static-legacy'
+SPECS={BASELINE:('Static',[75,86]),'shared-legacy':('Shared',[75,86]),'static-sm120':('Static',[75,86,120]),'shared-sm120':('Shared',[75,86,120])}
+
+def digest(path):
+ value=hashlib.sha256()
+ with Path(path).open('rb') as stream:
+  for part in iter(lambda:stream.read(4<<20),b''):value.update(part)
+ return value.hexdigest()
+
+def inventory(root=None,*,environ=None):
+ root=Path(root or Path(__file__).resolve().parent/'_native').resolve()
+ env=os.environ if environ is None else environ
+ override=env.get('MGBFS_EXECUTABLE')
+ if override and Path(override).resolve()!=(root/'bin/mgbfs').resolve():
+  return {'status':'UNAVAILABLE','reason':'Custom native executable selected; packaged diagnostic builds are not substituted.'}
+ metadata=root/'diagnostic_variants/variants.json'
+ if not metadata.is_file():return {'status':'UNAVAILABLE','reason':'This installation has no packaged diagnostic runtime/SM120 contrasts.'}
+ manifest=json.loads((root/'manifest.json').read_text())
+ if manifest.get('schema')!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_MANIFEST_SCHEMA')
+ hashes=manifest.get('sha256',{})
+ def checked(name):
+  path=root/name
+  if not path.resolve().is_relative_to(root) or path.is_symlink():raise RuntimeError('DIAGNOSTIC_VARIANT_PATH')
+  if name not in hashes or not path.is_file() or digest(path)!=hashes[name]:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_'+name)
+  return path
+ checked('diagnostic_variants/variants.json');checked('bin/mgbfs')
+ for name in ('lib/libcudart.so.12','lib/libnccl.so.2'):checked(name)
+ data=json.loads(metadata.read_text())
+ if data.get('schema')!=1 or data.get('production_default')!=BASELINE:raise RuntimeError('DIAGNOSTIC_VARIANT_METADATA_SCHEMA')
+ entries=data.get('variants',[])
+ if len(entries)!=4 or {x.get('id') for x in entries}!=set(SPECS):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
+ sources=set();verified=[]
+ for row in entries:
+  identifier=row['id'];runtime,architectures=SPECS[identifier]
+  if row.get('runtime')!=runtime or row.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_FACTOR_'+identifier)
+  expected='lib/libmgbfs_cuda.so' if identifier==BASELINE else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
+  receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
+  if row.get('library')!=expected or row.get('receipt')!=receipt:raise RuntimeError('DIAGNOSTIC_VARIANT_PATH_'+identifier)
+  path=checked(expected);proof=json.loads(checked(receipt).read_text())
+  if row.get('sha256')!=hashes[expected]:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_METADATA_'+identifier)
+  if not row.get('cuda_source_tree') or row.get('cuda_source_tree')!=proof.get('cuda_source_tree') or proof.get('id')!=identifier or proof.get('runtime')!=runtime or proof.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
+  sources.add(row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof))
+ if len(sources)!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_MISMATCH')
+ return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
+
+def environment(identifier,verified,parent=None):
+ if identifier not in SPECS or verified.get('status')!='AVAILABLE':raise RuntimeError('DIAGNOSTIC_VARIANT_SELECTION')
+ selected=next(x for x in verified['variants'] if x['id']==identifier)
+ root=Path(verified['root']);env=dict(os.environ if parent is None else parent)
+ directories=[str(Path(selected['library_path']).parent),str(root/'lib')]
+ driver=Path('/usr/lib/x86_64-linux-gnu')
+ if driver.is_dir():directories.append(str(driver))
+ if env.get('LD_LIBRARY_PATH'):directories.append(env['LD_LIBRARY_PATH'])
+ env.update(MGBFS_EXECUTABLE=verified['binary'],LD_LIBRARY_PATH=':'.join(dict.fromkeys(directories)))
+ return env
+
+def confirm_resolution(identifier,verified,libraries):
+ expected=next(x for x in verified['variants'] if x['id']==identifier)
+ observed=libraries.get('libmgbfs_cuda.so')
+ if not observed or Path(observed).resolve()!=Path(expected['library_path']).resolve() or digest(observed)!=expected['sha256']:raise RuntimeError('DIAGNOSTIC_VARIANT_RESOLUTION_'+identifier)
+ for name in ('libcudart.so.12','libnccl.so.2'):
+  if name not in libraries or Path(libraries[name]).resolve()!=(Path(verified['root'])/'lib'/name).resolve():raise RuntimeError('DIAGNOSTIC_VARIANT_VENDOR_RESOLUTION_'+name)
+ return {'id':identifier,'runtime':expected['runtime'],'architectures':expected['architectures'],'sha256':expected['sha256'],'resolved_libraries':libraries,'same_cuda_source_tree':expected['cuda_source_tree']}
+
+def cases(devices):
+ result=[]
+ # Complete the four builds for one execution path before moving to the next.
+ for path in ('api','persistent','bfs'):
+  for device in devices:
+   for identifier in SPECS:
+    if path=='api':config={'kind':'api','device':device,'module':'EAGER','data_loading':'EAGER','order':'engine-first','control_thread':True}
+    elif path=='persistent':config={'kind':'component','stage':'persistent','device':device,'seconds':40}
+    else:config={'kind':'bfs','fixture':'permutation','devices':[device],'history':'hash','generator':'cuda','shards':1}
+    config['variant']=identifier
+    result.append({'name':f'deep-build-{identifier}-gpu{device}-{path}','config':config,'seconds':40 if path!='bfs' else 45})
+ return result
+
+def compare(steps):
+ groups={}
+ for step in steps:
+  config=step.get('diagnostic_case',{});identifier=config.get('variant')
+  if identifier not in SPECS:continue
+  path='persistent' if config.get('stage')=='persistent' else config.get('kind')
+  device=config.get('device',(config.get('devices') or [None])[0]);key=(device,path)
+  groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}
+ comparisons=[]
+ for (device,path),values in groups.items():
+  statuses=[values.get(identifier,{}).get('status','NOT_RUN') for identifier in SPECS]
+  if any(x in ('NOT_RUN','SKIPPED','RUNNING') for x in statuses):outcome='INCOMPLETE'
+  elif all(x=='PASS' for x in statuses):outcome='ALL_PASS'
+  elif len(set(statuses))==1:outcome='ALL_SAME_FAILURE'
+  else:outcome='VARIANT_DEPENDENT'
+  controlled=[]
+  for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120','shared-sm120','runtime'),(BASELINE,'static-sm120','native-sm120'),('shared-legacy','shared-sm120','native-sm120')]:
+   left=values.get(a,{});right=values.get(b,{})
+   controlled.append({'factor':factor,'left':a,'right':b,'left_status':left.get('status','NOT_RUN'),'right_status':right.get('status','NOT_RUN'),'changed_pass_outcome':None if left.get('status') in (None,'SKIPPED') or right.get('status') in (None,'SKIPPED') else (left['status']=='PASS')!=(right['status']=='PASS')})
+  comparisons.append({'device':device,'path':path,'outcome':outcome,'variants':values,'controlled_pairs':controlled})
+ return {'root_cause_confirmed':False,'comparisons':comparisons,'scope':'Same CUDA source, four build configurations, fresh processes. Status/time correlations are not proof of a unique cause; inherited JIT cache is not cleared and shared runtime does not remove every vendor runtime instance.'}
