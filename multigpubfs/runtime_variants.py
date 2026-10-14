@@ -83,6 +83,21 @@ def cases(devices):
     result.append({'name':f'deep-build-{identifier}-gpu{device}-{path}','config':config,'seconds':40 if path!='bfs' else 45})
  return result
 
+def choose_coverage(steps,devices):
+ observed={}
+ for step in steps:
+  config=step.get('diagnostic_case',{})
+  if config.get('coverage_build') or config.get('variant') not in SPECS:continue
+  path='persistent' if config.get('stage')=='persistent' else config.get('kind')
+  if path not in ('api','persistent','bfs'):continue
+  device=config.get('device',(config.get('devices') or [None])[0])
+  observed[(config['variant'],device,path)]=step
+ for identifier in (BASELINE,'shared-sm120','static-sm120','shared-legacy'):
+  evidence=[observed.get((identifier,device,path)) for device in devices for path in ('api','persistent','bfs')]
+  if evidence and all(x is not None and x['status']=='PASS' for x in evidence):
+   return {'status':'VERIFIED_FOR_SYNTHETIC_COVERAGE','id':identifier,'devices':devices,'evidence':[x['name'] for x in evidence],'scope':'Subsequent diagnostic probes only; baseline failures remain in the report; no production repair or default change'}
+ return {'status':'UNAVAILABLE','id':None,'reason':'No common build passed API/kernel, native resident inventory and exact S3 BFS on every selected GPU; no unverified alternative is used.'}
+
 def call_boundary(phase):
  if not phase:return None
  if 'hardware-cudaSetDevice-enter' in phase:return 'C++ wrapper entered; cudaSetDevice return was not observed'
@@ -94,7 +109,7 @@ def compare(steps):
  groups={}
  for step in steps:
   config=step.get('diagnostic_case',{});identifier=config.get('variant')
-  if identifier not in SPECS:continue
+  if identifier not in SPECS or config.get('coverage_build'):continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
   device=config.get('device',(config.get('devices') or [None])[0]);key=(device,path)
   groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'call_boundary':call_boundary(step.get('last_native_phase')) if step['status'] in ('FAIL','TIMEOUT') else None,'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}

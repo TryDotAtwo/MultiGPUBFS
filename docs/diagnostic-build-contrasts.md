@@ -23,6 +23,12 @@ Package assembly checks ELF NEEDED/local symbols, cubin/PTX inventory,
 source-tree identity and SHA256. Each diagnostic child verifies hashes and
 the library paths actually resolved by its loader before making GPU calls.
 The comparison section is prioritized before the broader synthetic suite.
+If the baseline fails but an alternate build passes API/kernel, resident
+inventory and exact S3 BFS on every selected GPU, subsequent synthetic
+coverage may use that verified build. The chosen identity is explicit in
+report.json and deep-summary.txt; original factorial failures stay intact
+and the whole report retains FAIL. This is diagnostic continuation, not a
+production fallback. If no build meets the gate, no alternate is selected.
 For each selected GPU it covers direct EAGER API/kernel probes, real resident
 native inventory (two requests to one worker) and tiny S3 BFS with an
 independent CPU layer/terminal-state oracle.
