@@ -100,7 +100,15 @@ def analyze(report):
   if case['status'] in ('TIMEOUT','SKIPPED','INCOMPLETE'):unknown.append('Loader contrast '+case['name']+': '+case.get('reason',case.get('error','not completed')))
  failures=[x['name'] for x in steps if x['status'] in ('FAIL','TIMEOUT')]
  if failures and not actions:actions.append('Return report.json and diagnostics.zip from the same job. Use the evidence paths and failure-specific library versions to choose a user-level environment fix; do not blindly increase timeouts or install a driver with pip.')
- priority=('LOADER_CONTRAST_REPRODUCED','DRIVER_STUB_LOADED','DRIVER_KERNEL_LIBRARY_MISMATCH','DRIVER_MAJOR_TOO_OLD','CUDA_VISIBILITY_DISABLED','DRIVER_LIBRARY_UNAVAILABLE','NO_VISIBLE_GPU','NATIVE_KERNEL_IMAGE_UNAVAILABLE','DIAGNOSTIC_PROCESS_SPAWN_FAILED','ABI_VERSION_UNAVAILABLE','SHARED_LIBRARY_LOAD_FAILED','RUNTIME_DRIVER_COMPATIBILITY_FAILED')
+ builds=report.get('deep_analysis',{}).get('runtime_build_matrix',{})
+ for comparison in builds.get('comparisons',[]):
+  if comparison['outcome']=='VARIANT_DEPENDENT':
+   fact('DIAGNOSTIC_BUILD_CONTRAST_OBSERVED','GPU '+str(comparison['device'])+' '+comparison['path']+' passes for some diagnostic builds and fails for others. Runtime/SM120 controlled pairs are recorded; this alone does not prove a unique cause.',['deep_analysis/runtime_build_matrix/comparisons'])
+   actions.append('Compare the same-source runtime and native-SM120 pairs in deep-summary.txt; use actual library hashes and call boundaries, with the inherited JIT-cache limitation.')
+  for identifier,observed in comparison['variants'].items():
+   if observed.get('call_boundary'):
+    fact('NATIVE_CALL_BOUNDARY_RECORDED',identifier+' GPU '+str(comparison['device'])+' '+comparison['path']+': '+observed['call_boundary']+'. This locates the last flushed boundary rather than proving a driver root cause.',['steps/'+observed['name']+'/last_native_phase'])
+ priority=('DIAGNOSTIC_BUILD_CONTRAST_OBSERVED','LOADER_CONTRAST_REPRODUCED','DRIVER_STUB_LOADED','DRIVER_KERNEL_LIBRARY_MISMATCH','DRIVER_MAJOR_TOO_OLD','CUDA_VISIBILITY_DISABLED','DRIVER_LIBRARY_UNAVAILABLE','NO_VISIBLE_GPU','NATIVE_KERNEL_IMAGE_UNAVAILABLE','DIAGNOSTIC_PROCESS_SPAWN_FAILED','ABI_VERSION_UNAVAILABLE','SHARED_LIBRARY_LOAD_FAILED','RUNTIME_DRIVER_COMPATIBILITY_FAILED','NATIVE_CALL_BOUNDARY_RECORDED')
  best=next((item for code in priority for item in confirmed if item['code']==code),None) if failures else None
  explanation={'confidence':'observed','statement':best['statement'],'evidence':best['evidence']} if best else {'confidence':'unresolved' if failures else 'tested-required-components-passed','statement':'No single cause is established; inspect recorded hypotheses and missing evidence.' if failures else 'Required checks reported no failure. Optional evidence and untested policies remain explicitly limited.','evidence':failures}
  return {'schema':1,'best_supported_explanation':explanation,'primary_failure':failures[0] if failures else None,'confirmed_findings':confirmed,'hypotheses':hypotheses,'ruled_out_for_this_observation':excluded,'unknowns':unknown,'user_next_actions':actions,'operator_boundary':'Kernel-driver replacement, kernel errors and enforced GPU permissions cannot be repaired by a user-space library. If evidence stops at inaccessible policy, that uncertainty remains explicit.'}

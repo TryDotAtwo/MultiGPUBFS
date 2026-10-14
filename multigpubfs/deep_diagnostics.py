@@ -442,7 +442,7 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
  rows=['Diagnostic CUDA build contrasts (same source; observations, not a unique root cause):']
  for comparison in runner.report['deep_analysis']['runtime_build_matrix']['comparisons']:
   rows.append('GPU '+str(comparison['device'])+' '+comparison['path']+': '+comparison['outcome'])
-  for identifier,value in comparison['variants'].items():rows.append('  '+identifier+': '+value['status']+'; '+str(value.get('last_native_phase') or value.get('last_api') or value.get('reason') or 'completed'))
+  for identifier,value in comparison['variants'].items():rows.append('  '+identifier+': '+value['status']+'; '+str(value.get('call_boundary') or value.get('last_native_phase') or value.get('last_api') or value.get('reason') or 'completed'))
  rows.append('name\tstatus\tlast native phase / API')
  for step in runner.report['steps']:rows.append(step['name']+'\t'+step['status']+'\t'+str(step.get('last_native_phase') or step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation') or step.get('reason','')))
  (root/'deep-summary.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8');return runner.finish()

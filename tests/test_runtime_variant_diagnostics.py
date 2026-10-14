@@ -83,6 +83,13 @@ class RuntimeVariants(unittest.TestCase):
   steps=[{'name':x,'status':'TIMEOUT' if x==variants.BASELINE else 'PASS','diagnostic_case':{'variant':x,'kind':'api','device':0},'seconds':1} for x in variants.SPECS]
   result=variants.compare(steps);self.assertFalse(result['root_cause_confirmed'])
   self.assertEqual(result['comparisons'][0]['outcome'],'VARIANT_DEPENDENT')
+ def test_all_failing_variants_do_not_suggest_a_working_build(self):
+  steps=[{'name':x,'status':'TIMEOUT' if x==variants.BASELINE else 'FAIL','diagnostic_case':{'variant':x,'kind':'api','device':0}} for x in variants.SPECS]
+  self.assertEqual(variants.compare(steps)['comparisons'][0]['outcome'],'ALL_FAILED')
+ def test_wrapper_entry_and_separate_api_boundaries(self):
+  self.assertIn('cudaSetDevice return',variants.call_boundary('PHASE hardware-cudaSetDevice-enter'))
+  self.assertIn('cudaGetDeviceProperties return',variants.call_boundary('PHASE hardware-cudaGetDeviceProperties-enter'))
+  self.assertIn('no later wrapper marker',variants.call_boundary('PHASE pid=1 inventory-hardware-info'))
  def test_budget_and_missing_results_are_explicit(self):
   result=variants.compare([{'name':'x','status':'SKIPPED','reason':'GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED','diagnostic_case':{'variant':variants.BASELINE,'kind':'api','device':0}}])
   self.assertEqual(result['comparisons'][0]['outcome'],'INCOMPLETE')

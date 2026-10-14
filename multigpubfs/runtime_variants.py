@@ -83,6 +83,13 @@ def cases(devices):
     result.append({'name':f'deep-build-{identifier}-gpu{device}-{path}','config':config,'seconds':40 if path!='bfs' else 45})
  return result
 
+def call_boundary(phase):
+ if not phase:return None
+ if 'hardware-cudaSetDevice-enter' in phase:return 'C++ wrapper entered; cudaSetDevice return was not observed'
+ if 'hardware-cudaGetDeviceProperties-enter' in phase:return 'C++ cudaSetDevice returned; cudaGetDeviceProperties return was not observed'
+ if 'inventory-hardware-info' in phase or 'graph-info-hardware-info' in phase:return 'Executable reached hardware wrapper call; no later wrapper marker was recorded'
+ return 'Last flushed native marker: '+phase
+
 def compare(steps):
  groups={}
  for step in steps:
@@ -90,14 +97,14 @@ def compare(steps):
   if identifier not in SPECS:continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
   device=config.get('device',(config.get('devices') or [None])[0]);key=(device,path)
-  groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}
+  groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'call_boundary':call_boundary(step.get('last_native_phase')) if step['status'] in ('FAIL','TIMEOUT') else None,'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}
  comparisons=[]
  for (device,path),values in groups.items():
   statuses=[values.get(identifier,{}).get('status','NOT_RUN') for identifier in SPECS]
   if any(x in ('NOT_RUN','SKIPPED','RUNNING') for x in statuses):outcome='INCOMPLETE'
   elif all(x=='PASS' for x in statuses):outcome='ALL_PASS'
-  elif len(set(statuses))==1:outcome='ALL_SAME_FAILURE'
-  else:outcome='VARIANT_DEPENDENT'
+  elif any(x=='PASS' for x in statuses):outcome='VARIANT_DEPENDENT'
+  else:outcome='ALL_FAILED'
   controlled=[]
   for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120','shared-sm120','runtime'),(BASELINE,'static-sm120','native-sm120'),('shared-legacy','shared-sm120','native-sm120')]:
    left=values.get(a,{});right=values.get(b,{})
