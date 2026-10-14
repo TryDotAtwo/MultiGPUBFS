@@ -7,7 +7,7 @@ BASE_SHA = 'f85b5d3f90bb6c870bc60b3fbc76ef920284a83a443185090aa81643f3bee9aa'
 RUNTIMES = ('nvidia-cuda-runtime-cu12==12.9.79', 'nvidia-nccl-cu12==2.30.7')
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--output', type=Path, required=True);p.add_argument('--binary',type=Path,required=True);p.add_argument('--library',type=Path,required=True);p.add_argument('--native-manifest',type=Path);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--output', type=Path, required=True);p.add_argument('--binary',type=Path,required=True);p.add_argument('--library',type=Path,required=True);p.add_argument('--native-manifest',type=Path);p.add_argument('--diagnostic-variants',type=Path);p.add_argument('--cuobjdump',type=Path);a=p.parse_args()
     root=Path(__file__).resolve().parents[1];stage=root/'multigpubfs/_native'
     if stage.exists():raise RuntimeError('Refusing to replace existing native staging')
     with tempfile.TemporaryDirectory() as temp:
@@ -51,11 +51,16 @@ def main():
         subprocess.run(['patchelf','--set-rpath','$ORIGIN/../lib',str(stage/'bin/mgbfs')],check=True)
         subprocess.run(['patchelf','--set-rpath','$ORIGIN',str(stage/'lib/libmgbfs_cuda.so')],check=True)
         manifest=json.loads((stage/'manifest.json').read_text())
+        diagnostic_metadata=None
+        if a.diagnostic_variants:
+            if a.cuobjdump is None:raise RuntimeError('Diagnostic variant packaging requires the pinned cubin tool')
+            from package_diagnostic_variants import attach_variants
+            diagnostic_metadata=attach_variants(stage,a.diagnostic_variants,manifest,a.cuobjdump)
         manifest.update(bundled_runtime=runtime_receipts,package_source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),external_runtime='Compatible NVIDIA host driver and Linux system ABI only; CUDA runtime/NCCL are private bundled libraries')
-        manifest['sha256']={str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(stage.rglob('*')) if p.is_file() and p.name!='manifest.json'}
+        manifest['sha256']={str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(stage.rglob('*')) if p.is_file() and p.name!='manifest.json' and ('diagnostic_variants' not in p.parts or p.name=='variants.json')}
         sys.path.insert(0,str(root))
         from multigpubfs.artifact_metadata import elf_runtime_requirements
-        manifest['elf_runtime_requirements']=elf_runtime_requirements([stage/'bin/mgbfs',*sorted((stage/'lib').glob('*.so*'))])
+        manifest['elf_runtime_requirements']=elf_runtime_requirements([stage/'bin/mgbfs',*sorted((stage/'lib').glob('*.so*')),*sorted((stage/'diagnostic_variants').glob('*/*.so'))])
         (stage/'manifest.json').write_text(json.dumps(manifest,indent=2))
         a.output.mkdir(parents=True,exist_ok=True)
         subprocess.run([sys.executable,'-m','build','--wheel','--outdir',str(a.output.resolve())],cwd=root,check=True)
@@ -64,6 +69,7 @@ def main():
         (a.output/'SHA256SUMS').write_text(sha+'  '+wheel.name+'\n')
         receipt=dict(schema=1,wheel=wheel.name,sha256=sha,size=wheel.stat().st_size,manifest=manifest,status='BUILT_NEEDS_GPU_ACCEPTANCE')
         (a.output/'manifest.json').write_text(json.dumps(receipt,indent=2))
+        if diagnostic_metadata:(a.output/'diagnostic-variants.json').write_text(json.dumps(diagnostic_metadata,indent=2))
         print(json.dumps(dict(wheel=wheel.name,size=wheel.stat().st_size,sha256=sha,requirements=manifest['elf_runtime_requirements'])))
 
 if __name__=='__main__':main()

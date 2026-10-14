@@ -1,0 +1,92 @@
+name: Assemble wheel with isolated CUDA build contrasts
+on:
+  workflow_dispatch:
+    inputs:
+      variant_build_run:
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VARIANT_RUN: ${{ inputs.variant_build_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare CPU-only package tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf g++ binutils
+          python3 -m pip install build wheel
+      - name: Check diagnostic, isolation and ordinary runtime contracts
+        run: |
+          python3 -m unittest discover -s tests -p 'test*diagnostic*.py'
+          python3 -m unittest discover -s tests -p test_startup_trace.py
+          python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
+      - name: Obtain verified CUDA cubin inventory tool
+        run: |
+          python3 - <<'PY'
+          import urllib.request,hashlib,tarfile
+          from pathlib import Path
+          p=Path('/tmp/cuobjdump.tar.xz')
+          urllib.request.urlretrieve('https://developer.download.nvidia.com/compute/cuda/redist/cuda_cuobjdump/linux-x86_64/cuda_cuobjdump-linux-x86_64-12.9.82-archive.tar.xz',p)
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='ee0de40e8c18068bfcc53e73510e7e7a1a80555205347940df67fa525d24452f'
+          with tarfile.open(p) as t:t.extractall('/tmp/cubin-tool',filter='data')
+          PY
+      - name: Reuse immutable production artifacts and download three verified builds
+        run: |
+          python3 scripts/reuse_portable_native.py native-pip-20261014-v14
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          assert hashlib.sha256(Path('/tmp/mgbfs-portable/accepted.whl').read_bytes()).hexdigest()=='5fa2adb9d048e2025b873f3b616cb1530c01ad4a5cb8877348e7da993181fa69'
+          PY
+          gh run view "$VARIANT_RUN" --repo "$GITHUB_REPOSITORY" --json headSha,status,conclusion > /tmp/variant-build-run.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('/tmp/variant-build-run.json'));assert r['status']=='completed' and r['conclusion']=='success',r
+          PY
+          for id in shared-legacy static-sm120 shared-sm120; do
+            gh run download "$VARIANT_RUN" --repo "$GITHUB_REPOSITORY" --name "diagnostic-variant-$id" --dir "/tmp/diagnostic-builds/$id"
+          done
+      - name: Assemble diagnostic libraries and ordinary baseline into one wheel
+        run: |
+          PYTHONPATH=. python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json --diagnostic-variants /tmp/diagnostic-builds --cuobjdump /tmp/cubin-tool/cuda_cuobjdump-linux-x86_64-12.9.82-archive/bin/cuobjdump
+          cp /tmp/variant-build-run.json dist-native/variant-build-run.json
+      - name: Verify clean pip install, variant linkage and production byte identity
+        run: |
+          python3 -m venv /tmp/pip-variant-clean
+          /tmp/pip-variant-clean/bin/python -m pip install dist-native/*.whl
+          cd /tmp
+          /tmp/pip-variant-clean/bin/python - <<'PY'
+          import json,subprocess,hashlib,os
+          from pathlib import Path
+          from multigpubfs.runtime_variants import inventory,environment,BASELINE
+          from multigpubfs.native_distribution import native_runtime
+          verified=inventory();assert verified['status']=='AVAILABLE';native,env=native_runtime()
+          assert env['LD_LIBRARY_PATH'].split(':')[0]==str(Path(native).parents[1]/'lib')
+          baseline=json.load(open('/tmp/mgbfs-portable/native-manifest.json'))
+          for name in ('bin/mgbfs','lib/libmgbfs_cuda.so'):
+            path=Path(native).parents[1]/name;assert hashlib.sha256(path.read_bytes()).hexdigest()==baseline['sha256'][name],name
+          for row in verified['variants']:
+            e=environment(row['id'],verified)
+            r=subprocess.run(['ldd',native],env=e,text=True,capture_output=True,check=True)
+            assert row['library_path'] in r.stdout,(row['id'],r.stdout)
+            missing=[s for s in r.stdout.splitlines() if 'not found' in s and 'libcuda.so.1' not in s]
+            assert not missing,missing
+          print('VERIFIED_CLEAN_PIP_VARIANTS_ELF_AND_UNCHANGED_PRODUCTION_BYTES_NO_GPU')
+          PY
+          /tmp/pip-variant-clean/bin/python -m pip check
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-pip-wheel
+          path: dist-native/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
