@@ -1,0 +1,33 @@
+name: Inspect published CUDA runtime linkage
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify immutable published bytes and inspect ELF without GPU
+        run: |
+          python3 - <<'PY'
+          import zipfile,hashlib,urllib.request,json,subprocess
+          from pathlib import Path
+          p=Path('/tmp/linkage-audit');p.mkdir()
+          u='https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v14/multigpubfs-0.2.0.dev14-py3-none-linux_x86_64.whl'
+          f=p/'wheel.whl';urllib.request.urlretrieve(u,f)
+          sha=hashlib.sha256(f.read_bytes()).hexdigest()
+          assert sha=='5fa2adb9d048e2025b873f3b616cb1530c01ad4a5cb8877348e7da993181fa69'
+          result={'wheel_sha256':sha,'scope':'immutable ELF inspection, no GPU code or CUDA initialization','artifacts':{}}
+          with zipfile.ZipFile(f) as z:
+            for name in ('bin/mgbfs','lib/libmgbfs_cuda.so','lib/libcudart.so.12'):
+              names=[n for n in z.namelist() if n.endswith('/_native/'+name)];assert len(names)==1
+              target=p/Path(name).name;target.write_bytes(z.read(names[0]));entry={'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
+              entry['dynamic']=subprocess.check_output(['readelf','-d',str(target)],text=True)
+              symbols=subprocess.check_output(['nm','--defined-only',str(target)],text=True,stderr=subprocess.DEVNULL)
+              entry['defined_runtime_symbols']=[x for x in symbols.splitlines() if any(s in x for s in ('cudaSetDevice','cudaGetDeviceProperties','__cudaRegisterFatBinary','cudaGetDeviceCount','cudaMemGetInfo','cudaRuntimeGetVersion'))]
+              symbols=subprocess.check_output(['nm','-D',str(target)],text=True,stderr=subprocess.DEVNULL)
+              entry['dynamic_runtime_symbols']=[x for x in symbols.splitlines() if any(s in x for s in ('cudaSetDevice','cudaGetDeviceProperties','__cudaRegisterFatBinary','cudaGetDeviceCount','cudaMemGetInfo','cudaRuntimeGetVersion'))]
+              result['artifacts'][name]=entry
+          print(json.dumps(result,indent=2))
+          PY
