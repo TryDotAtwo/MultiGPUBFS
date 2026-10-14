@@ -19,7 +19,7 @@ class DeepDiagnostics(unittest.TestCase):
  def test_cpu_oracles_finite(self):
   for name in ('permutation','repeated','matrix','matrix-gemm','wide'):
    g=deep.fixture(name);sizes,terminal=deep.oracle(g)
-   self.assertEqual(sum(sizes),len(set(terminal)) if len(sizes)==1 else sum(sizes))
+   self.assertEqual(sizes,{'permutation':[1,2,2,1],'repeated':[1,1,1],'matrix':[1,2,1],'matrix-gemm':[1,1],'wide':[1,1]}[name])
    self.assertGreater(sum(sizes),0);self.assertLessEqual(sum(sizes),64)
  def test_summary_does_not_claim_root_cause(self):
   value=deep.summarize([{'name':'x','status':'TIMEOUT','last_native_phase':'hardware-get-properties'}])

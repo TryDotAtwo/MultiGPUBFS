@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multigpubfs"
-version = "0.2.0.dev12"
+version = "0.2.0.dev13"
 description = "Exact native GPU BFS for CayleyPy graph actions"
 requires-python = ">=3.10"
 

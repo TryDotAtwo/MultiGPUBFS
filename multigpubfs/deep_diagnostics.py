@@ -43,6 +43,8 @@ def startup_cases(devices):
     for thread in (False,True) if module=='EAGER' and data=='EAGER' else (False,):
      config={'kind':'api','device':device,'module':module,'data_loading':data,'order':order,'control_thread':thread}
      cases.append({'name':f'deep-gpu-{device}-{module}-{data}-{order}-thread{int(thread)}','config':config,'seconds':25})
+  for module in ('EAGER','LAZY'):
+   cases.append({'name':f'deep-gpu-{device}-{module}-native-loader','config':{'kind':'api','device':device,'module':module,'data_loading':module,'order':'engine-first','control_thread':True,'loader':'native'},'seconds':30})
  return cases
 
 def fixture(name):
@@ -100,6 +102,7 @@ def api_probe(config,root):
   for number,label in [(1,'max_threads_per_block'),(10,'warp_size'),(16,'multiprocessors'),(40,'async_engines'),(41,'unified_addressing'),(75,'compute_major'),(76,'compute_minor')]:
    phase('cudaDeviceGetAttribute '+label);v=C.c_int();code=fn(C.byref(v),number,config['device']);attributes[label]={'value':v.value,'code':code};state['attributes']=attributes;done(code)
   phase('full native hardware wrapper');values=(C.c_uint64*8)();fn=loaded['engine'].mgbfs_generic_hardware_info;fn.argtypes=[C.c_int,C.POINTER(C.c_uint64)];fn.restype=C.c_int;code=fn(config['device'],values);state['hardware']=list(values);done(code)
+  process_snapshot(os.getpid(),root/'process-snapshot.json')
   phase('exact successor kernel');state['kernel']=_kernel(config['device']);done()
   phase('stream/event/graph and pinned-memory APIs');state['primitives']=primitives(cuda,phase,done);done()
   state['status']='PASS';write(root/'probe.json',state);return state
@@ -133,8 +136,9 @@ def primitives(cuda,phase,done):
  finally:
   for name,ptr in [('cudaGraphExecDestroy',executable),('cudaGraphDestroy',graph),('cudaFreeHost',host),('cudaFree',memory),('cudaEventDestroy',event),('cudaStreamDestroy',stream)]:
    if ptr.value:
+    phase('cleanup '+name)
     fn=getattr(cuda,name);fn.argtypes=[C.c_void_p];fn.restype=C.c_int;code=fn(ptr)
-    if code:result[name]={'code':code,'status':'FAIL'}
+    done(code)
 
 def bfs_probe(config,root):
  from .native_distribution import native_runtime
@@ -160,6 +164,7 @@ def component(config,root):
  for key in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING'):
   setting=config.get('module' if key=='CUDA_MODULE_LOADING' else 'data_loading','inherited')
   if setting!='inherited':os.environ[key]=setting
+ if config['kind']=='inventory':return inventory(root)
  if config['kind']=='api':return api_probe(config,root)
  if config['kind']=='bfs':return bfs_probe(config,root)
  from .diagnostics import _component
@@ -174,8 +179,12 @@ def run_case(runner,case,deadline):
   tool=shutil.which('strace')
   if not tool:runner.skip(case['name'],'strace is not installed; native checkpoints and /proc snapshots remain available');return runner.report['steps'][-1]
   command=[tool,'-f','-qq','-s','80','-e','trace=ioctl,futex,clone,clone3,mmap,openat,execve','-o',str(folder/'strace.log')]+command
+ child_env=None
+ if case['config'].get('loader')=='native':
+  from .native_distribution import native_runtime
+  _,child_env=native_runtime()
  previous=runner.timeout;runner.timeout=min(case.get('seconds',30),remaining)
- try:entry=runner.run(case['name'],command,optional=case.get('optional',False))
+ try:entry=runner.run(case['name'],command,optional=case.get('optional',False),environment=child_env)
  finally:runner.timeout=previous
  entry['diagnostic_case']=case['config']
  for name in ('probe.json','process-snapshot.json'):
@@ -196,6 +205,36 @@ def summarize(steps):
   if c.get('kind')=='api':comparisons.append({'name':s['name'],'status':s['status'],'device':c['device'],'module':c['module'],'data':c['data_loading'],'order':c['order'],'thread':c['control_thread'],'last_api':s.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')})
  return {'root_cause_confirmed':False,'scope':'Controlled observations; mode correlations do not prove a driver bug. Finite synthetic tests do not cover every possible graph or API parameter.','failures':failures,'startup_matrix':comparisons,'untested':[{'name':s['name'],'reason':s.get('reason')} for s in steps if s['status']=='SKIPPED']}
 
+def inventory(root):
+ import inspect,importlib.metadata
+ from .diagnostics import _paths
+ native,env,libs=_paths();result={'scope':'Discovery only; an exported symbol is not execution acceptance','libraries':libs,'symbols':[],'catalog':{},'optional_packages':{},'capabilities':{},'run_modes':['generic','shard_ab_hash','shard_ab_sort_merge','hash','sorted','cuda','gemm','full','parent','none','radix','single','multi','persistent','autotune']}
+ for package in ('multigpubfs','cayleypy','torch','numpy'):
+  try:result['optional_packages'][package]=importlib.metadata.version(package)
+  except importlib.metadata.PackageNotFoundError:result['optional_packages'][package]='NOT_INSTALLED'
+ tool=shutil.which('nm')
+ if tool:
+  q=subprocess.run([tool,'-D','--defined-only',libs['libmgbfs_cuda.so']],text=True,capture_output=True,timeout=10)
+  result['symbols']=[line.split()[-1] for line in q.stdout.splitlines() if 'mgbfs_' in line][:1000];result['symbols_exit_code']=q.returncode
+ else:result['symbols_status']='nm unavailable'
+ from .transport import library_capabilities
+ result['capabilities']=library_capabilities(env)
+ try:
+  import cayleypy
+  for family in ('PermutationGroups','MatrixGroups','Puzzles'):
+   members={};obj=getattr(cayleypy,family,None)
+   if obj is not None:
+    for name in dir(obj):
+     if name.startswith('_'):continue
+     member=getattr(obj,name)
+     if callable(member):
+      try:signature=str(inspect.signature(member))
+      except (ValueError,TypeError):signature='unavailable'
+      members[name]={'signature':signature,'execution':'NOT_AUTOMATICALLY_EXECUTED; arbitrary constructor parameters may be unbounded'}
+   result['catalog'][family]=members
+ except ImportError:result['catalog_status']='CayleyPy optional dependency is not installed'
+ write(root/'probe.json',result);return result
+
 def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
  from .diagnostics import Runner
  import datetime
@@ -207,6 +246,7 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
  def run(name,stage,**kw):return run_case(runner,{'name':name,'config':dict(kind='component',stage=stage,**kw),'seconds':min(timeout,45)},deadline)
  try:
   run('system-info','system');run('filesystem','filesystem');run('environment-evidence','environment');run('nvml-evidence','nvml');run('torch-evidence','torch');run('driver-api','driver')
+  run_case(runner,{'name':'deep-capabilities','config':{'kind':'inventory'},'seconds':30,'optional':True},deadline)
   runtime=run('native-runtime','runtime');count=run('cuda-discovery','count')
   if runtime['status']=='PASS' and count['status']=='PASS':
    selected=devices or list(range(count['result']['data']['visible_devices']))
@@ -225,7 +265,7 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     # Change one execution dimension per bounded oracle case.
     base={'kind':'bfs','fixture':'permutation','devices':[selected[0]],'history':'hash','generator':'cuda','shards':1}
     variants=[('base',{}),('sorted',{'history':'sorted'}),('gemm',{'generator':'gemm'}),('parent',{'transport':'parent'}),('radix',{'candidate_order':'radix'}),('shards4',{'shards':4}),('persistent',{'persistent':True}),('tuner',{'autotune':True,'shards':None}),('repeated',{'fixture':'repeated'}),('matrix',{'fixture':'matrix'}),('matrix-gemm',{'fixture':'matrix-gemm','generator':'gemm'}),('wide',{'fixture':'wide'}),('shard-ab-hash',{'fixture':'lrx','backend':'shard_ab_hash'}),('shard-ab-sort',{'fixture':'lrx','backend':'shard_ab_sort_merge'})]
-    if len(selected)>1:variants.extend([('multi',{'devices':selected}),('multi-sorted',{'devices':selected,'history':'sorted'}),('multi-parent',{'devices':selected,'transport':'parent'}),('multi-gemm',{'devices':selected,'generator':'gemm'}),('multi-persistent',{'devices':selected,'persistent':True}),('multi-shard-ab',{'devices':selected,'fixture':'lrx','backend':'shard_ab_hash'})])
+    if len(selected)>1:variants.extend([('multi',{'devices':selected}),('multi-sorted',{'devices':selected,'history':'sorted'}),('multi-parent',{'devices':selected,'transport':'parent'}),('multi-gemm',{'devices':selected,'generator':'gemm'}),('multi-persistent',{'devices':selected,'persistent':True}),('multi-shard-ab',{'devices':selected,'fixture':'lrx','backend':'shard_ab_hash'}),('multi-shard-ab-sort',{'devices':selected,'fixture':'lrx','backend':'shard_ab_sort_merge'})])
     for label,changes in variants:run_case(runner,{'name':'deep-bfs-'+label,'config':dict(base,**changes),'seconds':min(timeout,45)},deadline)
   else:runner.skip('deep-gpu-suite','Native runtime or CUDA discovery failed')
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})

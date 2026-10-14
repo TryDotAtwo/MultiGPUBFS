@@ -213,12 +213,12 @@ class Runner:
  def save(self):_write(self.root/'report.json',self.report)
  def skip(self,name,reason):
   self.report['steps'].append({'name':name,'status':'SKIPPED','reason':reason});self.save();print('SKIP '+name+': '+reason,flush=True)
- def run(self,name,command,*,optional=False):
+ def run(self,name,command,*,optional=False,environment=None):
   entry={'name':name,'status':'RUNNING','command':command,'timeout_seconds':self.timeout,'log':name+'.log'};self.report['steps'].append(entry);self.save();print('START '+name,flush=True)
   started=time.monotonic();process=None;thread=None
   try:
    with (self.root/(name+'.log')).open('w',encoding='utf-8') as log:
-    env=dict(os.environ)
+    env=dict(os.environ if environment is None else environment)
     for key in ('RANK','LOCAL_RANK','WORLD_SIZE','MASTER_ADDR','MASTER_PORT','TORCHELASTIC_RUN_ID'):env.pop(key,None)
     process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',start_new_session=os.name=='posix')
     entry['pid']=process.pid;self.save()
