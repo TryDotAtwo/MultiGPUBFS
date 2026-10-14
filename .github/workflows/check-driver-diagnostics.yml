@@ -12,4 +12,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Framework, classification and actual shared-library loader failures
-        run: python3 -m unittest discover -s tests -p 'test*diagnostic*.py'
+        run: |
+          python3 -m unittest discover -s tests -p 'test*diagnostic*.py'
+          python3 -m unittest discover -s tests -p test_startup_trace.py
