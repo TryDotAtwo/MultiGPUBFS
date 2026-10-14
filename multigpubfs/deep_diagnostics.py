@@ -146,7 +146,7 @@ def bfs_probe(config,root):
  from .generic_session import persistent_graph_workers
  graph=fixture(config['fixture']);layers,last=oracle(graph);_,env=native_runtime()
  env.update(MGBFS_GENERIC_HISTORY=config.get('history','hash'),MGBFS_GENERIC_GENERATOR=config.get('generator','cuda'),MGBFS_AUTOTUNE_CACHE_DIR=str(root/'tune-cache'))
- devices=config['devices'];kwargs=dict(devices=devices,capacity=256,shards=config.get('shards',1),autotune=config.get('autotune',False),max_seconds=30,backend=config.get('backend','generic'),transport=config.get('transport','full'),candidate_order=config.get('candidate_order','none'),_native_env=env)
+ devices=config['devices'];kwargs=dict(devices=devices,capacity=256,shards=config.get('shards',1),autotune=config.get('autotune',False),max_seconds=30,backend=config.get('backend','generic'),transport=config.get('transport','full'),candidate_order=config.get('candidate_order','none'),peer_transport=config.get('peer_transport','auto'),_native_env=env)
  reports=[]
  def run(index):
   print('PHASE tiny BFS '+config['fixture']+' '+str(index),flush=True);output=root/('bfs-'+str(index));report=run_graph(graph,output,**kwargs)
@@ -229,7 +229,14 @@ def component(config,root):
  if config['kind']=='catalog':return catalog_probe(config,root)
  if config['kind']=='inventory':return inventory(root)
  if config['kind']=='api':return api_probe(config,root)
- if config['kind']=='bfs':return bfs_probe(config,root)
+ if config['kind']=='bfs':
+  if config.get('generator')=='gemm':
+   from .diagnostics import _cuda
+   majors=[]
+   for device in config['devices']:
+    cuda,_,ck=_cuda(device);fn=cuda.cudaDeviceGetAttribute;fn.argtypes=[C.POINTER(C.c_int),C.c_int,C.c_int];fn.restype=C.c_int;major=C.c_int();ck(fn(C.byref(major),75,device));majors.append(major.value)
+   if min(majors)<8:return {'status':'UNAVAILABLE','reason':'UNSUPPORTED: compiled exact GEMM path requires compute capability >=8.0','observed_compute_majors':majors}
+  return bfs_probe(config,root)
  from .diagnostics import _component
  return _component(config['stage'],root,config.get('devices'),config.get('device'),config.get('seconds',30))
 
@@ -325,6 +332,9 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
      for transport,changes in [('inherited',{}),('socket',{'NCCL_P2P_DISABLE':'1','NCCL_SHM_DISABLE':'1','NCCL_IB_DISABLE':'1'}),('no-p2p',{'NCCL_P2P_DISABLE':'1'})]:
       case={'name':'deep-nccl-'+transport,'config':{'kind':'component','stage':'nccl_exchange','devices':selected,'environment_overrides':changes},'seconds':45}
       run_case(runner,case,deadline)
+    capabilities=next((s.get('result',{}).get('data',{}).get('capabilities',{}) for s in runner.report['steps'] if s['name']=='deep-capabilities'),{})
+    if capabilities.get('lsa_compiled') is not True:runner.skip('deep-bfs-lsa','UNSUPPORTED: NCCL LSA is not confirmed compiled in the installed native library')
+    else:run_case(runner,{'name':'deep-bfs-lsa','config':{'kind':'bfs','fixture':'lrx','devices':selected,'backend':'shard_ab_hash','peer_transport':'lsa'},'seconds':45},deadline)
     # Change one execution dimension per bounded oracle case.
     base={'kind':'bfs','fixture':'permutation','devices':[selected[0]],'history':'hash','generator':'cuda','shards':1}
     variants=[('base',{}),('sorted',{'history':'sorted'}),('gemm',{'generator':'gemm'}),('parent',{'transport':'parent'}),('radix',{'candidate_order':'radix'}),('shards4',{'shards':4}),('persistent',{'persistent':True}),('tuner',{'autotune':True,'shards':None}),('repeated',{'fixture':'repeated'}),('matrix',{'fixture':'matrix'}),('matrix-gemm',{'fixture':'matrix-gemm','generator':'gemm'}),('wide',{'fixture':'wide'}),('shard-ab-hash',{'fixture':'lrx','backend':'shard_ab_hash'}),('shard-ab-sort',{'fixture':'lrx','backend':'shard_ab_sort_merge'})]
