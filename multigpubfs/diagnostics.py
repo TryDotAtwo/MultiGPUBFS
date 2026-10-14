@@ -293,7 +293,7 @@ class Runner:
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})

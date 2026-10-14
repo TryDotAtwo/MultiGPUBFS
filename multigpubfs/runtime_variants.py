@@ -25,10 +25,11 @@ def inventory(root=None,*,environ=None):
  manifest=json.loads((root/'manifest.json').read_text())
  if manifest.get('schema')!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_MANIFEST_SCHEMA')
  hashes=manifest.get('sha256',{})
- def checked(name):
+ def checked(name,expected=None):
   path=root/name
   if not path.resolve().is_relative_to(root) or path.is_symlink():raise RuntimeError('DIAGNOSTIC_VARIANT_PATH')
-  if name not in hashes or not path.is_file() or digest(path)!=hashes[name]:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_'+name)
+  expected=hashes.get(name) if expected is None else expected
+  if expected is None or not path.is_file() or digest(path)!=expected:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_'+name)
   return path
  checked('diagnostic_variants/variants.json');checked('bin/mgbfs')
  for name in ('lib/libcudart.so.12','lib/libnccl.so.2'):checked(name)
@@ -43,8 +44,8 @@ def inventory(root=None,*,environ=None):
   expected='lib/libmgbfs_cuda.so' if identifier==BASELINE else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
   receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
   if row.get('library')!=expected or row.get('receipt')!=receipt:raise RuntimeError('DIAGNOSTIC_VARIANT_PATH_'+identifier)
-  path=checked(expected);proof=json.loads(checked(receipt).read_text())
-  if row.get('sha256')!=hashes[expected]:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_METADATA_'+identifier)
+  path=checked(expected,row.get('sha256'));proof=json.loads(checked(receipt,row.get('receipt_sha256')).read_text())
+  if not row.get('sha256') or not row.get('receipt_sha256'):raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_METADATA_'+identifier)
   if not row.get('cuda_source_tree') or row.get('cuda_source_tree')!=proof.get('cuda_source_tree') or proof.get('id')!=identifier or proof.get('runtime')!=runtime or proof.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
   sources.add(row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof))
  if len(sources)!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_MISMATCH')

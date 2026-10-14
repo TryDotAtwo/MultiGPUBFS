@@ -24,7 +24,7 @@ def process_snapshot(pid,destination):
    for name in ('status','limits','wchan','syscall','stack'):
     try:item[name]=(root/name).read_text(errors='replace')[:12000]
     except OSError as e:item[name]={'unavailable':type(e).__name__,'errno':e.errno}
-   try:item['loaded_libraries']=[x for x in (root/'maps').read_text(errors='replace').splitlines() if any(k in x for k in ('libcuda','libnccl','libmgbfs','libstdc++','libgcc','libpthread'))][:160]
+   try:item['loaded_libraries']=[x for x in (root/'maps').read_text(errors='replace').splitlines() if any(k in x for k in ('libcuda','libnvidia','libnccl','libmgbfs','libstdc++','libgcc','libpthread'))][:160]
    except OSError as e:item['loaded_libraries']={'unavailable':str(e)}
    for thread in sorted((root/'task').iterdir())[:64]:
     entry={'tid':int(thread.name)}
@@ -121,6 +121,8 @@ def api_probe(config,root):
   if config['order']=='engine-first':engine()
   for name,fn,args in [('cudaSetDevice',cuda.cudaSetDevice,[config['device']]),('cudaFree-null context',cuda.cudaFree,[None]),('repeat cudaSetDevice',cuda.cudaSetDevice,[config['device']])]:phase(name);done(fn(*args))
   if config['order']=='context-first':engine()
+  for name in ('cudaRuntimeGetVersion','cudaDriverGetVersion'):
+   phase(name);version=C.c_int();fn=getattr(cuda,name);fn.argtypes=[C.POINTER(C.c_int)];fn.restype=C.c_int;code=fn(C.byref(version));state[name]=version.value;done(code)
   phase('cuModuleGetLoadingMode');driver=C.CDLL('libcuda.so.1',mode=C.RTLD_GLOBAL);mode=C.c_int();fn=driver.cuModuleGetLoadingMode;fn.argtypes=[C.POINTER(C.c_int)];fn.restype=C.c_int;code=fn(C.byref(mode));state['actual_module_loading_mode']=mode.value;done(code)
   free=C.c_size_t();total=C.c_size_t();fn=cuda.cudaMemGetInfo;fn.argtypes=[C.POINTER(C.c_size_t)]*2;fn.restype=C.c_int
   phase('cudaMemGetInfo');code=fn(C.byref(free),C.byref(total));state['memory']={'free':free.value,'total':total.value};done(code)
@@ -262,8 +264,41 @@ def catalog_probe(config,root):
  finally:
   for pointer in alloc:cuda.cudaFree(pointer)
 
+def persistent_build_probe(config,root):
+ from .diagnostics import _phase,_save_pool
+ from .native_distribution import native_runtime
+ from .generic_session import Pool
+ native,env=native_runtime();log_root=root/'persistent-runtime';log_root.mkdir()
+ previous=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT');os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=str(log_root)
+ try:pool=Pool()
+ finally:
+  if previous is None:os.environ.pop('MGBFS_GENERIC_SESSION_LOG_ROOT',None)
+  else:os.environ['MGBFS_GENERIC_SESSION_LOG_ROOT']=previous
+ try:
+  _phase('diagnostic build persistent first inventory')
+  first=pool.inventory(native,[config['device']],env,20);pid=pool.workers[0].process.pid
+  process_snapshot(pid,root/'process-snapshot.json')
+  _phase('diagnostic build persistent second inventory')
+  second=pool.inventory(native,[config['device']],env,8)
+  if pid!=pool.workers[0].process.pid or second[0]['device']!=config['device']:raise RuntimeError('DIAGNOSTIC_PERSISTENT_IDENTITY')
+  return {'device':config['device'],'requests':2,'same_worker_verified':True,'inventory':first,'worker_pid':pid}
+ except BaseException:
+  if pool.workers:process_snapshot(pool.workers[0].process.pid,root/'process-snapshot.json')
+  raise
+ finally:
+  _save_pool(pool,root);_phase('close owned diagnostic build worker');pool.close()
+
 def component(config,root):
  root=Path(root);os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
+ if config['kind']=='build-inventory':
+  from .runtime_variants import inventory
+  result=inventory();write(root/'probe.json',result);return result
+ if config.get('variant'):
+  from .runtime_variants import inventory,confirm_resolution
+  from .diagnostics import _paths
+  verified=inventory();_,_,libraries=_paths()
+  write(root/'variant.json',confirm_resolution(config['variant'],verified,libraries))
+  if config.get('stage')=='persistent':return persistent_build_probe(config,root)
  for key in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING'):
   setting=config.get('module' if key=='CUDA_MODULE_LOADING' else 'data_loading','inherited')
   if setting!='inherited':os.environ[key]=setting
@@ -289,14 +324,21 @@ def run_case(runner,case,deadline):
   if not tool:runner.skip(case['name'],'strace is not installed; native checkpoints and /proc snapshots remain available');return runner.report['steps'][-1]
   command=[tool,'-f','-qq','-s','80','-e','trace=ioctl,futex,clone,clone3,mmap,openat,execve','-o',str(folder/'strace.log')]+command
  child_env=None
- if case['config'].get('loader')=='native':
+ if case['config'].get('variant'):
+  from .runtime_variants import inventory,environment
+  verified=getattr(runner,'diagnostic_variants',None)
+  if verified is None:verified=inventory();runner.diagnostic_variants=verified
+  if verified.get('status')!='AVAILABLE':
+   runner.skip(case['name'],verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'));entry=runner.report['steps'][-1];entry['diagnostic_case']=case['config'];runner.save();return entry
+  child_env=environment(case['config']['variant'],verified)
+ elif case['config'].get('loader')=='native':
   from .native_distribution import native_runtime
   _,child_env=native_runtime()
  previous=runner.timeout;runner.timeout=min(case.get('seconds',30),remaining)
  try:entry=runner.run(case['name'],command,optional=case.get('optional',False),environment=child_env)
  finally:runner.timeout=previous
  entry['diagnostic_case']=case['config']
- for name in ('probe.json','process-snapshot.json'):
+ for name in ('probe.json','process-snapshot.json','variant.json'):
   path=folder/name
   if path.is_file():
    try:entry.setdefault('partial_evidence',{})[name]=json.loads(path.read_text())
@@ -307,12 +349,13 @@ def run_case(runner,case,deadline):
  runner.save();return entry
 
 def summarize(steps):
+ from .runtime_variants import compare
  failures=[{'name':s['name'],'status':s['status'],'last_native_phase':s.get('last_native_phase'),'last_api':s.get('partial_evidence',{}).get('probe.json',{}).get('last_operation'),'error':s.get('error')} for s in steps if s['status'] in ('FAIL','TIMEOUT','WARNING')]
  comparisons=[]
  for s in steps:
   c=s.get('diagnostic_case',{})
   if c.get('kind')=='api':comparisons.append({'name':s['name'],'status':s['status'],'device':c['device'],'module':c['module'],'data':c['data_loading'],'order':c['order'],'thread':c['control_thread'],'last_api':s.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')})
- return {'root_cause_confirmed':False,'scope':'Controlled observations; mode correlations do not prove a driver bug. Finite synthetic tests do not cover every possible graph or API parameter.','failures':failures,'startup_matrix':comparisons,'untested':[{'name':s['name'],'reason':s.get('reason')} for s in steps if s['status']=='SKIPPED']}
+ return {'root_cause_confirmed':False,'scope':'Controlled observations; mode correlations do not prove a driver bug. Finite synthetic tests do not cover every possible graph or API parameter.','failures':failures,'startup_matrix':comparisons,'runtime_build_matrix':compare(steps),'untested':[{'name':s['name'],'reason':s.get('reason')} for s in steps if s['status']=='SKIPPED']}
 
 def inventory(root):
  import inspect,importlib.metadata
@@ -362,6 +405,10 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
    if any(d>=count['result']['data']['visible_devices'] for d in selected):runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU is not visible'})
    else:
     runner.report['devices']=selected
+    from .runtime_variants import cases as build_cases
+    builds=run_case(runner,{'name':'deep-build-inventory','config':{'kind':'build-inventory'},'seconds':30},deadline)
+    runner.diagnostic_variants=builds.get('result',{}).get('data',{'status':'UNAVAILABLE','reason':'Diagnostic build inventory failed or was not completed.'})
+    for case in build_cases(selected):run_case(runner,case,deadline)
     for case in startup_cases(selected):run_case(runner,case,deadline)
     for device in selected:
      for stage in ('context','meminfo','hardware','memory','kernel','persistent'):
@@ -390,7 +437,11 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})
  except Exception as e:runner.report['steps'].append({'name':'deep-controller','status':'FAIL','error':str(e)})
  runner.report['deep_analysis']=summarize(runner.report['steps']);write(root/'deep-analysis.json',runner.report['deep_analysis'])
- rows=['name\tstatus\tlast native phase / API']
+ rows=['Diagnostic CUDA build contrasts (same source; observations, not a unique root cause):']
+ for comparison in runner.report['deep_analysis']['runtime_build_matrix']['comparisons']:
+  rows.append('GPU '+str(comparison['device'])+' '+comparison['path']+': '+comparison['outcome'])
+  for identifier,value in comparison['variants'].items():rows.append('  '+identifier+': '+value['status']+'; '+str(value.get('last_native_phase') or value.get('last_api') or value.get('reason') or 'completed'))
+ rows.append('name\tstatus\tlast native phase / API')
  for step in runner.report['steps']:rows.append(step['name']+'\t'+step['status']+'\t'+str(step.get('last_native_phase') or step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation') or step.get('reason','')))
  (root/'deep-summary.txt').write_text('\n'.join(rows)+'\n',encoding='utf-8');return runner.finish()
 

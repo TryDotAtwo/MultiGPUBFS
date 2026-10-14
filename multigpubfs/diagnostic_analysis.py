@@ -60,7 +60,7 @@ def analyze(report):
   actions.append('Use the successful contrast as a candidate user-level loader configuration for the same authorized GPU allocation; validate the regular kernel/NCCL tests before adopting it.')
  elif good:
   hypothesis('TRANSIENT_OR_LOADER_FAILURE','A variant passed but baseline failure was not reproduced; loader causality remains unconfirmed.',['loader-contrasts/result/data/results'])
- if by.get('native-runtime',{}).get('status')=='PASS':excluded.append({'statement':'The native binary executed and packaged integrity/dependency checks passed. An execute-permission or basic native-loader failure does not explain this later CUDA-discovery failure.','evidence':['native-runtime']})
+ if by.get('native-runtime',{}).get('status')=='PASS':excluded.append({'statement':'The native binary executed and packaged integrity/dependency checks passed. An execute-permission or basic native-loader failure does not explain subsequently reached native calls; later JIT or library-specific initialization failures remain possible.','evidence':['native-runtime']})
  runtime=data('native-runtime')
  if runtime.get('binary_executed'):
   fact('NATIVE_EXECUTED_BEFORE_INSPECTION_FAILURE','The native binary executed key-info; subsequent dependency inspection is a separate failure.',['native-runtime/partial_evidence/runtime.json'])

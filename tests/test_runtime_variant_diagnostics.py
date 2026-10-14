@@ -21,12 +21,12 @@ class RuntimeVariants(unittest.TestCase):
    if identifier!=variants.BASELINE:put(library,identifier.encode())
    receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
    put(receipt,json.dumps({'id':identifier,'runtime':runtime,'architectures':architectures,'source_commit':'a'*40,'cuda_source_tree':'b'*40}).encode())
-   entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':library,'sha256':self.hashes[library],'receipt':receipt,'source_commit':'a'*40,'cuda_source_tree':'b'*40})
+   entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':library,'sha256':self.hashes[library],'receipt':receipt,'receipt_sha256':self.hashes[receipt],'source_commit':'a'*40,'cuda_source_tree':'b'*40})
   self.metadata={'schema':1,'variants':entries,'production_default':variants.BASELINE}
   self.save_metadata()
  def save_metadata(self):
   self.put('diagnostic_variants/variants.json',json.dumps(self.metadata).encode())
-  (self.root/'manifest.json').write_text(json.dumps({'schema':1,'bundled_runtime':[{}],'sha256':self.hashes}))
+  (self.root/'manifest.json').write_text(json.dumps({'schema':1,'bundled_runtime':[{}],'sha256':{k:v for k,v in self.hashes.items() if not k.startswith('diagnostic_variants/') or k=='diagnostic_variants/variants.json'}}))
  def inventory(self):return variants.inventory(self.root,environ={})
  def test_complete_verified_factorial_inventory(self):
   value=self.inventory();self.assertEqual(value['status'],'AVAILABLE');self.assertEqual(len(value['variants']),4)
@@ -63,6 +63,12 @@ class RuntimeVariants(unittest.TestCase):
    native,env=native_distribution.native_runtime()
   self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'lib'))
   self.assertNotIn('diagnostic_variants',env['LD_LIBRARY_PATH'])
+ def test_production_does_not_hash_or_load_unused_alternatives(self):
+  (self.root/'diagnostic_variants/shared-sm120/libmgbfs_cuda.so').write_bytes(b'corrupt')
+  with patch.object(native_distribution,'__file__',str(self.root.parent/'native_distribution.py')),patch.dict(os.environ,{},clear=True):
+   _,env=native_distribution.native_runtime()
+  self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'lib'))
+  with self.assertRaisesRegex(RuntimeError,'CHECKSUM'):self.inventory()
  def test_actual_loader_path_must_match_selected_bytes(self):
   value=self.inventory()
   with self.assertRaisesRegex(RuntimeError,'RESOLUTION'):
