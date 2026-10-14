@@ -15,6 +15,8 @@ def extract(archive, destination):
         tar.extractall(destination)
 sdk=work/'cuda';sdk.mkdir()
 components=constant(root/'kaggle/library-owner/kernel.py','CUDA_COMPONENTS')
+if os.environ.get('MGBFS_DIAGNOSTIC_VARIANT'):
+    components=components+[('cuda_cuobjdump','12.9.82','ee0de40e8c18068bfcc53e73510e7e7a1a80555205347940df67fa525d24452f')]
 for component,version,sha in components:
     name=f'{component}-linux-x86_64-{version}-archive';archive=work/(name+'.tar.xz')
     url=f'https://developer.download.nvidia.com/compute/cuda/redist/{component}/linux-x86_64/{archive.name}'
