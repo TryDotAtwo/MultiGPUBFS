@@ -233,9 +233,9 @@ class Runner:
      if getattr(self,'deep_capture',False):
       from .deep_diagnostics import process_snapshot
       folder=self.root/name;folder.mkdir(exist_ok=True);process_snapshot(process.pid,folder/'process-snapshot.json')
-     self.stop(process)
-    except BaseException:self.stop(process);raise
-    self.stop(process);thread.join(timeout=2)
+     self.stop_probe(process)
+    except BaseException:self.stop_probe(process);raise
+    self.stop_probe(process);thread.join(timeout=2)
     if entry['status']=='RUNNING':
      entry['exit_code']=process.returncode;entry['status']='PASS' if process.returncode==0 else 'FAIL'
      if process.returncode:entry['error']='Component process exited with code '+str(process.returncode)
@@ -258,6 +258,13 @@ class Runner:
   data=entry.get('result',{}).get('data',{})
   if entry['status']=='PASS' and data.get('status')=='UNAVAILABLE':entry.update(status='SKIPPED',reason=data.get('reason',data.get('error','Auxiliary component unavailable')))
   self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
+ def stop_probe(self,process):
+  if not getattr(self,'deep_capture',False):return self.stop(process)
+  from .deep_diagnostics import bounded_stop
+  result=bounded_stop(process)
+  self.report.setdefault('diagnostic_cleanup',[]).append(result)
+  if not result['complete']:self.deep_cleanup_blocked=True
+  self.save()
  @staticmethod
  def stop(process):
   if os.name=='posix':
