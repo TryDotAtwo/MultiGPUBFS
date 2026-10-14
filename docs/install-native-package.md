@@ -5,7 +5,7 @@ The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v10/multigpubfs-0.2.0.dev10-py3-none-linux_x86_64.whl#sha256=f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v11/multigpubfs-0.2.0.dev11-py3-none-linux_x86_64.whl#sha256=ff30bbdde91bbf66654cf55e8f39fff4b7811105d2319d02e559a3844daf9dd4"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2Г—T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v10/multigpubfs-0.2.0.dev10-py3-none-linux_x86_64.whl#sha256=f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v11/multigpubfs-0.2.0.dev11-py3-none-linux_x86_64.whl#sha256=ff30bbdde91bbf66654cf55e8f39fff4b7811105d2319d02e559a3844daf9dd4"
 ```
 
 Use the package after installation:
@@ -31,7 +31,7 @@ The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies us
 
 ## Scope and identity
 
-Release: [native-pip-20261014-v10](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261014-v10). Package `0.2.0.dev10`; SHA256 `f06b9689c0edf4bd5b29782bab4ca1da951bb1a97b05c1cdfb7b30931fe18b49`. Pip verifies this hash through the URL fragment.
+Release: [native-pip-20261014-v11](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261014-v11). Package `0.2.0.dev11`; SHA256 `ff30bbdde91bbf66654cf55e8f39fff4b7811105d2319d02e559a3844daf9dd4`. Pip verifies this hash through the URL fragment.
 
 Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. This wheel compiles SM75/SM86 (T4/RTX3060); it does not claim B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
 
