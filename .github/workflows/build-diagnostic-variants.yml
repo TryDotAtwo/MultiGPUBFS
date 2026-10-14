@@ -1,0 +1,31 @@
+name: Build isolated CUDA runtime diagnostic variants
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  variant:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        id: [shared-legacy, static-sm120, shared-sm120]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare CPU-only CUDA compiler environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build g++ binutils
+      - name: Compile and verify the selected diagnostic library
+        env:
+          MGBFS_DIAGNOSTIC_VARIANT: ${{ matrix.id }}
+        run: python3 scripts/build_portable_native.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: diagnostic-variant-${{ matrix.id }}
+          path: /tmp/mgbfs-portable/diagnostic-variant/*
+          compression-level: 0
+          retention-days: 7
