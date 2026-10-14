@@ -90,6 +90,26 @@ class RuntimeVariants(unittest.TestCase):
   self.assertIn('cudaSetDevice return',variants.call_boundary('PHASE hardware-cudaSetDevice-enter'))
   self.assertIn('cudaGetDeviceProperties return',variants.call_boundary('PHASE hardware-cudaGetDeviceProperties-enter'))
   self.assertIn('no later wrapper marker',variants.call_boundary('PHASE pid=1 inventory-hardware-info'))
+
+ def contrast_steps(self,passing):
+  values=variants.cases([0,1])
+  return [{'name':c['name'],'status':'PASS' if c['config']['variant'] in passing else 'TIMEOUT','diagnostic_case':c['config']} for c in values]
+ def test_healthy_production_build_remains_coverage_default(self):
+  self.assertEqual(variants.choose_coverage(self.contrast_steps(set(variants.SPECS)),[0,1])['id'],variants.BASELINE)
+ def test_alternative_requires_all_three_paths_on_every_selected_gpu(self):
+  steps=self.contrast_steps({'shared-sm120'})
+  chosen=variants.choose_coverage(steps,[0,1]);self.assertEqual(chosen['id'],'shared-sm120')
+  next(x for x in steps if x['diagnostic_case'].get('devices')==[1] and x['diagnostic_case']['variant']=='shared-sm120')['status']='TIMEOUT'
+  self.assertIsNone(variants.choose_coverage(steps,[0,1])['id'])
+ def test_no_unverified_alternative_is_selected(self):
+  chosen=variants.choose_coverage(self.contrast_steps(set()),[0,1]);self.assertEqual(chosen['status'],'UNAVAILABLE');self.assertIsNone(chosen['id'])
+ def test_coverage_tests_do_not_replace_original_factorial_results(self):
+  steps=self.contrast_steps({'shared-sm120'})
+  steps.append({'name':'coverage-extra','status':'PASS','diagnostic_case':{'variant':variants.BASELINE,'coverage_build':True,'kind':'bfs','devices':[0]}})
+  comparisons=variants.compare(steps)['comparisons']
+  self.assertEqual(len(comparisons),6)
+  self.assertEqual(next(x for x in comparisons if x['device']==0 and x['path']=='bfs')['variants'][variants.BASELINE]['status'],'TIMEOUT')
+
  def test_budget_and_missing_results_are_explicit(self):
   result=variants.compare([{'name':'x','status':'SKIPPED','reason':'GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED','diagnostic_case':{'variant':variants.BASELINE,'kind':'api','device':0}}])
   self.assertEqual(result['comparisons'][0]['outcome'],'INCOMPLETE')
