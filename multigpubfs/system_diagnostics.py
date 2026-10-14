@@ -79,7 +79,7 @@ def mount_for(path):
  return best or {'status':'UNKNOWN'}
 
 def survey(root):
- data={'schema':1,'status':'RUNNING','python':sys.executable,'python_version':platform.python_version(),'machine':platform.machine(),'uid':os.geteuid(),'resource_limits':limits(),'environment':{k:os.environ[k][:4096] for k in ('CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_HOME','CUDA_PATH','TMPDIR','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_IB_DISABLE','NCCL_SOCKET_IFNAME','NCCL_NET','SLURM_GPUS_ON_NODE','SLURM_JOB_GPUS','SLURM_STEP_GPUS','SLURM_JOB_GRES') if k in os.environ}}
+ data={'schema':1,'status':'RUNNING','python':sys.executable,'python_version':platform.python_version(),'machine':platform.machine(),'uid':os.geteuid(),'resource_limits':limits(),'environment':{k:os.environ[k][:4096] for k in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING','CUDA_DISABLE_PTX_JIT','CUDA_FORCE_PTX_JIT','CUDA_CACHE_DISABLE','CUDA_CACHE_MAXSIZE','CUDA_CACHE_PATH','CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_HOME','CUDA_PATH','TMPDIR','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_IB_DISABLE','NCCL_SOCKET_IFNAME','NCCL_NET','SLURM_GPUS_ON_NODE','SLURM_JOB_GPUS','SLURM_STEP_GPUS','SLURM_JOB_GRES') if k in os.environ}}
  def save():
   from .diagnostics import _write
   _write(root/'environment.json',data)

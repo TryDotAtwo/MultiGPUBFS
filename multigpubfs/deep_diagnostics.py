@@ -99,7 +99,7 @@ def oracle(graph):
 
 def api_probe(config,root):
  from .diagnostics import _paths,_kernel
- state={'schema':1,'pid':os.getpid(),'config':config,'environment':{k:os.environ.get(k) for k in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING','CUDA_VISIBLE_DEVICES','CUDA_DISABLE_PTX_JIT')},'operations':[]}
+ state={'schema':1,'pid':os.getpid(),'config':config,'environment':{k:os.environ.get(k) for k in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING','CUDA_VISIBLE_DEVICES','CUDA_DISABLE_PTX_JIT','CUDA_FORCE_PTX_JIT','CUDA_CACHE_DISABLE','CUDA_CACHE_MAXSIZE','CUDA_CACHE_PATH')},'operations':[]}
  def phase(name):
   state['last_operation']=name;state['operations'].append({'name':name,'status':'ENTERED','monotonic':time.monotonic()});write(root/'probe.json',state);print('PHASE '+name,flush=True)
  def done(code=0):
@@ -291,12 +291,12 @@ def persistent_build_probe(config,root):
 def component(config,root):
  root=Path(root);os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
  if config['kind']=='build-inventory':
-  from .runtime_variants import inventory
-  result=inventory();write(root/'probe.json',result);return result
+  from .runtime_variants import inventory as build_inventory
+  result=build_inventory();write(root/'probe.json',result);return result
  if config.get('variant'):
-  from .runtime_variants import inventory,confirm_resolution
+  from .runtime_variants import inventory as build_inventory,confirm_resolution
   from .diagnostics import _paths
-  verified=inventory();_,_,libraries=_paths()
+  verified=build_inventory();_,_,libraries=_paths()
   write(root/'variant.json',confirm_resolution(config['variant'],verified,libraries))
   if config.get('stage')=='persistent':return persistent_build_probe(config,root)
  for key in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING'):
@@ -314,14 +314,16 @@ def component(config,root):
  return _component(config['stage'],root,config.get('devices'),config.get('device'),config.get('seconds',30))
 
 def run_case(runner,case,deadline):
- if getattr(runner,'deep_cleanup_blocked',False):runner.skip(case['name'],'OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED; no further GPU probes started');return runner.report['steps'][-1]
+ def skipped(reason):
+  runner.skip(case['name'],reason);entry=runner.report['steps'][-1];entry['diagnostic_case']=case['config'];runner.save();return entry
+ if getattr(runner,'deep_cleanup_blocked',False):return skipped('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED; no further GPU probes started')
  remaining=deadline-time.monotonic()-8
- if remaining<=.1:runner.skip(case['name'],'GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED');return runner.report['steps'][-1]
+ if remaining<=.1:return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
  folder=runner.root/case['name'];folder.mkdir(exist_ok=True);write(folder/'case-input.json',case['config'])
  command=[sys.executable,'-m','multigpubfs.deep_diagnostics','--child',str(folder/'case-input.json'),'--output',str(folder)]
  if case.get('strace'):
   tool=shutil.which('strace')
-  if not tool:runner.skip(case['name'],'strace is not installed; native checkpoints and /proc snapshots remain available');return runner.report['steps'][-1]
+  if not tool:return skipped('strace is not installed; native checkpoints and /proc snapshots remain available')
   command=[tool,'-f','-qq','-s','80','-e','trace=ioctl,futex,clone,clone3,mmap,openat,execve','-o',str(folder/'strace.log')]+command
  child_env=None
  if case['config'].get('variant'):
@@ -329,7 +331,7 @@ def run_case(runner,case,deadline):
   verified=getattr(runner,'diagnostic_variants',None)
   if verified is None:verified=inventory();runner.diagnostic_variants=verified
   if verified.get('status')!='AVAILABLE':
-   runner.skip(case['name'],verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'));entry=runner.report['steps'][-1];entry['diagnostic_case']=case['config'];runner.save();return entry
+   return skipped(verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'))
   child_env=environment(case['config']['variant'],verified)
  elif case['config'].get('loader')=='native':
   from .native_distribution import native_runtime

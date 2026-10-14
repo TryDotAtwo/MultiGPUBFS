@@ -58,6 +58,20 @@ class DeepDiagnostics(unittest.TestCase):
  def test_specialized_probe_uses_specialized_api_options(self):
   options=deep.bfs_options({'devices':[0,1],'backend':'shard_ab_hash','shards':1,'transport':'full','candidate_order':'none'})
   self.assertIsNone(options['shards']);self.assertEqual(options['transport'],'auto');self.assertEqual(options['candidate_order'],'auto')
+
+ def test_existing_capability_inventory_dispatch_is_preserved(self):
+  with tempfile.TemporaryDirectory() as d,patch.object(deep,'inventory',return_value={'original_inventory':True}):
+   self.assertTrue(deep.component({'kind':'inventory'},Path(d))['original_inventory'])
+ def test_budget_skips_retain_build_identity_for_incomplete_matrix(self):
+  from multigpubfs.diagnostics import Runner
+  from multigpubfs.runtime_variants import cases,compare
+  with tempfile.TemporaryDirectory() as d:
+   runner=Runner(Path(d)/'out',1)
+   for case in cases([0]):deep.run_case(runner,case,0)
+   result=compare(runner.report['steps'])
+  self.assertEqual(len(result['comparisons']),3)
+  self.assertTrue(all(x['outcome']=='INCOMPLETE' for x in result['comparisons']))
+
  def test_sm75_gemm_is_reported_unsupported(self):
   with tempfile.TemporaryDirectory() as d,patch.object(deep,'compute_majors',return_value=[7,7]),patch.object(deep,'bfs_probe',side_effect=AssertionError('Must not launch unsupported native GEMM')):
    result=deep.component({'kind':'bfs','generator':'gemm','devices':[0,1]},Path(d))
