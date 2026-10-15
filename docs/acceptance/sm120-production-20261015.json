@@ -1,0 +1,861 @@
+{
+  "schema": 1,
+  "status": "PASS_ON_2XT4",
+  "package": "0.2.0.dev16",
+  "wheel": "multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl",
+  "wheel_sha256": "65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b",
+  "production_library_sha256": "f8845e023d65d1f0aad2f86dfcf558bec9e558c3e989014664ade46dcf74485f",
+  "production_architectures": [
+    75,
+    86,
+    120
+  ],
+  "compiled_modules": {
+    "hash": [
+      75,
+      86,
+      120
+    ],
+    "generate": [
+      75,
+      86,
+      120
+    ],
+    "route": [
+      75,
+      86,
+      120
+    ],
+    "owner": [
+      75,
+      86,
+      120
+    ],
+    "macro_settle": [
+      75,
+      86,
+      120
+    ],
+    "future_merge": [
+      75,
+      86,
+      120
+    ],
+    "exchange_pack": [
+      75,
+      86,
+      120
+    ],
+    "materialize": [
+      75,
+      86,
+      120
+    ],
+    "bounded_owner": [
+      75,
+      86,
+      120
+    ],
+    "state_commit": [
+      75,
+      86,
+      120
+    ],
+    "archive_pack": [
+      75,
+      86,
+      120
+    ],
+    "directories": [
+      75,
+      86,
+      120
+    ],
+    "nccl_transport": [
+      75,
+      86,
+      120
+    ],
+    "regenerate": [
+      75,
+      86,
+      120
+    ],
+    "hash_first_generate": [
+      75,
+      86,
+      120
+    ],
+    "generic_graph": [
+      75,
+      86,
+      120
+    ],
+    "generic_visited": [
+      75,
+      86,
+      120
+    ],
+    "generic_route": [
+      75,
+      86,
+      120
+    ],
+    "generic_sorted_native": [
+      75,
+      86,
+      120
+    ],
+    "generic_sorted_disjoint_native": [
+      75,
+      86,
+      120
+    ],
+    "generic_sorted_owner_status": [
+      75,
+      86,
+      120
+    ],
+    "graph_window": [
+      75,
+      86,
+      120
+    ],
+    "shard_ab_job": [
+      75,
+      86,
+      120
+    ],
+    "shard_ab_pipeline": [
+      75,
+      86,
+      120
+    ]
+  },
+  "hardware": "2x NVIDIA T4",
+  "cpu_tests": 672,
+  "diagnostic_regressions": 89,
+  "package_source_commit": "03184aea54bc12bdd6555e010047af5a877cd157",
+  "native_binary_source_commit": "ec67761ed67e2ced650b600c2d0a2cc232e840d1",
+  "cuda_library_source_commit": "bf69013a8f4b14a70775e47c332353bee33a9acf",
+  "user_api": [
+    {
+      "n": 3,
+      "devices": [
+        0
+      ],
+      "vertices": 6,
+      "diameter": 3,
+      "wall_seconds": 3.3363138530000356,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 5,
+      "devices": [
+        0
+      ],
+      "vertices": 120,
+      "diameter": 10,
+      "wall_seconds": 0.0708875430000262,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 7,
+      "devices": [
+        0
+      ],
+      "vertices": 5040,
+      "diameter": 21,
+      "wall_seconds": 0.06480992099994864,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 3,
+      "devices": [
+        0,
+        1
+      ],
+      "vertices": 6,
+      "diameter": 3,
+      "wall_seconds": 2.6547224070000084,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0,
+          1
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 5,
+      "devices": [
+        0,
+        1
+      ],
+      "vertices": 120,
+      "diameter": 10,
+      "wall_seconds": 0.07542562499997985,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0,
+          1
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 7,
+      "devices": [
+        0,
+        1
+      ],
+      "vertices": 5040,
+      "diameter": 21,
+      "wall_seconds": 0.08075434199997744,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0,
+          1
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 11,
+      "devices": [
+        0,
+        1
+      ],
+      "vertices": 39916800,
+      "diameter": 55,
+      "wall_seconds": 1.9641302100000075,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0,
+          1
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    },
+    {
+      "n": 12,
+      "devices": [
+        0,
+        1
+      ],
+      "vertices": 479001600,
+      "diameter": 66,
+      "wall_seconds": 25.93582557000002,
+      "native_report_identity": {
+        "status": "COMPLETE",
+        "devices": [
+          0,
+          1
+        ],
+        "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"
+      }
+    }
+  ],
+  "deep": {
+    "wall_seconds": 1021.09093321,
+    "counts": {
+      "PASS": 191,
+      "SKIPPED": 6
+    },
+    "production_bfs_acceptance": {
+      "status": "PASS",
+      "build": "shared-sm120",
+      "devices": [
+        0,
+        1
+      ],
+      "steps": [
+        {
+          "name": "deep-build-shared-sm120-gpu0-api",
+          "status": "PASS",
+          "seconds": 3.641344633000017
+        },
+        {
+          "name": "deep-build-shared-sm120-gpu1-api",
+          "status": "PASS",
+          "seconds": 3.697022739999966
+        },
+        {
+          "name": "deep-build-shared-sm120-gpu0-persistent",
+          "status": "PASS",
+          "seconds": 4.099152924000009
+        },
+        {
+          "name": "deep-build-shared-sm120-gpu1-persistent",
+          "status": "PASS",
+          "seconds": 4.1005505539999945
+        },
+        {
+          "name": "deep-build-shared-sm120-gpu0-bfs",
+          "status": "PASS",
+          "seconds": 5.7036291050000045
+        },
+        {
+          "name": "deep-build-shared-sm120-gpu1-bfs",
+          "status": "PASS",
+          "seconds": 5.655944293999994
+        }
+      ],
+      "scope": "Real API/kernel, two resident requests and exact S3 BFS on each selected GPU; multi-GPU and other backends have separate named tests."
+    },
+    "diagnostic_coverage_build": {
+      "status": "VERIFIED_FOR_SYNTHETIC_COVERAGE",
+      "id": "shared-sm120",
+      "devices": [
+        0,
+        1
+      ],
+      "evidence": [
+        "deep-build-shared-sm120-gpu0-api",
+        "deep-build-shared-sm120-gpu0-persistent",
+        "deep-build-shared-sm120-gpu0-bfs",
+        "deep-build-shared-sm120-gpu1-api",
+        "deep-build-shared-sm120-gpu1-persistent",
+        "deep-build-shared-sm120-gpu1-bfs"
+      ],
+      "scope": "Subsequent diagnostic probes only; baseline failures remain in the report; no production repair or default change"
+    },
+    "runtime_build_matrix": {
+      "root_cause_confirmed": false,
+      "comparisons": [
+        {
+          "device": 0,
+          "path": "api",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu0-api",
+              "status": "PASS",
+              "seconds": 3.641344633000017,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu0-api",
+              "status": "PASS",
+              "seconds": 3.748054499000091,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu0-api",
+              "status": "PASS",
+              "seconds": 3.6541608130000895,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu0-api",
+              "status": "PASS",
+              "seconds": 3.618950466999877,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        },
+        {
+          "device": 1,
+          "path": "api",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu1-api",
+              "status": "PASS",
+              "seconds": 3.697022739999966,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu1-api",
+              "status": "PASS",
+              "seconds": 3.7012882569999874,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu1-api",
+              "status": "PASS",
+              "seconds": 3.610744559000068,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu1-api",
+              "status": "PASS",
+              "seconds": 3.663624415999948,
+              "reason": null,
+              "last_native_phase": "PHASE hardware-cudaGetDeviceProperties-return",
+              "call_boundary": null,
+              "last_api": "cleanup cudaStreamDestroy"
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        },
+        {
+          "device": 0,
+          "path": "persistent",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu0-persistent",
+              "status": "PASS",
+              "seconds": 4.099152924000009,
+              "reason": null,
+              "last_native_phase": "PHASE pid=12699 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu0-persistent",
+              "status": "PASS",
+              "seconds": 4.210775388000002,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16636 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu0-persistent",
+              "status": "PASS",
+              "seconds": 3.9108870729999126,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16800 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu0-persistent",
+              "status": "PASS",
+              "seconds": 3.867193952999969,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16964 done",
+              "call_boundary": null,
+              "last_api": null
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        },
+        {
+          "device": 1,
+          "path": "persistent",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu1-persistent",
+              "status": "PASS",
+              "seconds": 4.1005505539999945,
+              "reason": null,
+              "last_native_phase": "PHASE pid=12727 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu1-persistent",
+              "status": "PASS",
+              "seconds": 4.205185861000018,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16664 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu1-persistent",
+              "status": "PASS",
+              "seconds": 3.9597973669999647,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16828 done",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu1-persistent",
+              "status": "PASS",
+              "seconds": 3.9177096149999215,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16992 done",
+              "call_boundary": null,
+              "last_api": null
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        },
+        {
+          "device": 0,
+          "path": "bfs",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu0-bfs",
+              "status": "PASS",
+              "seconds": 5.7036291050000045,
+              "reason": null,
+              "last_native_phase": "PHASE pid=12751 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu0-bfs",
+              "status": "PASS",
+              "seconds": 5.761483762000125,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16688 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu0-bfs",
+              "status": "PASS",
+              "seconds": 5.564453725000021,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16852 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu0-bfs",
+              "status": "PASS",
+              "seconds": 5.52530069300019,
+              "reason": null,
+              "last_native_phase": "PHASE pid=17016 retiring",
+              "call_boundary": null,
+              "last_api": null
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        },
+        {
+          "device": 1,
+          "path": "bfs",
+          "outcome": "ALL_PASS",
+          "variants": {
+            "shared-sm120": {
+              "name": "deep-build-shared-sm120-gpu1-bfs",
+              "status": "PASS",
+              "seconds": 5.655944293999994,
+              "reason": null,
+              "last_native_phase": "PHASE pid=12779 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "static-sm120": {
+              "name": "deep-build-static-sm120-gpu1-bfs",
+              "status": "PASS",
+              "seconds": 5.760524043000032,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16716 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "baseline-static-legacy": {
+              "name": "deep-build-baseline-static-legacy-gpu1-bfs",
+              "status": "PASS",
+              "seconds": 5.514050808999855,
+              "reason": null,
+              "last_native_phase": "PHASE pid=16880 retiring",
+              "call_boundary": null,
+              "last_api": null
+            },
+            "shared-legacy": {
+              "name": "deep-build-shared-legacy-gpu1-bfs",
+              "status": "PASS",
+              "seconds": 5.576246883000067,
+              "reason": null,
+              "last_native_phase": "PHASE pid=17044 retiring",
+              "call_boundary": null,
+              "last_api": null
+            }
+          },
+          "controlled_pairs": [
+            {
+              "factor": "runtime",
+              "left": "baseline-static-legacy",
+              "right": "shared-legacy",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "runtime",
+              "left": "static-sm120",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "baseline-static-legacy",
+              "right": "static-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            },
+            {
+              "factor": "native-sm120",
+              "left": "shared-legacy",
+              "right": "shared-sm120",
+              "left_status": "PASS",
+              "right_status": "PASS",
+              "changed_pass_outcome": false
+            }
+          ]
+        }
+      ],
+      "scope": "Same CUDA source, four build configurations, fresh processes. Status/time correlations are not proof of a unique cause; inherited JIT cache is not cleared and shared runtime does not remove every vendor runtime instance."
+    }
+  },
+  "production_multi_gpu_validation": {
+    "status": "PASS",
+    "build": "shared-sm120",
+    "steps": [
+      {
+        "name": "coverage-multi-generic",
+        "status": "PASS",
+        "seconds": 6.945560801000056
+      },
+      {
+        "name": "coverage-matrix",
+        "status": "PASS",
+        "seconds": 6.693157622999934
+      },
+      {
+        "name": "coverage-multi-shard-ab-hash",
+        "status": "PASS",
+        "seconds": 8.64764316999981
+      },
+      {
+        "name": "coverage-multi-shard-ab-sort",
+        "status": "PASS",
+        "seconds": 8.649165611999933
+      }
+    ],
+    "scope": "Actual multi-GPU generic/matrix/specialized oracle probes on the normal production library"
+  },
+  "ordinary_doctor_status": "PASS",
+  "one_second_budget_test": {
+    "status": "INCOMPLETE",
+    "expected_status": "INCOMPLETE",
+    "archive_preserved": true
+  },
+  "archive_checksums_verified": true,
+  "owned_process_groups_reaped": true,
+  "actions": {
+    "regressions": 38686898868,
+    "package": 38686906655,
+    "asset_upload": 38687249996,
+    "anonymous_url_install": 38687519197
+  },
+  "kaggle": {
+    "id": "trydotatwo/multigpubfs-sm120-production-acceptance",
+    "version": 2,
+    "raw_receipt_sha256": "d549223315140f59794b54aaa220d53df3799c62619adbc1073a078c3981786e"
+  },
+  "scope": "The shared-SM120 library ran its SM75 images on real two T4 GPUs. Native SM120 cubin inventory is verified for all 24 modules. Original-server SM120 BFS is not acceptance-tested here. No throughput optimum, memory-capacity or multi-node guarantee."
+}

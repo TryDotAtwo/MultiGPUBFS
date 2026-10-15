@@ -4,9 +4,9 @@ Install the [pinned GitHub package](install-native-package.md) and read the
 [measured diagnostic acceptance](diagnostic-build-acceptance-2026-10-14.md).
 
 The extended `doctor --deep` package carries four CUDA libraries from the
-same CUDA source tree. Only isolated diagnostic child processes select them.
-The ordinary executable and default CUDA library remain byte-identical to
-the accepted v14 baseline. No build tool, administrator access or GPU reset
+same CUDA source tree. Only isolated diagnostic children switch between alternatives; ordinary BFS uses the fixed production library.
+The ordinary executable stays byte-identical to the accepted baseline. The
+normal CUDA library is now shared-sm120 (Shared runtime; SM75/86/120). No build tool, administrator access or GPU reset
 is required on the target server.
 
 | Diagnostic build | Runtime linked by CUDA library | Native cubins |
@@ -25,13 +25,13 @@ our library also does not guarantee every vendor library uses that instance.
 Package assembly checks ELF NEEDED/local symbols, cubin/PTX inventory,
 source-tree identity and SHA256. Each diagnostic child verifies hashes and
 the library paths actually resolved by its loader before making GPU calls.
-The comparison section is prioritized before the broader synthetic suite.
-If the baseline fails but an alternate build passes API/kernel, resident
-inventory and exact S3 BFS on every selected GPU, subsequent synthetic
-coverage may use that verified build. The chosen identity is explicit in
-report.json and deep-summary.txt; original factorial failures stay intact
-and the whole report retains FAIL. This is diagnostic continuation, not a
-production fallback. If no build meets the gate, no alternate is selected.
+Production direct API/kernel, resident inventory and exact S3 BFS run first
+on every selected GPU. `production_bfs_acceptance` records that finite gate.
+The normal loading matrix, modes, multi-GPU tests and finite catalogue follow;
+legacy build contrasts run last so a problematic JIT/startup cannot prevent
+the earlier production checks. The full report retains legacy failures;
+the production gate and each actual BFS result remain separately visible.
+There is no silent production fallback.
 For each selected GPU it covers direct EAGER API/kernel probes, real resident
 native inventory (two requests to one worker) and tiny S3 BFS with an
 independent CPU layer/terminal-state oracle.

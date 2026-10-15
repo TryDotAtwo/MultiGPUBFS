@@ -5,15 +5,15 @@ The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v15/multigpubfs-0.2.0.dev15-py3-none-linux_x86_64.whl#sha256=2b9863cf25533e547c76f330057ee7d01f89f7e9f5bf0be2a7d02fc7a7505604"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b"
 ```
 
 ## Kaggle
 
-Enable **Internet** and **GPU (2Г—T4)**, then run:
+Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261014-v15/multigpubfs-0.2.0.dev15-py3-none-linux_x86_64.whl#sha256=2b9863cf25533e547c76f330057ee7d01f89f7e9f5bf0be2a7d02fc7a7505604"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b"
 ```
 
 Use the package after installation:
@@ -31,9 +31,9 @@ The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies us
 
 ## Scope and identity
 
-Release: [native-pip-20261014-v15](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261014-v15). Package `0.2.0.dev15`; SHA256 `2b9863cf25533e547c76f330057ee7d01f89f7e9f5bf0be2a7d02fc7a7505604`. Pip verifies this hash through the URL fragment.
+Release: [native-pip-20261015-v16](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v16). Package `0.2.0.dev16`; SHA256 `65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b`. Pip verifies this hash through the URL fragment.
 
-Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library keeps SM75/SM86 (T4/RTX3060). Three diagnostic-only alternatives include Shared linkage and/or native SM120 cubins; it does not claim B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
+Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library uses Shared CUDA runtime linkage and native SM75/SM86/SM120 cubins. Legacy alternatives are isolated diagnostic contrasts. This does not claim original-server SM120 BFS, B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
 
 The native binaries were rebuilt on Ubuntu22.04 to avoid the old artifact's GLIBC2.38/GLIBCXX3.4.32 dependency. Exact runtime requirements and source/build hashes are recorded in the release manifest. [Acceptance evidence](pip-install-acceptance-2026-10-13.md) separates clean Linux installation, GPU results and hardware limits.
 
@@ -47,10 +47,12 @@ For a sweep over different graphs, keep one `persistent_graph_workers()` context
 
 ## Server component diagnostic
 
-For a single broad server investigation run `python -m multigpubfs.diagnostics --deep` from a fresh process inside the assigned GPU job. It has a 30-minute execution budget, four same-source CUDA runtime/SM120 build comparisons and one metadata/log archive. [Coverage and interpretation](diagnostic-build-contrasts.md); [measured acceptance](diagnostic-build-acceptance-2026-10-14.md). The normal BFS library is unchanged.
+For a single broad server investigation run `python -m multigpubfs.diagnostics --deep` from a fresh process inside the assigned GPU job. It has a 30-minute execution budget, four same-source CUDA runtime/SM120 build comparisons and one metadata/log archive. [Coverage and interpretation](diagnostic-build-contrasts.md); [measured acceptance](diagnostic-build-acceptance-2026-10-14.md). The shared-SM120 library is the normal default. Production API/resident/BFS checks and broad modes run before legacy contrasts. Owned-group cleanup is bounded in both normal and deep doctor, with retained evidence and no false PASS for an unreaped child.
 
 Run `multigpubfs doctor` after installation. It checks each visible local GPU, CUDA/native libraries, resident-worker file requests, NCCL and a tiny exact BFS, then writes a readable report and diagnostic ZIP. For Python-only submissions use `from multigpubfs.diagnostics import run_diagnostics; run_diagnostics()`. [Instructions](diagnostics.md) and [measured acceptance](diagnostics-acceptance-2026-10-13.md).
 
 The current diagnostic also probes NVIDIA Driver API directly without `nvidia-smi`. [Driver diagnostic acceptance](driver-diagnostics-acceptance-2026-10-14.md). After upgrading inside an already-running Python session, invoke `multigpubfs doctor` in a fresh process; previously imported Python code may otherwise remain cached. Python-only job submissions can use `subprocess.run([sys.executable, "-m", "multigpubfs.diagnostics"])`.
 
 The current `doctor` includes broad user-space evidence, isolated loader contrasts and `analysis.json`/`analysis.txt`: [forensic diagnostic guide](forensic-diagnostics.md), [acceptance](forensic-diagnostics-acceptance-2026-10-14.md). The primary failure, observed findings, hypotheses, exclusions and inaccessible evidence are separate.
+
+For a ready update-and-check command, Python-only job submission and actual calculation see [server quickstart](server-quickstart-ru.md). [Current production acceptance](sm120-production-acceptance-2026-10-15.md).
