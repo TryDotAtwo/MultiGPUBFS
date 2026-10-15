@@ -162,3 +162,19 @@ class Assets(unittest.TestCase):
    with self.assertRaisesRegex(self.module.AssetError,"PROBE_TIMEOUT"):
     self.module.run_hardware_probe([sys.executable,"-c","import time;time.sleep(20)"],timeout=.1)
   self.assertLess(time.monotonic()-began,6)
+
+ def test_selective_inventory_retains_deferred_universal_shared_control(self):
+  from multigpubfs import runtime_variants as v
+  m=self.manager();root=m.prepare(hardware(75));value=v.inventory(root,environ={})
+  self.assertEqual({r["id"] for r in value["variants"]},set(v.SPECS)|{"shared-universal"})
+  self.assertEqual(len(self.calls),2);m.ensure_variant(root,"shared-universal");self.assertEqual(len(self.calls),3)
+ def test_deep_matrix_can_compare_same_architectures_for_runtime_factor(self):
+  from multigpubfs import runtime_variants as v
+  import inspect
+  self.assertIn("include_universal",inspect.signature(v.cases).parameters,"Deep contrasts lack matching universal shared/static pair")
+  cases=v.cases([0],contrasts_only=True,include_universal=True)
+  self.assertIn("shared-universal",{c["config"]["variant"] for c in cases})
+  steps=[{"name":i,"status":"PASS","diagnostic_case":{"variant":i,"kind":"api","device":0}} for i in list(v.SPECS)+["shared-universal"]]
+  comparison=v.compare(steps)["comparisons"][0]
+  pair=next(p for p in comparison["controlled_pairs"] if p["left"]=="static-sm120" and p["factor"]=="runtime")
+  self.assertEqual(pair["right"],"shared-universal");self.assertFalse(v.compare(steps)["root_cause_confirmed"])
