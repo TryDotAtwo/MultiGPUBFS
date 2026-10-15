@@ -65,7 +65,7 @@ def code_digest():
 def artifacts(verified,settings):
  selected=next(x for x in verified['variants'] if x['id']==settings['variant'])
  root=Path(verified['root'])
- return {'binary_sha256':verified['binary_sha256'],'cuda_library_sha256':selected['sha256'],'cudart_sha256':digest(root/'lib/libcudart.so.12'),'nccl_sha256':digest(root/'lib/libnccl.so.2'),'python_code_sha256':code_digest()}
+ return {'binary_sha256':verified['binary_sha256'],'cuda_library_sha256':selected['sha256'],'cudart_sha256':digest(root/'lib/libcudart.so.12'),'nccl_sha256':digest(root/'lib/libnccl.so.2'),'python_code_sha256':code_digest(),'native_manifest_sha256':digest(root/'manifest.json')}
 
 def read_proof(profile,root):
  proof=profile.get('proof',{});path=(Path(root)/proof.get('path','')).resolve()
@@ -111,17 +111,18 @@ def probe(settings,root):
  overrides(settings);root=Path(root);root.mkdir(parents=True,exist_ok=True)
  _,env=native_runtime();env.update(overrides(settings));graphs=[]
  scope=persistent_graph_workers() if settings['worker']=='persistent' else contextlib.nullcontext()
- with scope:
+ with scope as pool:
   for index,name in enumerate(('permutation','permutation','repeated','matrix')):
    graph=fixture(name);layers,last=oracle(graph)
    print('PHASE server recipe exact '+name+' '+str(index)+' on GPUs '+str(settings['devices']),flush=True)
    output=root/('oracle-'+str(index))
    report=run_graph(graph,output,devices=settings['devices'],max_seconds=30,backend='generic',autotune=True,_native_env=env)
    if report.get('runtime_identity',{}).get('cuda_library_sha256')!=resolution['sha256']:raise RuntimeError('SERVER_RECIPE_LIBRARY_IDENTITY')
+   if report.get('devices')!=settings['devices']:raise RuntimeError('SERVER_RECIPE_GPU_SET')
    if report['status']!='COMPLETE' or report['layer_sizes']!=layers:raise RuntimeError('SERVER_RECIPE_CPU_LAYERS_MISMATCH')
    saved=json.loads((output/'states.json').read_text());rows=saved['current'] if isinstance(saved,dict) else saved
    if sorted(tuple(x) for x in rows)!=last:raise RuntimeError('SERVER_RECIPE_CPU_TERMINAL_STATES_MISMATCH')
-   graphs.append({'fixture':name,'status':report['status'],'layers_verified':True,'terminal_states_verified':True,'layer_sizes':layers,'states_sha256':report['states_sha256'],'bfs_seconds':report['bfs_seconds'],'runtime_identity':report.get('runtime_identity')})
+   graphs.append({'fixture':name,'status':report['status'],'layers_verified':True,'terminal_states_verified':True,'layer_sizes':layers,'states_sha256':report['states_sha256'],'bfs_seconds':report['bfs_seconds'],'runtime_identity':report.get('runtime_identity'),'worker_pids':[w.process.pid for w in pool.workers] if pool is not None else []})
  result={'cpu_oracles_verified':True,'settings':settings,'graphs':graphs,'scope':'Exact small permutation, repeated-symbol and matrix graphs; startup and functional acceptance, not large-graph capacity or throughput optimum'}
  write(root/'probe.json',result);return result
 
