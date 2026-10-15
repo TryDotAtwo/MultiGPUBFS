@@ -105,6 +105,9 @@ def probe(settings,root):
  from .launch import run_graph
  from .generic_session import persistent_graph_workers
  from .native_distribution import native_runtime
+ from .runtime_variants import inventory,confirm_resolution
+ from .diagnostics import _paths
+ verified=inventory();_,_,libraries=_paths();resolution=confirm_resolution(settings['variant'],verified,libraries)
  overrides(settings);root=Path(root);root.mkdir(parents=True,exist_ok=True)
  _,env=native_runtime();env.update(overrides(settings));graphs=[]
  scope=persistent_graph_workers() if settings['worker']=='persistent' else contextlib.nullcontext()
@@ -114,6 +117,7 @@ def probe(settings,root):
    print('PHASE server recipe exact '+name+' '+str(index)+' on GPUs '+str(settings['devices']),flush=True)
    output=root/('oracle-'+str(index))
    report=run_graph(graph,output,devices=settings['devices'],max_seconds=30,backend='generic',autotune=True,_native_env=env)
+   if report.get('runtime_identity',{}).get('cuda_library_sha256')!=resolution['sha256']:raise RuntimeError('SERVER_RECIPE_LIBRARY_IDENTITY')
    if report['status']!='COMPLETE' or report['layer_sizes']!=layers:raise RuntimeError('SERVER_RECIPE_CPU_LAYERS_MISMATCH')
    saved=json.loads((output/'states.json').read_text());rows=saved['current'] if isinstance(saved,dict) else saved
    if sorted(tuple(x) for x in rows)!=last:raise RuntimeError('SERVER_RECIPE_CPU_TERMINAL_STATES_MISMATCH')

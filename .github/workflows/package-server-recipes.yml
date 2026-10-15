@@ -1,5 +1,8 @@
 name: Package verified server recipes
 on:
+  push:
+    branches: [codex/integrated-bfs-best-practices-delivery]
+    paths: [.github/workflows/package-server-recipes.yml]
   workflow_dispatch:
 permissions:
   contents: read
