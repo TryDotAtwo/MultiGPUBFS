@@ -186,3 +186,9 @@ class Assets(unittest.TestCase):
   self.assertNotIn("shared-universal",{x["variant"] for x in r.candidates([0])})
   c=list(r.candidates([0],include_universal=True));self.assertIn("shared-universal",{x["variant"] for x in c})
   chosen=next(x for x in c if x["variant"]=="shared-universal");r.overrides(chosen)
+
+ def test_delivery_report_keeps_early_component_source_and_hash_identity(self):
+  manager=self.manager();hw=hardware(75);root=manager.prepare(hw)
+  with patch.dict(self.module._roots,{"fixture":(root,manager,hw)},clear=True):data=self.module.status(root)
+  self.assertIn("native_build_declaration",data,"Early native delivery report omits component provenance")
+  declared=data["native_build_declaration"];self.assertEqual(declared["native_binary_source_commit"],"a"*40);self.assertEqual(declared["cuda_library_source_commit"],"b"*40);self.assertEqual(declared["architectures"],[75]);self.assertEqual(declared["declared_artifact_sha256"]["bin/mgbfs"],h(b"fixture executable"))
