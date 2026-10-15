@@ -178,3 +178,11 @@ class Assets(unittest.TestCase):
   comparison=v.compare(steps)["comparisons"][0]
   pair=next(p for p in comparison["controlled_pairs"] if p["left"]=="static-sm120" and p["factor"]=="runtime")
   self.assertEqual(pair["right"],"shared-universal");self.assertFalse(v.compare(steps)["root_cause_confirmed"])
+
+ def test_server_recipe_search_includes_universal_shared_only_for_selective_install(self):
+  from multigpubfs import server_recipe as r
+  import inspect
+  self.assertIn("include_universal",inspect.signature(r.candidates).parameters,"Selective recipe search omits universal shared fallback")
+  self.assertNotIn("shared-universal",{x["variant"] for x in r.candidates([0])})
+  c=list(r.candidates([0],include_universal=True));self.assertIn("shared-universal",{x["variant"] for x in c})
+  chosen=next(x for x in c if x["variant"]=="shared-universal");r.overrides(chosen)
