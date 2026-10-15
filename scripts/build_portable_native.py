@@ -41,7 +41,7 @@ choices={'shared-legacy':('75;86','Shared'),'static-sm120':(universal,'Static'),
 if variant is not None and variant not in choices:raise RuntimeError('UNKNOWN_DIAGNOSTIC_VARIANT')
 architectures,runtime=choices.get(variant,(universal,'Shared'))
 cmake_architectures=architectures if variant=='shared-legacy' else ';'.join(str(a)+'-real' for a in native_architectures)+';'+';'.join(str(a)+'-virtual' for a in ptx_architectures)
-flags=[] if runtime is None else ['-DCMAKE_CUDA_RUNTIME_LIBRARY='+runtime]
+flags=['-DCMAKE_CUDA_FLAGS=--threads=2']+([] if runtime is None else ['-DCMAKE_CUDA_RUNTIME_LIBRARY='+runtime])
 run(['cmake','-S',root/'cuda','-B',native,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_CUDA_ARCHITECTURES='+cmake_architectures,'-DCMAKE_CUDA_COMPILER='+str(sdk/'bin/nvcc'),'-DBUILD_TESTING=OFF','-DMGBFS_NCCL_LSA=OFF','-DMGBFS_NCCL_ROOT='+str(nccl),'-DCUTLASS_ROOT='+str(cutlass),*flags],env)
 run(['cmake','--build',native,'--target','mgbfs_cuda','--parallel','2'],env)
 if variant:
