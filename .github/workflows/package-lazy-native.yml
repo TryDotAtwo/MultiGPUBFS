@@ -1,0 +1,56 @@
+name: Package automatic selective native delivery
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: CPU regression dependencies
+        run: |
+          python -m pip install build wheel
+          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy pyarrow huggingface_hub pytest cayleypy==0.2.0
+      - name: Full CPU regression with production index present
+        run: python -m unittest discover -s tests
+      - name: Build small Python wheel without native files
+        run: PYTHONPATH=. python scripts/build_lazy_native_package.py
+      - name: Clean wheel and GitHub source installations without GPU
+        run: |
+          python -m venv /tmp/lazy-wheel-clean
+          /tmp/lazy-wheel-clean/bin/python -m pip install --no-deps dist-native/*.whl
+          python -m venv /tmp/lazy-source-clean
+          /tmp/lazy-source-clean/bin/python -m pip install --no-deps "git+https://github.com/TryDotAtwo/MultiGPUBFS.git@${GITHUB_SHA}"
+          cd /tmp
+          for python in /tmp/lazy-wheel-clean/bin/python /tmp/lazy-source-clean/bin/python; do
+            "$python" - <<'PY'
+          import json,os,subprocess,urllib.request
+          from pathlib import Path
+          from unittest.mock import patch
+          def forbidden(*a,**k):raise AssertionError('Import unexpectedly initialized GPU or network')
+          with patch.object(subprocess,'Popen',forbidden),patch.object(urllib.request,'urlopen',forbidden):
+            import multigpubfs
+            from multigpubfs.native_assets import AssetManager,index_path,status
+            index=json.loads(index_path().read_text());AssetManager(index,Path('/tmp/schema-only'))
+            assert status()['status']=='NOT_PREPARED' and hasattr(multigpubfs,'enable_native')
+          print('VERIFIED_SMALL_PACKAGE_IMPORT_OFFLINE_WITHOUT_GPU')
+          PY
+            "$python" -m multigpubfs --help
+            "$python" -m pip check
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-pip-wheel
+          path: dist-native/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
