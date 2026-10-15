@@ -1,0 +1,47 @@
+name: Package verified server recipes
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install CPU validation dependencies
+        run: |
+          python -m pip install build wheel
+          python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy pyarrow huggingface_hub pytest cayleypy==0.2.0
+      - name: Full CPU regression suite
+        run: python -m unittest discover -s tests
+      - name: Repackage immutable verified native payload
+        run: python scripts/repackage_verified_native.py
+      - name: Clean install and public launcher entry point
+        run: |
+          python -m venv /tmp/recipe-clean
+          /tmp/recipe-clean/bin/python -m pip install dist-native/*.whl
+          cd /tmp
+          /tmp/recipe-clean/bin/python -m multigpubfs.server_recipe --help
+          /tmp/recipe-clean/bin/python -m pip check
+          /tmp/recipe-clean/bin/python - <<'PY'
+          from multigpubfs.runtime_variants import inventory,PRODUCTION
+          import importlib.metadata
+          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev17'
+          value=inventory();assert value['status']=='AVAILABLE'
+          assert next(v for v in value['variants'] if v['id']==PRODUCTION)['architectures']==[75,86,120]
+          print('VERIFIED_CLEAN_SERVER_RECIPE_INSTALL_NO_GPU')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-pip-wheel
+          path: dist-native/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
