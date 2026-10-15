@@ -1,0 +1,39 @@
+name: Verify GPU-free native prefetch from public package
+on:
+  workflow_dispatch:
+    inputs:
+      wheel_url:
+        required: true
+      sha256:
+        required: true
+permissions:
+  contents: read
+jobs:
+  prefetch-cpu:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      WHEEL_URL: ${{ inputs.wheel_url }}
+      WHEEL_SHA: ${{ inputs.sha256 }}
+      PIP_NO_CACHE_DIR: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install only small public package on CPU host
+        run: |
+          python -m venv /tmp/prefetch-public-clean
+          /tmp/prefetch-public-clean/bin/python -m pip install --no-deps "multigpubfs @ ${WHEEL_URL}#sha256=${WHEEL_SHA}"
+      - name: Real selected/all downloads without GPU and offline installed CLI
+        run: |
+          /tmp/prefetch-public-clean/bin/python scripts/accept_native_prefetch.py --wheel-url "$WHEEL_URL" --sha256 "$WHEEL_SHA" --output prefetch-cpu-acceptance.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-prefetch-cpu-acceptance
+          path: prefetch-cpu-acceptance.json
+          if-no-files-found: error
+          retention-days: 7
