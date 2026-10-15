@@ -408,7 +408,7 @@ def inventory(root):
  write(root/'probe.json',result);return result
 
 def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
- from .diagnostics import Runner
+ from .diagnostics import Runner,recover_visible_devices,record_architecture
  import datetime
  if not math.isfinite(total_timeout) or total_timeout<1:raise ValueError('Total timeout must be positive and finite')
  if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
@@ -421,12 +421,15 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
   return dict(case,config=dict(case['config'],variant=coverage_build,coverage_build=True))
  def run(name,stage,**kw):return run_case(runner,covered({'name':name,'config':dict(kind='component',stage=stage,**kw),'seconds':min(timeout,45)}),deadline)
  try:
-  run('system-info','system');run('filesystem','filesystem');run('environment-evidence','environment');run('nvml-evidence','nvml');run('torch-evidence','torch');run('driver-api','driver')
+  run('system-info','system');run('filesystem','filesystem');run('environment-evidence','environment');run('nvml-evidence','nvml');run('torch-evidence','torch');driver=run('driver-api','driver')
   run_case(runner,{'name':'deep-capabilities','config':{'kind':'inventory'},'seconds':30,'optional':True},deadline)
-  runtime=run('native-runtime','runtime');count=run('cuda-discovery','count')
-  if runtime['status']=='PASS' and count['status']=='PASS':
-   selected=devices or list(range(count['result']['data']['visible_devices']))
-   if any(d>=count['result']['data']['visible_devices'] for d in selected):runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU is not visible'})
+  runtime=run('native-runtime','runtime');record_architecture(runner,driver);count=run('cuda-discovery','count')
+  independent=recover_visible_devices(driver,devices) if count['status']!='PASS' else None
+  if runtime['status']=='PASS' and (count['status']=='PASS' or independent is not None):
+   visible=count['result']['data']['visible_devices'] if count['status']=='PASS' else driver['result']['data']['driver']['visible_devices']
+   selected=devices or list(range(visible))
+   if count['status']!='PASS':runner.report['native_discovery_recovery']={'status':'INDEPENDENT_CUDA_EVIDENCE','devices':selected,'scope':'Original native count failure retained; execution acceptance requires exact native BFS.'}
+   if any(d>=visible for d in selected):runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU is not visible'})
    else:
     runner.report['devices']=selected
     from .runtime_variants import cases as build_cases

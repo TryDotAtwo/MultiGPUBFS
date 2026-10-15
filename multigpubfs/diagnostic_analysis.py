@@ -60,6 +60,14 @@ def analyze(report):
   actions.append('Use the successful contrast as a candidate user-level loader configuration for the same authorized GPU allocation; validate the regular kernel/NCCL tests before adopting it.')
  elif good:
   hypothesis('TRANSIENT_OR_LOADER_FAILURE','A variant passed but baseline failure was not reproduced; loader causality remains unconfirmed.',['loader-contrasts/result/data/results'])
+ for device in report.get('architecture_support',{}).get('devices',[]):
+  code=device.get('code');label='Logical GPU '+str(device.get('logical_id'))+' SM'+str(device.get('sm'))
+  if code in ('UNKNOWN_PTX','PTX_JIT','UNSUPPORTED'):
+   fact('GPU_NATIVE_TARGET_NOT_LISTED',label+' has no matching declared native cubin. PTX evidence and actual execution are assessed separately.',['architecture_support/devices'])
+  if code=='PTX_JIT' and by.get('cuda-discovery',{}).get('status') in ('FAIL','TIMEOUT'):
+   hypothesis('FIRST_LOAD_PTX_JIT',label+' has compatible ordinary PTX but no native cubin. First-load JIT may contribute to startup delay; this does not establish the cause of the timeout.',['architecture_support/devices','cuda-discovery'])
+  elif code=='UNSUPPORTED':
+   fact('NATIVE_GPU_CODE_UNAVAILABLE',label+' has neither matching declared cubin nor compatible declared ordinary PTX; install a package with appropriate code before treating GPU execution as supported.',['architecture_support/devices'])
  if by.get('native-runtime',{}).get('status')=='PASS':excluded.append({'statement':'The native binary executed and packaged integrity/dependency checks passed. An execute-permission or basic native-loader failure does not explain subsequently reached native calls; later JIT or library-specific initialization failures remain possible.','evidence':['native-runtime']})
  runtime=data('native-runtime')
  if runtime.get('binary_executed'):
@@ -74,8 +82,8 @@ def analyze(report):
  for name,step in by.items():
   if step.get('status')=='SKIPPED':unknown.append(name+': '+step.get('reason','not tested'))
   if step.get('status')=='TIMEOUT':unknown.append(name+' timed out at '+step.get('last_phase','unknown phase')+'; preserved partial evidence is not acceptance.')
- if by.get('cuda-discovery',{}).get('status') in ('FAIL','TIMEOUT'):
-  excluded.append({'statement':'BFS and NCCL were not reached; their performance, graph capacity and dedup cannot be blamed for this startup observation.','evidence':['cuda-discovery']})
+ if by.get('cuda-discovery',{}).get('status') in ('FAIL','TIMEOUT') and report.get('working_configuration',{}).get('status')!='READY':
+  excluded.append({'statement':'Original BFS and NCCL stages were not reached after the discovery failure; any later diagnostic recipe attempts have separate execution evidence. Graph capacity and dedup cannot explain the initial discovery observation.','evidence':['cuda-discovery']})
  if env.get('loopback',{}).get('status')=='FAIL':
   fact('LOOPBACK_TEST_FAILED','The bounded local TCP bind/connect failed. This may affect rendezvous; it does not explain a CUDA discovery error by itself.',['environment-evidence/result/data/loopback'])
  for name in ('nvml-evidence','torch-evidence','environment-evidence','loader-contrasts','native-loader-trace'):
