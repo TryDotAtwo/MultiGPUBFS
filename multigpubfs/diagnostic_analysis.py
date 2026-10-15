@@ -107,12 +107,12 @@ def analyze(report):
  for case in variants:
   if case['status'] in ('TIMEOUT','SKIPPED','INCOMPLETE'):unknown.append('Loader contrast '+case['name']+': '+case.get('reason',case.get('error','not completed')))
  failures=[x['name'] for x in steps if x['status'] in ('FAIL','TIMEOUT')]
- if failures and not actions:actions.append('Return report.json and diagnostics.zip from the same job. Use the evidence paths and failure-specific library versions to choose a user-level environment fix; do not blindly increase timeouts or install a driver with pip.')
+ if failures and not actions and report.get('working_configuration',{}).get('status')!='READY':actions.append('Return report.json and diagnostics.zip from the same job. Use the evidence paths and failure-specific library versions to choose a user-level environment fix; do not blindly increase timeouts or install a driver with pip.')
  builds=report.get('deep_analysis',{}).get('runtime_build_matrix',{})
  for comparison in builds.get('comparisons',[]):
   if comparison['outcome']=='VARIANT_DEPENDENT':
-   fact('DIAGNOSTIC_BUILD_CONTRAST_OBSERVED','GPU '+str(comparison['device'])+' '+comparison['path']+' passes for some diagnostic builds and fails for others. Runtime/SM120 controlled pairs are recorded; this alone does not prove a unique cause.',['deep_analysis/runtime_build_matrix/comparisons'])
-   actions.append('Compare the same-source runtime and native-SM120 pairs in deep-summary.txt; use actual library hashes and call boundaries, with the inherited JIT-cache limitation.')
+   fact('DIAGNOSTIC_BUILD_CONTRAST_OBSERVED','GPU '+str(comparison['device'])+' '+comparison['path']+' passes for some diagnostic builds and fails for others. Runtime/native-code controlled pairs are recorded; this alone does not prove a unique cause.',['deep_analysis/runtime_build_matrix/comparisons'])
+   actions.append('Compare the same-source runtime and native-code coverage pairs in deep-summary.txt; use actual library hashes and call boundaries, with the inherited JIT-cache limitation.')
   for identifier,observed in comparison['variants'].items():
    if observed.get('call_boundary'):
     fact('NATIVE_CALL_BOUNDARY_RECORDED',identifier+' GPU '+str(comparison['device'])+' '+comparison['path']+': '+observed['call_boundary']+'. This locates the last flushed boundary rather than proving a driver root cause.',['steps/'+observed['name']+'/last_native_phase'])

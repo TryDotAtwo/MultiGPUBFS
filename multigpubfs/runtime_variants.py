@@ -24,7 +24,7 @@ def inventory(root=None,*,environ=None):
  if override and Path(override).resolve()!=(root/'bin/mgbfs').resolve():
   return {'status':'UNAVAILABLE','reason':'Custom native executable selected; packaged diagnostic builds are not substituted.'}
  metadata=root/'diagnostic_variants/variants.json'
- if not metadata.is_file():return {'status':'UNAVAILABLE','reason':'This installation has no packaged diagnostic runtime/SM120 contrasts.'}
+ if not metadata.is_file():return {'status':'UNAVAILABLE','reason':'This installation has no packaged diagnostic runtime/native-code contrasts.'}
  manifest=json.loads((root/'manifest.json').read_text())
  if manifest.get('schema')!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_MANIFEST_SCHEMA')
  hashes=manifest.get('sha256',{})

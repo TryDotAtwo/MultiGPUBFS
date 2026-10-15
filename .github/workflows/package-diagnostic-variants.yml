@@ -1,4 +1,4 @@
-name: Package shared SM120 production with diagnostic contrasts
+name: Package multi-architecture production with diagnostic contrasts
 on:
   workflow_dispatch:
     inputs:
@@ -93,7 +93,7 @@ jobs:
         run: |
           PYTHONPATH=. python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json --diagnostic-variants /tmp/diagnostic-builds --cuobjdump /tmp/cubin-tool/cuda_cuobjdump-linux-x86_64-12.9.82-archive/bin/cuobjdump
           cp /tmp/variant-build-run.json dist-native/variant-build-run.json
-      - name: Verify clean pip install, shared SM120 production and contrast linkage
+      - name: Verify clean pip install, multi-architecture production and contrast linkage
         run: |
           python3 -m venv /tmp/pip-variant-clean
           /tmp/pip-variant-clean/bin/python -m pip install dist-native/*.whl
