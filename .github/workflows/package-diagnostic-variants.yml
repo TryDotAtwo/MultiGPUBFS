@@ -4,6 +4,9 @@ on:
     inputs:
       variant_build_run:
         required: true
+      cli_build_run:
+        required: false
+        default: ""
 permissions:
   contents: read
   actions: read
@@ -69,6 +72,23 @@ jobs:
           for id in shared-legacy static-sm120 shared-sm120; do
             gh run download "$VARIANT_RUN" --repo "$GITHUB_REPOSITORY" --name "diagnostic-variant-$id" --dir "/tmp/diagnostic-builds/$id"
           done
+      - name: Select independently compiled trace CLI
+        if: inputs.cli_build_run != ''
+        env:
+          CLI_RUN: ${{ inputs.cli_build_run }}
+        run: |
+          gh run view "$CLI_RUN" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion' | grep -x success
+          gh run download "$CLI_RUN" --repo "$GITHUB_REPOSITORY" --name native-count-trace-cli --dir /tmp/count-trace-cli
+          python3 - <<'PY'
+          import json,hashlib,shutil,subprocess
+          from pathlib import Path
+          p=Path('/tmp/count-trace-cli');r=json.loads((p/'cli-receipt.json').read_text())
+          assert hashlib.sha256((p/'mgbfs').read_bytes()).hexdigest()==r['sha256']
+          assert r['cuda_source_tree']==subprocess.check_output(['git','rev-parse','HEAD:cuda'],text=True).strip()
+          work=Path('/tmp/mgbfs-portable');shutil.copy2(p/'mgbfs',work/'target/release/mgbfs');(work/'target/release/mgbfs').chmod(0o755)
+          m=json.loads((work/'native-manifest.json').read_text());m['native_binary_source_commit']=r['source_commit'];m['sha256']['bin/mgbfs']=r['sha256'];m['native_count_trace_receipt']=r
+          (work/'native-manifest.json').write_text(json.dumps(m))
+          PY
       - name: Assemble diagnostic libraries and ordinary baseline into one wheel
         run: |
           PYTHONPATH=. python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json --diagnostic-variants /tmp/diagnostic-builds --cuobjdump /tmp/cubin-tool/cuda_cuobjdump-linux-x86_64-12.9.82-archive/bin/cuobjdump

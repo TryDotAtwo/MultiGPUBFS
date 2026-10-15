@@ -8,7 +8,17 @@ fn graph(path:&str)->Result<GraphDefinitionV2>{let g:GraphDefinitionV2=serde_jso
 fn digest(g:&GraphDefinitionV2)->Result<String>{Ok(g.semantic_digest()?.iter().map(|v|format!("{v:02x}")).collect())}
 fn graph_bytes(g:&GraphDefinitionV2)->u64{match &g.action{GraphAction::Permutation{generators,..}=>generators.iter().map(|v|v.len() as u64*4).sum(),GraphAction::Matrix{generators,..}=>generators.iter().map(|v|v.matrix.len() as u64*8+4).sum()}}
 extern "C"{fn cudaGetDeviceCount(count:*mut i32)->i32;}
-pub fn visible_count()->Result<()>{let mut count=0;check(unsafe{cudaGetDeviceCount(&mut count)})?;if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}println!("{count}");Ok(())}
+/// Startup-only diagnostic checkpoint; no GPU dispatch or allocation.
+pub fn startup_trace(phase:&str)->Result<()>{crate::job_phase::set(phase)}
+pub fn visible_count()->Result<()>{
+ let mut count=0;
+ startup_trace("graph-count-cudaGetDeviceCount-enter")?;
+ let status=unsafe{cudaGetDeviceCount(&mut count)};
+ startup_trace("graph-count-cudaGetDeviceCount-returned")?;
+ check(status)?;
+ if count<=0{return Err("NO_VISIBLE_CUDA_DEVICES".into());}
+ println!("{count}");Ok(())
+}
 
 pub fn info(args:&[String])->Result<()>{
  crate::job_phase::set("graph-info-read-definition")?;

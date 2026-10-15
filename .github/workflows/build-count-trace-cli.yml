@@ -1,0 +1,26 @@
+name: Build bounded native discovery checkpoints
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/build-count-trace-cli.yml']
+permissions:
+  contents: read
+jobs:
+  cli:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare Rust toolchain without GPU
+        run: rustup toolchain install 1.75.0 --profile minimal
+      - name: Compile CLI and verify count logging without a GPU
+        run: python3 scripts/build_count_trace_cli.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-count-trace-cli
+          path: /tmp/mgbfs-portable/cli-artifact/*
+          compression-level: 0
+          retention-days: 7

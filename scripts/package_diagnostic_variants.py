@@ -43,6 +43,6 @@ def attach_variants(stage,inputs,manifest,cuobjdump):
   receipt=folder/'build-receipt.json';receipt.write_text(json.dumps(proof,indent=2))
   entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':str(library.relative_to(stage)),'sha256':sha(library),'receipt':str(receipt.relative_to(stage)),'receipt_sha256':sha(receipt),'source_commit':proof['source_commit'],'cuda_source_tree':cuda_tree,'ptx_architectures':proof.get('ptx_architectures')})
  production=next(x for x in entries if x['id']==PRODUCTION)
- manifest.update(ptx_architectures=production.get('ptx_architectures'),architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=baseline_source,cuda_library_source_commit=production['source_commit'],cuda_source_tree=cuda_tree)
+ manifest.update(ptx_architectures=production.get('ptx_architectures'),architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=manifest.get('native_binary_source_commit',baseline_source),cuda_library_source_commit=production['source_commit'],cuda_source_tree=cuda_tree)
  metadata={'schema':1,'production_default':PRODUCTION,'variants':entries,'scope':'Fixed shared-runtime multi-architecture production library; isolated same-source diagnostic contrasts; no production fallback'}
  (destination/'variants.json').write_text(json.dumps(metadata,indent=2));return metadata

@@ -1,6 +1,8 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 fn execute() -> Result<(), (i32, String)> {
+    #[cfg(all(feature="cuda",target_os="linux"))]
+    mgbfs_runtime::generic_distributed_run::startup_trace("cli-main-enter").map_err(|e|(1,e))?;
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
@@ -15,6 +17,7 @@ fn execute() -> Result<(), (i32, String)> {
                 use std::os::unix::process::CommandExt;
                 let executable =
                     std::env::current_exe().map_err(|e| (2, format!("CUDA_LOADING_EXEC: {e}")))?;
+                mgbfs_runtime::generic_distributed_run::startup_trace("cli-eager-reexec").map_err(|e|(1,e))?;
                 let error = std::process::Command::new(executable).args(&args).exec();
                 return Err((2, format!("CUDA_LOADING_EXEC: {error}")));
             }
@@ -27,6 +30,9 @@ fn execute() -> Result<(), (i32, String)> {
             }
         }
     }
+
+    #[cfg(all(feature="cuda",target_os="linux"))]
+    mgbfs_runtime::generic_distributed_run::startup_trace("cli-policy-ready").map_err(|e|(1,e))?;
 
     match args.first().and_then(|x| x.to_str()) {
         Some("graph-count") if args.len()==1 => {
