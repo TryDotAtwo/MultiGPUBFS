@@ -1,0 +1,318 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "package": "0.2.0.dev19",
+  "wheel_sha256": "5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986",
+  "wheel_bytes": 135304,
+  "package_source_commit": "914b2b3a250e94e54dcc5a30c9867d7855481c1f",
+  "native_index_sha256": "98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b",
+  "hardware": [
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ],
+      "driver": "580.178.04"
+    },
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ],
+      "driver": "580.178.04"
+    }
+  ],
+  "python_version": "3.13.15",
+  "checks": [
+    {
+      "name": "cold-explicit-activation",
+      "status": "PASS",
+      "seconds": 51.013213829999984,
+      "downloaded_bytes": 317591823,
+      "components": [
+        {
+          "component": "common",
+          "downloaded_bytes": 304491773,
+          "resumed_from_bytes": 0,
+          "sha256": "290a72ad2030c5f163155f85123adbe52cc7f17ffd31af095b2b7b4c2f43ec0e"
+        },
+        {
+          "component": "cuda-sm75",
+          "downloaded_bytes": 13100050,
+          "resumed_from_bytes": 0,
+          "sha256": "c40aa753231b0dab54e9c93686b271817638669de8596ca641bb47caa3e68223"
+        }
+      ],
+      "native_build_declaration": {
+        "architectures": [
+          75
+        ],
+        "ptx_architectures": [],
+        "cuda_toolkit": "12.9.86",
+        "cuda_runtime_linkage": "Shared",
+        "production_build": "shared-sm120",
+        "native_binary_source_commit": "0257cd3bd2f9aa2fbb1911f5c3115a4d20a112bb",
+        "cuda_library_source_commit": "5746c36524cf3125efa7ccdb2cf9a9ad166f1b4b",
+        "cuda_source_tree": "0dc4f274f213635acf983f3d449025f732631722",
+        "cuda_kernel_source_sha256": "196427e16607984984b3f534bd0eb7eebec91a9c0561df9874f0b683538e644c",
+        "elf_runtime_requirements": {
+          "CXXABI": "1.3.9",
+          "GLIBC": "2.34",
+          "GLIBCXX": "3.4.22"
+        },
+        "package_source_commit": "914b2b3a250e94e54dcc5a30c9867d7855481c1f",
+        "declared_artifact_sha256": {
+          "bin/mgbfs": "673e1c8fb4e765f858d4ffbbcd14ff848076d7cd5be95f37a16d0edce06fceb7",
+          "lib/libmgbfs_cuda.so": "b9467efba53d2776a16331ad2bbc2ad3d31206a6a894a5ea64ccc36e9fb291c9",
+          "lib/libcudart.so.12": "256e6409e4f06f618e1fb53d4844a6b81cdded1013afa8ade40c22f99eb133b7",
+          "lib/libnccl.so.2": "2d19623c75a1dc0f4296fa9b9ff5cb7f38f18e42b10076636eb4e144e9010d07"
+        }
+      }
+    },
+    {
+      "name": "ordinary-doctor-and-executed-ready-command",
+      "status": "PASS",
+      "counts": {
+        "PASS": 29,
+        "SKIPPED": 2
+      },
+      "downloaded_bytes": 0,
+      "selected": {
+        "variant": "shared-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "persistent",
+        "module": "inherited",
+        "data_loading": "inherited",
+        "transport": "inherited"
+      }
+    },
+    {
+      "name": "fresh-process-offline-cache-bfs",
+      "status": "PASS",
+      "devices": [
+        0,
+        1
+      ],
+      "downloaded_bytes": 0,
+      "exact_layers_verified": true
+    },
+    {
+      "name": "real-two-gpu-shard-engines",
+      "status": "PASS",
+      "exact_cpu_oracles_verified": true,
+      "backends": [
+        "shard_ab_hash",
+        "shard_ab_sort_merge"
+      ]
+    },
+    {
+      "name": "deferred-shared-universal-actual-command",
+      "status": "PASS",
+      "selected": {
+        "variant": "shared-universal",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "fresh",
+        "module": "EAGER",
+        "data_loading": "EAGER",
+        "transport": "socket"
+      },
+      "candidate_restriction_is_test_fixture": true,
+      "production_manifest_unchanged": true
+    },
+    {
+      "name": "deferred-static-sm120-actual-command",
+      "status": "PASS",
+      "selected": {
+        "variant": "static-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "fresh",
+        "module": "EAGER",
+        "data_loading": "EAGER",
+        "transport": "socket"
+      },
+      "candidate_restriction_is_test_fixture": true,
+      "production_manifest_unchanged": true
+    },
+    {
+      "name": "unused-legacy-controls-not-downloaded",
+      "status": "PASS"
+    },
+    {
+      "name": "persistent-S11",
+      "status": "PASS",
+      "states": 39916800,
+      "diameter": 55,
+      "bfs_seconds": 2.880441439,
+      "wall_seconds": 5.750976884000011,
+      "layer_sizes": [
+        1,
+        10,
+        54,
+        209,
+        649,
+        1717,
+        4015,
+        8504,
+        16599,
+        30239,
+        51909,
+        84591,
+        131625,
+        196470,
+        282369,
+        391939,
+        526724,
+        686763,
+        870233,
+        1073227,
+        1289718,
+        1511742,
+        1729808,
+        1933514,
+        2112319,
+        2256396,
+        2357475,
+        2409581,
+        2409581,
+        2357475,
+        2256396,
+        2112319,
+        1933514,
+        1729808,
+        1511742,
+        1289718,
+        1073227,
+        870233,
+        686763,
+        526724,
+        391939,
+        282369,
+        196470,
+        131625,
+        84591,
+        51909,
+        30239,
+        16599,
+        8504,
+        4015,
+        1717,
+        649,
+        209,
+        54,
+        10,
+        1
+      ],
+      "terminal_state_verified": true,
+      "worker_pids": [
+        2855,
+        2856
+      ]
+    },
+    {
+      "name": "persistent-S12",
+      "status": "PASS",
+      "states": 479001600,
+      "diameter": 66,
+      "bfs_seconds": 35.928730735,
+      "wall_seconds": 36.02951344400003,
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "terminal_state_verified": true,
+      "worker_pids": [
+        2855,
+        2856
+      ]
+    },
+    {
+      "name": "no-repeated-downloads-or-hardware-probes-between-graphs",
+      "status": "PASS",
+      "new_probes": 0,
+      "new_transfers": 0
+    },
+    {
+      "name": "diagnostic-archive-hashes-and-cleanup",
+      "status": "PASS",
+      "states_excluded": true
+    }
+  ],
+  "scope": "Real installed 2xT4 acceptance only. Other SM components are compiled/inventory evidence; B200/B300 execution is not claimed.",
+  "wall_seconds": 400.39563490700004
+}

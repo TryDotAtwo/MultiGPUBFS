@@ -3,10 +3,10 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986" && python -m multigpubfs.diagnostics
 ```
 
-Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. CUDA/NCCL поставляются внутри wheel; драйвер сервера пакет не заменяет.
+Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. Маленький wheel содержит Python API и закреплённый индекс. Готовые CUDA/NCCL и нужная SM-библиотека автоматически берутся из GitHub при первой подготовке на GPU-узле; драйвер сервера пакет не заменяет.
 
 Обычный `doctor` теперь сам ищет рабочий вариант. Полная матрица с общим бюджетом 30 минут:
 
@@ -15,7 +15,7 @@ python -m multigpubfs.diagnostics --deep --total-timeout 1800
 ```
 
 
-Один wheel уже содержит код для SM75/80/86/89/90/100/103/120. CUDA сама выбирает подходящий вариант; переустановка под каждую карту не требуется. Обычный PTX compute80 оставлен для совместимого JIT-пути на более новых GPU. Первая JIT-загрузка может быть медленнее; это не подтверждённая причина конкретного зависания.
+Обычная установка занимает 135,304 байт плюс зависимости API. Первый `enable_native()` на GPU-узле или `doctor` определяет видимые карты и загружает общий компонент и одну подходящую готовую CUDA-библиотеку. Поддерживаются SM75/80/86/89/90/100/103/120 и универсальный путь с compute80 PTX. Выбор, размеры, хеши и отдельные исходники Python/native/CUDA записываются в отчёт. Повторные графы используют кэш без повторной загрузки и опроса железа. Подготовка на CPU/login-узле не требует доступа к GPU: фактическая загрузка откладывается до native-запуска на выделенном GPU-узле.
 
 Если `mgbfs graph-count` завис, но независимые Driver API и CUDA Runtime обнаружили одинаковое число устройств, doctor продолжит изолированные проверки рабочих вариантов. Он сохраняет исходный TIMEOUT и не выдаёт READY по одному успешному опросу GPU. Для CUDA_VISIBLE_DEVICES используются логические номера внутри выделенной задачи; список выделенных карт не расширяется.
 
@@ -51,7 +51,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
@@ -72,7 +72,7 @@ subprocess.run(command, check=True)
 
 ## Что именно подбирается
 
-- Одна из четырёх готовых библиотек: shared/static, с полным набором SM75/80/86/89/90/100/103/120 либо прежними SM75/86. Штатная shared-библиотека с полным набором проверяется первой. Исторические идентификаторы `shared-sm120` и `static-sm120` сохранены; реальные архитектуры перечислены в отчёте.
+- Сначала выбранная по железу штатная Shared-библиотека. При необходимости дополнительно скачиваются контролируемые Shared/Static и legacy-варианты. Для сравнения только типа CUDA runtime используется отдельная универсальная Shared-библиотека с тем же набором архитектур, что у Static. Исторические идентификаторы сохранены; реальные архитектуры и факт установки перечислены в отчёте.
 - Persistent workers либо отдельные процессы, inherited/EAGER/LAZY-загрузка CUDA.
 - Совместная работа всех выбранных GPU; при проблемах проверяется NCCL-вариант с отключением P2P/SHM/IB. Затем возможна явно помеченная конфигурация на одной карте.
 
@@ -94,4 +94,4 @@ subprocess.run(command, check=True)
 
 READY доказывает работу выбранного пути на маленьких контрольных графах в проверенном окружении. Размер будущего графа, достаточность VRAM, наилучшая скорость и работа на нескольких узлах требуют отдельных измерений. Диагностика не обещает обойти запрет GPU, исправить ядро/драйвер или однозначно установить скрытую администратором причину.
 
-Проверка этого выпуска выполнена на настоящих 2×T4. SM100 для B200, SM103 для B300 и SM120 присутствуют в собранной библиотеке, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](multiarch-native-acceptance-2026-10-15.md).
+Проверка этого выпуска выполнена на настоящих 2×T4. Готовые отдельные компоненты SM100 для B200, SM103 для B300 и SM120 собраны, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](selective-native-acceptance-2026-10-15.md).

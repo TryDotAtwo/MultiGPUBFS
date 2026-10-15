@@ -2,7 +2,7 @@
 
 Approved user workflow: one small pip package, automatic GPU/driver discovery, download only compatible precompiled native components from GitHub, check SHA256, cache, and oracle-verified doctor command. No separate user loader, build toolkit, HF, paid rental, local product development/build or subagents.
 
-The CayleyPy API and BFS algorithms remain unchanged. Import/activation must remain usable without a GPU (for graph definitions and preinstalled container images); the first actual native request and doctor prepare missing native components. An explicit executable or installed full native bundle remains supported.
+The CayleyPy API and BFS algorithms remain unchanged. Import/activation must remain usable without a GPU (for graph definitions and preinstalled container images); on a GPU node explicit enable_native() prepares before the first BFS clock; CPU/no-device activation defers preparation to the first actual native request. Doctor has its own bounded preparation stage. An explicit executable or installed full native bundle remains supported.
 
 ## Delivery
 
@@ -26,3 +26,7 @@ Private 2xT4 acceptance: install small public GitHub wheel, cold prepare must fe
 2. Add downloader/cache/hardware tests before implementation; integrate central native root resolution and diagnostic bootstrap.
 3. Package common, per-SM, universal and optional controls from CI/accepted v18; publish immutable components and pin index.
 4. Build/publish small Python wheel; real installed GPU acceptance; update source/docs/examples and publish sanitized receipts.
+
+## Completed evidence
+
+All four delivery steps completed. Eight native components: CI38752777505; assembly38757641731. Immutable component release native-components-20261015-v1; small Python package native-pip-20261015-v19. CI38761978972 passed744 CPU tests and clean wheel/source installs; anonymous public extras installation CI38762778914 passed. Physical2xT4 installed-wheel acceptance passed cold common+SM75 selection, warm/offline actual BFS, deferred universal Shared/Static commands, both shard engines, all S11/S12 Mahonian layers, same persistent worker PIDs, no repeated hardware probes/transfers and diagnostic cleanup/archive hashes. Other target SMs remain compile/inventory evidence. See docs/selective-native-acceptance-2026-10-15.md and its public JSON receipt.

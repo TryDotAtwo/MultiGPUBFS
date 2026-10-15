@@ -3,18 +3,17 @@
 Install the [pinned GitHub package](install-native-package.md) and read the
 [measured diagnostic acceptance](diagnostic-build-acceptance-2026-10-14.md).
 
-The extended `doctor --deep` package carries four CUDA libraries from the
-same CUDA kernel/helper inputs. Only isolated diagnostic children switch between alternatives; ordinary BFS uses the fixed production library.
-The executable adds flushed startup markers around main, policy re-exec and the real CUDA count call; BFS algorithms are unchanged. The
-normal CUDA library is shared-sm120 (historical identifier; Shared runtime; SM75/80/86/89/90/100/103/120 plus compute80 PTX). No build tool, administrator access or GPU reset
-is required on the target server.
+The small package carries a pinned index, not four complete CUDA libraries. Ordinary native preparation fetches the common component and one compatible production library. Optional alternatives download only when their diagnostic case is reached; a declaration without installed bytes is explicitly `PINNED_DECLARATION_NOT_INSTALLED`, not verified execution.
 
-| Diagnostic build | Runtime linked by CUDA library | Native cubins |
+| Diagnostic build | CUDA runtime linkage | Native cubins |
 |---|---|---|
+| shared-sm120 (historical production ID) | Shared | Selected per-SM image, or universal when needed |
+| shared-universal | Shared | SM75/80/86/89/90/100/103/120 + compute80 PTX |
+| static-sm120 | Static | SM75/80/86/89/90/100/103/120 + compute80 PTX |
 | baseline-static-legacy | Static | SM75, SM86 |
 | shared-legacy | Shared | SM75, SM86 |
-| static-sm120 | Static | SM75, SM80, SM86, SM89, SM90, SM100, SM103, SM120 + compute80 PTX |
-| shared-sm120 | Shared | SM75, SM80, SM86, SM89, SM90, SM100, SM103, SM120 + compute80 PTX |
+
+Runtime-only comparisons use **shared-universal versus static-sm120**, keeping architecture coverage identical. The compact per-SM production image is a separate selection/native-code contrast. Older full v18 wheels retain their original four-entry inventory. All components use the same CUDA kernel/helper fingerprint. Only diagnostic child environments select alternatives; downloading them leaves the production manifest, library and profile identity unchanged. No compiler or administrator access is required on the target server.
 
 The Rust executable links shared libcudart in every comparison. This matrix
 checks whether outcomes depend on the library's runtime linkage, native multi-architecture
@@ -66,7 +65,7 @@ Interpretation:
 * ALL_PASS: this finite synthetic scenario did not reproduce the hang.
 * VARIANT_DEPENDENT: some builds pass and others fail; inspect controlled
   runtime/native-fatbinary pairs and exact call boundaries.
-* ALL_FAILED: none of the four builds passed that scenario.
+* ALL_FAILED: none of the applicable builds passed that scenario.
 * INCOMPLETE: missing, unavailable or budget-skipped comparisons prevent a
   complete contrast.
 
@@ -78,4 +77,4 @@ or JIT. The finite suite cannot guarantee coverage of every graph/API
 parameter, multi-node transport, security policy or inaccessible kernel state.
 It is a startup/correctness investigation, not a throughput benchmark.
 
-Both ordinary and deep doctor can recover the visible logical GPU set from agreeing independent driver/runtime probes after a native-count failure. They retain the original failure and execute the same real-BFS/printed-command gate before declaring a recipe READY. See [current release acceptance](multiarch-native-acceptance-2026-10-15.md).
+Both ordinary and deep doctor can recover the visible logical GPU set from agreeing independent driver/runtime probes after a native-count failure. They retain the original failure and execute the same real-BFS/printed-command gate before declaring a recipe READY. See [current release acceptance](selective-native-acceptance-2026-10-15.md).

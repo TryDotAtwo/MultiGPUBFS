@@ -1,11 +1,11 @@
 # Install MultiGPUBFS with one pip command
 
-The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed through SSH. No bootstrap, compiler, separate CUDA toolkit installation, manual library paths, chmod, HF account or Kaggle Inputs are needed.
+The same ordinary pip command installs the Python API from GitHub on Kaggle or a Linux x86_64 GPU server accessed through SSH. No compiler, standalone bootstrap, manual CUDA paths, HF account or Kaggle Inputs are required.
 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986"
 ```
 
 ## Kaggle
@@ -13,48 +13,50 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986"
 ```
 
-Use the package after installation:
+After an upgrade, start a new Python process/session before importing the package.
 
 ```python
 import multigpubfs, cayleypy
+from multigpubfs.generic_session import persistent_graph_workers
 multigpubfs.enable_native()
-graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5), device="cpu")
-result = graph.bfs()
+with persistent_graph_workers():
+    for n in (10, 11, 12):
+        graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.coxeter(n), device="cpu")
+        result = graph.bfs()
+        print(n, result.bfs_completed, result.layer_sizes)
 ```
 
-`device="cpu"` creates the graph definition. Native BFS uses the visible GPUs. To select them explicitly, pass `native_options=multigpubfs.NativeOptions(devices=(0,1))` to `graph.bfs()`. Activation is explicit and reversible; importing the package alone does not replace CayleyPy methods.
+`device="cpu"` constructs the graph definition; native BFS uses the GPUs visible to the allocated job. Use `multigpubfs.NativeOptions(devices=(0,1))` in `enable_native(...)` to select logical devices explicitly. Import alone does not initialize CUDA, download native files or replace CayleyPy methods.
 
-The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies using pip. CUDA runtime12.9.79 and NCCL2.30.7 are bundled under `multigpubfs/_native/lib`, with licenses and checked hashes. They are used only by native child processes; the wheel does not declare NVIDIA runtime package dependencies or replace Torch's pinned NCCL. Executable permissions are carried by the wheel.
+## What downloads and when
 
-## Scope and identity
+The wheel is **135,304 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
 
-Release: [native-pip-20261015-v18](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v18). Package `0.2.0.dev18`; SHA256 `1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9`. Pip verifies this hash through the URL fragment.
+Only the common executable/private CUDA12.9.79/NCCL2.30.7 component and one compatible CUDA component are fetched from pinned **GitHub Releases**. Native targets are SM75/80/86/89/90/100/103/120. A same-major compatible image can cover newer minor capabilities; mixed or other forward-compatible devices can use the universal component with ordinary compute80 PTX. The package records the actual selection. No target-server compilation is used for matching native cubins.
 
-Requires Python3.10+, Linux x86_64 with GLIBC 2.34+, GLIBCXX 3.4.22+ and CXXABI 1.3.9+ and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library uses Shared CUDA runtime linkage and native SM75/80/86/89/90/100/103/120 cubins plus ordinary compute80 PTX. The CUDA loader selects compatible code inside the same wheel; users do not select or rebuild an architecture package. Legacy alternatives are isolated diagnostic contrasts. This release has real 2×T4 acceptance; B200/B300/SM120 have compiled-code coverage, not execution acceptance for this wheel. Windows-native execution is unsupported. Graph size remains limited by memory/time.
+The common component is 304,491,773 bytes. A clean T4 host downloaded **317,591,823 bytes** in total; a clean B200 selection needs 316,425,738 bytes according to the compiled manifest, not a measured B200 run. Ordinary BFS does not download the optional diagnostic alternatives. Deep investigation or a needed recipe contrast fetches those separately.
 
-The native binaries were rebuilt on Ubuntu22.04 to avoid the old artifact's GLIBC2.38/GLIBCXX3.4.32 dependency. Exact runtime requirements and source/build hashes are recorded in the release manifest. [Acceptance evidence](pip-install-acceptance-2026-10-13.md) separates clean Linux installation, GPU results and hardware limits.
+Downloads are streamed, size/SHA256 checked, extracted against a strict file list and atomically published under `~/.cache/multigpubfs/native` (or `$XDG_CACHE_HOME/multigpubfs/native`). Processes share a locked content-addressed cache. `MGBFS_NATIVE_CACHE` can point to an existing writable persistent location. A complete cache supports `MGBFS_NATIVE_OFFLINE=1`; a missing component fails explicitly in offline mode. The first preparation requires outbound GitHub HTTPS. A download failure leaves the original CayleyPy method intact.
 
-## Examples
+Private CUDA/NCCL libraries belong to native child processes. Pip does not replace Torch's pinned NVIDIA packages. No NVIDIA driver is installed. Normal graph transitions reuse the selected runtime without another hardware-discovery process or network transfer.
 
-Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from this GitHub repository into Kaggle. Their dataset/kernel/competition/model input lists are empty. Results are written locally; no external artifact-storage account is needed.
+## Checks and limits
 
-The earlier pinned documentation and release are historical. Use this version's command; do not combine it with old global CUDA/NCCL installation commands. If an earlier command already changed the notebook environment, start a fresh Kaggle session/environment before testing this version.
+```bash
+multigpubfs doctor
+# Extended controlled alternatives, with a 30-minute execution budget:
+multigpubfs doctor --deep --total-timeout 1800
+```
 
-For a sweep over different graphs, keep one `persistent_graph_workers()` context around the whole loop. See [geometry and catalogue acceptance](geometry-catalogue-acceptance-2026-10-13.md). The Coxeter bound is certified; unknown graph families retain ordinary memory admission and measured tuning. No profile is claimed to be a global optimum.
+The diagnostic checks actual GPU kernels, NCCL, persistent workers and exact tiny BFS against independent CPU oracles. `working_configuration: READY` requires successful BFS and execution of its printed command. A cached file or a detected SM alone is not GPU acceptance. A native-count timeout retains its original evidence; agreeing independent CUDA probes allow isolated recipe checks to continue. See [server instructions](server-quickstart-ru.md) and [controlled build comparisons](diagnostic-build-contrasts.md).
 
-## Server component diagnostic
+Python3.10+ is required. Native execution requires Linux x86_64, GLIBC2.34+, GLIBCXX3.4.22+, CXXABI1.3.9+ and a compatible NVIDIA driver. Windows-native GPU execution is unsupported. Graph capacity remains bounded by VRAM/time. Unknown graph families keep ordinary memory admission and measured tuning; profiles are not claimed to be globally optimal.
 
-For a single broad server investigation run `python -m multigpubfs.diagnostics --deep` from a fresh process inside the assigned GPU job. It has a 30-minute execution budget, four same-kernel CUDA runtime/native-code build comparisons and one metadata/log archive. [Coverage and interpretation](diagnostic-build-contrasts.md); [measured acceptance](diagnostic-build-acceptance-2026-10-14.md). The shared multi-architecture library is the normal default (its historical identifier remains `shared-sm120`). Production API/resident/BFS checks and broad modes run before legacy contrasts. Owned-group cleanup is bounded in both normal and deep doctor, with retained evidence and no false PASS for an unreaped child.
+The new delivery flow passed physical **2×T4** acceptance, fresh-process offline BFS, both shard engines, deferred universal/static alternatives and persistent S11/S12. Other SM components, including SM100/B200, SM103/B300 and SM120, have compilation/cubin inventory evidence; execution of this delivery flow on them remains unmeasured. [Exact acceptance, hashes and scope](selective-native-acceptance-2026-10-15.md).
 
-Run `multigpubfs doctor` after installation. It checks each visible local GPU, CUDA/native libraries, resident-worker file requests, NCCL and a tiny exact BFS, then writes a readable report and diagnostic ZIP. For Python-only submissions use `from multigpubfs.diagnostics import run_diagnostics; run_diagnostics()`. [Instructions](diagnostics.md) and [measured acceptance](diagnostics-acceptance-2026-10-13.md).
+Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
 
-The current diagnostic also probes NVIDIA Driver API directly without `nvidia-smi`. [Driver diagnostic acceptance](driver-diagnostics-acceptance-2026-10-14.md). After upgrading inside an already-running Python session, invoke `multigpubfs doctor` in a fresh process; previously imported Python code may otherwise remain cached. Python-only job submissions can use `subprocess.run([sys.executable, "-m", "multigpubfs.diagnostics"])`.
-
-The current `doctor` includes broad user-space evidence, isolated loader contrasts and `analysis.json`/`analysis.txt`: [forensic diagnostic guide](forensic-diagnostics.md), [acceptance](forensic-diagnostics-acceptance-2026-10-14.md). The primary failure, observed findings, hypotheses, exclusions and inaccessible evidence are separate.
-
-For a ready update-and-check command, Python-only job submission and actual calculation see [server quickstart](server-quickstart-ru.md). [Current production acceptance](multiarch-native-acceptance-2026-10-15.md).
-
-A failed or timed-out native GPU count no longer ends both diagnostic modes early when independent driver/runtime probes agree. The original failure remains visible; only actual exact BFS and execution of the printed command can produce `working_configuration: READY`. Architecture coverage and separate native/CUDA/Python source identities are stored in `architecture.json` and the report.
+Release: [native-pip-20261015-v19](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v19). Wheel SHA256 `5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.

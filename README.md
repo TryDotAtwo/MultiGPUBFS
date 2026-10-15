@@ -4,7 +4,7 @@
 
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
-Current multi-architecture native package: [server update and calculation](docs/server-quickstart-ru.md), [measured production acceptance](docs/multiarch-native-acceptance-2026-10-15.md).
+Current automatic per-GPU native package: [server update and calculation](docs/server-quickstart-ru.md), [measured selective-download acceptance](docs/selective-native-acceptance-2026-10-15.md).
 
 Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Current fast-tuning and certified-geometry wheel acceptance: clean Linux installation and physical2×T4 GPU tests; prior native one-GPU checks are recorded separately. Larger/Blackwell and physical multi-host configurations remain unverified.
 
