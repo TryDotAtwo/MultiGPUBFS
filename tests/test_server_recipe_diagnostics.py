@@ -132,4 +132,20 @@ class RecipeArtifactRegression(unittest.TestCase):
    with self.assertRaisesRegex(RuntimeError,'LIBRARY_IDENTITY'):
     recipe.probe(settings,Path(d))
 
+
+class NativeRecipePackagingRegression(unittest.TestCase):
+ def test_native_payload_is_extracted_from_standard_wheel_platlib(self):
+  import io,zipfile
+  from scripts import repackage_verified_native as package
+  self.assertTrue(hasattr(package,'extract_native'),'Missing wheel platlib extraction')
+  data=io.BytesIO()
+  with zipfile.ZipFile(data,'w') as z:
+   z.writestr('multigpubfs-0.2.0.dev16.data/platlib/multigpubfs/_native/bin/mgbfs',b'native-binary')
+   z.writestr('multigpubfs-0.2.0.dev16.data/platlib/multigpubfs/_native/lib/libmgbfs_cuda.so',b'native-library')
+   z.writestr('multigpubfs-0.2.0.dev16.data/platlib/multigpubfs/server_recipe.py',b'old-python-must-not-be-copied')
+  with tempfile.TemporaryDirectory() as d,zipfile.ZipFile(data) as z:
+   package.extract_native(z,Path(d))
+   self.assertEqual((Path(d)/'multigpubfs/_native/bin/mgbfs').read_bytes(),b'native-binary')
+   self.assertFalse((Path(d)/'multigpubfs/server_recipe.py').exists())
+
 if __name__=='__main__':unittest.main()
