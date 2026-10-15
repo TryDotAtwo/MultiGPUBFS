@@ -134,6 +134,9 @@ def bfs(graph, *, backend="native", native_options=None, output=None, **kwargs):
     """Dispatch once without modifying CayleyPy."""
     from cayleypy import CayleyGraph
     with _LOCK:
+        if default_backend == "native":
+            from .native_distribution import prepare_for_activation
+            prepare_for_activation()
         original = _ORIGINAL or CayleyGraph.bfs
     return _search(original, graph, backend, native_options or NativeOptions(), output, kwargs)
 
@@ -150,6 +153,9 @@ def enable_native(options=None, *, default_backend="native"):
     with _LOCK:
         if _ORIGINAL is not None and CayleyGraph.bfs is not _INSTALLED:
             raise RuntimeError("CayleyGraph.bfs was replaced by another integration")
+        if default_backend == "native":
+            from .native_distribution import prepare_for_activation
+            prepare_for_activation()
         original = _ORIGINAL or CayleyGraph.bfs
         @wraps(original)
         def installed(graph, **kwargs):

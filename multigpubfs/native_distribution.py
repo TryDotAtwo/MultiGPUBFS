@@ -29,6 +29,13 @@ def native_root(*,prepare=False):
  from .native_assets import ensure_runtime,current_root
  return ensure_runtime(index) if prepare else current_root(index) or root
 
+def prepare_for_activation():
+ """Prefetch outside the first BFS budget, when a GPU node is present."""
+ package=Path(__file__).resolve().parent;index=package/"native_assets.json"
+ if os.environ.get("MGBFS_EXECUTABLE") or (package/"_native/bin/mgbfs").is_file() or not index.is_file() or not os.path.exists("/dev/nvidiactl"):return
+ from .native_assets import current_root
+ if current_root(index) is None:native_runtime()
+
 def native_runtime(explicit=None):
  env=dict(os.environ)
  override=explicit or env.get('MGBFS_EXECUTABLE')
