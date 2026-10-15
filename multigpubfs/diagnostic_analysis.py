@@ -108,6 +108,12 @@ def analyze(report):
   for identifier,observed in comparison['variants'].items():
    if observed.get('call_boundary'):
     fact('NATIVE_CALL_BOUNDARY_RECORDED',identifier+' GPU '+str(comparison['device'])+' '+comparison['path']+': '+observed['call_boundary']+'. This locates the last flushed boundary rather than proving a driver root cause.',['steps/'+observed['name']+'/last_native_phase'])
+ working=report.get('working_configuration',{})
+ if working.get('status')=='READY':
+  scope='single-GPU fallback; other requested GPUs are not accepted' if working.get('single_gpu_fallback') else 'selected GPU set '+str(working['selected']['devices'])
+  actions.insert(0,'Verified native BFS configuration: '+scope+'. Recheck with: '+working['command'])
+  if working.get('calculation_example'):actions.insert(1,'Calculation example; choose your graph parameters and a new output directory: '+working['calculation_example'])
+ elif working:actions.append('No ready server command: '+working.get('reason',working['status'])+'. Keep this diagnostic bundle; no unverified configuration is recommended.')
  priority=('DIAGNOSTIC_BUILD_CONTRAST_OBSERVED','LOADER_CONTRAST_REPRODUCED','DRIVER_STUB_LOADED','DRIVER_KERNEL_LIBRARY_MISMATCH','DRIVER_MAJOR_TOO_OLD','CUDA_VISIBILITY_DISABLED','DRIVER_LIBRARY_UNAVAILABLE','NO_VISIBLE_GPU','NATIVE_KERNEL_IMAGE_UNAVAILABLE','DIAGNOSTIC_PROCESS_SPAWN_FAILED','ABI_VERSION_UNAVAILABLE','SHARED_LIBRARY_LOAD_FAILED','RUNTIME_DRIVER_COMPATIBILITY_FAILED','NATIVE_CALL_BOUNDARY_RECORDED')
  best=next((item for code in priority for item in confirmed if item['code']==code),None) if failures else None
  explanation={'confidence':'observed','statement':best['statement'],'evidence':best['evidence']} if best else {'confidence':'unresolved' if failures else 'tested-required-components-passed','statement':'No single cause is established; inspect recorded hypotheses and missing evidence.' if failures else 'Required checks reported no failure. Optional evidence and untested policies remain explicitly limited.','evidence':failures}

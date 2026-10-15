@@ -6,7 +6,7 @@ def extract_native(archive,root):
  import re
  root=Path(root).resolve();stage=root/'multigpubfs/_native';copied=0
  for name in archive.namelist():
-  match=re.fullmatch(r'(?:[^/]+[.]data/platlib/)?(multigpubfs/_native/.+)',name)
+  match=re.fullmatch(r'(?:[^/]+[.]data/(?:platlib|purelib)/)?(multigpubfs/_native/.+)',name)
   if not match or name.endswith('/'):continue
   path=(root/match[1]).resolve()
   if not path.is_relative_to(stage):raise RuntimeError('NATIVE_PAYLOAD_PATH')
