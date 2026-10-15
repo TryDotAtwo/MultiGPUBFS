@@ -264,6 +264,7 @@ class Runner:
   result=bounded_stop(process)
   self.report.setdefault('diagnostic_cleanup',[]).append(result)
   if folder is not None:
+   folder.mkdir(parents=True,exist_ok=True)
    _write(folder/'cleanup.json',result)
   if not result['complete']:
    self.deep_cleanup_blocked=True
