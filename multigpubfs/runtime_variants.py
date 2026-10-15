@@ -18,7 +18,10 @@ def digest(path):
  return value.hexdigest()
 
 def inventory(root=None,*,environ=None):
- root=Path(root or Path(__file__).resolve().parent/'_native').resolve()
+ if root is None:
+  from .native_distribution import native_root
+  root=native_root(prepare=True)
+ root=Path(root).resolve()
  env=os.environ if environ is None else environ
  override=env.get('MGBFS_EXECUTABLE')
  if override and Path(override).resolve()!=(root/'bin/mgbfs').resolve():
@@ -27,7 +30,7 @@ def inventory(root=None,*,environ=None):
  if not metadata.is_file():return {'status':'UNAVAILABLE','reason':'This installation has no packaged diagnostic runtime/native-code contrasts.'}
  manifest=json.loads((root/'manifest.json').read_text())
  if manifest.get('schema')!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_MANIFEST_SCHEMA')
- hashes=manifest.get('sha256',{})
+ hashes=manifest.get('sha256',{});lazy=bool(manifest.get('native_delivery'))
  def checked(name,expected=None):
   path=root/name
   if not path.resolve().is_relative_to(root) or path.is_symlink():raise RuntimeError('DIAGNOSTIC_VARIANT_PATH')
@@ -44,23 +47,31 @@ def inventory(root=None,*,environ=None):
  fingerprints=any('cuda_kernel_source_sha256' in row for row in entries)
  for row in entries:
   identifier=row['id'];runtime,architectures=SPECS[identifier]
+  if lazy and identifier==PRODUCTION:architectures=manifest.get('architectures')
   if row.get('runtime')!=runtime or row.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_FACTOR_'+identifier)
   expected='lib/libmgbfs_cuda.so' if identifier==PRODUCTION else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
   receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
   if row.get('library')!=expected or row.get('receipt')!=receipt:raise RuntimeError('DIAGNOSTIC_VARIANT_PATH_'+identifier)
-  path=checked(expected,row.get('sha256'));proof=json.loads(checked(receipt,row.get('receipt_sha256')).read_text())
+  path=root/expected;installed=path.is_file()
+  if installed or not lazy or identifier==PRODUCTION:path=checked(expected,row.get('sha256'))
+  elif path.is_symlink() or not path.resolve().is_relative_to(root):raise RuntimeError('DIAGNOSTIC_VARIANT_PATH_'+identifier)
+  proof=json.loads(checked(receipt,row.get('receipt_sha256')).read_text())
   if not row.get('sha256') or not row.get('receipt_sha256'):raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_METADATA_'+identifier)
   if not row.get('cuda_source_tree') or row.get('cuda_source_tree')!=proof.get('cuda_source_tree') or proof.get('id')!=identifier or proof.get('runtime')!=runtime or proof.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
   fingerprint=row.get('cuda_kernel_source_sha256')
   if fingerprints and (not isinstance(fingerprint,str) or len(fingerprint)!=64 or set(fingerprint)-set('0123456789abcdef') or proof.get('cuda_kernel_source_sha256')!=fingerprint):raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
-  sources.add(fingerprint if fingerprints else row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof))
+  sources.add(fingerprint if fingerprints else row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof,installed=installed,verification='CHECKSUM_VERIFIED' if installed else 'PINNED_DECLARATION_NOT_INSTALLED'))
  if len(sources)!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_MISMATCH')
- return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
+ return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'lazy_delivery':lazy,'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
 
-def environment(identifier,verified,parent=None):
+def environment(identifier,verified,parent=None,*,deadline=None):
  if identifier not in SPECS or verified.get('status')!='AVAILABLE':raise RuntimeError('DIAGNOSTIC_VARIANT_SELECTION')
  selected=next(x for x in verified['variants'] if x['id']==identifier)
  root=Path(verified['root']);env=dict(os.environ if parent is None else parent)
+ if verified.get('lazy_delivery'):
+  from .native_assets import ensure_variant
+  ensure_variant(root,identifier,deadline=deadline)
+  if digest(selected['library_path'])!=selected['sha256']:raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_'+identifier)
  directories=[str(Path(selected['library_path']).parent),str(root/'lib')]
  driver=Path('/usr/lib/x86_64-linux-gnu')
  if driver.is_dir():directories.append(str(driver))

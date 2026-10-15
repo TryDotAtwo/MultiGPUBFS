@@ -20,11 +20,20 @@ def _file_digest(path):
   cache[key]=_stream_digest(path)
  return cache[key]
 
+def native_root(*,prepare=False):
+ """Resolve a full installed bundle or this package's verified user cache."""
+ root=Path(__file__).resolve().parent/'_native'
+ if (root/'bin/mgbfs').is_file():return root
+ index=Path(__file__).resolve().parent/'native_assets.json'
+ if not index.is_file():return root
+ from .native_assets import ensure_runtime,current_root
+ return ensure_runtime(index) if prepare else current_root(index) or root
+
 def native_runtime(explicit=None):
  env=dict(os.environ)
  override=explicit or env.get('MGBFS_EXECUTABLE')
  if override:return str(override),env
- root=Path(__file__).resolve().parent/'_native';binary=root/'bin/mgbfs'
+ root=native_root(prepare=True);binary=root/'bin/mgbfs'
  if binary.is_file():
   manifest=json.loads((root/'manifest.json').read_text())
   if manifest.get('schema')!=1:raise RuntimeError('NATIVE_BUNDLE_MANIFEST_SCHEMA')

@@ -350,7 +350,11 @@ def run_case(runner,case,deadline):
   if verified is None:verified=inventory();runner.diagnostic_variants=verified
   if verified.get('status')!='AVAILABLE':
    return skipped(verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'))
-  child_env=environment(case['config']['variant'],verified)
+  try:child_env=environment(case['config']['variant'],verified,deadline=deadline-8)
+  except Exception as error:
+   entry={'name':case['name'],'status':'FAIL','error':str(error),'failure_phase':'native-component-preparation','diagnostic_case':case['config']};runner.report['steps'].append(entry);runner.save();return entry
+  remaining=deadline-time.monotonic()-8
+  if remaining<=.1:return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
  elif case['config'].get('loader')=='native':
   from .native_distribution import native_runtime
   _,child_env=native_runtime()
@@ -408,7 +412,7 @@ def inventory(root):
  write(root/'probe.json',result);return result
 
 def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
- from .diagnostics import Runner,recover_visible_devices,record_architecture
+ from .diagnostics import Runner,recover_visible_devices,record_architecture,prepare_delivery
  import datetime
  if not math.isfinite(total_timeout) or total_timeout<1:raise ValueError('Total timeout must be positive and finite')
  if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
@@ -421,6 +425,7 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
   return dict(case,config=dict(case['config'],variant=coverage_build,coverage_build=True))
  def run(name,stage,**kw):return run_case(runner,covered({'name':name,'config':dict(kind='component',stage=stage,**kw),'seconds':min(timeout,45)}),deadline)
  try:
+  prepare_delivery(runner,deadline)
   run('system-info','system');run('filesystem','filesystem');run('environment-evidence','environment');run('nvml-evidence','nvml');run('torch-evidence','torch');driver=run('driver-api','driver')
   run_case(runner,{'name':'deep-capabilities','config':{'kind':'inventory'},'seconds':30,'optional':True},deadline)
   runtime=run('native-runtime','runtime');record_architecture(runner,driver);count=run('cuda-discovery','count')

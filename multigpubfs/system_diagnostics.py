@@ -98,7 +98,10 @@ def survey(root):
  _phase('inventory bounded existing driver library candidates and ELF headers');data['driver_candidates']=library_candidates();save()
  manifest=Path(__file__).parent/'_native/manifest.json'
  try:
-  declared=json.loads(manifest.read_text());data['native_build_declaration']={k:declared.get(k) for k in ('architectures','ptx_architectures','cuda_toolkit','cuda_runtime_linkage','production_build','source_commit','native_binary_source_commit','cuda_library_source_commit','package_source_commit','elf_runtime_requirements')};data['native_build_declaration']['declared_artifact_sha256']={k:declared.get('sha256',{}).get(k) for k in ('bin/mgbfs','lib/libmgbfs_cuda.so','lib/libcudart.so.12','lib/libnccl.so.2')};data['native_executable_mount']=mount_for(manifest.parent/'bin/mgbfs')
+  declared=json.loads(manifest.read_text())
+  info=Path(__file__).parent/'_package_info.json'
+  if info.is_file():declared['package_source_commit']=json.loads(info.read_text()).get('source_commit')
+  data['native_build_declaration']={k:declared.get(k) for k in ('architectures','ptx_architectures','cuda_toolkit','cuda_runtime_linkage','production_build','source_commit','native_binary_source_commit','cuda_library_source_commit','package_source_commit','elf_runtime_requirements')};data['native_build_declaration']['declared_artifact_sha256']={k:declared.get('sha256',{}).get(k) for k in ('bin/mgbfs','lib/libmgbfs_cuda.so','lib/libcudart.so.12','lib/libnccl.so.2')};data['native_executable_mount']=mount_for(manifest.parent/'bin/mgbfs')
  except (OSError,ValueError):data['native_build_declaration']={'status':'UNAVAILABLE'}
  data['filesystems']={}
  for path in (str(root),tempfile.gettempdir(),'/dev/shm'):

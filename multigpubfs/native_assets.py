@@ -15,7 +15,7 @@ def digest(path):
 def canonical(value):return (json.dumps(value,sort_keys=True,separators=(',',':'))+'\n').encode()
 def safe_path(name):
  p=PurePosixPath(name)
- if not name or p.is_absolute() or '..' in p.parts or '\\' in name or ':' in name or p.as_posix()!=name:raise AssetError('NATIVE_ASSET_ARCHIVE_PATH '+name)
+ if not name or not p.parts or p.is_absolute() or '..' in p.parts or '\\' in name or ':' in name or p.as_posix()!=name:raise AssetError('NATIVE_ASSET_ARCHIVE_PATH '+name)
  return p
 def checksum(value):return isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) is not None
 def checked_file(root,name,info):
@@ -102,6 +102,7 @@ class AssetManager:
  def _component(self,name,deadline):
   c=self.index['components'][name];folder=self.cache/'components'/c['sha256']
   with self._lock('component-'+c['sha256'],deadline):
+   if folder.is_symlink():raise AssetError('NATIVE_ASSET_CACHE_SYMLINK')
    if folder.exists():
     for p,f in c['files'].items():checked_file(folder,p,f)
     return folder
@@ -194,15 +195,18 @@ class AssetManager:
    finally:
     if stage.exists():shutil.rmtree(stage)
   return root
- def ensure_variant(self,root,identifier):
+ def ensure_variant(self,root,identifier,timeout=None):
   if identifier=='shared-sm120':return Path(root)/'lib/libmgbfs_cuda.so'
   if identifier not in self.index['diagnostics']:raise AssetError('NATIVE_ASSET_DIAGNOSTIC_VARIANT')
   root=Path(root).resolve();manifest=json.loads((root/'manifest.json').read_text());selected=manifest.get('native_delivery',{}).get('selected_component')
   if selected not in self.index['production'].values() or root!=self.cache/'bundles'/(self.identity+'-'+selected):raise AssetError('NATIVE_ASSET_ROOT_IDENTITY')
-  self._verify(root,selected);name=self.index['diagnostics'][identifier];c=self.index['components'][name];target=root/'diagnostic_variants'/identifier/'libmgbfs_cuda.so';deadline=time.monotonic()+self.timeout
+  self._verify(root,selected);name=self.index['diagnostics'][identifier];c=self.index['components'][name];target=root/'diagnostic_variants'/identifier/'libmgbfs_cuda.so';deadline=time.monotonic()+min(self.timeout,self.timeout if timeout is None else max(.001,timeout))
   with self._lock('variant-'+self.identity+'-'+identifier,deadline):
    if target.exists():return checked_file(target.parent,'libmgbfs_cuda.so',c['files']['libmgbfs_cuda.so'])
-   folder=self._component(name,deadline);temporary=target.with_suffix('.tmp');self._link(folder/'libmgbfs_cuda.so',temporary);os.replace(temporary,target)
+   folder=self._component(name,deadline)
+   fd,temp=tempfile.mkstemp(prefix='native-',dir=target.parent);os.close(fd);temporary=Path(temp);temporary.unlink()
+   try:self._link(folder/'libmgbfs_cuda.so',temporary);os.replace(temporary,target)
+   finally:temporary.unlink(missing_ok=True)
   return target
 
 _roots={}
@@ -217,13 +221,13 @@ def ensure_runtime(path=None):
  if platform.system()!='Linux' or platform.machine() not in ('x86_64','AMD64'):raise AssetError('NATIVE_ASSET_PLATFORM_UNSUPPORTED: Linux x86_64 NVIDIA execution is required')
  if not path.is_file():raise AssetError('NATIVE_ASSET_INDEX_NOT_INSTALLED')
  index=json.loads(path.read_text());manager=AssetManager(index,cache_path());hardware=run_hardware_probe();root=manager.prepare(hardware);_roots[key]=(root,manager,hardware);return root
-def ensure_variant(root,identifier):
+def ensure_variant(root,identifier,*,deadline=None):
  root=Path(root).resolve()
  for prepared,manager,hardware in _roots.values():
-  if prepared==root:return manager.ensure_variant(root,identifier)
+  if prepared==root:return manager.ensure_variant(root,identifier,timeout=None if deadline is None else deadline-time.monotonic())
  ensure_runtime()
  for prepared,manager,hardware in _roots.values():
-  if prepared==root:return manager.ensure_variant(root,identifier)
+  if prepared==root:return manager.ensure_variant(root,identifier,timeout=None if deadline is None else deadline-time.monotonic())
  raise AssetError('NATIVE_ASSET_ROOT_IDENTITY')
 def status(root=None):
  for prepared,manager,hardware in _roots.values():

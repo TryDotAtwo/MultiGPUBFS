@@ -103,6 +103,10 @@ def _rank(stage,root,devices,rank):
 
 def _component(stage,root,devices,device,seconds):
  os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
+ if stage=='assets':
+  from .native_distribution import native_runtime
+  from .native_assets import status
+  _phase('detect visible CUDA architecture and prepare verified precompiled components');native,env=native_runtime();data=status(Path(native).parent.parent);_write(root/'native-assets.json',data);return data
  if stage=='thread':
   _phase('start and join Python control thread')
   event=threading.Event();worker=threading.Thread(target=event.set);worker.start();worker.join(timeout=5)
@@ -221,6 +225,7 @@ class Runner:
   try:
    with (self.root/(name+'.log')).open('w',encoding='utf-8') as log:
     env=dict(os.environ if environment is None else environment)
+    if getattr(self,'native_assets_failed',False):env['MGBFS_NATIVE_OFFLINE']='1'
     for key in ('RANK','LOCAL_RANK','WORLD_SIZE','MASTER_ADDR','MASTER_PORT','TORCHELASTIC_RUN_ID'):env.pop(key,None)
     process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,text=True,encoding='utf-8',errors='replace',start_new_session=os.name=='posix')
     entry['pid']=process.pid;self.save()
@@ -298,7 +303,7 @@ class Runner:
  def finish(self):
   if getattr(self,'deep_cleanup_blocked',False) and self.report.get('working_configuration',{}).get('status')=='READY':
    self.report['working_configuration']={'status':'BLOCKED','reason':'A later diagnostic child could not be reaped; no ready launch command'}
-   for name in ('working-config.json','server-command.txt','architecture.json'):(self.root/name).unlink(missing_ok=True)
+   for name in ('working-config.json','server-command.txt','architecture.json','native-assets.json'):(self.root/name).unlink(missing_ok=True)
   failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
   from .diagnostic_analysis import analyze,render
   self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report)
@@ -315,13 +320,25 @@ class Runner:
    elif working.get('reason'):lines.append('NO READY COMMAND '+working['reason'])
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json','working-config.json','server-command.txt','architecture.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json','working-config.json','server-command.txt','architecture.json','native-assets.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
   with zipfile.ZipFile(self.root/'diagnostics.zip','w',zipfile.ZIP_DEFLATED) as archive:
    for f in files+[self.root/'manifest.json']:archive.write(f,str(f.relative_to(self.root)))
   print('\n'.join(lines),flush=True);print('BUNDLE '+str(self.root/'diagnostics.zip'),flush=True);return self.report
+
+def prepare_delivery(runner,deadline):
+ """Downloads have their own phase/deadline, before native query timeouts."""
+ from .native_distribution import native_root
+ package=Path(__file__).parent
+ if os.environ.get('MGBFS_EXECUTABLE') or not (package/'native_assets.json').is_file() or (package/'_native/bin/mgbfs').is_file():return None
+ previous=runner.timeout;runner.timeout=max(.1,min(600,deadline-time.monotonic()-8))
+ try:step=runner.component('native-assets','assets')
+ finally:runner.timeout=previous
+ runner.report['native_delivery']=step.get('result',{}).get('data',{'status':step['status'],'error':step.get('error','Native component preparation did not complete')})
+ if step['status']!='PASS':runner.native_assets_failed=True
+ runner.save();return step
 
 def recover_visible_devices(driver_step,requested=None):
  """Use agreed real CUDA driver/runtime evidence, never NVML or scheduler counts."""
@@ -338,8 +355,12 @@ def recover_visible_devices(driver_step,requested=None):
 
 def record_architecture(runner,driver_step):
  from .architecture_support import coverage
+ if driver_step.get('status')!='PASS':return
  manifest=Path(__file__).parent/'_native/manifest.json'
- if driver_step.get('status')!='PASS' or not manifest.is_file():return
+ if not manifest.is_file():
+  from .native_distribution import native_root
+  manifest=native_root(prepare=True)/'manifest.json'
+ if not manifest.is_file():return
  data=driver_step.get('result',{}).get('data',{}).get('driver',{})
  value=coverage(json.loads(manifest.read_text()),data.get('devices',[]))
  runner.report['architecture_support']=value;_write(runner.root/'architecture.json',value);runner.save()
@@ -354,6 +375,7 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
  search_deadline=time.monotonic()+total_timeout
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
+  prepare_delivery(runner,search_deadline)
   runner.component('control-thread','thread');runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);driver=runner.component('driver-api','driver')
   runtime=runner.component('native-runtime','runtime')
   if runtime['status']!='PASS':runner.component('native-loader-trace','loader-trace',optional=True);runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
