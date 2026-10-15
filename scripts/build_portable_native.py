@@ -40,7 +40,10 @@ universal=';'.join(map(str,native_architectures))
 choices={'shared-legacy':('75;86','Shared'),'static-sm120':(universal,'Static'),'shared-sm120':(universal,'Shared')}
 if variant is not None and variant not in choices:raise RuntimeError('UNKNOWN_DIAGNOSTIC_VARIANT')
 architectures,runtime=choices.get(variant,(universal,'Shared'))
-cmake_architectures=architectures if variant=='shared-legacy' else ';'.join(str(a)+'-real' for a in native_architectures)+';'+';'.join(str(a)+'-virtual' for a in ptx_architectures)
+sys.path.insert(0,str(root))
+from scripts.native_build_targets import targets
+native_architectures,ptx_architectures,cmake_architectures=targets(variant,os.environ.get('MGBFS_TARGET_ARCH'))
+architectures=';'.join(map(str,native_architectures))
 flags=['-DCMAKE_CUDA_FLAGS=--threads=2']+([] if runtime is None else ['-DCMAKE_CUDA_RUNTIME_LIBRARY='+runtime])
 run(['cmake','-S',root/'cuda','-B',native,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_CUDA_ARCHITECTURES='+cmake_architectures,'-DCMAKE_CUDA_COMPILER='+str(sdk/'bin/nvcc'),'-DBUILD_TESTING=OFF','-DMGBFS_NCCL_LSA=OFF','-DMGBFS_NCCL_ROOT='+str(nccl),'-DCUTLASS_ROOT='+str(cutlass),*flags],env)
 run(['cmake','--build',native,'--target','mgbfs_cuda','--parallel','2'],env)
