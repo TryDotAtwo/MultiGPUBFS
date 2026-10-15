@@ -1,0 +1,295 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "package": "0.2.0.dev20",
+  "package_source_commit": "144c4a44029e423dff8ec39d2b3cd547c75a48ba",
+  "wheel_sha256": "2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb",
+  "native_index_sha256": "98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b",
+  "cpu_test_count": 763,
+  "new_prefetch_regressions": 19,
+  "package_ci": 38782373175,
+  "public_extras_ci": 38783083416,
+  "prefetch_cpu_ci": 38783081409,
+  "cpu_receipt_origin": "Same result object recorded by the successful PREFETCH_CPU_ACCEPTANCE_PASS CI log marker; JSON formatting normalized for publication.",
+  "cpu": {
+    "schema": 1,
+    "status": "PASS",
+    "package": "0.2.0.dev20",
+    "package_source_commit": "144c4a44029e423dff8ec39d2b3cd547c75a48ba",
+    "wheel_sha256": "2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb",
+    "wheel_bytes": 137885,
+    "native_index_sha256": "98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b",
+    "platform": "Linux x86_64 GitHub CPU-only runner",
+    "gpu_device_nodes": [],
+    "scope": "Actual GitHub component prefetch and CPU cache checks; no GPU execution is claimed.",
+    "checks": [
+      {
+        "name": "all-dry-run-no-gpu-no-writes",
+        "status": "PASS",
+        "maximum_bytes": 514463349,
+        "component_count": 10
+      },
+      {
+        "name": "selected-real-github-prefetch-on-cpu",
+        "status": "PASS",
+        "targets": [
+          "100",
+          "120"
+        ],
+        "downloaded_bytes": 327579748,
+        "gpu_calls_forbidden": true
+      },
+      {
+        "name": "all-real-github-prefetch-reuses-common",
+        "status": "PASS",
+        "targets": [
+          "75",
+          "80",
+          "86",
+          "89",
+          "90",
+          "100",
+          "103",
+          "120",
+          "universal"
+        ],
+        "additional_downloaded_bytes": 186883601,
+        "total_downloaded_bytes": 514463349,
+        "diagnostic_controls_downloaded": false
+      },
+      {
+        "name": "independent-cache-file-hashes",
+        "status": "PASS",
+        "components": [
+          {
+            "component": "common",
+            "archive_sha256": "290a72ad2030c5f163155f85123adbe52cc7f17ffd31af095b2b7b4c2f43ec0e",
+            "file_count": 5
+          },
+          {
+            "component": "cuda-sm100",
+            "archive_sha256": "7f1bc124df9354b3262e764d5a769cc461df3f71d10b1998aae15c7e18f626a4",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm103",
+            "archive_sha256": "9b3ecc729f14c2bb65da92735d530e171840699a7d1e783bde4321ee15efa26a",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm120",
+            "archive_sha256": "1e56d9e9d935dc979d5ef079b6232702efc77a40a5bb1c9f5d8e92eb982d2446",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm75",
+            "archive_sha256": "c40aa753231b0dab54e9c93686b271817638669de8596ca641bb47caa3e68223",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm80",
+            "archive_sha256": "120c35e370f88ce6485d9dcfc9ceaef898cb7b3e234668b94926e3bc67b6e64f",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm86",
+            "archive_sha256": "799ec579a05e511fdeeb8de256364def321a094f3c57f9d9be012636da726972",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm89",
+            "archive_sha256": "274bed14ccb04e6ad3221bd8a8b3b0d0b9bed4907871f84a2d452ba42bcf8ba6",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-sm90",
+            "archive_sha256": "cf3a3dff1421919a407476944b5e1713ce776ad668faa9cf503e32aa90f73e0c",
+            "file_count": 1
+          },
+          {
+            "component": "cuda-universal",
+            "archive_sha256": "d077dfb6649044c1f42bbbd2a195b332f2675d6c7f16a3d43aa22ad886f995bd",
+            "file_count": 1
+          }
+        ]
+      },
+      {
+        "name": "all-warm-prefetch-network-forbidden",
+        "status": "PASS",
+        "downloaded_bytes": 0,
+        "gpu_calls_forbidden": true
+      },
+      {
+        "name": "fresh-process-installed-cli-all-offline",
+        "status": "PASS",
+        "downloaded_bytes": 0,
+        "gpu_accessed": false
+      },
+      {
+        "name": "installed-package-and-native-index-unchanged",
+        "status": "PASS",
+        "no_runtime_or_gpu_initialized": true
+      }
+    ],
+    "wall_seconds": 18.10677099
+  },
+  "gpu": {
+    "schema": 1,
+    "status": "PASS",
+    "package": "0.2.0.dev20",
+    "wheel_sha256": "2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb",
+    "wheel_bytes": 137885,
+    "package_source_commit": "144c4a44029e423dff8ec39d2b3cd547c75a48ba",
+    "native_index_sha256": "98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b",
+    "hardware": [
+      {
+        "name": "Tesla T4",
+        "cc": [
+          7,
+          5
+        ],
+        "driver": "580.178.04"
+      },
+      {
+        "name": "Tesla T4",
+        "cc": [
+          7,
+          5
+        ],
+        "driver": "580.178.04"
+      }
+    ],
+    "checks": [
+      {
+        "name": "selected-prefetch-before-gpu-allocation",
+        "status": "PASS",
+        "targets": [
+          "75",
+          "100"
+        ],
+        "downloaded_bytes": 329525788,
+        "seconds": 8.973386224000024,
+        "gpu_access_forbidden": true,
+        "components": [
+          {
+            "component": "common",
+            "sha256": "290a72ad2030c5f163155f85123adbe52cc7f17ffd31af095b2b7b4c2f43ec0e"
+          },
+          {
+            "component": "cuda-sm75",
+            "sha256": "c40aa753231b0dab54e9c93686b271817638669de8596ca641bb47caa3e68223"
+          },
+          {
+            "component": "cuda-sm100",
+            "sha256": "7f1bc124df9354b3262e764d5a769cc461df3f71d10b1998aae15c7e18f626a4"
+          }
+        ]
+      },
+      {
+        "name": "fresh-process-cli-prefetch-offline-no-visible-gpu",
+        "status": "PASS",
+        "downloaded_bytes": 0
+      },
+      {
+        "name": "parallel-two-physical-gpus-shared-offline-cache",
+        "status": "PASS",
+        "jobs": [
+          {
+            "status": "PASS",
+            "visible_physical_gpu": "0",
+            "logical_devices": [
+              0
+            ],
+            "layers": [
+              1,
+              2,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.000516527,
+            "selected_component": "cuda-sm75",
+            "downloaded_bytes": 0,
+            "library_sha256": "b9467efba53d2776a16331ad2bbc2ad3d31206a6a894a5ea64ccc36e9fb291c9",
+            "pid": 65
+          },
+          {
+            "status": "PASS",
+            "visible_physical_gpu": "1",
+            "logical_devices": [
+              0
+            ],
+            "layers": [
+              1,
+              2,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.000572471,
+            "selected_component": "cuda-sm75",
+            "downloaded_bytes": 0,
+            "library_sha256": "b9467efba53d2776a16331ad2bbc2ad3d31206a6a894a5ea64ccc36e9fb291c9",
+            "pid": 66
+          }
+        ],
+        "downloaded_bytes": 0
+      },
+      {
+        "name": "two-gpu-persistent-offline-1",
+        "status": "PASS",
+        "devices": [
+          0,
+          1
+        ],
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "terminal_states_cpu_verified": true,
+        "bfs_seconds": 0.183209909,
+        "worker_pids": [
+          118,
+          119
+        ],
+        "downloaded_bytes": 0
+      },
+      {
+        "name": "two-gpu-persistent-offline-2",
+        "status": "PASS",
+        "devices": [
+          0,
+          1
+        ],
+        "layer_sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "terminal_states_cpu_verified": true,
+        "bfs_seconds": 0.011830021,
+        "worker_pids": [
+          118,
+          119
+        ],
+        "downloaded_bytes": 0
+      },
+      {
+        "name": "other-sm-cache-preserved-after-gpu-jobs",
+        "status": "PASS",
+        "component": "cuda-sm100",
+        "hash_verified": true
+      }
+    ],
+    "scope": "Actual prefetch with GPU access forbidden, then physical 2xT4 offline BFS. Other SM files are hash-verified, not GPU execution acceptance.",
+    "wall_seconds": 24.607268449999992
+  },
+  "scope": "GPU-free real-file prefetch verified on a CPU-only host; parallel and persistent offline execution verified on physical2xT4. Other SM payloads verified by hashes/compiled inventory, not actual GPU execution."
+}

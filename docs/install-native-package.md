@@ -5,7 +5,7 @@ The same ordinary pip command installs the Python API from GitHub on Kaggle or a
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v20/multigpubfs-0.2.0.dev20-py3-none-any.whl#sha256=2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v20/multigpubfs-0.2.0.dev20-py3-none-any.whl#sha256=2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb"
 ```
 
 After an upgrade, start a new Python process/session before importing the package.
@@ -31,9 +31,13 @@ with persistent_graph_workers():
 
 `device="cpu"` constructs the graph definition; native BFS uses the GPUs visible to the allocated job. Use `multigpubfs.NativeOptions(devices=(0,1))` in `enable_native(...)` to select logical devices explicitly. Import alone does not initialize CUDA, download native files or replace CayleyPy methods.
 
+## Shared/login host and offline GPU jobs
+
+To prepare before GPUs are allocated, use `python -m multigpubfs prefetch --sm 100,120` or `python -m multigpubfs prefetch --all`. No GPU/driver discovery is performed. `--all --dry-run` reports the remaining archive bytes without downloads/writes. Put the cache on persistent storage visible to every job and set `MGBFS_NATIVE_CACHE` consistently. Set `MGBFS_NATIVE_OFFLINE=1` in GPU jobs to prohibit missing-component downloads. [Commands, sizes, Python API and concurrency](native-prefetch.md).
+
 ## What downloads and when
 
-The wheel is **135,304 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
+The wheel is **137,885 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
 
 Only the common executable/private CUDA12.9.79/NCCL2.30.7 component and one compatible CUDA component are fetched from pinned **GitHub Releases**. Native targets are SM75/80/86/89/90/100/103/120. A same-major compatible image can cover newer minor capabilities; mixed or other forward-compatible devices can use the universal component with ordinary compute80 PTX. The package records the actual selection. No target-server compilation is used for matching native cubins.
 
@@ -55,8 +59,8 @@ The diagnostic checks actual GPU kernels, NCCL, persistent workers and exact tin
 
 Python3.10+ is required. Native execution requires Linux x86_64, GLIBC2.34+, GLIBCXX3.4.22+, CXXABI1.3.9+ and a compatible NVIDIA driver. Windows-native GPU execution is unsupported. Graph capacity remains bounded by VRAM/time. Unknown graph families keep ordinary memory admission and measured tuning; profiles are not claimed to be globally optimal.
 
-The new delivery flow passed physical **2×T4** acceptance, fresh-process offline BFS, both shard engines, deferred universal/static alternatives and persistent S11/S12. Other SM components, including SM100/B200, SM103/B300 and SM120, have compilation/cubin inventory evidence; execution of this delivery flow on them remains unmeasured. [Exact acceptance, hashes and scope](selective-native-acceptance-2026-10-15.md).
+The current prefetch flow passed actual selected/all component preparation on a CPU-only host and physical **2×T4** parallel/persistent offline BFS. The unchanged underlying native delivery engine also has the earlier S11/S12, shard-engine and diagnostic-contrast acceptance recorded separately. Other SM components, including SM100/B200, SM103/B300 and SM120, have compilation/cubin inventory evidence; execution of this delivery flow on them remains unmeasured. [Current prefetch acceptance, hashes and scope](native-prefetch-acceptance-2026-10-15.md).
 
 Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
 
-Release: [native-pip-20261015-v19](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v19). Wheel SHA256 `5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
+Release: [native-pip-20261015-v20](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v20). Wheel SHA256 `2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.

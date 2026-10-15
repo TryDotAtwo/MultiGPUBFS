@@ -3,10 +3,12 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v20/multigpubfs-0.2.0.dev20-py3-none-any.whl#sha256=2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb" && python -m multigpubfs.diagnostics
 ```
 
 Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. Маленький wheel содержит Python API и закреплённый индекс. Готовые CUDA/NCCL и нужная SM-библиотека автоматически берутся из GitHub при первой подготовке на GPU-узле; драйвер сервера пакет не заменяет.
+
+Если GPU выдаются позже, заранее заполните общий кэш на login-узле: `python -m multigpubfs prefetch --all`. Для выбранных архитектур: `python -m multigpubfs prefetch --sm 100,120`. В заданиях задайте тот же `MGBFS_NATIVE_CACHE` и `MGBFS_NATIVE_OFFLINE=1`; повторная установка и скачивание при смене GPU не требуются. Если домашняя директория не общая между узлами, укажите общий постоянный диск. [Полная инструкция и объёмы](native-prefetch.md).
 
 Обычный `doctor` теперь сам ищет рабочий вариант. Полная матрица с общим бюджетом 30 минут:
 
@@ -15,7 +17,7 @@ python -m multigpubfs.diagnostics --deep --total-timeout 1800
 ```
 
 
-Обычная установка занимает 135,304 байт плюс зависимости API. Первый `enable_native()` на GPU-узле или `doctor` определяет видимые карты и загружает общий компонент и одну подходящую готовую CUDA-библиотеку. Поддерживаются SM75/80/86/89/90/100/103/120 и универсальный путь с compute80 PTX. Выбор, размеры, хеши и отдельные исходники Python/native/CUDA записываются в отчёт. Повторные графы используют кэш без повторной загрузки и опроса железа. Подготовка на CPU/login-узле не требует доступа к GPU: фактическая загрузка откладывается до native-запуска на выделенном GPU-узле.
+Обычная установка занимает 137,885 байт плюс зависимости API. Первый `enable_native()` на GPU-узле или `doctor` определяет видимые карты и загружает общий компонент и одну подходящую готовую CUDA-библиотеку. Поддерживаются SM75/80/86/89/90/100/103/120 и универсальный путь с compute80 PTX. Выбор, размеры, хеши и отдельные исходники Python/native/CUDA записываются в отчёт. Повторные графы используют кэш без повторной загрузки и опроса железа. Подготовка на CPU/login-узле не требует доступа к GPU: фактическая загрузка откладывается до native-запуска на выделенном GPU-узле.
 
 Если `mgbfs graph-count` завис, но независимые Driver API и CUDA Runtime обнаружили одинаковое число устройств, doctor продолжит изолированные проверки рабочих вариантов. Он сохраняет исходный TIMEOUT и не выдаёт READY по одному успешному опросу GPU. Для CUDA_VISIBLE_DEVICES используются логические номера внутри выделенной задачи; список выделенных карт не расширяется.
 
@@ -51,7 +53,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v19/multigpubfs-0.2.0.dev19-py3-none-any.whl#sha256=5deedf22ac24ac48c0cd8f6aeb909c18197cf3444dd73b668db5dbd4891e8986",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v20/multigpubfs-0.2.0.dev20-py3-none-any.whl#sha256=2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
@@ -94,4 +96,4 @@ subprocess.run(command, check=True)
 
 READY доказывает работу выбранного пути на маленьких контрольных графах в проверенном окружении. Размер будущего графа, достаточность VRAM, наилучшая скорость и работа на нескольких узлах требуют отдельных измерений. Диагностика не обещает обойти запрет GPU, исправить ядро/драйвер или однозначно установить скрытую администратором причину.
 
-Проверка этого выпуска выполнена на настоящих 2×T4. Готовые отдельные компоненты SM100 для B200, SM103 для B300 и SM120 собраны, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](selective-native-acceptance-2026-10-15.md).
+Проверка этого выпуска выполнена на настоящих 2×T4. Готовые отдельные компоненты SM100 для B200, SM103 для B300 и SM120 собраны, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](native-prefetch-acceptance-2026-10-15.md).
