@@ -7,14 +7,16 @@ def write(path,value):
  from .diagnostics import _write
  _write(path,value)
 
-def process_snapshot(pid,destination):
+def process_snapshot(pid,destination,*,process_group=None):
  """Read only the process group created for this diagnostic probe."""
  value={'schema':1,'scope':'owned diagnostic process group only','processes':[],'unavailable':[]}
  if os.name!='posix' or not Path('/proc').is_dir():
   value['unavailable'].append('Linux /proc unavailable');write(destination,value);return value
- try:group=os.getpgid(pid)
- except ProcessLookupError:
-  value['unavailable'].append('Probe process exited before snapshot');write(destination,value);return value
+ if process_group is not None:group=process_group
+ else:
+  try:group=os.getpgid(pid)
+  except ProcessLookupError:
+   value['unavailable'].append('Probe process exited before snapshot');write(destination,value);return value
  candidates=[pid] if group==os.getpgrp() else [int(x.name) for x in Path('/proc').iterdir() if x.name.isdigit()]
  for number in candidates:
   try:
@@ -35,19 +37,14 @@ def process_snapshot(pid,destination):
   except (OSError,ValueError):continue
  write(destination,value);return value
 
-def bounded_stop(process):
+def bounded_stop(process,timeout=2.0):
+ """Bounded cleanup of the owned group, including children of an exited leader."""
  import signal
+ started=time.monotonic();deadline=started+timeout
  result={'pid':process.pid,'signals_sent':[],'process_exit_observed':False}
- for sig in (signal.SIGTERM,signal.SIGKILL):
-  try:
-   if os.name=='posix':os.killpg(process.pid,sig)
-   elif process.poll() is None:process.send_signal(sig)
-   result['signals_sent'].append(int(sig))
-  except ProcessLookupError:pass
-  try:process.wait(timeout=1);result['process_exit_observed']=True
-  except subprocess.TimeoutExpired:pass
- # Child group members may outlive the leader; only inspect our own group.
- if os.name=='posix' and Path('/proc').is_dir():
+ def members():
+  if os.name!='posix' or not Path('/proc').is_dir():
+   return [] if process.poll() is not None else [process.pid]
   alive=[]
   for path in Path('/proc').iterdir():
    if not path.name.isdigit():continue
@@ -56,9 +53,27 @@ def bounded_stop(process):
      tail=(path/'stat').read_text().rsplit(')',1)[1].split()
      if tail[0]!='Z':alive.append(int(path.name))
    except (OSError,ValueError):pass
-  result['surviving_group_pids']=alive
- else:result['surviving_group_pids']=[] if result['process_exit_observed'] else [process.pid]
- result['complete']=result['process_exit_observed'] and not result['surviving_group_pids']
+  return alive
+ def observe():
+  result['process_exit_observed']=process.poll() is not None
+  result['surviving_group_pids']=members()
+  result['complete']=result['process_exit_observed'] and not result['surviving_group_pids']
+  return result['complete']
+ def wait_group(until):
+  while True:
+   if observe():return True
+   remaining=until-time.monotonic()
+   if remaining<=0:return False
+   time.sleep(min(.02,remaining))
+ if not observe():
+  for sig,until in ((signal.SIGTERM,min(deadline,started+.25)),(signal.SIGKILL,deadline)):
+   try:
+    if os.name=='posix':os.killpg(process.pid,sig)
+    elif process.poll() is None:process.send_signal(sig)
+    result['signals_sent'].append(int(sig))
+   except ProcessLookupError:pass
+   if wait_group(until):break
+ observe();result['seconds']=time.monotonic()-started
  return result
 
 def startup_cases(devices):
@@ -340,7 +355,7 @@ def run_case(runner,case,deadline):
  try:entry=runner.run(case['name'],command,optional=case.get('optional',False),environment=child_env)
  finally:runner.timeout=previous
  entry['diagnostic_case']=case['config']
- for name in ('probe.json','process-snapshot.json','variant.json'):
+ for name in ('probe.json','process-snapshot.json','variant.json','cleanup.json','post-cleanup-snapshot.json'):
   path=folder/name
   if path.is_file():
    try:entry.setdefault('partial_evidence',{})[name]=json.loads(path.read_text())
@@ -414,10 +429,14 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     from .runtime_variants import cases as build_cases
     builds=run_case(runner,{'name':'deep-build-inventory','config':{'kind':'build-inventory'},'seconds':30},deadline)
     runner.diagnostic_variants=builds.get('result',{}).get('data',{'status':'UNAVAILABLE','reason':'Diagnostic build inventory failed or was not completed.'})
-    for case in build_cases(selected):run_case(runner,case,deadline)
-    from .runtime_variants import choose_coverage,BASELINE
+    for case in build_cases(selected,production_only=True):run_case(runner,case,deadline)
+    from .runtime_variants import choose_coverage,PRODUCTION
     choice=choose_coverage(runner.report['steps'],selected);runner.report['diagnostic_coverage_build']=choice
-    if choice['id'] is not None and choice['id']!=BASELINE:coverage_build=choice['id']
+    if choice['id'] is not None and choice['id']!=PRODUCTION:coverage_build=choice['id']
+    primary_names={c['name'] for c in build_cases(selected,production_only=True)}
+    primary=[s for s in runner.report['steps'] if s['name'] in primary_names]
+    primary_status='PASS' if len(primary)==len(primary_names) and all(s['status']=='PASS' for s in primary) else ('FAIL' if any(s['status'] in ('FAIL','TIMEOUT') for s in primary) else 'INCOMPLETE')
+    runner.report['production_bfs_acceptance']={'status':primary_status,'build':PRODUCTION,'devices':selected,'steps':[{'name':s['name'],'status':s['status'],'seconds':s.get('seconds')} for s in primary],'scope':'Real API/kernel, two resident requests and exact S3 BFS on each selected GPU; multi-GPU and other backends have separate named tests.'}
     runner.save()
     for case in startup_cases(selected):run_case(runner,case,deadline)
     for device in selected:
@@ -443,6 +462,8 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
       name='deep-catalog-'+case['family']+'-'+case['constructor']+'-gpu'+str(device)
       if case['unsupported']:runner.skip(name,case['unsupported'])
       else:run_case(runner,covered({'name':name,'config':{'kind':'catalog','catalog':case,'device':device},'seconds':20}),deadline)
+    # Legacy startup/JIT contrasts run last so they cannot consume production coverage.
+    for case in build_cases(selected,contrasts_only=True):run_case(runner,case,deadline)
   else:runner.skip('deep-gpu-suite','Native runtime or CUDA discovery failed')
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})
  except Exception as e:runner.report['steps'].append({'name':'deep-controller','status':'FAIL','error':str(e)})

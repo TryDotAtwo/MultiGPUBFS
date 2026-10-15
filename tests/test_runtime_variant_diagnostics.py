@@ -17,12 +17,12 @@ class RuntimeVariants(unittest.TestCase):
   put('lib/libcudart.so.12',b'runtime');put('lib/libnccl.so.2',b'nccl')
   entries=[]
   for identifier,(runtime,architectures) in variants.SPECS.items():
-   library='lib/libmgbfs_cuda.so' if identifier==variants.BASELINE else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
-   if identifier!=variants.BASELINE:put(library,identifier.encode())
+   library='lib/libmgbfs_cuda.so' if identifier==variants.PRODUCTION else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
+   if identifier!=variants.PRODUCTION:put(library,identifier.encode())
    receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
    put(receipt,json.dumps({'id':identifier,'runtime':runtime,'architectures':architectures,'source_commit':'a'*40,'cuda_source_tree':'b'*40}).encode())
    entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':library,'sha256':self.hashes[library],'receipt':receipt,'receipt_sha256':self.hashes[receipt],'source_commit':'a'*40,'cuda_source_tree':'b'*40})
-  self.metadata={'schema':1,'variants':entries,'production_default':variants.BASELINE}
+  self.metadata={'schema':1,'variants':entries,'production_default':variants.PRODUCTION}
   self.save_metadata()
  def save_metadata(self):
   self.put('diagnostic_variants/variants.json',json.dumps(self.metadata).encode())
@@ -32,7 +32,7 @@ class RuntimeVariants(unittest.TestCase):
   value=self.inventory();self.assertEqual(value['status'],'AVAILABLE');self.assertEqual(len(value['variants']),4)
   self.assertEqual({(x['runtime'],120 in x['architectures']) for x in value['variants']},{('Static',False),('Static',True),('Shared',False),('Shared',True)})
  def test_corrupt_library_stops_selection(self):
-  (self.root/'diagnostic_variants/shared-sm120/libmgbfs_cuda.so').write_bytes(b'corrupt')
+  (self.root/'diagnostic_variants/static-sm120/libmgbfs_cuda.so').write_bytes(b'corrupt')
   with self.assertRaisesRegex(RuntimeError,'CHECKSUM'):self.inventory()
  def test_corrupt_metadata_is_detected(self):
   (self.root/'diagnostic_variants/variants.json').write_text('{}')
@@ -56,7 +56,7 @@ class RuntimeVariants(unittest.TestCase):
   parent={'CUDA_VISIBLE_DEVICES':'2,5','LD_LIBRARY_PATH':'/host/driver','TOKEN':'private'}
   env=variants.environment('shared-sm120',self.inventory(),parent)
   self.assertEqual(parent,{'CUDA_VISIBLE_DEVICES':'2,5','LD_LIBRARY_PATH':'/host/driver','TOKEN':'private'})
-  self.assertEqual(env['CUDA_VISIBLE_DEVICES'],'2,5');self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'diagnostic_variants/shared-sm120'))
+  self.assertEqual(env['CUDA_VISIBLE_DEVICES'],'2,5');self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'lib'))
   self.assertEqual(env['MGBFS_EXECUTABLE'],str(self.root/'bin/mgbfs'))
  def test_production_resolver_ignores_diagnostic_alternative(self):
   with patch.object(native_distribution,'__file__',str(self.root.parent/'native_distribution.py')),patch.dict(os.environ,{},clear=True):
@@ -64,7 +64,7 @@ class RuntimeVariants(unittest.TestCase):
   self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'lib'))
   self.assertNotIn('diagnostic_variants',env['LD_LIBRARY_PATH'])
  def test_production_does_not_hash_or_load_unused_alternatives(self):
-  (self.root/'diagnostic_variants/shared-sm120/libmgbfs_cuda.so').write_bytes(b'corrupt')
+  (self.root/'diagnostic_variants/static-sm120/libmgbfs_cuda.so').write_bytes(b'corrupt')
   with patch.object(native_distribution,'__file__',str(self.root.parent/'native_distribution.py')),patch.dict(os.environ,{},clear=True):
    _,env=native_distribution.native_runtime()
   self.assertEqual(env['LD_LIBRARY_PATH'].split(':')[0],str(self.root/'lib'))
@@ -72,7 +72,7 @@ class RuntimeVariants(unittest.TestCase):
  def test_actual_loader_path_must_match_selected_bytes(self):
   value=self.inventory()
   with self.assertRaisesRegex(RuntimeError,'RESOLUTION'):
-   variants.confirm_resolution('shared-sm120',value,{'libmgbfs_cuda.so':str(self.root/'lib/libmgbfs_cuda.so')})
+   variants.confirm_resolution('static-sm120',value,{'libmgbfs_cuda.so':str(self.root/'lib/libmgbfs_cuda.so')})
  def test_cases_cover_both_devices_and_native_paths_without_visibility_override(self):
   cases=variants.cases([0,1]);self.assertEqual(len(cases),24)
   self.assertEqual(len({x['name'] for x in cases}),24)
@@ -95,7 +95,7 @@ class RuntimeVariants(unittest.TestCase):
   values=variants.cases([0,1])
   return [{'name':c['name'],'status':'PASS' if c['config']['variant'] in passing else 'TIMEOUT','diagnostic_case':c['config']} for c in values]
  def test_healthy_production_build_remains_coverage_default(self):
-  self.assertEqual(variants.choose_coverage(self.contrast_steps(set(variants.SPECS)),[0,1])['id'],variants.BASELINE)
+  self.assertEqual(variants.choose_coverage(self.contrast_steps(set(variants.SPECS)),[0,1])['id'],variants.PRODUCTION)
  def test_alternative_requires_all_three_paths_on_every_selected_gpu(self):
   steps=self.contrast_steps({'shared-sm120'})
   chosen=variants.choose_coverage(steps,[0,1]);self.assertEqual(chosen['id'],'shared-sm120')

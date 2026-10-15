@@ -1,4 +1,4 @@
-name: Assemble wheel with isolated CUDA build contrasts
+name: Package shared SM120 production with diagnostic contrasts
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +29,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test*diagnostic*.py'
           python3 -m unittest discover -s tests -p test_startup_trace.py
           python3 -m unittest discover -s tests -p test_private_runtime_distribution.py
+          python3 -m unittest discover -s tests
       - name: Obtain verified CUDA cubin inventory tool
         run: |
           python3 - <<'PY'
@@ -67,7 +68,7 @@ jobs:
         run: |
           PYTHONPATH=. python3 scripts/package_github_wheel.py --output dist-native --binary /tmp/mgbfs-portable/target/release/mgbfs --library /tmp/mgbfs-portable/native-build/libmgbfs_cuda.so --native-manifest /tmp/mgbfs-portable/native-manifest.json --diagnostic-variants /tmp/diagnostic-builds --cuobjdump /tmp/cubin-tool/cuda_cuobjdump-linux-x86_64-12.9.82-archive/bin/cuobjdump
           cp /tmp/variant-build-run.json dist-native/variant-build-run.json
-      - name: Verify clean pip install, variant linkage and production byte identity
+      - name: Verify clean pip install, shared SM120 production and contrast linkage
         run: |
           python3 -m venv /tmp/pip-variant-clean
           /tmp/pip-variant-clean/bin/python -m pip install dist-native/*.whl
@@ -75,20 +76,25 @@ jobs:
           /tmp/pip-variant-clean/bin/python - <<'PY'
           import json,subprocess,hashlib,os
           from pathlib import Path
-          from multigpubfs.runtime_variants import inventory,environment,BASELINE
+          from multigpubfs.runtime_variants import inventory,environment,PRODUCTION
           from multigpubfs.native_distribution import native_runtime
           verified=inventory();assert verified['status']=='AVAILABLE';native,env=native_runtime()
           assert env['LD_LIBRARY_PATH'].split(':')[0]==str(Path(native).parents[1]/'lib')
           baseline=json.load(open('/tmp/mgbfs-portable/native-manifest.json'))
-          for name in ('bin/mgbfs','lib/libmgbfs_cuda.so'):
-            path=Path(native).parents[1]/name;assert hashlib.sha256(path.read_bytes()).hexdigest()==baseline['sha256'][name],name
+          root=Path(native).parents[1];manifest=json.loads((root/'manifest.json').read_text())
+          assert hashlib.sha256(Path(native).read_bytes()).hexdigest()==baseline['sha256']['bin/mgbfs']
+          assert manifest['production_build']==PRODUCTION and manifest['cuda_runtime_linkage']=='Shared' and 120 in manifest['architectures']
+          production=next(x for x in verified['variants'] if x['id']==PRODUCTION)
+          assert Path(production['library_path'])==root/'lib/libmgbfs_cuda.so'
+          assert production['sha256']==manifest['sha256']['lib/libmgbfs_cuda.so']
+          assert 'libcudart.so.12' in subprocess.check_output(['readelf','-d',production['library_path']],text=True)
           for row in verified['variants']:
             e=environment(row['id'],verified)
             r=subprocess.run(['ldd',native],env=e,text=True,capture_output=True,check=True)
             assert row['library_path'] in r.stdout,(row['id'],r.stdout)
             missing=[s for s in r.stdout.splitlines() if 'not found' in s and 'libcuda.so.1' not in s]
             assert not missing,missing
-          print('VERIFIED_CLEAN_PIP_VARIANTS_ELF_AND_UNCHANGED_PRODUCTION_BYTES_NO_GPU')
+          print('VERIFIED_CLEAN_PIP_SHARED_SM120_PRODUCTION_AND_VARIANTS_NO_GPU')
           PY
           /tmp/pip-variant-clean/bin/python -m pip check
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

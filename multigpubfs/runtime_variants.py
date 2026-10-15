@@ -1,11 +1,13 @@
 """Verified build contrasts for isolated diagnostic children only.
 
-Nothing in the production launcher imports this module or selects these builds.
+The production package uses a fixed shared-runtime SM120 build. Alternative
+builds are selected only in isolated diagnostic children, with no silent fallback.
 """
 import hashlib,json,os
 from pathlib import Path
 
 BASELINE='baseline-static-legacy'
+PRODUCTION='shared-sm120'
 SPECS={BASELINE:('Static',[75,86]),'shared-legacy':('Shared',[75,86]),'static-sm120':('Static',[75,86,120]),'shared-sm120':('Shared',[75,86,120])}
 
 def digest(path):
@@ -34,14 +36,14 @@ def inventory(root=None,*,environ=None):
  checked('diagnostic_variants/variants.json');checked('bin/mgbfs')
  for name in ('lib/libcudart.so.12','lib/libnccl.so.2'):checked(name)
  data=json.loads(metadata.read_text())
- if data.get('schema')!=1 or data.get('production_default')!=BASELINE:raise RuntimeError('DIAGNOSTIC_VARIANT_METADATA_SCHEMA')
+ if data.get('schema')!=1 or data.get('production_default')!=PRODUCTION:raise RuntimeError('DIAGNOSTIC_VARIANT_METADATA_SCHEMA')
  entries=data.get('variants',[])
  if len(entries)!=4 or {x.get('id') for x in entries}!=set(SPECS):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
  sources=set();verified=[]
  for row in entries:
   identifier=row['id'];runtime,architectures=SPECS[identifier]
   if row.get('runtime')!=runtime or row.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_FACTOR_'+identifier)
-  expected='lib/libmgbfs_cuda.so' if identifier==BASELINE else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
+  expected='lib/libmgbfs_cuda.so' if identifier==PRODUCTION else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
   receipt='diagnostic_variants/'+identifier+'/build-receipt.json'
   if row.get('library')!=expected or row.get('receipt')!=receipt:raise RuntimeError('DIAGNOSTIC_VARIANT_PATH_'+identifier)
   path=checked(expected,row.get('sha256'));proof=json.loads(checked(receipt,row.get('receipt_sha256')).read_text())
@@ -70,12 +72,14 @@ def confirm_resolution(identifier,verified,libraries):
   if name not in libraries or Path(libraries[name]).resolve()!=(Path(verified['root'])/'lib'/name).resolve():raise RuntimeError('DIAGNOSTIC_VARIANT_VENDOR_RESOLUTION_'+name)
  return {'id':identifier,'runtime':expected['runtime'],'architectures':expected['architectures'],'sha256':expected['sha256'],'resolved_libraries':libraries,'same_cuda_source_tree':expected['cuda_source_tree']}
 
-def cases(devices):
+def cases(devices,*,production_only=False,contrasts_only=False):
+ if production_only and contrasts_only:raise ValueError('Select one diagnostic partition')
  result=[]
- # Complete the four builds for one execution path before moving to the next.
- for path in ('api','persistent','bfs'):
-  for device in devices:
-   for identifier in SPECS:
+ identifiers=(PRODUCTION,) if production_only else ('static-sm120',BASELINE,'shared-legacy') if contrasts_only else (PRODUCTION,'static-sm120',BASELINE,'shared-legacy')
+ # Complete production API, resident and BFS checks before legacy JIT contrasts.
+ for identifier in identifiers:
+  for path in ('api','persistent','bfs'):
+   for device in devices:
     if path=='api':config={'kind':'api','device':device,'module':'EAGER','data_loading':'EAGER','order':'engine-first','control_thread':True}
     elif path=='persistent':config={'kind':'component','stage':'persistent','device':device,'seconds':40}
     else:config={'kind':'bfs','fixture':'permutation','devices':[device],'history':'hash','generator':'cuda','shards':1}
@@ -92,7 +96,7 @@ def choose_coverage(steps,devices):
   if path not in ('api','persistent','bfs'):continue
   device=config.get('device',(config.get('devices') or [None])[0])
   observed[(config['variant'],device,path)]=step
- for identifier in (BASELINE,'shared-sm120','static-sm120','shared-legacy'):
+ for identifier in (PRODUCTION,'static-sm120',BASELINE,'shared-legacy'):
   evidence=[observed.get((identifier,device,path)) for device in devices for path in ('api','persistent','bfs')]
   if evidence and all(x is not None and x['status']=='PASS' for x in evidence):
    return {'status':'VERIFIED_FOR_SYNTHETIC_COVERAGE','id':identifier,'devices':devices,'evidence':[x['name'] for x in evidence],'scope':'Subsequent diagnostic probes only; baseline failures remain in the report; no production repair or default change'}

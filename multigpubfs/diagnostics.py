@@ -233,9 +233,9 @@ class Runner:
      if getattr(self,'deep_capture',False):
       from .deep_diagnostics import process_snapshot
       folder=self.root/name;folder.mkdir(exist_ok=True);process_snapshot(process.pid,folder/'process-snapshot.json')
-     self.stop_probe(process)
-    except BaseException:self.stop_probe(process);raise
-    self.stop_probe(process);thread.join(timeout=2)
+    except BaseException:self.stop_probe(process,self.root/name);raise
+    self.stop_probe(process,self.root/name);thread.join(timeout=2)
+    if not thread.is_alive() and process.stdout:process.stdout.close()
     if entry['status']=='RUNNING':
      entry['exit_code']=process.returncode;entry['status']='PASS' if process.returncode==0 else 'FAIL'
      if process.returncode:entry['error']='Component process exited with code '+str(process.returncode)
@@ -258,12 +258,18 @@ class Runner:
   data=entry.get('result',{}).get('data',{})
   if entry['status']=='PASS' and data.get('status')=='UNAVAILABLE':entry.update(status='SKIPPED',reason=data.get('reason',data.get('error','Auxiliary component unavailable')))
   self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
- def stop_probe(self,process):
+ def stop_probe(self,process,folder=None):
   if not getattr(self,'deep_capture',False):return self.stop(process)
   from .deep_diagnostics import bounded_stop
   result=bounded_stop(process)
   self.report.setdefault('diagnostic_cleanup',[]).append(result)
-  if not result['complete']:self.deep_cleanup_blocked=True
+  if folder is not None:
+   _write(folder/'cleanup.json',result)
+  if not result['complete']:
+   self.deep_cleanup_blocked=True
+   if folder is not None:
+    from .deep_diagnostics import process_snapshot
+    process_snapshot(process.pid,folder/'post-cleanup-snapshot.json',process_group=process.pid)
   self.save()
  @staticmethod
  def stop(process):
@@ -291,9 +297,10 @@ class Runner:
   if not failures and any(x.get('reason')=='GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED' for x in self.report['steps']):self.report['status']='INCOMPLETE'
   self.save();_write(self.root/'analysis.json',self.report['analysis']);(self.root/'analysis.txt').write_text(render(self.report['analysis']),encoding='utf-8')
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
+  if self.report.get('production_bfs_acceptance'):lines.append('Production BFS acceptance: '+self.report['production_bfs_acceptance']['status']+' ('+self.report['production_bfs_acceptance']['build']+')')
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
