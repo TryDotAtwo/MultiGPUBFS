@@ -174,4 +174,14 @@ class NativePurelibPackagingRegression(unittest.TestCase):
    package.extract_native(z,Path(d))
    self.assertEqual((Path(d)/'multigpubfs/_native/bin/mgbfs').read_bytes(),b'native-binary')
 
+
+class RecipeReportGuidanceRegression(unittest.TestCase):
+ def test_analysis_gives_ready_command_even_if_a_diagnostic_contrast_failed(self):
+  from multigpubfs.diagnostic_analysis import analyze
+  command='python -m multigpubfs.server_recipe --profile /job/working-config.json --check'
+  report={'steps':[{'name':'old-build','status':'TIMEOUT'}],'working_configuration':{'status':'READY','selected':{'devices':[0]},'requested_devices':[0,1],'single_gpu_fallback':True,'command':command,'calculation_example':'the calculation example'}}
+  actions=' '.join(analyze(report)['user_next_actions'])
+  self.assertIn(command,actions)
+  self.assertIn('single-GPU',actions)
+
 if __name__=='__main__':unittest.main()
