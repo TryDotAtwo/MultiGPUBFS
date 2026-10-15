@@ -1,14 +1,15 @@
 """Verified build contrasts for isolated diagnostic children only.
 
-The production package uses a fixed shared-runtime SM120 build. Alternative
+The production package uses a fixed shared-runtime multi-architecture build. Alternative
 builds are selected only in isolated diagnostic children, with no silent fallback.
 """
 import hashlib,json,os
 from pathlib import Path
+from .architecture_support import NATIVE_ARCHITECTURES
 
 BASELINE='baseline-static-legacy'
 PRODUCTION='shared-sm120'
-SPECS={BASELINE:('Static',[75,86]),'shared-legacy':('Shared',[75,86]),'static-sm120':('Static',[75,86,120]),'shared-sm120':('Shared',[75,86,120])}
+SPECS={BASELINE:('Static',[75,86]),'shared-legacy':('Shared',[75,86]),'static-sm120':('Static',list(NATIVE_ARCHITECTURES)),'shared-sm120':('Shared',list(NATIVE_ARCHITECTURES))}
 
 def digest(path):
  value=hashlib.sha256()
@@ -125,7 +126,7 @@ def compare(steps):
   elif any(x=='PASS' for x in statuses):outcome='VARIANT_DEPENDENT'
   else:outcome='ALL_FAILED'
   controlled=[]
-  for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120','shared-sm120','runtime'),(BASELINE,'static-sm120','native-sm120'),('shared-legacy','shared-sm120','native-sm120')]:
+  for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120','shared-sm120','runtime'),(BASELINE,'static-sm120','native-fatbinary'),('shared-legacy','shared-sm120','native-fatbinary')]:
    left=values.get(a,{});right=values.get(b,{})
    controlled.append({'factor':factor,'left':a,'right':b,'left_status':left.get('status','NOT_RUN'),'right_status':right.get('status','NOT_RUN'),'changed_pass_outcome':None if left.get('status') in (None,'SKIPPED') or right.get('status') in (None,'SKIPPED') else (left['status']=='PASS')!=(right['status']=='PASS')})
   comparisons.append({'device':device,'path':path,'outcome':outcome,'variants':values,'controlled_pairs':controlled})

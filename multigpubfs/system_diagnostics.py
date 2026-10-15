@@ -217,4 +217,9 @@ def loader_trace(root,seconds):
   process=subprocess.run([native,'graph-count'],env=env,text=True,capture_output=True,timeout=min(6,max(.1,seconds*.5)))
   lines=[line for line in process.stderr.splitlines() if any(key in line for key in ('libcuda','libnvidia','libcudart','libmgbfs','libnccl','not found','undefined symbol','error:'))]
   text='\n'.join(lines[:160]);(root/'loader.log').write_text(text);return {'status':'PASS','native_exit_code':process.returncode,'filtered_trace':text[-24000:],'stderr_tail':process.stderr[-6000:],'truncated':len(lines)>160,'scope':'Expected native failure is preserved; trace collection success is not CUDA acceptance.'}
- except subprocess.TimeoutExpired as error:return {'status':'FAIL','error':str(error)}
+ except subprocess.TimeoutExpired as error:
+  raw=error.stderr or b''
+  if isinstance(raw,bytes):raw=raw.decode('utf-8',errors='replace')
+  lines=[line for line in raw.splitlines() if any(key in line for key in ('libcuda','libnvidia','libcudart','libmgbfs','libnccl','not found','undefined symbol','error:','calling init:','transferring control:'))]
+  text='\n'.join(lines[-160:]);(root/'loader.log').write_text(text)
+  return {'status':'FAIL','timed_out':True,'error':str(error),'filtered_trace':text[-24000:],'stderr_tail':raw[-6000:],'scope':'Partial loader trace preserved after bounded native startup timeout; no root cause inferred.'}

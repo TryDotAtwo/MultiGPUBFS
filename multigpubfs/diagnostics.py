@@ -298,7 +298,7 @@ class Runner:
  def finish(self):
   if getattr(self,'deep_cleanup_blocked',False) and self.report.get('working_configuration',{}).get('status')=='READY':
    self.report['working_configuration']={'status':'BLOCKED','reason':'A later diagnostic child could not be reaped; no ready launch command'}
-   for name in ('working-config.json','server-command.txt'):(self.root/name).unlink(missing_ok=True)
+   for name in ('working-config.json','server-command.txt','architecture.json'):(self.root/name).unlink(missing_ok=True)
   failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
   from .diagnostic_analysis import analyze,render
   self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report)
@@ -315,13 +315,35 @@ class Runner:
    elif working.get('reason'):lines.append('NO READY COMMAND '+working['reason'])
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json','working-config.json','server-command.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json','working-config.json','server-command.txt','architecture.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
   with zipfile.ZipFile(self.root/'diagnostics.zip','w',zipfile.ZIP_DEFLATED) as archive:
    for f in files+[self.root/'manifest.json']:archive.write(f,str(f.relative_to(self.root)))
   print('\n'.join(lines),flush=True);print('BUNDLE '+str(self.root/'diagnostics.zip'),flush=True);return self.report
+
+def recover_visible_devices(driver_step,requested=None):
+ """Use agreed real CUDA driver/runtime evidence, never NVML or scheduler counts."""
+ if driver_step.get('status')!='PASS':return None
+ data=driver_step.get('result',{}).get('data',{})
+ if data.get('classification')!='DRIVER_RUNTIME_READY':return None
+ driver=data.get('driver',{});runtime=data.get('runtime',{});count=driver.get('visible_devices')
+ if type(count) is not int or not 0<count<=128 or runtime.get('visible_devices')!=count:return None
+ rows=driver.get('devices',[])
+ if len(rows)!=count or {r.get('logical_id') for r in rows}!=set(range(count)):return None
+ selected=list(range(count)) if requested is None else list(requested)
+ if not selected or len(set(selected))!=len(selected) or any(type(d) is not int or not 0<=d<count for d in selected):return None
+ return selected
+
+def record_architecture(runner,driver_step):
+ from .architecture_support import coverage
+ manifest=Path(__file__).parent/'_native/manifest.json'
+ if driver_step.get('status')!='PASS' or not manifest.is_file():return
+ data=driver_step.get('result',{}).get('data',{}).get('driver',{})
+ value=coverage(json.loads(manifest.read_text()),data.get('devices',[]))
+ runner.report['architecture_support']=value;_write(runner.root/'architecture.json',value);runner.save()
+ for device in value['devices']:print('GPU architecture: logical '+str(device['logical_id'])+' SM'+str(device['sm'])+' '+device['code'],flush=True)
 
 def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeout=1800):
  if deep:
@@ -332,12 +354,22 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
  search_deadline=time.monotonic()+total_timeout
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
-  runner.component('control-thread','thread');runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);runner.component('driver-api','driver')
+  runner.component('control-thread','thread');runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);driver=runner.component('driver-api','driver')
   runtime=runner.component('native-runtime','runtime')
   if runtime['status']!='PASS':runner.component('native-loader-trace','loader-trace',optional=True);runner.skip('gpu-components','Native runtime loader/integrity failed');return runner.finish()
+  record_architecture(runner,driver)
+  runner.deep_capture=True
   count=runner.component('cuda-discovery','count')
   runner.component('loader-contrasts','contrasts',optional=True);runner.component('native-loader-trace','loader-trace',optional=True)
-  if count['status']!='PASS':runner.skip('gpu-components','CUDA discovery failed');return runner.finish()
+  if count['status']!='PASS':
+   selected=recover_visible_devices(driver,devices)
+   if selected is not None:
+    runner.report['devices']=selected
+    runner.report['native_discovery_recovery']={'status':'INDEPENDENT_CUDA_EVIDENCE','devices':selected,'scope':'Original native count failure is retained. Only an exact native BFS and executed launcher can produce READY.'}
+    from .server_recipe import find_working
+    runner.report['working_configuration']=find_working(runner,selected,search_deadline);runner.save()
+   else:runner.skip('gpu-components','CUDA discovery failed and no agreed independent CUDA count is available')
+   return runner.finish()
   selected=devices or list(range(count['result']['data']['visible_devices']))
   if any(d>=count['result']['data']['visible_devices'] for d in selected):
    runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU ID is not visible'});runner.save();return runner.finish()

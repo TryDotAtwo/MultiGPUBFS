@@ -34,10 +34,15 @@ def attach_variants(stage,inputs,manifest,cuobjdump):
   sass=output([cuobjdump,'--list-elf',library]);ptx=output([cuobjdump,'--list-ptx',library])
   if ('libcudart.so' in dynamic)!=(runtime=='Shared') or bool(defined)!=(runtime=='Static'):raise RuntimeError('DIAGNOSTIC_BUILD_LINKAGE_MISMATCH_'+identifier)
   if not all('sm_'+str(a) in sass for a in architectures):raise RuntimeError('DIAGNOSTIC_BUILD_CUBIN_MISSING_'+identifier)
+  if identifier in ('static-sm120',PRODUCTION):
+   from scripts.fatbinary_inventory import verify_inventory
+   from multigpubfs.architecture_support import PTX_ARCHITECTURES
+   verify_inventory(sass,ptx,architectures,PTX_ARCHITECTURES)
+   proof['ptx_architectures']=list(PTX_ARCHITECTURES)
   proof=dict(proof,id=identifier,runtime=runtime,architectures=architectures,cuda_source_tree=cuda_tree,packaged_sha256=sha(library),packaged_elf_dynamic=dynamic,runtime_defined_symbols=defined,sass_inventory=sass,ptx_inventory=ptx,scope='Compiled same-source diagnostic library; actual GPU acceptance is recorded separately')
   receipt=folder/'build-receipt.json';receipt.write_text(json.dumps(proof,indent=2))
-  entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':str(library.relative_to(stage)),'sha256':sha(library),'receipt':str(receipt.relative_to(stage)),'receipt_sha256':sha(receipt),'source_commit':proof['source_commit'],'cuda_source_tree':cuda_tree})
+  entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':str(library.relative_to(stage)),'sha256':sha(library),'receipt':str(receipt.relative_to(stage)),'receipt_sha256':sha(receipt),'source_commit':proof['source_commit'],'cuda_source_tree':cuda_tree,'ptx_architectures':proof.get('ptx_architectures')})
  production=next(x for x in entries if x['id']==PRODUCTION)
- manifest.update(architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=baseline_source,cuda_library_source_commit=production['source_commit'],cuda_source_tree=cuda_tree)
- metadata={'schema':1,'production_default':PRODUCTION,'variants':entries,'scope':'Fixed shared-SM120 production library; isolated same-source diagnostic contrasts; no production fallback'}
+ manifest.update(ptx_architectures=production.get('ptx_architectures'),architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=baseline_source,cuda_library_source_commit=production['source_commit'],cuda_source_tree=cuda_tree)
+ metadata={'schema':1,'production_default':PRODUCTION,'variants':entries,'scope':'Fixed shared-runtime multi-architecture production library; isolated same-source diagnostic contrasts; no production fallback'}
  (destination/'variants.json').write_text(json.dumps(metadata,indent=2));return metadata

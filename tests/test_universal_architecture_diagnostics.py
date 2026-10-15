@@ -57,7 +57,7 @@ class IndependentDiscoveryRegression(unittest.TestCase):
    def save(self):pass
    def finish(self):return self.report
   with tempfile.TemporaryDirectory() as d,patch.object(diagnostics,'Runner',Runner),patch('multigpubfs.server_recipe.find_working',return_value={'status':'READY'}) as search:
-   r=diagnostics.run(output=Path(d)/'out')
+   r=diagnostics.run_diagnostics(output=Path(d)/'out')
   search.assert_called_once();self.assertEqual(search.call_args.args[1],[0,1])
   self.assertEqual(r['working_configuration']['status'],'READY')
 
