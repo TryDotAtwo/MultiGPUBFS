@@ -134,9 +134,6 @@ def bfs(graph, *, backend="native", native_options=None, output=None, **kwargs):
     """Dispatch once without modifying CayleyPy."""
     from cayleypy import CayleyGraph
     with _LOCK:
-        if default_backend == "native":
-            from .native_distribution import prepare_for_activation
-            prepare_for_activation()
         original = _ORIGINAL or CayleyGraph.bfs
     return _search(original, graph, backend, native_options or NativeOptions(), output, kwargs)
 
