@@ -1,0 +1,54 @@
+name: Assemble selective native components
+on:
+  workflow_dispatch:
+    inputs:
+      native_build_run:
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  assemble:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NATIVE_RUN: ${{ inputs.native_build_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install CPU artifact tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf binutils
+          python -m pip install numpy
+      - name: Download successful exact-target builds and accepted common payload
+        run: |
+          gh run view "$NATIVE_RUN" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion' | grep -x success
+          gh run view "$NATIVE_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha' > /tmp/native-build-source
+          for sm in 75 80 86 89 90 100 103 120; do
+            gh run download "$NATIVE_RUN" --repo "$GITHUB_REPOSITORY" --name "native-component-sm$sm" --dir "/tmp/components/sm$sm"
+          done
+          python - <<'PY'
+          import urllib.request,hashlib,tarfile
+          from pathlib import Path
+          p=Path('/tmp/v18.whl');urllib.request.urlretrieve('https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl',p)
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9'
+          p=Path('/tmp/cuobjdump.tar.xz');urllib.request.urlretrieve('https://developer.download.nvidia.com/compute/cuda/redist/cuda_cuobjdump/linux-x86_64/cuda_cuobjdump-linux-x86_64-12.9.82-archive.tar.xz',p)
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='ee0de40e8c18068bfcc53e73510e7e7a1a80555205347940df67fa525d24452f'
+          with tarfile.open(p) as t:t.extractall('/tmp/cubin-tool',filter='data')
+          PY
+      - name: Verify source, ELF, every native module and package components
+        run: NATIVE_BUILD_SOURCE="$(cat /tmp/native-build-source)" PYTHONPATH=. python scripts/assemble_native_components.py --base-wheel /tmp/v18.whl --builds /tmp/components --output dist-native-components --cuobjdump /tmp/cubin-tool/cuda_cuobjdump-linux-x86_64-12.9.82-archive/bin/cuobjdump
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-component-assets
+          path: dist-native-components/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

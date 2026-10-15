@@ -1,0 +1,34 @@
+name: Publish existing native component artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        required: true
+      release_tag:
+        required: true
+permissions:
+  contents: write
+  actions: read
+jobs:
+  upload:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Download and verify exact component artifact on runner
+        run: |
+          gh run view "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion' | grep -x success
+          gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name native-component-assets --dir /tmp/component-release
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path('/tmp/component-release');r=json.loads((p/'component-release.json').read_text());raw=(p/'native-assets.json').read_bytes();assert hashlib.sha256(raw).hexdigest()==r['index_sha256'];index=json.loads(raw)
+          for name,c in index['components'].items():
+            f=p/c['url'].rsplit('/',1)[1];assert f.stat().st_size==c['size'] and hashlib.sha256(f.read_bytes()).hexdigest()==c['sha256'],name
+          print('VERIFIED_PINNED_COMPONENT_ARTIFACTS',len(index['components']))
+          PY
+      - name: Upload to existing draft component release
+        run: gh release upload "$RELEASE_TAG" /tmp/component-release/* --repo "$GITHUB_REPOSITORY"
