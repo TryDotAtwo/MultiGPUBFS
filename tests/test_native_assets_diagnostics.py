@@ -192,3 +192,28 @@ class Assets(unittest.TestCase):
   with patch.dict(self.module._roots,{"fixture":(root,manager,hw)},clear=True):data=self.module.status(root)
   self.assertIn("native_build_declaration",data,"Early native delivery report omits component provenance")
   declared=data["native_build_declaration"];self.assertEqual(declared["native_binary_source_commit"],"a"*40);self.assertEqual(declared["cuda_library_source_commit"],"b"*40);self.assertEqual(declared["architectures"],[75]);self.assertEqual(declared["declared_artifact_sha256"]["bin/mgbfs"],h(b"fixture executable"))
+
+ def test_explicit_activation_prepares_assets_before_replacing_graph_method(self):
+  from multigpubfs import native_distribution as d,cayleypy_backend as backend
+  self.assertTrue(hasattr(d,"prepare_for_activation"),"Explicit native activation does not prepare missing components")
+  try:from cayleypy import CayleyGraph
+  except ImportError:self.skipTest("CayleyPy API runs in full CPU and installed GPU acceptance")
+  backend.disable_native();original=CayleyGraph.bfs;package=Path(self.tmp.name)/"activation-package";package.mkdir();(package/"native_assets.json").write_text(json.dumps(self.index));manager=self.manager()
+  try:
+   with patch.object(d,"__file__",str(package/"native_distribution.py")),patch.object(d.os.path,"exists",return_value=True),patch.object(self.module,"ensure_runtime",side_effect=lambda path:manager.prepare(hardware(75))),patch.dict(os.environ,{},clear=True):backend.enable_native()
+   self.assertIsNot(CayleyGraph.bfs,original);self.assertEqual({p[0] for p in self.calls},{"common.tar.gz","cuda-sm75.tar.gz"})
+  finally:backend.disable_native()
+ def test_activation_download_failure_leaves_original_api_intact(self):
+  from multigpubfs import native_distribution as d,cayleypy_backend as backend
+  self.assertTrue(hasattr(d,"prepare_for_activation"),"Explicit native preparation hook is missing")
+  try:from cayleypy import CayleyGraph
+  except ImportError:self.skipTest("CayleyPy API runs in full CPU and installed GPU acceptance")
+  backend.disable_native();original=CayleyGraph.bfs
+  with patch.object(d,"prepare_for_activation",side_effect=self.module.AssetError("download failed")):
+   with self.assertRaisesRegex(self.module.AssetError,"download failed"):backend.enable_native()
+  self.assertIs(CayleyGraph.bfs,original)
+ def test_activation_without_gpu_does_not_start_discovery_or_download(self):
+  from multigpubfs import native_distribution as d
+  self.assertTrue(hasattr(d,"prepare_for_activation"),"CPU-safe activation deferral is missing")
+  with patch.object(d.os.path,"exists",return_value=False),patch.object(d,"native_runtime",side_effect=AssertionError("CPU-only activation initialized CUDA")):d.prepare_for_activation()
+  self.assertEqual(self.calls,[])
