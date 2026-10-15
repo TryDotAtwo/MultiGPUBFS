@@ -179,6 +179,28 @@ class AssetManager:
    finally:
     if stage.exists():shutil.rmtree(stage)
   return folder
+ def prefetch(self,sm=None,*,all_architectures=False,dry_run=False):
+  """Verify/cache production components without discovery or invented hardware."""
+  if type(all_architectures) is not bool or type(dry_run) is not bool:raise AssetError('NATIVE_PREFETCH_OPTIONS: flags must be boolean')
+  values=[] if sm is None else [sm] if isinstance(sm,(str,int)) else list(sm)
+  if all_architectures and values:raise AssetError('NATIVE_PREFETCH_SELECTION: choose --sm or --all')
+  targets=list(self.index['production']) if all_architectures else [part.strip() for value in values for part in str(value).split(',')]
+  if not targets or any(t not in self.index['production'] for t in targets):raise AssetError('NATIVE_PREFETCH_TARGET: choose '+','.join(self.index['production']))
+  targets=sorted(set(targets),key=lambda t:(t=='universal',int(t) if t!='universal' else 0))
+  names=list(dict.fromkeys([self.index['common'],*(self.index['production'][t] for t in targets)]));rows=[];deadline=time.monotonic()+self.timeout
+  for name in names:
+   self._remaining(deadline);c=self.index['components'][name];folder=self.cache/'components'/c['sha256']
+   if folder.is_symlink():raise AssetError('NATIVE_ASSET_CACHE_SYMLINK')
+   cached=folder.exists()
+   if cached:
+    for p,f in c['files'].items():checked_file(folder,p,f)
+   rows.append({'component':name,'archive_bytes':c['size'],'sha256':c['sha256'],'cached_before':cached})
+  begin=len(self.events)
+  if not dry_run:
+   for name in names:self._component(name,deadline)
+  transfers=list(self.events[begin:])
+  return {'schema':1,'status':'PLAN_ONLY' if dry_run else 'PREFETCHED','targets':targets,'cache':str(self.cache),'index_id':self.index['id'],'index_sha256':self.identity,'components':rows,'total_component_bytes':sum(r['archive_bytes'] for r in rows),'maximum_additional_download_bytes':sum(r['archive_bytes'] for r in rows if not r['cached_before']),'downloaded_bytes':sum(e['downloaded_bytes'] for e in transfers),'transfers':transfers,'gpu_accessed':False,'environment':{'MGBFS_NATIVE_CACHE':str(self.cache),'MGBFS_NATIVE_OFFLINE':'1'},'scope':'Files and hashes only; no GPU discovery, library loading, compilation or BFS acceptance. All means production SM components plus universal; optional diagnostic controls are separate.'}
+
  def _layout(self,selected):
   components=self.index['components'];production=components[selected];core=components[self.index['common']]
   files=dict(core['files']);files['lib/libmgbfs_cuda.so']=production['files']['libmgbfs_cuda.so'];metadata={};rows=[]
@@ -270,4 +292,4 @@ def status(root=None):
    if info.is_file():declared['package_source_commit']=json.loads(info.read_text()).get('source_commit')
    declared['declared_artifact_sha256']={k:manifest['sha256'].get(k) for k in ('bin/mgbfs','lib/libmgbfs_cuda.so','lib/libcudart.so.12','lib/libnccl.so.2')}
    return {'status':'READY','native_build_declaration':declared,'root':str(prepared),'index_id':manager.index['id'],'index_sha256':manager.identity,'hardware':hardware,'selected_component':json.loads((prepared/'manifest.json').read_text())['native_delivery']['selected_component'],'transfers':list(manager.events),'downloaded_bytes':sum(x['downloaded_bytes'] for x in manager.events),'scope':'Verified files only; transfers are cumulative in this Python process; actual GPU/BFS acceptance is separate'}
- return {'status':'NOT_PREPARED','scope':'Import and activation do not download or initialize CUDA'}
+ return {'status':'NOT_PREPARED','scope':'Import is offline; explicit GPU activation or a native request can prepare the runtime'}

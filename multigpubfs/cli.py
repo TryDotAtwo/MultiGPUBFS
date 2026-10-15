@@ -6,10 +6,14 @@ from .launch import run_graph
 
 def main(argv=None):
  argv=list(sys.argv[1:] if argv is None else argv)
+ if argv and argv[0]=='prefetch':
+  from .prefetch import main as prefetch_main
+  return prefetch_main(argv[1:])
  if argv and argv[0]=='doctor':
   from .diagnostics import main as doctor_main
   return doctor_main(argv[1:])
  parser=argparse.ArgumentParser(description='Exact GPU BFS for CayleyPy permutation and matrix actions. Defaults: all visible GPUs, measured startup tuning and compact terminal retention.')
+ parser.epilog='Service commands: multigpubfs prefetch --help; multigpubfs doctor --help.'
  parser.add_argument('definition',help='Schema2 JSON file, or Family.constructor with --catalog')
  parser.add_argument('--catalog',action='store_true',help='Resolve an exact public CayleyPy constructor name without evaluated source')
  parser.add_argument('--catalog-args',help='JSON positional argument list for the constructor')
