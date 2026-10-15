@@ -163,4 +163,15 @@ class RecipeGpuSetRegression(unittest.TestCase):
    with self.assertRaisesRegex(RuntimeError,'GPU_SET'):
     recipe.probe(settings,Path(d))
 
+
+class NativePurelibPackagingRegression(unittest.TestCase):
+ def test_native_payload_in_wheel_purelib_is_preserved(self):
+  import io,zipfile
+  from scripts import repackage_verified_native as package
+  data=io.BytesIO()
+  with zipfile.ZipFile(data,'w') as z:z.writestr('multigpubfs-0.2.0.dev16.data/purelib/multigpubfs/_native/bin/mgbfs',b'native-binary')
+  with tempfile.TemporaryDirectory() as d,zipfile.ZipFile(data) as z:
+   package.extract_native(z,Path(d))
+   self.assertEqual((Path(d)/'multigpubfs/_native/bin/mgbfs').read_bytes(),b'native-binary')
+
 if __name__=='__main__':unittest.main()
