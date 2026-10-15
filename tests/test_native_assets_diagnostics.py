@@ -139,3 +139,26 @@ class Assets(unittest.TestCase):
   with patch.object(self.module,"ensure_variant",side_effect=lambda r,i,**kw:manager.ensure_variant(r,i)):
    env=variants.environment("static-sm120",verified,parent={})
   self.assertEqual(Path(env["LD_LIBRARY_PATH"].split(":")[0]),root/"diagnostic_variants/static-sm120");self.assertTrue((root/"diagnostic_variants/static-sm120/libmgbfs_cuda.so").is_file());self.assertEqual(len(self.calls),3)
+
+ def test_index_cannot_mislabel_native_architecture_or_kernel_source(self):
+  for field,value in [("architectures",[100]),("cuda_kernel_source_sha256","f"*64)]:
+   index=copy.deepcopy(self.index);index["components"]["cuda-sm75"]["build"][field]=value
+   with self.assertRaises(self.module.AssetError):self.manager(index)
+  self.assertEqual(self.calls,[])
+ def test_partial_download_resumes_and_final_hash_is_verified(self):
+  component=self.index["components"]["cuda-sm75"];folder=self.cache/"downloads";folder.mkdir(parents=True);(folder/(component["sha256"]+".part")).write_bytes(self.payload["cuda-sm75.tar.gz"][:30])
+  root=self.manager().prepare(hardware(75));self.assertTrue((root/"bin/mgbfs").is_file());self.assertIn(("cuda-sm75.tar.gz","bytes=30-"),self.calls)
+ def test_nested_hardware_probe_stays_in_owned_diagnostic_group(self):
+  import sys
+  if os.name!="posix":self.skipTest("POSIX CUDA-host groups")
+  code="import json,os;print(json.dumps({\"group\":os.getpgrp()}))"
+  with patch.dict(os.environ,{"MGBFS_DIAGNOSTIC_TRACE_FILE":str(Path(self.tmp.name)/"trace.log")}):
+   data=self.module.run_hardware_probe([sys.executable,"-c",code],timeout=5)
+  self.assertEqual(data["group"],os.getpgrp(),"Hardware child escaped the owned diagnostic process group")
+ def test_inherited_group_probe_timeout_does_not_kill_parent(self):
+  import sys,time
+  began=time.monotonic()
+  with patch.dict(os.environ,{"MGBFS_DIAGNOSTIC_TRACE_FILE":str(Path(self.tmp.name)/"trace.log")}):
+   with self.assertRaisesRegex(self.module.AssetError,"PROBE_TIMEOUT"):
+    self.module.run_hardware_probe([sys.executable,"-c","import time;time.sleep(20)"],timeout=.1)
+  self.assertLess(time.monotonic()-began,6)
