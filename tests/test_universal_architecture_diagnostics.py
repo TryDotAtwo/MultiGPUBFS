@@ -49,7 +49,7 @@ class IndependentDiscoveryRegression(unittest.TestCase):
   self.assertIsNone(self.recover(driver_step(),[2]));self.assertIsNone(self.recover(driver_step(),[0,0]))
  def test_failed_native_count_still_attempts_oracle_verified_recipe(self):
   class Runner:
-   def __init__(self,*a,**kw):self.report={'steps':[]};self.deep_cleanup_blocked=False
+   def __init__(self,*a,**kw):self.report={'steps':[]};self.deep_cleanup_blocked=False;self.root=Path(a[0]);self.root.mkdir(parents=True,exist_ok=True)
    def component(self,name,stage,**kw):
     result=driver_step() if stage=='driver' else {'status':'TIMEOUT' if stage=='count' else 'PASS','result':{'data':{}}}
     self.report['steps'].append(dict(result,name=name));return result
