@@ -148,4 +148,19 @@ class NativeRecipePackagingRegression(unittest.TestCase):
    self.assertEqual((Path(d)/'multigpubfs/_native/bin/mgbfs').read_bytes(),b'native-binary')
    self.assertFalse((Path(d)/'multigpubfs/server_recipe.py').exists())
 
+
+class RecipeGpuSetRegression(unittest.TestCase):
+ def test_correct_layers_on_only_one_gpu_do_not_verify_two_gpu_setup(self):
+  from multigpubfs.deep_diagnostics import oracle
+  from multigpubfs import launch,native_distribution,diagnostics,runtime_variants
+  settings=dict(variant='shared-sm120',devices=[0,1],worker='fresh',module='inherited',data_loading='inherited',transport='inherited')
+  def run(graph,output,**kwargs):
+   output=Path(output);output.mkdir();sizes,last=oracle(graph)
+   (output/'states.json').write_text(json.dumps({'current':last}))
+   return {'status':'COMPLETE','devices':[0],'layer_sizes':sizes,'states_sha256':'fixture','bfs_seconds':.01,'runtime_identity':{'cuda_library_sha256':'selected-library'}}
+  inv={'status':'AVAILABLE','variants':[{'id':'shared-sm120','sha256':'selected-library'}]}
+  with tempfile.TemporaryDirectory() as d,patch.object(launch,'run_graph',side_effect=run),patch.object(native_distribution,'native_runtime',return_value=('/bin/false',{})),patch.object(runtime_variants,'inventory',return_value=inv),patch.object(diagnostics,'_paths',return_value=('/bin/false',{},{})),patch.object(runtime_variants,'confirm_resolution',return_value={'sha256':'selected-library'}):
+   with self.assertRaisesRegex(RuntimeError,'GPU_SET'):
+    recipe.probe(settings,Path(d))
+
 if __name__=='__main__':unittest.main()
