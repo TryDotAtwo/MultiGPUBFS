@@ -46,7 +46,7 @@ class Assets(unittest.TestCase):
     self.send_header('Content-Length',str(len(data)-offset));self.end_headers();self.wfile.write(data[offset:])
    def log_message(self,*args):pass
   self.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
-  self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown);self.addCleanup(self.thread.join,2)
+  self.addCleanup(self.thread.join,2);self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown)
   port=self.server.server_address[1]
   def opener(request,timeout):
    local=urllib.request.Request('http://127.0.0.1:'+str(port)+'/'+request.full_url.rsplit('/',1)[1],headers=dict(request.header_items()))
@@ -122,3 +122,20 @@ class Assets(unittest.TestCase):
   import sys
   value=hardware(100,100);code='import json;print('+repr(json.dumps(value))+')'
   self.assertEqual(self.module.run_hardware_probe([sys.executable,'-c',code],timeout=5),value)
+
+ def test_native_runtime_uses_prepared_index_root_and_preserves_explicit_override(self):
+  from multigpubfs import native_distribution as d
+  self.assertTrue(hasattr(d,"native_root"),"Native runtime does not resolve selectively prepared roots")
+  package=Path(self.tmp.name)/"package";package.mkdir();(package/"native_assets.json").write_text(json.dumps(self.index))
+  manager=self.manager();expected=manager.prepare(hardware(75))
+  with patch.object(d,"__file__",str(package/"native_distribution.py")),patch.object(self.module,"ensure_runtime",return_value=expected),patch.dict(os.environ,{},clear=True):
+   binary,env=d.native_runtime();self.assertEqual(Path(binary),expected/"bin/mgbfs");self.assertEqual(env["LD_LIBRARY_PATH"].split(":")[0],str(expected/"lib"))
+   self.assertEqual(d.native_runtime("/explicit/native")[0],"/explicit/native")
+ def test_inventory_declares_optional_payloads_without_fetch_and_environment_verifies_on_selection(self):
+  from multigpubfs import runtime_variants as variants
+  manager=self.manager();root=manager.prepare(hardware(75));verified=variants.inventory(root,environ={})
+  self.assertEqual(verified["status"],"AVAILABLE");self.assertEqual(len(self.calls),2)
+  selected=next(x for x in verified["variants"] if x["id"]=="static-sm120");self.assertIs(selected["installed"],False)
+  with patch.object(self.module,"ensure_variant",side_effect=lambda r,i,**kw:manager.ensure_variant(r,i)):
+   env=variants.environment("static-sm120",verified,parent={})
+  self.assertEqual(Path(env["LD_LIBRARY_PATH"].split(":")[0]),root/"diagnostic_variants/static-sm120");self.assertTrue((root/"diagnostic_variants/static-sm120/libmgbfs_cuda.so").is_file());self.assertEqual(len(self.calls),3)
