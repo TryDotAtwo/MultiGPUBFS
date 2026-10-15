@@ -10,12 +10,14 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--output', type=Path, required=True);p.add_argument('--binary',type=Path,required=True);p.add_argument('--library',type=Path,required=True);p.add_argument('--native-manifest',type=Path);p.add_argument('--diagnostic-variants',type=Path);p.add_argument('--cuobjdump',type=Path);a=p.parse_args()
     root=Path(__file__).resolve().parents[1];stage=root/'multigpubfs/_native'
     if stage.exists():raise RuntimeError('Refusing to replace existing native staging')
+    sys.path.insert(0,str(root))
+    from multigpubfs.architecture_support import NATIVE_ARCHITECTURES,PTX_ARCHITECTURES
     with tempfile.TemporaryDirectory() as temp:
         temp=Path(temp);base=temp/'accepted.whl'
         if a.binary and a.library:
             (stage/'bin').mkdir(parents=True);(stage/'lib').mkdir()
             shutil.copy2(a.binary,stage/'bin/mgbfs');shutil.copy2(a.library,stage/'lib/libmgbfs_cuda.so')
-            manifest=(json.loads(a.native_manifest.read_text()) if a.native_manifest else dict(schema=1,cuda_toolkit='12.9.86',architectures=[75,86,120],cuda_runtime_linkage='Shared',production_build='shared-sm120',platform='linux_x86_64',source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),hardware_acceptance='Build targets; see separate GPU acceptance receipt'))
+            manifest=(json.loads(a.native_manifest.read_text()) if a.native_manifest else dict(schema=1,cuda_toolkit='12.9.86',architectures=list(NATIVE_ARCHITECTURES),ptx_architectures=list(PTX_ARCHITECTURES),cuda_runtime_linkage='Shared',production_build='shared-sm120',platform='linux_x86_64',source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),hardware_acceptance='Build targets; see separate GPU acceptance receipt'))
             (stage/'manifest.json').write_text(json.dumps(manifest))
         else:
             raise RuntimeError('Explicit portable rebuilt binary and library required')

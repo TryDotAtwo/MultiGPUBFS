@@ -69,7 +69,7 @@ def _runtime_identity_uncached(native,env):
    if library_digest!=manifest['sha256'].get('lib/libmgbfs_cuda.so'):raise RuntimeError('NATIVE_IDENTITY_LIBRARY_CHECKSUM')
    # Package provenance applies only if the actual loader resolves its bytes.
    if dependency is not None and dependency['cuda_library_sha256']==library_digest:
-    identity.update(source_commit=manifest.get('source_commit'),cuda_toolkit=None if manifest.get('bundled_runtime') else manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
+    identity.update(source_commit=manifest.get('native_binary_source_commit',manifest.get('source_commit')),cuda_library_source_commit=manifest.get('cuda_library_source_commit',manifest.get('source_commit')),ptx_architectures=manifest.get('ptx_architectures'),cuda_toolkit=None if manifest.get('bundled_runtime') else manifest.get('cuda_toolkit'),architectures=manifest.get('architectures'))
  return identity
 
 _runtime_identity_cache={}
