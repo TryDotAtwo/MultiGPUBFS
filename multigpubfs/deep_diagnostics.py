@@ -317,6 +317,9 @@ def component(config,root):
  for key in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING'):
   setting=config.get('module' if key=='CUDA_MODULE_LOADING' else 'data_loading','inherited')
   if setting!='inherited':os.environ[key]=setting
+ if config['kind']=='server-recipe':
+  from .server_recipe import probe
+  return probe(config['settings'],root)
  if config['kind']=='catalog':return catalog_probe(config,root)
  if config['kind']=='inventory':return inventory(root)
  if config['kind']=='api':return api_probe(config,root)
@@ -438,6 +441,8 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     primary_status='PASS' if len(primary)==len(primary_names) and all(s['status']=='PASS' for s in primary) else ('FAIL' if any(s['status'] in ('FAIL','TIMEOUT') for s in primary) else 'INCOMPLETE')
     runner.report['production_bfs_acceptance']={'status':primary_status,'build':PRODUCTION,'devices':selected,'steps':[{'name':s['name'],'status':s['status'],'seconds':s.get('seconds')} for s in primary],'scope':'Real API/kernel, two resident requests and exact S3 BFS on each selected GPU; multi-GPU and other backends have separate named tests.'}
     runner.save()
+    from .server_recipe import find_working
+    runner.report['working_configuration']=find_working(runner,selected,deadline);runner.save()
     for case in startup_cases(selected):run_case(runner,case,deadline)
     for device in selected:
      for stage in ('context','meminfo','hardware','memory','kernel','persistent'):

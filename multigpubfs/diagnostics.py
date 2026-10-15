@@ -296,6 +296,9 @@ class Runner:
   if device is not None:command+=['--_device',str(device)]
   return self.run(name,command,optional=optional)
  def finish(self):
+  if getattr(self,'deep_cleanup_blocked',False) and self.report.get('working_configuration',{}).get('status')=='READY':
+   self.report['working_configuration']={'status':'BLOCKED','reason':'A later diagnostic child could not be reaped; no ready launch command'}
+   for name in ('working-config.json','server-command.txt'):(self.root/name).unlink(missing_ok=True)
   failures=[x['name'] for x in self.report['steps'] if x['status'] in ('FAIL','TIMEOUT')]
   from .diagnostic_analysis import analyze,render
   self.report.update(status='FAIL' if failures else 'PASS',failed_components=failures,finished_utc=datetime.datetime.now(datetime.timezone.utc).isoformat());self.report['analysis']=analyze(self.report)
@@ -303,9 +306,16 @@ class Runner:
   self.save();_write(self.root/'analysis.json',self.report['analysis']);(self.root/'analysis.txt').write_text(render(self.report['analysis']),encoding='utf-8')
   lines=['MultiGPUBFS diagnostic: '+self.report['status'],'Report: '+str(self.root/'report.json')]
   if self.report.get('production_bfs_acceptance'):lines.append('Production BFS acceptance: '+self.report['production_bfs_acceptance']['status']+' ('+self.report['production_bfs_acceptance']['build']+')')
+  working=self.report.get('working_configuration',{})
+  if working:
+   lines.append('Working server configuration: '+working['status'])
+   if working.get('command'):
+    lines.append('VERIFIED GPU SET '+str(working['selected']['devices'])+(' (single-GPU fallback)' if working.get('single_gpu_fallback') else ''))
+    lines.append('READY COMMAND '+working['command']);lines.append('CALCULATION EXAMPLE '+working['calculation_example'])
+   elif working.get('reason'):lines.append('NO READY COMMAND '+working['reason'])
   for step in self.report['steps']:lines.append(step['status']+' '+step['name']+' '+step.get('reason',step.get('error','')))
   lines.append(render(self.report['analysis']));(self.root/'report.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
+  files=[f for f in self.root.rglob('*') if f.is_file() and (f.suffix=='.log' or f.name in ('report.json','report.txt','result.json','driver.json','environment.json','runtime.json','analysis.json','analysis.txt','probe.json','process-snapshot.json','deep-analysis.json','deep-summary.txt','variant.json','cleanup.json','post-cleanup-snapshot.json','working-config.json','server-command.txt') or f.name.startswith(('rank-','response-','phase-')) and f.suffix=='.json')]
   manifest=[]
   for f in sorted(files):manifest.append({'path':str(f.relative_to(self.root)),'size':f.stat().st_size,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
   _write(self.root/'manifest.json',{'schema':1,'files':manifest,'scope':'logs/metadata only; BFS state payloads and job environment files excluded'})
@@ -319,6 +329,7 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
   return run_deep(output,devices,timeout,total_timeout)
  if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
  if devices is not None and (not devices or len(devices)!=len(set(devices)) or any(type(d) is not int or d<0 for d in devices)):raise ValueError('Devices must be distinct nonnegative integer IDs')
+ search_deadline=time.monotonic()+total_timeout
  root=Path(output or ('mgbfs-diagnostics-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+str(os.getpid()))).absolute();runner=Runner(root,timeout)
  try:
   runner.component('control-thread','thread');runner.component('system-info','system',optional=True);runner.component('filesystem','filesystem');runner.component('environment-evidence','environment',optional=True);runner.component('nvml-evidence','nvml',optional=True);runner.component('torch-evidence','torch',optional=True);runner.component('driver-api','driver')
@@ -349,6 +360,8 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
     else:runner.skip('multi-gpu-bfs','NCCL exchange failed')
    else:runner.skip('nccl-exchange','NCCL initialization failed');runner.skip('multi-gpu-bfs','NCCL initialization failed')
   else:runner.skip('multi-gpu-checks','Need at least two healthy selected GPUs')
+  from .server_recipe import find_working
+  runner.report['working_configuration']=find_working(runner,selected,search_deadline);runner.save()
   return runner.finish()
  except KeyboardInterrupt:
   runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'});return runner.finish()
