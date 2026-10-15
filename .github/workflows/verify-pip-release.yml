@@ -17,39 +17,40 @@ jobs:
       WHEEL_SHA: ${{ inputs.sha256 }}
       PIP_NO_CACHE_DIR: '1'
     steps:
-      - name: Anonymous wheel readback and clean one-command extras installation
+      - name: Anonymous selective wheel readback and one-command extras install
         run: |
           python3 - <<'PY'
-          import hashlib,json,os,re,subprocess,urllib.request,textwrap
+          import hashlib,json,os,re,subprocess,urllib.request,zipfile,textwrap
           from pathlib import Path
           url=os.environ['WHEEL_URL'];sha=os.environ['WHEEL_SHA']
           assert url.startswith('https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/')
           assert re.fullmatch('[0-9a-f]{64}',sha)
-          wheel=Path('/tmp/anonymous-readback.whl')
-          urllib.request.urlretrieve(url,wheel)
-          assert hashlib.sha256(wheel.read_bytes()).hexdigest()==sha
+          wheel=Path('/tmp/anonymous-readback.whl');urllib.request.urlretrieve(url,wheel)
+          assert wheel.stat().st_size<2_000_000 and hashlib.sha256(wheel.read_bytes()).hexdigest()==sha
+          with zipfile.ZipFile(wheel) as z:
+              assert 'multigpubfs/native_assets.json' in z.namelist()
+              assert not any(n.startswith('multigpubfs/_native/') for n in z.namelist())
+              index=json.loads(z.read('multigpubfs/native_assets.json'))
+              assert set(index['production'])=={'75','80','86','89','90','100','103','120','universal'}
           subprocess.run(['python3','-m','venv','/tmp/github-pip-clean'],check=True)
           python='/tmp/github-pip-clean/bin/python'
           subprocess.run([python,'-m','pip','install','multigpubfs[cayleypy] @ '+url+'#sha256='+sha],check=True)
-          check="""import importlib.metadata,json,os,subprocess
-          from pathlib import Path
-          import multigpubfs,cayleypy
-          from multigpubfs.native_distribution import native_runtime
+          check="""import importlib.metadata,os,subprocess,urllib.request
+          from unittest.mock import patch
+          def forbidden(*args,**kwargs):raise AssertionError('Import must not probe GPU or download')
+          with patch.object(subprocess,'Popen',side_effect=forbidden),patch.object(urllib.request,'urlopen',side_effect=forbidden):
+              import multigpubfs
+          import cayleypy
+          from multigpubfs.native_assets import status,index_path
           assert importlib.metadata.version('multigpubfs')==os.environ['WHEEL_URL'].rsplit('/',1)[-1].split('-')[1]
+          assert status()['status']=='NOT_PREPARED' and index_path().is_file()
           multigpubfs.enable_native()
           graph=cayleypy.CayleyGraph(cayleypy.PermutationGroups.lrx(5),device='cpu')
-          assert hasattr(multigpubfs,'enable_native')
-          native,env=native_runtime()
-          assert os.access(native,os.X_OK)
-          result=subprocess.run(['ldd',native],env=env,capture_output=True,text=True,check=True)
-          missing=[line for line in result.stdout.splitlines() if 'not found' in line and 'libcuda.so.1' not in line]
-          assert not missing,missing
-          for name in ('libnccl.so.2','libcudart.so.12','libmgbfs_cuda.so'):
-              line=next(line for line in result.stdout.splitlines() if name+' =>' in line)
-              assert '/site-packages/multigpubfs/_native/lib/' in line,line
-          print(result.stdout)
-          print('VERIFIED_GITHUB_SINGLE_PIP_CAYLEYPY_EXTRAS_CLEAN_UBUNTU2204_NO_GPU')
+          assert status()['status']=='NOT_PREPARED'
+          multigpubfs.disable_native()
+          print('VERIFIED_PUBLIC_GITHUB_SMALL_WHEEL_EXTRAS_IMPORT_CPU_SAFE_NO_GPU')
           """
           subprocess.run([python,'-c',textwrap.dedent(check)],cwd='/tmp',check=True)
+          subprocess.run([python,'-m','multigpubfs.diagnostics','--help'],check=True)
           subprocess.run([python,'-m','pip','check'],check=True)
           PY
