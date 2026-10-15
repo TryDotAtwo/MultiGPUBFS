@@ -74,3 +74,17 @@ class CleanupAndProduction(unittest.TestCase):
     self.assertTrue(not stat.exists() or stat.read_text().rsplit(')',1)[1].split()[0]=='Z')
    finally:
     if leader.poll() is None:os.killpg(leader.pid,9);leader.wait(timeout=3)
+
+ def test_unreaped_owned_child_is_a_failure_and_stops_following_probes(self):
+  from multigpubfs.diagnostics import Runner
+  import sys
+  with tempfile.TemporaryDirectory() as d:
+   runner=Runner(Path(d)/'out',1)
+   failed={'pid':1,'signals_sent':[15,9],'process_exit_observed':True,'surviving_group_pids':[12345],'complete':False}
+   with patch.object(deep,'bounded_stop',return_value=failed),patch.object(deep,'process_snapshot',return_value={}):
+    result=runner.run('orphan',[sys.executable,'-c','pass'])
+   self.assertEqual(result['status'],'FAIL')
+   self.assertIn('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED',result['error'])
+   with patch('multigpubfs.diagnostics.subprocess.Popen',side_effect=AssertionError('Must not start another probe')):
+    following=runner.run('following',[sys.executable,'-c','pass'])
+   self.assertEqual(following['status'],'SKIPPED')
