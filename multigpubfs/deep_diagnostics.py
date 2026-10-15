@@ -477,7 +477,7 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
       if case['unsupported']:runner.skip(name,case['unsupported'])
       else:run_case(runner,covered({'name':name,'config':{'kind':'catalog','catalog':case,'device':device},'seconds':20}),deadline)
     # Legacy startup/JIT contrasts run last so they cannot consume production coverage.
-    for case in build_cases(selected,contrasts_only=True):run_case(runner,case,deadline)
+    for case in build_cases(selected,contrasts_only=True,include_universal=runner.diagnostic_variants.get('lazy_delivery',False)):run_case(runner,case,deadline)
   else:runner.skip('deep-gpu-suite','Native runtime or CUDA discovery failed')
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})
  except Exception as e:runner.report['steps'].append({'name':'deep-controller','status':'FAIL','error':str(e)})

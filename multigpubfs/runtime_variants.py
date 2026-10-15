@@ -9,6 +9,7 @@ from .architecture_support import NATIVE_ARCHITECTURES
 
 BASELINE='baseline-static-legacy'
 PRODUCTION='shared-sm120'
+UNIVERSAL='shared-universal'
 SPECS={BASELINE:('Static',[75,86]),'shared-legacy':('Shared',[75,86]),'static-sm120':('Static',list(NATIVE_ARCHITECTURES)),'shared-sm120':('Shared',list(NATIVE_ARCHITECTURES))}
 
 def digest(path):
@@ -42,11 +43,13 @@ def inventory(root=None,*,environ=None):
  data=json.loads(metadata.read_text())
  if data.get('schema')!=1 or data.get('production_default')!=PRODUCTION:raise RuntimeError('DIAGNOSTIC_VARIANT_METADATA_SCHEMA')
  entries=data.get('variants',[])
- if len(entries)!=4 or {x.get('id') for x in entries}!=set(SPECS):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
+ expected_specs=dict(SPECS)
+ if lazy:expected_specs[UNIVERSAL]=('Shared',list(NATIVE_ARCHITECTURES))
+ if len(entries)!=len(expected_specs) or {x.get('id') for x in entries}!=set(expected_specs):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
  sources=set();verified=[]
  fingerprints=any('cuda_kernel_source_sha256' in row for row in entries)
  for row in entries:
-  identifier=row['id'];runtime,architectures=SPECS[identifier]
+  identifier=row['id'];runtime,architectures=expected_specs[identifier]
   if lazy and identifier==PRODUCTION:architectures=manifest.get('architectures')
   if row.get('runtime')!=runtime or row.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_FACTOR_'+identifier)
   expected='lib/libmgbfs_cuda.so' if identifier==PRODUCTION else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
@@ -65,7 +68,7 @@ def inventory(root=None,*,environ=None):
  return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'lazy_delivery':lazy,'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
 
 def environment(identifier,verified,parent=None,*,deadline=None):
- if identifier not in SPECS or verified.get('status')!='AVAILABLE':raise RuntimeError('DIAGNOSTIC_VARIANT_SELECTION')
+ if (identifier not in SPECS and identifier!=UNIVERSAL) or verified.get('status')!='AVAILABLE':raise RuntimeError('DIAGNOSTIC_VARIANT_SELECTION')
  selected=next(x for x in verified['variants'] if x['id']==identifier)
  root=Path(verified['root']);env=dict(os.environ if parent is None else parent)
  if verified.get('lazy_delivery'):
@@ -87,11 +90,12 @@ def confirm_resolution(identifier,verified,libraries):
   if name not in libraries or Path(libraries[name]).resolve()!=(Path(verified['root'])/'lib'/name).resolve():raise RuntimeError('DIAGNOSTIC_VARIANT_VENDOR_RESOLUTION_'+name)
  return {'id':identifier,'runtime':expected['runtime'],'architectures':expected['architectures'],'sha256':expected['sha256'],'resolved_libraries':libraries,'same_cuda_source_tree':expected['cuda_source_tree']}
 
-def cases(devices,*,production_only=False,contrasts_only=False):
+def cases(devices,*,production_only=False,contrasts_only=False,include_universal=False):
  if production_only and contrasts_only:raise ValueError('Select one diagnostic partition')
  result=[]
  identifiers=(PRODUCTION,) if production_only else ('static-sm120',BASELINE,'shared-legacy') if contrasts_only else (PRODUCTION,'static-sm120',BASELINE,'shared-legacy')
  # Complete production API, resident and BFS checks before legacy JIT contrasts.
+ if include_universal and not production_only:identifiers+=(UNIVERSAL,)
  for identifier in identifiers:
   for path in ('api','persistent','bfs'):
    for device in devices:
@@ -106,12 +110,12 @@ def choose_coverage(steps,devices):
  observed={}
  for step in steps:
   config=step.get('diagnostic_case',{})
-  if config.get('coverage_build') or config.get('variant') not in SPECS:continue
+  if config.get('coverage_build') or config.get('variant') not in (*SPECS,UNIVERSAL):continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
   if path not in ('api','persistent','bfs'):continue
   device=config.get('device',(config.get('devices') or [None])[0])
   observed[(config['variant'],device,path)]=step
- for identifier in (PRODUCTION,'static-sm120',BASELINE,'shared-legacy'):
+ for identifier in (PRODUCTION,'static-sm120',BASELINE,'shared-legacy',UNIVERSAL):
   evidence=[observed.get((identifier,device,path)) for device in devices for path in ('api','persistent','bfs')]
   if evidence and all(x is not None and x['status']=='PASS' for x in evidence):
    return {'status':'VERIFIED_FOR_SYNTHETIC_COVERAGE','id':identifier,'devices':devices,'evidence':[x['name'] for x in evidence],'scope':'Subsequent diagnostic probes only; baseline failures remain in the report; no production repair or default change'}
@@ -125,23 +129,26 @@ def call_boundary(phase):
  return 'Last flushed native marker: '+phase
 
 def compare(steps):
+ universal=any(x.get('diagnostic_case',{}).get('variant')==UNIVERSAL for x in steps)
+ comparison_specs=(*SPECS,UNIVERSAL) if universal else tuple(SPECS)
+ shared_control=UNIVERSAL if universal else PRODUCTION
  groups={}
  for step in steps:
   config=step.get('diagnostic_case',{});identifier=config.get('variant')
-  if identifier not in SPECS or config.get('coverage_build'):continue
+  if identifier not in comparison_specs or config.get('coverage_build'):continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
   device=config.get('device',(config.get('devices') or [None])[0]);key=(device,path)
   groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'call_boundary':call_boundary(step.get('last_native_phase')) if step['status'] in ('FAIL','TIMEOUT') else None,'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}
  comparisons=[]
  for (device,path),values in groups.items():
-  statuses=[values.get(identifier,{}).get('status','NOT_RUN') for identifier in SPECS]
+  statuses=[values.get(identifier,{}).get('status','NOT_RUN') for identifier in comparison_specs]
   if any(x in ('NOT_RUN','SKIPPED','RUNNING') for x in statuses):outcome='INCOMPLETE'
   elif all(x=='PASS' for x in statuses):outcome='ALL_PASS'
   elif any(x=='PASS' for x in statuses):outcome='VARIANT_DEPENDENT'
   else:outcome='ALL_FAILED'
   controlled=[]
-  for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120','shared-sm120','runtime'),(BASELINE,'static-sm120','native-fatbinary'),('shared-legacy','shared-sm120','native-fatbinary')]:
+  for a,b,factor in [(BASELINE,'shared-legacy','runtime'),('static-sm120',shared_control,'runtime'),(BASELINE,'static-sm120','native-fatbinary'),('shared-legacy',shared_control,'native-fatbinary')]:
    left=values.get(a,{});right=values.get(b,{})
    controlled.append({'factor':factor,'left':a,'right':b,'left_status':left.get('status','NOT_RUN'),'right_status':right.get('status','NOT_RUN'),'changed_pass_outcome':None if left.get('status') in (None,'SKIPPED') or right.get('status') in (None,'SKIPPED') else (left['status']=='PASS')!=(right['status']=='PASS')})
   comparisons.append({'device':device,'path':path,'outcome':outcome,'variants':values,'controlled_pairs':controlled})
- return {'root_cause_confirmed':False,'comparisons':comparisons,'scope':'Same CUDA source, four build configurations, fresh processes. Status/time correlations are not proof of a unique cause; inherited JIT cache is not cleared and shared runtime does not remove every vendor runtime instance.'}
+ return {'root_cause_confirmed':False,'comparisons':comparisons,'scope':'Same CUDA kernel inputs, controlled build configurations, fresh processes. Selective delivery adds a deferred universal shared control so the Shared/Static comparison keeps identical architecture sets. Status/time correlations are not proof of a unique cause; inherited JIT cache is not cleared and shared runtime does not remove every vendor runtime instance.'}

@@ -6,6 +6,7 @@ Only a native request prepares components; importing the library is offline.
 import contextlib,hashlib,json,os,platform,re,shutil,subprocess,sys,tarfile,tempfile,time,urllib.error,urllib.request
 from pathlib import Path,PurePosixPath
 
+LAYOUT_SCHEMA=1
 class AssetError(RuntimeError):pass
 def digest(path):
  h=hashlib.sha256()
@@ -181,7 +182,7 @@ class AssetManager:
  def _layout(self,selected):
   components=self.index['components'];production=components[selected];core=components[self.index['common']]
   files=dict(core['files']);files['lib/libmgbfs_cuda.so']=production['files']['libmgbfs_cuda.so'];metadata={};rows=[]
-  choices={'shared-sm120':selected,**self.index['diagnostics']}
+  choices={'shared-sm120':selected,'shared-universal':self.index['production']['universal'],**self.index['diagnostics']}
   for identifier,name in choices.items():
    c=components[name];build=dict(c['build']);library='lib/libmgbfs_cuda.so' if identifier=='shared-sm120' else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
    proof=dict(build,id=identifier,packaged_sha256=c['files']['libmgbfs_cuda.so']['sha256'])
@@ -190,7 +191,7 @@ class AssetManager:
   variants='diagnostic_variants/variants.json';metadata[variants]=canonical({'schema':1,'production_default':'shared-sm120','variants':rows,'scope':'Pinned components; absent diagnostic libraries are declarations until downloaded and verified'})
   build=production['build'];manifest=dict(self.index['native_metadata'])
   manifest.pop('package_source_commit',None)
-  manifest.update(schema=1,architectures=build['architectures'],ptx_architectures=build.get('ptx_architectures',[]),production_build='shared-sm120',cuda_runtime_linkage='Shared',cuda_library_source_commit=build['source_commit'],cuda_source_tree=build['cuda_source_tree'],cuda_kernel_source_sha256=build['cuda_kernel_source_sha256'],native_delivery={'schema':1,'index_sha256':self.identity,'selected_component':selected,'index_id':self.index['id']})
+  manifest.update(schema=1,architectures=build['architectures'],ptx_architectures=build.get('ptx_architectures',[]),production_build='shared-sm120',cuda_runtime_linkage='Shared',cuda_library_source_commit=build['source_commit'],cuda_source_tree=build['cuda_source_tree'],cuda_kernel_source_sha256=build['cuda_kernel_source_sha256'],native_delivery={'schema':1,'index_sha256':self.identity,'layout_schema':LAYOUT_SCHEMA,'selected_component':selected,'index_id':self.index['id']})
   manifest['sha256']={p:f['sha256'] for p,f in files.items()};manifest['sha256'][variants]=hashlib.sha256(metadata[variants]).hexdigest()
   return files,metadata,manifest
  def _verify(self,root,selected):
@@ -206,7 +207,7 @@ class AssetManager:
   try:os.link(source,destination)
   except OSError:shutil.copyfile(source,destination);destination.chmod(source.stat().st_mode&0o777)
  def prepare(self,hardware):
-  selected=self.select(hardware);deadline=time.monotonic()+self.timeout;root=self.cache/'bundles'/(self.identity+'-'+selected)
+  selected=self.select(hardware);deadline=time.monotonic()+self.timeout;root=self.cache/'bundles'/(self.identity+'-v'+str(LAYOUT_SCHEMA)+'-'+selected)
   with self._lock('bundle-'+root.name,deadline):
    if root.exists():return self._verify(root,selected)
    common=self._component(self.index['common'],deadline);cuda=self._component(selected,deadline)
@@ -222,10 +223,11 @@ class AssetManager:
   return root
  def ensure_variant(self,root,identifier,timeout=None):
   if identifier=='shared-sm120':return Path(root)/'lib/libmgbfs_cuda.so'
-  if identifier not in self.index['diagnostics']:raise AssetError('NATIVE_ASSET_DIAGNOSTIC_VARIANT')
+  controls={**self.index['diagnostics'],'shared-universal':self.index['production']['universal']}
+  if identifier not in controls:raise AssetError('NATIVE_ASSET_DIAGNOSTIC_VARIANT')
   root=Path(root).resolve();manifest=json.loads((root/'manifest.json').read_text());selected=manifest.get('native_delivery',{}).get('selected_component')
-  if selected not in self.index['production'].values() or root!=self.cache/'bundles'/(self.identity+'-'+selected):raise AssetError('NATIVE_ASSET_ROOT_IDENTITY')
-  self._verify(root,selected);name=self.index['diagnostics'][identifier];c=self.index['components'][name];target=root/'diagnostic_variants'/identifier/'libmgbfs_cuda.so';deadline=time.monotonic()+min(self.timeout,self.timeout if timeout is None else max(.001,timeout))
+  if selected not in self.index['production'].values() or root!=self.cache/'bundles'/(self.identity+'-v'+str(LAYOUT_SCHEMA)+'-'+selected):raise AssetError('NATIVE_ASSET_ROOT_IDENTITY')
+  self._verify(root,selected);name=controls[identifier];c=self.index['components'][name];target=root/'diagnostic_variants'/identifier/'libmgbfs_cuda.so';deadline=time.monotonic()+min(self.timeout,self.timeout if timeout is None else max(.001,timeout))
   with self._lock('variant-'+self.identity+'-'+identifier,deadline):
    if target.exists():return checked_file(target.parent,'libmgbfs_cuda.so',c['files']['libmgbfs_cuda.so'])
    folder=self._component(name,deadline)
@@ -237,7 +239,11 @@ class AssetManager:
 _roots={}
 def index_path():return Path(__file__).with_name('native_assets.json')
 def cache_path():return Path(os.environ.get('MGBFS_NATIVE_CACHE') or Path(os.environ.get('XDG_CACHE_HOME') or Path.home()/'.cache')/'multigpubfs/native')
-def _key(path):return (str(Path(path).resolve()),str(cache_path().expanduser().resolve()),os.environ.get('CUDA_VISIBLE_DEVICES'),os.environ.get('NVIDIA_VISIBLE_DEVICES'),os.environ.get('LD_LIBRARY_PATH'),os.environ.get('LD_PRELOAD'))
+def _key(path):
+ path=Path(path)
+ try:st=path.stat();revision=(st.st_size,st.st_mtime_ns)
+ except OSError:revision=None
+ return (str(path.resolve()),revision,str(cache_path().expanduser().resolve()),os.environ.get('CUDA_VISIBLE_DEVICES'),os.environ.get('NVIDIA_VISIBLE_DEVICES'),os.environ.get('LD_LIBRARY_PATH'),os.environ.get('LD_PRELOAD'))
 def current_root(path=None):
  value=_roots.get(_key(path or index_path()));return value[0] if value and (value[0]/'bin/mgbfs').is_file() else None
 def ensure_runtime(path=None):
@@ -258,5 +264,5 @@ def ensure_variant(root,identifier,*,deadline=None):
 def status(root=None):
  for prepared,manager,hardware in _roots.values():
   if root is None or Path(root).resolve()==prepared:
-   return {'status':'READY','root':str(prepared),'index_id':manager.index['id'],'index_sha256':manager.identity,'hardware':hardware,'selected_component':json.loads((prepared/'manifest.json').read_text())['native_delivery']['selected_component'],'transfers':list(manager.events),'downloaded_bytes':sum(x['downloaded_bytes'] for x in manager.events),'scope':'Verified native files only; actual GPU/BFS acceptance is separate'}
+   return {'status':'READY','root':str(prepared),'index_id':manager.index['id'],'index_sha256':manager.identity,'hardware':hardware,'selected_component':json.loads((prepared/'manifest.json').read_text())['native_delivery']['selected_component'],'transfers':list(manager.events),'downloaded_bytes':sum(x['downloaded_bytes'] for x in manager.events),'scope':'Verified files only; transfers are cumulative in this Python process; actual GPU/BFS acceptance is separate'}
  return {'status':'NOT_PREPARED','scope':'Import and activation do not download or initialize CUDA'}
