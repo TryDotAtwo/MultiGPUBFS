@@ -359,7 +359,9 @@ def record_architecture(runner,driver_step):
  manifest=Path(__file__).parent/'_native/manifest.json'
  if not manifest.is_file():
   from .native_distribution import native_root
-  manifest=native_root(prepare=True)/'manifest.json'
+  delivery=runner.report.get('native_delivery',{})
+  delivered=delivery.get('root') if delivery.get('status')=='READY' else None
+  manifest=(Path(delivered) if delivered else native_root(prepare=False))/'manifest.json'
  if not manifest.is_file():return
  data=driver_step.get('result',{}).get('data',{}).get('driver',{})
  value=coverage(json.loads(manifest.read_text()),data.get('devices',[]))

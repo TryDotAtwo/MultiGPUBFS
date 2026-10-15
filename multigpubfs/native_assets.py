@@ -264,5 +264,10 @@ def ensure_variant(root,identifier,*,deadline=None):
 def status(root=None):
  for prepared,manager,hardware in _roots.values():
   if root is None or Path(root).resolve()==prepared:
-   return {'status':'READY','root':str(prepared),'index_id':manager.index['id'],'index_sha256':manager.identity,'hardware':hardware,'selected_component':json.loads((prepared/'manifest.json').read_text())['native_delivery']['selected_component'],'transfers':list(manager.events),'downloaded_bytes':sum(x['downloaded_bytes'] for x in manager.events),'scope':'Verified files only; transfers are cumulative in this Python process; actual GPU/BFS acceptance is separate'}
+   manifest=json.loads((prepared/'manifest.json').read_text())
+   declared={k:manifest.get(k) for k in ('architectures','ptx_architectures','cuda_toolkit','cuda_runtime_linkage','production_build','native_binary_source_commit','cuda_library_source_commit','cuda_source_tree','cuda_kernel_source_sha256','elf_runtime_requirements')}
+   info=Path(__file__).with_name('_package_info.json')
+   if info.is_file():declared['package_source_commit']=json.loads(info.read_text()).get('source_commit')
+   declared['declared_artifact_sha256']={k:manifest['sha256'].get(k) for k in ('bin/mgbfs','lib/libmgbfs_cuda.so','lib/libcudart.so.12','lib/libnccl.so.2')}
+   return {'status':'READY','native_build_declaration':declared,'root':str(prepared),'index_id':manager.index['id'],'index_sha256':manager.identity,'hardware':hardware,'selected_component':json.loads((prepared/'manifest.json').read_text())['native_delivery']['selected_component'],'transfers':list(manager.events),'downloaded_bytes':sum(x['downloaded_bytes'] for x in manager.events),'scope':'Verified files only; transfers are cumulative in this Python process; actual GPU/BFS acceptance is separate'}
  return {'status':'NOT_PREPARED','scope':'Import and activation do not download or initialize CUDA'}

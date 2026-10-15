@@ -5,14 +5,14 @@ not repair a driver, change package defaults, or restart a production graph.
 """
 import argparse,contextlib,hashlib,json,os,shlex,socket,sys,tempfile,time
 from pathlib import Path
-from .runtime_variants import PRODUCTION,SPECS,digest
+from .runtime_variants import PRODUCTION,SPECS,UNIVERSAL,digest
 
 FIELDS={'variant','devices','worker','module','data_loading','transport'}
 FIXTURES=('permutation','repeated','matrix')
 
 def overrides(settings):
  if set(settings)!=FIELDS:raise ValueError('SERVER_RECIPE_FIELDS')
- if settings['variant'] not in SPECS:raise ValueError('SERVER_RECIPE_BUILD')
+ if settings['variant'] not in (*SPECS,UNIVERSAL):raise ValueError('SERVER_RECIPE_BUILD')
  devices=settings['devices']
  if not isinstance(devices,list) or not devices or any(type(x) is not int or x<0 for x in devices) or len(set(devices))!=len(devices):raise ValueError('SERVER_RECIPE_DEVICES')
  if settings['worker'] not in ('persistent','fresh') or settings['transport'] not in ('inherited','socket'):raise ValueError('SERVER_RECIPE_MODE')
@@ -23,11 +23,12 @@ def overrides(settings):
  if settings['transport']=='socket':env.update(NCCL_P2P_DISABLE='1',NCCL_SHM_DISABLE='1',NCCL_IB_DISABLE='1')
  return env
 
-def candidates(devices):
+def candidates(devices,*,include_universal=False):
  # Exhaust common-device configurations before clearly labelled single-GPU fallbacks.
  groups=[list(devices)]+([[d] for d in devices] if len(devices)>1 else [])
+ builds=(PRODUCTION,UNIVERSAL,'static-sm120','shared-legacy','baseline-static-legacy') if include_universal else (PRODUCTION,'static-sm120','shared-legacy','baseline-static-legacy')
  for group in groups:
-  for build in (PRODUCTION,'static-sm120','shared-legacy','baseline-static-legacy'):
+  for build in builds:
    for loading in ('inherited','LAZY','EAGER'):
     for transport in (('inherited','socket') if len(group)>1 else ('inherited',)):
      for worker in ('persistent','fresh'):
@@ -137,7 +138,8 @@ def find_working(runner,devices,deadline):
  runner.diagnostic_variants=verified
  identity=server_identity();remaining=deadline-time.monotonic();group_deadline=time.monotonic()+remaining*.7
  profile_path=runner.root/'working-config.json';attempts=[]
- for index,settings in enumerate(candidates(devices)):
+ choices=candidates(devices,include_universal=True) if verified.get('lazy_delivery') else candidates(devices)
+ for index,settings in enumerate(choices):
   if getattr(runner,'deep_cleanup_blocked',False):return result('BLOCKED','Owned diagnostic process could not be reaped; no ready command')
   if deadline-time.monotonic()<12:break
   if len(devices)>1 and settings['devices']==list(devices) and time.monotonic()>group_deadline:continue
