@@ -5,7 +5,7 @@ The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7"
 ```
 
 Use the package after installation:
@@ -31,7 +31,7 @@ The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies us
 
 ## Scope and identity
 
-Release: [native-pip-20261015-v16](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v16). Package `0.2.0.dev16`; SHA256 `65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b`. Pip verifies this hash through the URL fragment.
+Release: [native-pip-20261015-v17](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v17). Package `0.2.0.dev17`; SHA256 `979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7`. Pip verifies this hash through the URL fragment.
 
 Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library uses Shared CUDA runtime linkage and native SM75/SM86/SM120 cubins. Legacy alternatives are isolated diagnostic contrasts. This does not claim original-server SM120 BFS, B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
 

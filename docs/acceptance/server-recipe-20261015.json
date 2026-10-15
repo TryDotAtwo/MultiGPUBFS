@@ -1,0 +1,335 @@
+{
+  "schema": 1,
+  "status": "PASS_ON_2XT4",
+  "package": "0.2.0.dev17",
+  "wheel_sha256": "979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7",
+  "native_payload_unchanged": true,
+  "source_commit": "7e5eec96f5ad36f159d05fdea5b9ac0a13343483",
+  "hardware": "2xT4",
+  "cpu_tests": 689,
+  "checks": [
+    {
+      "name": "catalogue-S5",
+      "status": "PASS",
+      "states": 120,
+      "diameter": 10,
+      "devices": [
+        0,
+        1
+      ],
+      "wall_seconds": 15.702739967000014,
+      "kaggle_version": 1
+    },
+    {
+      "name": "catalogue-S11",
+      "status": "PASS",
+      "states": 39916800,
+      "diameter": 55,
+      "devices": [
+        0,
+        1
+      ],
+      "wall_seconds": 20.674764917000005,
+      "kaggle_version": 1
+    },
+    {
+      "name": "catalogue-S12",
+      "status": "PASS",
+      "states": 479001600,
+      "diameter": 66,
+      "devices": [
+        0,
+        1
+      ],
+      "wall_seconds": 52.79162576800002,
+      "kaggle_version": 1
+    },
+    {
+      "name": "reject-unsupported-lazy",
+      "status": "PASS",
+      "scope": "Real version-1 candidate was correctly rejected with CUDA_LOADING_POLICY; no working command was issued"
+    },
+    {
+      "name": "ordinary-doctor",
+      "status": "PASS",
+      "selected": {
+        "variant": "shared-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "persistent",
+        "module": "inherited",
+        "data_loading": "inherited",
+        "transport": "inherited"
+      }
+    },
+    {
+      "name": "printed-command-from-other-cwd",
+      "status": "PASS",
+      "cpu_oracles_verified": true
+    },
+    {
+      "name": "alternative-fresh-socket",
+      "status": "PASS",
+      "selected": {
+        "variant": "static-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "fresh",
+        "module": "EAGER",
+        "data_loading": "EAGER",
+        "transport": "socket"
+      },
+      "scope": "Real selected-config BFS and command; candidate restriction is a branch-coverage fixture"
+    },
+    {
+      "name": "single-gpu-fresh",
+      "status": "PASS",
+      "selected": {
+        "variant": "shared-sm120",
+        "devices": [
+          0
+        ],
+        "worker": "fresh",
+        "module": "inherited",
+        "data_loading": "inherited",
+        "transport": "inherited"
+      },
+      "scope": "Real selected-config BFS and command; candidate restriction is a branch-coverage fixture"
+    },
+    {
+      "name": "reject-settings",
+      "status": "PASS"
+    },
+    {
+      "name": "reject-artifact",
+      "status": "PASS"
+    },
+    {
+      "name": "reject-changed-gpu-assignment",
+      "status": "PASS"
+    },
+    {
+      "name": "deep-doctor",
+      "status": "PASS",
+      "selected": {
+        "variant": "shared-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "persistent",
+        "module": "inherited",
+        "data_loading": "inherited",
+        "transport": "inherited"
+      },
+      "counts": {
+        "PASS": 193,
+        "SKIPPED": 6
+      }
+    },
+    {
+      "name": "archive-proofs-and-cleanup",
+      "status": "PASS",
+      "state_payloads_excluded": true
+    },
+    {
+      "name": "exhausted-budget-never-recommends",
+      "status": "PASS"
+    }
+  ],
+  "wall_seconds": 1431.2121070570001,
+  "scope": "Installed server-recipe search and generated launcher on T4/SM75; no original-server SM120 execution claim",
+  "validation_history": {
+    "first_phase_kaggle_version": 1,
+    "first_phase_receipt_sha256": "3766e42db61706db00dce539933d6ac756b63f9676762fe1d0e7fe486265ff76",
+    "first_phase_harness_error": "Expected LAZY success in a branch fixture, but native policy correctly requires EAGER. Production search and S5/S11/S12 passed.",
+    "remaining_phase_kaggle_version": 2,
+    "same_wheel_sha256": "979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7"
+  },
+  "scientific_results": [
+    {
+      "n": 5,
+      "states": 120,
+      "diameter": 10,
+      "layer_sizes": [
+        1,
+        4,
+        9,
+        15,
+        20,
+        22,
+        20,
+        15,
+        9,
+        4,
+        1
+      ],
+      "bfs_seconds": 0.197528072,
+      "states_sha256": "a24bca8be2271f361782d56025de661d32003265e3a87faeb42068307ae40b57",
+      "cuda_library_sha256": "f8845e023d65d1f0aad2f86dfcf558bec9e558c3e989014664ade46dcf74485f",
+      "devices": [
+        0,
+        1
+      ],
+      "scope": "Version-1 exact same-wheel command; every actual layer independently checked against Mahonian polynomial"
+    },
+    {
+      "n": 11,
+      "states": 39916800,
+      "diameter": 55,
+      "layer_sizes": [
+        1,
+        10,
+        54,
+        209,
+        649,
+        1717,
+        4015,
+        8504,
+        16599,
+        30239,
+        51909,
+        84591,
+        131625,
+        196470,
+        282369,
+        391939,
+        526724,
+        686763,
+        870233,
+        1073227,
+        1289718,
+        1511742,
+        1729808,
+        1933514,
+        2112319,
+        2256396,
+        2357475,
+        2409581,
+        2409581,
+        2357475,
+        2256396,
+        2112319,
+        1933514,
+        1729808,
+        1511742,
+        1289718,
+        1073227,
+        870233,
+        686763,
+        526724,
+        391939,
+        282369,
+        196470,
+        131625,
+        84591,
+        51909,
+        30239,
+        16599,
+        8504,
+        4015,
+        1717,
+        649,
+        209,
+        54,
+        10,
+        1
+      ],
+      "bfs_seconds": 2.699858059,
+      "states_sha256": "8b8c42a1232f140dacd6907d19c8864d63eff530b6b3e5e94a1b035f5f9d4677",
+      "cuda_library_sha256": "f8845e023d65d1f0aad2f86dfcf558bec9e558c3e989014664ade46dcf74485f",
+      "devices": [
+        0,
+        1
+      ],
+      "scope": "Version-1 exact same-wheel command; every actual layer independently checked against Mahonian polynomial"
+    },
+    {
+      "n": 12,
+      "states": 479001600,
+      "diameter": 66,
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "bfs_seconds": 36.029145897,
+      "states_sha256": "4dddfe999b1d913c2eaccb1b911191baf8ea8e3db2be43d38e45767a27811e48",
+      "cuda_library_sha256": "f8845e023d65d1f0aad2f86dfcf558bec9e558c3e989014664ade46dcf74485f",
+      "devices": [
+        0,
+        1
+      ],
+      "scope": "Version-1 exact same-wheel command; every actual layer independently checked against Mahonian polynomial"
+    }
+  ],
+  "persistent_same_worker_group": true
+}

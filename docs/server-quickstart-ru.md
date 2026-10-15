@@ -1,72 +1,92 @@
-# Обновить пакет и начать расчёт на сервере
+# Найти рабочую конфигурацию и запустить BFS на сервере
 
-Команду нужно выполнять внутри задачи, которой уже выделены GPU. Она обновляет
-только MultiGPUBFS, сохраняет существующие зависимости Torch/CayleyPy и запускает
-диагностику в новом Python-процессе:
+Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
-```sh
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b" && python -m multigpubfs.diagnostics
+```bash
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7" && python -m multigpubfs.diagnostics
 ```
 
-Это обновление установленного окружения. Для чистой установки с CayleyPy есть
-[обычная команда pip с extra](install-native-package.md).
+Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. CUDA/NCCL поставляются внутри wheel; драйвер сервера пакет не заменяет.
 
-Штатная библиотека уже содержит готовые SM75/SM86/SM120 ядра и shared CUDA runtime.
-Компилятор на сервере, ручные пути библиотек и выбор диагностического варианта не
-нужны. GPU видны так, как их выделил планировщик; CUDA_VISIBLE_DEVICES менять не нужно.
+Обычный `doctor` теперь сам ищет рабочий вариант. Полная матрица с общим бюджетом 30 минут:
 
-При исправном окружении обычный doctor завершится PASS, включая `gpu-N-bfs`,
-а при нескольких GPU — `nccl-exchange` и `multi-gpu-bfs`. Это реальные маленькие
-BFS с проверкой точных слоёв. FAIL/TIMEOUT означает неуспешную проверку; полный
-отчёт и ZIP сохраняются в напечатанном каталоге. Ничего автоматически не отправляется.
+```bash
+python -m multigpubfs.diagnostics --deep --total-timeout 1800
+```
 
-Если сервис принимает только Python-код, отправьте такой файл. Обновление и
-диагностика выполняются отдельными процессами, поэтому старые импорты не мешают:
+## Что означает READY
+
+В начале итоговой сводки появятся:
+
+```text
+Working server configuration: READY
+VERIFIED GPU SET [0, 1]
+READY COMMAND ...
+CALCULATION EXAMPLE ...
+```
+
+Копируйте `READY COMMAND`: она повторно запускает маленькие проверочные BFS в выбранной конфигурации. Эта точка входа уже была успешно исполнена самим doctor перед рекомендацией.
+
+`CALCULATION EXAMPLE` запускает настоящий расчёт S11. Замените параметры графа и задайте новый каталог результатов. Например, если отчёт лежит в `mgbfs-diagnostics-...`:
+
+```bash
+python -m multigpubfs.server_recipe --profile /полный/путь/mgbfs-diagnostics-.../working-config.json --catalog PermutationGroups.coxeter --catalog-kwargs '{"n":11}' --output bfs-S11
+```
+
+`--catalog` принимает публичные конструкторы `PermutationGroups`, `MatrixGroups`, `Puzzles`; аргументы задаются JSON через `--catalog-args`/`--catalog-kwargs`. Собственный сохранённый граф можно передать через `--graph graph.json`. Параметр `--seconds` задаёт бюджет расчёта; по умолчанию 3600 секунд. Состояние `INCOMPLETE` не означает полного обхода, и команда возвращает код 2.
+
+## Если сервер принимает только Python-код
+
+SSH и интерактивная оболочка не нужны. В окружении с установленными CayleyPy/PyTorch отправьте этот код. Он обновит пакет, прочитает результат диагностики и запустит пример расчёта с найденной конфигурацией:
 
 ```python
-import subprocess, sys
-subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade",
-                "--force-reinstall", "--no-deps", "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl#sha256=65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b"], check=True)
-subprocess.run([sys.executable, "-m", "multigpubfs.diagnostics"], check=True)
+import json, shlex, subprocess, sys, tempfile
+from pathlib import Path
+
+subprocess.run([
+    sys.executable, "-m", "pip", "install", "--upgrade",
+    "--force-reinstall", "--no-deps",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7",
+], check=True)
+report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
+subprocess.run([
+    sys.executable, "-m", "multigpubfs.diagnostics",
+    "--output", str(report_dir),
+])
+report = json.loads((report_dir / "report.json").read_text())
+working = report.get("working_configuration", {})
+if working.get("status") != "READY":
+    raise RuntimeError(working.get("reason", "Рабочий вариант не подтверждён"))
+command = shlex.split(working["calculation_example"])
+command[command.index("--output") + 1] = str(report_dir.parent / "bfs-S11")
+# Пример считает S11. Изменяйте JSON после --catalog-kwargs для другого графа.
+subprocess.run(command, check=True)
 ```
 
-После успешной проверки запускайте расчёт из нового Python-процесса:
+Общий код возврата doctor здесь намеренно не используется как единственный критерий: неработающая альтернативная диагностическая сборка может дать общий FAIL при отдельно проверенной рабочей конфигурации READY.
 
-```python
-from time import perf_counter
-import multigpubfs
-from cayleypy import CayleyGraph, PermutationGroups
-from multigpubfs.generic_session import persistent_graph_workers
+## Что именно подбирается
 
-multigpubfs.enable_native()
-with persistent_graph_workers():
-    for n in (5, 11, 12):
-        graph = CayleyGraph(PermutationGroups.coxeter(n), device="cpu")
-        started = perf_counter()
-        result = graph.bfs()
-        if not result.bfs_completed:
-            print(n, "INCOMPLETE", result.completed_depth, result.output)
-            break
-        print(n, result.num_vertices(), result.diameter(),
-              round(perf_counter() - started, 3), result.output)
-```
+- Одна из четырёх готовых библиотек: shared/static, с нативным SM120 или прежними архитектурами. Штатная shared-SM120 проверяется первой.
+- Persistent workers либо отдельные процессы, inherited/EAGER/LAZY-загрузка CUDA.
+- Совместная работа всех выбранных GPU; при проблемах проверяется NCCL-вариант с отключением P2P/SHM/IB. Затем возможна явно помеченная конфигурация на одной карте.
 
-`device="cpu"` относится к описанию графа. После явного `enable_native()` сам
-BFS выполняется нашим native GPU-движком. По умолчанию он использует выделенные
-видимые карты и автоподбор; общий persistent-контекст сохраняет workers между
-графами. Точные размеры всех слоёв доступны в `result.layer_sizes` и отчёте;
-состояния сохраняются компактными выборками, не всеми слоями целиком.
+Каждый кандидат должен полностью посчитать перестановочный граф, граф с повторами и матричный граф. Все слои и последние состояния сверяются с независимым CPU-обходом. Проверяются фактически загруженная CUDA-библиотека и набор GPU. Для persistent-пути два первых обхода выполняются внутри одного пула; PID сохраняются в доказательствах.
 
-`PermutationGroups.coxeter(n)` можно заменить поддерживаемым конструктором
-CayleyPy. Для перебора LRX/Rapaport M2 есть [пример пар](../examples/cayleypy_pair_sweep.ipynb).
-Возможность закончить конкретный граф зависит от доступной памяти и объёма работы.
+Текущий native BFS требует EAGER. Проба LAZY может закончиться явным `CUDA_LOADING_POLICY ... EAGER required`: это корректный отказ кандидата, а не подтверждённый рабочий режим. Поиск продолжится с другими настройками.
 
-При разборе оставшейся ошибки используйте `python -m multigpubfs.diagnostics --deep`:
-до 30 минут тестов, проверки штатного BFS раньше старых сборок и один ZIP.
-`production_bfs_acceptance` отдельно показывает результат штатного запуска;
-FAIL в эксперименте старой сборки не превращает успешный штатный BFS в неуспешный
-расчёт. Общий статус deep сохраняет сведения обо всех ошибках.
+Выданная команда применяет только проверенные настройки в отдельном Python-процессе и запускает общий native backend с автоматическим подбором буферов. Глобальные настройки библиотеки, драйвер и основной пользовательский расчёт doctor не меняет. Команда предназначена для одного узла.
 
-[Измеренные проверки и границы покрытия](sm120-production-acceptance-2026-10-15.md).
-На T4 проверена эта библиотека с её SM75-кодом; запуск именно на серверных SM120
-нужно подтвердить свежим doctor на том сервере.
+## Если часть проверок не прошла
+
+Общий `FAIL` может относиться к другой диагностической сборке, тогда как выбранный путь имеет отдельный `READY`. Смотрите `Working server configuration`, `VERIFIED GPU SET` и `proof_steps`. `single-GPU fallback` означает, что принят запуск только на указанной одной карте, а не на всём исходном наборе.
+
+Без полного BFS и успешного запуска публичной команды состояния READY не будет. При `NOT_FOUND`, `INCOMPLETE`, `UNAVAILABLE` или `BLOCKED` непроверенная команда не выдаётся. Если собственный дочерний процесс нельзя завершить, новые GPU-пробы прекращаются и ранее подготовленная рекомендация отзывается.
+
+`working-config.json` привязан к серверу, доступным GPU/драйверу, Python, значимому окружению и SHA пакета. После смены задачи/окружения/драйвера/сборки команда может потребовать повторить doctor. Это защищает от случайного использования профиля от другой машины. Сохраните весь каталог отчёта: профиль ссылается на файлы доказательств. Они включены в `diagnostics.zip`; большие состояния и файлы окружения заданий туда не включены.
+
+## Границы проверки
+
+READY доказывает работу выбранного пути на маленьких контрольных графах в проверенном окружении. Размер будущего графа, достаточность VRAM, наилучшая скорость и работа на нескольких узлах требуют отдельных измерений. Диагностика не обещает обойти запрет GPU, исправить ядро/драйвер или однозначно установить скрытую администратором причину.
+
+Проверка выпуска выполнена на настоящих 2×T4. Сборка содержит нативный SM120, но SM120 на сервере Андрея проверит его собственный doctor. [Результаты проверки выпуска](server-recipe-acceptance-2026-10-15.md).
