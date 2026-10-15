@@ -36,7 +36,7 @@ env['LD_LIBRARY_PATH']=str(nccl/'lib')+':'+str(sdk/'lib')
 variant=os.environ.get('MGBFS_DIAGNOSTIC_VARIANT')
 choices={'shared-legacy':('75;86','Shared'),'static-sm120':('75;86;120','Static'),'shared-sm120':('75;86;120','Shared')}
 if variant is not None and variant not in choices:raise RuntimeError('UNKNOWN_DIAGNOSTIC_VARIANT')
-architectures,runtime=choices.get(variant,('75;86',None))
+architectures,runtime=choices.get(variant,('75;86;120','Shared'))
 flags=[] if runtime is None else ['-DCMAKE_CUDA_RUNTIME_LIBRARY='+runtime]
 run(['cmake','-S',root/'cuda','-B',native,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_CUDA_ARCHITECTURES='+architectures,'-DCMAKE_CUDA_COMPILER='+str(sdk/'bin/nvcc'),'-DBUILD_TESTING=OFF','-DMGBFS_NCCL_LSA=OFF','-DMGBFS_NCCL_ROOT='+str(nccl),'-DCUTLASS_ROOT='+str(cutlass),*flags],env)
 run(['cmake','--build',native,'--target','mgbfs_cuda','--parallel','2'],env)
