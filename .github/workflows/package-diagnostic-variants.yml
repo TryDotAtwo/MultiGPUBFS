@@ -19,11 +19,16 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
       - name: Prepare CPU-only package tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y patchelf g++ binutils
           python3 -m pip install build wheel
+          python3 -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install numpy pyarrow huggingface_hub pytest cayleypy==0.2.0
       - name: Check diagnostic, isolation and ordinary runtime contracts
         run: |
           python3 -m unittest discover -s tests -p 'test*diagnostic*.py'
