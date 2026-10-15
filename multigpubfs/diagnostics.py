@@ -214,6 +214,8 @@ class Runner:
  def skip(self,name,reason):
   self.report['steps'].append({'name':name,'status':'SKIPPED','reason':reason});self.save();print('SKIP '+name+': '+reason,flush=True)
  def run(self,name,command,*,optional=False,environment=None):
+  if getattr(self,'deep_cleanup_blocked',False):
+   self.skip(name,'OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED; no further probes started');return self.report['steps'][-1]
   entry={'name':name,'status':'RUNNING','command':command,'timeout_seconds':self.timeout,'log':name+'.log'};self.report['steps'].append(entry);self.save();print('START '+name,flush=True)
   started=time.monotonic();process=None;thread=None
   try:
@@ -234,14 +236,17 @@ class Runner:
       from .deep_diagnostics import process_snapshot
       folder=self.root/name;folder.mkdir(exist_ok=True);process_snapshot(process.pid,folder/'process-snapshot.json')
     except BaseException:self.stop_probe(process,self.root/name);raise
-    self.stop_probe(process,self.root/name);thread.join(timeout=2)
+    cleanup=self.stop_probe(process,self.root/name);thread.join(timeout=2)
+    if not cleanup['complete']:
+     entry['status']='TIMEOUT' if entry['status']=='TIMEOUT' else 'FAIL'
+     entry['error']=entry.get('error','')+'; OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED: '+str(cleanup['surviving_group_pids'])
     if not thread.is_alive() and process.stdout:process.stdout.close()
     if entry['status']=='RUNNING':
      entry['exit_code']=process.returncode;entry['status']='PASS' if process.returncode==0 else 'FAIL'
      if process.returncode:entry['error']='Component process exited with code '+str(process.returncode)
   except (OSError,ValueError) as error:entry.update(status='FAIL',error=str(error),errno=getattr(error,'errno',None),exception_type=type(error).__name__)
   entry['seconds']=time.monotonic()-started
-  if optional and entry['status'] in ('FAIL','TIMEOUT'):entry['status']='WARNING'
+  if optional and entry['status'] in ('FAIL','TIMEOUT') and not getattr(self,'deep_cleanup_blocked',False):entry['status']='WARNING'
   entry['log_tail']=(self.root/(name+'.log')).read_text(encoding='utf-8',errors='replace')[-6000:] if (self.root/(name+'.log')).exists() else ''
   phases=[line[6:] for line in entry['log_tail'].splitlines() if line.startswith('PHASE ')]
   if phases:entry['last_phase']=phases[-1]
@@ -259,7 +264,6 @@ class Runner:
   if entry['status']=='PASS' and data.get('status')=='UNAVAILABLE':entry.update(status='SKIPPED',reason=data.get('reason',data.get('error','Auxiliary component unavailable')))
   self.save();print(entry['status']+' '+name+' ('+format(entry['seconds'],'.2f')+' s)',flush=True);return entry
  def stop_probe(self,process,folder=None):
-  if not getattr(self,'deep_capture',False):return self.stop(process)
   from .deep_diagnostics import bounded_stop
   result=bounded_stop(process)
   self.report.setdefault('diagnostic_cleanup',[]).append(result)
@@ -271,7 +275,7 @@ class Runner:
    if folder is not None:
     from .deep_diagnostics import process_snapshot
     process_snapshot(process.pid,folder/'post-cleanup-snapshot.json',process_group=process.pid)
-  self.save()
+  self.save();return result
  @staticmethod
  def stop(process):
   if os.name=='posix':
