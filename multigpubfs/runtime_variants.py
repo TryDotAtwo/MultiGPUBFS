@@ -41,6 +41,7 @@ def inventory(root=None,*,environ=None):
  entries=data.get('variants',[])
  if len(entries)!=4 or {x.get('id') for x in entries}!=set(SPECS):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
  sources=set();verified=[]
+ fingerprints=any('cuda_kernel_source_sha256' in row for row in entries)
  for row in entries:
   identifier=row['id'];runtime,architectures=SPECS[identifier]
   if row.get('runtime')!=runtime or row.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_FACTOR_'+identifier)
@@ -50,7 +51,9 @@ def inventory(root=None,*,environ=None):
   path=checked(expected,row.get('sha256'));proof=json.loads(checked(receipt,row.get('receipt_sha256')).read_text())
   if not row.get('sha256') or not row.get('receipt_sha256'):raise RuntimeError('DIAGNOSTIC_VARIANT_CHECKSUM_METADATA_'+identifier)
   if not row.get('cuda_source_tree') or row.get('cuda_source_tree')!=proof.get('cuda_source_tree') or proof.get('id')!=identifier or proof.get('runtime')!=runtime or proof.get('architectures')!=architectures:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
-  sources.add(row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof))
+  fingerprint=row.get('cuda_kernel_source_sha256')
+  if fingerprints and (not isinstance(fingerprint,str) or len(fingerprint)!=64 or set(fingerprint)-set('0123456789abcdef') or proof.get('cuda_kernel_source_sha256')!=fingerprint):raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
+  sources.add(fingerprint if fingerprints else row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof))
  if len(sources)!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_MISMATCH')
  return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
 

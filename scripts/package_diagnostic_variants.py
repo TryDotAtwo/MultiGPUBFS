@@ -1,4 +1,4 @@
-"""Attach same-source build contrasts and promote the shared SM120 production library."""
+"""Attach same-source build contrasts and promote the shared multi-architecture production library."""
 import hashlib,json,shutil,subprocess
 from pathlib import Path
 from multigpubfs.runtime_variants import BASELINE,PRODUCTION,SPECS
@@ -6,11 +6,20 @@ from multigpubfs.runtime_variants import BASELINE,PRODUCTION,SPECS
 def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def output(command):return subprocess.check_output(list(map(str,command)),text=True,stderr=subprocess.STDOUT,timeout=120)
 
+def cuda_source_identity(root,commit):
+ # Include every tracked CUDA input, mode and path except the build recipe.
+ # Runtime linkage/architecture flags and actual cubins are checked separately.
+ raw=subprocess.check_output(['git','-C',str(root),'ls-tree','-rz',commit+':cuda'],timeout=120)
+ records=[x for x in raw.split(b'\0') if x]
+ code=sorted(x for x in records if x.split(b'\t',1)[1]!=b'CMakeLists.txt')
+ build=[x for x in records if x.split(b'\t',1)[1]==b'CMakeLists.txt']
+ if not code or len(build)!=1:raise RuntimeError('DIAGNOSTIC_BUILD_CUDA_SOURCE_INVENTORY')
+ return {'cuda_source_tree':output(['git','-C',root,'rev-parse',commit+':cuda']).strip(),'cuda_kernel_source_sha256':hashlib.sha256(b'\0'.join(code)).hexdigest(),'cuda_cmake_blob':build[0].split(b'\t',1)[0].split()[-1].decode()}
+
 def attach_variants(stage,inputs,manifest,cuobjdump):
  root=Path(__file__).resolve().parents[1];stage=Path(stage);inputs=Path(inputs)
  baseline_source=manifest['source_commit']
- def tree(commit):return output(['git','rev-parse',commit+':cuda']).strip()
- cuda_tree=tree(baseline_source);entries=[];destination=stage/'diagnostic_variants';destination.mkdir()
+ baseline_identity=cuda_source_identity(root,baseline_source);entries=[];destination=stage/'diagnostic_variants';destination.mkdir()
  for identifier,(runtime,architectures) in SPECS.items():
   folder=destination/identifier;folder.mkdir()
   if identifier==BASELINE:
@@ -27,7 +36,8 @@ def attach_variants(stage,inputs,manifest,cuobjdump):
   library=stage/'lib/libmgbfs_cuda.so' if identifier==PRODUCTION else folder/'libmgbfs_cuda.so'
   shutil.copy2(source,library)
   subprocess.run(['patchelf','--set-rpath','$ORIGIN' if identifier==PRODUCTION else '$ORIGIN/../../lib',str(library)],check=True)
-  if tree(proof['source_commit'])!=cuda_tree:raise RuntimeError('DIAGNOSTIC_BUILD_CUDA_SOURCE_MISMATCH_'+identifier)
+  identity=cuda_source_identity(root,proof['source_commit']);cuda_tree=identity['cuda_source_tree']
+  if identity['cuda_kernel_source_sha256']!=baseline_identity['cuda_kernel_source_sha256']:raise RuntimeError('DIAGNOSTIC_BUILD_CUDA_SOURCE_MISMATCH_'+identifier)
   if proof.get('cuda_toolkit')!='12.9.86':raise RuntimeError('DIAGNOSTIC_BUILD_TOOLKIT_MISMATCH_'+identifier)
   dynamic=output(['readelf','-d',library]);symbols=output(['nm','--defined-only',library])
   defined=[s for s in symbols.splitlines() if s.endswith((' cudaSetDevice',' cudaGetDeviceProperties_v2'))]
@@ -39,10 +49,10 @@ def attach_variants(stage,inputs,manifest,cuobjdump):
    from multigpubfs.architecture_support import PTX_ARCHITECTURES
    verify_inventory(sass,ptx,architectures,PTX_ARCHITECTURES)
    proof['ptx_architectures']=list(PTX_ARCHITECTURES)
-  proof=dict(proof,id=identifier,runtime=runtime,architectures=architectures,cuda_source_tree=cuda_tree,packaged_sha256=sha(library),packaged_elf_dynamic=dynamic,runtime_defined_symbols=defined,sass_inventory=sass,ptx_inventory=ptx,scope='Compiled same-source diagnostic library; actual GPU acceptance is recorded separately')
+  proof=dict(proof,**identity,id=identifier,runtime=runtime,architectures=architectures,packaged_sha256=sha(library),packaged_elf_dynamic=dynamic,runtime_defined_symbols=defined,sass_inventory=sass,ptx_inventory=ptx,scope='Compiled same-source diagnostic library; actual GPU acceptance is recorded separately')
   receipt=folder/'build-receipt.json';receipt.write_text(json.dumps(proof,indent=2))
-  entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':str(library.relative_to(stage)),'sha256':sha(library),'receipt':str(receipt.relative_to(stage)),'receipt_sha256':sha(receipt),'source_commit':proof['source_commit'],'cuda_source_tree':cuda_tree,'ptx_architectures':proof.get('ptx_architectures')})
+  entries.append({'id':identifier,'runtime':runtime,'architectures':architectures,'library':str(library.relative_to(stage)),'sha256':sha(library),'receipt':str(receipt.relative_to(stage)),'receipt_sha256':sha(receipt),'source_commit':proof['source_commit'],'cuda_source_tree':cuda_tree,'cuda_kernel_source_sha256':identity['cuda_kernel_source_sha256'],'ptx_architectures':proof.get('ptx_architectures')})
  production=next(x for x in entries if x['id']==PRODUCTION)
- manifest.update(ptx_architectures=production.get('ptx_architectures'),architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=manifest.get('native_binary_source_commit',baseline_source),cuda_library_source_commit=production['source_commit'],cuda_source_tree=cuda_tree)
+ manifest.update(ptx_architectures=production.get('ptx_architectures'),architectures=production['architectures'],cuda_runtime_linkage=production['runtime'],production_build=PRODUCTION,native_binary_source_commit=manifest.get('native_binary_source_commit',baseline_source),cuda_library_source_commit=production['source_commit'],cuda_source_tree=production['cuda_source_tree'],cuda_kernel_source_sha256=production['cuda_kernel_source_sha256'])
  metadata={'schema':1,'production_default':PRODUCTION,'variants':entries,'scope':'Fixed shared-runtime multi-architecture production library; isolated same-source diagnostic contrasts; no production fallback'}
  (destination/'variants.json').write_text(json.dumps(metadata,indent=2));return metadata
