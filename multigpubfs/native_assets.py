@@ -25,15 +25,31 @@ def checked_file(root,name,info):
  if digest(path)!=info['sha256']:raise AssetError('NATIVE_ASSET_CHECKSUM '+name)
  return path
 
+_probe_blocked=False
+def _stop_hardware_probe(process,owned_group):
+ if owned_group:
+  from .deep_diagnostics import bounded_stop
+  return bounded_stop(process)['complete']
+ # Nested probes inherit the diagnostic group; never kill that group here.
+ for method in ('terminate','kill'):
+  if process.poll() is not None:return True
+  try:getattr(process,method)()
+  except ProcessLookupError:return True
+  try:process.wait(timeout=1)
+  except subprocess.TimeoutExpired:pass
+ return process.poll() is not None
+
 def run_hardware_probe(command=None,timeout=20):
+ global _probe_blocked
+ if _probe_blocked:raise AssetError('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED: no more hardware probes')
  command=command or [sys.executable,'-m','multigpubfs._native_hardware']
- p=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=os.name=='posix')
+ owned_group=os.name=='posix' and not os.environ.get('MGBFS_DIAGNOSTIC_TRACE_FILE')
+ p=subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=owned_group)
  try:
   try:out,err=p.communicate(timeout=timeout)
   except subprocess.TimeoutExpired as error:
-   from .deep_diagnostics import bounded_stop
-   cleanup=bounded_stop(p)
-   if not cleanup['complete']:raise AssetError('NATIVE_ASSET_PROBE_TIMEOUT OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED') from error
+   if not _stop_hardware_probe(p,owned_group):
+    _probe_blocked=True;raise AssetError('NATIVE_ASSET_PROBE_TIMEOUT OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED') from error
    raise AssetError('NATIVE_ASSET_PROBE_TIMEOUT: CUDA hardware discovery exceeded its separate deadline') from error
   if p.returncode:raise AssetError('NATIVE_ASSET_HARDWARE_UNAVAILABLE: '+(err or out)[-4000:])
   try:value=json.loads(out)
@@ -41,9 +57,7 @@ def run_hardware_probe(command=None,timeout=20):
   if not isinstance(value,dict):raise AssetError('NATIVE_ASSET_HARDWARE_RESPONSE')
   return value
  finally:
-  if p.poll() is None:
-   from .deep_diagnostics import bounded_stop
-   bounded_stop(p)
+  if p.poll() is None and not _stop_hardware_probe(p,owned_group):_probe_blocked=True
   for stream in (p.stdout,p.stderr):
    if stream:stream.close()
 
@@ -64,6 +78,17 @@ class AssetManager:
     if not checksum(f.get('sha256')) or type(f.get('size')) is not int or not 0<=f['size']<=2_000_000_000 or f.get('mode') not in (0o644,0o755):raise AssetError('NATIVE_ASSET_INDEX_FILE '+path)
   refs=[index.get('common'),*index.get('production',{}).values(),*index.get('diagnostics',{}).values()]
   if not refs or any(x not in components for x in refs):raise AssetError('NATIVE_ASSET_INDEX_REFERENCE')
+  core=components[index['common']]['files']
+  if not {'bin/mgbfs','lib/libcudart.so.12','lib/libnccl.so.2'}<=set(core) or not any(p.startswith('licenses/') for p in core):raise AssetError('NATIVE_ASSET_COMMON_LAYOUT')
+  kernels=set()
+  for target,name in index['production'].items():
+   build=components[name].get('build',{})
+   if build.get('runtime')!='Shared' or (target!='universal' and build.get('architectures')!=[int(target)]):raise AssetError('NATIVE_ASSET_NATIVE_TARGET_MISMATCH')
+  for name in [*index['production'].values(),*index['diagnostics'].values()]:
+   build=components[name].get('build',{});fingerprint=build.get('cuda_kernel_source_sha256')
+   if not checksum(fingerprint) or 'libmgbfs_cuda.so' not in components[name]['files']:raise AssetError('NATIVE_ASSET_BUILD_PROVENANCE')
+   kernels.add(fingerprint)
+  if len(kernels)!=1:raise AssetError('NATIVE_ASSET_KERNEL_INPUT_MISMATCH')
   self.identity=hashlib.sha256(canonical(index)).hexdigest()
  def _remaining(self,deadline):
   remaining=deadline-time.monotonic()
@@ -216,6 +241,7 @@ def _key(path):return (str(Path(path).resolve()),str(cache_path().expanduser().r
 def current_root(path=None):
  value=_roots.get(_key(path or index_path()));return value[0] if value and (value[0]/'bin/mgbfs').is_file() else None
 def ensure_runtime(path=None):
+ if _probe_blocked:raise AssetError('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED: native launch is blocked')
  path=Path(path or index_path());key=_key(path)
  if key in _roots and (_roots[key][0]/'bin/mgbfs').is_file():return _roots[key][0]
  if platform.system()!='Linux' or platform.machine() not in ('x86_64','AMD64'):raise AssetError('NATIVE_ASSET_PLATFORM_UNSUPPORTED: Linux x86_64 NVIDIA execution is required')

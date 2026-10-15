@@ -352,6 +352,7 @@ def run_case(runner,case,deadline):
    return skipped(verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'))
   try:child_env=environment(case['config']['variant'],verified,deadline=deadline-8)
   except Exception as error:
+   if 'OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED' in str(error):runner.deep_cleanup_blocked=True
    entry={'name':case['name'],'status':'FAIL','error':str(error),'failure_phase':'native-component-preparation','diagnostic_case':case['config']};runner.report['steps'].append(entry);runner.save();return entry
   remaining=deadline-time.monotonic()-8
   if remaining<=.1:return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
