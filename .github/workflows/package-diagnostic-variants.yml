@@ -86,7 +86,9 @@ jobs:
           assert hashlib.sha256((p/'mgbfs').read_bytes()).hexdigest()==r['sha256']
           assert r['cuda_source_tree']==subprocess.check_output(['git','rev-parse','HEAD:cuda'],text=True).strip()
           work=Path('/tmp/mgbfs-portable');shutil.copy2(p/'mgbfs',work/'target/release/mgbfs');(work/'target/release/mgbfs').chmod(0o755)
-          m=json.loads((work/'native-manifest.json').read_text());m['native_binary_source_commit']=r['source_commit'];m['sha256']['bin/mgbfs']=r['sha256'];m['native_count_trace_receipt']=r
+          subprocess.run(['patchelf','--set-rpath','$ORIGIN/../lib',str(work/'target/release/mgbfs')],check=True)
+          relocated=hashlib.sha256((work/'target/release/mgbfs').read_bytes()).hexdigest()
+          m=json.loads((work/'native-manifest.json').read_text());m['native_binary_source_commit']=r['source_commit'];m['sha256']['bin/mgbfs']=relocated;m['native_count_trace_receipt']=dict(r,relocated_sha256=relocated)
           (work/'native-manifest.json').write_text(json.dumps(m))
           PY
       - name: Assemble diagnostic libraries and ordinary baseline into one wheel
