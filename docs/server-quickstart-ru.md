@@ -3,7 +3,7 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9" && python -m multigpubfs.diagnostics
 ```
 
 Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. CUDA/NCCL поставляются внутри wheel; драйвер сервера пакет не заменяет.
@@ -13,6 +13,11 @@ python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https
 ```bash
 python -m multigpubfs.diagnostics --deep --total-timeout 1800
 ```
+
+
+Один wheel уже содержит код для SM75/80/86/89/90/100/103/120. CUDA сама выбирает подходящий вариант; переустановка под каждую карту не требуется. Обычный PTX compute80 оставлен для совместимого JIT-пути на более новых GPU. Первая JIT-загрузка может быть медленнее; это не подтверждённая причина конкретного зависания.
+
+Если `mgbfs graph-count` завис, но независимые Driver API и CUDA Runtime обнаружили одинаковое число устройств, doctor продолжит изолированные проверки рабочих вариантов. Он сохраняет исходный TIMEOUT и не выдаёт READY по одному успешному опросу GPU. Для CUDA_VISIBLE_DEVICES используются логические номера внутри выделенной задачи; список выделенных карт не расширяется.
 
 ## Что означает READY
 
@@ -46,7 +51,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
@@ -67,7 +72,7 @@ subprocess.run(command, check=True)
 
 ## Что именно подбирается
 
-- Одна из четырёх готовых библиотек: shared/static, с нативным SM120 или прежними архитектурами. Штатная shared-SM120 проверяется первой.
+- Одна из четырёх готовых библиотек: shared/static, с полным набором SM75/80/86/89/90/100/103/120 либо прежними SM75/86. Штатная shared-библиотека с полным набором проверяется первой. Исторические идентификаторы `shared-sm120` и `static-sm120` сохранены; реальные архитектуры перечислены в отчёте.
 - Persistent workers либо отдельные процессы, inherited/EAGER/LAZY-загрузка CUDA.
 - Совместная работа всех выбранных GPU; при проблемах проверяется NCCL-вариант с отключением P2P/SHM/IB. Затем возможна явно помеченная конфигурация на одной карте.
 
@@ -89,4 +94,4 @@ subprocess.run(command, check=True)
 
 READY доказывает работу выбранного пути на маленьких контрольных графах в проверенном окружении. Размер будущего графа, достаточность VRAM, наилучшая скорость и работа на нескольких узлах требуют отдельных измерений. Диагностика не обещает обойти запрет GPU, исправить ядро/драйвер или однозначно установить скрытую администратором причину.
 
-Проверка выпуска выполнена на настоящих 2×T4. Сборка содержит нативный SM120, но SM120 на сервере Андрея проверит его собственный doctor. [Результаты проверки выпуска](server-recipe-acceptance-2026-10-15.md).
+Проверка этого выпуска выполнена на настоящих 2×T4. SM100 для B200, SM103 для B300 и SM120 присутствуют в собранной библиотеке, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](multiarch-native-acceptance-2026-10-15.md).

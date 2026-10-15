@@ -4,26 +4,26 @@ Install the [pinned GitHub package](install-native-package.md) and read the
 [measured diagnostic acceptance](diagnostic-build-acceptance-2026-10-14.md).
 
 The extended `doctor --deep` package carries four CUDA libraries from the
-same CUDA source tree. Only isolated diagnostic children switch between alternatives; ordinary BFS uses the fixed production library.
-The ordinary executable stays byte-identical to the accepted baseline. The
-normal CUDA library is now shared-sm120 (Shared runtime; SM75/86/120). No build tool, administrator access or GPU reset
+same CUDA kernel/helper inputs. Only isolated diagnostic children switch between alternatives; ordinary BFS uses the fixed production library.
+The executable adds flushed startup markers around main, policy re-exec and the real CUDA count call; BFS algorithms are unchanged. The
+normal CUDA library is shared-sm120 (historical identifier; Shared runtime; SM75/80/86/89/90/100/103/120 plus compute80 PTX). No build tool, administrator access or GPU reset
 is required on the target server.
 
 | Diagnostic build | Runtime linked by CUDA library | Native cubins |
 |---|---|---|
 | baseline-static-legacy | Static | SM75, SM86 |
 | shared-legacy | Shared | SM75, SM86 |
-| static-sm120 | Static | SM75, SM86, SM120 |
-| shared-sm120 | Shared | SM75, SM86, SM120 |
+| static-sm120 | Static | SM75, SM80, SM86, SM89, SM90, SM100, SM103, SM120 + compute80 PTX |
+| shared-sm120 | Shared | SM75, SM80, SM86, SM89, SM90, SM100, SM103, SM120 + compute80 PTX |
 
 The Rust executable links shared libcudart in every comparison. This matrix
-checks whether outcomes depend on the library's runtime linkage, native SM120
+checks whether outcomes depend on the library's runtime linkage, native multi-architecture
 images or their combination. Separate static runtimes are supported; finding
 two instances does not itself prove the cause. Explicit shared linkage in
 our library also does not guarantee every vendor library uses that instance.
 
 Package assembly checks ELF NEEDED/local symbols, cubin/PTX inventory,
-source-tree identity and SHA256. Each diagnostic child verifies hashes and
+SHA256 of every tracked CUDA input except CMakeLists.txt, actual complete source trees, build-recipe identity and artifact SHA256. The legacy recipe differs only in default CMake settings; runtime linkage and architecture flags are explicit and independently checked in the resulting ELF/cubin/PTX inventories. Actual tree IDs remain distinct in each receipt. Each diagnostic child verifies hashes and
 the library paths actually resolved by its loader before making GPU calls.
 Production direct API/kernel, resident inventory and exact S3 BFS run first
 on every selected GPU. `production_bfs_acceptance` records that finite gate.
@@ -55,7 +55,7 @@ Only diagnostic-owned process groups are stopped; real BFS and unrelated
 processes are not restarted or killed. Untested and budget-skipped cases stay
 explicit. Unsupported GEMM or uncompiled LSA is not a successful execution.
 
-Return the single `diagnostics.zip` privately. It includes `report.json`,
+If `working_configuration: READY` is present, use its verified command and preserve the proof directory. When no working recipe is found, return the single `diagnostics.zip` privately. It includes `report.json`,
 `deep-summary.txt`, `deep-analysis.json`, build evidence, API/worker/native
 logs, call boundaries and process snapshots, with a checksum manifest. It
 excludes graph-state payloads, raw case inputs and full job environment.
@@ -65,15 +65,17 @@ Interpretation:
 
 * ALL_PASS: this finite synthetic scenario did not reproduce the hang.
 * VARIANT_DEPENDENT: some builds pass and others fail; inspect controlled
-  runtime/SM120 pairs and exact call boundaries.
+  runtime/native-fatbinary pairs and exact call boundaries.
 * ALL_FAILED: none of the four builds passed that scenario.
 * INCOMPLETE: missing, unavailable or budget-skipped comparisons prevent a
   complete contrast.
 
 These outcomes establish observations, not a unique root cause. The test
 preserves the inherited JIT cache, so cold/warm or transient effects remain
-possible. Native SM120 cubins avoid requiring PTX JIT for those matching
+possible. Native matching cubins avoid requiring PTX JIT for those matching
 packaged kernels; they do not eliminate every vendor library's initialization
 or JIT. The finite suite cannot guarantee coverage of every graph/API
 parameter, multi-node transport, security policy or inaccessible kernel state.
 It is a startup/correctness investigation, not a throughput benchmark.
+
+Both ordinary and deep doctor can recover the visible logical GPU set from agreeing independent driver/runtime probes after a native-count failure. They retain the original failure and execute the same real-BFS/printed-command gate before declaring a recipe READY. See [current release acceptance](multiarch-native-acceptance-2026-10-15.md).

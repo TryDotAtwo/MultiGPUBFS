@@ -5,7 +5,7 @@ The same GitHub wheel installs on Kaggle and a Linux x86_64 GPU server accessed 
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v17/multigpubfs-0.2.0.dev17-py3-none-linux_x86_64.whl#sha256=979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl#sha256=1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9"
 ```
 
 Use the package after installation:
@@ -31,9 +31,9 @@ The `[cayleypy]` extra installs CayleyPy and its ordinary Python dependencies us
 
 ## Scope and identity
 
-Release: [native-pip-20261015-v17](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v17). Package `0.2.0.dev17`; SHA256 `979ea02ab7f2d271bdbbac4f6b93588e4d7fb2382e99de8e6dc89ca2802105d7`. Pip verifies this hash through the URL fragment.
+Release: [native-pip-20261015-v18](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261015-v18). Package `0.2.0.dev18`; SHA256 `1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9`. Pip verifies this hash through the URL fragment.
 
-Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library uses Shared CUDA runtime linkage and native SM75/SM86/SM120 cubins. Legacy alternatives are isolated diagnostic contrasts. This does not claim original-server SM120 BFS, B200/B300 acceptance or Windows-native support. Graph size remains limited by memory/time.
+Requires Python3.10+, Linux x86_64 with the Ubuntu22.04-or-newer system ABI and a compatible NVIDIA driver. No NVIDIA driver is shipped in the wheel. The ordinary native library uses Shared CUDA runtime linkage and native SM75/80/86/89/90/100/103/120 cubins plus ordinary compute80 PTX. The CUDA loader selects compatible code inside the same wheel; users do not select or rebuild an architecture package. Legacy alternatives are isolated diagnostic contrasts. This release has real 2×T4 acceptance; B200/B300/SM120 have compiled-code coverage, not execution acceptance for this wheel. Windows-native execution is unsupported. Graph size remains limited by memory/time.
 
 The native binaries were rebuilt on Ubuntu22.04 to avoid the old artifact's GLIBC2.38/GLIBCXX3.4.32 dependency. Exact runtime requirements and source/build hashes are recorded in the release manifest. [Acceptance evidence](pip-install-acceptance-2026-10-13.md) separates clean Linux installation, GPU results and hardware limits.
 
@@ -47,7 +47,7 @@ For a sweep over different graphs, keep one `persistent_graph_workers()` context
 
 ## Server component diagnostic
 
-For a single broad server investigation run `python -m multigpubfs.diagnostics --deep` from a fresh process inside the assigned GPU job. It has a 30-minute execution budget, four same-source CUDA runtime/SM120 build comparisons and one metadata/log archive. [Coverage and interpretation](diagnostic-build-contrasts.md); [measured acceptance](diagnostic-build-acceptance-2026-10-14.md). The shared-SM120 library is the normal default. Production API/resident/BFS checks and broad modes run before legacy contrasts. Owned-group cleanup is bounded in both normal and deep doctor, with retained evidence and no false PASS for an unreaped child.
+For a single broad server investigation run `python -m multigpubfs.diagnostics --deep` from a fresh process inside the assigned GPU job. It has a 30-minute execution budget, four same-kernel CUDA runtime/native-code build comparisons and one metadata/log archive. [Coverage and interpretation](diagnostic-build-contrasts.md); [measured acceptance](diagnostic-build-acceptance-2026-10-14.md). The shared multi-architecture library is the normal default (its historical identifier remains `shared-sm120`). Production API/resident/BFS checks and broad modes run before legacy contrasts. Owned-group cleanup is bounded in both normal and deep doctor, with retained evidence and no false PASS for an unreaped child.
 
 Run `multigpubfs doctor` after installation. It checks each visible local GPU, CUDA/native libraries, resident-worker file requests, NCCL and a tiny exact BFS, then writes a readable report and diagnostic ZIP. For Python-only submissions use `from multigpubfs.diagnostics import run_diagnostics; run_diagnostics()`. [Instructions](diagnostics.md) and [measured acceptance](diagnostics-acceptance-2026-10-13.md).
 
@@ -55,4 +55,6 @@ The current diagnostic also probes NVIDIA Driver API directly without `nvidia-sm
 
 The current `doctor` includes broad user-space evidence, isolated loader contrasts and `analysis.json`/`analysis.txt`: [forensic diagnostic guide](forensic-diagnostics.md), [acceptance](forensic-diagnostics-acceptance-2026-10-14.md). The primary failure, observed findings, hypotheses, exclusions and inaccessible evidence are separate.
 
-For a ready update-and-check command, Python-only job submission and actual calculation see [server quickstart](server-quickstart-ru.md). [Current production acceptance](sm120-production-acceptance-2026-10-15.md).
+For a ready update-and-check command, Python-only job submission and actual calculation see [server quickstart](server-quickstart-ru.md). [Current production acceptance](multiarch-native-acceptance-2026-10-15.md).
+
+A failed or timed-out native GPU count no longer ends both diagnostic modes early when independent driver/runtime probes agree. The original failure remains visible; only actual exact BFS and execution of the printed command can produce `working_configuration: READY`. Architecture coverage and separate native/CUDA/Python source identities are stored in `architecture.json` and the report.

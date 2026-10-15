@@ -35,10 +35,11 @@ jobs:
           /tmp/recipe-clean/bin/python -m pip check
           /tmp/recipe-clean/bin/python - <<'PY'
           from multigpubfs.runtime_variants import inventory,PRODUCTION
+          from multigpubfs.architecture_support import NATIVE_ARCHITECTURES
           import importlib.metadata
-          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev17'
+          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev18'
           value=inventory();assert value['status']=='AVAILABLE'
-          assert next(v for v in value['variants'] if v['id']==PRODUCTION)['architectures']==[75,86,120]
+          assert next(v for v in value['variants'] if v['id']==PRODUCTION)['architectures']==list(NATIVE_ARCHITECTURES)
           print('VERIFIED_CLEAN_SERVER_RECIPE_INSTALL_NO_GPU')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

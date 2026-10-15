@@ -17,10 +17,10 @@ def extract_native(archive,root):
 def main():
  root=Path(__file__).resolve().parents[1];stage=root/'multigpubfs/_native'
  if stage.exists():raise RuntimeError('Refusing to replace native staging')
- url='https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v16/multigpubfs-0.2.0.dev16-py3-none-linux_x86_64.whl'
+ url='https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v18/multigpubfs-0.2.0.dev18-py3-none-linux_x86_64.whl'
  with tempfile.TemporaryDirectory() as d:
   wheel=Path(d)/'accepted.whl';urllib.request.urlretrieve(url,wheel)
-  if hashlib.sha256(wheel.read_bytes()).hexdigest()!='65941655242e7a48fa3f27989992fe5f8d5d898c716d481ce0c92cdd9d4a5a6b':raise RuntimeError('ACCEPTED_NATIVE_WHEEL_CHECKSUM')
+  if hashlib.sha256(wheel.read_bytes()).hexdigest()!='1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9':raise RuntimeError('ACCEPTED_NATIVE_WHEEL_CHECKSUM')
   with zipfile.ZipFile(wheel) as z:extract_native(z,root)
  (stage/'bin/mgbfs').chmod(0o755)
  sys.path.insert(0,str(root))
@@ -30,7 +30,7 @@ def main():
  manifest=json.loads((stage/'manifest.json').read_text())
  for name,value in manifest['sha256'].items():
   if hashlib.sha256((stage/name).read_bytes()).hexdigest()!=value:raise RuntimeError('NATIVE_BASE_CHECKSUM_'+name)
- manifest['reused_native_release']='native-pip-20261015-v16'
+ manifest['reused_native_release']='native-pip-20261015-v18'
  manifest['package_source_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
  (stage/'manifest.json').write_text(json.dumps(manifest,indent=2))
  output=root/'dist-native';output.mkdir(exist_ok=False)

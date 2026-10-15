@@ -1,0 +1,289 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "package": "0.2.0.dev18",
+  "wheel_sha256": "1eda27dcd590528dc972dedffcf978c26854832e70703cb8e3d3233910769fa9",
+  "hardware": [
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ]
+    },
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ]
+    }
+  ],
+  "driver_versions": [
+    "580.178.04"
+  ],
+  "python_version": "3.13.15",
+  "scope": "Real 2xT4 execution; B200/B300/SM120 code inventory is compile evidence only; no target-server or new-GPU acceptance is implied.",
+  "checks": [
+    {
+      "name": "installed-fatbinary-inventory",
+      "status": "PASS",
+      "native_architectures": [
+        75,
+        80,
+        86,
+        89,
+        90,
+        100,
+        103,
+        120
+      ],
+      "ptx_architectures": [
+        80
+      ],
+      "library_sha256": "663a2a8d7a69a090d51e4d6c43cb6772b1537a912af22f9c0dfaceb44d3cd802",
+      "native_module_counts": {
+        "75": 24,
+        "80": 24,
+        "86": 24,
+        "89": 24,
+        "90": 24,
+        "100": 24,
+        "103": 24,
+        "120": 24
+      }
+    },
+    {
+      "name": "ordinary-doctor",
+      "status": "PASS",
+      "counts": {
+        "PASS": 28,
+        "SKIPPED": 2
+      },
+      "selected": {
+        "variant": "shared-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "persistent",
+        "module": "inherited",
+        "data_loading": "inherited",
+        "transport": "inherited"
+      }
+    },
+    {
+      "name": "real-native-recipe-after-injected-count-timeout",
+      "status": "PASS",
+      "fault_injection": true,
+      "actual_native_bfs_and_command_verified": true,
+      "devices": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "real-two-gpu-shard-engines",
+      "status": "PASS",
+      "backends": [
+        "shard_ab_hash",
+        "shard_ab_sort_merge"
+      ],
+      "exact_cpu_oracles_verified": true
+    },
+    {
+      "name": "real-static-runtime-and-printed-command",
+      "status": "PASS",
+      "selected": {
+        "variant": "static-sm120",
+        "devices": [
+          0,
+          1
+        ],
+        "worker": "fresh",
+        "module": "EAGER",
+        "data_loading": "EAGER",
+        "transport": "socket"
+      },
+      "candidate_restriction_is_test_fixture": true
+    },
+    {
+      "name": "cayleypy-persistent-S11",
+      "status": "PASS",
+      "devices": [
+        0,
+        1
+      ],
+      "states": 39916800,
+      "diameter": 55,
+      "bfs_seconds": 2.905318913,
+      "wall_seconds": 7.623073659999932,
+      "worker_pids": [
+        2593,
+        2594
+      ],
+      "layers_verified": true,
+      "terminal_state_verified": true,
+      "layer_sizes": [
+        1,
+        10,
+        54,
+        209,
+        649,
+        1717,
+        4015,
+        8504,
+        16599,
+        30239,
+        51909,
+        84591,
+        131625,
+        196470,
+        282369,
+        391939,
+        526724,
+        686763,
+        870233,
+        1073227,
+        1289718,
+        1511742,
+        1729808,
+        1933514,
+        2112319,
+        2256396,
+        2357475,
+        2409581,
+        2409581,
+        2357475,
+        2256396,
+        2112319,
+        1933514,
+        1729808,
+        1511742,
+        1289718,
+        1073227,
+        870233,
+        686763,
+        526724,
+        391939,
+        282369,
+        196470,
+        131625,
+        84591,
+        51909,
+        30239,
+        16599,
+        8504,
+        4015,
+        1717,
+        649,
+        209,
+        54,
+        10,
+        1
+      ],
+      "native_source_commit": "0257cd3bd2f9aa2fbb1911f5c3115a4d20a112bb",
+      "cuda_source_commit": "8a2ad1003d96527783681d1b553dc8bb8347bee7"
+    },
+    {
+      "name": "cayleypy-persistent-S12",
+      "status": "PASS",
+      "devices": [
+        0,
+        1
+      ],
+      "states": 479001600,
+      "diameter": 66,
+      "bfs_seconds": 36.35124581,
+      "wall_seconds": 36.45234498100001,
+      "worker_pids": [
+        2593,
+        2594
+      ],
+      "layers_verified": true,
+      "terminal_state_verified": true,
+      "layer_sizes": [
+        1,
+        11,
+        65,
+        274,
+        923,
+        2640,
+        6655,
+        15159,
+        31758,
+        61997,
+        113906,
+        198497,
+        330121,
+        526581,
+        808896,
+        1200626,
+        1726701,
+        2411747,
+        3277965,
+        4342688,
+        5615807,
+        7097310,
+        8775209,
+        10624132,
+        12604826,
+        14664752,
+        16739858,
+        18757500,
+        20640357,
+        22311069,
+        23697232,
+        24736324,
+        25380120,
+        25598186,
+        25380120,
+        24736324,
+        23697232,
+        22311069,
+        20640357,
+        18757500,
+        16739858,
+        14664752,
+        12604826,
+        10624132,
+        8775209,
+        7097310,
+        5615807,
+        4342688,
+        3277965,
+        2411747,
+        1726701,
+        1200626,
+        808896,
+        526581,
+        330121,
+        198497,
+        113906,
+        61997,
+        31758,
+        15159,
+        6655,
+        2640,
+        923,
+        274,
+        65,
+        11,
+        1
+      ],
+      "native_source_commit": "0257cd3bd2f9aa2fbb1911f5c3115a4d20a112bb",
+      "cuda_source_commit": "8a2ad1003d96527783681d1b553dc8bb8347bee7"
+    },
+    {
+      "name": "checksummed-archives-and-cleanup",
+      "status": "PASS",
+      "states_excluded": true
+    }
+  ],
+  "wall_seconds": 314.453330559,
+  "package_source_commit": "fd248e3979f69655417fab92541feb864272c60f",
+  "package_ci_run": 38747274003,
+  "native_build_run": 38736138908,
+  "trace_cli_build_run": 38737048839,
+  "diagnostic_regression_run": 38747250792
+}
