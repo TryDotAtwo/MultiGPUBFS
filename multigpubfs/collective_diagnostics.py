@@ -69,13 +69,14 @@ def catalog_batch(config,root):
  from .deep_diagnostics import catalog_probe,write
  root=Path(root);state={'schema':1,'status':'RUNNING','device':config['device'],'cases':[],
                       'scope':'One process and reused CUDA context per selected rank; finite successor checks, not full puzzle BFS.'}
+ runtime_cache={}
  for index,case in enumerate(config['catalog']):
   row={'family':case['family'],'constructor':case['constructor']};state['cases'].append(row)
   if case.get('unsupported'):row.update(status='SKIPPED',reason=case['unsupported'])
   else:
    folder=root/('catalog-'+str(index).zfill(3));folder.mkdir()
    try:
-    data=catalog_probe(dict(config,kind='catalog',catalog=case),folder)
+    data=catalog_probe(dict(config,kind='catalog',catalog=case,_catalog_runtime_cache=runtime_cache),folder)
     if data.get('all_generators_exact_readback_verified') is not True:raise RuntimeError('CATALOG_READBACK_NOT_VERIFIED')
     row.update(status='PASS',data=data)
    except Exception as error:row.update(status='FAIL',error=str(error),exception_type=type(error).__name__,traceback=traceback.format_exc())

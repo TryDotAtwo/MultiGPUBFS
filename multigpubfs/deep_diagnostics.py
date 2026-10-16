@@ -249,6 +249,13 @@ def catalog_configurations():
    cases.append({'family':family,'constructor':name,'kwargs':kwargs,'unsupported':unavailable})
  return cases
 
+def catalog_cuda(config):
+ from .diagnostics import _cuda
+ cache=config.get('_catalog_runtime_cache');device=config['device']
+ if cache is None:return _cuda(device,True)
+ if device not in cache:cache[device]=_cuda(device,True)
+ return cache[device]
+
 def catalog_probe(config,root):
  from .diagnostics import _cuda
  from .graph_definition import from_cayleypy
@@ -258,7 +265,7 @@ def catalog_probe(config,root):
  print('PHASE construct finite catalog definition '+selected['family']+'.'+selected['constructor'],flush=True)
  graph=from_cayleypy(getattr(getattr(cayleypy,selected['family']),selected['constructor'])(**kwargs));a=graph.action
  if graph.state_elements*graph.generator_count>16384:raise ValueError('CATALOG_REPRESENTATIVE_EXCEEDS_DIAGNOSTIC_BOUND')
- cuda,lib,ck=_cuda(config['device'],True);alloc=[]
+ cuda,lib,ck=catalog_cuda(config);ck(cuda.cudaSetDevice(config['device']));alloc=[]
  def upload(values,ty):
   host=(ty*len(values))(*values);ptr=C.c_void_p();ck(cuda.cudaMalloc(C.byref(ptr),C.sizeof(host)));alloc.append(ptr);ck(cuda.cudaMemcpy(ptr,host,C.sizeof(host),1));return ptr
  try:
