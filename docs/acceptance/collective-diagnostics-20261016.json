@@ -1,0 +1,762 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "package": "0.2.0.dev22",
+  "package_source_commit": "d31de6d341b37c130e2598d1079f19a4793829e1",
+  "wheel_sha256": "b691739ae60e917a7a4a677453edc666b9aaa38a34b29931eb0db37deda2a267",
+  "hardware": [
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ],
+      "driver": "580.178.04"
+    },
+    {
+      "name": "Tesla T4",
+      "cc": [
+        7,
+        5
+      ],
+      "driver": "580.178.04"
+    }
+  ],
+  "checks": [
+    {
+      "name": "ordinary-doctor-all-selected-gpus-no-single-gpu-sweeps",
+      "status": "PASS",
+      "wall_seconds": 106.57346523299992,
+      "steps": [
+        {
+          "name": "native-assets",
+          "status": "PASS",
+          "seconds": 4.300088038000013
+        },
+        {
+          "name": "control-thread",
+          "status": "PASS",
+          "seconds": 0.1887099300000159
+        },
+        {
+          "name": "system-info",
+          "status": "PASS",
+          "seconds": 0.231240089000039
+        },
+        {
+          "name": "filesystem",
+          "status": "PASS",
+          "seconds": 0.18391733300001079
+        },
+        {
+          "name": "environment-evidence",
+          "status": "PASS",
+          "seconds": 0.28603088600004867
+        },
+        {
+          "name": "nvml-evidence",
+          "status": "PASS",
+          "seconds": 0.2404638529999943
+        },
+        {
+          "name": "torch-evidence",
+          "status": "PASS",
+          "seconds": 11.572393733000013
+        },
+        {
+          "name": "driver-api",
+          "status": "PASS",
+          "seconds": 3.602476774999957
+        },
+        {
+          "name": "native-runtime",
+          "status": "PASS",
+          "seconds": 4.304157625000016
+        },
+        {
+          "name": "cuda-discovery",
+          "status": "PASS",
+          "seconds": 3.49718869000003
+        },
+        {
+          "name": "loader-contrasts",
+          "status": "SKIPPED",
+          "seconds": 0.19000448700001016
+        },
+        {
+          "name": "native-loader-trace",
+          "status": "SKIPPED",
+          "seconds": 0.19181560599997738
+        },
+        {
+          "name": "all-gpus-context",
+          "status": "PASS",
+          "seconds": 5.157304769999996
+        },
+        {
+          "name": "all-gpus-meminfo",
+          "status": "PASS",
+          "seconds": 4.906085070000017
+        },
+        {
+          "name": "all-gpus-hardware",
+          "status": "PASS",
+          "seconds": 4.901900375000025
+        },
+        {
+          "name": "all-gpus-memory",
+          "status": "PASS",
+          "seconds": 4.908194514999991
+        },
+        {
+          "name": "all-gpus-kernel",
+          "status": "PASS",
+          "seconds": 4.903234638000015
+        },
+        {
+          "name": "all-gpus-persistent",
+          "status": "PASS",
+          "seconds": 5.457530198000029
+        },
+        {
+          "name": "nccl-init",
+          "status": "PASS",
+          "seconds": 9.167641686000024
+        },
+        {
+          "name": "nccl-exchange",
+          "status": "PASS",
+          "seconds": 8.832124189000012
+        },
+        {
+          "name": "multi-gpu-bfs",
+          "status": "PASS",
+          "seconds": 6.15940292099998
+        },
+        {
+          "name": "server-recipe-000",
+          "status": "PASS",
+          "seconds": 6.710868921999975
+        },
+        {
+          "name": "server-recipe-000-command",
+          "status": "PASS",
+          "seconds": 11.788182164000034
+        }
+      ],
+      "joint_primitives": [
+        {
+          "name": "all-gpus-context",
+          "seconds": 5.157304769999996,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "name": "all-gpus-meminfo",
+          "seconds": 4.906085070000017,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "name": "all-gpus-hardware",
+          "seconds": 4.901900375000025,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "name": "all-gpus-memory",
+          "seconds": 4.908194514999991,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "name": "all-gpus-kernel",
+          "seconds": 4.903234638000015,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "name": "all-gpus-persistent",
+          "seconds": 5.457530198000029,
+          "ranks": [
+            {
+              "rank": 0,
+              "device": 0,
+              "status": "PASS"
+            },
+            {
+              "rank": 1,
+              "device": 1,
+              "status": "PASS"
+            }
+          ]
+        }
+      ],
+      "working_devices": [
+        0,
+        1
+      ],
+      "no_single_gpu_fallback": true
+    },
+    {
+      "name": "entire-catalog-in-two-concurrent-reused-contexts",
+      "status": "PASS",
+      "wall_seconds": 9.615475859999947,
+      "catalog_cases": 48,
+      "ranks": [
+        {
+          "rank": 0,
+          "device": 0,
+          "pid": 929,
+          "passed": 48,
+          "skipped": 0,
+          "failed": 0,
+          "cases": [
+            {
+              "family": "PermutationGroups",
+              "constructor": "all_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "all_transpositions",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "block_interchange",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "burnt_pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "conjugacy_classes",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "consecutive_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter_b",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter_d",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "cubic_pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "cyclic_coxeter",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "derangements",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "down_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "full_reversals",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "generalized_stars",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "increasing_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "involutive_derangements",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "koltsov3",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "larx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lrx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lsl_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "prefix_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rand_generators",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rapaport_m1",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rapaport_m2",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "sheveleva2",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "signed_reversals",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "stars",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles_01i",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles_0ij",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "top_spin",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "transposons",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "wrapped_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "heisenberg",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "special_linear_fundamental_roots",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "special_linear_root_weyl",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "globe_puzzle",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "hungarian_rings",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "megaminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "mini_pyramorphix",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "picture_cube333",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "pyraminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "rubik_cube",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "starminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "starminx_2",
+              "status": "PASS"
+            }
+          ]
+        },
+        {
+          "rank": 1,
+          "device": 1,
+          "pid": 930,
+          "passed": 48,
+          "skipped": 0,
+          "failed": 0,
+          "cases": [
+            {
+              "family": "PermutationGroups",
+              "constructor": "all_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "all_transpositions",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "block_interchange",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "burnt_pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "conjugacy_classes",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "consecutive_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter_b",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "coxeter_d",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "cubic_pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "cyclic_coxeter",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "derangements",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "down_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "full_reversals",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "generalized_stars",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "increasing_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "involutive_derangements",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "koltsov3",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "larx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lrx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lsl_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "lx",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "pancake",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "prefix_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rand_generators",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rapaport_m1",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "rapaport_m2",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "sheveleva2",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "signed_reversals",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "stars",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles_01i",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "three_cycles_0ij",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "top_spin",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "transposons",
+              "status": "PASS"
+            },
+            {
+              "family": "PermutationGroups",
+              "constructor": "wrapped_k_cycles",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "heisenberg",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "special_linear_fundamental_roots",
+              "status": "PASS"
+            },
+            {
+              "family": "MatrixGroups",
+              "constructor": "special_linear_root_weyl",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "globe_puzzle",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "hungarian_rings",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "megaminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "mini_pyramorphix",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "picture_cube333",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "pyraminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "rubik_cube",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "starminx",
+              "status": "PASS"
+            },
+            {
+              "family": "Puzzles",
+              "constructor": "starminx_2",
+              "status": "PASS"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "scope": "Physical 2xT4 collective installed-package diagnostics; no physical eight-GPU acceptance is claimed. No CUDA/Rust changes.",
+  "wall_seconds": 122.58207584000002
+}

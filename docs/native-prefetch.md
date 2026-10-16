@@ -5,7 +5,7 @@
 ## Установка
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261015-v20/multigpubfs-0.2.0.dev20-py3-none-any.whl#sha256=2a3213f46e02256dc3eeddf094a80488ceeddaba2f2bc70cebb85ee6c69ba7cb"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261016-v22/multigpubfs-0.2.0.dev22-py3-none-any.whl#sha256=b691739ae60e917a7a4a677453edc666b9aaa38a34b29931eb0db37deda2a267"
 ```
 
 Если CayleyPy/PyTorch уже установлены, можно использовать `multigpubfs @` вместо extra. Команда одна и та же для SSH и вычислительного окружения; в Kaggle установку выполняют через `%pip`. После обновления нужен новый Python-процесс.
