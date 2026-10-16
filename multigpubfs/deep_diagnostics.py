@@ -387,7 +387,7 @@ def summarize(steps):
  comparisons=[]
  for s in steps:
   c=s.get('diagnostic_case',{})
-  if c.get('kind')=='api':comparisons.append({'name':s['name'],'status':s['status'],'device':c['device'],'module':c['module'],'data':c['data_loading'],'order':c['order'],'thread':c['control_thread'],'last_api':s.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')})
+  if c.get('kind')=='api':comparisons.append({'name':s['name'],'status':s['status'],'device':c.get('device'),'devices':c.get('devices') or [c.get('device')],'ranks':s.get('partial_evidence',{}).get('probe.json',{}).get('ranks',[]),'module':c['module'],'data':c['data_loading'],'order':c['order'],'thread':c['control_thread'],'last_api':s.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')})
  return {'root_cause_confirmed':False,'scope':'Controlled observations; mode correlations do not prove a driver bug. Finite synthetic tests do not cover every possible graph or API parameter.','failures':failures,'startup_matrix':comparisons,'runtime_build_matrix':compare(steps),'untested':[{'name':s['name'],'reason':s.get('reason')} for s in steps if s['status']=='SKIPPED']}
 
 def inventory(root):
