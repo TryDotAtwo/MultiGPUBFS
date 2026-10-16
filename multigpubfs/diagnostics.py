@@ -391,33 +391,35 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
     runner.report['devices']=selected
     runner.report['native_discovery_recovery']={'status':'INDEPENDENT_CUDA_EVIDENCE','devices':selected,'scope':'Original native count failure is retained. Only an exact native BFS and executed launcher can produce READY.'}
     from .server_recipe import find_working
-    runner.report['working_configuration']=find_working(runner,selected,search_deadline);runner.save()
+    runner.report['working_configuration']=find_working(runner,selected,search_deadline,full_gpu_only=True);runner.save()
    else:runner.skip('gpu-components','CUDA discovery failed and no agreed independent CUDA count is available')
    return runner.finish()
   selected=devices or list(range(count['result']['data']['visible_devices']))
   if any(d>=count['result']['data']['visible_devices'] for d in selected):
    runner.report['steps'].append({'name':'device-selection','status':'FAIL','error':'Selected GPU ID is not visible'});runner.save();return runner.finish()
-  runner.report['devices']=selected;runner.save();healthy=[]
-  for device in selected:
-   context=runner.component('gpu-'+str(device)+'-context','context',device=device)
-   if context['status']!='PASS':runner.skip('gpu-'+str(device)+'-remaining','CUDA context failed');continue
-   runner.component('gpu-'+str(device)+'-meminfo','meminfo',device=device)
-   runner.component('gpu-'+str(device)+'-hardware','hardware',device=device)
-   memory=runner.component('gpu-'+str(device)+'-memory','memory',device=device)
-   kernel=runner.component('gpu-'+str(device)+'-kernel','kernel',device=device) if memory['status']=='PASS' else None
-   if kernel is None:runner.skip('gpu-'+str(device)+'-kernel','Memory allocation/readback failed')
-   runner.component('gpu-'+str(device)+'-persistent','persistent',device=device)
-   if kernel is not None and kernel['status']=='PASS':healthy.append(device);runner.component('gpu-'+str(device)+'-bfs','bfs',devices=[device])
-  if len(selected)>1 and healthy==selected:
-   init=runner.component('nccl-init','nccl_init',devices=selected)
-   if init['status']=='PASS':
-    exchange=runner.component('nccl-exchange','nccl_exchange',devices=selected)
-    if exchange['status']=='PASS':runner.component('multi-gpu-bfs','bfs',devices=selected)
-    else:runner.skip('multi-gpu-bfs','NCCL exchange failed')
-   else:runner.skip('nccl-exchange','NCCL initialization failed');runner.skip('multi-gpu-bfs','NCCL initialization failed')
-  else:runner.skip('multi-gpu-checks','Need at least two healthy selected GPUs')
+  runner.report['devices']=selected;runner.save()
+  from .deep_diagnostics import run_case
+  def joint(name,stage):return run_case(runner,{'name':name,'config':{'kind':'component','stage':stage,'devices':selected,'seconds':timeout},'seconds':timeout},search_deadline)
+  context=joint('all-gpus-context','context')
+  if context['status']=='PASS':
+   joint('all-gpus-meminfo','meminfo');joint('all-gpus-hardware','hardware')
+   memory=joint('all-gpus-memory','memory')
+   kernel=joint('all-gpus-kernel','kernel') if memory['status']=='PASS' else None
+   if kernel is None:runner.skip('all-gpus-kernel','Memory allocation/readback failed on the selected GPU set')
+   joint('all-gpus-persistent','persistent')
+   if kernel is not None and kernel['status']=='PASS':
+    if len(selected)>1:
+     init=joint('nccl-init','nccl_init')
+     if init['status']=='PASS':
+      exchange=joint('nccl-exchange','nccl_exchange')
+      if exchange['status']=='PASS':joint('multi-gpu-bfs','bfs')
+      else:runner.skip('multi-gpu-bfs','NCCL exchange failed')
+     else:runner.skip('nccl-exchange','NCCL initialization failed');runner.skip('multi-gpu-bfs','NCCL initialization failed')
+    else:joint('all-gpus-bfs','bfs')
+   else:runner.skip('joint-bfs','Kernel did not pass on the complete selected GPU set')
+  else:runner.skip('all-gpus-remaining','CUDA context failed on the selected GPU set; no subset fallback')
   from .server_recipe import find_working
-  runner.report['working_configuration']=find_working(runner,selected,search_deadline);runner.save()
+  runner.report['working_configuration']=find_working(runner,selected,search_deadline,full_gpu_only=True);runner.save()
   return runner.finish()
  except KeyboardInterrupt:
   runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'});return runner.finish()

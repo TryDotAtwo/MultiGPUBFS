@@ -23,9 +23,9 @@ def overrides(settings):
  if settings['transport']=='socket':env.update(NCCL_P2P_DISABLE='1',NCCL_SHM_DISABLE='1',NCCL_IB_DISABLE='1')
  return env
 
-def candidates(devices,*,include_universal=False):
+def candidates(devices,*,include_universal=False,full_gpu_only=False):
  # Exhaust common-device configurations before clearly labelled single-GPU fallbacks.
- groups=[list(devices)]+([[d] for d in devices] if len(devices)>1 else [])
+ groups=[list(devices)]+([[d] for d in devices] if len(devices)>1 and not full_gpu_only else [])
  builds=(PRODUCTION,UNIVERSAL,'static-sm120','shared-legacy','baseline-static-legacy') if include_universal else (PRODUCTION,'static-sm120','shared-legacy','baseline-static-legacy')
  for group in groups:
   for build in builds:
@@ -127,7 +127,7 @@ def probe(settings,root):
  result={'cpu_oracles_verified':True,'settings':settings,'graphs':graphs,'scope':'Exact small permutation, repeated-symbol and matrix graphs; startup and functional acceptance, not large-graph capacity or throughput optimum'}
  write(root/'probe.json',result);return result
 
-def find_working(runner,devices,deadline):
+def find_working(runner,devices,deadline,*,full_gpu_only=False):
  from .runtime_variants import inventory
  from .deep_diagnostics import run_case,write
  def result(status,reason):return {'status':status,'reason':reason,'requested_devices':list(devices)}
@@ -136,9 +136,9 @@ def find_working(runner,devices,deadline):
  verified=getattr(runner,'diagnostic_variants',None) or inventory()
  if verified.get('status')!='AVAILABLE':return result('UNAVAILABLE',verified.get('reason','No checksummed packaged build inventory'))
  runner.diagnostic_variants=verified
- identity=server_identity();remaining=deadline-time.monotonic();group_deadline=time.monotonic()+remaining*.7
+ identity=server_identity();remaining=deadline-time.monotonic();group_deadline=deadline if full_gpu_only else time.monotonic()+remaining*.7
  profile_path=runner.root/'working-config.json';attempts=[]
- choices=candidates(devices,include_universal=True) if verified.get('lazy_delivery') else candidates(devices)
+ choices=candidates(devices,include_universal=True,full_gpu_only=full_gpu_only) if verified.get('lazy_delivery') else candidates(devices,full_gpu_only=full_gpu_only)
  for index,settings in enumerate(choices):
   if getattr(runner,'deep_cleanup_blocked',False):return result('BLOCKED','Owned diagnostic process could not be reaped; no ready command')
   if deadline-time.monotonic()<12:break

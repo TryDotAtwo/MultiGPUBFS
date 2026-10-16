@@ -113,8 +113,7 @@ def choose_coverage(steps,devices):
   if config.get('coverage_build') or config.get('variant') not in (*SPECS,UNIVERSAL):continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
   if path not in ('api','persistent','bfs'):continue
-  device=config.get('device',(config.get('devices') or [None])[0])
-  observed[(config['variant'],device,path)]=step
+  for device in config.get('devices') or [config.get('device')]:observed[(config['variant'],device,path)]=step
  for identifier in (PRODUCTION,'static-sm120',BASELINE,'shared-legacy',UNIVERSAL):
   evidence=[observed.get((identifier,device,path)) for device in devices for path in ('api','persistent','bfs')]
   if evidence and all(x is not None and x['status']=='PASS' for x in evidence):
@@ -137,7 +136,7 @@ def compare(steps):
   config=step.get('diagnostic_case',{});identifier=config.get('variant')
   if identifier not in comparison_specs or config.get('coverage_build'):continue
   path='persistent' if config.get('stage')=='persistent' else config.get('kind')
-  device=config.get('device',(config.get('devices') or [None])[0]);key=(device,path)
+  selected=config.get('devices') or [config.get('device')];device=tuple(selected) if len(selected)>1 else selected[0];key=(device,path)
   groups.setdefault(key,{})[identifier]={'name':step['name'],'status':step['status'],'seconds':step.get('seconds'),'reason':step.get('reason'),'last_native_phase':step.get('last_native_phase'),'call_boundary':call_boundary(step.get('last_native_phase')) if step['status'] in ('FAIL','TIMEOUT') else None,'last_api':step.get('partial_evidence',{}).get('probe.json',{}).get('last_operation')}
  comparisons=[]
  for (device,path),values in groups.items():

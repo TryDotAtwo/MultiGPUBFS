@@ -1,5 +1,9 @@
 # Comprehensive opt-in diagnostics
 
+Since dev21, the complete selected GPU allocation is tested jointly. See
+[collective diagnostics](collective-diagnostics.md) for concurrent rank probes,
+batched catalog contexts and explicit global-budget skips.
+
 See [the one-run CUDA build contrast](diagnostic-build-contrasts.md) for the
 static/shared and native-SM120 comparison carried by the extended package.
 
@@ -8,7 +12,7 @@ The execution budget defaults to 1800 seconds. `--total-timeout` changes it;
 `--stage-timeout` bounds an individual synthetic stage. Metadata finalization
 and diagnostic process cleanup require a small additional bounded allowance.
 
-The ordinary doctor and production BFS use their existing behavior. Deep mode
+The ordinary doctor also uses joint GPU probes; production BFS is unchanged. Deep mode
 changes only its own child process environments. It never changes allocation
 visibility, replaces driver files, resets GPUs, restarts real BFS, requests sudo,
 or runs large/full graphs. EAGER/LAZY contrasts are ctypes-only synthetic tests;
@@ -19,7 +23,7 @@ file-polling control thread, direct memory and attributes, native properties
 wrapper with inner entry/return checkpoints, successor/readback, pinned memory,
 streams/events, empty CUDA Graph, persistent inventory, NCCL transport contrasts,
 small CPU-oracle permutation/repeated/matrix/wide/LRX graphs, hash/sorted/GEMM,
-parent/full/radix/shards, persistent jobs and tuning, single/multiple visible GPUs.
+parent/full/radix/shards, persistent jobs and tuning, the complete selected GPU allocation, without a single-GPU fallback.
 
 Timeouts capture only owned diagnostic process groups: /proc thread state,
 wchan/syscall/stack when permitted, loader maps and resource limits. Optional

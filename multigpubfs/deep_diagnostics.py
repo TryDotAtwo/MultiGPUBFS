@@ -204,6 +204,7 @@ def bfs_probe(config,root):
  reports=[]
  def run(index):
   print('PHASE tiny BFS '+config['fixture']+' '+str(index),flush=True);output=root/('bfs-'+str(index));report=run_graph(graph,output,**kwargs)
+  if report.get('devices',([report['device']] if 'device' in report else None))!=devices:raise RuntimeError('DIAGNOSTIC_BFS_GPU_SET_MISMATCH')
   if report['status']!='COMPLETE' or report['layer_sizes']!=layers:raise RuntimeError('CPU_LAYER_ORACLE_MISMATCH')
   saved=json.loads((output/'states.json').read_text());payload=saved['current'] if isinstance(saved,dict) else saved
   if sorted(tuple(x) for x in payload)!=last:raise RuntimeError('CPU_TERMINAL_STATE_ORACLE_MISMATCH')
@@ -305,6 +306,13 @@ def persistent_build_probe(config,root):
 
 def component(config,root):
  root=Path(root);os.environ['MGBFS_DIAGNOSTIC_TRACE_FILE']=str(root/'native-startup.log')
+ scalar=config.get('kind') in ('api','catalog-batch') or config.get('kind')=='component' and config.get('stage') in ('context','meminfo','hardware','memory','kernel','persistent')
+ if scalar and config.get('devices'):
+  from .collective_diagnostics import run_group
+  return run_group(config,root)
+ if config['kind']=='catalog-batch':
+  from .collective_diagnostics import catalog_batch
+  return catalog_batch(config,root)
  if config['kind']=='build-inventory':
   from .runtime_variants import inventory as build_inventory
   result=build_inventory();write(root/'probe.json',result);return result
@@ -336,7 +344,7 @@ def run_case(runner,case,deadline):
   runner.skip(case['name'],reason);entry=runner.report['steps'][-1];entry['diagnostic_case']=case['config'];runner.save();return entry
  if getattr(runner,'deep_cleanup_blocked',False):return skipped('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED; no further GPU probes started')
  remaining=deadline-time.monotonic()-8
- if remaining<=.1:return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
+ if remaining<min(case.get('seconds',30),runner.timeout):return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
  folder=runner.root/case['name'];folder.mkdir(exist_ok=True);write(folder/'case-input.json',case['config'])
  command=[sys.executable,'-m','multigpubfs.deep_diagnostics','--child',str(folder/'case-input.json'),'--output',str(folder)]
  if case.get('strace'):
@@ -355,7 +363,7 @@ def run_case(runner,case,deadline):
    if 'OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED' in str(error):runner.deep_cleanup_blocked=True
    entry={'name':case['name'],'status':'FAIL','error':str(error),'failure_phase':'native-component-preparation','diagnostic_case':case['config']};runner.report['steps'].append(entry);runner.save();return entry
   remaining=deadline-time.monotonic()-8
-  if remaining<=.1:return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
+  if remaining<min(case.get('seconds',30),runner.timeout):return skipped('GLOBAL_DIAGNOSTIC_BUDGET_EXHAUSTED')
  elif case['config'].get('loader')=='native':
   from .native_distribution import native_runtime
   _,child_env=native_runtime()
@@ -414,6 +422,7 @@ def inventory(root):
 
 def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
  from .diagnostics import Runner,recover_visible_devices,record_architecture,prepare_delivery
+ from .collective_diagnostics import group_cases
  import datetime
  if not math.isfinite(total_timeout) or total_timeout<1:raise ValueError('Total timeout must be positive and finite')
  if not math.isfinite(timeout) or timeout<=0:raise ValueError('Stage timeout must be positive and finite')
@@ -441,22 +450,22 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     from .runtime_variants import cases as build_cases
     builds=run_case(runner,{'name':'deep-build-inventory','config':{'kind':'build-inventory'},'seconds':30},deadline)
     runner.diagnostic_variants=builds.get('result',{}).get('data',{'status':'UNAVAILABLE','reason':'Diagnostic build inventory failed or was not completed.'})
-    for case in build_cases(selected,production_only=True):run_case(runner,case,deadline)
+    primary_cases=group_cases(build_cases(selected,production_only=True),selected)
+    for case in primary_cases:run_case(runner,case,deadline)
     from .runtime_variants import choose_coverage,PRODUCTION
     choice=choose_coverage(runner.report['steps'],selected);runner.report['diagnostic_coverage_build']=choice
     if choice['id'] is not None and choice['id']!=PRODUCTION:coverage_build=choice['id']
-    primary_names={c['name'] for c in build_cases(selected,production_only=True)}
+    primary_names={c['name'] for c in primary_cases}
     primary=[s for s in runner.report['steps'] if s['name'] in primary_names]
     primary_status='PASS' if len(primary)==len(primary_names) and all(s['status']=='PASS' for s in primary) else ('FAIL' if any(s['status'] in ('FAIL','TIMEOUT') for s in primary) else 'INCOMPLETE')
-    runner.report['production_bfs_acceptance']={'status':primary_status,'build':PRODUCTION,'devices':selected,'steps':[{'name':s['name'],'status':s['status'],'seconds':s.get('seconds')} for s in primary],'scope':'Real API/kernel, two resident requests and exact S3 BFS on each selected GPU; multi-GPU and other backends have separate named tests.'}
+    runner.report['production_bfs_acceptance']={'status':primary_status,'build':PRODUCTION,'devices':selected,'steps':[{'name':s['name'],'status':s['status'],'seconds':s.get('seconds')} for s in primary],'scope':'Concurrent API/kernel and resident requests on every selected rank, then exact S3 BFS on the complete allocated GPU set; no single-GPU fallback.'}
     runner.save()
     from .server_recipe import find_working
-    runner.report['working_configuration']=find_working(runner,selected,deadline);runner.save()
-    for case in startup_cases(selected):run_case(runner,case,deadline)
-    for device in selected:
-     for stage in ('context','meminfo','hardware','memory','kernel','persistent'):
-      run('gpu-'+str(device)+'-'+stage,stage,device=device,seconds=min(timeout,45))
-     run_case(runner,covered({'name':f'deep-strace-gpu-{device}','strace':True,'config':{'kind':'component','stage':'persistent','device':device,'seconds':25},'seconds':30,'optional':True}),deadline)
+    runner.report['working_configuration']=find_working(runner,selected,deadline,full_gpu_only=True);runner.save()
+    for case in group_cases(startup_cases(selected),selected):run_case(runner,case,deadline)
+    for stage in ('context','meminfo','hardware','memory','kernel','persistent'):
+     run('all-gpus-'+stage,stage,devices=selected,seconds=min(timeout,45))
+    run_case(runner,covered({'name':'deep-strace-all-gpus','strace':True,'config':{'kind':'component','stage':'persistent','devices':selected,'seconds':25},'seconds':30,'optional':True}),deadline)
     if len(selected)>1:
      for transport,changes in [('inherited',{}),('socket',{'NCCL_P2P_DISABLE':'1','NCCL_SHM_DISABLE':'1','NCCL_IB_DISABLE':'1'}),('no-p2p',{'NCCL_P2P_DISABLE':'1'})]:
       case={'name':'deep-nccl-'+transport,'config':{'kind':'component','stage':'nccl_exchange','devices':selected,'environment_overrides':changes},'seconds':45}
@@ -465,19 +474,15 @@ def run_deep(output=None,devices=None,timeout=60,total_timeout=1800):
     if capabilities.get('lsa_compiled') is not True:runner.skip('deep-bfs-lsa','UNSUPPORTED: NCCL LSA is not confirmed compiled')
     else:run_case(runner,covered({'name':'deep-bfs-lsa','config':{'kind':'bfs','fixture':'lrx','devices':selected,'backend':'shard_ab_hash','peer_transport':'lsa'},'seconds':45}),deadline)
     # Change one execution dimension per bounded oracle case.
-    base={'kind':'bfs','fixture':'permutation','devices':[selected[0]],'history':'hash','generator':'cuda','shards':1}
+    base={'kind':'bfs','fixture':'permutation','devices':selected,'history':'hash','generator':'cuda','shards':1}
     variants=[('base',{}),('sorted',{'history':'sorted'}),('gemm',{'generator':'gemm'}),('parent',{'transport':'parent'}),('radix',{'candidate_order':'radix'}),('shards4',{'shards':4}),('persistent',{'persistent':True}),('tuner',{'autotune':True,'shards':None}),('repeated',{'fixture':'repeated'}),('matrix',{'fixture':'matrix'}),('matrix-gemm',{'fixture':'matrix-gemm','generator':'gemm'}),('wide',{'fixture':'wide'}),('shard-ab-hash',{'fixture':'lrx','backend':'shard_ab_hash'}),('shard-ab-sort',{'fixture':'lrx','backend':'shard_ab_sort_merge'})]
-    if len(selected)>1:variants.extend([('multi',{'devices':selected}),('multi-sorted',{'devices':selected,'history':'sorted'}),('multi-parent',{'devices':selected,'transport':'parent'}),('multi-gemm',{'devices':selected,'generator':'gemm'}),('multi-persistent',{'devices':selected,'persistent':True}),('multi-shard-ab',{'devices':selected,'fixture':'lrx','backend':'shard_ab_hash'}),('multi-shard-ab-sort',{'devices':selected,'fixture':'lrx','backend':'shard_ab_sort_merge'})])
+    if len(selected)>1:variants=[('multi' if label=='base' else 'multi-'+label,options) for label,options in variants]
     for label,changes in variants:run_case(runner,covered({'name':'deep-bfs-'+label,'config':dict(base,**changes),'seconds':min(timeout,45)}),deadline)
     catalog=catalog_configurations()
     if not catalog:runner.skip('deep-catalog-successors','CayleyPy optional dependency unavailable')
-    for case in catalog:
-     for device in selected:
-      name='deep-catalog-'+case['family']+'-'+case['constructor']+'-gpu'+str(device)
-      if case['unsupported']:runner.skip(name,case['unsupported'])
-      else:run_case(runner,covered({'name':name,'config':{'kind':'catalog','catalog':case,'device':device},'seconds':20}),deadline)
+    if catalog:run_case(runner,covered({'name':'deep-catalog-all-gpus','config':{'kind':'catalog-batch','catalog':catalog,'devices':selected},'seconds':min(timeout,120)}),deadline)
     # Legacy startup/JIT contrasts run last so they cannot consume production coverage.
-    for case in build_cases(selected,contrasts_only=True,include_universal=runner.diagnostic_variants.get('lazy_delivery',False)):run_case(runner,case,deadline)
+    for case in group_cases(build_cases(selected,contrasts_only=True,include_universal=runner.diagnostic_variants.get('lazy_delivery',False)),selected):run_case(runner,case,deadline)
   else:runner.skip('deep-gpu-suite','Native runtime or CUDA discovery failed')
  except KeyboardInterrupt:runner.report['steps'].append({'name':'interrupted','status':'FAIL','error':'Interrupted by caller'})
  except Exception as e:runner.report['steps'].append({'name':'deep-controller','status':'FAIL','error':str(e)})
