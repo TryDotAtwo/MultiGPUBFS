@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source_commit": "1067171010ae0a27e283aa0b19365da768affb28",
+  "native_binary_sha256": "10e423aee53f450d5a14f064db0cb1c7784e8080e7b94045adbad378ad304fce",
+  "base_index_sha256": "32564ff0a869dc1cf24d8255bc5d71acfdf6a3145de7497f757f4d28efec6ba5",
+  "index_sha256": "2d8104d9428e94cf133ad5e8cf93498709077f5c11c46c2e85090151fa0b7eec",
+  "common_sha256": "2be2ee8d9316224d7d3b1615f52e6861ef757e3c81f97f9b196ccb33e22540f6",
+  "common_size": 310801425,
+  "cuda_library_components_unchanged": true,
+  "native_expected_plan_rejections_nonfatal": true,
+  "kernel_source_sha256": "196427e16607984984b3f534bd0eb7eebec91a9c0561df9874f0b683538e644c",
+  "status": "COMPILED_CPU_TESTED_NEEDS_GPU_ACCEPTANCE",
+  "scope": "Only Rust resident plan rejection handling rebuilt; no changes to CUDA kernels, SM libraries, CUDA runtime, NCCL or BFS math"
+}

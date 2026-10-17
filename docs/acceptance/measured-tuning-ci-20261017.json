@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "checks": [
+    {
+      "kind": "rust-native",
+      "run": 39053510108,
+      "source_commit": "1067171010ae0a27e283aa0b19365da768affb28",
+      "status": "PASS",
+      "tests": 465,
+      "url": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/39053510108"
+    },
+    {
+      "kind": "python-package",
+      "run": 39053875888,
+      "source_commit": "9ab794acb1ae78614517ca8a8c06748e9613ed51",
+      "status": "PASS",
+      "tests": 817,
+      "url": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/39053875888"
+    }
+  ]
+}

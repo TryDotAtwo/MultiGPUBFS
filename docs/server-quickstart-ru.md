@@ -3,7 +3,7 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51" && python -m multigpubfs.diagnostics
 ```
 
 Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. Маленький wheel содержит Python API и закреплённый индекс. Готовые CUDA/NCCL и нужная SM-библиотека автоматически берутся из GitHub при первой подготовке на GPU-узле; драйвер сервера пакет не заменяет.
@@ -17,7 +17,7 @@ python -m multigpubfs.diagnostics --deep --total-timeout 1800
 ```
 
 
-Обычная установка занимает 137,885 байт плюс зависимости API. Первый `enable_native()` на GPU-узле или `doctor` определяет видимые карты и загружает общий компонент и одну подходящую готовую CUDA-библиотеку. Поддерживаются SM75/80/86/89/90/100/103/120 и универсальный путь с compute80 PTX. Выбор, размеры, хеши и отдельные исходники Python/native/CUDA записываются в отчёт. Повторные графы используют кэш без повторной загрузки и опроса железа. Подготовка на CPU/login-узле не требует доступа к GPU: фактическая загрузка откладывается до native-запуска на выделенном GPU-узле.
+Обычная установка занимает 144,632 байт плюс зависимости API. Первый `enable_native()` на GPU-узле или `doctor` определяет видимые карты и загружает общий компонент и одну подходящую готовую CUDA-библиотеку. Поддерживаются SM75/80/86/89/90/100/103/120 и универсальный путь с compute80 PTX. Выбор, размеры, хеши и отдельные исходники Python/native/CUDA записываются в отчёт. Повторные графы используют кэш без повторной загрузки и опроса железа. Подготовка на CPU/login-узле не требует доступа к GPU: фактическая загрузка откладывается до native-запуска на выделенном GPU-узле.
 
 Если `mgbfs graph-count` завис, но независимые Driver API и CUDA Runtime обнаружили одинаковое число устройств, doctor продолжит изолированные проверки рабочих вариантов. Он сохраняет исходный TIMEOUT и не выдаёт READY по одному успешному опросу GPU. Для CUDA_VISIBLE_DEVICES используются логические номера внутри выделенной задачи; список выделенных карт не расширяется.
 
@@ -53,7 +53,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
@@ -97,3 +97,6 @@ subprocess.run(command, check=True)
 READY доказывает работу выбранного пути на маленьких контрольных графах в проверенном окружении. Размер будущего графа, достаточность VRAM, наилучшая скорость и работа на нескольких узлах требуют отдельных измерений. Диагностика не обещает обойти запрет GPU, исправить ядро/драйвер или однозначно установить скрытую администратором причину.
 
 Проверка этого выпуска выполнена на настоящих 2×T4. Готовые отдельные компоненты SM100 для B200, SM103 для B300 и SM120 собраны, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](native-prefetch-acceptance-2026-10-15.md).
+
+
+В dev29 обновлён общий компонент с native CLI: здоровый worker сохраняется после точного ресурсного отказа read-only плана. Поэтому dev24–dev28 кэш один раз докачает новый common-архив; CUDA-библиотеки по SM остаются прежними и переиспользуются по SHA256. Для заданий без сети заранее повторите предзагрузку в тот же постоянный кэш. [Измеренная проверка установленного пакета на 2×3060](measured-tuning-acceptance-2026-10-17.md).

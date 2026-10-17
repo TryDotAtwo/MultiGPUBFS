@@ -5,7 +5,7 @@ The same ordinary pip command installs the Python API from GitHub on Kaggle or a
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
 ```
 
 After an upgrade, start a new Python process/session before importing the package.
@@ -37,11 +37,11 @@ To prepare before GPUs are allocated, use `python -m multigpubfs prefetch --sm 1
 
 ## What downloads and when
 
-The wheel is **137,885 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
+The wheel is **144,632 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
 
 Only the common executable/private CUDA12.9.79/NCCL2.30.7 component and one compatible CUDA component are fetched from pinned **GitHub Releases**. Native targets are SM75/80/86/89/90/100/103/120. A same-major compatible image can cover newer minor capabilities; mixed or other forward-compatible devices can use the universal component with ordinary compute80 PTX. The package records the actual selection. No target-server compilation is used for matching native cubins.
 
-The common component is 304,491,773 bytes. A clean T4 host downloaded **317,591,823 bytes** in total; a clean B200 selection needs 316,425,738 bytes according to the compiled manifest, not a measured B200 run. Ordinary BFS does not download the optional diagnostic alternatives. Deep investigation or a needed recipe contrast fetches those separately.
+The current common component is 310,801,425 bytes. A clean SM75/T4 selection needs 323,901,475 component bytes; SM100/B200 needs 322,735,390 according to the manifest. These byte counts are delivery sizes, not GPU performance or B200 execution evidence. Ordinary BFS does not download the optional diagnostic alternatives. Deep investigation or a needed recipe contrast fetches those separately.
 
 Downloads are streamed, size/SHA256 checked, extracted against a strict file list and atomically published under `~/.cache/multigpubfs/native` (or `$XDG_CACHE_HOME/multigpubfs/native`). Processes share a locked content-addressed cache. `MGBFS_NATIVE_CACHE` can point to an existing writable persistent location. A complete cache supports `MGBFS_NATIVE_OFFLINE=1`; a missing component fails explicitly in offline mode. The first preparation requires outbound GitHub HTTPS. A download failure leaves the original CayleyPy method intact.
 
@@ -59,10 +59,13 @@ The diagnostic checks actual GPU kernels, NCCL, persistent workers and exact tin
 
 Python3.10+ is required. Native execution requires Linux x86_64, GLIBC2.34+, GLIBCXX3.4.22+, CXXABI1.3.9+ and a compatible NVIDIA driver. Windows-native GPU execution is unsupported. Graph capacity remains bounded by VRAM/time. Unknown graph families keep ordinary memory admission and measured tuning; profiles are not claimed to be globally optimal.
 
-The current prefetch flow passed actual selected/all component preparation on a CPU-only host and physical **2×T4** parallel/persistent offline BFS. The unchanged underlying native delivery engine also has the earlier S11/S12, shard-engine and diagnostic-contrast acceptance recorded separately. Other SM components, including SM100/B200, SM103/B300 and SM120, have compilation/cubin inventory evidence; execution of this delivery flow on them remains unmeasured. [Current prefetch acceptance, hashes and scope](native-prefetch-acceptance-2026-10-15.md).
+The current prefetch flow passed actual selected/all component preparation on a CPU-only host and physical **2×T4** parallel/persistent offline BFS. Earlier native delivery versions have the S11/S12, shard-engine and diagnostic-contrast acceptance recorded separately. Other SM components, including SM100/B200, SM103/B300 and SM120, have compilation/cubin inventory evidence; execution of this delivery flow on them remains unmeasured. [Current prefetch acceptance, hashes and scope](native-prefetch-acceptance-2026-10-15.md).
 
 Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
 
-Release: [native-pip-20261017-v24](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261017-v24). Wheel SHA256 `693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
+Release: [native-pip-20261017-v29](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261017-v29). Wheel SHA256 `ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
 
 Native CUDA/NCCL error context, retained failed-rank phase files and opt-in call tracing: [server failure evidence](native-failure-evidence.md).
+
+
+В dev29 обновлён общий компонент с native CLI: здоровый worker сохраняется после точного ресурсного отказа read-only плана. Поэтому dev24–dev28 кэш один раз докачает новый common-архив; CUDA-библиотеки по SM остаются прежними и переиспользуются по SHA256. Для заданий без сети заранее повторите предзагрузку в тот же постоянный кэш. [Измеренная проверка установленного пакета на 2×3060](measured-tuning-acceptance-2026-10-17.md).
