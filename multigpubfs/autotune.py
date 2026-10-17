@@ -481,7 +481,7 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
    if reserve_env['MGBFS_GENERIC_GENERATOR']==default_generator or not any(code in str(error) for code in resource_codes):raise
    size_generator_rejections.append({'generator':reserve_env['MGBFS_GENERIC_GENERATOR'],'stage':'size-profile-workspace-admission','reason':str(error),'selected_generator':default_generator,'selected_capacity':first['plan']['capacity'],'shards':shards,'history_algorithm':first['plan'].get('history_algorithm','HASH')})
    eligible=False;reserve_env=dict(env);reserve=first;common=first['plan']['capacity']
-  admitted_generators=('cuda','gemm') if eligible else (default_generator,)
+  admitted_generators=['cuda','gemm'] if eligible else [default_generator]
   large_batch=reserve['plan']['batch'];small_batch=min(4096,large_batch)
   dependency=_dependency_identity(native,env)
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
