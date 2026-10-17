@@ -398,6 +398,7 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
  except RuntimeError as error:
   failure=_native_probe_failure(error)
   if failure is None:raise
+  failure=dict(failure,source_graph_digest=graph.digest())
   if pool is not None:
    pool.close_workers()
    pool.launch_admission=None

@@ -2,10 +2,14 @@
 
 Starting with 0.2.0.dev23, the generic native engine labels its checked CUDA/NCCL FFI calls with the rank, device, target BFS layer, last completed layer, call sequence and Rust source location. The existing `GENERIC_CUDA_<code>` prefix is retained. This is diagnostic instrumentation; CUDA kernels, precompiled SM libraries, buffer geometry and BFS mathematics are unchanged.
 
+## Changes in 0.2.0.dev24
+
+The first native error remains in `native_error`; later cleanup errors are separate. Preserved tuning errors now name the durable evidence directory after temporary cleanup. Captured CUDA 999 in an optional probe has an explicit conservative fallback with fresh rank processes; timeouts and production BFS failures still propagate. See [tuning failure recovery](tuning-failure-recovery.md) for the policy and limits.
+
 ## Update once, then reproduce the calculation
 
 ```bash
-python -m pip install --upgrade "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v23/multigpubfs-0.2.0.dev23-py3-none-any.whl"
+python -m pip install --upgrade "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl"
 ```
 
 Start a **new Python process** after the update. For the next failing calculation, add this before `enable_native()` and the calculation:
