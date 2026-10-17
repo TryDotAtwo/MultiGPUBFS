@@ -318,12 +318,52 @@ def _rebase_owned_profile(saved,graph):
   profile['measured']=False
  return result
 
+
+def _tuning_failure_key(native,devices,env):
+ return (str(native),_stat_identity(native),None if devices is None else tuple(devices),_configuration_digest(env),tuple(env.get(k) for k in ('LD_LIBRARY_PATH','LD_PRELOAD','CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')))
+
+def _native_probe_failure(error):
+ """Only a captured CUDA 999 from an optional native rank job is recoverable."""
+ if not str(error).startswith('NATIVE_DISTRIBUTED_RANK_FAILED'):return None
+ root=getattr(error,'tuning_evidence_root',None)
+ if not root:return None
+ for evidence in Path(root).glob('**/failure-evidence'):
+  if not (evidence/'summary.json').is_file():continue
+  for phase in evidence.glob('rank-*/phase.json'):
+   try:
+    if phase.stat().st_size>262144:continue
+    fault=json.loads(phase.read_text()).get('native_error')
+   except (OSError,ValueError):continue
+   if isinstance(fault,dict) and fault.get('code')==999:
+    return {'error':str(error),'evidence':str(evidence.resolve()),'native_error':fault,'probe_retried':False}
+ return None
+
+def _conservative_after_probe(graph,devices,capacity,native,env,failure,started):
+ # A failed worker group is already closed. Cached free VRAM and admission
+ # tickets from that group are not evidence for the new production launch.
+ clean=dict(env);clean.pop('_MGBFS_PROFILE_INVENTORY',None)
+ shards,_,transport,order=_transport_variants(graph,clean)[0]
+ with _evidence_directory(clean,'mgbfs-fallback-admission-') as directory:
+  admitted=_admit(graph,devices,capacity,shards,native,clean,directory)
+ plan=admitted['plan']
+ return {'backend':'generic','status':'TUNING_PROBE_FAILED_CONSERVATIVE_PROFILE',
+  'devices':admitted['devices'],'shards':shards,'batch':plan['batch'],'batch_fraction':1.,
+  'transport':transport,'candidate_order':order,'generator_backend':plan.get('generator_backend','cuda'),
+  'history_algorithm':plan.get('history_algorithm','HASH'),'owner_lanes':plan.get('owner_lanes',0),
+  'measured':False,'cache_hit':False,'online_size_tuning':False,'size_profiles':[],
+  'tuning_failure':failure,'seconds':time.monotonic()-started,
+  'scope':'optional CUDA probe failed; fresh baseline admission; no probe retry or production BFS restart'}
+
 def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  # Session reuse skips selector work, never live memory admission. A changed
  # geometry, runtime, environment or rank generation takes the full path.
  import copy
  from .generic_session import _active
  started=time.monotonic();env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
+ failure_key=_tuning_failure_key(native,devices,env)
+ previous=None if _active is None else getattr(_active,'tuning_probe_failure',None)
+ if previous is not None and previous[0]==failure_key:
+  return _conservative_after_probe(graph,devices,capacity,native,env,previous[1],started)
  pool=_active;key=None if pool is None else _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
  cache=None if pool is None else getattr(pool,'size_profile_results',None)
  alias_key=_lrx_resource_alias_key(key,graph)
@@ -354,7 +394,18 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
    remember_launch_admission(graph,native,selected,devices,capacity,saved['shards'],saved['batch'],fresh)
    result=copy.deepcopy(saved);result.update(cache_hit=True,session_profile_hit=True,owned_resource_hit=fresh.get('owned_resource_admission',False),seconds=time.monotonic()-started,_admission_inventory=fresh.get('inventory',[]));return result
   del cache[key]
- result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
+ try:result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
+ except RuntimeError as error:
+  failure=_native_probe_failure(error)
+  if failure is None:raise
+  if pool is not None:
+   pool.close_workers()
+   pool.launch_admission=None
+  import warnings
+  warnings.warn('GPU autotuning probe failed; using an unmeasured baseline on a fresh rank group; evidence='+failure['evidence'],RuntimeWarning,stacklevel=2)
+  result=_conservative_after_probe(graph,devices,capacity,native,env,failure,started)
+  if pool is not None:pool.tuning_probe_failure=(failure_key,failure)
+  return result
  if pool is not None and result.get('backend','generic')=='generic' and result.get('size_profiles') and (result.get('measured') or result.get('cache_hit')):
   selected=_profile_environment(env,result)
   with _evidence_directory(env,'mgbfs-session-profile-store-') as temporary:
@@ -469,6 +520,7 @@ def _evidence_directory(env,prefix):
   original_error=str(error)
   old=str(Path(temporary.name));new=str(destination.resolve())
   error.args=tuple(arg.replace(old,new) if isinstance(arg,str) else arg for arg in error.args)
+  error.tuning_evidence_root=new
   # Rebase metadata, preserving verbatim worker logs and their checksums.
   def rebase(value):
    if isinstance(value,str):return value.replace(old,new)

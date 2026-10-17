@@ -6,13 +6,13 @@ from scripts.package_diagnostic_variants import cuda_source_identity
 from multigpubfs.artifact_metadata import elf_runtime_requirements
 
 ROOT=Path(__file__).resolve().parents[1]
-TAG='native-components-20261017-v2'
+TAG='native-components-20261017-v3'
 BASE='https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/'+TAG+'/'
 def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def run(*args,**kw):return subprocess.run(list(map(str,args)),check=True,cwd=ROOT,**kw)
 def main():
  old_bytes=(ROOT/'multigpubfs/native_assets.json').read_bytes()
- assert hashlib.sha256(old_bytes).hexdigest()=='98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b'
+ assert hashlib.sha256(old_bytes).hexdigest()=='5aea6723a2867547c5656ec932d7a66cdd52df0e6b98b49a0fd80ad70abc483a'
  old=json.loads(old_bytes);identity=cuda_source_identity(ROOT,'HEAD')
  assert all(c['build']['cuda_kernel_source_sha256']==identity['cuda_kernel_source_sha256'] for c in old['components'].values() if 'build' in c),'CUDA_KERNEL_CHANGED'
  work=Path('/tmp/mgbfs-fault-native');work.mkdir()
@@ -38,7 +38,7 @@ def main():
    if relative!='bin/mgbfs':assert files[relative]==info
  head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
  index=json.loads(old_bytes);index['id']=TAG;index['components'][index['common']]={'url':BASE+'common.tar.gz','size':archive.stat().st_size,'sha256':sha(archive),'files':files}
- index['native_metadata'].update(native_binary_source_commit=head,native_failure_context_schema=1)
+ index['native_metadata'].update(native_binary_source_commit=head,native_failure_context_schema=1,native_primary_error_preserved=True)
  index['native_metadata']['elf_runtime_requirements']=elf_runtime_requirements([binary,common/'lib/libcudart.so.12',common/'lib/libnccl.so.2',library])
  AssetManager(index,work/'new-schema')
  data=(json.dumps(index,sort_keys=True,separators=(',',':'))+'\n').encode();(output/'native-assets.json').write_bytes(data)
