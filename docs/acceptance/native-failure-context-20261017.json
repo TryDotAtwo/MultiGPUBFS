@@ -1,0 +1,285 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "package": "0.2.0.dev23",
+  "wheel_sha256": "69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69",
+  "package_source_commit": "c7217ee8397bb71aeae811e12723fd7a2efaea73",
+  "native_binary_sha256": "6c579b686a945305b2ea1a54ed1d50806696c9e4c3cd22ad6224bca594127b01",
+  "native_source_commit": "cb9a5931d6ee60491ddf8dcd887fe9ff017289c2",
+  "hardware": [
+    "Tesla T4, 7.5, 580.178.04",
+    "Tesla T4, 7.5, 580.178.04"
+  ],
+  "checks": [
+    {
+      "name": "exact-two-rank-persistent-permutation",
+      "status": "PASS",
+      "result": {
+        "cpu_layers_and_terminal_states_verified": true,
+        "fixture": "permutation",
+        "reports": [
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              2,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.172260376,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 126141,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 3,
+              "generator_backend": "cuda",
+              "generator_bytes": 24,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 1,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "77535184d3cf506b10d14f7d25534d3d662dec0299993025957e36955dcea82e"
+          },
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              2,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.005082337,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 126141,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 3,
+              "generator_backend": "cuda",
+              "generator_bytes": 24,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 1,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "77535184d3cf506b10d14f7d25534d3d662dec0299993025957e36955dcea82e"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exact-two-rank-persistent-repeated",
+      "status": "PASS",
+      "result": {
+        "cpu_layers_and_terminal_states_verified": true,
+        "fixture": "repeated",
+        "reports": [
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              1,
+              1
+            ],
+            "bfs_seconds": 0.160837177,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 126141,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 3,
+              "generator_backend": "cuda",
+              "generator_bytes": 24,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 1,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "077a77f0a6939cd16bf51eb9973e67ed9c4c86659809dcfb4d8dddc7f0a257f0"
+          },
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              1,
+              1
+            ],
+            "bfs_seconds": 0.004128899,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 126141,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 3,
+              "generator_backend": "cuda",
+              "generator_bytes": 24,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 1,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "077a77f0a6939cd16bf51eb9973e67ed9c4c86659809dcfb4d8dddc7f0a257f0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exact-two-rank-persistent-matrix",
+      "status": "PASS",
+      "result": {
+        "cpu_layers_and_terminal_states_verified": true,
+        "fixture": "matrix",
+        "reports": [
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.14717828,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 188650,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 2,
+              "generator_backend": "cuda",
+              "generator_bytes": 72,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 8,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "0feda373679d6add84b36a5c09d21b49a6f85608fdbfddd4000f39b3519aaf65"
+          },
+          {
+            "status": "COMPLETE",
+            "layer_sizes": [
+              1,
+              2,
+              1
+            ],
+            "bfs_seconds": 0.005373065,
+            "plan": {
+              "batch": 256,
+              "capacity": 256,
+              "device_bytes": 188650,
+              "driver_graph_reserve_bytes": 0,
+              "elements": 2,
+              "generator_backend": "cuda",
+              "generator_bytes": 72,
+              "history_algorithm": "HASH",
+              "history_layers": 3,
+              "owner_lanes": 0,
+              "parent_transport": false,
+              "queue_capacity": 512,
+              "shards": 1,
+              "sort_candidates": false,
+              "sorted_owner_bytes": 0,
+              "state_bytes": 8,
+              "table_layout": "THREE_BANK_SHARED_TOMBSTONE_HISTORY",
+              "table_slots": 2048,
+              "world": 2
+            },
+            "states_sha256": "0feda373679d6add84b36a5c09d21b49a6f85608fdbfddd4000f39b3519aaf65"
+          }
+        ]
+      }
+    },
+    {
+      "name": "injected-999-persistent",
+      "status": "PASS",
+      "mode": "persistent",
+      "fault": {
+        "call": "cudaMemcpyAsync",
+        "call_sequence": 82,
+        "code": 999,
+        "device": 1,
+        "interpretation": "API reporting the error; asynchronous origin may precede this call",
+        "last_completed_layer": 0,
+        "layer": 1,
+        "line": 155,
+        "phase": "bfs",
+        "rank": 1,
+        "source": "crates/mgbfs-runtime/src/generic_distributed_native.rs"
+      },
+      "captured_ranks": 2,
+      "captures": [
+        "before_cleanup",
+        "after_cleanup"
+      ],
+      "files_survived_worker_cleanup": true,
+      "no_restart": true
+    },
+    {
+      "name": "injected-999-oneshot",
+      "status": "PASS",
+      "mode": "oneshot",
+      "fault": {
+        "call": "cudaMemcpyAsync",
+        "call_sequence": 61,
+        "code": 999,
+        "device": 1,
+        "interpretation": "API reporting the error; asynchronous origin may precede this call",
+        "last_completed_layer": 0,
+        "layer": 1,
+        "line": 155,
+        "phase": "bfs",
+        "rank": 1,
+        "source": "crates/mgbfs-runtime/src/generic_distributed_native.rs"
+      },
+      "captured_ranks": 2,
+      "captures": [
+        "before_cleanup",
+        "after_cleanup"
+      ],
+      "files_survived_worker_cleanup": true,
+      "no_restart": true
+    }
+  ],
+  "scope": "Physical 2xT4 normal exact BFS plus deliberately injected API failure; does not reproduce or fix the unknown production 8-GPU CUDA 999 cause",
+  "wall_seconds": 48.210724306999964
+}

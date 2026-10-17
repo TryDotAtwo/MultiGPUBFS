@@ -3,7 +3,7 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261016-v22/multigpubfs-0.2.0.dev22-py3-none-any.whl#sha256=b691739ae60e917a7a4a677453edc666b9aaa38a34b29931eb0db37deda2a267" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v23/multigpubfs-0.2.0.dev23-py3-none-any.whl#sha256=69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69" && python -m multigpubfs.diagnostics
 ```
 
 Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. Маленький wheel содержит Python API и закреплённый индекс. Готовые CUDA/NCCL и нужная SM-библиотека автоматически берутся из GitHub при первой подготовке на GPU-узле; драйвер сервера пакет не заменяет.
@@ -53,7 +53,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261016-v22/multigpubfs-0.2.0.dev22-py3-none-any.whl#sha256=b691739ae60e917a7a4a677453edc666b9aaa38a34b29931eb0db37deda2a267",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v23/multigpubfs-0.2.0.dev23-py3-none-any.whl#sha256=69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
