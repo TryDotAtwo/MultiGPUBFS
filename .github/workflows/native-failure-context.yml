@@ -14,6 +14,7 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_native_failure.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_tuning_evidence_retention.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_tuning_probe_failure.py' -v
+      - run: python3 -m unittest discover -s tests -p 'test_native_phase_supervision.py' -v
   rust:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
