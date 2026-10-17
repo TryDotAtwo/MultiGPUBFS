@@ -33,9 +33,9 @@ fn align(value:u64)->Result<u64>{Ok(value.checked_add(255).ok_or("SORTED_SHAPE_O
 pub(crate) struct OriginShape{pub count:u32,pub allocation_bytes:usize,pub temporary_bytes:usize}
 impl OriginShape{
  pub fn query(input:&Input,device:i32)->Result<Self>{
-  check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device)})?;
+  crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device)})?;
   let(mut bytes,mut temporary,mut count)=(0u64,0u64,0u64);
-  check(unsafe{mgbfs_generic_sorted_native_shape(input,&mut bytes,&mut temporary,&mut count,ptr::null_mut())})?;
+  crate::generic_native::checked!(mgbfs_generic_sorted_native_shape, unsafe{mgbfs_generic_sorted_native_shape(input,&mut bytes,&mut temporary,&mut count,ptr::null_mut())})?;
   let expected=u64::from(input.world)*u64::from(input.queue_capacity);
   if count!=expected||count>=0x7fff_ffff{return Err("SORTED_SHAPE_COUNT".into());}
   let admitted=align(count*8)?.checked_mul(2).and_then(|v|v.checked_add(align(count*4).ok()?.checked_mul(5)?)).and_then(|v|v.checked_add(align(temporary).ok()?)).and_then(|v|v.checked_add(256)).ok_or("SORTED_SHAPE_OVERFLOW")?;
@@ -43,7 +43,7 @@ impl OriginShape{
   Ok(Self{count:count as u32,allocation_bytes:usize::try_from(bytes).map_err(|_|"SORTED_SHAPE_OVERFLOW")?,temporary_bytes:usize::try_from(temporary).map_err(|_|"SORTED_SHAPE_OVERFLOW")?})
  }
 }
-pub(crate) fn metadata_sizes()->Result<[usize;5]>{let mut raw=[0u64;5];check(unsafe{mgbfs_generic_sorted_native_metadata_shape(raw.as_mut_ptr(),5)})?;let mut sizes=[0usize;5];for (out,value) in sizes.iter_mut().zip(raw){if value==0{return Err("SORTED_METADATA_SHAPE".into());}*out=usize::try_from(value).map_err(|_|"SORTED_SHAPE_OVERFLOW")?;}Ok(sizes)}
+pub(crate) fn metadata_sizes()->Result<[usize;5]>{let mut raw=[0u64;5];crate::generic_native::checked!(mgbfs_generic_sorted_native_metadata_shape, unsafe{mgbfs_generic_sorted_native_metadata_shape(raw.as_mut_ptr(),5)})?;let mut sizes=[0usize;5];for (out,value) in sizes.iter_mut().zip(raw){if value==0{return Err("SORTED_METADATA_SHAPE".into());}*out=usize::try_from(value).map_err(|_|"SORTED_SHAPE_OVERFLOW")?;}Ok(sizes)}
 fn action_profile(input:&Input)->[u32;9]{[input.state_bytes,input.transport,input.kind,input.elements,input.world,input.shards,input.queue_capacity,input.rows,input.cols]}
 pub(crate) struct OriginBuffers{buffer:Buffer,pub shape:OriginShape,workspace:Workspace,profile:[u32;9]}
 impl OriginBuffers{
@@ -58,11 +58,11 @@ impl OriginBuffers{
  pub fn allocated_bytes(&self)->usize{self.buffer.bytes}
  pub fn generate_unique(&self,input:&Input,error:*mut c_void,stream:*mut c_void)->Result<()>{
   if action_profile(input)!=self.profile||u64::from(input.world)*u64::from(input.queue_capacity)!=u64::from(self.shape.count){return Err("SORTED_WORKSPACE_INPUT_GEOMETRY".into());}
-  check(unsafe{mgbfs_generic_sorted_native_origin(input,&self.workspace,error,stream)})
+  crate::generic_native::checked!(mgbfs_generic_sorted_native_origin, unsafe{mgbfs_generic_sorted_native_origin(input,&self.workspace,error,stream)})
  }
  pub fn accept(&self,input:&Input,destination:&Destination,stream:*mut c_void)->Result<()>{
   if action_profile(input)!=self.profile||u64::from(input.world)*u64::from(input.queue_capacity)!=u64::from(self.shape.count){return Err("SORTED_WORKSPACE_INPUT_GEOMETRY".into());}
-  check(unsafe{mgbfs_generic_sorted_native_accept(input,&self.workspace,destination,stream)})
+  crate::generic_native::checked!(mgbfs_generic_sorted_native_accept, unsafe{mgbfs_generic_sorted_native_accept(input,&self.workspace,destination,stream)})
  }
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn native_layout(){assert_eq!(mem::size_of::<Input>(),176);assert_eq!(mem::size_of::<Workspace>(),80);assert_eq!(mem::size_of::<Destination>(),112);assert_eq!(align(257).unwrap(),512);assert!(align(u64::MAX).is_err());}}
@@ -101,7 +101,7 @@ impl OwnerShape {
   let sizes=metadata_sizes()?;let origin=OriginShape::query(input,device)?;
   let page=256u64;let needed=(u64::from(capacity)+page-1)/page;
   let classes=64-needed.next_power_of_two().leading_zeros();
-  let(mut control,mut handles)=(0,0);check(unsafe{mgbfs_generic_sorted_native_carry_shape(page as u32,classes,&mut control,&mut handles)})?;
+  let(mut control,mut handles)=(0,0);crate::generic_native::checked!(mgbfs_generic_sorted_native_carry_shape, unsafe{mgbfs_generic_sorted_native_carry_shape(page as u32,classes,&mut control,&mut handles)})?;
   // Rounded roots, transient carry outputs and small per-shard roots. Shared
   // rank credits do not assume balanced ownership of logical shards.
   let target=u64::from(capacity).checked_mul(u64::from(banks)*4).and_then(|v|v.checked_add(u64::from(input.shards)*u64::from(banks)*page*2)).ok_or("SORTED_POOL_OVERFLOW")?;
@@ -123,33 +123,33 @@ pub(crate) struct SortedOwner {
 impl SortedOwner {
  pub fn new(input:&Input,shape:OwnerShape,arena:*mut c_void,stride:u32,error:*mut c_void,streams:&[*mut c_void],device:i32)->Result<Self>{
   if streams.len()!=shape.lanes as usize{return Err("SORTED_OWNER_STREAMS".into());}
-  check(unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device)})?;
+  crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(device)})?;
   let pool_storage=Buffer::new(shape.pool_bytes,device)?;let roots=shape.banks as usize*input.shards as usize;
   let tiers=Buffer::new(shape.tier_stride*roots,device)?;let handles=Buffer::new(shape.handle_stride*roots,device)?;
   let pool=Pool{occupied:pool_storage.at(shape.pool_offsets[0]),descriptors:pool_storage.at(shape.pool_offsets[1]),regions:shape.regions,page_entries:256};
-  for buffer in [&pool_storage,&tiers]{check(unsafe{mgbfs_cuda::ffi::cudaMemsetAsync(buffer.ptr,0,buffer.bytes,ptr::null_mut())})?;}
+  for buffer in [&pool_storage,&tiers]{crate::generic_native::checked!(cudaMemsetAsync, unsafe{mgbfs_cuda::ffi::cudaMemsetAsync(buffer.ptr,0,buffer.bytes,ptr::null_mut())})?;}
   let mut lanes=Vec::new();for &stream in streams{
    let origin=OriginBuffers::new(input,device)?;if origin.allocated_bytes()!=shape.origin.allocation_bytes{return Err("SORTED_OWNER_ORIGIN_SHAPE_CHANGED".into());}
    let metadata=Buffer::new(align((shape.carry_stride+shape.reservation_stride+shape.banks as usize*shape.snapshot_stride) as u64)? as usize,device)?;
-   check(unsafe{mgbfs_cuda::ffi::cudaMemsetAsync(metadata.ptr,0,metadata.bytes,ptr::null_mut())})?;
+   crate::generic_native::checked!(cudaMemsetAsync, unsafe{mgbfs_cuda::ffi::cudaMemsetAsync(metadata.ptr,0,metadata.bytes,ptr::null_mut())})?;
    let control=Buffer::new(shape.control_bytes,device)?;lanes.push(Lane{origin,metadata,control,stream});
   }
-  check(unsafe{mgbfs_cuda::ffi::cudaStreamSynchronize(ptr::null_mut())})?;
+  crate::generic_native::checked!(cudaStreamSynchronize, unsafe{mgbfs_cuda::ffi::cudaStreamSynchronize(ptr::null_mut())})?;
   let mut graphs=Vec::new();for root in 0..roots{
    let lane=&lanes[(root%input.shards as usize)%lanes.len()];
    let config=CarryConfig{pool:&pool,tiers:tiers.at(root*shape.tier_stride),carry:lane.metadata.ptr,hashes:pool_storage.at(shape.pool_offsets[2]),rows:pool_storage.at(shape.pool_offsets[3]),arena,error,control:lane.control.ptr,handles:handles.at(root*shape.handle_stride),stride,width:input.elements,state_bytes:input.state_bytes,classes:shape.classes};
-   let mut graph=ptr::null_mut();check(unsafe{mgbfs_generic_sorted_native_carry_create(&config,lane.stream,&mut graph)})?;graphs.push(CarryGraph(graph));
+   let mut graph=ptr::null_mut();crate::generic_native::checked!(mgbfs_generic_sorted_native_carry_create, unsafe{mgbfs_generic_sorted_native_carry_create(&config,lane.stream,&mut graph)})?;graphs.push(CarryGraph(graph));
   }
   let out=Self{graphs,lanes,pool_storage,tiers,handles,pool,shape,shards:input.shards};
   if out.allocated_bytes()!=out.shape.allocated_bytes{return Err("SORTED_OWNER_ALLOCATION_MISMATCH".into());}Ok(out)
  }
  pub fn allocated_bytes(&self)->usize{self.pool_storage.bytes+self.tiers.bytes+self.handles.bytes+self.lanes.iter().map(|l|l.origin.allocated_bytes()+l.metadata.bytes+l.control.bytes).sum::<usize>()}
  pub fn stream(&self,shard:u32)->*mut c_void{self.lanes[shard as usize%self.lanes.len()].stream}
- pub fn seed(&self,shard:u32,hash:u64,error:*mut c_void,stream:*mut c_void)->Result<()>{if shard>=self.shards{return Err("SORTED_ROOT_SHARD".into());}check(unsafe{mgbfs_generic_sorted_native_seed(&self.pool,self.tiers.at(shard as usize*self.shape.tier_stride),self.pool_storage.at(self.shape.pool_offsets[2]),self.pool_storage.at(self.shape.pool_offsets[3]),hash,0,error,stream)})}
+ pub fn seed(&self,shard:u32,hash:u64,error:*mut c_void,stream:*mut c_void)->Result<()>{if shard>=self.shards{return Err("SORTED_ROOT_SHARD".into());}crate::generic_native::checked!(mgbfs_generic_sorted_native_seed, unsafe{mgbfs_generic_sorted_native_seed(&self.pool,self.tiers.at(shard as usize*self.shape.tier_stride),self.pool_storage.at(self.shape.pool_offsets[2]),self.pool_storage.at(self.shape.pool_offsets[3]),hash,0,error,stream)})}
  // Caller joins all owner streams before retirement and arena bank reuse.
  pub fn retire_bank(&self,bank:u32,error:*mut c_void,stream:*mut c_void)->Result<()>{
   if bank>=self.shape.banks{return Err("SORTED_EPOCH_BANK".into());}
-  for shard in 0..self.shards{check(unsafe{mgbfs_generic_sorted_native_retire(&self.pool,self.tiers.at((bank*self.shards+shard) as usize*self.shape.tier_stride),error,stream)})?;}Ok(())
+  for shard in 0..self.shards{crate::generic_native::checked!(mgbfs_generic_sorted_native_retire, unsafe{mgbfs_generic_sorted_native_retire(&self.pool,self.tiers.at((bank*self.shards+shard) as usize*self.shape.tier_stride),error,stream)})?;}Ok(())
  }
  pub fn accept(&self,input:&Input,mut destination:Destination,bank:u32)->Result<()>{
   if input.shard>=self.shards||bank>=self.shape.banks{return Err("SORTED_EPOCH_BANK".into());}
@@ -158,14 +158,14 @@ impl SortedOwner {
   destination.snapshots=lane.metadata.at(snapshot_offset);destination.snapshot_count=self.shape.banks;
   destination.pool=(&self.pool as *const Pool).cast_mut().cast();destination.run_hashes=self.pool_storage.at(self.shape.pool_offsets[2]);destination.run_rows=self.pool_storage.at(self.shape.pool_offsets[3]);
   destination.carry=lane.metadata.ptr;destination.reservation=lane.metadata.at(self.shape.carry_stride);
-  for b in 0..self.shape.banks{check(unsafe{mgbfs_generic_sorted_native_snapshot_acquire(&self.pool,self.tiers.at((b*self.shards+input.shard) as usize*self.shape.tier_stride),lane.metadata.at(snapshot_offset+b as usize*self.shape.snapshot_stride),destination.run_hashes,destination.run_rows,destination.error,stream)})?;}
+  for b in 0..self.shape.banks{crate::generic_native::checked!(mgbfs_generic_sorted_native_snapshot_acquire, unsafe{mgbfs_generic_sorted_native_snapshot_acquire(&self.pool,self.tiers.at((b*self.shards+input.shard) as usize*self.shape.tier_stride),lane.metadata.at(snapshot_offset+b as usize*self.shape.snapshot_stride),destination.run_hashes,destination.run_rows,destination.error,stream)})?;}
   lane.origin.generate_unique(input,destination.error,stream)?;lane.origin.accept(input,&destination,stream)?;
-  for b in 0..self.shape.banks{check(unsafe{mgbfs_generic_sorted_native_owner_snapshot_release(&self.pool,lane.metadata.at(snapshot_offset+b as usize*self.shape.snapshot_stride),destination.error,stream)})?;}
+  for b in 0..self.shape.banks{crate::generic_native::checked!(mgbfs_generic_sorted_native_owner_snapshot_release, unsafe{mgbfs_generic_sorted_native_owner_snapshot_release(&self.pool,lane.metadata.at(snapshot_offset+b as usize*self.shape.snapshot_stride),destination.error,stream)})?;}
   // Releasing snapshot leases before carry returns old epoch credits promptly.
   let graph=&self.graphs[(bank*self.shards+input.shard) as usize];
-  check(unsafe{mgbfs_generic_sorted_native_carry_launch(graph.0,stream)})?;
+  crate::generic_native::checked!(mgbfs_generic_sorted_native_carry_launch, unsafe{mgbfs_generic_sorted_native_carry_launch(graph.0,stream)})?;
   // The graph retries once on actual allocation pressure. Normal publication
   // needs one host launch; persistent pressure remains a collective failure.
-  check(unsafe{mgbfs_generic_sorted_native_owner_status(destination.reservation,destination.carry,destination.error,stream)})
+  crate::generic_native::checked!(mgbfs_generic_sorted_native_owner_status, unsafe{mgbfs_generic_sorted_native_owner_status(destination.reservation,destination.carry,destination.error,stream)})
  }
 }

@@ -1,17 +1,24 @@
 //! Job-boundary telemetry; never called inside GPU batch dispatch.
 use mgbfs_core::Result;
 pub fn set(phase:&str)->Result<()> {
+ crate::native_fault::phase(phase);
  if let Some(path)=std::env::var_os("MGBFS_DIAGNOSTIC_TRACE_FILE") {
   use std::io::Write;
   let mut file=std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e|e.to_string())?;
   writeln!(file,"PHASE pid={} {}",std::process::id(),phase).map_err(|e|e.to_string())?;
   file.flush().map_err(|e|e.to_string())?;
  }
+ persist(Some(phase))
+}
+pub fn checkpoint()->Result<()> { persist(None) }
+fn persist(phase:Option<&str>)->Result<()> {
  let Some(path)=std::env::var_os("MGBFS_JOB_PHASE_PATH") else{return Ok(());};
  let path=std::path::PathBuf::from(path);
  let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs_f64();
  let mut value=if path.exists(){serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?}else{serde_json::json!({"schema":1,"pid":std::process::id(),"sequence":std::env::var("MGBFS_JOB_SEQUENCE").unwrap_or_default(),"entered":{}})};
- value["phase"]=serde_json::json!(phase);value["entered"][phase]=serde_json::json!(unix);
+ if let Some(phase)=phase { value["phase"]=serde_json::json!(phase);value["entered"][phase]=serde_json::json!(unix); }
+ for (key,item) in crate::native_fault::snapshot().as_object().unwrap(){value[key]=item.clone();}
+ value["updated_unix"]=serde_json::json!(unix);
  let tmp=path.with_extension("tmp");std::fs::write(&tmp,serde_json::to_vec(&value).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(tmp,path).map_err(|e|e.to_string())?;Ok(())
 }
 

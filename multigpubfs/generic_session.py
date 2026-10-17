@@ -36,7 +36,7 @@ class Job:
 
 class Worker:
  def __init__(self,native,env,rank,device,root,kind):
-  self.root=root;root.mkdir();self.sequence=0;self.job=None;self.log=(root/'worker.log').open('w')
+  self.rank=rank;self.device=device;self.root=root;root.mkdir();self.sequence=0;self.job=None;self.log=(root/'worker.log').open('w')
   startup={k:v for k,v in env.items() if not k.startswith('MGBFS_') or k in ('MGBFS_CUDART_LIBRARY','MGBFS_CUDA_LIB_DIR','MGBFS_EXECUTABLE')}
   startup.update(RANK=str(rank),LOCAL_RANK=str(device),MGBFS_SESSION_KIND=kind)
   self.process=subprocess.Popen([str(native),'graph-session',str(root),str(rank),str(device)],env=startup,stdout=self.log,stderr=subprocess.STDOUT)

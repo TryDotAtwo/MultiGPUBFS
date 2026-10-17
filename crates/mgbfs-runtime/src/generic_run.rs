@@ -14,6 +14,7 @@ pub fn run(args:&[String])->Result<()> {
   "--capacity"=>capacity=Some(args[i+1].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?),
   "--seconds"=>seconds=args[i+1].parse().map_err(|_|"CLI_GRAPH_SECONDS")?,
   _=>return Err("CLI_GRAPH_UNKNOWN_OPTION".into()),}i+=2;}
+ crate::native_fault::reset(Some(0),Some(device));
  if seconds==0{return Err("CLI_GRAPH_SECONDS".into());}
  if std::env::var("WORLD_SIZE").ok().is_some_and(|v|v!="1"){return Err("GENERIC_DISTRIBUTED_INTEGRATION_NOT_READY".into());}
  let graph:GraphDefinitionV2=serde_json::from_reader(std::fs::File::open(&args[0]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;graph.validate()?;
@@ -22,10 +23,11 @@ pub fn run(args:&[String])->Result<()> {
  let plan=match capacity{Some(c)=>GenericMemoryPlan::with_storage(graph.start.len() as u32,c,crate::generic_memory::preferred_state_bytes(&graph))?,None=>GenericNativeBfs::automatic_plan(&graph,device)?};
  let report_plan=serde_json::json!({"state_bytes":plan.state_bytes,"elements":plan.elements,"capacity":plan.capacity,"table_slots":plan.table_slots,"batch":plan.batch,"device_bytes":plan.device_bytes,"history_layers":1,"world":1,"shards":1,"table_layout":"SINGLE_ALL_VISITED"});let storage_bytes=plan.state_bytes;let allocation=plan.device_bytes;let capacity=plan.capacity;let setup=Instant::now();let mut bfs=GenericNativeBfs::new(&graph,device,plan,0x19f856a2,64)?;let setup_seconds=setup.elapsed().as_secs_f64();
  let _signals=Signals::new();eprintln!("MGBFS_GRAPH_READY device={device}");let started=Instant::now();let mut counts=vec![1u32];let mut times=vec![];let (status,reason)=loop{
+  crate::native_fault::layer(counts.len() as u64,counts.len() as u64-1);
   if CANCELLED.load(Ordering::Relaxed){bfs.stop();break ("INCOMPLETE","CANCELLED".to_owned());}
   if started.elapsed()>=Duration::from_secs(seconds){bfs.stop();break ("INCOMPLETE","DEADLINE".to_owned());}
   let layer=Instant::now();match bfs.advance()?{
-   GenericAdvance::Layer{count}=>{counts.push(count);times.push(layer.elapsed().as_secs_f64());},
+   GenericAdvance::Layer{count}=>{counts.push(count);crate::native_fault::completed(counts.len() as u64-1);times.push(layer.elapsed().as_secs_f64());},
    GenericAdvance::Complete=>break ("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),
    GenericAdvance::Resource{fatal}=>break ("INCOMPLETE",format!("RESOURCE_{fatal}")),
   }

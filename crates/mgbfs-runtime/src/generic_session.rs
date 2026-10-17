@@ -17,12 +17,13 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
    let env:BTreeMap<String,String>=serde_json::from_value(v["env"].clone()).map_err(|e|e.to_string())?;
    if env.keys().any(|k|!k.starts_with("MGBFS_")&&!k.starts_with("NCCL_")){return Err("GENERIC_SESSION_ENV".into());}
    for(k,value)in env{previous.insert(k.clone(),std::env::var(&k).ok());std::env::set_var(k,value);}
+   crate::native_fault::reset(Some(rank),Some(device));
    crate::job_phase::set("preparing")?;
    crate::job_phase::set("control-thread-start")?;
    let _job_control=crate::job_phase::Control::start();
    crate::job_phase::set("control-thread-ready")?;
    match v["command"].as_str(){
-    Some("release-memory")=>{crate::generic_native::check(unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::check(unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
+    Some("release-memory")=>{crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::checked!(cudaDeviceSynchronize, unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
     Some("bench")=>{
      // Generic and host-NCCL reference jobs share the same healthy rank.
      std::env::set_var("WORLD_SIZE",std::env::var("MGBFS_BENCH_WORLD_SIZE").map_err(|_|"ENV_WORLD_SIZE")?);
@@ -33,11 +34,11 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
     },
     Some("inventory")=>{
      crate::job_phase::set("inventory-cudaSetDevice")?;
-     crate::generic_native::check(unsafe{cudaSetDevice(device as i32)})?;
+     crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;
      crate::job_phase::set("inventory-cudaMemGetInfo")?;
-     let(mut free,mut total)=(0usize,0usize);crate::generic_native::check(unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
+     let(mut free,mut total)=(0usize,0usize);crate::generic_native::checked!(cudaMemGetInfo, unsafe{cudaMemGetInfo(&mut free,&mut total)})?;
      crate::job_phase::set("inventory-hardware-info")?;
-     let mut hw=[0u64;8];crate::generic_native::check(unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;
+     let mut hw=[0u64;8];crate::generic_native::checked!(mgbfs_generic_hardware_info, unsafe{mgbfs_generic_hardware_info(device as i32,hw.as_mut_ptr())})?;
      crate::job_phase::set("inventory-pool-accounting")?;
      Ok(serde_json::json!({"device":device,"free_bytes":(free as u64+crate::session_cache::reusable_bytes()+crate::generic_pool::available()?).min(total as u64),"additional_reserve_bytes":crate::generic_memory::admission_reserve_bytes()?,"nccl_warmed":crate::session_cache::warmed_communicator(),"cached_reusable_bytes":crate::session_cache::reusable_bytes(),"pool_reusable_bytes":crate::generic_pool::available()?,"total_bytes":total,"sm_count":hw[0],"compute_major":hw[1],"compute_minor":hw[2],"l2_bytes":hw[3],"warp_size":hw[4],"threads_per_sm":hw[5],"threads_per_block":hw[6],"shared_bytes_per_sm":hw[7]}))
     },

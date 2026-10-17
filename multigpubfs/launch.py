@@ -127,13 +127,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if profile:
     result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    return finish(result)
-  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];started=time.monotonic()
+  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];failure=None;started=time.monotonic()
   try:
    from .generic_session import launch_group_selection
    selection=launch_group_selection(str(native),devices,native_env)
    for rank in range(len(devices)):
     log=(output/f'rank-{rank}.log').open('w');logs.append(log)
-    env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]))
+    env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]),MGBFS_JOB_PHASE_PATH=str(output/f'rank-{rank}.phase.json'))
     from .generic_session import launch as launch_rank
     jobs.append(launch_rank([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(max_seconds)],env,log,devices,_selection=selection))
    while any(p.poll() is None for p in jobs):
@@ -148,6 +148,12 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     if timed_out or (not all(phases) and time.monotonic()-started>max_seconds+1200):raise RuntimeError('DISTRIBUTED_COMPLETION_TIMEOUT: worker state remains in rank logs; no restart')
     time.sleep(.002)
    if any(p.returncode for p in jobs):raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED')
+  except BaseException as error:
+   failure=error
+   from .failure_evidence import preserve_native_failure
+   preserve_native_failure(jobs,output,error,when='before_cleanup')
+   if isinstance(error,RuntimeError):error.args=(str(error)+'; evidence='+str(output/'failure-evidence'),)
+   raise
   finally:
    for p in jobs:
     if p.poll() is None:p.terminate()
@@ -155,6 +161,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     if p.poll() is None:
      try:p.wait(timeout=10)
      except subprocess.TimeoutExpired:p.kill();p.wait()
+   if failure is not None:
+    from .failure_evidence import preserve_native_failure
+    preserve_native_failure(jobs,output,failure,when='after_cleanup')
    for log in logs:log.close()
   parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
   for rank,p in enumerate(parts):
