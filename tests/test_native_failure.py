@@ -69,7 +69,7 @@ class DiagnosticFailureBundleTests(unittest.TestCase):
   import contextlib,io,zipfile
   from multigpubfs.diagnostics import Runner
   with tempfile.TemporaryDirectory() as temp:
-   root=Path(temp);runner=Runner(root,60)
+   root=Path(temp)/'doctor';runner=Runner(root,60)
    evidence=root/'pilot-0/failure-evidence';rank=evidence/'rank-1';rank.mkdir(parents=True)
    for name in ['phase.json','response.json']:(rank/name).write_text('{"code":999}')
    (rank/'worker.log').write_text('MGBFS_NATIVE_ERROR')
