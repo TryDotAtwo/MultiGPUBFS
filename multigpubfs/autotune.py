@@ -496,7 +496,8 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
   if not pilots:pilots=[dict(batch=large_batch,generator_backend=default_generator,layer_sizes=[1],layer_seconds=[])]
   budget=0.
   profiles=select_size_profiles(pilots,len(selected),threshold=len(selected)*global_profile.get('hardware_policy',{}).get('size_threshold_per_rank',16384))
-  result=dict(base,online_size_tuning=True,global_profile=global_profile,status='MEASURED_FRONTIER_SIZE_PROFILES',size_profiles=profiles,pilots=pilots,identity=identity,cache_hit=False,measured=any(p['measured'] for p in profiles),seconds=time.monotonic()-started,pilot_budget_seconds=budget,scope='same admitted shard/history/transport geometry; layer-boundary batch and exact generator selection; unmeasured large frontiers are conservative, no extrapolated optimum')
+  result=dict(base,online_size_tuning=True,global_profile=global_profile,status='MEASURED_FRONTIER_SIZE_PROFILES',size_profiles=profiles,pilots=pilots,identity=identity,cache_hit=False,measured=global_profile.get('measured',False) or any(p['measured'] for p in profiles),selection_measured=global_profile.get('measured',False),size_profiles_measured=any(p['measured'] for p in profiles),seconds=time.monotonic()-started,pilot_budget_seconds=budget,scope='same admitted shard/history/transport geometry; layer-boundary batch and exact generator selection; unmeasured large frontiers are conservative, no extrapolated optimum')
+  if global_profile.get('candidate_failures'):result.update(candidate_failures=global_profile['candidate_failures'],failed_candidate_policy=global_profile['failed_candidate_policy'],failed_probes_retried=False)
   if dependency and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True);fd,path=tempfile.mkstemp(prefix='size-'+key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
