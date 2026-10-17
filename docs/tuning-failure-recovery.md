@@ -1,6 +1,6 @@
 # Autotuning candidate failures and measured selection
 
-Version 0.2.0.dev25 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
+Version 0.2.0.dev26 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
 
 ## Candidate rejection
 
@@ -24,3 +24,8 @@ Use `multigpubfs.persistent_graph_workers()` around repeated public CayleyPy cal
 ## Evidence boundary
 
 Candidate rejection fixes the selector's premature termination and dev24 fallback policy. It does not identify the cause of the original production CUDA 999 on eight GPUs. The reporting CUDA/NCCL call may expose an earlier asynchronous error. CPU tests and two-GPU acceptance do not establish correctness or performance on that server.
+
+
+## Bounded probes with insufficient completed work
+
+A slow configuration may hit its probe deadline before it has enough completed work for a meaningful comparison. Its completed layer vector is still checked against the other reports. If correct but below the existing depth/work gate, it is recorded in `excluded_prefix_candidates` with its native reason and coverage. It cannot reduce the comparison window of candidates that did complete enough work. An INCOMPLETE probe with sufficient completed work still participates at the common completed depth. At least two eligible candidates are required for a measured selection; after a captured candidate failure, insufficient remaining comparisons produce the explicit error above. This does not extrapolate large-layer performance or treat a short probe as fully tested.
