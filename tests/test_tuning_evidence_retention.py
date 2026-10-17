@@ -11,7 +11,7 @@ class EvidenceRetention(unittest.TestCase):
      raise RuntimeError('producer failure')
    logs=list(root.glob('*/rank-0.log'));self.assertEqual(len(logs),1);self.assertEqual(logs[0].read_text(),'original native error')
    self.assertTrue(list(root.glob('*/failure-context.json')));self.assertFalse(Path(temporary).exists())
-   self.assertTrue(any('Tuning evidence:' in note for note in caught.exception.__notes__))
+   if hasattr(caught.exception,'add_note'):self.assertTrue(any('Tuning evidence:' in note for note in caught.exception.__notes__))
  def test_success_cleans_temporary_workspace(self):
   with _evidence_directory({},'test-') as temporary:Path(temporary,'receipt').write_text('ok')
   self.assertFalse(Path(temporary).exists())

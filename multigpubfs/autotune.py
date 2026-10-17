@@ -466,8 +466,20 @@ def _evidence_directory(env,prefix):
   root.mkdir(parents=True,exist_ok=True)
   destination=Path(tempfile.mkdtemp(prefix=prefix,dir=root))
   shutil.copytree(temporary.name,destination,dirs_exist_ok=True)
-  (destination/'failure-context.json').write_text(json.dumps(dict(schema=1,error_type=type(error).__name__,error=str(error),trace=traceback.format_exc())))
-  if hasattr(error,'add_note'):error.add_note('Tuning evidence: '+str(destination))
+  original_error=str(error)
+  old=str(Path(temporary.name));new=str(destination.resolve())
+  error.args=tuple(arg.replace(old,new) if isinstance(arg,str) else arg for arg in error.args)
+  # Rebase metadata, preserving verbatim worker logs and their checksums.
+  def rebase(value):
+   if isinstance(value,str):return value.replace(old,new)
+   if isinstance(value,list):return [rebase(item) for item in value]
+   if isinstance(value,dict):return {key:rebase(item) for key,item in value.items()}
+   return value
+  for summary in destination.glob('**/failure-evidence/summary.json'):
+   try:summary.write_text(json.dumps(rebase(json.loads(summary.read_text())),indent=2))
+   except (OSError,ValueError):pass
+  (destination/'failure-context.json').write_text(json.dumps(dict(schema=1,error_type=type(error).__name__,error=str(error),original_error=original_error,evidence=new,trace=traceback.format_exc())))
+  if hasattr(error,'add_note'):error.add_note('Tuning evidence: '+new)
   raise
  finally:
   temporary.cleanup()
