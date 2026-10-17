@@ -6,6 +6,9 @@ on:
         required: true
       release_tag:
         required: true
+      asset_prefix:
+        required: true
+        default: candidate
 permissions:
   contents: write
   actions: read
@@ -17,19 +20,22 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BUILD_RUN: ${{ inputs.build_run }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      ASSET_PREFIX: ${{ inputs.asset_prefix }}
     steps:
       - name: Fetch exact successful package artifact on runner
         run: |
           gh run view "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion' | grep -x success
           gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name native-pip-wheel --dir /tmp/candidate-wheel
           python3 - <<'PY'
-          import hashlib,json
+          import hashlib,json,os,re
           from pathlib import Path
-          p=Path('/tmp/candidate-wheel');m=json.loads((p/'manifest.json').read_text());wheel=p/m['wheel']
+          p=Path('/tmp/candidate-wheel');m=json.loads((p/'manifest.json').read_text());wheel=p/m['wheel'];prefix=os.environ['ASSET_PREFIX']
+          assert re.fullmatch('[a-z0-9-]{1,40}',prefix)
           assert wheel.stat().st_size==m['size']<2_000_000
           assert hashlib.sha256(wheel.read_bytes()).hexdigest()==m['sha256']
-          (p/'candidate-manifest.json').write_text(json.dumps(m,indent=2))
-          (p/'candidate-SHA256SUMS').write_text(m['sha256']+'  '+m['wheel']+'\n')
+          wheel.rename(p/(prefix+'-'+m['wheel']))
+          (p/(prefix+'-manifest.json')).write_text(json.dumps(m,indent=2))
+          (p/(prefix+'-SHA256SUMS')).write_text(m['sha256']+'  '+m['wheel']+'\n')
           PY
       - name: Upload candidate bytes without replacing native component metadata
-        run: gh release upload "$RELEASE_TAG" /tmp/candidate-wheel/*.whl /tmp/candidate-wheel/candidate-manifest.json /tmp/candidate-wheel/candidate-SHA256SUMS --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$RELEASE_TAG" /tmp/candidate-wheel/"$ASSET_PREFIX"-* --repo "$GITHUB_REPOSITORY"
