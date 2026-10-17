@@ -1,0 +1,15 @@
+name: Resident plan policy regression checks
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.75.0 --profile minimal
+      - run: cargo +1.75.0 test --locked -p mgbfs-runtime session_protocol::tests
