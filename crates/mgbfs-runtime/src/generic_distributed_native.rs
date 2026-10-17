@@ -285,4 +285,20 @@ impl GenericDistributedBfs{
   Ok(DistributedAdvance::Layer{local,global})
  }
 }
-impl Drop for GenericDistributedBfs{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device);cudaStreamSynchronize(self.bfs.stream.ptr);for stream in &self.streams{cudaStreamSynchronize(stream.ptr);}if !crate::session_cache::comm_put(self.comm){mgbfs_nccl_destroy(self.comm);}}}}
+impl Drop for GenericDistributedBfs{
+ fn drop(&mut self){unsafe{
+  mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device);
+  let failed=crate::native_fault::failed();
+  if failed{
+   // A fatal rank cannot finish pending collectives normally. Abort before
+   // stream drains; never park this communicator in the healthy session cache.
+   crate::session_cache::permit_comm(false);
+   let status=mgbfs_nccl_abort(self.comm);
+   if status!=0{eprintln!("MGBFS_FAILED_COMM_ABORT rank={} code={status}",self.rank);}
+  }
+  cudaStreamSynchronize(self.bfs.stream.ptr);
+  for stream in &self.streams{cudaStreamSynchronize(stream.ptr);}
+  if failed||!crate::session_cache::comm_put(self.comm){mgbfs_nccl_destroy(self.comm);}
+ }}
+}
+

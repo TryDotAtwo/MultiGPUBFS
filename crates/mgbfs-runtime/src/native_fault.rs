@@ -22,6 +22,7 @@ pub fn reset(rank: Option<u32>, device: Option<u32>) {
         ..Context::default()
     });
 }
+pub fn failed() -> bool { CONTEXT.with(|v| v.borrow().error.is_some()) }
 pub fn phase(value: &str) { CONTEXT.with(|v| v.borrow_mut().phase = value.into()); }
 pub fn layer(target: u64, completed: u64) {
     CONTEXT.with(|v| { let mut v = v.borrow_mut(); v.layer = Some(target); v.completed = Some(completed); });
