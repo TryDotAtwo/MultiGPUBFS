@@ -3,8 +3,24 @@ import contextlib,json,os,subprocess,tempfile,time
 from pathlib import Path
 _active=None
 
+def _expected_plan_rejection(job):
+ if job is None or getattr(job,'command',None) not in ('graph-plan','graph-local-plan'):return False
+ response=getattr(job,'response',None);sequence=getattr(job,'sequence',None)
+ return (isinstance(response,dict) and type(sequence) is int and sequence>=0
+         and type(response.get('schema')) is int and response['schema']==1
+         and type(response.get('sequence')) is int and response['sequence']==sequence
+         and response.get('ok') is False
+         and response.get('error') in ('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GEMM_BATCH_EXCEEDS_ADMISSION'))
+
+def _job_failed(job):
+ if job is None or job.returncode in (None,0):return False
+ response=getattr(job,'response',None);result=response.get('result') if isinstance(response,dict) else None
+ query_only=isinstance(result,dict) and bool(result.get('query_only'))
+ return not (query_only or _expected_plan_rejection(job))
+
+
 class Job:
- def __init__(self,worker,sequence):self.worker=worker;self.sequence=sequence;self.pid=worker.process.pid;self.returncode=None;self.response=None;self.receipt_log=None;self.log_offset=0;self.logged=False
+ def __init__(self,worker,sequence):self.worker=worker;self.sequence=sequence;self.pid=worker.process.pid;self.returncode=None;self.response=None;self.command=None;self.receipt_log=None;self.log_offset=0;self.logged=False
  def poll(self):
   path=self.worker.root/f'response-{self.sequence:08}.json'
   if self.returncode is None and path.exists():
@@ -42,8 +58,8 @@ class Worker:
   self.process=subprocess.Popen([str(native),'graph-session',str(root),str(rank),str(device)],env=startup,stdout=self.log,stderr=subprocess.STDOUT)
  def submit(self,command,args,env):
   if self.job is not None and self.job.poll() is None:raise RuntimeError('GENERIC_SESSION_CONCURRENT_JOB')
-  if self.process.poll() is not None or self.job is not None and self.job.returncode and not (self.job.response or {}).get('result',{}).get('query_only'):raise RuntimeError('GENERIC_SESSION_FAILED_NO_RESTART')
-  job=Job(self,self.sequence);self.job=job
+  if self.process.poll() is not None or _job_failed(self.job):raise RuntimeError('GENERIC_SESSION_FAILED_NO_RESTART')
+  job=Job(self,self.sequence);job.command=command;self.job=job
   path=self.root/f'job-{self.sequence:08}.json';tmp=path.with_suffix('.tmp')
   env=dict(env,MGBFS_JOB_PHASE_PATH=str(self.root/f'phase-{self.sequence:08}.json'),MGBFS_JOB_SEQUENCE=str(self.sequence),MGBFS_JOB_CANCEL_PATH=str(self.root/f'cancel-{self.sequence:08}'))
   tmp.write_text(json.dumps(dict(schema=1,sequence=self.sequence,command=command,args=args,env={k:v for k,v in env.items() if k.startswith(('MGBFS_','NCCL_'))})));os.replace(tmp,path);self.sequence+=1
@@ -76,7 +92,7 @@ class Pool:
   dependency=_dependency_identity(str(native),env)
   stamps=tuple((x[0],x[1],_stat_identity(x[1])) for x in (dependency or {}).get('resolved_dependencies',[]))
   key=(_stat_identity(native),stamps,str(native),tuple(devices),tuple((k,env.get(k)) for k in ('LD_LIBRARY_PATH','CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','CUDA_MODULE_LOADING','CUDA_DISABLE_PTX_JIT')),tuple(sorted((k,v) for k,v in env.items() if k.startswith('NCCL_'))))
-  if key==self.identity and any(w.process.poll() is not None or w.job is not None and w.job.returncode not in (None,0) and not (w.job.response or {}).get('result',{}).get('query_only') for w in self.workers):raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
+  if key==self.identity and any(w.process.poll() is not None or _job_failed(w.job) for w in self.workers):raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
   if key!=self.identity:
    self.close_workers();root=self.root/str(self.generation);root.mkdir();self.generation+=1
    try:
@@ -120,9 +136,16 @@ def query(command,env,seconds,kwargs):
   if capacity!='auto':target=str(min(int(target),int(capacity)))
   for round in range(2):
    jobs=[w.submit('graph-local-plan',[command[2],str(device),str(len(devices)),command[4],capacity,target],env) for w,device in zip(_active.workers,devices)]
+   plan_rejections=[]
    for i,job in enumerate(jobs):
-    if job.wait(max(.001,seconds-(time.monotonic()-started))):raise RuntimeError('GENERIC_SESSION_LOCAL_PLAN_FAILED '+repr(job.response))
-    local=job.response['result'];inventory[i]['free_bytes']=local['free_bytes'];inventory[i]['local_sorted_plan']=local['plan']
+    if job.wait(max(.001,seconds-(time.monotonic()-started))):
+     if not _expected_plan_rejection(job):raise RuntimeError('GENERIC_SESSION_LOCAL_PLAN_FAILED '+repr(job.response))
+     plan_rejections.append(job.response)
+    else:
+     local=job.response['result'];inventory[i]['free_bytes']=local['free_bytes'];inventory[i]['local_sorted_plan']=local['plan']
+   # A recognized validation refusal does not poison live ranks. Finish every
+   # submitted plan under the existing deadline before its caller continues.
+   if plan_rejections:raise RuntimeError('GENERIC_SESSION_LOCAL_PLAN_FAILED '+repr(plan_rejections[0]))
    target=str(min(x['local_sorted_plan']['batch'] for x in inventory))
  with tempfile.TemporaryDirectory(prefix='mgbfs-live-inventory-') as d:
   path=Path(d)/'inventory.json';path.write_text(json.dumps(inventory))

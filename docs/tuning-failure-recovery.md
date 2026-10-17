@@ -1,6 +1,6 @@
 # Autotuning candidate failures and measured selection
 
-Version 0.2.0.dev27 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
+Version 0.2.0.dev28 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
 
 ## Candidate rejection
 
@@ -34,3 +34,8 @@ A slow configuration may hit its probe deadline before it has enough completed w
 ## Optional generator workspace admission
 
 After measuring and admitting an execution profile, size-tier preparation may try an additional generator. A recognized capacity/workspace rejection for that additional mode is recorded in `size_generator_rejections`; the already admitted measured profile remains selected. Its capacity and owner geometry are retained. Rejected generators are removed from both live and compatible-source size tiers. This is not a session-wide unmeasured fallback. An error admitting the selected generator, an unknown native error, or a timeout still propagates; no retry is attempted.
+
+
+## Persistent planning refusals and failed groups
+
+Every resident job records its requested command. A live worker may continue after a schema/sequence-verified capacity/workspace refusal from `graph-plan` or `graph-local-plan`. The original native response and nonzero result remain unchanged for diagnosis. All submitted peer local-plan requests are drained under the existing deadline before a recognized refusal returns. An unknown query error, invalid response identity, dead process, or failed BFS/bench job remains fatal; no failed production group is restarted. The same nonfatal-plan predicate is used by both individual-worker and whole-pool guards.
