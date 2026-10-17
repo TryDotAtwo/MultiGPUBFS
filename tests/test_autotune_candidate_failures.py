@@ -71,6 +71,25 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
   def pilot(g,target,**kwargs):self.calls.append(Path(target).name);self.native_fault(target,700)
   with self.assertRaisesRegex(RuntimeError,'NATIVE_DISTRIBUTED_RANK_FAILED'):self.choose(pilot)
   self.assertEqual(len(self.calls),1)
+ def test_sorted_candidates_still_run_when_all_hash_candidates_fail(self):
+  self.env.pop('MGBFS_GENERIC_HISTORY')
+  def pilot(g,target,**kwargs):
+   self.calls.append(Path(target).name)
+   if kwargs['_native_env'].get('MGBFS_GENERIC_HISTORY')!='sorted':self.native_fault(target)
+   return self.report(len(self.calls))
+  result=self.choose(pilot)
+  self.assertTrue(result['measured']);self.assertEqual(result['history_algorithm'],'SORTED_RUNS')
+  self.assertEqual(len(result['pilots']),4);self.assertEqual(len(result['candidate_failures']),5)
+  self.assertEqual(self.closes,5)
+ def test_measured_geometry_survives_unmeasured_size_tiers(self):
+  p=self.report(2);p.update(backend='generic',shards=4,transport='full',candidate_order='radix',history_algorithm='HASH',owner_lanes=0,batch=16,generator_backend='cuda')
+  global_profile=dict(p,status='MEASURED_EQUAL_PREFIX_GPU_PROFILE',measured=True,batch_fraction=.25,pilots=[p])
+  admission={'size_profile_capability':1,'devices':[0,1],'inventory':[],'plan':{'capacity':50000,'batch':64,'history_algorithm':'HASH','generator_backend':'cuda'}}
+  with patch.object(autotune,'choose_profile',return_value=global_profile),patch.object(autotune,'_admit',return_value=admission),patch.object(autotune,'_dependency_identity',return_value=None),patch.object(autotune,'_system_info',return_value=subprocess.CompletedProcess([],1,'','')):
+   result=autotune._choose_size_profile_uncached(self.graph,[0,1],None,90,str(self.native),self.env,allow_specialized=False)
+  self.assertTrue(result['measured'],'Measured geometry must not be replaced by an unmeasured selection')
+  self.assertFalse(result['size_profiles_measured'])
+  self.assertTrue(all(not p['measured'] for p in result['size_profiles']))
  def test_size_entry_does_not_replace_a_terminal_tuning_error_with_baseline(self):
   root=self.root/'saved';ev=root/'pilot-0/failure-evidence';(ev/'rank-1').mkdir(parents=True)
   (ev/'rank-1/phase.json').write_text(json.dumps({'native_error':{'code':999}}));(ev/'summary.json').write_text('{}')
