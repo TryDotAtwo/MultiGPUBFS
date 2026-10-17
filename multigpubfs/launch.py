@@ -12,7 +12,6 @@ def _receipt(output,digest):
  if hashlib.sha256((output/'states.json').read_bytes()).hexdigest()!=report['states_sha256']:raise RuntimeError('GRAPH_RECEIPT_CHECKSUM')
  return report
 
-
 def _job_phase(job,output,rank):
  if hasattr(job,'phase'):return job.phase()
  path=Path(output)/('rank-'+str(rank)+'.phase.json')
@@ -176,3 +175,61 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    failed=_phase_failures([_job_phase(p,output,rank) for rank,p in enumerate(jobs)])
    if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
 
+  except BaseException as error:
+   failure=error
+   from .failure_evidence import preserve_native_failure
+   preserve_native_failure(jobs,output,error,when='before_cleanup')
+   if isinstance(error,RuntimeError):error.args=(str(error)+'; evidence='+str(output/'failure-evidence'),)
+   raise
+  finally:
+   for p in jobs:
+    if p.poll() is None:p.terminate()
+   for p in jobs:
+    if p.poll() is None:
+     try:p.wait(timeout=10)
+     except subprocess.TimeoutExpired:p.kill();p.wait()
+   if failure is not None:
+    from .failure_evidence import preserve_native_failure
+    preserve_native_failure(jobs,output,failure,when='after_cleanup')
+   for log in logs:log.close()
+  parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
+  for rank,p in enumerate(parts):
+   if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission.get('rank_plans',[admission['plan']]*len(devices))[rank]:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
+   if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
+  snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
+  current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
+  if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
+  states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
+  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  if profile:report['autotune']=profile;report['profile_status']=profile['status']
+  (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
+  return finish(_receipt(output,digest))
+
+
+def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_seconds,backend,batch,profile_layers,profile):
+ from .specialized import admit_specialized,match_lrx,run_specialized,exact_specialized_supported
+ if not exact_specialized_supported(graph):raise RuntimeError('SPECIALIZED_LOSSLESS_KEY_DOMAIN_UNSUPPORTED: no proved injective key for this graph')
+ if match_lrx(graph) is None:raise ValueError('SPECIALIZED_GRAPH_UNSUPPORTED')
+ output=Path(output).absolute();output.parent.mkdir(parents=True,exist_ok=True)
+ if output.exists():raise FileExistsError(output)
+ started=time.monotonic()
+ with tempfile.TemporaryDirectory(prefix='mgbfs-specialized-admit-',dir=output.parent) as temporary:
+  definition=Path(temporary)/'definition.json';definition.write_text(graph.to_json());selection='auto' if devices is None else ','.join(map(str,devices))
+  probe=native_query([native,'graph-info',str(definition),selection,'1'],capture_output=True,text=True,env=env)
+  if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
+  inventory=json.loads(probe.stdout)
+  if inventory['graph_digest']!=graph.digest():raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
+  selected=inventory['devices'];mode='HASH' if backend=='shard_ab_hash' else 'SORT_MERGE'
+  from .transport import select_peer_transport
+  request=('lsa' if profile['specialized_transport']=='NCCL_LSA' else 'host') if profile and profile.get('specialized_transport') else env.get('MGBFS_PEER_TRANSPORT','auto')
+  decision=select_peer_transport(native,env,selected,Path(temporary)/'transport',request=request,seconds=max_seconds)
+  env=dict(env,MGBFS_SPECIALIZED_TRANSPORT=decision['selected'])
+  if decision['selected']=='NCCL_LSA':env['NCCL_CUMEM_ENABLE']='1'
+  plan=admit_specialized(graph,native,env,selected,Path(temporary)/'queries',capacity=capacity,mode=mode,seconds=max(1,max_seconds-(time.monotonic()-started)))
+  actual_batch=plan['batch'] if batch is None else batch
+  if actual_batch!=plan['batch']:raise ValueError('SPECIALIZED_BATCH_REQUIRES_MATCHED_ADMISSION')
+  report=run_specialized(graph,output,native=native,env=env,devices=selected,capacity=plan['capacity'],batch=actual_batch,max_seconds=max(1,max_seconds-(time.monotonic()-started)),mode=mode,profile_layers=profile_layers)
+  report['plan'].update(plan);report['startup_admission_seconds']=time.monotonic()-started-report['launch_wall_seconds']
+  report['transport_selection']=decision
+  if profile:report['autotune']=profile
+  (output/'report.json').write_text(json.dumps(report,indent=2));return _receipt(output,graph.digest())
