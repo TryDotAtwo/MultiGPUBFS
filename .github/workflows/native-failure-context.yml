@@ -12,6 +12,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -p 'test_native_failure.py' -v
+      - run: python3 -m unittest discover -s tests -p 'test_tuning_evidence_retention.py' -v
   rust:
     runs-on: ubuntu-22.04
     timeout-minutes: 15

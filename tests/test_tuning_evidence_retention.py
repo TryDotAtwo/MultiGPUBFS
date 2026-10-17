@@ -23,3 +23,26 @@ class EvidenceCacheIdentity(unittest.TestCase):
   b=dict(a,MGBFS_TUNING_EVIDENCE_ROOT='second',MGBFS_JOB_PHASE_PATH='second',MGBFS_JOB_SEQUENCE='2',MGBFS_JOB_CANCEL_PATH='second')
   self.assertEqual(_configuration_digest(a),_configuration_digest(b))
   self.assertNotEqual(_configuration_digest(a),_configuration_digest(dict(b,MGBFS_SHARDS='16')))
+
+class DurableEvidencePaths(unittest.TestCase):
+ def test_exception_and_summary_reference_preserved_files_after_temporary_cleanup(self):
+  import json
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory)/'evidence'
+   with self.assertRaises(RuntimeError) as caught:
+    with _evidence_directory({'MGBFS_TUNING_EVIDENCE_ROOT':str(root)},'test-') as temporary:
+     source=Path(temporary)/'pilot-0/failure-evidence';source.mkdir(parents=True)
+     (source/'rank-0').mkdir();(source/'rank-0/phase.json').write_text('{"layer":2}')
+     error='NATIVE_DISTRIBUTED_RANK_FAILED [(0, 1)]; evidence='+str(source)
+     (source/'summary.json').write_text(json.dumps({'error':error,'captures':[{'error':error}]}))
+     raise RuntimeError(error)
+   self.assertFalse(Path(temporary).exists())
+   destination=next(root.iterdir())
+   expected=destination/'pilot-0/failure-evidence'
+   self.assertIn('evidence='+str(expected),str(caught.exception))
+   self.assertNotIn(temporary,str(caught.exception))
+   self.assertTrue((expected/'rank-0/phase.json').is_file())
+   summary=json.loads((expected/'summary.json').read_text())
+   self.assertIn('evidence='+str(expected),summary['error'])
+   context=json.loads((destination/'failure-context.json').read_text())
+   self.assertEqual(context['error'],str(caught.exception))

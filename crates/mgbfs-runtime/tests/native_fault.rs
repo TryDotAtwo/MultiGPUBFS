@@ -42,3 +42,27 @@ fn separate_threads_have_separate_call_context() {
     assert_eq!(native_fault::snapshot()["layer"], 4);
     assert_eq!(native_fault::snapshot()["rank"], 1);
 }
+
+#[test]
+fn teardown_does_not_replace_the_primary_native_error() {
+    native_fault::reset(Some(1), Some(5));
+    native_fault::layer(2, 1);
+    native_fault::begin("cudaMemcpyAsync", "advance.rs", 275);
+    assert!(native_fault::finish(999).is_err());
+    let first = native_fault::snapshot()["native_error"].clone();
+    for line in 1..=32 {
+        native_fault::begin("cudaDeviceSynchronize", "cleanup.rs", line);
+        assert!(native_fault::finish(999).is_err());
+    }
+    let snapshot = native_fault::snapshot();
+    assert_eq!(snapshot["native_error"], first);
+    assert_eq!(snapshot["native_secondary_error_count"], 32);
+    assert_eq!(snapshot["native_last_error"]["call"], "cudaDeviceSynchronize");
+    native_fault::begin("cleanup_success", "cleanup.rs", 40);
+    assert!(native_fault::finish(0).is_ok());
+    assert_eq!(native_fault::snapshot()["native_error"], first);
+    native_fault::reset(Some(0), Some(0));
+    assert!(native_fault::snapshot()["native_error"].is_null());
+    assert!(native_fault::snapshot()["native_last_error"].is_null());
+    assert_eq!(native_fault::snapshot()["native_secondary_error_count"], 0);
+}
