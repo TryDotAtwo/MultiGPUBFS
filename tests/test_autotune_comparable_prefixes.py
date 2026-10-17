@@ -31,7 +31,8 @@ class ComparableMeasuredPrefixes(unittest.TestCase):
   self.assertIn('pilot-2',[p['candidate'] for p in result['pilots']])
   self.assertEqual(result['common_layer_sizes'],self.sizes[:15])
  def test_faulted_candidate_and_short_candidate_are_separate_from_measured_survivors(self):
-  result=self.choose([20,10,20,20,20],fault=True)
+  try:result=self.choose([20,10,20,20,20],fault=True)
+  except RuntimeError as error:self.fail('An insufficient bounded probe aborted adequate survivors: '+str(error))
   self.assertTrue(result['measured']);self.assertEqual(len(result['pilots']),3)
   self.assertEqual(len(result['candidate_failures']),1)
   self.assertEqual(len(result['excluded_prefix_candidates']),1)
@@ -41,6 +42,7 @@ class ComparableMeasuredPrefixes(unittest.TestCase):
  def test_one_adequate_candidate_is_not_a_measured_comparison(self):
   result=self.choose([20,10,10,10,10])
   self.assertFalse(result['measured'])
+  self.assertIn('excluded_prefix_candidates',result)
   self.assertEqual(len(result['excluded_prefix_candidates']),4)
  def test_fault_with_only_one_adequate_candidate_reports_no_measured_profile(self):
   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE'):self.choose([20,20,10,10,10],fault=True)
