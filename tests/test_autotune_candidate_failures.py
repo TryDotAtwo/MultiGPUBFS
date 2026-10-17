@@ -23,7 +23,7 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
   self.assertEqual(devices,[0,1])
   history='SORTED_RUNS' if env.get('MGBFS_GENERIC_HISTORY')=='sorted' else 'HASH'
   return {'devices':[0,1],'inventory':[],'plan':{'capacity':50000,'batch':64,'history_algorithm':history,'owner_lanes':int(env.get('MGBFS_GENERIC_OWNER_LANES',0))}}
- def fail(self,target,code=999):
+ def native_fault(self,target,code=999):
   evidence=Path(target)/'failure-evidence';(evidence/'rank-1').mkdir(parents=True)
   (evidence/'rank-1/phase.json').write_text(json.dumps({'native_error':{'code':code,'call':'cudaMemcpyAsync','rank':1,'device':1,'layer':2}}))
   error='NATIVE_DISTRIBUTED_RANK_FAILED [(1, 1)]; evidence='+str(evidence)
@@ -37,7 +37,7 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
  def test_failed_first_candidate_is_excluded_and_remaining_profiles_are_measured(self):
   def pilot(g,target,**kwargs):
    self.calls.append(Path(target).name)
-   if len(self.calls)==1:self.fail(target)
+   if len(self.calls)==1:self.native_fault(target)
    return self.report(len(self.calls))
   try:result=self.choose(pilot)
   except RuntimeError as e:self.fail_test('One candidate aborted all measurements: '+str(e))
@@ -50,14 +50,14 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
   self.assertTrue(Path(failure['evidence']).is_dir());self.assertIn(str(failure['evidence']),failure['error'])
  def fail_test(self,message):raise AssertionError(message)
  def test_all_failed_candidates_raise_instead_of_baseline_or_measured_claim(self):
-  def pilot(g,target,**kwargs):self.calls.append(Path(target).name);self.fail(target)
+  def pilot(g,target,**kwargs):self.calls.append(Path(target).name);self.native_fault(target)
   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE') as caught:self.choose(pilot)
   self.assertEqual(len(self.calls),5);self.assertEqual(len(caught.exception.candidate_failures),5)
   self.assertTrue(all(Path(c['evidence']).is_dir() for c in caught.exception.candidate_failures))
  def test_one_survivor_is_not_an_empirical_comparison(self):
   def pilot(g,target,**kwargs):
    self.calls.append(Path(target).name)
-   if len(self.calls)!=2:self.fail(target)
+   if len(self.calls)!=2:self.native_fault(target)
    return self.report(2)
   with self.assertRaisesRegex(RuntimeError,'AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE'):self.choose(pilot)
  def test_unproven_error_and_timeout_are_not_skipped(self):
@@ -67,7 +67,7 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
    with self.subTest(error=type(error).__name__),self.assertRaises(type(error)):self.choose(pilot)
    self.assertEqual(len(self.calls),1)
  def test_other_cuda_error_is_not_reclassified_as_the_known_probe_failure(self):
-  def pilot(g,target,**kwargs):self.calls.append(Path(target).name);self.fail(target,700)
+  def pilot(g,target,**kwargs):self.calls.append(Path(target).name);self.native_fault(target,700)
   with self.assertRaisesRegex(RuntimeError,'NATIVE_DISTRIBUTED_RANK_FAILED'):self.choose(pilot)
   self.assertEqual(len(self.calls),1)
  def test_size_entry_does_not_replace_a_terminal_tuning_error_with_baseline(self):
