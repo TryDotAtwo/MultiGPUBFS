@@ -1,4 +1,4 @@
-import subprocess,unittest
+import os,subprocess,unittest
 from unittest.mock import patch
 from multigpubfs import autotune
 import test_autotune_candidate_failures as harness
@@ -51,5 +51,13 @@ class OptionalGeneratorSizeAdmission(unittest.TestCase):
   self.global_profile['generator_backend']='gemm'
   with self.assertRaisesRegex(RuntimeError,'REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION'):self.choose(self.admission)
   self.assertEqual(self.calls,[('gemm',50000)])
+
+ def test_rejected_optional_modes_have_stable_serialized_cache_identity(self):
+  cache=self.h.root/'disk-profiles'
+  with patch.dict(os.environ,MGBFS_PROFILE_CACHE=str(cache)),patch.object(autotune,'choose_profile',return_value=self.global_profile),patch.object(autotune,'_admit',side_effect=self.admission),patch('multigpubfs.generation.gemm_supported',return_value=True),patch.object(autotune,'_gemm_hardware_available',return_value=True),patch.object(autotune,'_dependency_identity',return_value={'test_library':'fixed'}),patch.object(autotune,'_system_info',return_value=subprocess.CompletedProcess([],0,'stable-hardware','')):
+   first=autotune._choose_size_profile_uncached(self.h.graph,[0,1],50000,90,str(self.h.native),self.h.env,allow_specialized=False)
+   second=autotune._choose_size_profile_uncached(self.h.graph,[0,1],50000,90,str(self.h.native),self.h.env,allow_specialized=False)
+  self.assertFalse(first['cache_hit']);self.assertTrue(second['cache_hit'],'Disk profile identity must survive JSON round-trip')
+  self.assertTrue(second['measured']);self.assertTrue(all(p['generator_backend']=='cuda' for p in second['size_profiles']))
 
 if __name__=='__main__':unittest.main()
