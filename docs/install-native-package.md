@@ -5,7 +5,7 @@ The same ordinary pip command installs the Python API from GitHub on Kaggle or a
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v23/multigpubfs-0.2.0.dev23-py3-none-any.whl#sha256=69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v23/multigpubfs-0.2.0.dev23-py3-none-any.whl#sha256=69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v24/multigpubfs-0.2.0.dev24-py3-none-any.whl#sha256=693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d"
 ```
 
 After an upgrade, start a new Python process/session before importing the package.
@@ -63,6 +63,6 @@ The current prefetch flow passed actual selected/all component preparation on a 
 
 Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
 
-Release: [native-pip-20261017-v23](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261017-v23). Wheel SHA256 `69d6b88b0c431b95d58ecc276aad38796838abf90d6cb4854eb9f85efb6e4b69`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
+Release: [native-pip-20261017-v24](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261017-v24). Wheel SHA256 `693917bbede1fe2f4808481f32335c3df0d4bda77e7f0eafe09e48537e36980d`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
 
 Native CUDA/NCCL error context, retained failed-rank phase files and opt-in call tracing: [server failure evidence](native-failure-evidence.md).
