@@ -8,6 +8,7 @@ from multigpubfs.graph_definition import GraphDefinition
 class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+  self.native=self.root/'native';self.native.write_bytes(b'test-native')
   self.graph=GraphDefinition.permutation([[1,0,2],[0,2,1]],[0,1,2])
   self.calls=[];self.closes=0;self.after_fault=False
   self.pool=SimpleNamespace(workers=['old0','old1'],identity='old',launch_admission='stale')
@@ -33,7 +34,7 @@ class MeasuredSelectionAfterCandidateFailure(unittest.TestCase):
   return {'layer_sizes':[1,20000,20000,20000,1],'layer_seconds':[.03]+[1-index*.1]*3,'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
  def choose(self,pilot):
   with patch.object(autotune,'_admit',side_effect=self.admit),patch.object(autotune,'_system_info',return_value=subprocess.CompletedProcess([],1,'','')),patch.object(autotune,'_dependency_identity',return_value=None),patch('multigpubfs.launch.run_graph',side_effect=pilot),patch.object(generic_session,'_active',self.pool),warnings.catch_warnings(record=True):
-   return autotune.choose_profile(self.graph,[0,1],None,90,'native',self.env,allow_specialized=False)
+   return autotune.choose_profile(self.graph,[0,1],None,90,str(self.native),self.env,allow_specialized=False)
  def test_failed_first_candidate_is_excluded_and_remaining_profiles_are_measured(self):
   def pilot(g,target,**kwargs):
    self.calls.append(Path(target).name)
