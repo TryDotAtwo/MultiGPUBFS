@@ -1,0 +1,23 @@
+name: Build native failure context CLI
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - run: rustup toolchain install 1.75.0 --profile minimal
+      - run: sudo apt-get update -qq && sudo apt-get install -y patchelf
+      - run: PYTHONPATH=. python3 scripts/build_failure_context_native.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-failure-components
+          path: dist-fault-native/*
+          compression-level: 0
+          retention-days: 7
