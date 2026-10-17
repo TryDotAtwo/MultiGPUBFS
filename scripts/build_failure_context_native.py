@@ -23,10 +23,10 @@ def main():
  for name,path in [('libmgbfs_cuda.so',library),('libcudart.so',common/'lib/libcudart.so.12'),('libcudart.so.12',common/'lib/libcudart.so.12'),('libnccl.so.2',common/'lib/libnccl.so.2')]:
   (vendor/name).symlink_to(path)
  env=dict(os.environ,MGBFS_CUDA_LIB_DIR=str(vendor),MGBFS_CUDART_LIB_DIR=str(vendor),CARGO_TARGET_DIR=str(work/'target'),LD_LIBRARY_PATH=str(vendor))
- run('cargo','+1.75.0','test','--locked',env=env)
+ run('cargo','+1.75.0','test','--locked','--no-fail-fast',env=env)
  run('cargo','+1.75.0','build','--locked','--release','-p','mgbfs-cli','--features','cuda',env=env)
  binary=work/'target/release/mgbfs';run('patchelf','--set-rpath','$ORIGIN/../lib',binary)
- key=subprocess.run([str(binary),'graph-key-info'],env=env,check=True,text=True,capture_output=True,timeout=30)
+ key=subprocess.run([str(binary),'key-info'],env=env,check=True,text=True,capture_output=True,timeout=30)
  assert json.loads(key.stdout)['lossless_bitpack128_feistel_v1'] is True
  output=ROOT/'dist-fault-native';output.mkdir();archive=output/'common.tar.gz';files={}
  with archive.open('wb') as raw,gzip.GzipFile(filename='',fileobj=raw,mode='wb',mtime=0,compresslevel=1) as gz,tarfile.open(fileobj=gz,mode='w') as tar:
