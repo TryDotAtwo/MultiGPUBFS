@@ -63,4 +63,22 @@ class NativeFailureEvidenceTests(unittest.TestCase):
    self.assertLessEqual(len(data),1024);self.assertTrue(data.endswith(b'END-OF-FAILED-JOB'))
    self.assertTrue(report['ranks'][0]['files']['worker.log']['truncated'])
 
+
+class DiagnosticFailureBundleTests(unittest.TestCase):
+ def test_doctor_archive_keeps_native_phase_response_and_summary_without_job_environment(self):
+  import contextlib,io,zipfile
+  from multigpubfs.diagnostics import Runner
+  with tempfile.TemporaryDirectory() as temp:
+   root=Path(temp);runner=Runner(root,60)
+   evidence=root/'pilot-0/failure-evidence';rank=evidence/'rank-1';rank.mkdir(parents=True)
+   for name in ['phase.json','response.json']:(rank/name).write_text('{"code":999}')
+   (rank/'worker.log').write_text('MGBFS_NATIVE_ERROR')
+   (evidence/'summary.json').write_text('{"schema":1}')
+   (rank/'job.json').write_text('{"env":{"PRIVATE":"never bundle"}}')
+   with contextlib.redirect_stdout(io.StringIO()):runner.finish()
+   with zipfile.ZipFile(root/'diagnostics.zip') as archive:
+    for name in ['rank-1/phase.json','rank-1/response.json','rank-1/worker.log','summary.json']:
+     self.assertIn('pilot-0/failure-evidence/'+name,archive.namelist())
+    self.assertNotIn('pilot-0/failure-evidence/rank-1/job.json',archive.namelist())
+
 if __name__=='__main__':unittest.main()
