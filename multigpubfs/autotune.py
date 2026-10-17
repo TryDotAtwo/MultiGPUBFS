@@ -469,14 +469,24 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
   default_generator=env.get('MGBFS_GENERIC_GENERATOR','cuda')
   eligible=default_generator=='gemm' or (gemm_supported(graph) and _gemm_hardware_available())
   reserve_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm' if eligible else 'cuda')
-  reserve=first if reserve_env['MGBFS_GENERIC_GENERATOR']==env['MGBFS_GENERIC_GENERATOR'] else _admit(graph,selected,capacity,shards,native,reserve_env,temporary)
-  common=min(first['plan']['capacity'],reserve['plan']['capacity'])
-  reserve=reserve if capacity==common else _admit(graph,selected,common,shards,native,reserve_env,temporary)
+  size_generator_rejections=[]
+  try:
+   reserve=first if reserve_env['MGBFS_GENERIC_GENERATOR']==default_generator else _admit(graph,selected,capacity,shards,native,reserve_env,temporary)
+   common=min(first['plan']['capacity'],reserve['plan']['capacity'])
+   reserve=reserve if capacity==common else _admit(graph,selected,common,shards,native,reserve_env,temporary)
+  except RuntimeError as error:
+   # A separate optional generator may not fit the measured owner's geometry.
+   # Keep the already admitted measured choice; never hide its own failure.
+   resource_codes=('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GEMM_BATCH_EXCEEDS_ADMISSION')
+   if reserve_env['MGBFS_GENERIC_GENERATOR']==default_generator or not any(code in str(error) for code in resource_codes):raise
+   size_generator_rejections.append({'generator':reserve_env['MGBFS_GENERIC_GENERATOR'],'stage':'size-profile-workspace-admission','reason':str(error),'selected_generator':default_generator,'selected_capacity':first['plan']['capacity'],'shards':shards,'history_algorithm':first['plan'].get('history_algorithm','HASH')})
+   eligible=False;reserve_env=dict(env);reserve=first;common=first['plan']['capacity']
+  admitted_generators=('cuda','gemm') if eligible else (default_generator,)
   large_batch=reserve['plan']['batch'];small_batch=min(4096,large_batch)
   dependency=_dependency_identity(native,env)
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
-  identity={'schema':1,'graph':graph.digest(),'devices':selected,'capacity':common,'batch':large_batch,'plan':reserve['plan'],'config':_configuration_digest(env),'native':_content_digest(native),'selector':_content_digest(__file__,Path(__file__).with_name('size_profiles.py')),'dependency':dependency,'hardware':hardware.stdout,'topology':topology.stdout}
+  identity={'schema':1,'graph':graph.digest(),'devices':selected,'capacity':common,'batch':large_batch,'plan':reserve['plan'],'config':_configuration_digest(env),'native':_content_digest(native),'selector':_content_digest(__file__,Path(__file__).with_name('size_profiles.py')),'dependency':dependency,'hardware':hardware.stdout,'topology':topology.stdout,'admitted_generators':admitted_generators}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/('size-'+key+'.json')
   if dependency and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
@@ -484,13 +494,13 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
    except (OSError,ValueError):result={}
    if not isinstance(result,dict):result={}
    profiles=result.get('size_profiles',[])
-   if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and valid_profile_entries(profiles,large_batch,('cuda','gemm') if eligible else ('cuda',)):
-    result=dict(result,cache_hit=True,global_profile=global_profile,seconds=time.monotonic()-started);return result
+   if result.get('identity')==identity and result.get('status')=='MEASURED_FRONTIER_SIZE_PROFILES' and valid_profile_entries(profiles,large_batch,admitted_generators):
+    result=dict(result,cache_hit=True,global_profile=global_profile,size_generator_rejections=size_generator_rejections,admitted_generators=admitted_generators,seconds=time.monotonic()-started);return result
   if global_profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE':
    source=global_profile.get('source_pilots',[])
    compatible=[p for p in source if p.get('backend')=='generic' and p.get('history_algorithm','HASH')==global_profile.get('history_algorithm','HASH') and p.get('shards')==shards and p.get('transport')==global_profile.get('transport') and p.get('candidate_order')==global_profile.get('candidate_order')]
    threshold=len(selected)*max(1024,min(int(i['sm_count']) for i in first['inventory'])*512)
-   compatible=[dict(p,generator_backend=p.get('generator_backend','cuda')) for p in compatible]
+   compatible=[dict(p,generator_backend=p.get('generator_backend','cuda')) for p in compatible if p.get('generator_backend','cuda') in admitted_generators]
    tiers=select_size_profiles(compatible,len(selected),threshold=threshold) if compatible else []
    profiles=[]
    for tier in tiers:
@@ -498,14 +508,14 @@ def _choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,
     batch=max(1,min(large_batch,int(large_batch*tier['batch']/max(1,donor_batch))))
     profiles.append(dict(minimum_frontier=tier['minimum_frontier'],batch=batch,generator_backend=tier['generator_backend'],measured=False,status='REUSED_SOURCE_SIZE_PROFILE',source_maximum_measured_frontier=tier['maximum_measured_frontier']))
    if not profiles:profiles=[dict(minimum_frontier=0,batch=max(1,int(large_batch*global_profile['batch_fraction'])),generator_backend=default_generator,measured=False,status='REUSED_SOURCE_CONSERVATIVE_PROFILE')]
-   return dict(global_profile,batch=max(1,int(large_batch*global_profile['batch_fraction'])),size_profiles=profiles,online_size_tuning=True,seconds=time.monotonic()-started,global_profile=global_profile,pilot_budget_seconds=0.,target_pilots_executed=0)
-  base={'backend':'generic','shards':shards,'batch':large_batch,'batch_fraction':1.,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0),'generator_backend':reserve['plan'].get('generator_backend','cuda'),'size_profiles':[],'seconds':time.monotonic()-started,'measured':False}
+   return dict(global_profile,batch=max(1,int(large_batch*global_profile['batch_fraction'])),size_profiles=profiles,online_size_tuning=True,seconds=time.monotonic()-started,global_profile=global_profile,pilot_budget_seconds=0.,target_pilots_executed=0,size_generator_rejections=size_generator_rejections,admitted_generators=admitted_generators)
+  base={'backend':'generic','shards':shards,'batch':large_batch,'batch_fraction':1.,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0),'generator_backend':reserve['plan'].get('generator_backend','cuda'),'size_generator_rejections':size_generator_rejections,'admitted_generators':admitted_generators,'size_profiles':[],'seconds':time.monotonic()-started,'measured':False}
   if max_seconds<10 or common<=4096:return dict(base,status='SMALL_OR_SHORT_WORKLOAD_CONSERVATIVE_PROFILE')
   # Reuse completed matching startup pilots, never rerun the prefix for tiers.
   pilots=[]
   chosen={'shards':shards,'transport':env.get('MGBFS_GENERIC_TRANSPORT','full'),'candidate_order':env.get('MGBFS_GENERIC_SORT','none'),'history_algorithm':reserve['plan'].get('history_algorithm','HASH'),'owner_lanes':reserve['plan'].get('owner_lanes',0)}
   for p in global_profile.get('pilots',[]):
-   if all(p.get(k,0 if k=='owner_lanes' else 'HASH' if k=='history_algorithm' else None)==v for k,v in chosen.items()) and p.get('batch',large_batch)<=large_batch:
+   if all(p.get(k,0 if k=='owner_lanes' else 'HASH' if k=='history_algorithm' else None)==v for k,v in chosen.items()) and p.get('batch',large_batch)<=large_batch and p.get('generator_backend','cuda') in admitted_generators:
     pilots.append(dict(p,batch=p.get('batch',large_batch),generator_backend=p.get('generator_backend','cuda')))
   pilots.sort(key=lambda p:(p['generator_backend']!=global_profile.get('generator_backend','cuda'),p['batch']!=global_profile.get('batch')))
   if not pilots:pilots=[dict(batch=large_batch,generator_backend=default_generator,layer_sizes=[1],layer_seconds=[])]

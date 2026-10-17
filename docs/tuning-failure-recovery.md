@@ -1,6 +1,6 @@
 # Autotuning candidate failures and measured selection
 
-Version 0.2.0.dev26 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
+Version 0.2.0.dev27 removes the session-wide unmeasured fallback introduced in dev24. A failed optional probe does not establish that any profile is fast or safe.
 
 ## Candidate rejection
 
@@ -29,3 +29,8 @@ Candidate rejection fixes the selector's premature termination and dev24 fallbac
 ## Bounded probes with insufficient completed work
 
 A slow configuration may hit its probe deadline before it has enough completed work for a meaningful comparison. Its completed layer vector is still checked against the other reports. If correct but below the existing depth/work gate, it is recorded in `excluded_prefix_candidates` with its native reason and coverage. It cannot reduce the comparison window of candidates that did complete enough work. An INCOMPLETE probe with sufficient completed work still participates at the common completed depth. At least two eligible candidates are required for a measured selection; after a captured candidate failure, insufficient remaining comparisons produce the explicit error above. This does not extrapolate large-layer performance or treat a short probe as fully tested.
+
+
+## Optional generator workspace admission
+
+After measuring and admitting an execution profile, size-tier preparation may try an additional generator. A recognized capacity/workspace rejection for that additional mode is recorded in `size_generator_rejections`; the already admitted measured profile remains selected. Its capacity and owner geometry are retained. Rejected generators are removed from both live and compatible-source size tiers. This is not a session-wide unmeasured fallback. An error admitting the selected generator, an unknown native error, or a timeout still propagates; no retry is attempted.
