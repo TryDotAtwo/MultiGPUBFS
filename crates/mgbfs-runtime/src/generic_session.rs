@@ -10,6 +10,7 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
  for sequence in 0u64.. {
   let path=root.join(format!("job-{sequence:08}.json"));
   if !waiter.wait(&path,Some(&shutdown),None)?{return Ok(());}
+  let mut command:Option<String>=None;
   let outcome=(||->Result<serde_json::Value>{
    let v:serde_json::Value=serde_json::from_slice(&std::fs::read(&path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
    if v["schema"]!=1||v["sequence"].as_u64()!=Some(sequence){return Err("GENERIC_SESSION_SEQUENCE".into());}
@@ -22,7 +23,8 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
    crate::job_phase::set("control-thread-start")?;
    let _job_control=crate::job_phase::Control::start();
    crate::job_phase::set("control-thread-ready")?;
-   match v["command"].as_str(){
+   command=v["command"].as_str().map(str::to_owned);
+   match command.as_deref(){
     Some("release-memory")=>{crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::checked!(cudaDeviceSynchronize, unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
     Some("bench")=>{
      // Generic and host-NCCL reference jobs share the same healthy rank.
@@ -58,7 +60,12 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
   let response=match &outcome{Ok(v)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":true,"result":v,"cache":crate::session_cache::stats()}),Err(e)=>serde_json::json!({"schema":1,"sequence":sequence,"ok":false,"error":e})};
   let destination=root.join(format!("response-{sequence:08}.json"));let temporary=destination.with_extension("tmp");
   std::fs::write(&temporary,serde_json::to_vec(&response).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(temporary,destination).map_err(|e|e.to_string())?;
-  outcome?; // Errors terminate the worker; never reuse failed CUDA/NCCL state.
+  if let Err(error)=outcome {
+   // Read-only capacity validation is a rejected plan, not a failed GPU job.
+   // Keep the original error response. Never reuse a rank after a native fault.
+   if !crate::session_protocol::expected_plan_rejection(command.as_deref(),&error,crate::native_fault::failed()){return Err(error);}
+   eprintln!("MGBFS_SESSION_PLAN_REJECTED rank={rank} sequence={sequence} command={} error={error}",command.as_deref().unwrap_or("unknown"));
+  }
  }
  Ok(())
 }

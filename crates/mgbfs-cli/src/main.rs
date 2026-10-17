@@ -49,7 +49,7 @@ fn execute() -> Result<(), (i32, String)> {
             #[cfg(not(all(feature="cuda",target_os="linux")))]
             return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
         }
-        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
+        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"resident_plan_rejection_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
 
         Some(command @ ("graph-info" | "graph-plan" | "graph-local-plan" | "graph-rank")) => {
             #[cfg(all(feature="cuda",target_os="linux"))]

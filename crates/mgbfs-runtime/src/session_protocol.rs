@@ -25,8 +25,11 @@ impl Job {
 }
 
 /// Whether a rejected read-only plan leaves a healthy resident rank reusable.
-pub fn expected_plan_rejection(_command: Option<&str>, _error: &str, _native_failed: bool) -> bool {
-    false
+pub fn expected_plan_rejection(command: Option<&str>, error: &str, native_failed: bool) -> bool {
+    !native_failed
+        && matches!(command, Some("graph-plan") | Some("graph-local-plan"))
+        && matches!(error, "REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION"
+            | "REQUESTED_CAPACITY_EXCEEDS_ADMISSION" | "GEMM_BATCH_EXCEEDS_ADMISSION")
 }
 
 #[cfg(test)]
