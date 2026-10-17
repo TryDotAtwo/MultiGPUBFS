@@ -2,7 +2,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 #[test] fn actual_route_banks_fit_at_1_2_8_128_rank_geometries(){
  for world in [1,2,8,128] {for width in [4,16,257] {for shards in [1,4,16] {
   let p=Plan::automatic(width,world,shards,4,16384,12u64<<30,None).unwrap();p.validate(4).unwrap();
-  assert!(p.device_bytes<=((12u64<<30)*9/10));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.table_slots>=u64::from(p.capacity)*2);
+  assert!(p.device_bytes<=((12u64<<30)-(2u64<<30)));assert!(p.queue_capacity<=p.batch*4);assert!(p.queue_capacity>=4);assert!(p.table_slots>=u64::from(p.capacity)*2);
   let mut bad=p.clone();bad.device_bytes-=1;assert!(bad.validate(4).is_err());
  }}}
 }
@@ -18,7 +18,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
  let (plans,cuts)=heterogeneous_plans(14,4,3,4096,&[12u64<<30,24u64<<30],None,1).unwrap();
  assert!(plans[1].capacity>plans[0].capacity);assert_eq!(plans[0].batch,plans[1].batch);assert_eq!(plans[0].queue_capacity,plans[1].queue_capacity);
  assert_eq!(cuts[0],0);assert_eq!(cuts[2],1u64<<32);assert!(cuts[1]<(1u64<<31));
- for (p,free) in plans.iter().zip([12u64<<30,24u64<<30]){p.validate(3).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));}
+ for (p,free) in plans.iter().zip([12u64<<30,24u64<<30]){p.validate(3).unwrap();assert!(p.device_bytes<=free-(2u64<<30));}
  assert!(heterogeneous_plans(14,4,3,4096,&[],None,1).is_err());
 }
 
@@ -37,7 +37,7 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
 
 #[test]fn automatic_plan_uses_remaining_history_budget_after_bounded_transport(){
  for (width,bytes) in [(14,1),(17,1),(257,8)]{
-  let free=12u64<<30;let budget=free-(1u64<<30).max(free/10);
+  let free=12u64<<30;let budget=free-(2u64<<30);
   let p=Plan::automatic_storage(width,2,4,3,4096,free,None,bytes).unwrap();assert!(p.transport_bytes()<=budget/4);assert!(p.device_bytes<=budget);
   if p.capacity<(1<<28){assert!(Plan::with_storage(width,2,4,p.capacity+1,p.batch,3,4096,bytes).unwrap().device_bytes>budget);}
  }
@@ -51,13 +51,13 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
  assert!(Plan::with_storage_history(4,2,4,100,8,3,4096,1,2).is_err());
 }
 #[test]fn rolling_automatic_capacity_is_exactly_admitted(){
- let p=Plan::automatic_storage_history(14,2,16,3,4096,12u64<<30,None,1,3).unwrap();assert_eq!(p.history_layers,3);assert!(p.device_bytes<=(12u64<<30)-(12u64<<30)/10);p.validate(3).unwrap();
+ let p=Plan::automatic_storage_history(14,2,16,3,4096,12u64<<30,None,1,3).unwrap();assert_eq!(p.history_layers,3);assert!(p.device_bytes<=(12u64<<30)-(2u64<<30));p.validate(3).unwrap();
  let (plans,cuts)=mgbfs_runtime::generic_distributed_memory::heterogeneous_plans_history(14,4,3,4096,&[12u64<<30,24u64<<30],None,1,3).unwrap();assert!(plans[0].capacity<plans[1].capacity);assert_eq!(plans[0].batch,plans[1].batch);assert_eq!(*cuts.last().unwrap(),1u64<<32);
 }
 
 #[test]fn rolling_logical_geometry_admission_at_1_2_8_128_ranks(){
  for world in [1,2,8,128]{for shards in [1,4,16]{for (width,bytes) in [(4,1),(16,1),(257,8)]{
-  let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(1u64<<30).max(free/10));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=u64::from(p.capacity)*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
+  let free=12u64<<30;let p=Plan::automatic_storage_history(width,world,shards,4,16384,free,None,bytes,3).unwrap();p.validate(4).unwrap();assert!(p.device_bytes<=free-(2u64<<30));assert!(u64::from(p.capacity)*3<0x80000000);assert!(p.table_slots>=u64::from(p.capacity)*6);assert!(u64::from(p.world)*u64::from(p.shards)*u64::from(p.queue_capacity)<0x7fffffff);
  }}}
 }
 

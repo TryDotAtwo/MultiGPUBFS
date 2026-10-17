@@ -1,0 +1,37 @@
+name: Upload failure-aware native common component
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        required: true
+      release_tag:
+        required: true
+permissions:
+  contents: write
+  actions: read
+jobs:
+  upload:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: ${{ inputs.build_run }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Verify successful CI artifact and immutable reused CUDA components
+        run: |
+          gh run view "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json conclusion --jq '.conclusion' | grep -x success
+          gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --name native-failure-components --dir /tmp/failure-release
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          p=Path('/tmp/failure-release');r=json.loads((p/'component-release.json').read_text());raw=(p/'native-assets.json').read_bytes();index=json.loads(raw)
+          assert hashlib.sha256(raw).hexdigest()==r['index_sha256']
+          c=index['components'][index['common']];f=p/'common.tar.gz'
+          assert f.stat().st_size==c['size'] and hashlib.sha256(f.read_bytes()).hexdigest()==c['sha256']
+          assert index['id']==os.environ['RELEASE_TAG'] and r['cuda_library_components_unchanged']
+          assert index['native_metadata']['native_failure_context_schema']==1
+          assert all(c['url'].startswith('https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-components-20261015-v1/') for n,c in index['components'].items() if n!=index['common'])
+          print('VERIFIED_FAILURE_AWARE_COMMON_AND_UNCHANGED_CUDA')
+          PY
+      - run: gh release upload "$RELEASE_TAG" /tmp/failure-release/* --repo "$GITHUB_REPOSITORY"
