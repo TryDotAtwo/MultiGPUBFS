@@ -1,0 +1,24 @@
+name: Native failure context regressions
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p 'test_native_failure.py' -v
+  rust:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.75.0 --profile minimal
+      - run: cargo +1.75.0 test --locked -p mgbfs-runtime --test native_fault
+      - run: MGBFS_CUDA_LIB_DIR=/tmp cargo +1.75.0 check --locked -p mgbfs-cli --features cuda --tests
