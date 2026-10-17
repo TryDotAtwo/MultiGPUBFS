@@ -2,7 +2,7 @@
 
 ## What changed
 
-A captured CUDA 999 in an optional distributed tuning probe no longer automatically aborts the caller's main BFS. The library preserves the probe's evidence, closes every process in the failed resident rank group, discards its pending admission ticket, and performs fresh memory admission for the original graph and selected devices. It issues a RuntimeWarning and returns an explicitly **unmeasured** baseline profile with status `TUNING_PROBE_FAILED_CONSERVATIVE_PROFILE`. The main BFS then starts in a new rank group. A failed probe is not retried.
+A captured CUDA 999 in an optional distributed tuning probe no longer automatically aborts the caller's main BFS. The library preserves the probe's evidence, detects a recorded native failure before waiting for process exit, closes every process in the failed resident rank group, discards its pending admission ticket, and performs fresh memory admission for the original graph and selected devices. It issues a RuntimeWarning and returns an explicitly **unmeasured** baseline profile with status `TUNING_PROBE_FAILED_CONSERVATIVE_PROFILE`. The main BFS then starts in a new rank group. A failed probe is not retried.
 
 This handles failure of the optional selector. It does **not** establish or repair the underlying cause of an observed CUDA 999 on a particular eight-GPU server. A reporting `cudaMemcpyAsync` can expose an earlier asynchronous failure. No claim is made that a hardware/driver problem or a faulty kernel has been eliminated.
 
@@ -48,6 +48,10 @@ MGBFS_NATIVE_OFFLINE=0 python -m multigpubfs prefetch --all
 ```
 
 Or select the known architectures with `--sm 100,120`. Existing per-SM CUDA components are unchanged and remain reusable. The rebuilt common component is downloaded and checksum-verified once. Compute jobs may then keep `MGBFS_NATIVE_OFFLINE=1`.
+
+## Failed communicator teardown
+
+After a fatal generic native error, the runtime aborts its NCCL communicator before draining streams and never parks the failed communicator for reuse. The supervisor observes both resident and one-shot phase files; a recorded nonzero native error is a rank failure even while the process is unwinding. Healthy-run completion polling remains prompt, while phase-file reads are bounded to one check per 50 ms. A timeout without recorded native failure remains a timeout and does not trigger the optional-probe fallback.
 
 ## Evidence and interpretation
 
