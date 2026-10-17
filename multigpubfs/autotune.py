@@ -149,7 +149,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':16,'selector_sha256':_content_digest(__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py')),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':_content_digest(native),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  identity={'schema':17,'selector_sha256':_content_digest(__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py')),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':_content_digest(native),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
   if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
@@ -197,15 +197,42 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     sorted_admitted.append((lane,shards,transport,admission['plan']))
   if len(admitted)+len(sorted_admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
   common_capacity=min([p['capacity'] for _,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted]+[hardware_policy['probe_capacity_per_rank']])
-  pilots=[];limit=5
+  pilots=[];limit=5;candidate_failures=[]
   from .launch import run_graph
+  def measure(label,candidate_env,run):
+   # Only the failed candidate is rejected. Successful candidates still have
+   # to establish a real matched-prefix comparison on the selected GPU group.
+   try:
+    with _evidence_directory(candidate_env,'mgbfs-candidate-'+label+'-') as trial:
+     return run(Path(trial)/label)
+   except RuntimeError as error:
+    failure=_native_probe_failure(error)
+    if failure is None:raise
+    failure=dict(failure,candidate=label,source_graph_digest=graph.digest())
+    candidate_failures.append(failure)
+    from .generic_session import _active
+    if _active is not None:
+     _active.close_workers();_active.launch_admission=None
+    # Queries from the destroyed group cannot admit another candidate.
+    env.pop('_MGBFS_PROFILE_INVENTORY',None)
+    import warnings
+    warnings.warn('GPU autotuning rejected candidate '+label+' after CUDA 999; remaining candidates will be measured on a fresh rank group; evidence='+failure['evidence'],RuntimeWarning,stacklevel=2)
+    return None
+  def no_measured_profile():
+   payload={'schema':1,'status':'AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE','successful_candidates':len(pilots),'candidate_failures':candidate_failures,'scope':'no unmeasured fallback and no failed-candidate retry'}
+   (Path(temporary)/'candidate-failures.json').write_text(json.dumps(payload,indent=2))
+   error=RuntimeError('AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE: successful_candidates='+str(len(pilots))+'; failed_candidates='+str(len(candidate_failures))+'; evidence='+', '.join(f['evidence'] for f in candidate_failures))
+   error.candidate_failures=candidate_failures
+   raise error
   for index,(shards,fraction,transport,order,_) in enumerate(admitted):
    if max_seconds-(time.monotonic()-started)<limit+1:break
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
-   report=run_graph(graph,Path(temporary)/('pilot-'+str(index)),devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
-   pilots.append({'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+   label='pilot-'+str(index)
+   report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env))
+   if report is None:continue
+   pilots.append({'candidate':label,'rank_worker_pids':report.get('rank_worker_pids',[]),'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Compare generator on the same graph, history, capacity and transport.
   # GEMM has its own explicit workspace admission and a bounded launch batch.
   if pilots and gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=limit+1 :
@@ -214,8 +241,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     admission=_admit(graph,selected,common_capacity,base['shards'],native,candidate_env,temporary)
     if admission['plan'].get('generator_backend')!='gemm':raise RuntimeError('NATIVE_GEMM_CAPABILITY_REQUIRED')
     batch=min(base['batch'],admission['plan']['batch'])
-    report=run_graph(graph,Path(temporary)/'generator-gemm',devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(max_seconds-(time.monotonic()-started)))),executable=native,shards=base['shards'],autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
-    pilots.append(dict(base,generator_backend='gemm',batch=batch,layer_sizes=report['layer_sizes'],layer_seconds=report['layer_seconds'],status=report['status'],reason=report['reason']))
+    report=measure('generator-gemm',candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(max_seconds-(time.monotonic()-started)))),executable=native,shards=base['shards'],autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env))
+    if report is not None:pilots.append(dict(base,candidate='generator-gemm',rank_worker_pids=report.get('rank_worker_pids',[]),generator_backend='gemm',batch=batch,layer_sizes=report['layer_sizes'],layer_seconds=report['layer_seconds'],status=report['status'],reason=report['reason']))
    except RuntimeError as error:
     if not any(code in str(error) for code in ('GEMM_BATCH_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GENERIC_CUDA_801','GENERIC_CUDA_209','NATIVE_GEMM_CAPABILITY_REQUIRED')):raise
 
@@ -231,9 +258,11 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     except RuntimeError as error:
      if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM','SORTED_OWNER_NO_ADMISSION')):continue
      raise
-    batch=max(1,min(admission['plan']['batch'],pilots[0]['batch']))
-    report=run_graph(graph,Path(temporary)/('sorted-lanes-'+str(lane)),devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(remaining))),executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env)
-    pilots.append({'backend':'generic','history_algorithm':'SORTED_RUNS','owner_lanes':lane,'candidate_order':'none','transport':transport,'shards':shards,'batch_fraction':1.0,'batch':batch,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+    batch=max(1,min(admission['plan']['batch'],pilots[0]['batch'] if pilots else admission['plan']['batch']))
+    label='sorted-lanes-'+str(lane)
+    report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=common_capacity,max_seconds=min(limit,max(1,int(remaining))),executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env))
+    if report is None:continue
+    pilots.append({'candidate':label,'rank_worker_pids':report.get('rank_worker_pids',[]),'backend':'generic','history_algorithm':'SORTED_RUNS','owner_lanes':lane,'candidate_order':'none','transport':transport,'shards':shards,'batch_fraction':1.0,'batch':batch,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
   # Specialized candidates preserve only a proved identical LRX action/root.
   # Unsupported definitions/topologies remain on the general exact backend.
   if allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and max_seconds-(time.monotonic()-started)>=8 :
@@ -256,12 +285,14 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      report=run_specialized(graph,Path(temporary)/label,native=native,env=candidate_env,devices=selected,capacity=plan['capacity'],batch=plan['batch'],max_seconds=min(15,max(2,int(remaining))),mode=mode,profile_layers=36)
      if len(report['layer_seconds'])>=4 and sum(report['layer_sizes'][2:])>=32768:
       pilots.append({'backend':backend,'candidate_order':'none' if mode=='HASH' else 'radix','transport':'specialized_key_first_host','shards':1,'batch_fraction':1.0,'batch':plan['batch'],'specialized_capacity':plan['capacity'],'specialized_mode':mode,'specialized_transport':peer,'transport_selection':transport_decision,'state_bytes':1,'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason'],'specialized_admission':plan})
+  if candidate_failures and len(pilots)<2:no_measured_profile()
   if not pilots:return {'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
   depth=min(len(p['layer_seconds']) for p in pilots)
   sizes=pilots[0]['layer_sizes'][:depth+1]
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
   # Exclude first collective warmup. Tiny prefixes cannot justify a speed claim.
   if depth<4 or sum(sizes[2:])<32768:
+   if candidate_failures:no_measured_profile()
    return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':pilots,'common_depth':depth,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
   scores=[sum(p['layer_seconds'][1:depth]) for p in pilots]
   winner=min(range(len(scores)),key=lambda i:scores[i])
@@ -271,7 +302,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   chosen=pilots[winner]
   chosen_generator=chosen.get('generator_backend',forced_generator)
   result={'generator_backend':chosen_generator,'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common_capacity,'scope':'hardware-derived prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and exact bounded matrix CUDA/GEMM generators and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
-  result['_admission_inventory']=baseline.get('inventory',[])
+  result['_admission_inventory']=[] if candidate_failures else baseline.get('inventory',[])
+  if candidate_failures:result.update(candidate_failures=candidate_failures,failed_candidate_policy='REJECT_AND_MEASURE_REMAINING',winner_candidate=chosen.get('candidate'),failed_probes_retried=False)
   result.update(history_algorithm=chosen.get('history_algorithm','SORTED_RUNS' if env.get('MGBFS_GENERIC_HISTORY')=='sorted' else 'HASH'),owner_lanes=chosen.get('owner_lanes',int(env.get('MGBFS_GENERIC_OWNER_LANES','0'))))
   if chosen['backend']=='generic':result['batch']=chosen['batch']
   if chosen['backend']!='generic':result.update(specialized_capacity=chosen['specialized_capacity'],specialized_mode=chosen['specialized_mode'],specialized_transport=chosen['specialized_transport'],specialized_admission=chosen['specialized_admission'],batch=chosen['batch'])
@@ -319,9 +351,6 @@ def _rebase_owned_profile(saved,graph):
  return result
 
 
-def _tuning_failure_key(native,devices,env):
- return (str(native),_stat_identity(native),None if devices is None else tuple(devices),_configuration_digest(env),tuple(env.get(k) for k in ('LD_LIBRARY_PATH','LD_PRELOAD','CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')))
-
 def _native_probe_failure(error):
  """Only a captured CUDA 999 from an optional native rank job is recoverable."""
  if not str(error).startswith('NATIVE_DISTRIBUTED_RANK_FAILED'):return None
@@ -338,32 +367,12 @@ def _native_probe_failure(error):
     return {'error':str(error),'evidence':str(evidence.resolve()),'native_error':fault,'probe_retried':False}
  return None
 
-def _conservative_after_probe(graph,devices,capacity,native,env,failure,started):
- # A failed worker group is already closed. Cached free VRAM and admission
- # tickets from that group are not evidence for the new production launch.
- clean=dict(env);clean.pop('_MGBFS_PROFILE_INVENTORY',None)
- shards,_,transport,order=_transport_variants(graph,clean)[0]
- with _evidence_directory(clean,'mgbfs-fallback-admission-') as directory:
-  admitted=_admit(graph,devices,capacity,shards,native,clean,directory)
- plan=admitted['plan']
- return {'backend':'generic','status':'TUNING_PROBE_FAILED_CONSERVATIVE_PROFILE',
-  'devices':admitted['devices'],'shards':shards,'batch':plan['batch'],'batch_fraction':1.,
-  'transport':transport,'candidate_order':order,'generator_backend':plan.get('generator_backend','cuda'),
-  'history_algorithm':plan.get('history_algorithm','HASH'),'owner_lanes':plan.get('owner_lanes',0),
-  'measured':False,'cache_hit':False,'online_size_tuning':False,'size_profiles':[],
-  'tuning_failure':failure,'seconds':time.monotonic()-started,
-  'scope':'optional CUDA probe failed; fresh baseline admission; no probe retry or production BFS restart'}
-
 def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  # Session reuse skips selector work, never live memory admission. A changed
  # geometry, runtime, environment or rank generation takes the full path.
  import copy
  from .generic_session import _active
  started=time.monotonic();env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
- failure_key=_tuning_failure_key(native,devices,env)
- previous=None if _active is None else getattr(_active,'tuning_probe_failure',None)
- if previous is not None and previous[0]==failure_key:
-  return _conservative_after_probe(graph,devices,capacity,native,env,previous[1],started)
  pool=_active;key=None if pool is None else _session_profile_key(pool,graph,devices,capacity,max_seconds,native,env,allow_specialized)
  cache=None if pool is None else getattr(pool,'size_profile_results',None)
  alias_key=_lrx_resource_alias_key(key,graph)
@@ -394,19 +403,7 @@ def choose_size_profile(graph,devices,capacity,max_seconds,native,env,*,allow_sp
    remember_launch_admission(graph,native,selected,devices,capacity,saved['shards'],saved['batch'],fresh)
    result=copy.deepcopy(saved);result.update(cache_hit=True,session_profile_hit=True,owned_resource_hit=fresh.get('owned_resource_admission',False),seconds=time.monotonic()-started,_admission_inventory=fresh.get('inventory',[]));return result
   del cache[key]
- try:result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
- except RuntimeError as error:
-  failure=_native_probe_failure(error)
-  if failure is None:raise
-  failure=dict(failure,source_graph_digest=graph.digest())
-  if pool is not None:
-   pool.close_workers()
-   pool.launch_admission=None
-  import warnings
-  warnings.warn('GPU autotuning probe failed; using an unmeasured baseline on a fresh rank group; evidence='+failure['evidence'],RuntimeWarning,stacklevel=2)
-  result=_conservative_after_probe(graph,devices,capacity,native,env,failure,started)
-  if pool is not None:pool.tuning_probe_failure=(failure_key,failure)
-  return result
+ result=_choose_size_profile_uncached(graph,devices,capacity,max_seconds,native,env,allow_specialized=allow_specialized)
  if pool is not None and result.get('backend','generic')=='generic' and result.get('size_profiles') and (result.get('measured') or result.get('cache_hit')):
   selected=_profile_environment(env,result)
   with _evidence_directory(env,'mgbfs-session-profile-store-') as temporary:
