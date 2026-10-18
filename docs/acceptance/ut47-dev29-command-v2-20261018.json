@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "status": "VERIFIED_ON_EIGHT_PHYSICAL_GPUS",
+  "scope": "Standalone corrected command only; dev29 library and native engine unchanged. Four-layer prefix, not full UT(4,47), not a CUDA999 root-cause fix.",
+  "source_sha256": "06435d973bddddf66246660bd597076120432deff23759f7f037663585a0f109",
+  "package": "0.2.0.dev29",
+  "hardware": [
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB",
+    "NVIDIA GeForce RTX 3080 Ti, 8.6, 595.99.02, 12288 MiB"
+  ],
+  "graph_digest": "ff71582e6018295a7b1d23605f350623df9059f4e3d595c25ec29a75f9666e7e",
+  "expected_layers": [
+    1,
+    6,
+    26,
+    110,
+    414
+  ],
+  "repeat_count": 2,
+  "same_eight_workers": true,
+  "nccl_rank_log_count": 8,
+  "archive_files": 137,
+  "archive_crc_verified": true,
+  "manifest_sha256_verified_files": 136,
+  "success_exit_code": 0,
+  "success_wall_seconds_including_cold_download": 30.751501882012235,
+  "original_json_bug_regression": {
+    "expected_failure_preserved": true,
+    "archive_crc_and_manifest_verified": true
+  },
+  "controlled_timeout": {
+    "expected_timeout_preserved": true,
+    "archive_crc_and_manifest_verified": true
+  },
+  "archive_sha256": "e805d8b99cd4dafc94f8199e25b6bfc1c0e302ab8b2bf9b8ad8fe91d9ad5885d",
+  "original_cuda999_root_cause_fixed": false
+}
