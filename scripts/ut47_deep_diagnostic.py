@@ -18,7 +18,7 @@ import traceback
 import urllib.request
 import zipfile
 
-WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
+WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce"
 EXPECTED = [1, 6, 26, 110, 414]
 MODES = ("baseline", "no-gdr", "no-ib")
 SAFE_ENV = ("CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "CUDA_MODULE_LOADING",
@@ -130,7 +130,7 @@ def stage_worker(root, spec):
                     package=importlib.metadata.version("multigpubfs"))
     from multigpubfs import GraphDefinition, run_graph, persistent_graph_workers
     from multigpubfs.native_distribution import native_runtime
-    if importlib.metadata.version("multigpubfs") != "0.2.0.dev29":
+    if importlib.metadata.version("multigpubfs") != "0.2.0.dev30":
         raise RuntimeError("DEV29_REQUIRED")
     native, env = native_runtime()
     env.update(NCCL_DEBUG="INFO", NCCL_DEBUG_SUBSYS="ALL",

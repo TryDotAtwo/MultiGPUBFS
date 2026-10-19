@@ -3,7 +3,7 @@
 Запускайте внутри той же серверной задачи, которой выделены GPU. Команда использует тот же Python для установки и проверки. В существующем окружении Андрея CayleyPy и PyTorch уже установлены:
 
 ```bash
-python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51" && python -m multigpubfs.diagnostics
+python -m pip install --upgrade --force-reinstall --no-deps "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce" && python -m multigpubfs.diagnostics
 ```
 
 Для чистого окружения замените `multigpubfs @` на `multigpubfs[cayleypy] @` и уберите `--no-deps`. Пакет и готовые бинарники берутся только из GitHub. Маленький wheel содержит Python API и закреплённый индекс. Готовые CUDA/NCCL и нужная SM-библиотека автоматически берутся из GitHub при первой подготовке на GPU-узле; драйвер сервера пакет не заменяет.
@@ -53,7 +53,7 @@ from pathlib import Path
 subprocess.run([
     sys.executable, "-m", "pip", "install", "--upgrade",
     "--force-reinstall", "--no-deps",
-    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51",
+    "multigpubfs @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce",
 ], check=True)
 report_dir = Path(tempfile.mkdtemp(prefix="mgbfs-job-")) / "doctor"
 subprocess.run([
@@ -99,4 +99,4 @@ READY доказывает работу выбранного пути на ма�
 Проверка этого выпуска выполнена на настоящих 2×T4. Готовые отдельные компоненты SM100 для B200, SM103 для B300 и SM120 собраны, но запуск нового wheel на этих картах здесь не измерен. [Результаты проверки выпуска](native-prefetch-acceptance-2026-10-15.md).
 
 
-В dev29 обновлён общий компонент с native CLI: здоровый worker сохраняется после точного ресурсного отказа read-only плана. Поэтому dev24–dev28 кэш один раз докачает новый common-архив; CUDA-библиотеки по SM остаются прежними и переиспользуются по SHA256. Для заданий без сети заранее повторите предзагрузку в тот же постоянный кэш. [Измеренная проверка установленного пакета на 2×3060](measured-tuning-acceptance-2026-10-17.md).
+В dev30 исправлено зависание восьми рангов при большом числе шардов: группы обмена NCCL ограничены без отключения автоподбора. Общий компонент dev29 переиспользуется из кэша; один раз скачивается новая CUDA-библиотека для нужного SM. Старые диагностические контроли с отличающимися исходниками исключены; рабочий SM и универсальная сборка остаются доступны.

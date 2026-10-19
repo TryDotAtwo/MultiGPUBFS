@@ -5,7 +5,7 @@ The same ordinary pip command installs the Python API from GitHub on Kaggle or a
 ## Linux / SSH
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
+python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce"
 ```
 
 ## Kaggle
@@ -13,7 +13,7 @@ python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/Mul
 Enable **Internet** and **GPU (2×T4)**, then run:
 
 ```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
+%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce"
 ```
 
 After an upgrade, start a new Python process/session before importing the package.
@@ -63,9 +63,9 @@ The current prefetch flow passed actual selected/all component preparation on a 
 
 Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
 
-Release: [native-pip-20261017-v29](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261017-v29). Wheel SHA256 `ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51`; native-index SHA256 `98cb1c35e660d454b48ba65dbc684e1c4baedf6320fe6c644fe9461ef4d5050b`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
+Release: [native-pip-20261019-v30](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261019-v30). Wheel SHA256 `39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce`; native-index SHA256 `a468c11a90e2fe32c41b7d4e9d5c8614bdbfc2ceaa1890b5b8ef99234a6c3940`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
 
 Native CUDA/NCCL error context, retained failed-rank phase files and opt-in call tracing: [server failure evidence](native-failure-evidence.md).
 
 
-В dev29 обновлён общий компонент с native CLI: здоровый worker сохраняется после точного ресурсного отказа read-only плана. Поэтому dev24–dev28 кэш один раз докачает новый common-архив; CUDA-библиотеки по SM остаются прежними и переиспользуются по SHA256. Для заданий без сети заранее повторите предзагрузку в тот же постоянный кэш. [Измеренная проверка установленного пакета на 2×3060](measured-tuning-acceptance-2026-10-17.md).
+В dev30 исправлено зависание восьми рангов при большом числе шардов: группы обмена NCCL ограничены без отключения автоподбора. Общий компонент dev29 переиспользуется из кэша; один раз скачивается новая CUDA-библиотека для нужного SM. Старые диагностические контроли с отличающимися исходниками исключены; рабочий SM и универсальная сборка остаются доступны.

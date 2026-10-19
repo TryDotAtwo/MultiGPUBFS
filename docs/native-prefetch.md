@@ -5,7 +5,7 @@
 ## Установка
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261017-v29/multigpubfs-0.2.0.dev29-py3-none-any.whl#sha256=ab5d6452dd1588bf4c1a003ad911b4cea03d3e6e61e7a6ea3cc18d2d40bf7a51"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce"
 ```
 
 Если CayleyPy/PyTorch уже установлены, можно использовать `multigpubfs @` вместо extra. Команда одна и та же для SSH и вычислительного окружения; в Kaggle установку выполняют через `%pip`. После обновления нужен новый Python-процесс.
@@ -86,4 +86,4 @@ with persistent_graph_workers():
 [Проверка выпуска](native-prefetch-acceptance-2026-10-15.md): настоящие архивы загружены на машине без GPU; затем реальные параллельные и persistent-запуски на2×T4 работали из подготовленного кэша без новых загрузок. Выполнение на других архитектурах этим тестом не подтверждается.
 
 
-В dev29 обновлён общий компонент с native CLI: здоровый worker сохраняется после точного ресурсного отказа read-only плана. Поэтому dev24–dev28 кэш один раз докачает новый common-архив; CUDA-библиотеки по SM остаются прежними и переиспользуются по SHA256. Для заданий без сети заранее повторите предзагрузку в тот же постоянный кэш. [Измеренная проверка установленного пакета на 2×3060](measured-tuning-acceptance-2026-10-17.md).
+В dev30 исправлено зависание восьми рангов при большом числе шардов: группы обмена NCCL ограничены без отключения автоподбора. Общий компонент dev29 переиспользуется из кэша; один раз скачивается новая CUDA-библиотека для нужного SM. Старые диагностические контроли с отличающимися исходниками исключены; рабочий SM и универсальная сборка остаются доступны.

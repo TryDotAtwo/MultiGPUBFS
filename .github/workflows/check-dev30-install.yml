@@ -1,0 +1,29 @@
+name: Check published dev30 installation
+on:
+  push:
+    branches: [codex/integrated-bfs-best-practices-delivery]
+    paths: [scripts/check_dev30_public_install.py, examples/ut47_eight_gpu.py, .github/workflows/check-dev30-install.yml]
+permissions:
+  contents: read
+jobs:
+  installed:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install CPU dependencies for real CayleyPy constructor
+        run: |
+          python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install cayleypy==0.2.0
+      - name: Verify public wheel and installed native component without GPU
+        run: |
+          cd /tmp
+          python3 "$GITHUB_WORKSPACE/scripts/check_dev30_public_install.py"
+      - name: Verify deep diagnostic contracts
+        run: python3 -m unittest discover -s scripts -p 'test_ut47_deep_diagnostic.py'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dev30-installed-acceptance
+          path: /tmp/dev30-installed-acceptance.json
