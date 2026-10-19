@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/integrated-bfs-best-practices-delivery]
-    paths: [docs/acceptance/ut47-nccl-bounded-20261019.json]
+    paths: [docs/acceptance/ut47-nccl-bounded-20261019.json, .github/workflows/publish-bounded-nccl.yml]
 permissions:
   contents: read
   actions: read
@@ -48,7 +48,7 @@ jobs:
           from pathlib import Path
           p=Path("pyproject.toml");p.write_text(p.read_text().replace('version = "0.2.0.dev29"','version = "0.2.0.dev30"'))
           PY
-          python3 scripts/build_lazy_native_package.py
+          python3 -m scripts.build_lazy_native_package
           cp dist-native/*.whl /tmp/bounded-release/
           cp dist-native/manifest.json /tmp/bounded-release/wheel-manifest.json
           cp docs/acceptance/ut47-nccl-bounded-20261019.json /tmp/bounded-release/gpu-acceptance.json
