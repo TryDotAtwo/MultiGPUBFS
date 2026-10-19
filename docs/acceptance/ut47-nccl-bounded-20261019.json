@@ -1,0 +1,338 @@
+{
+  "schema": 1,
+  "status": "VERIFIED_REPRODUCED_HANG_FIX",
+  "transport_source_commit": "fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1",
+  "hardware": "8x NVIDIA RTX 3060; CUDA toolkit 12.9.86; NCCL 2.30.7; driver 595.58.03",
+  "native_binary_sha256": "10e423aee53f450d5a14f064db0cb1c7784e8080e7b94045adbad378ad304fce",
+  "full_library_sha256": "8cc2a215a261b042387703f6ab7b83106eecdcb14b5fcae857b5513827328643",
+  "cpp_contract_cases": {
+    "geometry": 96,
+    "errors_and_cancellation": 4,
+    "status": "PASS"
+  },
+  "ab_tests": [
+    {
+      "name": "revert256",
+      "status": "TIMEOUT",
+      "seconds": 78.86561639327556,
+      "cleanup_complete": true,
+      "runs": []
+    },
+    {
+      "name": "patched256",
+      "status": "PASS",
+      "seconds": 28.080665824003518,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 256,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 24.661925360560417,
+          "bfs_seconds": 13.966071513,
+          "tuning": null
+        }
+      ]
+    },
+    {
+      "name": "patched-transitions",
+      "status": "PASS",
+      "seconds": 34.29234062042087,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 7.1341982912272215,
+          "bfs_seconds": 0.5371917,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 128,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 10.864920887164772,
+          "bfs_seconds": 10.230278479,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 256,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 10.877887490205467,
+          "bfs_seconds": 10.341057824,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 0.2971828645095229,
+          "bfs_seconds": 0.185041885,
+          "tuning": null
+        }
+      ]
+    },
+    {
+      "name": "patched-oracle",
+      "status": "PASS",
+      "seconds": 46.8786825761199,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "COMPLETE",
+          "reason": "FRONTIER_EXHAUSTED",
+          "shards": 256,
+          "layer_sizes": [
+            1,
+            6,
+            20,
+            56,
+            116,
+            208,
+            268,
+            52,
+            2
+          ],
+          "wall_seconds": 43.70391097571701,
+          "bfs_seconds": 32.969783723,
+          "tuning": null
+        }
+      ]
+    },
+    {
+      "name": "patched-production",
+      "status": "PASS",
+      "seconds": 225.0247659943998,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "INCOMPLETE",
+          "reason": "RESOURCE_258",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414,
+            1446,
+            4802,
+            15074,
+            44164,
+            121446,
+            311840,
+            750118,
+            1696770,
+            3629226,
+            7371724,
+            14288342,
+            26485720,
+            46538398,
+            76087808,
+            114090354,
+            156071448
+          ],
+          "wall_seconds": 218.41989556979388,
+          "bfs_seconds": 155.767064415,
+          "tuning": {
+            "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE",
+            "seconds": 61.24717379268259,
+            "pilots": 12,
+            "excluded_prefix_candidates": [],
+            "selected_shards": 1,
+            "measured": true,
+            "common_depth": 8
+          }
+        }
+      ]
+    }
+  ],
+  "full_library_tests": [
+    {
+      "name": "full-transitions",
+      "status": "PASS",
+      "seconds": 33.706451173871756,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 7.38859124854207,
+          "bfs_seconds": 0.738825786,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 128,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 11.499034838750958,
+          "bfs_seconds": 10.965142903,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 256,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 10.944997959770262,
+          "bfs_seconds": 10.409681863,
+          "tuning": null
+        },
+        {
+          "status": "INCOMPLETE",
+          "reason": "PROFILE_LAYER_LIMIT",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414
+          ],
+          "wall_seconds": 0.25864165369421244,
+          "bfs_seconds": 0.15475932,
+          "tuning": null
+        }
+      ]
+    },
+    {
+      "name": "full-oracle",
+      "status": "PASS",
+      "seconds": 45.23185356054455,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "COMPLETE",
+          "reason": "FRONTIER_EXHAUSTED",
+          "shards": 256,
+          "layer_sizes": [
+            1,
+            6,
+            20,
+            56,
+            116,
+            208,
+            268,
+            52,
+            2
+          ],
+          "wall_seconds": 43.8887507757172,
+          "bfs_seconds": 32.91876689,
+          "tuning": null
+        }
+      ]
+    },
+    {
+      "name": "full-production",
+      "status": "PASS",
+      "seconds": 209.2500757323578,
+      "cleanup_complete": true,
+      "runs": [
+        {
+          "status": "INCOMPLETE",
+          "reason": "RESOURCE_258",
+          "shards": 1,
+          "layer_sizes": [
+            1,
+            6,
+            26,
+            110,
+            414,
+            1446,
+            4802,
+            15074,
+            44164,
+            121446,
+            311840,
+            750118,
+            1696770,
+            3629226,
+            7371724,
+            14288342,
+            26485720,
+            46538398,
+            76087808,
+            114090354,
+            156071448
+          ],
+          "wall_seconds": 205.16050026658922,
+          "bfs_seconds": 145.59426026,
+          "tuning": {
+            "status": "MEASURED_FRONTIER_SIZE_PROFILES",
+            "seconds": 58.178002207539976,
+            "pilots": 1,
+            "excluded_prefix_candidates": null,
+            "selected_shards": 1,
+            "measured": true,
+            "common_depth": null
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "UT(4,47) is resource-partial, not a complete graph calculation.",
+    "The old failure was reproduced on eight RTX 5060 Ti and eight RTX 3060. The final full-library GPU acceptance here is on RTX 3060.",
+    "The original server InfiniBand protection-error CUDA999 is not equated with this later NCCL progress stall.",
+    "The internal NCCL blocked frame is not established: ptrace was unavailable. The oversized group is a demonstrated causal trigger by reversion.",
+    "Other SM components are compile-verified separately; compilation does not prove execution on every architecture."
+  ]
+}

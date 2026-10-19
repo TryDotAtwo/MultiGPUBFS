@@ -1,0 +1,65 @@
+name: Publish verified bounded NCCL package
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/integrated-bfs-best-practices-delivery]
+    paths: [docs/acceptance/ut47-nccl-bounded-20261019.json]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 130
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: '39275971311'
+      RELEASE_TAG: native-pip-20261019-v30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require completed eight-GPU acceptance
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('docs/acceptance/ut47-nccl-bounded-20261019.json'))
+          assert r['status']=='VERIFIED_REPRODUCED_HANG_FIX'
+          assert r['transport_source_commit']=='fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1'
+          assert all(x['status']=='PASS' for x in r['full_library_tests'])
+          PY
+      - name: Wait for exact native build and download artifacts
+        run: |
+          gh run watch "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+          test "$(gh run view "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')" = fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1
+          gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --dir /tmp/bounded-builds
+      - name: Assemble and validate release payload
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf binutils
+          python3 -m pip install build numpy packaging
+          python3 -m scripts.package_bounded_nccl_release --builds /tmp/bounded-builds --output /tmp/bounded-release
+          python3 -m unittest discover -s tests -p 'test_*native*.py'
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("pyproject.toml");p.write_text(p.read_text().replace('version = "0.2.0.dev29"','version = "0.2.0.dev30"'))
+          PY
+          python3 scripts/build_lazy_native_package.py
+          cp dist-native/*.whl /tmp/bounded-release/
+          cp dist-native/manifest.json /tmp/bounded-release/wheel-manifest.json
+          cp docs/acceptance/ut47-nccl-bounded-20261019.json /tmp/bounded-release/gpu-acceptance.json
+          cd /tmp/bounded-release
+          sha256sum *.whl >> SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bounded-nccl-release
+          path: /tmp/bounded-release/*
+          compression-level: 0
+      - name: Publish immutable prerelease
+        run: |
+          gh release create "$RELEASE_TAG" /tmp/bounded-release/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title 'Native pip dev30: bounded NCCL transport' --notes-file docs/acceptance/ut47-nccl-bounded-20261019.md
