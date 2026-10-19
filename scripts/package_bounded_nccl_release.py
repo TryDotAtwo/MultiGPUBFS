@@ -1,6 +1,7 @@
 """Replace production CUDA components with one verified bounded-transport build.
 
-The v29 executable/runtime/NCCL and explicitly old diagnostic controls are reused.
+The v29 executable/runtime/NCCL are reused. Incompatible old diagnostic controls
+are retired rather than mixed into a same-source comparison.
 Every production SM, including universal, must have the new transport source.
 """
 import argparse,copy,gzip,hashlib,io,json,os,shutil,subprocess,tarfile
@@ -22,6 +23,19 @@ def validate(proof,library,target):
  if sha(library)!=proof['sha256']:raise ValueError('BUILD_CHECKSUM')
  verify_inventory(proof['sass_inventory'],proof['ptx_inventory'],arches,ptx)
  return arches,ptx
+
+def retire_incompatible_controls(index,fingerprint):
+ retired=[]
+ production={index['common'],*index['production'].values()}
+ for identifier,name in list(index['diagnostics'].items()):
+  component=index['components'][name]
+  if component.get('build',{}).get('cuda_kernel_source_sha256')==fingerprint:continue
+  retired.append(dict(id=identifier,component_id=name,sha256=component['sha256'],reason='Source differs from production; not a controlled comparison'))
+  del index['diagnostics'][identifier]
+  if name not in production and name not in index['diagnostics'].values():del index['components'][name]
+ index['retired_diagnostic_controls']=retired
+ return retired
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--builds',type=Path,required=True);ap.add_argument('--output',type=Path,required=True);a=ap.parse_args()
  root=Path(__file__).resolve().parents[1];index=json.loads((root/'multigpubfs/native_assets.json').read_text())
@@ -29,7 +43,7 @@ def main():
  assert set(index['production'])==set(expected)
  a.output.mkdir(exist_ok=False);identity=cuda_source_identity(root,BUILD_SOURCE)
  index=copy.deepcopy(index);index['id']='bounded-nccl-20261019-v30'
- index['scope']='Bounded NCCL transport production components; GPU acceptance recorded separately. Legacy diagnostic controls are intentionally unchanged.'
+ index['scope']='Bounded NCCL transport production components; GPU acceptance recorded separately. Source-mismatched legacy diagnostic controls are excluded.'
  for target in expected:
   folder=a.builds/('native-component-sm'+target);proof=json.loads((folder/'build-receipt.json').read_text());original=folder/'libmgbfs_cuda.so';arches,ptx=validate(proof,original,target)
   library=a.output/('staged-'+target+'.so');shutil.copy2(original,library)
@@ -41,9 +55,10 @@ def main():
   build=dict(proof,architectures=arches,ptx_architectures=ptx,cuda_source_tree=identity['cuda_source_tree'],cuda_kernel_source_sha256=identity['cuda_kernel_source_sha256'],packaged_sha256=sha(library),elf_dynamic=dynamic,elf_runtime_requirements=elf_runtime_requirements([library]),scope='Compiled and inventory-verified; this target requires its own GPU acceptance')
   index['components'][name]={'url':'https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/'+TAG+'/'+filename,'sha256':sha(dest),'size':dest.stat().st_size,'files':{'libmgbfs_cuda.so':{'sha256':sha(library),'size':len(data),'mode':0o644}},'build':build}
   library.unlink()
+ retired=retire_incompatible_controls(index,identity['cuda_kernel_source_sha256'])
  AssetManager(index,a.output/'schema-check')
  raw=(json.dumps(index,sort_keys=True,separators=(',',':'))+'\n').encode();(a.output/'native-assets.json').write_bytes(raw);(root/'multigpubfs/native_assets.json').write_bytes(raw)
- receipt={'schema':1,'build_source':BUILD_SOURCE,'index_sha256':hashlib.sha256(raw).hexdigest(),'common_unchanged':index['common'],'production':{k:index['components'][v]['sha256'] for k,v in index['production'].items()},'scope':'All production CUDA components rebuilt; common binary and old diagnostic contrasts retained'}
+ receipt={'schema':1,'build_source':BUILD_SOURCE,'index_sha256':hashlib.sha256(raw).hexdigest(),'common_unchanged':index['common'],'production':{k:index['components'][v]['sha256'] for k,v in index['production'].items()},'retired_diagnostic_controls':retired,'scope':'All production CUDA components rebuilt; common binary retained; source-mismatched historical controls excluded'}
  (a.output/'component-release.json').write_text(json.dumps(receipt,indent=2)+'\n')
  (a.output/'SHA256SUMS').write_text(''.join(sha(f)+'  '+f.name+'\n' for f in sorted(a.output.iterdir()) if f.is_file()))
  print(json.dumps(receipt))

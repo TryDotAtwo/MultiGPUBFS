@@ -28,7 +28,7 @@ explanation for every CUDA999 or the server's earlier InfiniBand fault.
 
 All production SM components and the universal component are rebuilt. The dev29
 executable, CUDA runtime and NCCL component are reused; the fix is in the CUDA
-shared library. Legacy diagnostic contrast libraries remain explicitly old
-controls. Compilation for an SM is not an execution test on that SM.
+shared library. Legacy diagnostic contrast libraries built from different source are excluded
+from this release; selected-SM and universal comparisons remain available. Compilation for an SM is not an execution test on that SM.
 Use the dev30 wheel attached to this GitHub release after publication. Start a
 new Python process. No LD_PRELOAD or manual cache replacement is required.
