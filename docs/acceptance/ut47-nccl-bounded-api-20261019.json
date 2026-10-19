@@ -1,0 +1,44 @@
+{
+  "status": "VERIFIED_NATIVE_BINARY_AND_CAYLEYPY_API",
+  "source_commit": "fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1",
+  "python_tests": 817,
+  "api": [
+    {
+      "run": 0,
+      "seconds": 7.268116208724678,
+      "vertices": 729,
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "diameter": 8
+    },
+    {
+      "run": 1,
+      "seconds": 0.3546522166579962,
+      "vertices": 729,
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "diameter": 8
+    }
+  ],
+  "native_ci_library_sha256": "a4a36824bb69d57b63a2c30a32e289c37e0b96db32377321afad32ad9bf47818",
+  "public_wheel_installed_test": "NOT_RUN_RELEASE_BLOCKED_BY_GITHUB_ACTIONS_OUTAGE",
+  "gpu_processes": []
+}
