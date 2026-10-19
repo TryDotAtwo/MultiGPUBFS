@@ -31,6 +31,7 @@ fn lrx_multiset_two_rank_graph_windows_full_state_oracle() {
                 let workers: Vec<_> = (0..2).map(|rank| std::thread::spawn(move || {
                     std::panic::catch_unwind(|| {
                         let cfg = DistributedConfig {
+                            route_banks: 2, epoch_window: 2, state_descriptor_capacity: 4096,
                             rank, world: 2,
                             logical_owner_to_rank: if reversed { vec![1, 0] } else { vec![0, 1] },
                             transport: mgbfs_core::config::ReferenceTransport::Lsa,
