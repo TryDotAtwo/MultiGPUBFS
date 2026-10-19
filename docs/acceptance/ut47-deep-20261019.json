@@ -1,0 +1,450 @@
+{
+  "schema": 1,
+  "scope": "diagnostic validation, not a computational fix or original server acceptance",
+  "hardware": [
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84",
+    "NVIDIA GeForce RTX 5060 Ti, 595.84"
+  ],
+  "source_sha256": "22cbf51d70fcab34cc7685289a8c07f7102e0f42a945b028deb2687fd6affebc",
+  "matrix_source_sha256": "97796e38c5ca4925ecaaf389da0d84010f55f141d244cee63cd803af1deb498d",
+  "cpu_controls": 18,
+  "tracer_sha256": "d2de013ee8170506352a2a01cf34fcbd046ccbde62586087b9ac9f9c430b4a78",
+  "archives": [
+    {
+      "name": "ut47-deep-20261019-113959-p3dop1tz.zip",
+      "sha256": "4accaf35e9f0f5f667f92d93f5c25e546ef5b0ffbf11097f717363a1d324e09b",
+      "files": 4866,
+      "all_checksums_verified": true
+    },
+    {
+      "name": "targeted.zip",
+      "sha256": "5901319abfd523f424ebf8370c71eb4f8354c54a40bc075f1e8f8f72a855e320",
+      "files": 157,
+      "all_checksums_verified": true
+    }
+  ],
+  "stages": [
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "initial-health",
+      "status": "PASS",
+      "seconds": 3.122,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "prepare",
+      "status": "PASS",
+      "seconds": 5.277,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-collective",
+      "status": "PASS",
+      "seconds": 13.198,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-collective-health",
+      "status": "PASS",
+      "seconds": 2.922,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-collective",
+      "status": "PASS",
+      "seconds": 13.803,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-collective-health",
+      "status": "PASS",
+      "seconds": 3.223,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-collective",
+      "status": "PASS",
+      "seconds": 13.753,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-collective-health",
+      "status": "PASS",
+      "seconds": 3.222,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-oracle",
+      "status": "PASS",
+      "seconds": 13.195,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-oracle-health",
+      "status": "PASS",
+      "seconds": 2.571,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-oracle",
+      "status": "PASS",
+      "seconds": 13.495,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-oracle-health",
+      "status": "PASS",
+      "seconds": 2.421,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-oracle",
+      "status": "PASS",
+      "seconds": 13.746,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-oracle-health",
+      "status": "PASS",
+      "seconds": 2.471,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-fresh-256",
+      "status": "TIMEOUT",
+      "seconds": 72.509,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-fresh-256-health",
+      "status": "PASS",
+      "seconds": 7.883,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-fresh-256",
+      "status": "TIMEOUT",
+      "seconds": 75.442,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-fresh-256-health",
+      "status": "PASS",
+      "seconds": 5.076,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-fresh-256",
+      "status": "TIMEOUT",
+      "seconds": 76.711,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-fresh-256-health",
+      "status": "PASS",
+      "seconds": 3.673,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-persistent-transitions",
+      "status": "TIMEOUT",
+      "seconds": 136.705,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-persistent-transitions-health",
+      "status": "PASS",
+      "seconds": 3.573,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-persistent-transitions",
+      "status": "TIMEOUT",
+      "seconds": 135.656,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-persistent-transitions-health",
+      "status": "PASS",
+      "seconds": 5.076,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-persistent-transitions",
+      "status": "TIMEOUT",
+      "seconds": 137.333,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-persistent-transitions-health",
+      "status": "PASS",
+      "seconds": 3.122,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-production",
+      "status": "PASS",
+      "seconds": 178.525,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED",
+      "verdict": "AUTOTUNE_AND_BOUNDED_BFS_VERIFIED",
+      "graph_status": "INCOMPLETE",
+      "reason": "RESOURCE_258",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226,
+        7371724,
+        14288342,
+        26485720,
+        46538398,
+        76087808,
+        114090354,
+        156071448,
+        194968586,
+        222631864
+      ],
+      "bfs_seconds": 112.612651891,
+      "tuning_seconds": 58.72290096594952,
+      "selected_shards": 1
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "baseline-production-health",
+      "status": "PASS",
+      "seconds": 2.67,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-production",
+      "status": "PASS",
+      "seconds": 176.7,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED",
+      "verdict": "AUTOTUNE_AND_BOUNDED_BFS_VERIFIED",
+      "graph_status": "INCOMPLETE",
+      "reason": "RESOURCE_258",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226,
+        7371724,
+        14288342,
+        26485720,
+        46538398,
+        76087808,
+        114090354,
+        156071448,
+        194968586,
+        222631864
+      ],
+      "bfs_seconds": 112.650424952,
+      "tuning_seconds": 57.16011121310294,
+      "selected_shards": 1
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-gdr-production-health",
+      "status": "PASS",
+      "seconds": 2.771,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-production",
+      "status": "PASS",
+      "seconds": 179.109,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED",
+      "verdict": "AUTOTUNE_AND_BOUNDED_BFS_VERIFIED",
+      "graph_status": "INCOMPLETE",
+      "reason": "RESOURCE_258",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226,
+        7371724,
+        14288342,
+        26485720,
+        46538398,
+        76087808,
+        114090354,
+        156071448,
+        194968586,
+        222631864
+      ],
+      "bfs_seconds": 112.567648534,
+      "tuning_seconds": 59.73531222704332,
+      "selected_shards": 1
+    },
+    {
+      "run": "ut47-deep-20261019-113959-p3dop1tz",
+      "name": "no-ib-production-health",
+      "status": "PASS",
+      "seconds": 2.871,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "targeted",
+      "name": "health",
+      "status": "PASS",
+      "seconds": 3.071,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    },
+    {
+      "run": "targeted",
+      "name": "collective",
+      "status": "PASS",
+      "seconds": 13.502,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "targeted",
+      "name": "oracle",
+      "status": "PASS",
+      "seconds": 12.141,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "targeted",
+      "name": "fresh-256",
+      "status": "TIMEOUT",
+      "seconds": 75.449,
+      "cleanup_complete": true,
+      "trace_status": "OBSERVED"
+    },
+    {
+      "run": "targeted",
+      "name": "health-after",
+      "status": "PASS",
+      "seconds": 4.825,
+      "cleanup_complete": true,
+      "trace_status": "NOT_REQUESTED"
+    }
+  ],
+  "contract_ranks": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "contract_records": 112,
+  "limitations": [
+    "Full matrix ran the earlier diagnostic source; final source adds group summaries and stricter reporting; final source tested on collective, oracle and fresh-256 timeout.",
+    "No original cluster InfiniBand hardware reproduced.",
+    "No general root cause or engine fix is claimed.",
+    "Production resource stops are not completed UT47 graphs.",
+    "No launch recommendation: 256-shard and transition checks timed out."
+  ],
+  "contract_comparison": {
+    "groups": [
+      1
+    ],
+    "sends": 56,
+    "recvs": 56,
+    "mismatch_count": 0,
+    "scope": "Last traced outer NCCL group: 56 send and 56 receive peer contracts match element totals, message counts and ordered count/type signatures. Does not prove NCCL progress or payload equality."
+  }
+}
