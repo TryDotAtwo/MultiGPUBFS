@@ -18,7 +18,7 @@ import traceback
 import urllib.request
 import zipfile
 
-WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v31/multigpubfs-0.2.0.dev31-py3-none-any.whl"
+WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v31/multigpubfs-0.2.0.dev31-py3-none-any.whl#sha256=9620fda20aff293e143f973d68916edbf91e487032aac7ccee8225fdad795670"
 EXPECTED = [1, 6, 26, 110, 414]
 MODES = ("baseline", "no-gdr", "no-ib")
 SAFE_ENV = ("CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "CUDA_MODULE_LOADING",

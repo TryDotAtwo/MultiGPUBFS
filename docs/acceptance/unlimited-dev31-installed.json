@@ -1,0 +1,204 @@
+{
+  "schema": 1,
+  "status": "PUBLISHED_WHEEL_INSTALLED_GPU_VERIFIED",
+  "wheel": {
+    "schema": 1,
+    "wheel": "multigpubfs-0.2.0.dev31-py3-none-any.whl",
+    "sha256": "9620fda20aff293e143f973d68916edbf91e487032aac7ccee8225fdad795670",
+    "size": 142874,
+    "source_commit": "93268170b5ef0664f0845d7c6bc9448d49f3b46d",
+    "native_index_sha256": "423a491a802ec807b0ecc38fbdb694af5abf8738fbdba186c6d7943856972f8d",
+    "native_components": "unlimited-20261019-v31",
+    "status": "BUILT_NEEDS_INSTALLED_GPU_ACCEPTANCE"
+  },
+  "native_sha256": "2b88c4217c15864025a28feadbf22686eddfae2b6d544580a335b35863fe6bf2",
+  "native_matches_ci": true,
+  "hardware": "2xRTX3060 SM86",
+  "runs": [
+    {
+      "name": "oracle-1",
+      "seconds": 6.795820154249668,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ]
+    },
+    {
+      "name": "oracle-2",
+      "seconds": 5.61640198295936,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ]
+    },
+    {
+      "name": "resource",
+      "seconds": 4.780688595958054,
+      "status": "INCOMPLETE",
+      "reason": "RESOURCE_2",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446
+      ]
+    },
+    {
+      "name": "tune-first",
+      "seconds": 12.193898409139365,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4796,
+        14916,
+        42558,
+        113080,
+        261382,
+        465744,
+        510640,
+        280944,
+        63754,
+        11744
+      ]
+    },
+    {
+      "name": "tune-repeat",
+      "seconds": 0.2611651630140841,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4796,
+        14916,
+        42558,
+        113080,
+        261382,
+        465744,
+        510640,
+        280944,
+        63754,
+        11744
+      ]
+    },
+    {
+      "name": "finite",
+      "status": "INCOMPLETE",
+      "reason": "DEADLINE",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226
+      ],
+      "seconds": 2.09156176
+    },
+    {
+      "name": "shard_ab_hash",
+      "status": "COMPLETE",
+      "reason": "GRAPH_EXHAUSTED",
+      "layers": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "seconds": 0.1379
+    },
+    {
+      "name": "shard_ab_sort_merge",
+      "status": "COMPLETE",
+      "reason": "GRAPH_EXHAUSTED",
+      "layers": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "seconds": 0.134547
+    },
+    {
+      "name": "stale",
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "seconds": 0.141456008
+    }
+  ],
+  "session_profile_hit": true,
+  "worker_pids_reused": true,
+  "estale_injected_recoveries": 10,
+  "python_checks": "862 passed, 210 subtests passed",
+  "ci_publication": "success",
+  "ci_cpu_functional_steps": "passed",
+  "ci_rust_format": "failed; repository-wide formatting includes unchanged pre-existing files",
+  "scope": "Single-host 1/2 GPU validation. Not original server 8-GPU or multi-node acceptance."
+}
