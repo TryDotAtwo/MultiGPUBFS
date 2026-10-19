@@ -43,6 +43,8 @@ def _merge_local_sorted_plans(parts,digest,requested):
    cumulative+=p['capacity'];cuts.append((cumulative*(1<<32)+total-1)//total)
  return {'size_profile_capability':1 if all(p.get('size_profile_capability')==1 for p in parts) else 0,'graph_digest':digest,'devices':[v['device'] for v in parts],'inventory':[{k:v[k] for k in ('device','free_bytes','total_bytes','sm_count','compute_major','compute_minor','l2_bytes') if k in v} for v in parts],'plan':first,'rank_plans':plans,'owner_cuts':cuts}
 
+from .work_limits import wire, remaining as remaining_work, phase_expired
+
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune):
  from .launch import _receipt
  rank=int(os.environ['RANK']);world=int(os.environ['WORLD_SIZE']);local=int(os.environ.get('LOCAL_RANK','0'))
@@ -53,7 +55,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  if output.exists():raise FileExistsError(output)
  output.parent.mkdir(parents=True,exist_ok=True)
  digest=graph.digest();host=os.environ['MASTER_ADDR'];port=int(os.environ.get('MGBFS_CONTROL_PORT',str(int(os.environ['MASTER_PORT'])+1)))
- session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
+ session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,600 if max_seconds is None else max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
  started=time.monotonic();profile=None
  try:
   from .host_memory import admit as admit_host
@@ -120,16 +122,19 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if rank!=0:bootstrap.write_bytes(base64.b64decode(store.get(label+'/nccl-id')))
     log=(folder/f'rank-{rank}.log').open('w');job=None
     try:
-     job=subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(folder/f'rank-{rank}'),str(seconds)],env=dict(phase_env,RANK=str(rank),WORLD_SIZE=str(world),LOCAL_RANK=str(device)),stdout=log,stderr=subprocess.STDOUT)
+     job=subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(folder/f'rank-{rank}'),str(wire(seconds))],env=dict(phase_env,RANK=str(rank),WORLD_SIZE=str(world),LOCAL_RANK=str(device),MGBFS_JOB_PHASE_PATH=str(folder/f'rank-{rank}.phase.json')),stdout=log,stderr=subprocess.STDOUT)
      if rank==0:
       while not bootstrap.exists():
        if job.poll() is not None:raise RuntimeError('EXTERNAL_BOOTSTRAP_WORKER_EXIT')
        store.check_error();time.sleep(.02)
       store.put(label+'/nccl-id',base64.b64encode(bootstrap.read_bytes()).decode())
-     deadline=time.monotonic()+seconds+180
+     deadline=None if seconds is None else time.monotonic()+seconds+180
+     observed_start=time.monotonic()
      while job.poll() is None:
       store.check_error()
-      if time.monotonic()>deadline:raise RuntimeError('EXTERNAL_WORKER_OBSERVATION_TIMEOUT_NO_RESTART')
+      from .launch import _job_phase
+      observed=_job_phase(job,folder,rank)
+      if (deadline is not None and time.monotonic()>deadline) or (observed is not None and phase_expired(observed,time.time(),seconds)) or (observed is None and time.monotonic()-observed_start>600):raise RuntimeError('EXTERNAL_WORKER_OBSERVATION_TIMEOUT_NO_RESTART')
       time.sleep(.05)
      if job.returncode:raise RuntimeError('EXTERNAL_NATIVE_RANK_FAILED '+str(rank))
     finally:
@@ -154,7 +159,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      for i in range(world):store.get(label+f'/consumed/{i}')
      store.release_prefix(label+'/')
     return result['report']
-   if shards is None and autotune and max_seconds>=10:
+   if shards is None and autotune and (max_seconds is None or max_seconds>=10):
     inventory=inventories('profile-admission')
     from .hardware_profiles import startup_policy
     baseline=admit('hardware-baseline',inventory,1,capacity)
@@ -172,7 +177,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if proposal['run']:
      pilots=[]
      for i,(count,fraction,transport,order,history,lanes,generator) in enumerate(proposal['variants']):
-      if rank==0:store.put('profile-go-'+str(i),max_seconds-(time.monotonic()-started)>=3)
+      if rank==0:store.put('profile-go-'+str(i),i==0 or (60 if max_seconds is None else min(60,max_seconds))-(time.monotonic()-started)>=3)
       if not store.get('profile-go-'+str(i)):break
       v=phase('pilot-'+str(i),count,proposal['capacity'],fraction,1,128,transport=transport,order=order,history=history,lanes=lanes,generator=generator);pilots.append({'generator_backend':v['plan'].get('generator_backend','cuda'),'history_algorithm':v['plan']['history_algorithm'],'owner_lanes':v['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':count,'batch_fraction':fraction,'layer_sizes':v['layer_sizes'],'layer_seconds':v['layer_seconds'],'status':v['status']})
      depth=min(len(p['layer_seconds']) for p in pilots);sizes=pilots[0]['layer_sizes'][:depth+1]
@@ -185,7 +190,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     profile['reserve_generator_backend']='gemm' if gemm_supported(graph) and all(store.get('profile-admission'+f'/gemm/{i}') and store.get('profile-admission'+f'/size-profile/{i}') for i in range(world)) else profile.get('generator_backend','cuda')
     profile['online_size_tuning']=True
    shards=shards if shards is not None else (profile['shards'] if profile else 1)
-   remaining=max(1,max_seconds-int(time.monotonic()-started+.999));result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('reserve_generator_backend',profile.get('generator_backend','cuda')) if profile else native_env.get('MGBFS_GENERIC_GENERATOR'))
+   remaining=remaining_work(max_seconds,time.monotonic()-started);result=phase('production',shards,capacity,profile['batch_fraction'] if profile else 1.0,remaining,transport=profile['transport'] if profile else native_env.get('MGBFS_GENERIC_TRANSPORT'),order=profile['candidate_order'] if profile else native_env.get('MGBFS_GENERIC_SORT'),history=('sorted' if profile['history_algorithm']=='SORTED_RUNS' else 'hash') if profile else native_env.get('MGBFS_GENERIC_HISTORY'),lanes=profile['owner_lanes'] if profile and profile['history_algorithm']=='SORTED_RUNS' else None,generator=profile.get('reserve_generator_backend',profile.get('generator_backend','cuda')) if profile else native_env.get('MGBFS_GENERIC_GENERATOR'))
    if profile:profile['online_size_tuning']=result.get('size_profile_count',0)>0;result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    store.put(f'finished/{rank}',True)
    if rank==0:

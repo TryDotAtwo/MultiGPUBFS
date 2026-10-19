@@ -8,14 +8,14 @@ impl Signals{pub(crate) fn new()->Self{CANCELLED.store(false,Ordering::Relaxed);
 impl Drop for Signals{fn drop(&mut self){unsafe{libc::signal(libc::SIGTERM,self.term);libc::signal(libc::SIGINT,self.int);}}}
 pub fn run(args:&[String])->Result<()> {
  if args.len()<2{return Err("CLI_USAGE: mgbfs graph <graph.json> <output-dir> [--device N] [--capacity N] [--seconds N]".into());}
- let mut device=0u32;let mut capacity=None;let mut seconds=3600u64;let mut i=2;
+ let mut device=0u32;let mut capacity=None;let mut seconds=0u64;let mut i=2;
  while i<args.len(){if i+1>=args.len(){return Err("CLI_GRAPH_OPTION_VALUE".into());}match args[i].as_str(){
   "--device"=>device=args[i+1].parse().map_err(|_|"CLI_GRAPH_DEVICE")?,
   "--capacity"=>capacity=Some(args[i+1].parse::<u32>().map_err(|_|"CLI_GRAPH_CAPACITY")?),
   "--seconds"=>seconds=args[i+1].parse().map_err(|_|"CLI_GRAPH_SECONDS")?,
   _=>return Err("CLI_GRAPH_UNKNOWN_OPTION".into()),}i+=2;}
  crate::native_fault::reset(Some(0),Some(device));
- if seconds==0{return Err("CLI_GRAPH_SECONDS".into());}
+
  if std::env::var("WORLD_SIZE").ok().is_some_and(|v|v!="1"){return Err("GENERIC_DISTRIBUTED_INTEGRATION_NOT_READY".into());}
  let graph:GraphDefinitionV2=serde_json::from_reader(std::fs::File::open(&args[0]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;graph.validate()?;
  let output=Path::new(&args[1]);if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}
@@ -25,7 +25,7 @@ pub fn run(args:&[String])->Result<()> {
  let _signals=Signals::new();eprintln!("MGBFS_GRAPH_READY device={device}");let started=Instant::now();let mut counts=vec![1u32];let mut times=vec![];let (status,reason)=loop{
   crate::native_fault::layer(counts.len() as u64,counts.len() as u64-1);
   if CANCELLED.load(Ordering::Relaxed){bfs.stop();break ("INCOMPLETE","CANCELLED".to_owned());}
-  if started.elapsed()>=Duration::from_secs(seconds){bfs.stop();break ("INCOMPLETE","DEADLINE".to_owned());}
+  if seconds!=0 && started.elapsed()>=Duration::from_secs(seconds){bfs.stop();break ("INCOMPLETE","DEADLINE".to_owned());}
   let layer=Instant::now();match bfs.advance()?{
    GenericAdvance::Layer{count}=>{counts.push(count);crate::native_fault::completed(counts.len() as u64-1);times.push(layer.elapsed().as_secs_f64());},
    GenericAdvance::Complete=>break ("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),

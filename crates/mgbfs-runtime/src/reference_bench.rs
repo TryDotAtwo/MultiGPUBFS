@@ -1196,7 +1196,8 @@ fn run_pass(
     let mut calibration_stopped = false;
     let mut job_stop_reason=None::<String>;
     let job_seconds=std::env::var("MGBFS_JOB_BFS_SECONDS").ok().map(|v|v.parse::<f64>().map_err(|_|"JOB_BFS_SECONDS")).transpose()?;
-    if job_seconds.is_some_and(|v|!v.is_finite()||v<=0.0){return Err("JOB_BFS_SECONDS".into());}
+    if job_seconds.is_some_and(|v|!v.is_finite()||v<0.0){return Err("JOB_BFS_SECONDS".into());}
+    let job_seconds=job_seconds.filter(|v|*v>0.0);
     let controlled=job_seconds.is_some()||std::env::var_os("MGBFS_JOB_CANCEL_PATH").is_some();
     loop {
         let tick = Instant::now();

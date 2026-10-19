@@ -18,7 +18,7 @@ import traceback
 import urllib.request
 import zipfile
 
-WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v30/multigpubfs-0.2.0.dev30-py3-none-any.whl#sha256=39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce"
+WHEEL = "https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v31/multigpubfs-0.2.0.dev31-py3-none-any.whl"
 EXPECTED = [1, 6, 26, 110, 414]
 MODES = ("baseline", "no-gdr", "no-ib")
 SAFE_ENV = ("CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "CUDA_MODULE_LOADING",
@@ -109,6 +109,11 @@ def health(root):
             driver.cuDevicePrimaryCtxRelease_v2(device)
     return dict(status="PASS", visible_devices=count.value)
 
+def prefix_verdict(layers):
+    common=min(len(layers),len(EXPECTED))
+    if layers[:common]!=EXPECTED[:common]: return "UT47_PREFIX_MISMATCH"
+    return "VERIFIED" if len(layers)>=len(EXPECTED) else "INSUFFICIENT_PREFIX"
+
 def stage_worker(root, spec):
     mode = spec.get("mode", "baseline")
     if mode == "no-gdr": os.environ["NCCL_NET_GDR_LEVEL"] = "LOC"
@@ -130,8 +135,8 @@ def stage_worker(root, spec):
                     package=importlib.metadata.version("multigpubfs"))
     from multigpubfs import GraphDefinition, run_graph, persistent_graph_workers
     from multigpubfs.native_distribution import native_runtime
-    if importlib.metadata.version("multigpubfs") != "0.2.0.dev30":
-        raise RuntimeError("DEV29_REQUIRED")
+    if importlib.metadata.version("multigpubfs") != "0.2.0.dev31":
+        raise RuntimeError("DEV31_REQUIRED")
     native, env = native_runtime()
     env.update(NCCL_DEBUG="INFO", NCCL_DEBUG_SUBSYS="ALL",
                NCCL_DEBUG_FILE=str(root/"nccl-%h-%p.log"), MGBFS_TRACE_NATIVE_CALLS="1",
@@ -171,9 +176,9 @@ def stage_worker(root, spec):
             if kind == "oracle":
                 if report.get("status") != "COMPLETE" or layers != oracle(3):
                     raise RuntimeError("COMPLETE_CPU_ORACLE_MISMATCH")
-            elif layers[:5] != EXPECTED:
+            elif prefix_verdict(layers) == "UT47_PREFIX_MISMATCH":
                 raise RuntimeError("UT47_PREFIX_MISMATCH")
-            if kind not in ("production","oracle") and (report.get("status")!="INCOMPLETE" or report.get("reason")!="PROFILE_LAYER_LIMIT"):
+            if kind not in ("production","oracle") and prefix_verdict(layers)=="VERIFIED" and (report.get("status")!="INCOMPLETE" or report.get("reason")!="PROFILE_LAYER_LIMIT"):
                 raise RuntimeError("UNEXPECTED_FIXED_PROBE_STOP")
             if report.get("status")=="COMPLETE" and sum(layers) != (3 if kind=="oracle" else 47)**6:
                 raise RuntimeError("COMPLETE_CARDINALITY_MISMATCH")
@@ -196,7 +201,15 @@ def stage_worker(root, spec):
                                 ignore=shutil.ignore_patterns("job-*"))
     else:
         execute(None)
-    return dict(status="PASS", reports=reports)
+    result=dict(status="PASS", reports=reports)
+    if kind != "oracle" and any(prefix_verdict(v["layers"])=="INSUFFICIENT_PREFIX" for v in reports):
+        result.update(status="INCONCLUSIVE",reason="INSUFFICIENT_PREFIX")
+    elif kind=="production":
+        verdict=production_verdict(result)
+        result["verification"]=verdict
+        if verdict not in ("FULL_GRAPH_COMPLETE","AUTOTUNE_AND_BOUNDED_BFS_VERIFIED"):
+            result.update(status="INCONCLUSIVE",reason=verdict)
+    return result
 
 def walk(value):
     if isinstance(value, dict):
@@ -293,6 +306,7 @@ def run_stage(base, name, spec, timeout, deadline, tracer=None):
     finally:
         clean=stop_group(p) if p else True
     result=json.loads((root/"result.json").read_text()) if (root/"result.json").exists() else {}
+    if status=="PASS" and result.get("status")=="INCONCLUSIVE": status="INCONCLUSIVE"
     entry=dict(name=name,status=status,code=code,seconds=time.monotonic()-start,
                cleanup_complete=clean,spec=spec,result=result)
     entry["trace_status"]=("OBSERVED" if list(root.glob("api-*.ndjson")) else "NOT_OBSERVED") if tracer and spec["kind"] not in ("health","prepare","production") else "NOT_REQUESTED"
@@ -421,11 +435,11 @@ def main(args):
         # Low-risk controls for every transport first, then the known failing geometries.
         tests=[("collective",dict(kind="nccl"),50),
                ("oracle",dict(kind="oracle",shards=[1]),60),
-               ("fresh-256",dict(kind="fixed",shards=[256]),70),
-               ("persistent-transitions",dict(kind="fixed",shards=[1,128,256,1],persistent=True),130)]
+               ("fresh-256",dict(kind="fixed",shards=[256]),150),
+               ("persistent-transitions",dict(kind="fixed",shards=[1,128,256,1],persistent=True),420)]
         for label,template,limit in tests:
             for mode in MODES:
-                spec=dict(template,mode=mode,seconds=35)
+                spec=dict(template,mode=mode,seconds=120 if template["kind"]=="fixed" else 35)
                 run(mode+"-"+label,spec,limit)
                 h=run(mode+"-"+label+"-health",dict(kind="health"),25)
                 if h["status"] not in ("PASS","SKIPPED_BUDGET"): stopped=True

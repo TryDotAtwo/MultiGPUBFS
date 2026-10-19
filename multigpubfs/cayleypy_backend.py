@@ -14,7 +14,7 @@ from .launch import run_graph
 class NativeOptions:
     output_root: str | Path | None = None
     devices: tuple[int, ...] | None = None
-    max_seconds: int = 3600
+    max_seconds: int | None = None
     autotune: bool = True
 
 

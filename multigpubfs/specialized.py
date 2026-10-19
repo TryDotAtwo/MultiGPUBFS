@@ -91,23 +91,24 @@ def _environment(env,match,devices,capacity,batch,mode,query=False,profile_layer
  if profile_layers is not None:e['MGBFS_CALIBRATION_LAYERS']=str(profile_layers)
  return e
 
+from .work_limits import wire, phase_expired
+
 def _workers(native,root,match,devices,batch,env,seconds,query=False):
  (root/'native').mkdir();jobs=[];logs=[];started=time.monotonic();stop_at=None
  try:
   for rank,device in enumerate(devices):
-   log=(root/f'rank-{rank}.log').open('w');logs.append(log);e=dict(env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(device),TORCHELASTIC_RUN_ID=root.name)
+   log=(root/f'rank-{rank}.log').open('w');logs.append(log);e=dict(env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(device),TORCHELASTIC_RUN_ID=root.name,MGBFS_JOB_PHASE_PATH=str(root/f'rank-{rank}.phase.json'))
    command=[native,'bench','--reference',f"lrx{match['n']}r{match['r']}",str(batch),str(root/'bootstrap'),str(root/'archive'),str(root/'native')]
    if query:command.append('--search-only')
    from .generic_session import launch_specialized
    jobs.append(launch_specialized(command,e,log,devices))
   while any(p.poll() is None for p in jobs):
-   phases=[p.phase() if hasattr(p,'phase') else None for p in jobs]
+   from .launch import _job_phase
+   phases=[_job_phase(p,root,rank) for rank,p in enumerate(jobs)]
    controlled=not query and all(phase is not None for phase in phases)
    elapsed=time.monotonic()-started
-   timeout=(elapsed>max(600,seconds)) if not controlled else any(
-    (phase['phase']=='preparing' and time.time()-phase['entered']['preparing']>600) or
-    (phase['phase']=='bfs' and time.time()-phase['entered']['bfs']>seconds+60) or
-    (phase['phase']=='retiring' and time.time()-phase['entered']['retiring']>600) for phase in phases)
+   timeout=(elapsed>max(600,seconds or 0)) if not controlled else any(
+    phase_expired(phase,time.time(),seconds) for phase in phases)
    if timeout and stop_at is None:
     stop_at=time.monotonic()
     for p in jobs:
@@ -165,7 +166,7 @@ def run_specialized(graph,output,*,native,env,devices,capacity,batch,max_seconds
     except BaseException as error:errors[rank]=str(error)
    t=threading.Thread(target=read,daemon=True);threads.append(t);t.start()
   e=_environment(env,match,devices,capacity,batch,mode,profile_layers=profile_layers,shard_target=shard_target)
-  e['MGBFS_JOB_BFS_SECONDS']=str(max_seconds)
+  e['MGBFS_JOB_BFS_SECONDS']=str(wire(max_seconds))
   codes,wall,deadline=_workers(native,output,match,devices,batch,e,max_seconds)
  finally:
   stopped.set()

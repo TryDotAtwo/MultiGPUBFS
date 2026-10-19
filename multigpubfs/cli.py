@@ -20,7 +20,7 @@ def main(argv=None):
  parser.add_argument('--catalog-kwargs',help='JSON keyword argument object for the constructor')
  parser.add_argument('output',type=Path,help='New result directory')
  parser.add_argument('--devices',help='Comma-separated local GPU IDs; omitted uses all visible GPUs')
- parser.add_argument('--seconds',type=int,default=3600,help='Bounded launch/work budget including startup tuning')
+ parser.add_argument('--seconds',type=int,default=None,help='Optional work budget in seconds; omitted or 0 runs until complete or resource stop')
  parser.add_argument('--capacity',type=int,help='Optional per-rank capacity, checked against actual free VRAM')
  parser.add_argument('--backend',choices=['auto','generic','shard_ab_hash','shard_ab_sort_merge'],default='auto')
  parser.add_argument('--peer-transport',choices=['auto','host','lsa'],default='auto')

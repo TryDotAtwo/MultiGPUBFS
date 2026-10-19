@@ -1,0 +1,46 @@
+name: Publish unlimited BFS dev31
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/integrated-bfs-best-practices-delivery]
+    paths: [.github/workflows/publish-unlimited.yml, docs/acceptance/unlimited-dev31.json]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate acceptance and Python regressions
+        run: |
+          python3 -m pip install build pytest numpy packaging
+          python3 -c 'import json; assert json.load(open("docs/acceptance/unlimited-dev31.json"))["status"]=="VERIFIED_2_GPU"'
+          PYTHONPATH=. python3 -m pytest -q tests/test_unlimited_and_stale.py scripts/test_ut47_deep_diagnostic.py
+      - name: Build and package native CLI
+        run: |
+          rustup toolchain install 1.75.0 --profile minimal
+          rustup default 1.75.0
+          PYTHONPATH=. python3 -m scripts.package_unlimited_release
+          PYTHONPATH=. python3 -m scripts.build_lazy_native_package
+          cp dist-native/*.whl release-unlimited/
+          cp dist-native/manifest.json release-unlimited/wheel-manifest.json
+          cp docs/acceptance/unlimited-dev31.json release-unlimited/gpu-acceptance.json
+          cd release-unlimited
+          sha256sum * > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unlimited-dev31-release
+          path: release-unlimited/*
+          compression-level: 0
+      - name: Publish immutable prerelease
+        run: |
+          gh release create native-pip-20261019-v31 release-unlimited/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title 'Native pip dev31: optional BFS deadlines and reliable diagnostics' --notes-file docs/acceptance/unlimited-dev31.md

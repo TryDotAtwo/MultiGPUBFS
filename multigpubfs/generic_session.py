@@ -19,12 +19,15 @@ def _job_failed(job):
  return not (query_only or _expected_plan_rejection(job))
 
 
+from .metadata_io import read_json
+
 class Job:
  def __init__(self,worker,sequence):self.worker=worker;self.sequence=sequence;self.pid=worker.process.pid;self.returncode=None;self.response=None;self.command=None;self.receipt_log=None;self.log_offset=0;self.logged=False
  def poll(self):
   path=self.worker.root/f'response-{self.sequence:08}.json'
-  if self.returncode is None and path.exists():
-   self.response=json.loads(path.read_text())
+  response=read_json(path) if self.returncode is None else None
+  if response is not None:
+   self.response=response
    if self.response.get('schema')!=1 or self.response.get('sequence')!=self.sequence:raise RuntimeError('GENERIC_SESSION_RESPONSE_IDENTITY')
    self.returncode=self.response.get('result',{}).get('exit_code',0) if self.response.get('ok') is True else 1
   if self.returncode is None and self.worker.process.poll() is not None:self.returncode=self.worker.process.returncode or 1
@@ -42,8 +45,8 @@ class Job:
   return self.returncode
  def phase(self):
   path=self.worker.root/f'phase-{self.sequence:08}.json'
-  if not path.exists():return None
-  value=json.loads(path.read_text())
+  value=read_json(path)
+  if value is None:return None
   if value.get('schema')!=1 or value.get('pid')!=self.pid or value.get('sequence')!=str(self.sequence):raise RuntimeError('GENERIC_SESSION_PHASE_IDENTITY')
   return value
  def request_cancel(self):(self.worker.root/f'cancel-{self.sequence:08}').touch()

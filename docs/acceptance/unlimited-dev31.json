@@ -1,0 +1,202 @@
+{
+  "schema": 1,
+  "status": "VERIFIED_2_GPU",
+  "hardware": "2xRTX3060, driver580.126.09, SM86",
+  "base_commit": "f4f6075d036a88f538b77313617103f34b6a3991",
+  "native_candidate_sha256": "bafa6f0fb2b5e866db96124fe35c99e39ac4fbb21b437e34c5d550e87938aa74",
+  "python_tests": 862,
+  "subtests": 210,
+  "runs": [
+    {
+      "name": "oracle-1",
+      "seconds": 3.41662171902135,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ]
+    },
+    {
+      "name": "oracle-2",
+      "seconds": 4.2150690709240735,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ]
+    },
+    {
+      "name": "resource",
+      "seconds": 2.877746496349573,
+      "status": "INCOMPLETE",
+      "reason": "RESOURCE_2",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446
+      ]
+    },
+    {
+      "name": "tune-first",
+      "seconds": 10.484561159275472,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4796,
+        14916,
+        42558,
+        113080,
+        261382,
+        465744,
+        510640,
+        280944,
+        63754,
+        11744
+      ]
+    },
+    {
+      "name": "tune-repeat",
+      "seconds": 0.2769787246361375,
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4796,
+        14916,
+        42558,
+        113080,
+        261382,
+        465744,
+        510640,
+        280944,
+        63754,
+        11744
+      ]
+    },
+    {
+      "name": "finite",
+      "status": "INCOMPLETE",
+      "reason": "DEADLINE",
+      "layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226
+      ],
+      "seconds": 1.967589109
+    },
+    {
+      "name": "shard_ab_hash",
+      "status": "COMPLETE",
+      "reason": "GRAPH_EXHAUSTED",
+      "layers": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "seconds": 0.141628
+    },
+    {
+      "name": "shard_ab_sort_merge",
+      "status": "COMPLETE",
+      "reason": "GRAPH_EXHAUSTED",
+      "layers": [
+        1,
+        3,
+        6,
+        10,
+        16,
+        24,
+        29,
+        21,
+        6,
+        3,
+        1
+      ],
+      "seconds": 0.13900099999999999
+    },
+    {
+      "name": "stale",
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "seconds": 0.12217596
+    }
+  ],
+  "persistent_session_profile_hit": true,
+  "same_worker_pids": true,
+  "injected_estale_recoveries": 10,
+  "extra_checks": [
+    "CayleyPy S5/S6 persistent default unlimited",
+    "native CLI default unlimited",
+    "two external ranks with explicit capacity1024"
+  ],
+  "limitations": [
+    "No new eight-GPU server acceptance",
+    "Transient ESTALE recovery tested by injection; persistent filesystem failure is still fatal",
+    "External-rank auto capacity on the test setup hit admission rejection; explicit capacity1024 verified deadline semantics; this is not multi-node admission acceptance",
+    "Release CI binary will be rebuilt from committed source; installed release validation follows publication"
+  ]
+}

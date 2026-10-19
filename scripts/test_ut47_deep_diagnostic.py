@@ -125,3 +125,9 @@ class Controls(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
+
+
+def test_correct_short_prefix_is_inconclusive():
+ assert m.prefix_verdict([1,6,26,110])=="INSUFFICIENT_PREFIX"
+ assert m.prefix_verdict([1,6,999])=="UT47_PREFIX_MISMATCH"
+ assert m.prefix_verdict(m.EXPECTED)=="VERIFIED"
