@@ -1,0 +1,11 @@
+{
+  "status": "PUBLIC_WHEEL_INSTALLED_CPU_CHECKED",
+  "wheel_sha256": "39ed27a8dfc8f45f1ec36a907d5a0a74a24f91266a785610840afbef2ea111ce",
+  "native_library_sha256": "a4a36824bb69d57b63a2c30a32e289c37e0b96db32377321afad32ad9bf47818",
+  "graph_matches_original": true,
+  "gpu_executed": false,
+  "scope": "Public artifact readback, installed index/cache/native loader and real CayleyPy graph construction; eight-GPU execution is covered by the identical library receipt",
+  "workflow_url": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/39288354130",
+  "release_url": "https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261019-v30",
+  "example_commit": "f7084a4345aae8b4b25a272d088b4c8104d858a3"
+}
