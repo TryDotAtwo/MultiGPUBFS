@@ -34,8 +34,26 @@ jobs:
           PY
       - name: Wait for exact native build and download artifacts
         run: |
-          gh run watch "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
-          test "$(gh run view "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')" = fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1
+          python3 - <<'PY'
+          import json,os,time,urllib.request,urllib.error
+          end=time.monotonic()+7200
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['BUILD_RUN']}"
+          while time.monotonic()<end:
+              try:
+                  request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+                  with urllib.request.urlopen(request,timeout=30) as response:
+                      data=json.load(response)
+              except (urllib.error.URLError,TimeoutError):
+                  print('Transient build-status query failure; retrying',flush=True)
+                  time.sleep(30);continue
+              assert data['head_sha']=='fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1'
+              if data['status']=='completed':
+                  assert data['conclusion']=='success',data['conclusion']
+                  break
+              time.sleep(30)
+          else:
+              raise RuntimeError('Native build did not finish within publication deadline')
+          PY
           gh run download "$BUILD_RUN" --repo "$GITHUB_REPOSITORY" --dir /tmp/bounded-builds
       - name: Assemble and validate release payload
         run: |
