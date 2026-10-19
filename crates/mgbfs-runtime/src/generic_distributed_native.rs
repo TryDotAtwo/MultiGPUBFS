@@ -217,7 +217,7 @@ impl GenericDistributedBfs{
    let mut fatal=0u32;crate::generic_native::checked!(cudaMemcpyAsync, unsafe{cudaMemcpyAsync((&mut fatal as *mut u32).cast(),self.control.ptr,4,2,stream)})?;crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(stream)})?;
    if fatal==1&&batch>1{profiling=false;self.online_bucket=Some(bucket);batch=(batch/2).max(1);self.source_retries+=1;continue;}
    if fatal!=0{return Ok(DistributedAdvance::Resource{fatal});}
-   // A single matched NCCL group submits all peer lanes without host count reads.
+   // Matched bounded NCCL groups submit every peer lane without host count reads.
    let used=u32::try_from((u64::from(batch)*u64::from(b.generators)).min(u64::from(p.queue_capacity))).map_err(|_|"BOUNDED_QUEUE_EXTENT")?;
    crate::generic_native::checked!(mgbfs_nccl_exchange_bounded_triplets, unsafe{mgbfs_nccl_exchange_bounded_triplets(self.comm,self.rank,p.world,p.shards,p.queue_capacity,used,p.queue_payload_bytes() as u64,p.state_bytes,bank.counts.ptr,bank.records.ptr,bank.states.ptr,self.inbox.counts.ptr,self.inbox.records.ptr,self.inbox.states.ptr,stream)})?;
    if let Some(cache)=&self.parent_cache{

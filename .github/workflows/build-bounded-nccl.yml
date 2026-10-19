@@ -1,0 +1,44 @@
+name: Build bounded NCCL transport components
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/integrated-bfs-best-practices-delivery]
+    paths: [cuda/nccl_transport.cpp]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        sm: [75,80,86,89,90,100,103,120,universal]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare pinned compiler host
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build g++ binutils
+          python3 -m pip install packaging numpy
+      - name: Verify exact-target configuration
+        run: python3 -m unittest discover -s tests -p test_selective_build_diagnostics.py
+      - name: Build the bounded transport and CUDA kernels
+        env:
+          MGBFS_DIAGNOSTIC_VARIANT: shared-sm120
+          MGBFS_TARGET_ARCH: ${{ matrix.sm }}
+        run: |
+          if [ "$MGBFS_TARGET_ARCH" = universal ]; then unset MGBFS_TARGET_ARCH; fi
+          python3 scripts/build_portable_native.py
+      - name: Bounded P2P contract regression (CPU only)
+        run: python3 scripts/test_nccl_bounded_groups.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success() || failure()
+        with:
+          name: native-component-sm${{ matrix.sm }}
+          path: /tmp/mgbfs-portable/diagnostic-variant/shared-sm120/*
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 7
