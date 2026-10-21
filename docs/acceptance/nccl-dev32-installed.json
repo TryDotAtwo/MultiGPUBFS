@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "status": "PUBLISHED_WHEEL_INSTALLED_GPU_VERIFIED",
+  "manifest": {
+    "schema": 1,
+    "wheel": "multigpubfs-0.2.0.dev32-py3-none-any.whl",
+    "sha256": "c33c88e8c7c396b85dee53790f411b920861f9bfddf4765464bb0cee5abf7e36",
+    "size": 147636,
+    "source_commit": "6caebe07b08211da2662a735f99e03374d29d56f",
+    "native_index_sha256": "423a491a802ec807b0ecc38fbdb694af5abf8738fbdba186c6d7943856972f8d",
+    "native_components": "unlimited-20261019-v31",
+    "status": "BUILT_NEEDS_INSTALLED_GPU_ACCEPTANCE"
+  },
+  "wheel_code_matches_tested_source": true,
+  "hardware": "2xRTX3060",
+  "runs": [
+    {
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layer_sizes": [
+        1,
+        6,
+        26,
+        110,
+        408,
+        1400,
+        4220,
+        12036,
+        29830,
+        46784,
+        21562,
+        1232,
+        34
+      ],
+      "bfs_seconds": 0.481931952,
+      "profile_status": "MEASURED_FRONTIER_SIZE_PROFILES"
+    },
+    {
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layer_sizes": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "bfs_seconds": 0.022107838,
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING"
+    },
+    {
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "layer_sizes": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "bfs_seconds": 0.035282615,
+      "profile_status": "FAST_START_LIVE_SIZE_TUNING"
+    }
+  ],
+  "scope": "Not B200 or original failing RTX node acceptance",
+  "ci": "Publication and functional checks passed; unchanged Rust formatting gate failed"
+}
