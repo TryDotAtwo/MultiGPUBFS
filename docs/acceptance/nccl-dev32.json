@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "status": "VERIFIED_2_RTX3060",
+  "package": "0.2.0.dev32",
+  "tests": {
+    "passed": 853,
+    "subtests": 210
+  },
+  "native_components_unchanged": true,
+  "native_index_sha256": "423a491a802ec807b0ecc38fbdb694af5abf8738fbdba186c6d7943856972f8d",
+  "large": {
+    "status": "INCOMPLETE",
+    "reason": "RESOURCE_258",
+    "layer_sizes": [
+      1,
+      6,
+      26,
+      110,
+      414,
+      1446,
+      4802,
+      15074,
+      44164,
+      121446,
+      311840,
+      750118,
+      1696770,
+      3629226,
+      7371724,
+      14288342,
+      26485720
+    ],
+    "bfs_seconds": 82.723557299,
+    "profile_status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE"
+  },
+  "autotune": {
+    "measured": true,
+    "seconds": 60.21371190104401,
+    "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE"
+  },
+  "communication": {
+    "seconds": 21.487490154977422,
+    "reserve_bytes": 2147483648,
+    "ranks": [
+      {
+        "verified": true,
+        "rank": 0,
+        "device": 0,
+        "nccl_device_bytes": 94371824,
+        "scratch_bytes": 335544336,
+        "queue_capacity": 524288,
+        "passes": 4,
+        "payload_readback": true
+      },
+      {
+        "verified": true,
+        "rank": 1,
+        "device": 1,
+        "nccl_device_bytes": 94371824,
+        "scratch_bytes": 335544336,
+        "queue_capacity": 524288,
+        "passes": 4,
+        "payload_readback": true
+      }
+    ],
+    "bfs_prefix": {
+      "status": "INCOMPLETE",
+      "reason": "PROFILE_LAYER_LIMIT",
+      "layer_sizes": [
+        1,
+        6,
+        26,
+        110,
+        414
+      ]
+    }
+  },
+  "small_graphs": [
+    {
+      "label": "oracle",
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "states": 729,
+      "layers": 9,
+      "wall": 0.12386430101469159
+    },
+    {
+      "label": "cached",
+      "status": "COMPLETE",
+      "reason": "FRONTIER_EXHAUSTED",
+      "states": 729,
+      "layers": 9,
+      "wall": 0.14042606198927388
+    }
+  ],
+  "explicit_transports": [
+    {
+      "policy": {},
+      "status": "VERIFIED",
+      "seconds": 53.21219134598505,
+      "bfs_prefix": {
+        "status": "INCOMPLETE",
+        "reason": "PROFILE_LAYER_LIMIT",
+        "layer_sizes": [
+          1,
+          6,
+          26,
+          110,
+          414
+        ]
+      }
+    },
+    {
+      "policy": {},
+      "status": "VERIFIED",
+      "seconds": 41.03712519898545,
+      "bfs_prefix": {
+        "status": "INCOMPLETE",
+        "reason": "PROFILE_LAYER_LIMIT",
+        "layer_sizes": [
+          1,
+          6,
+          26,
+          110,
+          414
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "No B200 or failing original RTX node GPU acceptance",
+    "CUDA999 original async origin remains unproven; startup transport selection is tested mitigation",
+    "UT(4,47) resource-limited, not complete",
+    "Large-frontier size profiles not all measured"
+  ]
+}

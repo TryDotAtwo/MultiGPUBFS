@@ -58,6 +58,17 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  from .host_memory import admit
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
+ if _native_env is not None:native_env=dict(_native_env)
+ communication=None
+ if _profile_layers is None and os.environ.get('WORLD_SIZE','1')=='1' and not backend.startswith('shard_ab_'):
+  if Path(output).exists():raise FileExistsError(output)
+  selected=devices
+  if selected is None:
+   count=native_query([native,'graph-count'],env=native_env,capture_output=True,text=True)
+   if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
+   selected=list(range(int(count.stdout.strip())))
+  from .nccl_preflight import prepare
+  native_env,communication=prepare(native,selected,native_env,output,graph)
  geometry_bound=None
  if capacity is None and _profile_layers is None and not backend.startswith('shard_ab_'):
   from .workload_geometry import certified_frontier_bound
@@ -68,9 +79,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     bound_admission=_admit(graph,devices,None,shards or 1,native,native_env,bound_dir)
    capacity=min(geometry_bound['maximum_frontier'],bound_admission['plan']['capacity'])
 
- if _native_env is not None:native_env=dict(_native_env)
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  def finish(report):
+  if communication is not None:report['communication_preflight']=communication
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   from .size_profiles import save_online_profiles
   try:save_online_profiles(report)
