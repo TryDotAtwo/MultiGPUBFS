@@ -215,7 +215,7 @@ def package(root):
     allowed={'report.json','report.txt','result.json','probe.json','phase.json','cleanup.json',
         'process-snapshot.json','post-cleanup-snapshot.json','case-input.json','failure.json','request.json',
         'recovery-profile.json','recovery-proof.json','recovery-summary.txt','launch-command.txt','graph.json',
-        'findings.json','analysis.json','analysis.txt','environment.json','driver.json','runtime.json','working-config.json'}
+        'failure-context.json','summary.json','findings.json','analysis.json','analysis.txt','environment.json','driver.json','runtime.json','working-config.json'}
     entries=[];omitted=[];total=0
     with zipfile.ZipFile(root/'diagnostics.zip','w',zipfile.ZIP_DEFLATED) as z:
         for f in sorted(root.rglob('*')):

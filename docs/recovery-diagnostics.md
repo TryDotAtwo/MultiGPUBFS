@@ -31,3 +31,21 @@ Only READY produces `launch-command.txt` and `recovery-profile.json`. The comman
 Profiles are bound to the node/boot, GPU/driver evidence, visibility, relevant loader/transport environment and exact package/native identity. Changing those requires a new check, not blindly reusing a transport choice from another server.
 
 If CUDA becomes unavailable in fresh processes, the tool cannot repair the kernel driver without privileges. It states the last observed call and affected ranks, preserves transport errors and recommends a new allocation/node or operator recovery only when warranted. It does not assert that CUDA999 alone proves faulty hardware or insufficient memory.
+
+## CayleyPy API after READY
+
+In the same verified job/environment:
+
+```python
+from multigpubfs.recovery_diagnostics import enable_profile
+from multigpubfs import persistent_graph_workers
+from cayleypy import CayleyGraph, PermutationGroups
+
+enable_profile("/absolute/diagnostic/path/recovery-profile.json")
+with persistent_graph_workers():
+    for n in (8, 9, 10):
+        result = CayleyGraph(PermutationGroups.coxeter(n), device="cpu").bfs()
+        print(n, result.bfs_completed, result.completed_depth)
+```
+
+`doctor --recover` exits zero only for READY. Inspect the report as well: rejected experiments remain recorded. This command does not launch an unbounded production graph automatically. Use the printed command explicitly when ready.

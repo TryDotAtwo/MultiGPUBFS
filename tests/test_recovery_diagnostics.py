@@ -118,3 +118,11 @@ def test_preflight_children_stay_in_supervised_group(monkeypatch,tmp_path):
 
 def test_unavailable_result_is_not_a_pass():
  row=good();row['result']['data']['status']='UNAVAILABLE';assert not d.verified(row)
+
+
+def test_archive_preserves_failure_context(tmp_path):
+ for name in ('failure-context.json','summary.json'):(tmp_path/name).write_text('{"failure":"retained"}')
+ d.package(tmp_path)
+ with zipfile.ZipFile(tmp_path/'diagnostics.zip') as z:
+  assert json.loads(z.read('failure-context.json'))['failure']=='retained'
+  assert 'summary.json' in z.namelist()

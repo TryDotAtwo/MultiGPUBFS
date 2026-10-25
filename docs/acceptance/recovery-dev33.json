@@ -1,0 +1,521 @@
+{
+  "source_tests": [
+    {
+      "hardware": "2 x RTX 3060",
+      "devices": [
+        0,
+        1
+      ],
+      "status": "PASS",
+      "recovery": "READY",
+      "steps": [
+        {
+          "name": "native-assets",
+          "status": "PASS",
+          "seconds": 3.9898271820056834
+        },
+        {
+          "name": "filesystem",
+          "status": "PASS",
+          "seconds": 0.18581771399476565
+        },
+        {
+          "name": "system-info",
+          "status": "PASS",
+          "seconds": 0.2298140909988433
+        },
+        {
+          "name": "environment",
+          "status": "PASS",
+          "seconds": 0.23500138399685966
+        },
+        {
+          "name": "nvml",
+          "status": "PASS",
+          "seconds": 0.23908868299622554
+        },
+        {
+          "name": "driver",
+          "status": "PASS",
+          "seconds": 4.548762923004688
+        },
+        {
+          "name": "runtime",
+          "status": "PASS",
+          "seconds": 5.703763115998299
+        },
+        {
+          "name": "topology",
+          "status": "PASS",
+          "seconds": 0.6454160970024532
+        },
+        {
+          "name": "discovery",
+          "status": "PASS",
+          "seconds": 4.451205214994843
+        },
+        {
+          "name": "runtime-identity",
+          "status": "PASS",
+          "seconds": 4.195281945001625
+        },
+        {
+          "name": "initial-cuda-health",
+          "status": "PASS",
+          "seconds": 6.35327239799517
+        },
+        {
+          "name": "all-gpus-hardware",
+          "status": "PASS",
+          "seconds": 6.571282795004663
+        },
+        {
+          "name": "all-gpus-meminfo",
+          "status": "PASS",
+          "seconds": 6.3442079439992085
+        },
+        {
+          "name": "all-gpus-kernel",
+          "status": "PASS",
+          "seconds": 6.302955904000555
+        },
+        {
+          "name": "transport-local-shm",
+          "status": "PASS",
+          "seconds": 9.416443258000072
+        },
+        {
+          "name": "accept-local-shm",
+          "status": "PASS",
+          "seconds": 40.92250986999716
+        },
+        {
+          "name": "transport-local-p2p",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-socket",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-host-staged-ib",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-inherited",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "api-EAGER-engine-first",
+          "status": "PASS",
+          "seconds": 8.47387066599913
+        },
+        {
+          "name": "api-EAGER-context-first",
+          "status": "PASS",
+          "seconds": 8.371771038000588
+        },
+        {
+          "name": "api-LAZY-engine-first",
+          "status": "PASS",
+          "seconds": 8.2345839250047
+        },
+        {
+          "name": "api-LAZY-context-first",
+          "status": "PASS",
+          "seconds": 8.424810062999313
+        },
+        {
+          "name": "mode-hash",
+          "status": "PASS",
+          "seconds": 14.25849887199729
+        },
+        {
+          "name": "mode-sort",
+          "status": "PASS",
+          "seconds": 14.007323400001042
+        },
+        {
+          "name": "mode-gemm",
+          "status": "PASS",
+          "seconds": 17.170362841003225
+        },
+        {
+          "name": "mode-parent",
+          "status": "PASS",
+          "seconds": 13.764182124999934
+        },
+        {
+          "name": "mode-radix",
+          "status": "PASS",
+          "seconds": 13.854440670998883
+        },
+        {
+          "name": "mode-shards4",
+          "status": "PASS",
+          "seconds": 14.039111529993534
+        },
+        {
+          "name": "mode-repeated",
+          "status": "PASS",
+          "seconds": 14.00786446499842
+        },
+        {
+          "name": "mode-matrix",
+          "status": "PASS",
+          "seconds": 14.067731442999502
+        },
+        {
+          "name": "mode-matrix-gemm",
+          "status": "PASS",
+          "seconds": 17.1011054720002
+        },
+        {
+          "name": "mode-wide",
+          "status": "PASS",
+          "seconds": 13.965867213999445
+        },
+        {
+          "name": "mode-shard-ab-hash",
+          "status": "PASS",
+          "seconds": 10.261149761994602
+        },
+        {
+          "name": "mode-shard-ab-sort",
+          "status": "PASS",
+          "seconds": 10.351782648998778
+        },
+        {
+          "name": "final-cuda-health",
+          "status": "PASS",
+          "seconds": 6.083249971001351
+        },
+        {
+          "name": "public-launcher-check",
+          "status": "PASS",
+          "seconds": 42.466996353003196
+        }
+      ],
+      "measured_autotune": true,
+      "oracle_layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "ut47_layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226,
+        7371724,
+        14288342,
+        26485720
+      ],
+      "ut47_status": "INCOMPLETE",
+      "ut47_reason": "RESOURCE_258",
+      "native": {
+        "native_sha256": "2b88c4217c15864025a28feadbf22686eddfae2b6d544580a335b35863fe6bf2",
+        "python_runtime_sha256": "1cae0fdd6685dd20bed1419536113358731f7dc2c98bde74a1c80eebdbc12ae0",
+        "source_commit": "1067171010ae0a27e283aa0b19365da768affb28",
+        "cuda_library_sha256": "a4a36824bb69d57b63a2c30a32e289c37e0b96db32377321afad32ad9bf47818",
+        "cuda_toolkit": null,
+        "architectures": [
+          86
+        ],
+        "cuda_library_source_commit": "fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1",
+        "ptx_architectures": []
+      },
+      "report_sha256": "f99baa1a44e1f563c42cd23ebc9b0b172b103cbd7451bf74c14a419d480a38fc",
+      "archive_sha256": "a132ebfbad72cf9ce5363d802ac8cca37282e5015de7ae924799faa4b669fbc2",
+      "archive_bytes": 1564619,
+      "python_tests": {
+        "passed": 882,
+        "skipped": 1,
+        "subtests": 210,
+        "note": "881 passed initially; one compiler-dependent test passed after installing g++; no code changes required"
+      }
+    },
+    {
+      "hardware": "8 x RTX 5060 Ti (SM120)",
+      "source_commit": "b032e88dc980db1d5ca883f44062786c59959c70",
+      "devices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "status": "PASS",
+      "recovery": "READY",
+      "steps": [
+        {
+          "name": "native-assets",
+          "status": "PASS",
+          "seconds": 22.306991750956513
+        },
+        {
+          "name": "filesystem",
+          "status": "PASS",
+          "seconds": 0.12432310206349939
+        },
+        {
+          "name": "system-info",
+          "status": "PASS",
+          "seconds": 0.22466442198492587
+        },
+        {
+          "name": "environment",
+          "status": "PASS",
+          "seconds": 0.17486563499551266
+        },
+        {
+          "name": "nvml",
+          "status": "PASS",
+          "seconds": 0.22792844998184592
+        },
+        {
+          "name": "driver",
+          "status": "PASS",
+          "seconds": 3.9364760379539803
+        },
+        {
+          "name": "runtime",
+          "status": "PASS",
+          "seconds": 2.785217311931774
+        },
+        {
+          "name": "topology",
+          "status": "PASS",
+          "seconds": 1.8843542530667037
+        },
+        {
+          "name": "discovery",
+          "status": "PASS",
+          "seconds": 4.590343503979966
+        },
+        {
+          "name": "runtime-identity",
+          "status": "PASS",
+          "seconds": 2.6869171910220757
+        },
+        {
+          "name": "initial-cuda-health",
+          "status": "PASS",
+          "seconds": 11.009966541081667
+        },
+        {
+          "name": "all-gpus-hardware",
+          "status": "PASS",
+          "seconds": 9.40540858998429
+        },
+        {
+          "name": "all-gpus-meminfo",
+          "status": "PASS",
+          "seconds": 9.204315404058434
+        },
+        {
+          "name": "all-gpus-kernel",
+          "status": "PASS",
+          "seconds": 9.810463618021458
+        },
+        {
+          "name": "transport-local-shm",
+          "status": "PASS",
+          "seconds": 18.227501497021876
+        },
+        {
+          "name": "accept-local-shm",
+          "status": "PASS",
+          "seconds": 167.3170165499905
+        },
+        {
+          "name": "transport-local-p2p",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-socket",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-host-staged-ib",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "transport-inherited",
+          "status": "SKIPPED",
+          "seconds": null
+        },
+        {
+          "name": "api-EAGER-engine-first",
+          "status": "PASS",
+          "seconds": 6.951521257986315
+        },
+        {
+          "name": "api-EAGER-context-first",
+          "status": "PASS",
+          "seconds": 8.988752724020742
+        },
+        {
+          "name": "api-LAZY-engine-first",
+          "status": "PASS",
+          "seconds": 8.750010023941286
+        },
+        {
+          "name": "api-LAZY-context-first",
+          "status": "PASS",
+          "seconds": 9.872547298902646
+        },
+        {
+          "name": "mode-hash",
+          "status": "PASS",
+          "seconds": 26.869041844038293
+        },
+        {
+          "name": "mode-sort",
+          "status": "PASS",
+          "seconds": 26.96793850301765
+        },
+        {
+          "name": "mode-gemm",
+          "status": "PASS",
+          "seconds": 26.36829725804273
+        },
+        {
+          "name": "mode-parent",
+          "status": "PASS",
+          "seconds": 26.299017626908608
+        },
+        {
+          "name": "mode-radix",
+          "status": "PASS",
+          "seconds": 25.954684572061524
+        },
+        {
+          "name": "mode-shards4",
+          "status": "PASS",
+          "seconds": 25.864740555989556
+        },
+        {
+          "name": "mode-repeated",
+          "status": "PASS",
+          "seconds": 26.011994594009593
+        },
+        {
+          "name": "mode-matrix",
+          "status": "PASS",
+          "seconds": 25.662824884988368
+        },
+        {
+          "name": "mode-matrix-gemm",
+          "status": "PASS",
+          "seconds": 26.36242084496189
+        },
+        {
+          "name": "mode-wide",
+          "status": "PASS",
+          "seconds": 26.81441587593872
+        },
+        {
+          "name": "mode-shard-ab-hash",
+          "status": "PASS",
+          "seconds": 16.588465836946853
+        },
+        {
+          "name": "mode-shard-ab-sort",
+          "status": "PASS",
+          "seconds": 16.593535623978823
+        },
+        {
+          "name": "final-cuda-health",
+          "status": "PASS",
+          "seconds": 7.634261957951821
+        },
+        {
+          "name": "public-launcher-check",
+          "status": "PASS",
+          "seconds": 167.5091322209919
+        }
+      ],
+      "measured_autotune": true,
+      "oracle_layers": [
+        1,
+        6,
+        20,
+        56,
+        116,
+        208,
+        268,
+        52,
+        2
+      ],
+      "ut47_layers": [
+        1,
+        6,
+        26,
+        110,
+        414,
+        1446,
+        4802,
+        15074,
+        44164,
+        121446,
+        311840,
+        750118,
+        1696770,
+        3629226,
+        7371724,
+        14288342,
+        26485720,
+        46538398,
+        76087808,
+        114090354,
+        156071448
+      ],
+      "ut47_status": "INCOMPLETE",
+      "ut47_reason": "RESOURCE_258",
+      "native": {
+        "native_sha256": "2b88c4217c15864025a28feadbf22686eddfae2b6d544580a335b35863fe6bf2",
+        "python_runtime_sha256": "1cae0fdd6685dd20bed1419536113358731f7dc2c98bde74a1c80eebdbc12ae0",
+        "source_commit": "1067171010ae0a27e283aa0b19365da768affb28",
+        "cuda_library_sha256": "ea620a52e56b1d87e820dc8965d7c507d432808177ae6fa92acfff1d64d645f3",
+        "cuda_toolkit": null,
+        "architectures": [
+          120
+        ],
+        "cuda_library_source_commit": "fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1",
+        "ptx_architectures": []
+      },
+      "report_sha256": "4218290c2491b606d24f8596abf602eae2d9e106c013a5c32a0a9e69583fd128",
+      "archive_sha256": "0bf8ddbf59df24f2cee118396cd4b479724d20d1819bf0a06c85e4dd1cafd473",
+      "archive_bytes": 5090601
+    }
+  ],
+  "archive_metadata_followup_tests": 41,
+  "installed_release_acceptance": "pending; recorded separately after publication"
+}
