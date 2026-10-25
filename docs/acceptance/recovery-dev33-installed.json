@@ -1,0 +1,271 @@
+{
+  "schema": 1,
+  "hardware": "8 x RTX 5060 Ti (SM120)",
+  "wheel": "multigpubfs-0.2.0.dev33-py3-none-any.whl",
+  "wheel_sha256": "a1bcdb333c0de661c792c53f71f3fd9cb52baca9860c92e9f60be8e191229a62",
+  "release_commit": "d476637532f01145e868b1e937b960b002f8724e",
+  "devices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "status": "PASS",
+  "recovery": "READY",
+  "execution": {
+    "returncode": 0,
+    "seconds": 766.5979633331299,
+    "package_path": "/opt/mgbfs/build/venv/lib/python3.12/site-packages/multigpubfs",
+    "source_bytes_match": true
+  },
+  "steps": [
+    {
+      "name": "native-assets",
+      "status": "PASS",
+      "seconds": 2.429414688027464
+    },
+    {
+      "name": "filesystem",
+      "status": "PASS",
+      "seconds": 0.12433914700523019
+    },
+    {
+      "name": "system-info",
+      "status": "PASS",
+      "seconds": 0.22516524302773178
+    },
+    {
+      "name": "environment",
+      "status": "PASS",
+      "seconds": 0.18044573499355465
+    },
+    {
+      "name": "nvml",
+      "status": "PASS",
+      "seconds": 0.2277364449109882
+    },
+    {
+      "name": "driver",
+      "status": "PASS",
+      "seconds": 4.187143816030584
+    },
+    {
+      "name": "runtime",
+      "status": "PASS",
+      "seconds": 2.8859806950204074
+    },
+    {
+      "name": "topology",
+      "status": "PASS",
+      "seconds": 1.8345100859878585
+    },
+    {
+      "name": "discovery",
+      "status": "PASS",
+      "seconds": 4.69089768093545
+    },
+    {
+      "name": "runtime-identity",
+      "status": "PASS",
+      "seconds": 2.6363005040911958
+    },
+    {
+      "name": "initial-cuda-health",
+      "status": "PASS",
+      "seconds": 11.362821546965279
+    },
+    {
+      "name": "all-gpus-hardware",
+      "status": "PASS",
+      "seconds": 8.955220805015415
+    },
+    {
+      "name": "all-gpus-meminfo",
+      "status": "PASS",
+      "seconds": 9.458036202937365
+    },
+    {
+      "name": "all-gpus-kernel",
+      "status": "PASS",
+      "seconds": 9.159578270977363
+    },
+    {
+      "name": "transport-local-shm",
+      "status": "PASS",
+      "seconds": 18.682662224047817
+    },
+    {
+      "name": "accept-local-shm",
+      "status": "PASS",
+      "seconds": 168.37593252793886
+    },
+    {
+      "name": "transport-local-p2p",
+      "status": "SKIPPED",
+      "seconds": null
+    },
+    {
+      "name": "transport-socket",
+      "status": "SKIPPED",
+      "seconds": null
+    },
+    {
+      "name": "transport-host-staged-ib",
+      "status": "SKIPPED",
+      "seconds": null
+    },
+    {
+      "name": "transport-inherited",
+      "status": "SKIPPED",
+      "seconds": null
+    },
+    {
+      "name": "api-EAGER-engine-first",
+      "status": "PASS",
+      "seconds": 7.053314973018132
+    },
+    {
+      "name": "api-EAGER-context-first",
+      "status": "PASS",
+      "seconds": 8.032302233972587
+    },
+    {
+      "name": "api-LAZY-engine-first",
+      "status": "PASS",
+      "seconds": 8.899351016967557
+    },
+    {
+      "name": "api-LAZY-context-first",
+      "status": "PASS",
+      "seconds": 9.008168825996108
+    },
+    {
+      "name": "mode-hash",
+      "status": "PASS",
+      "seconds": 26.165700957062654
+    },
+    {
+      "name": "mode-sort",
+      "status": "PASS",
+      "seconds": 25.906298010027967
+    },
+    {
+      "name": "mode-gemm",
+      "status": "PASS",
+      "seconds": 26.070412189001217
+    },
+    {
+      "name": "mode-parent",
+      "status": "PASS",
+      "seconds": 27.484316366026178
+    },
+    {
+      "name": "mode-radix",
+      "status": "PASS",
+      "seconds": 25.84139390802011
+    },
+    {
+      "name": "mode-shards4",
+      "status": "PASS",
+      "seconds": 27.076126454980113
+    },
+    {
+      "name": "mode-repeated",
+      "status": "PASS",
+      "seconds": 25.73235237004701
+    },
+    {
+      "name": "mode-matrix",
+      "status": "PASS",
+      "seconds": 25.91565094992984
+    },
+    {
+      "name": "mode-matrix-gemm",
+      "status": "PASS",
+      "seconds": 26.46793969499413
+    },
+    {
+      "name": "mode-wide",
+      "status": "PASS",
+      "seconds": 27.17472212901339
+    },
+    {
+      "name": "mode-shard-ab-hash",
+      "status": "PASS",
+      "seconds": 16.187723553040996
+    },
+    {
+      "name": "mode-shard-ab-sort",
+      "status": "PASS",
+      "seconds": 15.887347234995104
+    },
+    {
+      "name": "final-cuda-health",
+      "status": "PASS",
+      "seconds": 8.556965596042573
+    },
+    {
+      "name": "public-launcher-check",
+      "status": "PASS",
+      "seconds": 169.6908300119685
+    }
+  ],
+  "measured_autotune": true,
+  "oracle_layers": [
+    1,
+    6,
+    20,
+    56,
+    116,
+    208,
+    268,
+    52,
+    2
+  ],
+  "ut47_layers": [
+    1,
+    6,
+    26,
+    110,
+    414,
+    1446,
+    4802,
+    15074,
+    44164,
+    121446,
+    311840,
+    750118,
+    1696770,
+    3629226,
+    7371724,
+    14288342,
+    26485720,
+    46538398,
+    76087808,
+    114090354,
+    156071448
+  ],
+  "ut47_status": "INCOMPLETE",
+  "ut47_reason": "RESOURCE_258",
+  "native": {
+    "native_sha256": "2b88c4217c15864025a28feadbf22686eddfae2b6d544580a335b35863fe6bf2",
+    "python_runtime_sha256": "99f071bdea598460f1e4a556d35384f7f953f6b2352a262f0fded79897fabe15",
+    "source_commit": "1067171010ae0a27e283aa0b19365da768affb28",
+    "cuda_library_sha256": "ea620a52e56b1d87e820dc8965d7c507d432808177ae6fa92acfff1d64d645f3",
+    "cuda_toolkit": null,
+    "architectures": [
+      120
+    ],
+    "cuda_library_source_commit": "fcc00f7c7aca517297eb546eea5fc3c8fb74e7b1",
+    "ptx_architectures": []
+  },
+  "report_sha256": "c84149054c0a317f53e78b7c3625320c61ea4c71289d1f3d5aeca3799f09e734",
+  "archive_sha256": "534636484ed8a287d46435e3803ab4e80ebcc9896125fe4aa5b1775bfe9d4813",
+  "archive_bytes": 5104818,
+  "focused_installed_tests": 41,
+  "limits": "Original RTX PRO 6000 nodes and B200 not tested. UT(4,47) is a checked resource-limited prefix, not a complete traversal. Other transports were skipped after a validated route passed."
+}

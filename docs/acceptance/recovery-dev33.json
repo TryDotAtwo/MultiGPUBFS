@@ -517,5 +517,5 @@
     }
   ],
   "archive_metadata_followup_tests": 41,
-  "installed_release_acceptance": "pending; recorded separately after publication"
+  "installed_release_acceptance": "recovery-dev33-installed.json"
 }
