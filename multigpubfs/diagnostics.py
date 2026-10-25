@@ -429,7 +429,7 @@ def run_diagnostics(output=None,devices=None,timeout=60,*,deep=False,total_timeo
 def main(argv=None):
  parser=argparse.ArgumentParser(description='Check native loader, filesystem, every visible GPU, kernel, persistent workers, NCCL and tiny exact BFS; write report/log bundle. No GPU reset or automatic retry.')
  parser.add_argument('--output',type=Path,help='New diagnostic directory (must not already exist)');parser.add_argument('--devices',help='Logical local IDs, e.g. 0,1; default all visible GPUs');parser.add_argument('--stage-timeout',type=float,default=60)
- parser.add_argument('--deep',action='store_true',help='Isolated comprehensive synthetic diagnostic suite; no production retries or GPU resets');parser.add_argument('--total-timeout',type=float,default=1800,help='Deep suite total execution budget, seconds (default 30 minutes)')
+ parser.add_argument('--recover',action='store_true',help='Safe-first joint GPU recovery experiments, verified launch recipe and one archive');parser.add_argument('--deep',action='store_true',help='Isolated comprehensive synthetic diagnostic suite; no production retries or GPU resets');parser.add_argument('--total-timeout',type=float,default=1800,help='Deep suite total execution budget, seconds (default 30 minutes)')
  parser.add_argument('--_child',help=argparse.SUPPRESS);parser.add_argument('--_device',type=int,help=argparse.SUPPRESS);parser.add_argument('--_rank',type=int,help=argparse.SUPPRESS)
  args=parser.parse_args(argv)
  try:
@@ -451,6 +451,9 @@ def main(argv=None):
     print(result['traceback'],flush=True);code=1
    name='result.json' if args._rank is None else 'rank-'+str(args._rank)+('.json' if code==0 else '-error.json')
    _write(root/name,result);return code
+  if args.recover:
+   from .recovery_diagnostics import run
+   report=run(args.output,devices,args.total_timeout);return 0 if report['recovery']['status']=='READY' else 1
   report=run_diagnostics(args.output,devices,args.stage_timeout,deep=args.deep,total_timeout=args.total_timeout);return 0 if report['status']=='PASS' else 1
  except (OSError,ValueError) as error:print('Diagnostic setup error: '+str(error),file=sys.stderr);return 2
 

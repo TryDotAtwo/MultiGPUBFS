@@ -84,6 +84,7 @@ def prepare(native, devices, env, output, graph=None):
         candidate['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent)
         _write(attempt / 'request.json', {'devices': devices, 'policy': policy})
         processes, logs = [], []
+        own_groups = candidate.get("MGBFS_DIAGNOSTIC_SUPERVISED") != "1"
         started = time.monotonic()
         try:
             for rank in range(len(devices)):
@@ -92,7 +93,7 @@ def prepare(native, devices, env, output, graph=None):
                 processes.append(subprocess.Popen(
                     [sys.executable, '-u', '-m', 'multigpubfs.nccl_preflight',
                      str(attempt), str(rank)], env=candidate, stdout=log,
-                    stderr=subprocess.STDOUT, start_new_session=True))
+                    stderr=subprocess.STDOUT, start_new_session=own_groups))
             deadline = started + 90
             while any(p.poll() is None for p in processes):
                 if any(p.poll() not in (None, 0) for p in processes):
@@ -121,7 +122,7 @@ def prepare(native, devices, env, output, graph=None):
                 process = subprocess.Popen([sys.executable, '-u', '-m',
                     'multigpubfs.nccl_preflight', str(attempt), '--prefix'],
                     env=rehearsal_env, stdout=log, stderr=subprocess.STDOUT,
-                    start_new_session=True)
+                    start_new_session=own_groups)
                 processes.append(process)
                 try:
                     code = process.wait(timeout=120)
@@ -153,15 +154,19 @@ def prepare(native, devices, env, output, graph=None):
         finally:
             for process in processes:
                 if process.poll() is None:
-                    try: os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        if own_groups: os.killpg(process.pid, signal.SIGTERM)
+                        else: process.terminate()
                     except ProcessLookupError: pass
             for process in processes:
                 try:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    try: os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        if own_groups: os.killpg(process.pid, signal.SIGKILL)
+                        else: process.kill()
                     except ProcessLookupError: pass
-                    process.wait()
+                    process.wait(timeout=3)
             for log in logs:
                 log.close()
     _write(root / 'report.json', {'status': 'FAILED', 'attempts': reports})
