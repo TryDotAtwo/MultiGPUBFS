@@ -215,7 +215,7 @@ def package(root):
     allowed={'report.json','report.txt','result.json','probe.json','phase.json','cleanup.json',
         'process-snapshot.json','post-cleanup-snapshot.json','case-input.json','failure.json','request.json',
         'recovery-profile.json','recovery-proof.json','recovery-summary.txt','launch-command.txt','graph.json',
-        'failure-context.json','summary.json','findings.json','analysis.json','analysis.txt','environment.json','driver.json','runtime.json','working-config.json'}
+        'cayleypy-example.py','api-proof.json','auto-registration.json','failure-context.json','summary.json','findings.json','analysis.json','analysis.txt','environment.json','driver.json','runtime.json','working-config.json'}
     entries=[];omitted=[];total=0
     with zipfile.ZipFile(root/'diagnostics.zip','w',zipfile.ZIP_DEFLATED) as z:
         for f in sorted(root.rglob('*')):
@@ -302,6 +302,17 @@ def run(output=None,devices=None,total_timeout=1800):
                     _write(root/'recovery-profile.json',profile)
                     check=s.case('public-launcher-check',{'kind':'check','profile':str(root/'recovery-profile.json')},seconds=300,gpu=True)
                     if acceptance(check,s.devices):
+                        api=s.case('cayleypy-persistent-check',{'kind':'api-check','profile':str(root/'recovery-profile.json'),'devices':s.devices},seconds=180,gpu=True)
+                        from .recovery_registry import install,api_accepted
+                        if not api_accepted(api,s.devices):raise RuntimeError('CAYLEYPY_API_CHECK_FAILED')
+                        # Validate automatic selection in an isolated cache and fresh process first.
+                        staged=root/'auto-cache'
+                        auto=s.case('cayleypy-auto-check',{'kind':'api-check','profile':str(root/'recovery-profile.json'),'devices':s.devices,'auto':True,'api_proof':api,'cache':str(staged)},seconds=180,gpu=True)
+                        if not api_accepted(auto,s.devices):raise RuntimeError('CAYLEYPY_AUTO_CHECK_FAILED')
+                        cached=install(root/'recovery-profile.json',auto)
+                        _write(root/'api-proof.json',auto)
+                        _write(root/'auto-registration.json',{'status':'REGISTERED','profile':str(cached)})
+                        (root/'cayleypy-example.py').write_text('import multigpubfs\nfrom cayleypy import CayleyGraph, PermutationGroups\nmultigpubfs.enable_native()\nwith multigpubfs.persistent_graph_workers():\n    for n in (8, 9, 10):\n        result = CayleyGraph(PermutationGroups.coxeter(n), device="cpu").bfs()\n        print(n, result.bfs_completed, result.completed_depth)\n')
                         command=shlex.join([sys.executable,'-m','multigpubfs.recovery_diagnostics','--profile',str(root/'recovery-profile.json'),'--output',str(root.parent/(root.name+'-bfs'))])
                     else:s.after_failure('public-launcher-check',policy)
             elif not s.blocked:
@@ -336,7 +347,7 @@ def enable_profile(profile_path,output_root='bfs-results'):
     profile=read_profile(profile_path)
     os.environ.update(profile['policy'])
     from . import NativeOptions,enable_native
-    return enable_native(NativeOptions(devices=tuple(profile['devices']),autotune=True,max_seconds=None,output_root=output_root))
+    return enable_native(NativeOptions(devices=tuple(profile['devices']),autotune=True,max_seconds=None,output_root=output_root), recovery=False)
 
 
 def main(argv=None):
@@ -346,7 +357,10 @@ def main(argv=None):
     if args.child:
         root=args.child;config=json.loads((root/'case-input.json').read_text())
         try:
-            if config['kind']=='check':
+            if config['kind']=='api-check':
+                from .recovery_api import check
+                data=check(config,root)
+            elif config['kind']=='check':
                 profile=read_profile(config['profile']);os.environ.update(profile['policy'])
                 data=experiment({'kind':'accept','devices':profile['devices']},root)
             else:data=experiment(config,root)

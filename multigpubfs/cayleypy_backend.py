@@ -86,6 +86,8 @@ def _search(original, graph, backend, options, output, kwargs):
         if backend == "auto" and output is None:
             return original(graph, **kwargs)
         raise NotImplementedError(f"Native BFS does not support {unsupported}; use backend='torch'")
+    from .recovery_registry import bind_options
+    options = bind_options(options)
     definition = from_cayleypy(graph)
     if kwargs.get("start_states") is not None:
         start = _flatten(kwargs["start_states"])
@@ -138,7 +140,7 @@ def bfs(graph, *, backend="native", native_options=None, output=None, **kwargs):
     return _search(original, graph, backend, native_options or NativeOptions(), output, kwargs)
 
 
-def enable_native(options=None, *, default_backend="native"):
+def enable_native(options=None, *, default_backend="native", recovery=True):
     """Enable graph.bfs() explicitly; importing multigpubfs has no side effects."""
     from cayleypy import CayleyGraph
     global _ORIGINAL, _INSTALLED
@@ -152,7 +154,14 @@ def enable_native(options=None, *, default_backend="native"):
             raise RuntimeError("CayleyGraph.bfs was replaced by another integration")
         if default_backend == "native":
             from .native_distribution import prepare_for_activation
-            prepare_for_activation()
+            from . import recovery_registry
+            if recovery:selected = recovery_registry.activate(selected)
+            else:recovery_registry.opt_out()
+            try:
+                prepare_for_activation()
+            except BaseException:
+                recovery_registry.restore()
+                raise
         original = _ORIGINAL or CayleyGraph.bfs
         @wraps(original)
         def installed(graph, **kwargs):
@@ -172,3 +181,5 @@ def disable_native():
                 raise RuntimeError("CayleyGraph.bfs was replaced by another integration")
             CayleyGraph.bfs = _ORIGINAL
             _ORIGINAL = _INSTALLED = None
+        from .recovery_registry import restore
+        restore()

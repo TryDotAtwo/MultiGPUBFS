@@ -1,4 +1,4 @@
-name: Publish recovery diagnostics dev33
+name: Publish recovery diagnostics dev34
 on:
   workflow_dispatch:
   push:
@@ -22,13 +22,15 @@ jobs:
       - name: Test and package unchanged pinned native components
         run: |
           python3 -m pip install build pytest numpy packaging
-          PYTHONPATH=. python3 -m pytest -q tests/test_recovery_diagnostics.py tests/test_nccl_preflight.py tests/test_unlimited_and_stale.py
+          python3 -m pip install torch==2.9.0+cpu --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install git+https://github.com/cayleypy/cayleypy.git@3cd11ecefc98e54d6fc0ccdec967d0bcc8ca4a93
+          PYTHONPATH=. python3 -m pytest -q tests/test_recovery_registry.py tests/test_recovery_diagnostics.py tests/test_cayleypy_backend.py tests/test_nccl_preflight.py tests/test_unlimited_and_stale.py
           PYTHONPATH=. python3 -m scripts.build_lazy_native_package
-          cp docs/acceptance/recovery-dev33.json dist-native/gpu-acceptance.json
+          cp docs/acceptance/recovery-dev34.json dist-native/gpu-acceptance.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: recovery-dev33-release
+          name: recovery-dev34-release
           path: dist-native/*
       - name: Publish prerelease
         run: |
-          gh release create native-pip-20261025-v33 dist-native/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title 'dev33: isolated recovery diagnostics and verified server launch recipes' --notes-file docs/acceptance/recovery-dev33.md
+          gh release create native-pip-20261025-v34 dist-native/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title 'dev34: automatic verified recovery profiles for CayleyPy persistent sessions' --notes-file docs/acceptance/recovery-dev34.md

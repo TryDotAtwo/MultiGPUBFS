@@ -34,18 +34,6 @@ If CUDA becomes unavailable in fresh processes, the tool cannot repair the kerne
 
 ## CayleyPy API after READY
 
-In the same verified job/environment:
+In dev34 the diagnostic verifies the real API and a fresh-process automatic activation, then registers the profile. Ordinary `multigpubfs.enable_native()` selects a matching profile; no path is needed. See [automatic profile activation](auto-recovery.md) for the persistent example, cache location and invalidation rules.
 
-```python
-from multigpubfs.recovery_diagnostics import enable_profile
-from multigpubfs import persistent_graph_workers
-from cayleypy import CayleyGraph, PermutationGroups
-
-enable_profile("/absolute/diagnostic/path/recovery-profile.json")
-with persistent_graph_workers():
-    for n in (8, 9, 10):
-        result = CayleyGraph(PermutationGroups.coxeter(n), device="cpu").bfs()
-        print(n, result.bfs_completed, result.completed_depth)
-```
-
-`doctor --recover` exits zero only for READY. Inspect the report as well: rejected experiments remain recorded. This command does not launch an unbounded production graph automatically. Use the printed command explicitly when ready.
+`doctor --recover` exits zero only for READY. Rejected experiments remain recorded. It does not automatically start an unbounded production graph.

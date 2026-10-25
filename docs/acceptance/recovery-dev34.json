@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "package": "0.2.0.dev34",
+  "hardware": "2x RTX 3060 12GB",
+  "driver": "580.159.03",
+  "tests": {
+    "passed": 67
+  },
+  "source_diagnostic": {
+    "status": "PASS",
+    "recovery": "READY",
+    "seconds": 209.77089023590088,
+    "archive_sha256": "3fa9f3b9c0164413b1c0896b9a2d1585ce4f8eb0747dd5c6a41b848b1f2739ba"
+  },
+  "api": {
+    "explicit": "PASS",
+    "automatic_fresh_process": "PASS",
+    "graphs": [
+      "S3",
+      "S4",
+      "S3"
+    ],
+    "exact_layers_and_terminal_states": true,
+    "persistent_worker_pids_reused": true,
+    "devices": [
+      0,
+      1
+    ]
+  },
+  "scope": "Source GPU acceptance; installed release acceptance recorded separately. No acceptance claim for Andrey's 8-GPU node. UT(4,47) measured prefix only, resource-limited, not full graph."
+}

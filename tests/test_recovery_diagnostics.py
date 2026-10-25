@@ -88,7 +88,14 @@ def test_full_controller_recovery_or_blocked(monkeypatch,tmp_path,unhealthy):
   elif self.blocked and gpu:step.update(status='SKIPPED',reason='CUDA_HEALTH_BLOCKED')
   (folder/'result.json').write_text(json.dumps(step['result']))
   self.runner.report['steps'].append(step);return step
- monkeypatch.setattr(d.Supervisor,'case',fake)
+ import multigpubfs.recovery_registry as registry
+ monkeypatch.setattr(registry,'install',lambda *a:tmp_path/'cached-profile.json')
+ original=fake
+ def with_api(self,name,config,policy=None,seconds=60,gpu=False):
+  step=original(self,name,config,policy,seconds,gpu)
+  if name in ('cayleypy-persistent-check','cayleypy-auto-check'):step['result']['data'].update(api_verified=True,persistent_reuse=True)
+  return step
+ monkeypatch.setattr(d.Supervisor,'case',with_api)
  report=d.run(tmp_path/'run',[0,1],1800)
  assert report['recovery']['status']==('BLOCKED' if unhealthy else 'READY')
  if unhealthy:
