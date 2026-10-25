@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "package": "0.2.0.dev35",
+  "hardware": "2x RTX 3060 12GB",
+  "tests_passed": 90,
+  "source_setup": {
+    "status": "READY",
+    "seconds": 254.57506799697876,
+    "environment_reused": false,
+    "devices": [
+      0,
+      1
+    ],
+    "generated_example_verified": true,
+    "archive_sha256": "acac20d2022f4d71faafcb5511f4f46c1e673e5d2c37c59c0285ab6e806c6f11"
+  },
+  "scope": "Source setup installed a preliminary wheel into a new venv and passed joint GPU recovery plus generated CayleyPy persistent example. Final cache reuse and TMPDIR cleanup refinements have unit coverage; published wheel acceptance follows separately. Native binaries unchanged. No multi-node or other hardware acceptance."
+}

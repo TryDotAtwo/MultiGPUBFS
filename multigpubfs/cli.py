@@ -6,6 +6,9 @@ from .launch import run_graph
 
 def main(argv=None):
  argv=list(sys.argv[1:] if argv is None else argv)
+ if argv and argv[0]=='setup':
+  from .cluster_setup import main as setup_main
+  return setup_main(argv[1:])
  if argv and argv[0]=='prefetch':
   from .prefetch import main as prefetch_main
   return prefetch_main(argv[1:])
