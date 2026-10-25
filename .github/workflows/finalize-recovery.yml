@@ -1,4 +1,4 @@
-name: Attach installed dev33 acceptance
+name: Attach installed dev34 acceptance
 on:
   workflow_dispatch:
   push:
@@ -20,6 +20,6 @@ jobs:
           persist-credentials: false
       - name: Verify acceptance and publish metadata only
         run: |
-          python3 -c "import json; r=json.load(open('docs/acceptance/recovery-dev33-installed.json')); assert r['status']=='PASS' and r['recovery']=='READY' and r['devices']==list(range(8)) and r['execution']['returncode']==0 and r['execution']['source_bytes_match']"
-          gh release upload native-pip-20261025-v33 docs/acceptance/recovery-dev33-installed.json --clobber --repo "$GITHUB_REPOSITORY"
-          gh release edit native-pip-20261025-v33 --repo "$GITHUB_REPOSITORY" --notes-file docs/acceptance/recovery-dev33.md
+          python3 -c "import json; r=json.load(open('docs/acceptance/recovery-dev34-installed.json')); assert r['status']=='PASS' and r['recovery']=='READY' and r['devices']==[0,1] and r['execution']['returncode']==0 and r['execution']['source_bytes_match']"
+          gh release upload native-pip-20261025-v34 docs/acceptance/recovery-dev34-installed.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit native-pip-20261025-v34 --repo "$GITHUB_REPOSITORY" --notes-file docs/acceptance/recovery-dev34.md

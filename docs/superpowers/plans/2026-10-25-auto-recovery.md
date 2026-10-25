@@ -9,3 +9,7 @@ Constraints: no automatic production restart, no subset fallback, no GPU reset, 
 - [ ] Add real CayleyPy multi-graph persistent check and fresh-process automatic activation gate to doctor; publish cache only after success.
 - [ ] Run CPU tests, full 2-GPU recovery and new-process installed-wheel acceptance.
 - [ ] Publish source/wheel and evidence on GitHub; remove rental after saving evidence.
+
+
+## Acceptance
+Implemented and published as dev34. 75 release tests passed. Source and installed-wheel diagnostics PASS/READY on 2x3060; separate ordinary enable_native persistent S3/S4/S3 PASS with cached recipe. Evidence: docs/acceptance/recovery-dev34-installed.json. Other hardware remains untested for this change.

@@ -1,0 +1,314 @@
+{
+  "schema": 1,
+  "package": "0.2.0.dev34",
+  "hardware": "2x RTX 3060 12GB",
+  "status": "PASS",
+  "recovery": "READY",
+  "devices": [
+    0,
+    1
+  ],
+  "execution": {
+    "returncode": 0,
+    "seconds": 207.63292264938354,
+    "source_bytes_match": true,
+    "wheel_sha256": "cb4c54a1741a7dc175565c08fe825edb3bbe4b05f204c11a8aa23055ffce914b",
+    "version": "0.2.0.dev34"
+  },
+  "archive_sha256": "2ba785782bf20b82d8b9a86a40933d8b28537f727d5b8e4a3ef31d3972cdd6a7",
+  "plain_api": {
+    "status": "PASS",
+    "package": "0.2.0.dev34",
+    "automatic_profile": true,
+    "devices": [
+      0,
+      1
+    ],
+    "autotune": true,
+    "max_seconds": null,
+    "persistent_reuse": true,
+    "graphs": [
+      {
+        "n": 3,
+        "layers": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "worker_pids": [
+          22468,
+          22469
+        ]
+      },
+      {
+        "n": 4,
+        "layers": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "worker_pids": [
+          22468,
+          22469
+        ]
+      },
+      {
+        "n": 3,
+        "layers": [
+          1,
+          2,
+          2,
+          1
+        ],
+        "worker_pids": [
+          22468,
+          22469
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "native-assets",
+      "status": "PASS",
+      "seconds": 0.9300271400134079
+    },
+    {
+      "name": "filesystem",
+      "status": "PASS",
+      "seconds": 0.12824434001231566,
+      "cleanup_complete": true
+    },
+    {
+      "name": "system-info",
+      "status": "PASS",
+      "seconds": 0.12545697198947892,
+      "cleanup_complete": true
+    },
+    {
+      "name": "environment",
+      "status": "PASS",
+      "seconds": 0.12429046304896474,
+      "cleanup_complete": true
+    },
+    {
+      "name": "nvml",
+      "status": "PASS",
+      "seconds": 0.12433730397606269,
+      "cleanup_complete": true
+    },
+    {
+      "name": "driver",
+      "status": "PASS",
+      "seconds": 1.3297090779524297,
+      "cleanup_complete": true
+    },
+    {
+      "name": "runtime",
+      "status": "PASS",
+      "seconds": 1.1812755540013313,
+      "cleanup_complete": true
+    },
+    {
+      "name": "topology",
+      "status": "PASS",
+      "seconds": 0.3801452560001053,
+      "cleanup_complete": true
+    },
+    {
+      "name": "discovery",
+      "status": "PASS",
+      "seconds": 1.3320894860080443,
+      "cleanup_complete": true
+    },
+    {
+      "name": "runtime-identity",
+      "status": "PASS",
+      "seconds": 1.0314737189910375,
+      "cleanup_complete": true
+    },
+    {
+      "name": "initial-cuda-health",
+      "status": "PASS",
+      "seconds": 1.5807227719924413,
+      "cleanup_complete": true
+    },
+    {
+      "name": "all-gpus-hardware",
+      "status": "PASS",
+      "seconds": 1.43130509799812,
+      "cleanup_complete": true
+    },
+    {
+      "name": "all-gpus-meminfo",
+      "status": "PASS",
+      "seconds": 1.3832646750379354,
+      "cleanup_complete": true
+    },
+    {
+      "name": "all-gpus-kernel",
+      "status": "PASS",
+      "seconds": 1.3829944250173867,
+      "cleanup_complete": true
+    },
+    {
+      "name": "transport-local-shm",
+      "status": "PASS",
+      "seconds": 4.189301169011742,
+      "cleanup_complete": true
+    },
+    {
+      "name": "accept-local-shm",
+      "status": "PASS",
+      "seconds": 43.80435577197932,
+      "cleanup_complete": true
+    },
+    {
+      "name": "transport-local-p2p",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "transport-socket",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "transport-host-staged-ib",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "transport-inherited",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "api-EAGER-engine-first",
+      "status": "PASS",
+      "seconds": 2.037396401981823,
+      "cleanup_complete": true
+    },
+    {
+      "name": "api-EAGER-context-first",
+      "status": "PASS",
+      "seconds": 2.0384490599972196,
+      "cleanup_complete": true
+    },
+    {
+      "name": "api-LAZY-engine-first",
+      "status": "PASS",
+      "seconds": 1.9395631169900298,
+      "cleanup_complete": true
+    },
+    {
+      "name": "api-LAZY-context-first",
+      "status": "PASS",
+      "seconds": 1.9456258019781671,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-hash",
+      "status": "PASS",
+      "seconds": 6.250292740995064,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-sort",
+      "status": "PASS",
+      "seconds": 6.305794385960326,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-gemm",
+      "status": "PASS",
+      "seconds": 6.702379692986142,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-parent",
+      "status": "PASS",
+      "seconds": 6.356341035978403,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-radix",
+      "status": "PASS",
+      "seconds": 6.408718021004461,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-shards4",
+      "status": "PASS",
+      "seconds": 6.308948755962774,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-repeated",
+      "status": "PASS",
+      "seconds": 6.408446823013946,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-matrix",
+      "status": "PASS",
+      "seconds": 6.256671986018773,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-matrix-gemm",
+      "status": "PASS",
+      "seconds": 6.662101418012753,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-wide",
+      "status": "PASS",
+      "seconds": 6.257899062009528,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-shard-ab-hash",
+      "status": "PASS",
+      "seconds": 4.30430504900869,
+      "cleanup_complete": true
+    },
+    {
+      "name": "mode-shard-ab-sort",
+      "status": "PASS",
+      "seconds": 4.3560205370304175,
+      "cleanup_complete": true
+    },
+    {
+      "name": "final-cuda-health",
+      "status": "PASS",
+      "seconds": 1.3942441820399836,
+      "cleanup_complete": true
+    },
+    {
+      "name": "public-launcher-check",
+      "status": "PASS",
+      "seconds": 43.616003893024754,
+      "cleanup_complete": true
+    },
+    {
+      "name": "cayleypy-persistent-check",
+      "status": "PASS",
+      "seconds": 8.007905761012807,
+      "cleanup_complete": true
+    },
+    {
+      "name": "cayleypy-auto-check",
+      "status": "PASS",
+      "seconds": 9.060789798968472,
+      "cleanup_complete": true
+    }
+  ],
+  "scope": "Installed GitHub wheel on 2 GPUs; no acceptance claim for other nodes or full UT(4,47).",
+  "ci": {
+    "release_workflow": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/40200433077",
+    "tests_passed": 75,
+    "unrelated_check": "Native CPU contracts failed cargo fmt on unchanged Rust files; CUDA typecheck and dependency cache passed."
+  }
+}
