@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "package": "0.2.0.dev35",
+  "hardware": "2x RTX 3060 12GB",
+  "status": "READY",
+  "execution": {
+    "returncode": 0,
+    "seconds": 258.3766713142395,
+    "wheel_sha256": "73d5d21bafcd9ec05a982ac9d06705f67c7faacc92732bbd98cd4b8e774a5ce7",
+    "prefetch_returncode": 0,
+    "prefetch": {
+      "schema": 1,
+      "status": "PREFETCHED_NOT_GPU_VERIFIED",
+      "package": "0.2.0.dev35",
+      "scope": "single-host GPU allocation; no scheduler submission or driver changes",
+      "allocation": {
+        "scope": "single-host",
+        "cpus_per_task": null,
+        "visible_devices": "",
+        "scheduler": "unspecified"
+      },
+      "wheel_sha256": "73d5d21bafcd9ec05a982ac9d06705f67c7faacc92732bbd98cd4b8e774a5ce7",
+      "environment_reused": true
+    }
+  },
+  "setup": {
+    "schema": 1,
+    "status": "READY",
+    "package": "0.2.0.dev35",
+    "scope": "single-host GPU allocation; no scheduler submission or driver changes",
+    "allocation": {
+      "scope": "single-host",
+      "cpus_per_task": null,
+      "visible_devices": null,
+      "scheduler": "unspecified"
+    },
+    "wheel_sha256": "73d5d21bafcd9ec05a982ac9d06705f67c7faacc92732bbd98cd4b8e774a5ce7",
+    "environment_reused": false,
+    "devices": [
+      0,
+      1
+    ],
+    "generated_example_verified": true
+  },
+  "recovery": "READY",
+  "devices": [
+    0,
+    1
+  ],
+  "archives": {
+    "release-setup": "31272c944aeba4dfdd5365ed13b7e7f7cfbc4430b45eb87d552f2fd21cd7f8bf",
+    "prefetch-setup": "cbd8459ceba464399008cf97ff844632e9b4a1a62de4fb41eb08361dc7937e34"
+  },
+  "api": [
+    {
+      "name": "cayleypy-auto-check",
+      "status": "PASS",
+      "cleanup_complete": true,
+      "result": {
+        "status": "PASS",
+        "data": {
+          "devices": [
+            0,
+            1
+          ],
+          "api_verified": true,
+          "persistent_reuse": true,
+          "automatic_profile": true,
+          "graphs": [
+            {
+              "n": 3,
+              "layers": [
+                1,
+                2,
+                2,
+                1
+              ],
+              "devices": [
+                0,
+                1
+              ],
+              "worker_pids": [
+                22752,
+                22753
+              ]
+            },
+            {
+              "n": 4,
+              "layers": [
+                1,
+                3,
+                5,
+                6,
+                5,
+                3,
+                1
+              ],
+              "devices": [
+                0,
+                1
+              ],
+              "worker_pids": [
+                22752,
+                22753
+              ]
+            },
+            {
+              "n": 3,
+              "layers": [
+                1,
+                2,
+                2,
+                1
+              ],
+              "devices": [
+                0,
+                1
+              ],
+              "worker_pids": [
+                22752,
+                22753
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "scope": "Installed GitHub wheel in new managed environment; selected all visible 2 GPUs. Not multi-node or other hardware acceptance.",
+  "tests_passed": 90,
+  "release_ci": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/40204604324"
+}
