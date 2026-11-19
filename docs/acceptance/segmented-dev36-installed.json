@@ -1,0 +1,395 @@
+{
+  "schema": 1,
+  "status": "VERIFIED_INSTALLED_2_GPU",
+  "tested_utc": "2026-11-19T20:56:17Z",
+  "release": "native-pip-20261119-v36",
+  "release_url": "https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261119-v36",
+  "python_wheel_sha256": "ca1f6ea06dddccbdf89d8a36ededd70f65637522a11134d82c40fff4b9ed3b90",
+  "native_index_sha256": "97c9aa9c2c7db33dc6f35b6169f952dbf04d723ffcca15aaa50c986056611ddb",
+  "package_source_commit": "d8d83b51bf08417da17540e680bfa7d890be1fa3",
+  "runtime_cuda_source_commit": "684cdc36f477fa84bf5181cd84d25d56acc78b2e",
+  "gpu": [
+    "NVIDIA GeForce RTX 3060, 12288 MiB, 580.126.20",
+    "NVIDIA GeForce RTX 3060, 12288 MiB, 580.126.20"
+  ],
+  "gpu_tests": [
+    {
+      "mode": "legacy",
+      "n": 3,
+      "states": 6,
+      "layer_sizes": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "seconds": 6.031,
+      "segments_per_rank": []
+    },
+    {
+      "mode": "legacy",
+      "n": 4,
+      "states": 24,
+      "layer_sizes": [
+        1,
+        3,
+        5,
+        6,
+        5,
+        3,
+        1
+      ],
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "seconds": 0.055,
+      "segments_per_rank": []
+    },
+    {
+      "mode": "legacy",
+      "n": 5,
+      "states": 120,
+      "layer_sizes": [
+        1,
+        4,
+        9,
+        15,
+        20,
+        22,
+        20,
+        15,
+        9,
+        4,
+        1
+      ],
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "seconds": 0.063,
+      "segments_per_rank": []
+    },
+    {
+      "mode": "legacy",
+      "n": 6,
+      "states": 720,
+      "layer_sizes": [
+        1,
+        5,
+        14,
+        29,
+        49,
+        71,
+        90,
+        101,
+        101,
+        90,
+        71,
+        49,
+        29,
+        14,
+        5,
+        1
+      ],
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "seconds": 0.067,
+      "segments_per_rank": []
+    },
+    {
+      "mode": "segmented24",
+      "n": 3,
+      "states": 6,
+      "layer_sizes": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "seconds": 5.739,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "segmented24",
+      "n": 4,
+      "states": 24,
+      "layer_sizes": [
+        1,
+        3,
+        5,
+        6,
+        5,
+        3,
+        1
+      ],
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "seconds": 0.052,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "segmented24",
+      "n": 5,
+      "states": 120,
+      "layer_sizes": [
+        1,
+        4,
+        9,
+        15,
+        20,
+        22,
+        20,
+        15,
+        9,
+        4,
+        1
+      ],
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "seconds": 0.062,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "segmented24",
+      "n": 6,
+      "states": 720,
+      "layer_sizes": [
+        1,
+        5,
+        14,
+        29,
+        49,
+        71,
+        90,
+        101,
+        101,
+        90,
+        71,
+        49,
+        29,
+        14,
+        5,
+        1
+      ],
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "seconds": 0.08,
+      "segments_per_rank": [
+        2,
+        2
+      ]
+    },
+    {
+      "mode": "permutation_bitmap",
+      "n": 3,
+      "states": 6,
+      "layer_sizes": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "seconds": 5.643,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "permutation_bitmap",
+      "n": 4,
+      "states": 24,
+      "layer_sizes": [
+        1,
+        3,
+        5,
+        6,
+        5,
+        3,
+        1
+      ],
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "seconds": 0.049,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "permutation_bitmap",
+      "n": 5,
+      "states": 120,
+      "layer_sizes": [
+        1,
+        4,
+        9,
+        15,
+        20,
+        22,
+        20,
+        15,
+        9,
+        4,
+        1
+      ],
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "seconds": 0.054,
+      "segments_per_rank": [
+        1,
+        1
+      ]
+    },
+    {
+      "mode": "permutation_bitmap",
+      "n": 6,
+      "states": 720,
+      "layer_sizes": [
+        1,
+        5,
+        14,
+        29,
+        49,
+        71,
+        90,
+        101,
+        101,
+        90,
+        71,
+        49,
+        29,
+        14,
+        5,
+        1
+      ],
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "seconds": 0.063,
+      "segments_per_rank": [
+        2,
+        2
+      ]
+    }
+  ],
+  "doctor_status": "PASS",
+  "doctor_steps": [
+    {
+      "name": "native-assets",
+      "status": "PASS"
+    },
+    {
+      "name": "control-thread",
+      "status": "PASS"
+    },
+    {
+      "name": "system-info",
+      "status": "PASS"
+    },
+    {
+      "name": "filesystem",
+      "status": "PASS"
+    },
+    {
+      "name": "environment-evidence",
+      "status": "PASS"
+    },
+    {
+      "name": "nvml-evidence",
+      "status": "PASS"
+    },
+    {
+      "name": "torch-evidence",
+      "status": "PASS"
+    },
+    {
+      "name": "driver-api",
+      "status": "PASS"
+    },
+    {
+      "name": "native-runtime",
+      "status": "PASS"
+    },
+    {
+      "name": "cuda-discovery",
+      "status": "PASS"
+    },
+    {
+      "name": "loader-contrasts",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "native-loader-trace",
+      "status": "SKIPPED"
+    },
+    {
+      "name": "all-gpus-context",
+      "status": "PASS"
+    },
+    {
+      "name": "all-gpus-meminfo",
+      "status": "PASS"
+    },
+    {
+      "name": "all-gpus-hardware",
+      "status": "PASS"
+    },
+    {
+      "name": "all-gpus-memory",
+      "status": "PASS"
+    },
+    {
+      "name": "all-gpus-kernel",
+      "status": "PASS"
+    },
+    {
+      "name": "all-gpus-persistent",
+      "status": "PASS"
+    },
+    {
+      "name": "nccl-init",
+      "status": "PASS"
+    },
+    {
+      "name": "nccl-exchange",
+      "status": "PASS"
+    },
+    {
+      "name": "multi-gpu-bfs",
+      "status": "PASS"
+    },
+    {
+      "name": "server-recipe-000",
+      "status": "PASS"
+    },
+    {
+      "name": "server-recipe-000-command",
+      "status": "PASS"
+    }
+  ],
+  "offline_cache_reuse": {
+    "downloaded_bytes": 0,
+    "components": [
+      {
+        "archive_bytes": 304497488,
+        "cached_before": true,
+        "component": "common",
+        "sha256": "7d44d15a64d3032974801321420fda50027ce3724dba4d6d316cb759ffcb2c99"
+      },
+      {
+        "archive_bytes": 1543405,
+        "cached_before": true,
+        "component": "native-executable",
+        "sha256": "e59f12da441d7d6263c93f1a21eaa5e54b91f797b2b247cc4fd2903382f57fca"
+      },
+      {
+        "archive_bytes": 12898164,
+        "cached_before": true,
+        "component": "cuda-sm86",
+        "sha256": "7d7b0b42ce0faeb1ca7a7d3b2cf3fc7bbd4e65ad2019f6b1bf90eaac6bd175ae"
+      }
+    ]
+  },
+  "scope": "Installed wheel; single host; forced rows_per_bank=32; exact independent Mahonian layers. Not large per-rank capacity or B200/B300 acceptance.",
+  "previous_large_source_evidence": "segmented-memory-20261119/manifest.json"
+}

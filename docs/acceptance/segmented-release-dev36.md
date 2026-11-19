@@ -22,5 +22,20 @@ neither complete S14 nor more than 2^32 resident states on a single GPU was
 verified. Bitmap supports permutation actions only and allocates for the
 complete multiset domain. Both are experimental; an INCOMPLETE report is not
 a completed graph or diameter. See
-[the detailed design](https://github.com/TryDotAtwo/MultiGPUBFS/blob/5e81b7991da0566b27d973aa6ed83ec49062a727/docs/experimental-memory-backends.md)
+[the detailed design](../experimental-memory-backends.md)
 and source-pinned acceptance manifest.
+
+## Public package verification
+
+The published dev36 wheel was tested on 2x RTX 3060. CayleyPy persistent
+S3-S6 matched independently computed layer sizes for all three backends.
+A separate installation from the GitHub working branch passed S4 with both
+new backends. With 32 rows per bank, S6 used
+two segments on each GPU. The production diagnostic passed on those two
+GPUs, including NCCL and BFS. A second prefetch reused the cached archives
+without transferring data. See [installed verification](segmented-dev36-installed.json).
+
+The [Native CPU contracts workflow](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44611559377)
+passed its CPU contracts and type checks, but its Rust formatting gate failed.
+A checked parent already had formatting differences in 55 files; this branch
+had differences in 60. The release pipeline passed its separate checks.
