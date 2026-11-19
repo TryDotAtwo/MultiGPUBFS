@@ -45,7 +45,9 @@ def inventory(root=None,*,environ=None):
  entries=data.get('variants',[])
  expected_specs=dict(SPECS)
  if lazy:expected_specs[UNIVERSAL]=('Shared',list(NATIVE_ARCHITECTURES))
- if len(entries)!=len(expected_specs) or {x.get('id') for x in entries}!=set(expected_specs):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
+ unavailable=data.get('unavailable_variants',[])
+ if not isinstance(unavailable,list) or any(not isinstance(x,str) for x in unavailable) or len(set(unavailable))!=len(unavailable) or not set(unavailable)<=set(expected_specs)-{PRODUCTION,UNIVERSAL}:raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
+ if len(entries)!=len(expected_specs)-len(unavailable) or {x.get('id') for x in entries}!=set(expected_specs)-set(unavailable):raise RuntimeError('DIAGNOSTIC_VARIANT_MATRIX')
  sources=set();verified=[]
  fingerprints=any('cuda_kernel_source_sha256' in row for row in entries)
  for row in entries:
@@ -65,11 +67,12 @@ def inventory(root=None,*,environ=None):
   if fingerprints and (not isinstance(fingerprint,str) or len(fingerprint)!=64 or set(fingerprint)-set('0123456789abcdef') or proof.get('cuda_kernel_source_sha256')!=fingerprint):raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_'+identifier)
   sources.add(fingerprint if fingerprints else row['cuda_source_tree']);verified.append(dict(row,library_path=str(path.resolve()),build_receipt=proof,installed=installed,verification='CHECKSUM_VERIFIED' if installed else 'PINNED_DECLARATION_NOT_INSTALLED'))
  if len(sources)!=1:raise RuntimeError('DIAGNOSTIC_VARIANT_SOURCE_MISMATCH')
- return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'lazy_delivery':lazy,'variants':verified,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
+ return {'schema':1,'status':'AVAILABLE','root':str(root),'binary':str(root/'bin/mgbfs'),'binary_sha256':hashes['bin/mgbfs'],'lazy_delivery':lazy,'variants':verified,'unavailable_variants':unavailable,'scope':'checksummed same-source diagnostic libraries; isolated children only; production default unchanged'}
 
 def environment(identifier,verified,parent=None,*,deadline=None):
  if (identifier not in SPECS and identifier!=UNIVERSAL) or verified.get('status')!='AVAILABLE':raise RuntimeError('DIAGNOSTIC_VARIANT_SELECTION')
- selected=next(x for x in verified['variants'] if x['id']==identifier)
+ selected=next((x for x in verified['variants'] if x['id']==identifier),None)
+ if selected is None:raise RuntimeError('DIAGNOSTIC_VARIANT_UNAVAILABLE: '+identifier)
  root=Path(verified['root']);env=dict(os.environ if parent is None else parent)
  if verified.get('lazy_delivery'):
   from .native_assets import ensure_variant

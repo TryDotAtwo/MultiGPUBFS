@@ -77,10 +77,13 @@ class AssetManager:
    for path,f in c['files'].items():
     safe_path(path)
     if not checksum(f.get('sha256')) or type(f.get('size')) is not int or not 0<=f['size']<=2_000_000_000 or f.get('mode') not in (0o644,0o755):raise AssetError('NATIVE_ASSET_INDEX_FILE '+path)
-  refs=[index.get('common'),*index.get('production',{}).values(),*index.get('diagnostics',{}).values()]
+  refs=[index.get('common'),*([index['executable']] if 'executable' in index else []),*index.get('production',{}).values(),*index.get('diagnostics',{}).values()]
   if not refs or any(x not in components for x in refs):raise AssetError('NATIVE_ASSET_INDEX_REFERENCE')
   core=components[index['common']]['files']
   if not {'bin/mgbfs','lib/libcudart.so.12','lib/libnccl.so.2'}<=set(core) or not any(p.startswith('licenses/') for p in core):raise AssetError('NATIVE_ASSET_COMMON_LAYOUT')
+  if 'executable' in index:
+   cli=components[index['executable']]['files']
+   if set(cli)!={'bin/mgbfs'} or cli['bin/mgbfs']['mode']!=0o755:raise AssetError('NATIVE_ASSET_EXECUTABLE_LAYOUT')
   kernels=set()
   for target,name in index['production'].items():
    build=components[name].get('build',{})
@@ -187,7 +190,7 @@ class AssetManager:
   targets=list(self.index['production']) if all_architectures else [part.strip() for value in values for part in str(value).split(',')]
   if not targets or any(t not in self.index['production'] for t in targets):raise AssetError('NATIVE_PREFETCH_TARGET: choose '+','.join(self.index['production']))
   targets=sorted(set(targets),key=lambda t:(t=='universal',int(t) if t!='universal' else 0))
-  names=list(dict.fromkeys([self.index['common'],*(self.index['production'][t] for t in targets)]));rows=[];deadline=time.monotonic()+self.timeout
+  names=list(dict.fromkeys([self.index['common'],*([self.index['executable']] if 'executable' in self.index else []),*(self.index['production'][t] for t in targets)]));rows=[];deadline=time.monotonic()+self.timeout
   for name in names:
    self._remaining(deadline);c=self.index['components'][name];folder=self.cache/'components'/c['sha256']
    if folder.is_symlink():raise AssetError('NATIVE_ASSET_CACHE_SYMLINK')
@@ -203,14 +206,16 @@ class AssetManager:
 
  def _layout(self,selected):
   components=self.index['components'];production=components[selected];core=components[self.index['common']]
-  files=dict(core['files']);files['lib/libmgbfs_cuda.so']=production['files']['libmgbfs_cuda.so'];metadata={};rows=[]
+  files=dict(core['files'])
+  if 'executable' in self.index:files['bin/mgbfs']=components[self.index['executable']]['files']['bin/mgbfs']
+  files['lib/libmgbfs_cuda.so']=production['files']['libmgbfs_cuda.so'];metadata={};rows=[]
   choices={'shared-sm120':selected,'shared-universal':self.index['production']['universal'],**self.index['diagnostics']}
   for identifier,name in choices.items():
    c=components[name];build=dict(c['build']);library='lib/libmgbfs_cuda.so' if identifier=='shared-sm120' else 'diagnostic_variants/'+identifier+'/libmgbfs_cuda.so'
    proof=dict(build,id=identifier,packaged_sha256=c['files']['libmgbfs_cuda.so']['sha256'])
    receipt='diagnostic_variants/'+identifier+'/build-receipt.json';data=canonical(proof);metadata[receipt]=data
    rows.append({'id':identifier,'runtime':proof['runtime'],'architectures':proof['architectures'],'ptx_architectures':proof.get('ptx_architectures',[]),'library':library,'sha256':proof['packaged_sha256'],'receipt':receipt,'receipt_sha256':hashlib.sha256(data).hexdigest(),'source_commit':proof['source_commit'],'cuda_source_tree':proof['cuda_source_tree'],'cuda_kernel_source_sha256':proof['cuda_kernel_source_sha256'],'component_id':name})
-  variants='diagnostic_variants/variants.json';metadata[variants]=canonical({'schema':1,'production_default':'shared-sm120','variants':rows,'scope':'Pinned components; absent diagnostic libraries are declarations until downloaded and verified'})
+  variants='diagnostic_variants/variants.json';metadata[variants]=canonical({'schema':1,'production_default':'shared-sm120','variants':rows,'unavailable_variants':[r['id'] for r in self.index.get('retired_diagnostic_controls',[]) if isinstance(r,dict) and 'id' in r],'scope':'Pinned components; explicitly retired controls are unavailable, other absent libraries are declarations until downloaded and verified'})
   build=production['build'];manifest=dict(self.index['native_metadata'])
   manifest.pop('package_source_commit',None)
   manifest.update(schema=1,architectures=build['architectures'],ptx_architectures=build.get('ptx_architectures',[]),production_build='shared-sm120',cuda_runtime_linkage='Shared',cuda_library_source_commit=build['source_commit'],cuda_source_tree=build['cuda_source_tree'],cuda_kernel_source_sha256=build['cuda_kernel_source_sha256'],native_delivery={'schema':1,'index_sha256':self.identity,'layout_schema':LAYOUT_SCHEMA,'selected_component':selected,'index_id':self.index['id']})
@@ -232,11 +237,13 @@ class AssetManager:
   selected=self.select(hardware);deadline=time.monotonic()+self.timeout;root=self.cache/'bundles'/(self.identity+'-v'+str(LAYOUT_SCHEMA)+'-'+selected)
   with self._lock('bundle-'+root.name,deadline):
    if root.exists():return self._verify(root,selected)
-   common=self._component(self.index['common'],deadline);cuda=self._component(selected,deadline)
+   common=self._component(self.index['common'],deadline);cli=self._component(self.index['executable'],deadline) if 'executable' in self.index else None;cuda=self._component(selected,deadline)
    root.parent.mkdir(parents=True,exist_ok=True);stage=Path(tempfile.mkdtemp(prefix='assemble-',dir=root.parent))
    try:
     files,metadata,manifest=self._layout(selected)
-    for p in self.index['components'][self.index['common']]['files']:self._link(common/p,stage/p)
+    for p in self.index['components'][self.index['common']]['files']:
+     if p!='bin/mgbfs' or cli is None:self._link(common/p,stage/p)
+    if cli is not None:self._link(cli/'bin/mgbfs',stage/'bin/mgbfs')
     self._link(cuda/'libmgbfs_cuda.so',stage/'lib/libmgbfs_cuda.so')
     for p,b in metadata.items():(stage/p).parent.mkdir(parents=True,exist_ok=True);(stage/p).write_bytes(b)
     (stage/'manifest.json').write_bytes(canonical(manifest));self._verify(stage,selected);os.replace(stage,root)

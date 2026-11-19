@@ -365,6 +365,7 @@ def run_case(runner,case,deadline):
   if verified is None:verified=inventory();runner.diagnostic_variants=verified
   if verified.get('status')!='AVAILABLE':
    return skipped(verified.get('reason','DIAGNOSTIC_BUILD_CONTRAST_UNAVAILABLE'))
+  if case['config']['variant'] in verified.get('unavailable_variants',[]):return skipped('DIAGNOSTIC_VARIANT_UNAVAILABLE: not rebuilt from current CUDA source')
   try:child_env=environment(case['config']['variant'],verified,deadline=deadline-8)
   except Exception as error:
    if 'OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED' in str(error):runner.deep_cleanup_blocked=True

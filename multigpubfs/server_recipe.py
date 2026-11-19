@@ -139,6 +139,8 @@ def find_working(runner,devices,deadline,*,full_gpu_only=False):
  identity=server_identity();remaining=deadline-time.monotonic();group_deadline=deadline if full_gpu_only else time.monotonic()+remaining*.7
  profile_path=runner.root/'working-config.json';attempts=[]
  choices=candidates(devices,include_universal=True,full_gpu_only=full_gpu_only) if verified.get('lazy_delivery') else candidates(devices,full_gpu_only=full_gpu_only)
+ available={v['id'] for v in verified['variants']}
+ choices=(c for c in choices if c['variant'] in available)
  for index,settings in enumerate(choices):
   if getattr(runner,'deep_cleanup_blocked',False):return result('BLOCKED','Owned diagnostic process could not be reaped; no ready command')
   if deadline-time.monotonic()<12:break
