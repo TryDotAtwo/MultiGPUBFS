@@ -57,6 +57,9 @@ owner can have many segments: the limit is local to one segment, not a
 use checked 64-bit arithmetic. Collision resolution compares full state values.
 For an inverse-closed action, only three distance banks are needed; for a
 directed action the visited history is retained.
+The 24-bit local row is a field inside a 64-bit hash slot; each slot itself
+uses 8 bytes, in addition to state storage and other metadata. It is not a
+three-byte-per-entry hash table.
 
 The current implementation allocates segments lazily and consults the existing
 segment tables for a shard sequentially. The number and layout of segments
@@ -104,5 +107,11 @@ about 55-58 s. Repeating the *same graph and matching runtime/device/geometry*
 inside a persistent context reused the exact profile in about 16-17 ms.
 Changing graph or hardware may require tuning again. Small conservative
 profiles are not claimed to be measured optima.
+
+A separately built SM86 wheel was installed offline in a clean environment;
+CayleyPy persistent S3 and S4 passed with both modes on 2x RTX 3060. The
+wheel is an unpublished test artifact. The new CUDA modules have also
+compiled to SM100 objects, but a complete SM100 library and any B200 runtime
+acceptance remain separate checks.
 
 [Reports, hashes and acceptance boundaries](acceptance/segmented-memory-20261119/manifest.json).
