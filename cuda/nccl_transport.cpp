@@ -293,7 +293,9 @@ extern "C" int mgbfs_nccl_send_recv_pair(void* raw,const void* hashes,uint64_t h
   return send_recv_lanes(raw,sends,sent,receives,received,2,peer,stream);
 }
 extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_gather_u64(void* raw,const uint64_t* send,uint64_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint64,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_reduce_max_pair_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,2,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" void mgbfs_nccl_destroy(void* raw){delete static_cast<Comm*>(raw);}
 extern "C" int mgbfs_nccl_abort(void* raw){
   auto* p = static_cast<Comm*>(raw);

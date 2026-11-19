@@ -552,6 +552,12 @@ pub mod ffi {
             receive: *mut u32,
             stream: *mut c_void,
         ) -> i32;
+        pub fn mgbfs_nccl_all_gather_u64(
+            comm: *mut c_void,
+            send: *const u64,
+            receive: *mut u64,
+            stream: *mut c_void,
+        ) -> i32;
         pub fn mgbfs_nccl_all_reduce_max_u32(
             comm: *mut c_void,
             send: *const u32,

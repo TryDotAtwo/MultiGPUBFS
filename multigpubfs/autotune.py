@@ -121,6 +121,21 @@ def _configuration_digest(env):
  values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')) and k not in ignored}
  return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 
+def _segmented_deep_prefix_candidates(pilots):
+ # A stalled candidate must not force all comparisons onto tiny early layers.
+ # Always check its completed prefix before excluding it.
+ if not pilots:return [],[]
+ reference=max(pilots,key=lambda p:len(p['layer_seconds']))['layer_sizes']
+ for p in pilots:
+  d=len(p['layer_seconds'])
+  if p['layer_sizes'][:d+1]!=reference[:d+1]:raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
+ max_depth=max(len(p['layer_seconds']) for p in pilots)
+ threshold=(3*max_depth+3)//4
+ deep=[p for p in pilots if len(p['layer_seconds'])>=threshold]
+ if len(deep)<2:return pilots,[]
+ excluded=[dict(p,completed_depth=len(p['layer_seconds']),minimum_comparable_depth=threshold,reason='SHORT_COMMON_PREFIX_RELATIVE_TO_BEST_COMPLETED_DEPTH') for p in pilots if len(p['layer_seconds'])<threshold]
+ return deep,excluded
+
 def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True):
  # Omitted peer policy and public default auto are the same configuration.
  env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
@@ -137,7 +152,25 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   selected=baseline['devices'];plan=baseline['plan']
   from .hardware_profiles import startup_policy
   hardware_policy=startup_policy(baseline.get('inventory',[]),plan)
-  variants=_transport_variants(graph,env,hardware_policy['shards'])
+  # Independent shard owners are scheduled on a bounded number of GPU lanes.
+  # Both dimensions must be measured: increasing shards alone does not add lanes.
+  segmented=env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1'
+  bitmap=segmented and env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
+  shard_choices=(list(dict.fromkeys([1,4,8]+hardware_policy['shards'])) if segmented else hardware_policy['shards'])
+  variants=[(*v,None) for v in _transport_variants(graph,env,shard_choices)]
+  if segmented:
+   forced=env.get('MGBFS_SEGMENT_OWNER_LANES')
+   if forced is not None:
+    try:forced=int(forced)
+    except ValueError:raise ValueError('INVALID_SEGMENTED_OWNER_LANES') from None
+    if not 1<=forced<=64:raise ValueError('INVALID_SEGMENTED_OWNER_LANES')
+   # Start with inexpensive, empirically useful geometries, then vary batch
+   # and shard count. The timer limits the number actually executed.
+   trial=[(4,.0625,4),(8,.0625,4),(8,.0625,8),(16,.0625,8),
+          (16,.0625,16),(4,1.0,4),(8,1.0,8),(1,.25,1)]
+   trial.extend((sh,.0625,min(sh,8)) for sh in shard_choices)
+   if forced is not None:trial=[(max(sh,forced),f,forced) for sh,f,_ in trial]
+   variants=list(dict.fromkeys((sh,f,default_transport,default_order,lane) for sh,f,lane in trial))
   # The same sequential startup owns these selected devices; pilot processes
   # release their allocations before the next admission. Production queries live VRAM again.
   if baseline.get('inventory'):env['_MGBFS_PROFILE_INVENTORY']=json.dumps(baseline['inventory'])
@@ -157,11 +190,11 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    except (OSError,ValueError):saved={}
    from .specialized import match_lrx
    specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and match_lrx(graph) is not None
-   if saved.get('generator_backend','cuda') in (('cuda','gemm') if gemm_supported(graph) else ('cuda',)) and saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and type(saved.get('shards')) is int and 1<=saved['shards']<=4096 and saved.get('batch_fraction') in (1.0,.25) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order')) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
+   if saved.get('generator_backend','cuda') in (('cuda','gemm') if gemm_supported(graph) else ('cuda',)) and saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and type(saved.get('shards')) is int and 1<=saved['shards']<=4096 and saved.get('batch_fraction') in ((1.0,.25,.0625) if segmented else (1.0,.25)) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order'),saved.get('segment_owner_lanes') if segmented else None) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
     saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;saved['_admission_inventory']=baseline.get('inventory',[]);return saved
   from .profile_families import identity as family_identity,load as family_load,transferred
   shared_identity=family_identity(graph,plan,identity)
-  if dependency is not None and hardware.returncode==0 and topology.returncode==0:
+  if not segmented and dependency is not None and hardware.returncode==0 and topology.returncode==0:
    borrowed=family_load(root,shared_identity)
    if borrowed is not None:
     candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=borrowed.get('transport','full'),MGBFS_GENERIC_SORT=borrowed.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=borrowed.get('generator_backend','cuda'),MGBFS_GENERIC_HISTORY='sorted' if borrowed.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(borrowed.get('owner_lanes',1)))
@@ -175,15 +208,16 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      return dict(transferred(borrowed,identity,fresh,time.monotonic()-started),_admission_inventory=baseline.get('inventory',[]))
     except (RuntimeError,ValueError):pass
   admitted=[]
-  for shards,fraction,transport,order in variants:
+  for shards,fraction,transport,order,lane in variants:
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
+   if lane is not None:candidate_env['MGBFS_SEGMENT_OWNER_LANES']=str(lane)
    try:admission=_admit(graph,selected,capacity,shards,native,candidate_env,temporary)
    except RuntimeError as error:
     if any(code in str(error) for code in ('REQUESTED_CAPACITY_EXCEEDS_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_DISTRIBUTED_HEADROOM')):continue
     raise
-   admitted.append((shards,fraction,transport,order,admission['plan']))
+   admitted.append((shards,fraction,transport,order,lane,admission['plan']))
   history=env.get('MGBFS_GENERIC_HISTORY');sorted_admitted=[]
-  if history in (None,'sorted'):
+  if not segmented and history in (None,'sorted'):
    forced_lanes=env.get('MGBFS_GENERIC_OWNER_LANES')
    lanes=[int(forced_lanes)] if forced_lanes is not None else [1,2,4,8]
    for lane in lanes:
@@ -196,7 +230,12 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      raise
     sorted_admitted.append((lane,shards,transport,admission['plan']))
   if len(admitted)+len(sorted_admitted)<2:return {'status':'NO_ADMITTED_ALTERNATIVE_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'seconds':time.monotonic()-started}
-  common_capacity=min([p['capacity'] for _,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted]+[hardware_policy['probe_capacity_per_rank']])
+  # Segments are allocated lazily. Capping them to the legacy probe budget
+  # prematurely ended every pilot on the same small layer and selected a
+  # geometry that was slow on the larger layers of the actual graph.
+  capacity_limits=[p['capacity'] for _,_,_,_,_,p in admitted]+[p['capacity'] for _,_,_,p in sorted_admitted]
+  if not segmented:capacity_limits.append(hardware_policy['probe_capacity_per_rank'])
+  common_capacity=min(capacity_limits)
   pilots=[];limit=5;candidate_failures=[]
   from .launch import run_graph
   def measure(label,candidate_env,run):
@@ -224,18 +263,28 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    error=RuntimeError('AUTOTUNE_NO_MEASURED_PROFILE_AFTER_FAILURE: successful_candidates='+str(len(pilots))+'; failed_candidates='+str(len(candidate_failures))+'; evidence='+', '.join(f['evidence'] for f in candidate_failures))
    error.candidate_failures=candidate_failures
    raise error
-  for index,(shards,fraction,transport,order,_) in enumerate(admitted):
+  for index,(shards,fraction,transport,order,lane,_) in enumerate(admitted):
    if max_seconds-(time.monotonic()-started)<limit+1:break
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
+   if lane is not None:candidate_env['MGBFS_SEGMENT_OWNER_LANES']=str(lane)
    admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
    label='pilot-'+str(index)
-   report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,_batch=batch,_profile_layers=36,_native_env=candidate_env))
+   # For segmented modes the user cap, if any, is already in
+   # candidate_env. Passing the legacy probe capacity here would invent an
+   # extra global atomic limit in uncapped production and skew the timings.
+   report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=None if segmented else common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,memory_backend='permutation_bitmap' if bitmap else 'segmented24' if segmented else 'legacy',_batch=batch,_profile_layers=36,_native_env=candidate_env))
    if report is None:continue
-   pilots.append({'candidate':label,'rank_worker_pids':report.get('rank_worker_pids',[]),'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']})
+   if segmented and report.get('backend')!=('EXPERIMENTAL_PERMUTATION_BITMAP' if bitmap else 'EXPERIMENTAL_SEGMENTED24'):raise RuntimeError('SEGMENTED_TUNER_WRONG_BACKEND')
+   pilot={'candidate':label,'executed_backend':report.get('backend'),'rank_worker_pids':report.get('rank_worker_pids',[]),'backend':'generic','history_algorithm':admission['plan'].get('history_algorithm','HASH'),'owner_lanes':admission['plan'].get('owner_lanes',0),'candidate_order':order,'transport':transport,'shards':shards,'batch_fraction':fraction,'batch':batch,'state_bytes':report.get('state_bytes',report.get('plan',{}).get('state_bytes')),'layer_sizes':report['layer_sizes'],'layer_seconds':report['layer_seconds'],'status':report['status'],'reason':report['reason']}
+   if segmented:
+    actual=[x.get('owner_lanes') for x in report.get('segment_memory_by_rank',[])]
+    if len(actual)!=len(selected) or any(type(n) is not int or not 1<=n<=lane for n in actual):raise RuntimeError('SEGMENTED_TUNER_LANE_RECEIPT_MISSING')
+    pilot.update(segment_owner_lanes=lane,segment_owner_lanes_by_rank=actual)
+   pilots.append(pilot)
   # Compare generator on the same graph, history, capacity and transport.
   # GEMM has its own explicit workspace admission and a bounded launch batch.
-  if pilots and gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=limit+1 :
+  if pilots and env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')!='1' and gemm_supported(graph) and _gemm_hardware_available() and forced_generator=='cuda' and max_seconds-(time.monotonic()-started)>=limit+1 :
    base=pilots[0];candidate_env=dict(env,MGBFS_GENERIC_GENERATOR='gemm',MGBFS_GENERIC_TRANSPORT=base['transport'],MGBFS_GENERIC_SORT=base['candidate_order'],MGBFS_GENERIC_HISTORY='sorted' if base.get('history_algorithm')=='SORTED_RUNS' else 'hash',MGBFS_GENERIC_OWNER_LANES=str(base.get('owner_lanes',1)))
    try:
     admission=_admit(graph,selected,common_capacity,base['shards'],native,candidate_env,temporary)
@@ -303,6 +352,9 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   if len(pilots)<2:
    if candidate_failures:no_measured_profile()
    return {'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':all_pilots,'excluded_prefix_candidates':excluded_prefix_candidates,'comparable_candidates':len(pilots),'common_depth':min(len(p['layer_seconds']) for p in all_pilots),'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
+  if segmented:
+   pilots,shallow=_segmented_deep_prefix_candidates(pilots)
+   excluded_prefix_candidates.extend(shallow)
   # Keep usable INCOMPLETE samples. Only the common completed substantial
   # prefix of the eligible candidates is compared; warmup is excluded below.
   depth=min(len(p['layer_seconds']) for p in pilots)
@@ -316,6 +368,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   chosen=pilots[winner]
   chosen_generator=chosen.get('generator_backend',forced_generator)
   result={'generator_backend':chosen_generator,'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common_capacity,'scope':'hardware-derived prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and exact bounded matrix CUDA/GEMM generators and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
+  if segmented:result.update(segment_owner_lanes=chosen['segment_owner_lanes'],winner_index=winner,scope=('permutation_bitmap' if bitmap else 'segmented24')+' GPU prefix timing among admitted shard, owner-lane and batch choices; no claim of a global optimum or large-rank acceptance')
   result['excluded_prefix_candidates']=excluded_prefix_candidates
   result['_admission_inventory']=[] if candidate_failures else baseline.get('inventory',[])
   if candidate_failures:result.update(candidate_failures=candidate_failures,failed_candidate_policy='REJECT_AND_MEASURE_REMAINING',winner_candidate=chosen.get('candidate'),failed_probes_retried=False)
@@ -327,8 +380,9 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
    os.replace(path,cache)
-   from .profile_families import store as family_store
-   family_store(root,shared_identity,result)
+   if not segmented:
+    from .profile_families import store as family_store
+    family_store(root,shared_identity,result)
   return result
 
 
@@ -342,6 +396,7 @@ def _profile_environment(env,result):
  selected=dict(env,MGBFS_GENERIC_TRANSPORT=result.get('transport','full'),MGBFS_GENERIC_SORT=result.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=result.get('generator_backend','cuda'))
  if result.get('history_algorithm')=='SORTED_RUNS':selected.update(MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(result['owner_lanes']))
  elif result.get('history_algorithm')=='HASH':selected['MGBFS_GENERIC_HISTORY']='hash'
+ if result.get('segment_owner_lanes') is not None:selected['MGBFS_SEGMENT_OWNER_LANES']=str(result['segment_owner_lanes'])
  return selected
 
 def _profile_geometry(admission):

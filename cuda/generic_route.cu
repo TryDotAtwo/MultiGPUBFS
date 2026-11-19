@@ -60,6 +60,52 @@ template<class State> __global__ void regenerate_routes(ActionT<State> action,ui
   output[uint64_t(element)*stride+row]=action.value(child,element);
  }
 }
+// Regenerate all non-packed queues in one launch. Each CTA works within
+// one queue, so writes stay SoA/coalesced and empty queues launch no work.
+// device_count is read after routing on the same stream; no CPU count reads.
+template<class State> __global__ void regenerate_all_routes(
+ ActionT<State> action,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,
+ const uint32_t* counts,uint32_t capacity,uint32_t queues,State* output,uint32_t* error) {
+ constexpr uint32_t blocks_per_queue=4;
+ const uint64_t groups=uint64_t(queues)*blocks_per_queue;
+ for(uint64_t group=blockIdx.x;group<groups;group+=gridDim.x){
+  const uint32_t queue=uint32_t(group/blocks_per_queue), part=uint32_t(group%blocks_per_queue);
+  const uint32_t actual=counts[queue];
+  if(actual>capacity){if(!threadIdx.x&&!part)atomicOr(error,4u);continue;}
+  const uint64_t entries=uint64_t(actual)*action.elements;
+  for(uint64_t at=uint64_t(part)*blockDim.x+threadIdx.x;at<entries;at+=uint64_t(blocks_per_queue)*blockDim.x){
+   const uint32_t element=uint32_t(at/actual),row=uint32_t(at%actual);
+   const GenericRouteRecord origin=requests[uint64_t(queue)*capacity+row];
+   if(origin.source!=source||origin.parent<begin||origin.parent-begin>=action.count||origin.generator>=action.generators||origin.reserved){
+    atomicOr(error,2u);continue;
+   }
+   const uint32_t child=uint32_t(origin.parent-begin)*action.generators+origin.generator;
+   output[(uint64_t(queue)*action.elements+element)*capacity+row]=State(action.value(child,element));
+  }
+ }
+}
+extern "C" int mgbfs_generic_regenerate_all_routes_count_storage(
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,
+ const uint32_t* counts,uint32_t capacity,uint32_t queues,void* output,uint32_t* error,void* stream) {
+ if((state_bytes!=1&&state_bytes!=8)||kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||
+  count>stride||uint64_t(count)*generators>=0x7fffffffULL||source>=128||begin>UINT64_MAX-count||
+  !parents||!requests||!counts||!capacity||!queues||queues>128u*4096u||!output||!error||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements))||
+  uint64_t(queues)>SIZE_MAX/(uint64_t(capacity)*sizeof(GenericRouteRecord))||
+  uint64_t(queues)>SIZE_MAX/state_bytes/(uint64_t(capacity)*elements))return int(cudaErrorInvalidValue);
+ if(!count)return int(cudaSuccess);
+ const uint32_t blocks=uint32_t(uint64_t(queues)*4>65535?65535:uint64_t(queues)*4);
+ if(state_bytes==1){
+  ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
+  regenerate_all_routes<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(a,source,begin,requests,counts,capacity,queues,static_cast<uint8_t*>(output),error);
+ }else{
+  Action a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
+  regenerate_all_routes<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(a,source,begin,requests,counts,capacity,queues,static_cast<int64_t*>(output),error);
+ }
+ return int(cudaGetLastError());
+}
 extern "C" int mgbfs_generic_regenerate_routes_i64(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
  const int64_t* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,
  const uint32_t* moduli,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,uint32_t request_count,
@@ -216,3 +262,27 @@ extern "C" int mgbfs_generic_regenerate_gemm_routes_count_storage(void* context,
  const void* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,
  const uint32_t* moduli,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,uint32_t request_count,const uint32_t* device_count,
  void* output,uint32_t output_stride,uint32_t* error,void* stream){if(state_bytes==1)return mgbfs_generic_regenerate_gemm_routes_count_u8(context,kind,elements,n,m,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,matrices,moduli,source,begin,requests,request_count,device_count,static_cast<uint8_t*>(output),output_stride,error,stream);if(state_bytes==8)return mgbfs_generic_regenerate_gemm_routes_count_i64(context,kind,elements,n,m,generators,static_cast<const int64_t*>(parents),count,stride,permutations,matrices,moduli,source,begin,requests,request_count,device_count,static_cast<int64_t*>(output),output_stride,error,stream);return int(cudaErrorInvalidValue);}
+
+// Compute the actual maximum live queue occupancy. Counts can exceed capacity
+// only in a rejected/retried route; callers must vote on route errors first.
+__global__ static void mgbfs_max_queue_count_kernel(const uint32_t* counts,uint32_t n,uint32_t* maximum){
+ __shared__ uint32_t warp_max[8];
+ uint32_t value=0;
+ for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x)
+  value=max(value,counts[i]);
+ for(int offset=16;offset;offset>>=1)value=max(value,__shfl_down_sync(0xffffffffu,value,offset));
+ const uint32_t lane=threadIdx.x&31u,warp=threadIdx.x>>5;
+ if(lane==0)warp_max[warp]=value;
+ __syncthreads();
+ if(warp==0){
+  value=lane<8?warp_max[lane]:0;
+  for(int offset=16;offset;offset>>=1)value=max(value,__shfl_down_sync(0xffffffffu,value,offset));
+  if(lane==0)atomicMax(maximum,value);
+ }
+}
+extern "C" int mgbfs_generic_max_queue_count(const uint32_t* counts,uint32_t n,uint32_t* maximum,void* stream){
+ if(!counts||!maximum||!n||n>128u*4096u)return int(cudaErrorInvalidValue);
+ uint32_t blocks=(n+255)/256;if(blocks>256)blocks=256;
+ mgbfs_max_queue_count_kernel<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(counts,n,maximum);
+ return int(cudaGetLastError());
+}

@@ -2,6 +2,8 @@
 
 [Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and checksummed local outputs. Source and native wheels come from GitHub; no Kaggle Inputs are required.
 
+Experimental, opt-in memory backends (24-bit local segments and exact permutation bitmap): [selection, measurements and current limits](docs/experimental-memory-backends.md). They require a matching rebuilt native runtime; current published assets do not contain them.
+
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
 Current automatic per-GPU native package: [server update and calculation](docs/server-quickstart-ru.md), [GPU-free prefetch and offline shared-cache jobs](docs/native-prefetch.md), [measured prefetch acceptance](docs/native-prefetch-acceptance-2026-10-15.md).

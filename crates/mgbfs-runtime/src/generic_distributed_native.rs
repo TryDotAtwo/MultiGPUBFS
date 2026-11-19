@@ -33,7 +33,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetD
 struct QueueBank{records:Buffer,counts:Buffer,states:Buffer}
 impl QueueBank{fn new(p:&GenericDistributedMemoryPlan,device:i32)->Result<Self>{let boxes=p.world as usize*p.shards as usize;let q=p.queue_capacity as usize;Ok(Self{records:Buffer::new(boxes*q*32,device)?,counts:Buffer::new(boxes*4,device)?,states:Buffer::new(boxes*q*p.queue_payload_bytes(),device)?})}}
 #[derive(Debug,PartialEq,Eq)]
-pub enum DistributedAdvance{Layer{local:u32,global:u64},Complete,Resource{fatal:u32}}
+pub enum DistributedAdvance{Layer{local:u64,global:u64},Complete,Resource{fatal:u32}}
 pub struct GenericDistributedBfs{
  online_size_tuning:bool,online_bucket:Option<u32>,online_choices:std::collections::BTreeMap<u32,(u32,bool)>,profile_events:Vec<serde_json::Value>,active_batch:u32,use_gemm:bool,gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:*mut c_void,
  sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,banks:[QueueBank;2],inbox:QueueBank,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
@@ -282,7 +282,7 @@ impl GenericDistributedBfs{
   self.parent_cursor=self.parent_cursor.checked_add(u64::from(b.count)).ok_or("GENERIC_PARENT_CURSOR_OVERFLOW")?;
   if let Some(cache)=&self.parent_cache{crate::generic_native::checked!(mgbfs_generic_advance_parent_cursors, unsafe{mgbfs_generic_advance_parent_cursors(cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),self.control.at(32),p.world,stream)})?;}
   self.depth+=1;self.max_frontier=*counts.iter().max().unwrap();self.counts=counts;std::mem::swap(&mut b.front,&mut b.future);b.count=local;b.terminal=false;
-  Ok(DistributedAdvance::Layer{local,global})
+  Ok(DistributedAdvance::Layer{local:u64::from(local),global})
  }
 }
 impl Drop for GenericDistributedBfs{

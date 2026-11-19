@@ -97,7 +97,17 @@ pub fn global_plan(args:&[String])->Result<serde_json::Value>{
 
 #[derive(serde::Deserialize)]struct SizeProfile{minimum_frontier:u64,batch:u32,#[serde(default)]status:String,#[serde(default)]maximum_measured_frontier:u64,#[serde(default)]frontier_max_rank_bucket:Option<u32>,generator_backend:String}
 #[derive(serde::Deserialize)]struct Launch{#[serde(default)]online_size_tuning:bool,#[serde(default)]size_profiles:Vec<SizeProfile>,graph_digest:String,devices:Vec<u32>,plan:Plan,#[serde(default)]rank_plans:Vec<Plan>,#[serde(default)]owner_cuts:Option<Vec<u64>>,#[serde(default)]profile_max_layers:Option<u32>}
+fn valid_frontier_bucket(bucket:u32, segmented:bool)->bool{bucket<=if segmented{63}else{31}}
+
+#[cfg(test)] mod bucket_width_tests{
+ #[test] fn legacy_and_segmented_widths(){
+  assert!(super::valid_frontier_bucket(31,false));assert!(!super::valid_frontier_bucket(32,false));
+  assert!(super::valid_frontier_bucket(32,true));assert!(super::valid_frontier_bucket(63,true));assert!(!super::valid_frontier_bucket(64,true));
+ }
+}
+
 pub fn run(args:&[String])->Result<()>{
+ let segmented=std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1");
  if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}let g=graph(&args[0])?;let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
  if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
@@ -106,7 +116,7 @@ pub fn run(args:&[String])->Result<()>{
  let mut previous_base=None;let mut buckets=std::collections::BTreeSet::new();
  for p in &launch.size_profiles{
   if p.batch==0||p.batch>launch.plan.batch||!matches!(p.generator_backend.as_str(),"cuda"|"gemm")||(p.generator_backend=="gemm"&&launch.plan.generator_backend!="gemm"){return Err("SIZE_PROFILE_LAUNCH_INVALID".into());}
-  if let Some(bucket)=p.frontier_max_rank_bucket{if bucket>31||!buckets.insert(bucket)||!matches!(p.status.as_str(),"LIVE_CHUNK_EMPIRICAL_PROFILE"|"REUSED_SOURCE_LIVE_BUCKET"){return Err("SIZE_PROFILE_BUCKET_INVALID".into());}}
+  if let Some(bucket)=p.frontier_max_rank_bucket{if !valid_frontier_bucket(bucket,segmented)||!buckets.insert(bucket)||!matches!(p.status.as_str(),"LIVE_CHUNK_EMPIRICAL_PROFILE"|"REUSED_SOURCE_LIVE_BUCKET"){return Err("SIZE_PROFILE_BUCKET_INVALID".into());}}
   else{if previous_base.map_or(p.minimum_frontier!=0,|previous|p.minimum_frontier<=previous){return Err("SIZE_PROFILE_BASE_INVALID".into());}previous_base=Some(p.minimum_frontier);}
  }
  if !launch.size_profiles.is_empty()&&previous_base.is_none(){return Err("SIZE_PROFILE_BASE_MISSING".into());}
@@ -114,6 +124,7 @@ pub fn run(args:&[String])->Result<()>{
  let rank_plan=plans[rank as usize].clone();
  let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;let output=Path::new(&args[4]);if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
  let bootstrap=Path::new(&args[3]);let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}id=crate::session_cache::bootstrap_id(||{let mut fresh=[0u8;128];crate::generic_native::checked!(mgbfs_nccl_unique_id, unsafe{mgbfs_nccl_unique_id(fresh.as_mut_ptr().cast())})?;Ok(fresh)})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let waiter=crate::session_wait::FileWaiter::new(bootstrap.parent().ok_or("GRAPH_BOOTSTRAP_PARENT")?);if !waiter.wait(bootstrap,None,Some(Duration::from_secs(60)))?{return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);let cached=crate::session_cache::bootstrap_id(||Ok(id))?;if cached!=id{return Err("GENERIC_SESSION_COMM_ID_MISMATCH".into());}}
+ if segmented{return run_segmented(&g,&launch,rank,rank_plan,&id,seconds,output)}
  let cache_shape=format!("{}:{}",serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?,std::env::var("MGBFS_GENERIC_GENERATOR").unwrap_or_default());if rank_plan.history_algorithm=="HASH"{let required=GenericDistributedBfs::buffer_requirements(&g,&rank_plan,launch.owner_cuts.as_deref())?;crate::session_cache::begin_generic(cache_shape,&required)?;}else{crate::session_cache::begin(cache_shape);}let _signals=Signals::new();let setup=Instant::now();let mut bfs=GenericDistributedBfs::new_with_cuts(&g,launch.devices[rank as usize],rank,rank_plan.clone(),&id,0x19f856a2,64,launch.owner_cuts.as_deref())?;if launch.online_size_tuning{bfs.enable_online_size_tuning();}let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={}",launch.devices[rank as usize]);
  crate::job_phase::set("bfs")?;
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let(status,reason)=loop{
@@ -126,4 +137,33 @@ pub fn run(args:&[String])->Result<()>{
  use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
  let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":if rank_plan.history_layers==3{"GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY"}else{"GENERIC_DISTRIBUTED_EXACT_ALL_VISITED"},"profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"});
  std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;bfs.quiesce()?;crate::session_cache::permit_comm(true);Ok(())
+}
+
+// Private opt-in used solely for integration tests; no public API promises yet.
+fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:&[u8;128],seconds:u64,output:&Path)->Result<()>{
+ if launch.online_size_tuning||launch.size_profiles.iter().any(|p|p.generator_backend!="cuda"){return Err("SEGMENTED_EXPERIMENT_PROFILE_NOT_SUPPORTED".into())}
+ let backend=if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
+ crate::session_cache::begin(format!("{}:{}",backend,serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?));
+ // Shape changes park legacy cudaMallocAsync pages in the pool. Return idle
+ // pages before this backend admits ordinary cudaMalloc segment storage.
+ crate::generic_native::checked!(cudaSetDevice,unsafe{cudaSetDevice(launch.devices[rank as usize] as i32)})?;
+ let pool_idle_before=crate::generic_pool::available()?;crate::generic_pool::trim_idle()?;let pool_idle_after=crate::generic_pool::available()?;
+ let _signals=Signals::new();let setup=Instant::now();
+ let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,64,launch.owner_cuts.as_deref())?;
+ let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
+ let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];
+ let(status,reason)=loop{
+  crate::native_fault::layer(sizes.len() as u64,sizes.len() as u64-1);
+  let local=if CANCELLED.load(Ordering::Relaxed)||crate::job_phase::cancelled(){1}else if launch.profile_max_layers.map_or(false,|limit|sizes.len() as u32>limit){3}else if seconds!=0&&start.elapsed()>=Duration::from_secs(seconds){2}else{0};
+  let stop=bfs.collective_stop(local)?;if stop!=0{break("INCOMPLETE",if stop==1{"CANCELLED".to_owned()}else if stop==3{"PROFILE_LAYER_LIMIT".to_owned()}else{"DEADLINE".to_owned()});}
+  if let Some(p)=launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket==Some(bfs.frontier_bucket())).or_else(||launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket.is_none()&&p.minimum_frontier<=bfs.global_frontier())){bfs.set_size_profile(p.batch,false)?;}
+  let layer=Instant::now();match bfs.advance()?{DistributedAdvance::Layer{global,..}=>{sizes.push(global);crate::native_fault::completed(sizes.len() as u64-1);times.push(layer.elapsed().as_secs_f64());},DistributedAdvance::Complete=>break("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),DistributedAdvance::Resource{fatal}=>break("INCOMPLETE",format!("RESOURCE_{fatal}"))}
+ };
+ let bfs_seconds=start.elapsed().as_secs_f64();crate::job_phase::set("retiring")?;
+ let current=bfs.sample_global(1000)?;let previous=bfs.previous_small_sample(*sizes.iter().rev().nth(1).unwrap_or(&0))?;
+ let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
+ use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
+ let mut memory=bfs.memory_geometry();memory["pool_idle_before_trim_bytes"]=pool_idle_before.into();memory["pool_idle_after_trim_bytes"]=pool_idle_after.into();
+ let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
+ std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;bfs.quiesce()?;bfs.mark_healthy();crate::session_cache::permit_comm(true);Ok(())
 }

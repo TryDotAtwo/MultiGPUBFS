@@ -16,6 +16,7 @@ class NativeOptions:
     devices: tuple[int, ...] | None = None
     max_seconds: int | None = None
     autotune: bool = True
+    memory_backend: str = "legacy"
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,8 @@ def _search(original, graph, backend, options, output, kwargs):
              else contextlib.nullcontext())
     with scope:
         report = run_graph(definition, output, devices=options.devices,
-                           max_seconds=options.max_seconds, autotune=options.autotune)
+                           max_seconds=options.max_seconds, autotune=options.autotune,
+                           memory_backend=options.memory_backend)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

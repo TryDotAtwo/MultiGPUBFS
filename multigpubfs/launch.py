@@ -5,6 +5,29 @@ from .process_control import query as native_query, run as native_run
 from .graph_definition import GraphDefinition,from_cayleypy
 from .native_distribution import native_runtime
 
+# Cache only successful capability queries. The key follows the executable
+# identity and loader search path, so replacing a binary or library path
+# cannot silently reuse a capability learned from a different installation.
+_memory_backend_capabilities=set()
+def _require_memory_backend(native,env,backend):
+ key_name={'segmented24':'segmented24_v1','permutation_bitmap':'permutation_bitmap_v1'}[backend]
+ resolved=shutil.which(native) or native
+ st=os.stat(resolved)
+ identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,env.get('LD_LIBRARY_PATH',''),key_name)
+ if identity in _memory_backend_capabilities:return
+ result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
+ try: info=json.loads(result.stdout)
+ except (TypeError,ValueError):info={}
+ if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True:
+  raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
+ if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
+ _memory_backend_capabilities.add(identity)
+
+def _check_memory_backend_receipt(report,backend):
+ expected={'segmented24':'EXPERIMENTAL_SEGMENTED24','permutation_bitmap':'EXPERIMENTAL_PERMUTATION_BITMAP'}.get(backend)
+ if expected is not None and report.get('backend')!=expected:
+  raise RuntimeError('NATIVE_MEMORY_BACKEND_RECEIPT_MISMATCH: expected '+expected+', got '+str(report.get('backend')))
+
 def _receipt(output,digest):
  report=json.loads((output/'report.json').read_text(encoding='utf-8'))
  if report['graph_digest']!=digest:raise RuntimeError('GRAPH_RECEIPT_IDENTITY_MISMATCH')
@@ -32,7 +55,7 @@ def _phase_failures(phases):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -50,15 +73,36 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
+ if memory_backend not in ('legacy','segmented24','permutation_bitmap'):raise ValueError('INVALID_MEMORY_BACKEND')
+ if memory_backend=='permutation_bitmap':
+  if graph.action['kind']!='permutation':raise ValueError('BITMAP_REQUIRES_PERMUTATION_ACTION')
+  if not 1<=len(graph.start)<=64:raise ValueError('BITMAP_UNSUPPORTED_DEGREE')
  if peer_transport not in ('auto','host','lsa'):raise ValueError('INVALID_PEER_TRANSPORT')
  if peer_transport=='lsa' and not backend.startswith('shard_ab_'):raise ValueError('LSA_REQUIRES_SPECIALIZED_BACKEND')
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
- if capacity is not None and (type(capacity) is not int or not 1<=capacity<=0x7ffffffe):raise ValueError('INVALID_CAPACITY')
+ if capacity is not None and (type(capacity) is not int or not 1<=capacity<=(0xffffffffffffffff if memory_backend in ('segmented24','permutation_bitmap') else 0x7ffffffe)):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ segmented=(memory_backend in ('segmented24','permutation_bitmap'))
+ if not segmented:
+  # An inherited private experiment flag must not override an explicit API choice.
+  native_env.pop('MGBFS_EXPERIMENTAL_SEGMENTED24',None);native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None);native_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
+ if segmented:
+  if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
+  if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
+  _require_memory_backend(native,native_env,memory_backend)
+  native_env=dict(native_env,MGBFS_EXPERIMENTAL_SEGMENTED24='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
+  if memory_backend=='permutation_bitmap':native_env['MGBFS_EXPERIMENTAL_BITMAP']='1'
+  else:native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None)
+  if capacity is not None:
+   prior=int(native_env.get('MGBFS_SEGMENT_MAX_RANK_STATES',str(capacity)))
+   native_env['MGBFS_SEGMENT_MAX_RANK_STATES']=str(min(prior,capacity))
+   # Legacy graph-info capacity is only used to size bounded transport; it
+   # must not become an implicit rank-wide segment capacity.
+   capacity=None
  communication=None
  if _profile_layers is None and os.environ.get('WORLD_SIZE','1')=='1' and not backend.startswith('shard_ab_'):
   if Path(output).exists():raise FileExistsError(output)
@@ -68,9 +112,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
   from .nccl_preflight import prepare
-  native_env,communication=prepare(native,selected,native_env,output,graph)
+  # The transport smoke graph must not inherit an explicit production-state
+  # cap: a tiny cap is a valid request for the real BFS, not an NCCL failure.
+  preflight_env=dict(native_env);segment_cap=preflight_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
+  native_env,communication=prepare(native,selected,preflight_env,output,graph)
+  if segment_cap is not None:native_env['MGBFS_SEGMENT_MAX_RANK_STATES']=segment_cap
  geometry_bound=None
- if capacity is None and _profile_layers is None and not backend.startswith('shard_ab_'):
+ if capacity is None and _profile_layers is None and not segmented and not backend.startswith('shard_ab_'):
   from .workload_geometry import certified_frontier_bound
   geometry_bound=certified_frontier_bound(graph)
   if geometry_bound is not None:
@@ -81,6 +129,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
 
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  def finish(report):
+  _check_memory_backend_receipt(report,memory_backend)
   if communication is not None:report['communication_preflight']=communication
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   from .size_profiles import save_online_profiles
@@ -105,18 +154,17 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,max_seconds,backend,_batch,_profile_layers,None))
  if shards is None:
   if autotune:
-   from .autotune import choose_size_profile
+   from .autotune import choose_size_profile,choose_profile
    # Reserve most of the caller's deadline for BFS, not cold tuning.
    tuning_budget=60 if max_seconds is None else min(60,max(1,max_seconds//3))
    native_env=dict(native_env,MGBFS_TUNING_EVIDENCE_ROOT=str(Path(output).parent/(Path(output).name+'-tuning-evidence')))
-   profile=choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto')
+   profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
    if profile.get('backend','generic')!='generic':
     remaining=remaining_work(max_seconds,profile['seconds'])
     return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
-   native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=profile.get('transport','full'),MGBFS_GENERIC_SORT=profile.get('candidate_order','none'),MGBFS_GENERIC_GENERATOR=profile.get('generator_backend',native_env.get('MGBFS_GENERIC_GENERATOR','cuda')))
-   if profile.get('history_algorithm')=='SORTED_RUNS':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(profile['owner_lanes']))
-   elif profile.get('history_algorithm')=='HASH':native_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
+   from .autotune import _profile_environment
+   native_env=_profile_environment(native_env,profile)
    if (profile.get('measured') or profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE') and profile.get('backend','generic')=='generic':_batch=profile['batch']
    max_seconds=remaining_work(max_seconds,profile['seconds'])
   else:shards=1
@@ -145,11 +193,15 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if profile is not None:profile['launch_admission_reused']=accepted is not None
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
+  if memory_backend=='permutation_bitmap':
+   # graph-info derives hash cut points, while bitmap uses exact rank modulo
+   # world. Never send irrelevant hash cuts into the bitmap runtime.
+   admission['owner_cuts']=None
   if admission.get('owned_resource_admission'):native_env=dict(native_env,MGBFS_REQUIRE_OWNED_RAW='1')
   if profile and profile.get('size_profiles'):admission.update(size_profiles=profile['size_profiles'],online_size_tuning=profile.get('online_size_tuning',False))
   if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
   if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
-  if max_seconds is not None and admission['plan'].get('generator_backend','cuda')!='gemm' and admission['plan'].get('history_algorithm','HASH')=='HASH' and len(devices)==1 and shards==1 and _profile_layers is None and not (profile and profile.get('size_profiles')) and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False) and not admission['plan'].get('sort_candidates',False):
+  if not segmented and max_seconds is not None and admission['plan'].get('generator_backend','cuda')!='gemm' and admission['plan'].get('history_algorithm','HASH')=='HASH' and len(devices)==1 and shards==1 and _profile_layers is None and not (profile and profile.get('size_profiles')) and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False) and not admission['plan'].get('sort_candidates',False):
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(wire(max_seconds))]
    if capacity is not None:command+=['--capacity',str(capacity)]
    process=native_run(command,capture_output=True,text=True,env=native_env,timeout=None if max_seconds is None else max_seconds+180)
@@ -211,7 +263,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device');report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device')
+  if segmented:
+   report['segment_memory_by_rank']=[dict(p['segment_memory'],rank=i,device=devices[i]) for i,p in enumerate(parts)]
+   report['segment_memory_scope']='rank 0 only; see segment_memory_by_rank for every selected GPU'
+  report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
   if profile:report['autotune']=profile;report['profile_status']=profile['status']
   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
   return finish(_receipt(output,digest))

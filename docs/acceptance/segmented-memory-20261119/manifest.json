@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "date": "2026-11-19",
+  "base_commit": "b102b8e887eead755903b9e00a865368a6270a12",
+  "hardware": {
+    "2gpu": "2 x RTX 3060 12288 MiB",
+    "8gpu": "8 x RTX 3090: seven 24576 MiB, one 20480 MiB, PCIe"
+  },
+  "method": {
+    "8gpu": "one run per mode; equal 8 shards, 8 owner lanes, batch 8192, 1048576 segment rows for S12/S13",
+    "2gpu": "one run per mode; equal 8 shards, batch 8192, 1048576 rows; 8 owner lanes for new modes",
+    "correctness": "all layer sizes independently compared with the Mahonian inversion polynomial; small cases also compare exact retained state sets",
+    "scope": "physical GPUs and listed graphs only; no SM100 or S14 runtime acceptance"
+  },
+  "builds": {
+    "cuda_library_sha256": "3066d3ca7797bc8c8e2ea2e2633cb0deeaa9e45db6f393278494e29e57a54f71",
+    "gpu_8_s10_s12_native_sha256": "24eedcc0712eec72c65460f7f971e0da6451b85f71d410b45540c40f333c9b86",
+    "gpu_8_s13_native_sha256": "5f2e60693be18b55d2a82f845b9ee4a903495692930d49e0c075482c7dbcbd85",
+    "rust_175_2gpu_native_sha256": "29bfd1e6340d35caadeeb4edb16b9c101258484503294e238dabf8b78903acdf",
+    "note": "S13 binary adds key-info capability flags; same GPU library. Rust 1.75 binary passed separate small GPU acceptance."
+  },
+  "additional_checks": {
+    "python_regression": "934 passed, 212 subtests passed; 1 unrelated warning",
+    "rust_contracts": "10 passed",
+    "resource_stops": "2 and 8 rank GPU cases",
+    "u64_boundary": "synthetic >2^32 NCCL and API counts; no actual single-rank >2^32-state BFS",
+    "tuning": "2x3060 S11: segmented 57.957 s, bitmap 54.337 s cold; same-graph persistent cache hit 16-17 ms"
+  },
+  "records": {
+    "8gpu-s10-legacy": {
+      "report": "8gpu-s10-legacy.json",
+      "sha256": "ccd444fe4236ffe9b5606fbd0715c245eb693d9905c3f1686e1dcd112c462652",
+      "n": 10,
+      "states": 3628800,
+      "layers": 46,
+      "bfs_seconds": 0.316531196,
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "world": 8
+    },
+    "8gpu-s10-segmented24": {
+      "report": "8gpu-s10-segmented24.json",
+      "sha256": "392e919b3a78539036fd5e367c20e206b93cd494c16f900d68890ca5d1fe1659",
+      "n": 10,
+      "states": 3628800,
+      "layers": 46,
+      "bfs_seconds": 0.498134384,
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "world": 8
+    },
+    "8gpu-s10-permutation_bitmap": {
+      "report": "8gpu-s10-permutation_bitmap.json",
+      "sha256": "0e8c4f32af6a9246e18074078c0cd66abaacc6f5a2c0bc135905c421573e2685",
+      "n": 10,
+      "states": 3628800,
+      "layers": 46,
+      "bfs_seconds": 0.665650819,
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "world": 8
+    },
+    "8gpu-s12-legacy": {
+      "report": "8gpu-s12-legacy.json",
+      "sha256": "7a08e84b584d0abec1fc45c9ba13180bc30dcd175563d620ee406b65e0378e5a",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 29.272723809,
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "world": 8
+    },
+    "8gpu-s12-segmented24": {
+      "report": "8gpu-s12-segmented24.json",
+      "sha256": "aaeb3b391afacab31ca8ca2aca56263a0c5f2f128412a249961f3895a91760d6",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 24.091961337,
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "world": 8
+    },
+    "8gpu-s12-permutation_bitmap": {
+      "report": "8gpu-s12-permutation_bitmap.json",
+      "sha256": "4b6f57fa1301986b118bf600d552d6401d767930e3df058baa9cad9ba86b93b8",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 91.130684174,
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "world": 8
+    },
+    "8gpu-s13-segmented24": {
+      "report": "8gpu-s13-segmented24.json",
+      "sha256": "cbc18174651af5e4a1b6822165f71eb321575f0d0c85a9275d2d873e6bc8a2de",
+      "n": 13,
+      "states": 6227020800,
+      "layers": 79,
+      "bfs_seconds": 316.890648138,
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "world": 8
+    },
+    "8gpu-s13-legacy": {
+      "report": "8gpu-s13-legacy.json",
+      "sha256": "0b2560b42de494d3265901305aa71cc37da748feb8d8fec42ea6e52d57aa8896",
+      "n": 13,
+      "states": 6227020800,
+      "layers": 79,
+      "bfs_seconds": 410.519229288,
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "world": 8
+    },
+    "2gpu-s12-legacy-rank0": {
+      "report": "2gpu-s12-legacy-rank0.json",
+      "sha256": "7cd34ba527b0619a092abfe60121023e4b3c2db0283ee950e6803edba74c004f",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 46.495344591,
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "world": 2
+    },
+    "2gpu-s12-legacy-rank1": {
+      "report": "2gpu-s12-legacy-rank1.json",
+      "sha256": "8276051ecd4574f70ec6df2fb8dec98dafcc6a6b1700cbd489b47f2c1ca8985b",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 46.495442269,
+      "backend": "GENERIC_DISTRIBUTED_EXACT_THREE_BANK_HISTORY",
+      "world": 2
+    },
+    "2gpu-s12-segmented24-rank0": {
+      "report": "2gpu-s12-segmented24-rank0.json",
+      "sha256": "c1542a1ba72ebca10d2927a69603c9d0a3a0226a30af129ad7d93caffdfbfc1d",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 59.347925294,
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "world": 2
+    },
+    "2gpu-s12-segmented24-rank1": {
+      "report": "2gpu-s12-segmented24-rank1.json",
+      "sha256": "dd5ebf11c097bd264dab14429be377441630955cee7d648a9556e6dabd1ba0be",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 59.347891429,
+      "backend": "EXPERIMENTAL_SEGMENTED24",
+      "world": 2
+    },
+    "2gpu-s12-permutation_bitmap-rank0": {
+      "report": "2gpu-s12-permutation_bitmap-rank0.json",
+      "sha256": "fa20933dbb987871d2355ae23cc9e2a1df39f8cba85c440d37afcf0cbe956287",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 84.411465961,
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "world": 2
+    },
+    "2gpu-s12-permutation_bitmap-rank1": {
+      "report": "2gpu-s12-permutation_bitmap-rank1.json",
+      "sha256": "ef8d71a5cac174fdc649d852e3100c11f30ab954dc5fb15ea666fba587d436a8",
+      "n": 12,
+      "states": 479001600,
+      "layers": 67,
+      "bfs_seconds": 84.411466462,
+      "backend": "EXPERIMENTAL_PERMUTATION_BITMAP",
+      "world": 2
+    }
+  }
+}

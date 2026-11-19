@@ -229,4 +229,7 @@ mod bootstrap_tests {
 
 pub fn generic_buffer_put(ptr:*mut c_void,bytes:usize)->bool{let allowed=CACHE.with(|c|c.borrow().permit_comm);allowed&&buffer_put(ptr,bytes)}
 
+/// Release only unclaimed, quiescent buffers; preserve current job metadata.
+pub fn release_unused_buffers(){CACHE.with(|c|c.borrow_mut().release_storage());}
+
 pub fn release_idle_storage(){CACHE.with(|c|{let mut c=c.borrow_mut();c.release_storage();for(_,_,event,_)in c.pinned.drain(..){unsafe{cudaEventDestroy(event);}}c.shape.clear();c.generic_required=None;c.generic_manifest.clear();});}
