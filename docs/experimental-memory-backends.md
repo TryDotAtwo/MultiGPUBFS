@@ -8,13 +8,12 @@ states on one rank, out-of-core execution, or universal performance gains.
 
 ## Native build requirement
 
-These modes require a native executable **and** CUDA library built from this
-source. The existing dev35 GitHub native assets predate these modes. Installing
-the source while continuing to use those old assets is not enough. The
-launcher queries key-info and raises NATIVE_MEMORY_BACKEND_UNAVAILABLE
-before starting BFS if the matching executable lacks the requested mode. It
-also checks the actual backend in the receipt. A new cross-architecture
-published native package is not part of this source change.
+These modes require a matching native executable **and** CUDA library.
+The dev36 GitHub release provides independently checksummed components for
+SM75/80/86/89/90/100/103/120 and a universal build. Existing dev35 native
+assets do not contain the new kernels. The launcher checks the requested
+native capability before BFS and checks the actual backend in the receipt.
+See [installation and offline prefetch](install-native-package.md).
 
 ## Select a backend
 
@@ -108,10 +107,9 @@ inside a persistent context reused the exact profile in about 16-17 ms.
 Changing graph or hardware may require tuning again. Small conservative
 profiles are not claimed to be measured optima.
 
-A separately built SM86 wheel was installed offline in a clean environment;
-CayleyPy persistent S3 and S4 passed with both modes on 2x RTX 3060. The
-wheel is an unpublished test artifact. The complete CUDA library was also
-compiled and its SM100 inventory checked in GitHub Actions; this is not a
-B200 runtime acceptance or a published installable package.
+An installed SM86 candidate and the selective offline-cache layout passed
+CayleyPy persistent S3-S5 on 2x RTX 3060 with both modes. All advertised CUDA
+components, including SM100 and SM103, were compiled and inventory-checked;
+this is not a B200 or B300 runtime acceptance.
 
 [Reports, hashes and acceptance boundaries](acceptance/segmented-memory-20261119/manifest.json).

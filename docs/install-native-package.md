@@ -1,95 +1,81 @@
-# Install MultiGPUBFS with one pip command
+# Install MultiGPUBFS with pip
 
-The same ordinary pip command installs the Python API from GitHub on Kaggle or a Linux x86_64 GPU server accessed through SSH. No compiler, standalone bootstrap, manual CUDA paths, HF account or Kaggle Inputs are required.
-
-## Linux / SSH
+This is an experimental release for Linux x86_64 NVIDIA GPU jobs. The same
+command works on a login host and a GPU worker; no target-host compilation is
+required. After upgrading, start a new Python process.
 
 ```bash
-python -m pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261025-v33/multigpubfs-0.2.0.dev33-py3-none-any.whl#sha256=a1bcdb333c0de661c792c53f71f3fd9cb52baca9860c92e9f60be8e191229a62"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261119-v36/multigpubfs-0.2.0.dev36-py3-none-any.whl#sha256=ca1f6ea06dddccbdf89d8a36ededd70f65637522a11134d82c40fff4b9ed3b90"
 ```
 
-## Kaggle
+For Kaggle use the same quoted argument after `%pip install --upgrade`,
+with Internet and GPU enabled. Import alone does not download native files.
 
-Enable **Internet** and **GPU (2×T4)**, then run:
+## Prefetch on a login host without a GPU
 
-```python
-%pip install "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261025-v33/multigpubfs-0.2.0.dev33-py3-none-any.whl#sha256=a1bcdb333c0de661c792c53f71f3fd9cb52baca9860c92e9f60be8e191229a62"
+Select all SM versions you expect, or use `--all` for every target including
+the universal fallback. The shared location must be visible and writable to
+the later GPU jobs.
+
+```bash
+export MGBFS_NATIVE_CACHE=/path/to/shared/multigpubfs-cache
+python -m multigpubfs prefetch --sm 86,100,120
+# Alternatively: python -m multigpubfs prefetch --all
 ```
 
-After an upgrade, start a new Python process/session before importing the package.
+Use `--all --dry-run` to inspect download sizes. The shared CUDA/NCCL archive
+is content-addressed and reused if already cached from the prior package.
+On every job set the same cache path and `MGBFS_NATIVE_OFFLINE=1` to forbid
+downloads; missing preloaded components fail explicitly.
+
+## CayleyPy persistent BFS
 
 ```python
-import multigpubfs, cayleypy
+import cayleypy
+import multigpubfs
 from multigpubfs.generic_session import persistent_graph_workers
-multigpubfs.enable_native()
-with persistent_graph_workers():
-    for n in (10, 11, 12):
-        graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.coxeter(n), device="cpu")
-        result = graph.bfs()
-        print(n, result.bfs_completed, result.layer_sizes)
+
+multigpubfs.enable_native(multigpubfs.NativeOptions(
+    devices=(0, 1),  # set to the logical devices allocated to this job
+    memory_backend="segmented24",
+))
+try:
+    with persistent_graph_workers():
+        for n in (4, 5, 6):
+            graph = cayleypy.CayleyGraph(cayleypy.PermutationGroups.coxeter(n), device="cpu")
+            result = graph.bfs()
+            print(n, result.bfs_completed, result.layer_sizes)
+            if result.bfs_completed:
+                print("diameter:", result.diameter())
+            else:
+                print("last completed depth:", result.completed_depth)
+finally:
+    multigpubfs.disable_native()
 ```
 
-`device="cpu"` constructs the graph definition; native BFS uses the GPUs visible to the allocated job. Use `multigpubfs.NativeOptions(devices=(0,1))` in `enable_native(...)` to select logical devices explicitly. Import alone does not initialize CUDA, download native files or replace CayleyPy methods.
+`device="cpu"` constructs a CayleyPy graph definition; the native BFS uses
+the GPUs specified in `NativeOptions`. The alternate exact
+`permutation_bitmap` backend supports permutation actions only. The existing
+`legacy` backend remains the default for compatibility. The CLI also accepts
+`--memory-backend segmented24` or `--memory-backend permutation_bitmap`.
 
-## Shared/login host and offline GPU jobs
+`INCOMPLETE` is not a completed graph or diameter. Segmented storage does
+not guarantee that a graph fits. The bitmap covers the entire multiset
+permutation domain. A cache hit, successful compilation, or a reported SM
+does not establish correctness or speed on a target GPU.
 
-To prepare before GPUs are allocated, use `python -m multigpubfs prefetch --sm 100,120` or `python -m multigpubfs prefetch --all`. No GPU/driver discovery is performed. `--all --dry-run` reports the remaining archive bytes without downloads/writes. Put the cache on persistent storage visible to every job and set `MGBFS_NATIVE_CACHE` consistently. Set `MGBFS_NATIVE_OFFLINE=1` in GPU jobs to prohibit missing-component downloads. [Commands, sizes, Python API and concurrency](native-prefetch.md).
-
-## What downloads and when
-
-The wheel is **156,929 bytes** and contains Python code plus a pinned component index. On a GPU node, explicit `enable_native()` detects the visible GPUs through a bounded NVIDIA Driver API child and prepares the native runtime before the first BFS clock. Installation and graph setup can also happen on a CPU/login/container-build host: preparation is deferred to the first real native operation on a GPU node. `doctor` has a separate preparation stage.
-
-Only the common executable/private CUDA12.9.79/NCCL2.30.7 component and one compatible CUDA component are fetched from pinned **GitHub Releases**. Native targets are SM75/80/86/89/90/100/103/120. A same-major compatible image can cover newer minor capabilities; mixed or other forward-compatible devices can use the universal component with ordinary compute80 PTX. The package records the actual selection. No target-server compilation is used for matching native cubins.
-
-The current common component is 304,497,488 bytes. A clean SM75/T4 selection needs 317,597,550 component bytes; SM100/B200 needs 316,431,478 according to the manifest. These byte counts are delivery sizes, not GPU performance or B200 execution evidence. Ordinary BFS does not download the optional diagnostic alternatives. Deep investigation or a needed recipe contrast fetches those separately.
-
-Downloads are streamed, size/SHA256 checked, extracted against a strict file list and atomically published under `~/.cache/multigpubfs/native` (or `$XDG_CACHE_HOME/multigpubfs/native`). Processes share a locked content-addressed cache. `MGBFS_NATIVE_CACHE` can point to an existing writable persistent location. A complete cache supports `MGBFS_NATIVE_OFFLINE=1`; a missing component fails explicitly in offline mode. The first preparation requires outbound GitHub HTTPS. A download failure leaves the original CayleyPy method intact.
-
-Private CUDA/NCCL libraries belong to native child processes. Pip does not replace Torch's pinned NVIDIA packages. No NVIDIA driver is installed. Normal graph transitions reuse the selected runtime without another hardware-discovery process or network transfer.
-
-## Checks and limits
+## Diagnosis and limits
 
 ```bash
-multigpubfs doctor
-# Extended controlled alternatives, with a 30-minute execution budget:
-multigpubfs doctor --deep --total-timeout 1800
+python -m multigpubfs doctor
+python -m multigpubfs doctor --deep --total-timeout 1800
 ```
 
-The diagnostic checks actual GPU kernels, NCCL, persistent workers and exact tiny BFS against independent CPU oracles. `working_configuration: READY` requires successful BFS and execution of its printed command. A cached file or a detected SM alone is not GPU acceptance. A native-count timeout retains its original evidence; agreeing independent CUDA probes allow isolated recipe checks to continue. See [server instructions](server-quickstart-ru.md) and [controlled build comparisons](diagnostic-build-contrasts.md).
+The new backends have exact small-oracle and S12/S13 evidence on RTX GPUs;
+SM100/B200 and SM103/B300 were compiled but have not been hardware-accepted
+for this release. More than 2^32 simultaneously resident states on one GPU
+and complete S14 remain unverified. Python 3.10+, Linux x86_64, a compatible
+NVIDIA driver and the GLIBC/GLIBCXX versions in the native manifest are
+required. [Architecture, timings and limitations](experimental-memory-backends.md).
 
-Python3.10+ is required. Native execution requires Linux x86_64, GLIBC2.34+, GLIBCXX3.4.22+, CXXABI1.3.9+ and a compatible NVIDIA driver. Windows-native GPU execution is unsupported. BFS has no work deadline by default: it runs until graph completion, resource exhaustion or explicit cancellation. Positive max_seconds remains optional; startup/query/retirement timeouts and scheduler job limits are separate. Unknown graph families keep ordinary memory admission and measured tuning; profiles are not claimed to be globally optimal.
-
-The current prefetch flow passed actual selected/all component preparation on a CPU-only host and physical **2×T4** parallel/persistent offline BFS. Earlier native delivery versions have the S11/S12, shard-engine and diagnostic-contrast acceptance recorded separately. The dev33 GitHub wheel additionally passed complete recovery diagnostics on 8×RTX 5060 Ti (SM120). SM100/B200 and SM103/B300 have compilation/cubin inventory evidence; this release was not execution-tested on those devices. [Current prefetch acceptance, hashes and scope](native-prefetch-acceptance-2026-10-15.md).
-
-Import [the basic notebook](../examples/cayleypy_basic.ipynb) or [the pair sweep](../examples/cayleypy_pair_sweep.ipynb) from GitHub into Kaggle. Their input lists remain empty. For a loop over graphs, retain one `persistent_graph_workers()` context around the loop.
-
-Release: [native-pip-20261025-v33](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261025-v33). Wheel SHA256 `a1bcdb333c0de661c792c53f71f3fd9cb52baca9860c92e9f60be8e191229a62`; native-index SHA256 `423a491a802ec807b0ecc38fbdb694af5abf8738fbdba186c6d7943856972f8d`. Older pinned releases and their acceptance reports remain historical and are not overwritten.
-
-Native CUDA/NCCL error context, retained failed-rank phase files and opt-in call tracing: [server failure evidence](native-failure-evidence.md).
-
-
-В dev30 исправлено зависание восьми рангов при большом числе шардов: группы обмена NCCL ограничены без отключения автоподбора. Общий компонент dev29 переиспользуется из кэша; один раз скачивается новая CUDA-библиотека для нужного SM. Старые диагностические контроли с отличающимися исходниками исключены; рабочий SM и универсальная сборка остаются доступны.
-
-## Work limits and persistent tuning (dev31)
-
-Use NativeOptions(max_seconds=None), or omit max_seconds. The CLI accepts --seconds 0 for unlimited work. Diagnostics retain bounded stages so a hung probe cannot consume an entire allocation. A correct truncated prefix is inconclusive, not a wrong BFS result; unmeasured tuning is not a verified production pass.
-
-Persistent workers cache tuning by graph, runtime, devices and configuration. Identical repeated calls reuse the profile with fresh admission checks; a changed graph or geometry may need new bounded probes. Online layer-size adaptation is distinct from repeating the full tuner.
-
-[dev31 regression and 2-GPU acceptance](acceptance/unlimited-dev31.json). Eight-GPU server acceptance for this release is not inferred from these tests.
-
-## Measured NCCL admission (dev32)
-
-Before the first multi-GPU generic BFS, the launcher measures communication memory, verifies all-peer traffic and rehearses a short graph prefix. Only verified transport alternatives are accepted, then ordinary measured autotuning proceeds. Persistent sessions reuse communication calibration. Explicit NCCL transport settings are respected; full BFS is never automatically restarted.
-
-[Implementation and limitations](acceptance/nccl-dev32.md), [source GPU acceptance](acceptance/nccl-dev32.json), [published wheel acceptance](acceptance/nccl-dev32-installed.json). B200 and the original failing RTX node still require target acceptance.
-
-## Automatic recovery diagnostics (dev33)
-
-Inside one GPU job, launch one parent process using every selected GPU:
-
-```sh
-python -m multigpubfs doctor --recover --devices 0,1,2,3,4,5,6,7 --total-timeout 1800
-```
-
-The isolated diagnostic tries bounded safe transport alternatives, checks fresh CUDA health after failures and accepts a recipe only after CPU-oracle BFS, measured tuning and a real UT(4,47) prefix on the complete GPU set. A READY result includes `launch-command.txt`; the production command has no time limit. `diagnostics.zip` contains checksummed logs, phases and actionable findings. See [the recovery guide](recovery-diagnostics.md) for limits and persistent CayleyPy usage.
+[Release and checksums](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261119-v36)
