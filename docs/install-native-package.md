@@ -37,7 +37,8 @@ from multigpubfs.generic_session import persistent_graph_workers
 
 multigpubfs.enable_native(multigpubfs.NativeOptions(
     devices=(0, 1),  # set to the logical devices allocated to this job
-    memory_backend="segmented24",
+    memory_backend="segmented",
+    segment_rows=2**32,  # maximum rows per bank, configurable
 ))
 try:
     with persistent_graph_workers():
@@ -56,8 +57,9 @@ finally:
 `device="cpu"` constructs a CayleyPy graph definition; the native BFS uses
 the GPUs specified in `NativeOptions`. The alternate exact
 `permutation_bitmap` backend supports permutation actions only. The existing
-`legacy` backend remains the default for compatibility. The CLI also accepts
-`--memory-backend segmented24` or `--memory-backend permutation_bitmap`.
+`legacy` backend remains the default for compatibility. The CLI accepts `--memory-backend segmented --segment-rows 4294967296`
+or `--memory-backend permutation_bitmap`. Changing the configured maximum
+does not force allocation of a full segment on a smaller GPU.
 
 `INCOMPLETE` is not a completed graph or diameter. Segmented storage does
 not guarantee that a graph fits. The bitmap covers the entire multiset

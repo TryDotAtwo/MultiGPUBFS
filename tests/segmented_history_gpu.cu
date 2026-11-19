@@ -17,8 +17,8 @@ using State = std::array<uint8_t,2>;
 
 struct Owned {
     MgbfsSegment segment{};
-    uint32_t* count{};
-    uint32_t* future{};
+    uint64_t* count{};
+    uint64_t* future{};
     uint32_t* error{};
 };
 
@@ -31,11 +31,11 @@ static Owned make_segment(uint32_t capacity, uint32_t banks=1, uint32_t width=1)
     CUDA_OK(cudaMalloc((void**)&x.segment.slots, x.segment.slots_count * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void**)&x.segment.states, capacity * banks * 2 * width));
     CUDA_OK(cudaMalloc((void**)&x.segment.positions, capacity * banks * sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc((void**)&x.count, sizeof(uint32_t)));
-    CUDA_OK(cudaMalloc((void**)&x.future, capacity * sizeof(uint32_t)));
+    CUDA_OK(cudaMalloc((void**)&x.count, sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void**)&x.future, capacity * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void**)&x.error, sizeof(uint32_t)));
     CUDA_OK(cudaMemset(x.segment.slots, 0xff, x.segment.slots_count * sizeof(uint64_t)));
-    CUDA_OK(cudaMemset(x.count, 0, sizeof(uint32_t)));
+    CUDA_OK(cudaMemset(x.count, 0, sizeof(uint64_t)));
     CUDA_OK(cudaMemset(x.error, 0, sizeof(uint32_t)));
     return x;
 }
@@ -63,7 +63,7 @@ static uint32_t submit(Owned& dst, const std::vector<MgbfsSegment>& sealed, cons
     return error;
 }
 static std::set<State> values(const Owned& x, uint32_t expected) {
-    uint32_t count=0; CUDA_OK(cudaMemcpy(&count,x.count,4,cudaMemcpyDeviceToHost));
+    uint64_t count=0; CUDA_OK(cudaMemcpy(&count,x.count,8,cudaMemcpyDeviceToHost));
     require(count==expected,"unexpected accepted count");
     std::vector<uint8_t> soa(x.segment.capacity*2);
     CUDA_OK(cudaMemcpy(soa.data(),x.segment.states,soa.size(),cudaMemcpyDeviceToHost));
@@ -104,7 +104,7 @@ static void wide_values() {
     CUDA_OK(cudaMemcpy(in,data.data(),data.size()*8,cudaMemcpyHostToDevice)); CUDA_OK(cudaMemcpy(dh,hashes.data(),hashes.size()*8,cudaMemcpyHostToDevice));
     CUDA_OK((cudaError_t)mgbfs_segmented_accept_i64(in,dh,4,2,nullptr,0,x.segment,0,x.count,x.future,x.error,nullptr));
     CUDA_OK(cudaDeviceSynchronize());
-    uint32_t count=0,error=0; CUDA_OK(cudaMemcpy(&count,x.count,4,cudaMemcpyDeviceToHost)); CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));
+    uint64_t count=0;uint32_t error=0; CUDA_OK(cudaMemcpy(&count,x.count,8,cudaMemcpyDeviceToHost)); CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));
     require(error==0 && count==2,"wide state count");
     std::vector<int64_t> states(8); CUDA_OK(cudaMemcpy(states.data(),x.segment.states,states.size()*8,cudaMemcpyDeviceToHost));
     std::set<std::array<int64_t,2>> actual;
@@ -138,24 +138,24 @@ static void rehash_nontrivial_seed_and_bucket() {
     require(position==expected,"shard-independent bucket rule");
     CUDA_OK((cudaError_t)mgbfs_segmented_rehash_u8(2,x.segment,1,0,0,seed,64,x.error,nullptr));
     CUDA_OK(cudaDeviceSynchronize());uint32_t error=0;CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));require(error==0,"nontrivial rehash error");
-    CUDA_OK(cudaMemset(x.count,0,4));require(submit(x,{}, {a},1,h)==0,"same hash after rehash");
-    uint32_t count=0;CUDA_OK(cudaMemcpy(&count,x.count,4,cudaMemcpyDeviceToHost));require(count==0,"rehash lost previously inserted state");
+    CUDA_OK(cudaMemset(x.count,0,8));require(submit(x,{}, {a},1,h)==0,"same hash after rehash");
+    uint64_t count=0;CUDA_OK(cudaMemcpy(&count,x.count,8,cudaMemcpyDeviceToHost));require(count==0,"rehash lost previously inserted state");
     destroy(x);
 }
 
 static void rolling_retirement() {
     Owned x=make_segment(4,3);
     require(submit(x,{},{{1,11},{2,12}},0,0)==0,"rolling bank zero insert");
-    CUDA_OK(cudaMemset(x.count,0,sizeof(uint32_t)));
+    CUDA_OK(cudaMemset(x.count,0,sizeof(uint64_t)));
     require(submit(x,{},{{3,13}},1,0)==0,"rolling bank one insert");
     CUDA_OK(cudaMemset(x.error,0,sizeof(uint32_t)));
     CUDA_OK((cudaError_t)mgbfs_segmented_retire(x.segment,0,2,x.error,nullptr));
     CUDA_OK(cudaDeviceSynchronize());
     uint32_t error=0; CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));
     require(error==0,"rolling retirement failed");
-    CUDA_OK(cudaMemset(x.count,0,sizeof(uint32_t)));
+    CUDA_OK(cudaMemset(x.count,0,sizeof(uint64_t)));
     require(submit(x,{},{{1,11},{2,12},{3,13},{4,14}},2,0)==0,"post-retirement insert");
-    uint32_t count=0; CUDA_OK(cudaMemcpy(&count,x.count,4,cudaMemcpyDeviceToHost));
+    uint64_t count=0; CUDA_OK(cudaMemcpy(&count,x.count,8,cudaMemcpyDeviceToHost));
     require(count==3,"retired rows or surviving bank were mishandled");
     std::vector<uint8_t> data(4*3*2);
     CUDA_OK(cudaMemcpy(data.data(),x.segment.states,data.size(),cudaMemcpyDeviceToHost));
@@ -166,9 +166,9 @@ static void rolling_retirement() {
     CUDA_OK(cudaMemset(x.error,0,4));
     CUDA_OK((cudaError_t)mgbfs_segmented_rehash_u8(2,x.segment,0,1,3,0,0,x.error,nullptr));
     CUDA_OK(cudaDeviceSynchronize()); CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));require(!error,"rehash error");
-    CUDA_OK(cudaMemset(x.count,0,4));
+    CUDA_OK(cudaMemset(x.count,0,8));
     require(submit(x,{},{{3,13},{4,14},{5,15},{5,15}},0,0)==0,"post rehash insert");
-    CUDA_OK(cudaMemcpy(&count,x.count,4,cudaMemcpyDeviceToHost));require(count==1,"rehash lost live bank or accepted duplicate");
+    CUDA_OK(cudaMemcpy(&count,x.count,8,cudaMemcpyDeviceToHost));require(count==1,"rehash lost live bank or accepted duplicate");
     destroy(x);
 }
 
@@ -188,8 +188,8 @@ static void spill_across_segments() {
         MgbfsSegment* ds=nullptr;if(!sealed.empty()){CUDA_OK(cudaMalloc((void**)&ds,sealed.size()*sizeof(MgbfsSegment)));CUDA_OK(cudaMemcpy(ds,sealed.data(),sealed.size()*sizeof(MgbfsSegment),cudaMemcpyHostToDevice));}
         CUDA_OK(cudaMemset(out_count,0,4));
         CUDA_OK((cudaError_t)mgbfs_segmented_accept_spill_u8(input,hashes,n,selected,remaining,2,ds,uint32_t(sealed.size()),dst.segment,0,dst.count,dst.future,ids[iter%2],out_count,dst.error,nullptr));
-        CUDA_OK(cudaDeviceSynchronize());uint32_t count=0,error=0,next=0;
-        CUDA_OK(cudaMemcpy(&count,dst.count,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&error,dst.error,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&next,out_count,4,cudaMemcpyDeviceToHost));
+        CUDA_OK(cudaDeviceSynchronize());uint64_t count=0;uint32_t error=0,next=0;
+        CUDA_OK(cudaMemcpy(&count,dst.count,8,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&error,dst.error,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&next,out_count,4,cudaMemcpyDeviceToHost));
         require(!error && count<=7 && next<=remaining,"spill bounds or error");
         auto got=values(dst,count);require(got.size()==count,"duplicate inside segment");for(auto x:got)require(all.insert(x).second,"duplicate across segments");
         require(!next||count,"spill made no progress");sealed.push_back(dst.segment);selected=ids[iter%2];remaining=next;++iter;if(ds)CUDA_OK(cudaFree(ds));
@@ -219,7 +219,7 @@ static void routed_packed_inboxes() {
     MgbfsSegment* sealed=nullptr;CUDA_OK(cudaMalloc((void**)&sealed,sizeof(MgbfsSegment)));CUDA_OK(cudaMemcpy(sealed,&first.segment,sizeof(MgbfsSegment),cudaMemcpyHostToDevice));
     uint32_t* spill2=nullptr;uint32_t* count2=nullptr;CUDA_OK(cudaMalloc((void**)&spill2,bound*4));CUDA_OK(cudaMalloc((void**)&count2,4));CUDA_OK(cudaMemset(count2,0,4));
     CUDA_OK((cudaError_t)mgbfs_segmented_accept_routes_u8(2,nullptr,nullptr,dl,dr,dcl,dcr,0,world,chosen,shards,q,1,spill,n,sealed,1,second.segment,0,second.count,second.future,spill2,count2,second.error,nullptr));
-    CUDA_OK(cudaDeviceSynchronize());uint32_t n2=0,err2=0,c1=0,c2=0;CUDA_OK(cudaMemcpy(&n2,count2,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&err2,second.error,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&c1,first.count,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&c2,second.count,4,cudaMemcpyDeviceToHost));
+    CUDA_OK(cudaDeviceSynchronize());uint32_t n2=0,err2=0;uint64_t c1=0,c2=0;CUDA_OK(cudaMemcpy(&n2,count2,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&err2,second.error,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&c1,first.count,8,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&c2,second.count,8,cudaMemcpyDeviceToHost));
     require(!err2&&!n2&&c1+c2==6,"routed inbox failed exact dedup");auto a=values(first,c1),b=values(second,c2);a.insert(b.begin(),b.end());require(a.size()==6,"routed inbox lost or duplicated states");
     for(uint8_t i=1;i<=6;i++)require(a.count({i,uint8_t(i+20)})==1,"packed state mismatch");
     destroy(first);destroy(second);for(void* ptr:{(void*)dl,(void*)dr,(void*)dcl,(void*)dcr,(void*)spill,(void*)spill_count,(void*)sealed,(void*)spill2,(void*)count2})CUDA_OK(cudaFree(ptr));
@@ -239,32 +239,32 @@ static void directed_omits_retirement_metadata() {
 
 // Exercise the actual last encodable local row without materializing millions
 // of earlier values; the one inserted row and a full-segment spill are real.
-static void boundary_24bit_row() {
-    constexpr uint32_t cap=1u<<24;
+static void boundary_32bit_row() {
+    constexpr uint64_t cap=uint64_t(1)<<32;
     MgbfsSegment seg{};seg.capacity=cap;seg.banks=1;seg.slots_count=32;
-    uint32_t *count=nullptr,*error=nullptr,*spill=nullptr,*spill_count=nullptr;
+    uint64_t *count=nullptr;uint32_t *error=nullptr,*spill=nullptr,*spill_count=nullptr;
     uint8_t* input=nullptr;uint64_t* hashes=nullptr;
     CUDA_OK(cudaMalloc((void**)&seg.slots,seg.slots_count*8));
     CUDA_OK(cudaMalloc((void**)&seg.states,cap));
-    CUDA_OK(cudaMalloc((void**)&count,4));CUDA_OK(cudaMalloc((void**)&error,4));
+    CUDA_OK(cudaMalloc((void**)&count,8));CUDA_OK(cudaMalloc((void**)&error,4));
     CUDA_OK(cudaMalloc((void**)&spill,4));CUDA_OK(cudaMalloc((void**)&spill_count,4));
     CUDA_OK(cudaMalloc((void**)&input,2));CUDA_OK(cudaMalloc((void**)&hashes,16));
     CUDA_OK(cudaMemset(seg.slots,0xff,seg.slots_count*8));CUDA_OK(cudaMemset(error,0,4));
-    uint32_t initial=cap-1;uint8_t rows[2]={42,73};uint64_t hv[2]={0x1234567800000000ULL,0x2345678900000000ULL};
-    CUDA_OK(cudaMemcpy(count,&initial,4,cudaMemcpyHostToDevice));CUDA_OK(cudaMemcpy(input,rows,2,cudaMemcpyHostToDevice));CUDA_OK(cudaMemcpy(hashes,hv,16,cudaMemcpyHostToDevice));
+    uint64_t initial=cap-1;uint8_t rows[2]={42,73};uint64_t hv[2]={0x1234567800000000ULL,0x2345678900000000ULL};
+    CUDA_OK(cudaMemcpy(count,&initial,8,cudaMemcpyHostToDevice));CUDA_OK(cudaMemcpy(input,rows,2,cudaMemcpyHostToDevice));CUDA_OK(cudaMemcpy(hashes,hv,16,cudaMemcpyHostToDevice));
     CUDA_OK((cudaError_t)mgbfs_segmented_accept_spill_u8(input,hashes,1,nullptr,1,1,nullptr,0,seg,0,count,nullptr,spill,spill_count,error,nullptr));
-    CUDA_OK(cudaDeviceSynchronize());uint32_t got=0,err=0;uint8_t stored=0;
-    CUDA_OK(cudaMemcpy(&got,count,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&err,error,4,cudaMemcpyDeviceToHost));
+    CUDA_OK(cudaDeviceSynchronize());uint64_t got=0;uint32_t err=0;uint8_t stored=0;
+    CUDA_OK(cudaMemcpy(&got,count,8,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&err,error,4,cudaMemcpyDeviceToHost));
     CUDA_OK(cudaMemcpy(&stored,static_cast<uint8_t*>(seg.states)+cap-1,1,cudaMemcpyDeviceToHost));
-    require(got==cap&&!err&&stored==42,"24-bit maximum row not stored");
+    require(got==cap&&!err&&stored==42,"32-bit maximum row not stored");
     std::vector<uint64_t> cells(seg.slots_count);CUDA_OK(cudaMemcpy(cells.data(),seg.slots,cells.size()*8,cudaMemcpyDeviceToHost));
     bool found=false;for(uint64_t cell:cells)if(cell!=~uint64_t(0)&&uint32_t(cell)==cap-1)found=true;
-    require(found,"24-bit maximum row not encoded in slot");
+    require(found,"32-bit maximum row not encoded in slot");
     CUDA_OK(cudaMemset(spill_count,0,4));
     CUDA_OK((cudaError_t)mgbfs_segmented_accept_spill_u8(input+1,hashes+1,1,nullptr,1,1,nullptr,0,seg,0,count,nullptr,spill,spill_count,error,nullptr));
     CUDA_OK(cudaDeviceSynchronize());uint32_t spilled=0,index=99;
     CUDA_OK(cudaMemcpy(&spilled,spill_count,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&index,spill,4,cudaMemcpyDeviceToHost));CUDA_OK(cudaMemcpy(&err,error,4,cudaMemcpyDeviceToHost));
-    require(spilled==1&&index==0&&!err,"full 24-bit segment failed to spill");
+    require(spilled==1&&index==0&&!err,"full 32-bit segment failed to spill");
     for(void* p:{(void*)seg.slots,seg.states,(void*)count,(void*)error,(void*)spill,(void*)spill_count,(void*)input,(void*)hashes})CUDA_OK(cudaFree(p));
 }
 
@@ -303,7 +303,7 @@ static void exercise(int device) {
     multisegment_collision_stress();
     wide_values();
     parallel_shards();
-    boundary_24bit_row();
+    boundary_32bit_row();
     cached_descriptors_include_active();
     destroy(first); destroy(second); destroy(overflow);
 }

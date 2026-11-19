@@ -1,0 +1,10 @@
+PASS exact depth 0
+PASS exact depth 1
+PASS exact depth 2
+PASS exact depth 3
+PASS exact depth 4
+PASS exact depth 5
+PASS exact depth 6
+PASS asymmetric resource stop depth 1
+PASS real asymmetric CUDA OOM depth 2
+EVIDENCE /workspace/seg24-boundaries-cfy76lja

@@ -1,28 +1,28 @@
 use mgbfs_runtime::segmented_history::{ChunkRanges, SegmentGeometry, StateAddress, sum_rank_counts, LOCAL_ROWS};
 
 #[test]
-fn local_reference_has_24_bit_rows_and_a_separate_segment_number() {
+fn local_reference_has_32_bit_rows_and_a_separate_segment_number() {
     for segment in [0, 1, 256, u32::MAX] {
         for bank in 0..3 {
             for row in [0, 1, LOCAL_ROWS - 1] {
                 let loc = StateAddress::new(segment, bank, row).unwrap();
                 assert_eq!(StateAddress::decode(loc.encode()).unwrap(), loc);
-                assert_eq!(loc.local_payload(), ((bank as u32) << 24) | row);
+                assert_eq!(loc.local_payload(), ((bank as u64) << 32) | row);
             }
         }
     }
     assert!(StateAddress::new(0, 0, LOCAL_ROWS).is_err());
     assert!(StateAddress::new(0, 3, 0).is_err());
-    assert!(StateAddress::decode(1u64 << 26).is_err());
-    assert!(StateAddress::decode(3u64 << 24).is_err());
+    assert!(StateAddress::decode(1u128 << 66).is_err());
+    assert!(StateAddress::decode(3u128 << 32).is_err());
 }
 
 #[test]
 fn independent_small_segments_exceed_the_old_single_u32_arena_limit() {
     let g = SegmentGeometry::new(1024, LOCAL_ROWS, 3).unwrap();
-    assert_eq!(g.rows(), 1024u64 * 3 * u64::from(LOCAL_ROWS));
-    assert!(g.rows() > u64::from(u32::MAX));
-    assert_eq!(g.arena_bytes(1).unwrap(), g.rows());
+    assert_eq!(g.rows(), 1024u128 * 3 * u128::from(LOCAL_ROWS));
+    assert!(g.rows() > u128::from(u32::MAX));
+    assert_eq!(u128::from(g.arena_bytes(1).unwrap()), g.rows());
     assert!(SegmentGeometry::new(1, LOCAL_ROWS + 1, 3).is_err());
     assert!(SegmentGeometry::new(0, 8, 1).is_err());
     assert!(SegmentGeometry::new(1, 0, 1).is_err());
@@ -47,11 +47,11 @@ fn admission_counts_tables_history_and_communication_without_rank_wide_u32_trunc
     assert_eq!(directed.slots, 2048);
     assert_eq!(directed.state_bytes, 14 * 1024);
     assert_eq!(directed.position_bytes, 0);
-    assert_eq!(directed.device_bytes, 30736);
+    assert_eq!(directed.device_bytes, 30744);
     let rolling = SegmentLayout::new(14, 1, 1024, 3).unwrap();
     assert_eq!(rolling.slots, 8192);
     assert_eq!(rolling.position_bytes, 3 * 1024 * 8);
-    assert_eq!(rolling.device_bytes, 133136);
+    assert_eq!(rolling.device_bytes, 133144);
     let reserve = 2u64 << 30;
     let fixed = 1u64 << 30;
     let admitted = rolling.admit(reserve + fixed + rolling.device_bytes * 5000000, reserve, fixed, None).unwrap();
@@ -63,7 +63,7 @@ fn admission_counts_tables_history_and_communication_without_rank_wide_u32_trunc
     assert_eq!(rolling.admit(reserve + fixed + rolling.device_bytes * 20, reserve, fixed, Some(2000)).unwrap().segments, 20);
     assert!(SegmentLayout::new(0, 1, 1024, 1).is_err());
     assert!(SegmentLayout::new(2, 4, 1024, 1).is_err());
-    assert!(SegmentLayout::new(2, 8, (1<<24)+1, 1).is_err());
+    assert!(SegmentLayout::new(2, 8, LOCAL_ROWS+1, 1).is_err());
 }
 
 #[test]
@@ -95,4 +95,17 @@ fn collective_vote_prioritizes_fatal_over_resource_and_retry() {
     assert_eq!(decode_route_owner_vote(resource.max(fatal)),SegmentVote::SourceFatal(source_fatal));
     assert_eq!(decode_route_owner_vote(retry.max(resource)),SegmentVote::Resource);
     assert_eq!(decode_route_owner_vote(route_owner_vote(0,107).max(resource)),SegmentVote::OwnerFatal(107));
+}
+
+
+#[test]
+fn full_width_segment_contract_supports_exactly_two_to_the_32_rows() {
+    use mgbfs_runtime::segmented_history::SegmentLayout;
+    assert_eq!(u64::from(LOCAL_ROWS), 1u64 << 32);
+    let max_row = StateAddress::new(7, 2, (1u64 << 32) - 1).unwrap();
+    assert_eq!(StateAddress::decode(max_row.encode()).unwrap(), max_row);
+    assert!(StateAddress::new(0, 0, 1u64 << 32).is_err());
+    let segment = SegmentLayout::new(14, 1, 1u64 << 32, 3).unwrap();
+    assert!(segment.device_bytes > 180_000_000_000u64);
+    assert!(SegmentLayout::new(14, 1, (1u64 << 32) + 1, 3).is_err());
 }

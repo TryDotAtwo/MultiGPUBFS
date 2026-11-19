@@ -2,27 +2,28 @@
 //! This module alone is not a GPU BFS backend.
 use std::ops::Range;
 
-/// Number of distinct values representable by a 24-bit local row.
-pub const LOCAL_ROWS: u32 = 1 << 24;
-const ROW_MASK: u32 = LOCAL_ROWS - 1;
-const BANK_SHIFT: u32 = 24;
-const VALID_PAYLOAD_MASK: u32 = (1 << 26) - 1;
+/// A local row is 32 bits; its cardinality needs 64 bits to represent 2^32.
+pub const LOCAL_ROWS: u64 = 1u64 << 32;
+const BANK_SHIFT: u32 = 32;
+const LOCAL_PAYLOAD_BITS: u32 = 34;
+const LOCAL_PAYLOAD_MASK: u64 = (1u64 << LOCAL_PAYLOAD_BITS) - 1;
 
-/// A segment number is separate from the 24-bit row in that segment.
+/// A segment number is separate from the local 32-bit row and two bank bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StateAddress { segment: u32, bank: u8, row: u32 }
 
 impl StateAddress {
-    pub fn new(segment: u32, bank: u8, row: u32) -> Result<Self, &'static str> {
+    pub fn new(segment: u32, bank: u8, row: u64) -> Result<Self, &'static str> {
         if bank >= 3 || row >= LOCAL_ROWS { return Err("SEGMENTED_ADDRESS_RANGE"); }
-        Ok(Self { segment, bank, row })
+        Ok(Self { segment, bank, row: row as u32 })
     }
-    pub fn local_payload(self) -> u32 { (u32::from(self.bank) << BANK_SHIFT) | self.row }
-    pub fn encode(self) -> u64 { (u64::from(self.segment) << 32) | u64::from(self.local_payload()) }
-    pub fn decode(value: u64) -> Result<Self, &'static str> {
-        let local = value as u32;
-        if local & !VALID_PAYLOAD_MASK != 0 { return Err("SEGMENTED_ADDRESS_RESERVED_BITS"); }
-        Self::new((value >> 32) as u32, (local >> BANK_SHIFT) as u8, local & ROW_MASK)
+    pub fn local_payload(self) -> u64 { (u64::from(self.bank) << BANK_SHIFT) | u64::from(self.row) }
+    // Segment + bank + row need 66 bits; never truncate a global address to u64.
+    pub fn encode(self) -> u128 { (u128::from(self.segment) << LOCAL_PAYLOAD_BITS) | u128::from(self.local_payload()) }
+    pub fn decode(value: u128) -> Result<Self, &'static str> {
+        if value >> (LOCAL_PAYLOAD_BITS + 32) != 0 { return Err("SEGMENTED_ADDRESS_RESERVED_BITS"); }
+        let local = (value as u64) & LOCAL_PAYLOAD_MASK;
+        Self::new((value >> LOCAL_PAYLOAD_BITS) as u32, (local >> BANK_SHIFT) as u8, local & (LOCAL_ROWS - 1))
     }
     pub fn segment(self) -> u32 { self.segment }
     pub fn bank(self) -> u8 { self.bank }
@@ -31,18 +32,19 @@ impl StateAddress {
 
 /// Uniform upper bounds; actual allocations and NCCL reserves are admitted separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SegmentGeometry { segments: u32, rows_per_bank: u32, banks: u32 }
+pub struct SegmentGeometry { segments: u32, rows_per_bank: u64, banks: u32 }
 impl SegmentGeometry {
-    pub fn new(segments: u32, rows_per_bank: u32, banks: u32) -> Result<Self, &'static str> {
+    pub fn new(segments: u32, rows_per_bank: u64, banks: u32) -> Result<Self, &'static str> {
         if segments == 0 || rows_per_bank == 0 || rows_per_bank > LOCAL_ROWS || !matches!(banks, 1 | 3) {
             return Err("SEGMENTED_GEOMETRY_RANGE");
         }
         Ok(Self { segments, rows_per_bank, banks })
     }
-    pub fn rows(self) -> u64 { u64::from(self.segments) * u64::from(self.rows_per_bank) * u64::from(self.banks) }
+    pub fn rows(self) -> u128 { u128::from(self.segments) * u128::from(self.rows_per_bank) * u128::from(self.banks) }
     pub fn arena_bytes(self, state_bytes: u32) -> Result<u64, &'static str> {
         if state_bytes == 0 { return Err("SEGMENTED_ZERO_STATE_BYTES"); }
-        self.rows().checked_mul(u64::from(state_bytes)).ok_or("SEGMENTED_ARENA_BYTES_OVERFLOW")
+        let bytes = self.rows().checked_mul(u128::from(state_bytes)).ok_or("SEGMENTED_ARENA_BYTES_OVERFLOW")?;
+        u64::try_from(bytes).map_err(|_| "SEGMENTED_ARENA_BYTES_OVERFLOW")
     }
 }
 
@@ -74,7 +76,7 @@ impl Iterator for ChunkRanges {
 /// fixed allocations, rather than hidden in a percentage of free memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegmentLayout {
-    pub rows_per_bank: u32,
+    pub rows_per_bank: u64,
     pub banks: u32,
     pub slots: u64,
     pub state_bytes: u64,
@@ -89,24 +91,24 @@ pub struct SegmentAdmission {
     pub device_bytes: u64,
 }
 impl SegmentLayout {
-    pub fn new(elements: u32, state_bytes: u32, rows_per_bank: u32, banks: u32) -> Result<Self, &'static str> {
+    pub fn new(elements: u32, state_bytes: u32, rows_per_bank: u64, banks: u32) -> Result<Self, &'static str> {
         if elements == 0 || !matches!(state_bytes, 1 | 8) || rows_per_bank == 0 || rows_per_bank > LOCAL_ROWS || !matches!(banks, 1 | 3) {
             return Err("SEGMENTED_LAYOUT_RANGE");
         }
-        let rows = u64::from(rows_per_bank).checked_mul(u64::from(banks)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let rows = rows_per_bank.checked_mul(u64::from(banks)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let slots = rows.checked_mul(2).and_then(u64::checked_next_power_of_two).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let states = rows.checked_mul(u64::from(elements)).and_then(|v| v.checked_mul(u64::from(state_bytes))).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let positions = if banks == 3 { rows.checked_mul(8).ok_or("SEGMENTED_LAYOUT_OVERFLOW")? } else { 0 };
-        let bytes = slots.checked_mul(8).and_then(|v| v.checked_add(states)).and_then(|v| v.checked_add(positions)).and_then(|v| v.checked_add(16)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let bytes = slots.checked_mul(8).and_then(|v| v.checked_add(states)).and_then(|v| v.checked_add(positions)).and_then(|v| v.checked_add(24)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         Ok(Self { rows_per_bank, banks, slots, state_bytes: states, position_bytes: positions, device_bytes: bytes })
     }
     /// State-only storage for a bitmap backend; visited bits are allocated
     /// independently for the full rank-owned domain and must be admitted first.
-    pub fn bitmap(elements:u32,state_bytes:u32,rows_per_bank:u32)->Result<Self,&'static str>{
+    pub fn bitmap(elements:u32,state_bytes:u32,rows_per_bank:u64)->Result<Self,&'static str>{
         if elements==0||!matches!(state_bytes,1|8)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS{return Err("BITMAP_LAYOUT_RANGE")}
-        let rows=u64::from(rows_per_bank)*3;
+        let rows=rows_per_bank*3;
         let states=rows.checked_mul(u64::from(elements)).and_then(|v|v.checked_mul(u64::from(state_bytes))).ok_or("BITMAP_LAYOUT_OVERFLOW")?;
-        Ok(Self{rows_per_bank,banks:3,slots:0,state_bytes:states,position_bytes:0,device_bytes:states.checked_add(16).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
+        Ok(Self{rows_per_bank,banks:3,slots:0,state_bytes:states,position_bytes:0,device_bytes:states.checked_add(24).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
     }
     /// `reserve` covers driver/NCCL headroom; `fixed` includes all other
     /// allocations, e.g. descriptors, communication pages and owner lanes.
@@ -120,7 +122,7 @@ impl SegmentLayout {
         let by_domain = rank_upper_states.unwrap_or(u64::MAX);
         let segments = by_budget.min(by_domain).min(u64::from(u32::MAX));
         if segments == 0 { return Err("SEGMENTED_NO_CAPACITY"); }
-        let rows = segments.checked_mul(u64::from(self.rows_per_bank)).ok_or("SEGMENTED_ADMISSION_OVERFLOW")?;
+        let rows = segments.checked_mul(self.rows_per_bank).ok_or("SEGMENTED_ADMISSION_OVERFLOW")?;
         let used = segments.checked_mul(self.device_bytes).and_then(|v| v.checked_add(fixed)).ok_or("SEGMENTED_ADMISSION_OVERFLOW")?;
         Ok(SegmentAdmission { segments: segments as u32, rows_per_bank: rows, device_bytes: used })
     }

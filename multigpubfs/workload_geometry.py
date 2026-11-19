@@ -16,7 +16,7 @@ def coxeter_frontier_bound(graph):
    if j>=i:window-=sizes[j-i]
    out.append(window)
   sizes=out
- return {'kind':'CERTIFIED_COXETER_GLOBAL_FRONTIER','maximum_frontier':max(sizes),'order':sum(sizes),'depth':len(sizes)-1,'scope':'global peak is a safe per-rank upper bound, independent of hash balance'}
+ return {'kind':'CERTIFIED_COXETER_GLOBAL_FRONTIER','maximum_frontier':max(sizes),'maximum_live_states':max(sum(sizes[max(0,j-2):j+1]) for j in range(len(sizes))),'order':sum(sizes),'depth':len(sizes)-1,'scope':'global peak is a safe per-rank upper bound, independent of hash balance'}
 
 def certified_frontier_bound(graph):
  bound=coxeter_frontier_bound(graph)

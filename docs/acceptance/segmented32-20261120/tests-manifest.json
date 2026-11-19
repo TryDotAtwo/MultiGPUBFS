@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "gpu": "2x RTX 3060 12GiB",
+  "driver": "595.99.02",
+  "cuda_toolkit": "12.8.1",
+  "cuda_arch": "sm86",
+  "native_sha256": "a3cbdf8bf4a8c26d16e983788cb66fef09e5f33cad04c05c8600f05058e7917e",
+  "cuda_library_sha256": "5d827afb383d98e9e616b2c37d01305595730e08a4a68e0dacf530f8465fac78",
+  "gpu_ctest": [
+    "segmented-large-stride",
+    "segmented-history",
+    "segmented-distributed",
+    "segmented-bitmap-boundary"
+  ],
+  "integration_tests": {
+    "permutation_bitmap_bfs_gpu.log": "da0642352f8617d1cddcba9ac542bbdc9f8c4aede5926503665c90317077a072",
+    "permutation_bitmap_boundaries_gpu.log": "b86a51b1a65b14c90b5d44d82a0b6e9d0f5463f741e86f3b6cd53e5feab8b41a",
+    "segmented_cayleypy_gpu.log": "6eabaf79ce405dabd1bc189c71436c0a518da40338bd996ec3f358e5c41bc47a",
+    "segmented_persistent_pool_gpu.log": "bcaee1eea2cfc144eebff6ccb1de4b3b2dcafde454fed8f42a4883d77ff49886",
+    "segmented_public_launch_gpu.log": "ece96ad268c6bca1c7ffe91ce7aea11f884f2c276dacde276453c466605d1f03",
+    "segmented_rank_boundaries_gpu.log": "4679d51816e789d9ef0bc9535e3ba51ad6e9ea00f74a5701039c245475cde994",
+    "segmented_rank_failure_gpu.log": "d8968027d6d4b8d362c05d76e46956e6e706ddab2ad6ffe11a42b820793a8045",
+    "segmented_single_gpu.log": "a753fbddab416775de3e1b47631a15c5007d9548c37d5013340d8e1550123a48"
+  },
+  "scope": "2x3060 GPU correctness only; not B200 acceptance or full S14 proof"
+}

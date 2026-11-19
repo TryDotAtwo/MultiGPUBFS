@@ -27,8 +27,8 @@ static std::vector<std::set<State>> oracle(State start,const std::vector<std::ve
 }
 constexpr uint32_t WORLD=2,SHARDS=2,Q=64,CAP=3;constexpr uint64_t SEED=0x19f856a2;
 struct Segment {
- MgbfsSegment seg{};uint32_t *count{},*per_bank[3]{},*future{},*error{};uint32_t known=0,bank_known[3]{},mark=0,begin=0,end=0;
- Segment(uint32_t width,bool rolling){seg.capacity=CAP;seg.banks=rolling?3:1;seg.slots_count=32;CHECK(cudaMalloc((void**)&seg.slots,32*8));CHECK(cudaMemset(seg.slots,255,32*8));CHECK(cudaMalloc(&seg.states,CAP*width*seg.banks));CHECK(cudaMalloc((void**)&seg.positions,CAP*8*seg.banks));for(uint32_t i=0;i<seg.banks;i++){CHECK(cudaMalloc((void**)&per_bank[i],4));CHECK(cudaMemset(per_bank[i],0,4));}count=per_bank[0];CHECK(cudaMalloc((void**)&future,CAP*4));CHECK(cudaMalloc((void**)&error,4));CHECK(cudaMemset(error,0,4));}
+ MgbfsSegment seg{};uint64_t *count{},*per_bank[3]{},*future{};uint32_t *error{};uint32_t known=0,bank_known[3]{},mark=0,begin=0,end=0;
+ Segment(uint32_t width,bool rolling){seg.capacity=CAP;seg.banks=rolling?3:1;seg.slots_count=32;CHECK(cudaMalloc((void**)&seg.slots,32*8));CHECK(cudaMemset(seg.slots,255,32*8));CHECK(cudaMalloc(&seg.states,CAP*width*seg.banks));CHECK(cudaMalloc((void**)&seg.positions,CAP*8*seg.banks));for(uint32_t i=0;i<seg.banks;i++){CHECK(cudaMalloc((void**)&per_bank[i],8));CHECK(cudaMemset(per_bank[i],0,8));}count=per_bank[0];CHECK(cudaMalloc((void**)&future,CAP*8));CHECK(cudaMalloc((void**)&error,4));CHECK(cudaMemset(error,0,4));}
  void activate(uint32_t bank){count=per_bank[bank];known=bank_known[bank];}
  ~Segment(){cudaFree(seg.slots);cudaFree(seg.states);cudaFree(seg.positions);for(uint32_t i=0;i<seg.banks;i++)cudaFree(per_bank[i]);cudaFree(future);cudaFree(error);}
 };
@@ -46,6 +46,7 @@ struct Rank {
  Segment& make(uint32_t shard,uint32_t width){segments[shard].push_back(std::make_unique<Segment>(width,rolling));segments[shard].back()->activate(next_bank);return *segments[shard].back();}
 };
 static uint32_t read32(uint32_t* p){uint32_t x=0;CHECK(cudaMemcpy(&x,p,4,cudaMemcpyDeviceToHost));return x;}
+static uint64_t read64(uint64_t* p){uint64_t x=0;CHECK(cudaMemcpy(&x,p,8,cudaMemcpyDeviceToHost));return x;}
 static void accept_queue(Rank& r,uint32_t shard,uint32_t width){
  CHECK(cudaSetDevice(r.gpu));auto& segs=r.segments[shard];if(segs.empty())r.make(shard,width);
  const uint32_t* selection=nullptr;uint32_t selected=WORLD*Q,pass=0;size_t active_index=0;
@@ -55,7 +56,7 @@ static void accept_queue(Rank& r,uint32_t shard,uint32_t width){
   if(!sealed.empty()){CHECK(cudaMalloc((void**)&ds,sealed.size()*sizeof(MgbfsSegment)));CHECK(cudaMemcpy(ds,sealed.data(),sealed.size()*sizeof(MgbfsSegment),cudaMemcpyHostToDevice));}
   const uint32_t out=pass%2;CHECK(cudaMemsetAsync(r.spill_count[out],0,4,r.stream));CHECK(cudaMemsetAsync(active.error,0,4,r.stream));
   CHECK((cudaError_t)mgbfs_segmented_accept_routes_u8(width,nullptr,nullptr,r.routes,r.inbox,r.counts,r.received,r.gpu,WORLD,shard,SHARDS,Q,1,selection,selected,ds,sealed.size(),active.seg,r.next_bank,active.count,active.future,r.spill[out],r.spill_count[out],active.error,r.stream));
-  CHECK(cudaStreamSynchronize(r.stream));uint32_t err=read32(active.error),next=read32(r.spill_count[out]);active.known=read32(active.count);active.bank_known[r.next_bank]=active.known;need(!err&&active.known<=CAP&&next<=selected,"owner error/bounds");
+  CHECK(cudaStreamSynchronize(r.stream));uint32_t err=read32(active.error),next=read32(r.spill_count[out]);active.known=uint32_t(read64(active.count));active.bank_known[r.next_bank]=active.known;need(!err&&active.known<=CAP&&next<=selected,"owner error/bounds");
   if(ds)CHECK(cudaFree(ds));selection=r.spill[out];selected=next;pass++;need(pass<200,"spill progress");if(next)active_index++;
  }while(selected);
 }
@@ -64,12 +65,12 @@ static void run_graph(State start,const std::vector<std::vector<uint32_t>>& gs,b
  uint32_t owner=(uint64_t(uint32_t(hash>>32))*WORLD)>>32;uint32_t shard=(uint64_t(uint32_t(hash))*SHARDS)>>32;std::array<uint32_t,2> map{0,1};std::swap(map[0],map[owner]);
  Rank a(0,gs,map,rolling),b(1,gs,map,rolling);std::array<Rank*,2> ranks{&a,&b};ncclComm_t comms[2];int devices[2]={0,1};NCCL(ncclCommInitAll(comms,2,devices));a.comm=comms[0];b.comm=comms[1];
  CHECK(cudaSetDevice(0));Segment& root=a.make(shard,width);uint8_t* ds=nullptr;uint64_t* dh=nullptr;CHECK(cudaMalloc((void**)&ds,width));CHECK(cudaMalloc((void**)&dh,8));CHECK(cudaMemcpy(ds,start.data(),width,cudaMemcpyHostToDevice));CHECK(cudaMemcpy(dh,&hash,8,cudaMemcpyHostToDevice));
- CHECK((cudaError_t)mgbfs_segmented_accept_u8(ds,dh,1,width,nullptr,0,root.seg,0,root.count,root.future,root.error,nullptr));CHECK(cudaDeviceSynchronize());need(read32(root.error)==0&&read32(root.count)==1,"root insertion");root.known=1;root.bank_known[0]=1;root.end=1;CHECK(cudaFree(ds));CHECK(cudaFree(dh));
+ CHECK((cudaError_t)mgbfs_segmented_accept_u8(ds,dh,1,width,nullptr,0,root.seg,0,root.count,root.future,root.error,nullptr));CHECK(cudaDeviceSynchronize());need(read32(root.error)==0&&read64(root.count)==1,"root insertion");root.known=1;root.bank_known[0]=1;root.end=1;CHECK(cudaFree(ds));CHECK(cudaFree(dh));
  for(size_t depth=0;depth<expected.size();++depth){
   std::set<State> actual;std::array<std::vector<Segment*>,2> work;
   const uint32_t current=rolling?depth%3:0, future=rolling?(depth+1)%3:0;
   for(auto* r:ranks){CHECK(cudaSetDevice(r->gpu));r->next_bank=future;for(auto& bucket:r->segments)for(auto& item:bucket){Segment& s=*item;if(s.end>s.begin){work[r->gpu].push_back(&s);std::vector<uint8_t> raw(CAP*width*s.seg.banks);CHECK(cudaMemcpy(raw.data(),s.seg.states,raw.size(),cudaMemcpyDeviceToHost));for(uint32_t row=s.begin;row<s.end;row++){State x;for(uint32_t e=0;e<width;e++)x.push_back(raw[e*CAP*s.seg.banks+current*CAP+row]);need(actual.insert(x).second,"duplicate frontier");}}
-    if(rolling){uint32_t expired=s.bank_known[future];CHECK(cudaMemset(s.error,0,4));if(expired)CHECK((cudaError_t)mgbfs_segmented_retire(s.seg,future,expired,s.error,nullptr));CHECK(cudaMemset(s.per_bank[future],0,4));s.bank_known[future]=0;
+    if(rolling){uint32_t expired=s.bank_known[future];CHECK(cudaMemset(s.error,0,4));if(expired)CHECK((cudaError_t)mgbfs_segmented_retire(s.seg,future,expired,s.error,nullptr));CHECK(cudaMemset(s.per_bank[future],0,8));s.bank_known[future]=0;
      CHECK((cudaError_t)mgbfs_segmented_rehash_u8(width,s.seg,s.bank_known[0],s.bank_known[1],s.bank_known[2],SEED,64,s.error,nullptr));CHECK(cudaDeviceSynchronize());need(!read32(s.error),"rolling maintenance");s.activate(future);
     }else s.mark=s.known;}}
   need(actual==expected[depth],"oracle frontier mismatch");size_t rounds=std::max(work[0].size(),work[1].size());

@@ -7,7 +7,8 @@ static __device__ __forceinline__ uint64_t mix64(uint64_t x){x^=x>>30;x*=0xbf584
 static __device__ __forceinline__ uint64_t mgbfs_shared_table_bucket(uint64_t hash,uint64_t capacity){return mix64(hash^0x9e3779b97f4a7c15ULL)&(capacity-1);}
 static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
 template<class State> struct ActionT {
- uint32_t kind,elements,n,m,generators,count,stride;
+ uint32_t kind,elements,n,m,generators,count;
+ uint64_t stride;
  const State* parents;const uint32_t* permutations;const int64_t* matrices;const uint32_t* moduli;
  const int32_t* products=nullptr;uint32_t product_stride=0;const uint8_t* byte_products=nullptr;
  __device__ uint32_t child(uint32_t i)const{return i;}

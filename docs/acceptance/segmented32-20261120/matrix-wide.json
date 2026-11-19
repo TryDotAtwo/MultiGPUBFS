@@ -1,0 +1,46 @@
+[
+  {
+    "case": "matrix",
+    "states": 12,
+    "layers": 6,
+    "state_bytes": 8,
+    "history_banks": 1,
+    "segments": [
+      4,
+      4
+    ]
+  },
+  {
+    "case": "signed",
+    "states": 4,
+    "layers": 3,
+    "state_bytes": 8,
+    "history_banks": 3,
+    "segments": [
+      1,
+      2
+    ]
+  },
+  {
+    "case": "directed",
+    "states": 3,
+    "layers": 3,
+    "state_bytes": 8,
+    "history_banks": 1,
+    "segments": [
+      1,
+      1
+    ]
+  },
+  {
+    "case": "wide-permutation",
+    "states": 720,
+    "layers": 19,
+    "state_bytes": 1,
+    "history_banks": 1,
+    "segments": [
+      123,
+      122
+    ]
+  }
+]

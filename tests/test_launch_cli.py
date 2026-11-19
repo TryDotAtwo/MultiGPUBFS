@@ -17,6 +17,13 @@ class CliContract(unittest.TestCase):
     with patch('multigpubfs.cli.run_graph',return_value={'status':'COMPLETE'}) as run:
      self.assertEqual(main([str(p),str(Path(d)/backend),'--memory-backend',backend]),0)
      self.assertEqual(run.call_args.kwargs['memory_backend'],backend)
+ def test_segmented_cli_forwards_custom_rows(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d)/'g.json';p.write_text(GraphDefinition.permutation([[1,0]],[0,1]).to_json())
+   with patch('multigpubfs.cli.run_graph',return_value={'status':'COMPLETE'}) as run:
+    self.assertEqual(main([str(p),str(Path(d)/'out'),'--memory-backend','segmented','--segment-rows','65536']),0)
+    self.assertEqual(run.call_args.kwargs['segment_rows'],65536)
+    self.assertEqual(run.call_args.kwargs['memory_backend'],'segmented')
  def test_bad_definition_does_not_start_gpu(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'bad.json';p.write_text('{}')

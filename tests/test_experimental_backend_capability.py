@@ -17,7 +17,7 @@ def test_matching_native_capability_can_be_cached(tmp_path,monkeypatch,backend,k
     binary=tmp_path/'mgbfs';binary.write_bytes(b'new')
     calls=[]
     def query(*a,**kw):
-        calls.append((a,kw));return query_response({'schema':1,key:True})
+        calls.append((a,kw));return query_response({'schema':1,key:True,'segmented32_v2':True})
     monkeypatch.setattr(launch,'native_query',query)
     launch._require_memory_backend(str(binary),{'LD_LIBRARY_PATH':'/one'},backend)
     launch._require_memory_backend(str(binary),{'LD_LIBRARY_PATH':'/one'},backend)
@@ -47,3 +47,20 @@ def test_matching_receipts_are_accepted():
     launch._check_memory_backend_receipt({'backend':'EXPERIMENTAL_SEGMENTED24'},'segmented24')
     launch._check_memory_backend_receipt({'backend':'EXPERIMENTAL_PERMUTATION_BITMAP'},'permutation_bitmap')
     launch._check_memory_backend_receipt({'backend':'GENERIC'},'legacy')
+
+@pytest.mark.parametrize('backend,key',[('segmented24','segmented24_v1'),('permutation_bitmap','permutation_bitmap_v1')])
+def test_pre_32bit_native_is_rejected(tmp_path,monkeypatch,backend,key):
+    binary=tmp_path/'mgbfs';binary.write_bytes(b'old ABI')
+    monkeypatch.setattr(launch,'native_query',lambda *a,**kw:query_response({'schema':1,key:True}))
+    with pytest.raises(RuntimeError,match='NATIVE_MEMORY_BACKEND_UNAVAILABLE'):
+        launch._require_memory_backend(str(binary),{},backend)
+
+@pytest.mark.parametrize('name',['segmented','segmented32','segmented24'])
+def test_segmented_names_select_same_memory_backend(name):
+    assert launch._normalize_memory_backend(name)=='segmented24'
+
+def test_normalize_other_memory_backends():
+    assert launch._normalize_memory_backend('legacy')=='legacy'
+    assert launch._normalize_memory_backend('permutation_bitmap')=='permutation_bitmap'
+    with pytest.raises(ValueError, match='INVALID_MEMORY_BACKEND'):
+        launch._normalize_memory_backend('unknown')

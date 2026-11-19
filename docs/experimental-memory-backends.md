@@ -9,10 +9,11 @@ states on one rank, out-of-core execution, or universal performance gains.
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The dev36 GitHub release provides independently checksummed components for
-SM75/80/86/89/90/100/103/120 and a universal build. Existing dev35 native
-assets do not contain the new kernels. The launcher checks the requested
-native capability before BFS and checks the actual backend in the receipt.
+The 32-bit-row variant requires native ABI `segmented32_v2`: both the
+executable and CUDA component must be built from the same source revision.
+Older dev36 components have the earlier 24-bit layout and are not compatible.
+The launcher checks the native capability before BFS and the actual backend
+in the receipt.
 See [installation and offline prefetch](install-native-package.md).
 
 ## Select a backend
@@ -25,7 +26,8 @@ from cayleypy import CayleyGraph, PermutationGroups
 
 options = NativeOptions(
     devices=(0, 1),
-    memory_backend="segmented24",  # or "permutation_bitmap", or "legacy"
+    memory_backend="segmented",  # or "permutation_bitmap", or "legacy"
+    segment_rows=2**32,  # maximum rows per bank per segment; change if needed
     autotune=True,
 )
 multigpubfs.enable_native(options)
@@ -48,23 +50,36 @@ uses the GPUs named in `NativeOptions.devices`. Inspect `result.report["backend"
 to see what actually ran. The result contains layer sizes and compact samples;
 it is not an archive of every state. `INCOMPLETE` is not a completed diameter.
 
-## `segmented24`
+## `segmented`
 
-Each independent hash segment has at most 2^24 rows per bank. A logical GPU
-owner can have many segments: the limit is local to one segment, not a
-32-bit limit on all states held by one GPU. Global and per-rank layer counts
-use checked 64-bit arithmetic. Collision resolution compares full state values.
-For an inverse-closed action, only three distance banks are needed; for a
-directed action the visited history is retained.
-The 24-bit local row is a field inside a 64-bit hash slot; each slot itself
-uses 8 bytes, in addition to state storage and other metadata. It is not a
-three-byte-per-entry hash table.
+An independent segment stores up to `segment_rows` states **per bank**.
+The default is `2**32`; valid values are integers from 1 through `2**32`.
+Local rows are indexed from 0 through `segment_rows - 1` with 32-bit row
+indices. A segment number and bank number are tracked separately. Aggregate
+counts, strides, and layer offsets are 64-bit; full states are compared for
+hash collisions. The former name `segmented24` remains a compatibility
+alias; it does not select a 24-bit index. Receipts may still say
+`EXPERIMENTAL_SEGMENTED24` for compatibility.
 
-The current implementation allocates segments lazily and consults the existing
-segment tables for a shard sequentially. The number and layout of segments
-therefore affect throughput. Segmented storage does not guarantee that a graph
-fits in VRAM. A memory stop preserves the last completed layer rather than
-reporting a partially processed one as complete.
+For an inverse-closed action the implementation uses three state banks per
+segment; directed actions retain the visited history in a single bank.
+`segment_rows` is a maximum, **not** an immediate memory allocation. The
+actual rows per bank can be smaller according to workload and available
+memory. On growth, a logical shard can receive additional independent
+segments. See `configured_segment_rows`, `rows_per_bank` and
+`segment_count` in each entry of `result.report["segment_memory_by_rank"]`.
+
+Segments are allocated lazily, and their tables are looked up sequentially
+within a logical shard. Both the number of shards and the number of segments
+can affect performance. Neither segmentation nor the configured maximum
+guarantees that a graph will fit in VRAM. On a resource stop, only completed
+layers are reported as complete.
+
+The CLI accepts the same configuration, for example:
+
+```bash
+multigpubfs graph.json result --memory-backend segmented --segment-rows 16777216
+```
 
 ## `permutation_bitmap`
 
@@ -83,8 +98,10 @@ problem have been validated.
 
 ## Measured scope and tuning
 
-With eight RTX 3090 GPUs, fixed 8 logical shards, 8 owner lanes, 8192 batch,
-and 1,048,576 rows per segment, one complete S12 run gave:
+The following historical dev36 24-bit-row measurements used eight RTX 3090
+GPUs, fixed 8 logical shards, 8 owner lanes, 8192 batch, and 1,048,576 rows
+per segment. They do not measure the new 32-bit-row ABI. One complete S12
+run gave:
 
 | Backend | BFS time | All 67 layer sizes |
 |---|---:|---|

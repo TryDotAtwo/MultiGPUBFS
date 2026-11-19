@@ -31,7 +31,7 @@ def main():
  subprocess.run(['cargo','+1.75.0','build','--locked','--release','-p','mgbfs-cli','--features','cuda'],cwd=ROOT,env=env,check=True)
  binary=ROOT/'target/release/mgbfs'
  info=json.loads(subprocess.check_output([str(binary),'key-info'],env=env,text=True,timeout=30))
- if info.get('segmented24_v1') is not True or info.get('permutation_bitmap_v1') is not True:
+ if info.get('segmented24_v1') is not True or info.get('permutation_bitmap_v1') is not True or info.get('segmented32_v2') is not True:
   raise RuntimeError('CLI_MEMORY_BACKEND_CAPABILITIES')
  receipt={'schema':1,'source_commit':commit,'binary_sha256':digest(binary),'cuda_input_sha256':proof['sha256'],
           'cuda_build_source':proof['source_commit'],'rustc':subprocess.check_output(['rustc','+1.75.0','--version'],text=True).strip(),

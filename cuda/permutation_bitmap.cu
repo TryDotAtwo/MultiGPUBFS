@@ -29,7 +29,7 @@ __global__ void bitmap_route(ActionT<T> action,BitmapDeviceDomain domain,uint32_
  }
 }
 template<class T,bool Packed>
-int launch_route(BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const T* parents,uint32_t count,uint32_t stride,
+int launch_route(BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const T* parents,uint32_t count,uint64_t stride,
  const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(!elements||elements!=domain.elements||!generators||!parents||count>stride||!permutations||
@@ -42,7 +42,7 @@ int launch_route(BitmapDeviceDomain domain,uint32_t elements,uint32_t generators
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_bitmap_route(uint32_t state_bytes,BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const void* parents,
- uint32_t count,uint32_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
+ uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
   if(elements<=24)return launch_route<uint8_t,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
@@ -53,12 +53,12 @@ extern "C" int mgbfs_bitmap_route(uint32_t state_bytes,BitmapDeviceDomain domain
 }
 
 template<class T>
-__global__ void bitmap_seed(const T* input,uint32_t elements,MgbfsSegment active,uint64_t* bits,uint64_t local,uint32_t* accepted){
+__global__ void bitmap_seed(const T* input,uint32_t elements,MgbfsSegment active,uint64_t* bits,uint64_t local,uint64_t* accepted){
  if(blockIdx.x||threadIdx.x)return;
  for(uint32_t e=0;e<elements;e++)static_cast<T*>(active.states)[uint64_t(e)*active.capacity*active.banks]=input[e];
  bits[local/64]|=1ull<<(local%64);*accepted=1;
 }
-extern "C" int mgbfs_bitmap_seed(uint32_t state_bytes,const void* input,uint32_t elements,MgbfsSegment active,uint64_t* bits,uint64_t local,uint32_t* accepted,void* stream){
+extern "C" int mgbfs_bitmap_seed(uint32_t state_bytes,const void* input,uint32_t elements,MgbfsSegment active,uint64_t* bits,uint64_t local,uint64_t* accepted,void* stream){
  if(!input||!elements||!active.states||active.banks!=3||!bits||!accepted)return int(cudaErrorInvalidValue);
  if(state_bytes==1)bitmap_seed<uint8_t><<<1,1,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const uint8_t*>(input),elements,active,bits,local,accepted);
  else if(state_bytes==8)bitmap_seed<int64_t><<<1,1,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const int64_t*>(input),elements,active,bits,local,accepted);
@@ -72,7 +72,7 @@ extern "C" int mgbfs_bitmap_seed(uint32_t state_bytes,const void* input,uint32_t
 // their spill lifetime. A fatal/capacity failure terminates the partial layer.
 template<class T,class Input>
 __global__ void bitmap_accept(Input in,uint32_t world,uint32_t owner,uint64_t total,uint64_t owner_len,
- uint64_t* bits,MgbfsSegment active,uint32_t bank,uint32_t* accepted,const uint32_t* selection,uint32_t selected,
+ uint64_t* bits,MgbfsSegment active,uint32_t bank,uint64_t* accepted,const uint32_t* selection,uint32_t selected,
  uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t global_limit){
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<selected;i+=blockDim.x*gridDim.x){
   uint32_t child=selection?selection[i]:in.child(i);if(!in.valid(child,error))continue;
@@ -87,8 +87,9 @@ __global__ void bitmap_accept(Input in,uint32_t world,uint32_t owner,uint64_t to
    while(v<global_limit)if(n.compare_exchange_weak(v,v+1,cuda::memory_order_acq_rel,cuda::memory_order_relaxed)){reserved=true;break;}
    if(!reserved){atomicAnd(word,~mask);atomicOr(error,uint32_t(MGBFS_SEGMENTED_CAPACITY_LIMIT));continue;}
   }
-  uint32_t row=atomicAdd(accepted,0u);
-  while(row<active.capacity){uint32_t v=atomicCAS(accepted,row,row+1u);if(v==row)break;row=v;}
+  cuda::atomic_ref<uint64_t,cuda::thread_scope_device> accepted_counter(*accepted);
+  uint64_t row=accepted_counter.load(cuda::memory_order_relaxed);
+  while(row<active.capacity&&!accepted_counter.compare_exchange_weak(row,row+1,cuda::memory_order_relaxed,cuda::memory_order_relaxed)){}
   if(row>=active.capacity){
    if(reserved){cuda::atomic_ref<uint64_t,cuda::thread_scope_device> n(*global_count);n.fetch_sub(1,cuda::memory_order_acq_rel);}
    spill[atomicAdd(spill_count,1u)]=child;atomicAnd(word,~mask);continue;
@@ -102,11 +103,11 @@ template<class T,bool Packed>
 int launch_accept(uint32_t elements,const T* local,const T* remote,const GenericRouteRecord* lm,const GenericRouteRecord* rm,
  const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t owner,uint64_t total,uint64_t owner_len,uint64_t* bits,
  uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,MgbfsSegment active,uint32_t bank,
- uint32_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream){
+ uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream){
  uint64_t bound=uint64_t(world)*q;
  if(!elements||(Packed&&elements>24)||!world||world>128||rank>=world||owner>=world||!total||!bits||!shards||shard>=shards||!q||
   bound>=0x80000000ULL||visible>q||selected>bound||(!selection&&selected!=uint64_t(world)*visible)||!lm||!rm||!lc||!rc||(!Packed&&(!local||!remote))||
-  !active.states||active.banks!=3||!active.capacity||active.capacity>(1u<<24)||bank>=3||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
+  !active.states||active.banks!=3||!active.capacity||active.capacity>(uint64_t(1)<<32)||bank>=3||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
  if(!selected)return 0;
  MgbfsBoundedIncomingAction<T,Packed> in{{elements,uint32_t(bound),q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,nullptr},visible};
  uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;
@@ -116,7 +117,7 @@ int launch_accept(uint32_t elements,const T* local,const T* remote,const Generic
 extern "C" int mgbfs_bitmap_accept(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
  const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,
  uint32_t owner,uint64_t total,uint64_t owner_len,uint64_t* bits,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
- const uint32_t* selection,uint32_t selected,MgbfsSegment active,uint32_t bank,uint32_t* accepted,uint32_t* spill,
+ const uint32_t* selection,uint32_t selected,MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint32_t* spill,
  uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream){
  if(state_bytes==1&&packed)return launch_accept<uint8_t,true>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,owner,total,owner_len,bits,shard,shards,q,visible,selection,selected,active,bank,accepted,spill,spill_count,error,global_count,limit,stream);
  if(state_bytes==1)return launch_accept<uint8_t,false>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,owner,total,owner_len,bits,shard,shards,q,visible,selection,selected,active,bank,accepted,spill,spill_count,error,global_count,limit,stream);

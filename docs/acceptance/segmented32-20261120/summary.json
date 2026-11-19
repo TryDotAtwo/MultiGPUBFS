@@ -1,0 +1,56 @@
+{
+  "benchmark": {
+    "11": {
+      "segmented24": {
+        "bfs_seconds": [
+          6.680729643,
+          6.5971119609999995
+        ],
+        "mean_seconds": 6.6389208019999995
+      },
+      "permutation_bitmap": {
+        "bfs_seconds": [
+          7.539993058,
+          7.5224685220000005
+        ],
+        "mean_seconds": 7.53123079
+      },
+      "bitmap_to_segmented_ratio": 1.134405879300622
+    },
+    "12": {
+      "segmented24": {
+        "bfs_seconds": [
+          87.318075333,
+          86.631922718
+        ],
+        "mean_seconds": 86.9749990255
+      },
+      "permutation_bitmap": {
+        "bfs_seconds": [
+          104.066863543,
+          104.362506475
+        ],
+        "mean_seconds": 104.214685009
+      },
+      "bitmap_to_segmented_ratio": 1.1982142704991068
+    }
+  },
+  "s14_coxeter_estimate": {
+    "n_factorial": 87178291200,
+    "max_frontier": 3727542188,
+    "max_three_live_layers": 11141606753,
+    "gpu_count": 8,
+    "per_gpu_frontier_rows_25pct_margin": 582428467,
+    "segment_hash_bytes_per_gpu": 72800017214,
+    "bitmap_bytes_per_gpu": 25824156438,
+    "includes": "states, per-segment hash/positions or full-domain bitmap, 25% balance allowance",
+    "excludes": "NCCL, queues, CUDA allocations, metadata, allocator overhead and heavier real skew",
+    "gpu_assumption": "NVIDIA B200 SXM 180 GB per GPU",
+    "scope": "arithmetic estimate for Coxeter adjacent-transposition graph only; not a measured fit"
+  },
+  "s15_coxeter": {
+    "max_three_live_layers": 151421412675,
+    "three_layer_state_bytes_without_other_storage": 2271321190125,
+    "scope": "current uncompressed 15-byte state storage for Coxeter S15 already exceeds 8x180 GB"
+  }
+}

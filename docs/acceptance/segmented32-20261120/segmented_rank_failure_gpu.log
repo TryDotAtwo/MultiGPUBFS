@@ -1,0 +1,3 @@
+PASS rank failure and supervisor cleanup in 11.97 sec
+PASS fresh persistent job after fault
+EVIDENCE /workspace/seg24-failure-gov2mu27

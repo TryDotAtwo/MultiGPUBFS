@@ -5,6 +5,15 @@ from .process_control import query as native_query, run as native_run
 from .graph_definition import GraphDefinition,from_cayleypy
 from .native_distribution import native_runtime
 
+def _normalize_memory_backend(name):
+ # Keep the previous spelling as an alias for existing clients and receipts;
+ # it is no longer the width of the local index.
+ if name in ('segmented','segmented32','segmented24'):
+  return 'segmented24'
+ if name in ('legacy','permutation_bitmap'):
+  return name
+ raise ValueError('INVALID_MEMORY_BACKEND')
+
 # Cache only successful capability queries. The key follows the executable
 # identity and loader search path, so replacing a binary or library path
 # cannot silently reuse a capability learned from a different installation.
@@ -18,7 +27,7 @@ def _require_memory_backend(native,env,backend):
  result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
  try: info=json.loads(result.stdout)
  except (TypeError,ValueError):info={}
- if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True:
+ if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True:
   raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
  if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
  _memory_backend_capabilities.add(identity)
@@ -55,7 +64,7 @@ def _phase_failures(phases):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -72,8 +81,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  max_seconds=normalize(max_seconds)
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
+ if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
- if memory_backend not in ('legacy','segmented24','permutation_bitmap'):raise ValueError('INVALID_MEMORY_BACKEND')
+ memory_backend=_normalize_memory_backend(memory_backend)
  if memory_backend=='permutation_bitmap':
   if graph.action['kind']!='permutation':raise ValueError('BITMAP_REQUIRES_PERMUTATION_ACTION')
   if not 1<=len(graph.start)<=64:raise ValueError('BITMAP_UNSUPPORTED_DEGREE')
@@ -91,6 +101,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   # An inherited private experiment flag must not override an explicit API choice.
   native_env.pop('MGBFS_EXPERIMENTAL_SEGMENTED24',None);native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None);native_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
  if segmented:
+  if segment_rows is not None:native_env['MGBFS_SEGMENT_MAX_ROWS']=str(segment_rows)
+  else:native_env.setdefault('MGBFS_SEGMENT_MAX_ROWS',str(1<<32))
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   _require_memory_backend(native,native_env,memory_backend)
@@ -117,7 +129,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   preflight_env=dict(native_env);segment_cap=preflight_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)
   if segment_cap is not None:native_env['MGBFS_SEGMENT_MAX_RANK_STATES']=segment_cap
- geometry_bound=None
+ geometry_bound=None;shard_geometry=None
  if capacity is None and _profile_layers is None and not segmented and not backend.startswith('shard_ab_'):
   from .workload_geometry import certified_frontier_bound
   geometry_bound=certified_frontier_bound(graph)
@@ -132,6 +144,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   _check_memory_backend_receipt(report,memory_backend)
   if communication is not None:report['communication_preflight']=communication
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
+  if shard_geometry is not None:report['shard_geometry']=shard_geometry
   from .size_profiles import save_online_profiles
   try:save_online_profiles(report)
   except OSError:report['profile_cache_write_status']='UNAVAILABLE'
@@ -160,6 +173,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    native_env=dict(native_env,MGBFS_TUNING_EVIDENCE_ROOT=str(Path(output).parent/(Path(output).name+'-tuning-evidence')))
    profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
+   if segmented:shard_geometry=profile.get('shard_geometry')
    if profile.get('backend','generic')!='generic':
     remaining=remaining_work(max_seconds,profile['seconds'])
     return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
@@ -167,6 +181,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    native_env=_profile_environment(native_env,profile)
    if (profile.get('measured') or profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE') and profile.get('backend','generic')=='generic':_batch=profile['batch']
    max_seconds=remaining_work(max_seconds,profile['seconds'])
+  elif segmented:
+   from .autotune import _segmented_shard_plan
+   with tempfile.TemporaryDirectory(prefix='mgbfs-segment-shards-') as shard_dir:
+    shard_geometry,_=_segmented_shard_plan(graph,devices,capacity,native,native_env,shard_dir)
+   shards=shard_geometry['admitted_shards']
   else:shards=1
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
@@ -193,6 +212,15 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if profile is not None:profile['launch_admission_reused']=accepted is not None
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
   admission=json.loads(probe.stdout);devices=admission['devices']
+  if segmented:
+   # Scale a known maximum frontier per bank to the admitted GPU and shard
+   # count. Other graph families are sized natively from their orbit bound.
+   from .workload_geometry import coxeter_frontier_bound
+   frontier=coxeter_frontier_bound(graph) if admission['plan'].get('history_layers',3)==3 else None
+   if frontier:
+    divisor=4*len(devices)*shards
+    expected=(frontier['maximum_frontier']*5+divisor-1)//divisor
+    native_env['MGBFS_SEGMENT_EXPECTED_ROWS']=str(max(32,expected))
   if memory_backend=='permutation_bitmap':
    # graph-info derives hash cut points, while bitmap uses exact rank modulo
    # world. Never send irrelevant hash cuts into the bitmap runtime.

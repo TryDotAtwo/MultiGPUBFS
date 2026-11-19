@@ -17,6 +17,11 @@ class NativeOptions:
     max_seconds: int | None = None
     autotune: bool = True
     memory_backend: str = "legacy"
+    segment_rows: int = 1 << 32
+
+    def __post_init__(self):
+        if type(self.segment_rows) is not int or not 1 <= self.segment_rows <= 1 << 32:
+            raise ValueError("INVALID_SEGMENT_ROWS")
 
 
 @dataclass(frozen=True)
@@ -115,7 +120,8 @@ def _search(original, graph, backend, options, output, kwargs):
     with scope:
         report = run_graph(definition, output, devices=options.devices,
                            max_seconds=options.max_seconds, autotune=options.autotune,
-                           memory_backend=options.memory_backend)
+                           memory_backend=options.memory_backend,
+                           segment_rows=options.segment_rows)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

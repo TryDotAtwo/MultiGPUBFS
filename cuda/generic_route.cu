@@ -286,3 +286,93 @@ extern "C" int mgbfs_generic_max_queue_count(const uint32_t* counts,uint32_t n,u
  mgbfs_max_queue_count_kernel<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(counts,n,maximum);
  return int(cudaGetLastError());
 }
+
+
+// 64-bit SoA bank stride, used by independent large segments.
+extern "C" int mgbfs_generic_route_i64_wide_stride(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const int64_t* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* stream){
+ if(kind>1||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+  bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
+  !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
+  (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
+ if(!count)return 0;uint64_t blocks=(uint64_t(count)*generators+255)/256;
+ Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
+ route<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ return int(cudaGetLastError());
+}
+
+
+// 64-bit SoA bank stride, used by independent large segments.
+extern "C" int mgbfs_generic_route_u8_wide_stride(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const uint8_t* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* stream){
+ if(kind>0||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+  bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
+  !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
+  (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
+ if(!count)return 0;uint64_t blocks=(uint64_t(count)*generators+255)/256;
+ ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
+ route<<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ return int(cudaGetLastError());
+}
+
+
+// 64-bit SoA bank stride, used by independent large segments.
+extern "C" int mgbfs_generic_route_packed_u8_wide_stride(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const uint8_t* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* stream){
+ if(kind>0||elements>24||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+  bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
+  !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
+  (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
+ if(!count)return 0;uint64_t blocks=(uint64_t(count)*generators+255)/256;
+ ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
+ route<uint8_t,true><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ return int(cudaGetLastError());
+}
+
+
+// 64-bit SoA bank stride, used by independent large segments.
+extern "C" int mgbfs_generic_regenerate_all_routes_count_storage_wide_stride(
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint32_t source,uint64_t begin,const GenericRouteRecord* requests,
+ const uint32_t* counts,uint32_t capacity,uint32_t queues,void* output,uint32_t* error,void* stream) {
+ if((state_bytes!=1&&state_bytes!=8)||kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||
+  count>stride||uint64_t(count)*generators>=0x7fffffffULL||source>=128||begin>UINT64_MAX-count||
+  !parents||!requests||!counts||!capacity||!queues||queues>128u*4096u||!output||!error||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements))||
+  uint64_t(queues)>SIZE_MAX/(uint64_t(capacity)*sizeof(GenericRouteRecord))||
+  uint64_t(queues)>SIZE_MAX/state_bytes/(uint64_t(capacity)*elements))return int(cudaErrorInvalidValue);
+ if(!count)return int(cudaSuccess);
+ const uint32_t blocks=uint32_t(uint64_t(queues)*4>65535?65535:uint64_t(queues)*4);
+ if(state_bytes==1){
+  ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
+  regenerate_all_routes<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(a,source,begin,requests,counts,capacity,queues,static_cast<uint8_t*>(output),error);
+ }else{
+  Action a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
+  regenerate_all_routes<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(a,source,begin,requests,counts,capacity,queues,static_cast<int64_t*>(output),error);
+ }
+ return int(cudaGetLastError());
+}
+
+extern "C" int mgbfs_segmented_route_storage(
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* stream){
+ if(state_bytes==1){
+  auto fn=elements<=24?mgbfs_generic_route_packed_u8_wide_stride:mgbfs_generic_route_u8_wide_stride;
+  return fn(kind,elements,n,m,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,stream);
+ }
+ if(state_bytes==8)return mgbfs_generic_route_i64_wide_stride(kind,elements,n,m,generators,static_cast<const int64_t*>(parents),count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,stream);
+ return int(cudaErrorInvalidValue);
+}

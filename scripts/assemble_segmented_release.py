@@ -22,7 +22,7 @@ from multigpubfs.native_assets import AssetManager
 from scripts.fatbinary_inventory import verify_inventory
 from scripts.package_diagnostic_variants import cuda_source_identity
 
-EXPECTED_BUILD_SOURCE = '684cdc36f477fa84bf5181cd84d25d56acc78b2e'
+EXPECTED_BUILD_SOURCE = os.environ.get('MGBFS_COMPONENT_BUILD_SOURCE', '684cdc36f477fa84bf5181cd84d25d56acc78b2e')
 COMMON_SHA = '7d44d15a64d3032974801321420fda50027ce3724dba4d6d316cb759ffcb2c99'
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,6 +87,8 @@ def main():
  source=command('git','-C',ROOT,'rev-parse','HEAD')
  cli_receipt=json.loads(args.binary_receipt.read_text())
  sm86_receipt=json.loads((args.builds/'sm86/build-receipt.json').read_text())
+ if os.environ.get('MGBFS_COMPONENT_BUILD_SOURCE') and cli_receipt.get('capabilities',{}).get('segmented32_v2') is not True:
+  raise RuntimeError('CLI_SEGMENTED32_ABI_MISSING')
  if cli_receipt.get('source_commit')!=source or cli_receipt.get('binary_sha256')!=digest(args.binary) or cli_receipt.get('cuda_input_sha256')!=sm86_receipt.get('sha256') or cli_receipt.get('cuda_build_source')!=EXPECTED_BUILD_SOURCE or cli_receipt.get('capabilities',{}).get('segmented24_v1') is not True or cli_receipt.get('capabilities',{}).get('permutation_bitmap_v1') is not True:raise RuntimeError('CLI_BUILD_IDENTITY')
  identity=cuda_source_identity(ROOT,'HEAD')
  common_metadata=copy.deepcopy(old['native_metadata'])
