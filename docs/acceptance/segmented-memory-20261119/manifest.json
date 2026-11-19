@@ -173,6 +173,17 @@
       "report": "additional-evidence.json",
       "sha256": "4a6136a90bd43ec5722726571d1fe01eb18364e89cde2e7980b9e089a0116af9",
       "scope": "Offline wheel acceptance on 2x3060 and partial SM100 object compilation; not complete SM100 library or B200 runtime acceptance"
+    },
+    "ci-sm100-full-library": {
+      "status": "COMPILED_AND_ELF_INVENTORY_VERIFIED",
+      "source_commit": "684cdc36f477fa84bf5181cd84d25d56acc78b2e",
+      "cuda_toolkit": "12.9.86",
+      "workflow_run": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44599038300",
+      "job_id": 135825107596,
+      "artifact": "https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44599038300/artifacts/14568591626",
+      "artifact_sha256": "da99f027ec7bff819150fc933cfcbebd307aed537fa4f0ebdc47a4bb5e3c39fa",
+      "artifact_expires_utc": "2026-11-26T19:49:15Z",
+      "limitations": "CUDA library build only; not an installable wheel or a B200 GPU runtime test"
     }
   }
 }

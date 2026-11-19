@@ -110,8 +110,8 @@ profiles are not claimed to be measured optima.
 
 A separately built SM86 wheel was installed offline in a clean environment;
 CayleyPy persistent S3 and S4 passed with both modes on 2x RTX 3060. The
-wheel is an unpublished test artifact. The new CUDA modules have also
-compiled to SM100 objects, but a complete SM100 library and any B200 runtime
-acceptance remain separate checks.
+wheel is an unpublished test artifact. The complete CUDA library was also
+compiled and its SM100 inventory checked in GitHub Actions; this is not a
+B200 runtime acceptance or a published installable package.
 
 [Reports, hashes and acceptance boundaries](acceptance/segmented-memory-20261119/manifest.json).
