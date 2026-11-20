@@ -26,11 +26,12 @@ static Owned make_segment(uint32_t capacity, uint32_t banks=1, uint32_t width=1)
     Owned x;
     x.segment.capacity = capacity;
     x.segment.banks = banks;
+    x.segment.position_item_bytes = std::getenv("MGBFS_TEST_COMPACT_POSITIONS") ? 4 : 8;
     x.segment.slots_count = 32;
     while(x.segment.slots_count < uint64_t(capacity)*2) x.segment.slots_count *= 2;
     CUDA_OK(cudaMalloc((void**)&x.segment.slots, x.segment.slots_count * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void**)&x.segment.states, capacity * banks * 2 * width));
-    CUDA_OK(cudaMalloc((void**)&x.segment.positions, capacity * banks * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void**)&x.segment.positions, capacity * banks * x.segment.position_item_bytes));
     CUDA_OK(cudaMalloc((void**)&x.count, sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void**)&x.future, capacity * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void**)&x.error, sizeof(uint32_t)));
@@ -134,7 +135,7 @@ static void rehash_nontrivial_seed_and_bucket() {
     Owned x=make_segment(4,3);const State a{7,17};const uint64_t seed=0x19f856a2ULL;
     const uint64_t h=host_hash(a,seed);const uint64_t expected=host_mix(h^0x9e3779b97f4a7c15ULL)&(x.segment.slots_count-1);
     require(submit(x,{}, {a},0,h)==0,"hashed insert");
-    uint64_t position=~uint64_t(0);CUDA_OK(cudaMemcpy(&position,x.segment.positions,8,cudaMemcpyDeviceToHost));
+    uint64_t position=0; CUDA_OK(cudaMemcpy(&position,x.segment.positions,x.segment.position_item_bytes,cudaMemcpyDeviceToHost));
     require(position==expected,"shard-independent bucket rule");
     CUDA_OK((cudaError_t)mgbfs_segmented_rehash_u8(2,x.segment,1,0,0,seed,64,x.error,nullptr));
     CUDA_OK(cudaDeviceSynchronize());uint32_t error=0;CUDA_OK(cudaMemcpy(&error,x.error,4,cudaMemcpyDeviceToHost));require(error==0,"nontrivial rehash error");
@@ -303,7 +304,7 @@ static void exercise(int device) {
     multisegment_collision_stress();
     wide_values();
     parallel_shards();
-    boundary_32bit_row();
+    if(!std::getenv("MGBFS_TEST_SKIP_LARGE_ALLOCATION")) boundary_32bit_row();
     cached_descriptors_include_active();
     destroy(first); destroy(second); destroy(overflow);
 }

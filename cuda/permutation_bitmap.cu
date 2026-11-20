@@ -59,7 +59,7 @@ __global__ void bitmap_seed(const T* input,uint32_t elements,MgbfsSegment active
  bits[local/64]|=1ull<<(local%64);*accepted=1;
 }
 extern "C" int mgbfs_bitmap_seed(uint32_t state_bytes,const void* input,uint32_t elements,MgbfsSegment active,uint64_t* bits,uint64_t local,uint64_t* accepted,void* stream){
- if(!input||!elements||!active.states||active.banks!=3||!bits||!accepted)return int(cudaErrorInvalidValue);
+ if(!input||!elements||!active.states||!(active.banks==2||active.banks==3)||!bits||!accepted)return int(cudaErrorInvalidValue);
  if(state_bytes==1)bitmap_seed<uint8_t><<<1,1,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const uint8_t*>(input),elements,active,bits,local,accepted);
  else if(state_bytes==8)bitmap_seed<int64_t><<<1,1,0,static_cast<cudaStream_t>(stream)>>>(static_cast<const int64_t*>(input),elements,active,bits,local,accepted);
  else return int(cudaErrorInvalidValue);
@@ -107,7 +107,7 @@ int launch_accept(uint32_t elements,const T* local,const T* remote,const Generic
  uint64_t bound=uint64_t(world)*q;
  if(!elements||(Packed&&elements>24)||!world||world>128||rank>=world||owner>=world||!total||!bits||!shards||shard>=shards||!q||
   bound>=0x80000000ULL||visible>q||selected>bound||(!selection&&selected!=uint64_t(world)*visible)||!lm||!rm||!lc||!rc||(!Packed&&(!local||!remote))||
-  !active.states||active.banks!=3||!active.capacity||active.capacity>(uint64_t(1)<<32)||bank>=3||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
+  !active.states||!(active.banks==2||active.banks==3)||!active.capacity||active.capacity>(uint64_t(1)<<32)||bank>=active.banks||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
  if(!selected)return 0;
  MgbfsBoundedIncomingAction<T,Packed> in{{elements,uint32_t(bound),q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,nullptr},visible};
  uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;

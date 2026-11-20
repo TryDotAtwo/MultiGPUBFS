@@ -10,12 +10,11 @@ establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The dev38 release provides separately checksummed components for the
-`segmented32_v2` ABI. Its executable includes the persistent-cache admission
-fix; CUDA components are reused from dev37 after verifying the CUDA-source
-digest is identical. Older dev36 components use the earlier 24-bit layout
-and are not compatible. The launcher checks the native capability before BFS
-and the actual backend in the receipt.
+This candidate source requires `segmented_memory_presets_v1` and native ABI 3.
+The executable and CUDA component must come from the same build. The dev38
+binary and CUDA component implement ABI 2 and cannot be combined with this
+source. The launcher checks the capability before BFS and the backend in the
+receipt; a mismatched runtime is rejected instead of silently ignoring options.
 See [installation and offline prefetch](install-native-package.md).
 
 ## Select a backend
@@ -29,6 +28,7 @@ from cayleypy import CayleyGraph, PermutationGroups
 options = NativeOptions(
     devices=(0, 1),
     memory_backend="segmented",  # or "permutation_bitmap", or "legacy"
+    memory_preset="balanced",  # or "max_capacity" on the two experimental backends
     segment_rows=2**32,  # maximum rows per bank per segment; change if needed
     autotune=True,
 )
@@ -51,6 +51,27 @@ finally:
 uses the GPUs named in `NativeOptions.devices`. Inspect `result.report["backend"]`
 to see what actually ran. The result contains layer sizes and compact samples;
 it is not an archive of every state. `INCOMPLETE` is not a completed diameter.
+
+## Memory preset
+
+`memory_preset="balanced"` selects for speed among eligible measured profiles.
+`memory_preset="max_capacity"` prioritizes estimated admitted rows on the
+limiting GPU, then measured speed for equal estimates. It defaults to one owner
+lane and a queue ceiling of 2048; bitmap uses two state banks, while hash uses
+32-bit slot positions where the number of slots permits. The score describes
+the tested allocation geometry, not a guarantee of a global optimum or future
+NCCL/driver allocation. Max-capacity can be slower.
+
+The policy and backend are independent. Explicit compatible environment
+settings retain priority, and changing backend or policy changes the tuning
+cache identity. The legacy backend currently rejects `max_capacity` instead
+of pretending to apply it. Small jobs can use a conservative profile without
+measured tuning. The worker reuses an exact matching profile; a new graph or
+configuration can require tuning again.
+
+The two-bank bitmap keeps global visited bits and retains a bounded sample of
+the previous complete layer before reusing its state bank. A resource stop
+reports only complete layers. See [validation and limits](acceptance/segment-vram-20261120.md).
 
 ## `segmented`
 
@@ -80,7 +101,7 @@ layers are reported as complete.
 The CLI accepts the same configuration, for example:
 
 ```bash
-multigpubfs graph.json result --memory-backend segmented --segment-rows 16777216
+multigpubfs graph.json result --memory-backend segmented --memory-preset max_capacity --segment-rows 16777216
 ```
 
 ## `permutation_bitmap`
@@ -100,7 +121,9 @@ problem have been validated.
 
 ## Measured scope and tuning
 
-On 8x RTX 3090 all three backends completed S13 with 6,227,020,800 states;
+In a later matched exact-exchange comparison on the same 8x RTX 3090, S13 took 393.32 s for hash and 593.55 s for bitmap. This was one paired run, using the earlier three-bank bitmap; see the [audit](acceptance/bitmap-audit-20261120.md).
+
+For context, an earlier padded-exchange run measured the following. On 8x RTX 3090 all three backends completed S13 with 6,227,020,800 states;
 all 79 layer sizes matched the independent Mahonian oracle. Single-run BFS
 times with 8 logical shards, 8 segmented owner lanes, batch 8192 and physical
 segments of 1,048,576 rows per bank were:

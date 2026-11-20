@@ -161,6 +161,13 @@ def _segmented_shard_plan(graph,devices,capacity,native,env,directory,baseline=N
    rejected.append({'shards':shards,'reason':str(error)})
    shards=max(1,shards//2)
 
+def _pick_segmented_profile(pilots,scores,preset):
+ if preset=='balanced':return min(range(len(scores)),key=lambda i:scores[i])
+ if preset!='max_capacity':raise ValueError('INVALID_MEMORY_PRESET')
+ if any(type(p.get('capacity_score_rows')) is not int for p in pilots):
+  raise RuntimeError('SEGMENTED_CAPACITY_EVIDENCE_MISSING')
+ return min(range(len(scores)),key=lambda i:(-pilots[i]['capacity_score_rows'],scores[i]))
+
 def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None):
  # Omitted peer policy and public default auto are the same configuration.
  env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
@@ -331,7 +338,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    # For segmented modes the user cap, if any, is already in
    # candidate_env. Passing the legacy probe capacity here would invent an
    # extra global atomic limit in uncapped production and skew the timings.
-   report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=None if segmented else common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,memory_backend='permutation_bitmap' if bitmap else 'segmented24' if segmented else 'legacy',_batch=batch,_profile_layers=36,_native_env=candidate_env))
+   report=measure(label,candidate_env,lambda target:run_graph(graph,target,devices=selected,capacity=None if segmented else common_capacity,max_seconds=limit,executable=native,shards=shards,autotune=False,memory_backend='permutation_bitmap' if bitmap else 'segmented24' if segmented else 'legacy',memory_preset=env.get('MGBFS_MEMORY_PRESET','balanced'),_batch=batch,_profile_layers=36,_native_env=candidate_env))
    if report is None:continue
    if segmented and report.get('backend')!=('EXPERIMENTAL_PERMUTATION_BITMAP' if bitmap else 'EXPERIMENTAL_SEGMENTED24'):raise RuntimeError('SEGMENTED_TUNER_WRONG_BACKEND')
    if segmented and report.get('status')=='INCOMPLETE' and str(report.get('reason','')).startswith('RESOURCE_'):
@@ -346,6 +353,13 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     if env.get('_MGBFS_SEGMENT_EXCHANGE_CAPABLE')=='1':
      if any(type(x) is not bool or x!=(exchange=='1') for x in actual_exchange):raise RuntimeError('SEGMENTED_TUNER_EXCHANGE_RECEIPT_MISMATCH')
     elif exchange!='0' or any(x not in (None,False) for x in actual_exchange):raise RuntimeError('SEGMENTED_TUNER_EXCHANGE_RECEIPT_MISMATCH')
+    if env.get('MGBFS_MEMORY_PRESET')=='max_capacity':
+     capacities=[]
+     for r in receipts:
+      budget=r.get('storage_budget_bytes');unit=r.get('bytes_per_segment');rows=r.get('rows_per_bank')
+      if not all(type(x) is int and x>0 for x in (budget,unit,rows)):raise RuntimeError('SEGMENTED_CAPACITY_EVIDENCE_MISSING')
+      capacities.append((budget//unit)*rows)
+     pilot.update(capacity_score_rows=min(capacities),capacity_score_rows_by_rank=capacities)
     pilot.update(segment_owner_lanes=lane,segment_owner_lanes_by_rank=actual,segment_exact_exchange=exchange=='1')
    pilots.append(pilot)
   # Compare generator on the same graph, history, capacity and transport.
@@ -428,14 +442,15 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   sizes=pilots[0]['layer_sizes'][:depth+1]
   if any(p['layer_sizes'][:depth+1]!=sizes for p in pilots):raise RuntimeError('AUTOTUNE_PREFIX_CORRECTNESS_MISMATCH')
   scores=[sum(p['layer_seconds'][1:depth]) for p in pilots]
-  winner=min(range(len(scores)),key=lambda i:scores[i])
-  # A single bounded sample cannot justify a marginal switch. Keep baseline
-  # unless the alternative beats it by at least five percent.
-  if scores[winner]>=scores[0]*.95:winner=0
+  if segmented:
+   winner=_pick_segmented_profile(pilots,scores,env.get('MGBFS_MEMORY_PRESET','balanced'))
+  else:
+   winner=min(range(len(scores)),key=lambda i:scores[i])
+   if scores[winner]>=scores[0]*.95:winner=0
   chosen=pilots[winner]
   chosen_generator=chosen.get('generator_backend',forced_generator)
   result={'generator_backend':chosen_generator,'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common_capacity,'scope':'hardware-derived prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and exact bounded matrix CUDA/GEMM generators and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
-  if segmented:result.update(shard_geometry=shard_geometry,resource_rejections=resource_rejections,segment_owner_lanes=chosen['segment_owner_lanes'],segment_exact_exchange=chosen['segment_exact_exchange'],winner_index=winner,scope=('permutation_bitmap' if bitmap else 'segmented24')+' GPU prefix timing among admitted shard, owner-lane, batch and exchange choices; no claim of a global optimum or large-rank acceptance')
+  if segmented:result.update(memory_preset=env.get('MGBFS_MEMORY_PRESET','balanced'),capacity_metric_scope='minimum per-rank estimated full-segment rows; not a measured global maximum',shard_geometry=shard_geometry,resource_rejections=resource_rejections,segment_owner_lanes=chosen['segment_owner_lanes'],segment_exact_exchange=chosen['segment_exact_exchange'],winner_index=winner,scope=('permutation_bitmap' if bitmap else 'segmented24')+' GPU prefix timing among admitted shard, owner-lane, batch and exchange choices; no claim of a global optimum or large-rank acceptance')
   result['excluded_prefix_candidates']=excluded_prefix_candidates
   result['_admission_inventory']=[] if candidate_failures else baseline.get('inventory',[])
   if candidate_failures:result.update(candidate_failures=candidate_failures,failed_candidate_policy='REJECT_AND_MEASURE_REMAINING',winner_candidate=chosen.get('candidate'),failed_probes_retried=False)

@@ -81,6 +81,7 @@ pub struct SegmentLayout {
     pub slots: u64,
     pub state_bytes: u64,
     pub position_bytes: u64,
+    pub position_item_bytes: u32,
     pub device_bytes: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,15 +101,29 @@ impl SegmentLayout {
         let states = rows.checked_mul(u64::from(elements)).and_then(|v| v.checked_mul(u64::from(state_bytes))).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let positions = if banks == 3 { rows.checked_mul(8).ok_or("SEGMENTED_LAYOUT_OVERFLOW")? } else { 0 };
         let bytes = slots.checked_mul(8).and_then(|v| v.checked_add(states)).and_then(|v| v.checked_add(positions)).and_then(|v| v.checked_add(24)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
-        Ok(Self { rows_per_bank, banks, slots, state_bytes: states, position_bytes: positions, device_bytes: bytes })
+        Ok(Self { rows_per_bank, banks, slots, state_bytes: states, position_bytes: positions, position_item_bytes: if banks==3 {8} else {0}, device_bytes: bytes })
+    }
+    /// Use exact 32-bit positions only when every hash slot index fits u32.
+    /// There is no sentinel in the positions array: it is read only for
+    /// initialized live rows, so slot index u32::MAX remains representable.
+    pub fn new_compact(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
+        let mut layout=Self::new(elements,state_bytes,rows_per_bank,banks)?;
+        if banks==3 && layout.slots <= (1u64<<32) {
+            let saved=layout.position_bytes/2;
+            layout.position_bytes-=saved;layout.device_bytes-=saved;layout.position_item_bytes=4;
+        }
+        Ok(layout)
     }
     /// State-only storage for a bitmap backend; visited bits are allocated
     /// independently for the full rank-owned domain and must be admitted first.
     pub fn bitmap(elements:u32,state_bytes:u32,rows_per_bank:u64)->Result<Self,&'static str>{
-        if elements==0||!matches!(state_bytes,1|8)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS{return Err("BITMAP_LAYOUT_RANGE")}
-        let rows=rows_per_bank*3;
+        Self::bitmap_banks(elements,state_bytes,rows_per_bank,3)
+    }
+    pub fn bitmap_banks(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
+        if elements==0||!matches!(state_bytes,1|8)||!matches!(banks,2|3)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS{return Err("BITMAP_LAYOUT_RANGE")}
+        let rows=rows_per_bank*u64::from(banks);
         let states=rows.checked_mul(u64::from(elements)).and_then(|v|v.checked_mul(u64::from(state_bytes))).ok_or("BITMAP_LAYOUT_OVERFLOW")?;
-        Ok(Self{rows_per_bank,banks:3,slots:0,state_bytes:states,position_bytes:0,device_bytes:states.checked_add(24).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
+        Ok(Self{rows_per_bank,banks,slots:0,state_bytes:states,position_bytes:0,position_item_bytes:0,device_bytes:states.checked_add(24).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
     }
     /// `reserve` covers driver/NCCL headroom; `fixed` includes all other
     /// allocations, e.g. descriptors, communication pages and owner lanes.
@@ -126,6 +141,28 @@ impl SegmentLayout {
         let used = segments.checked_mul(self.device_bytes).and_then(|v| v.checked_add(fixed)).ok_or("SEGMENTED_ADMISSION_OVERFLOW")?;
         Ok(SegmentAdmission { segments: segments as u32, rows_per_bank: rows, device_bytes: used })
     }
+}
+
+/// Largest complete segment layout that fits an actual byte budget.
+/// The cap describes one bank of one segment, never a rank-wide state limit.
+/// Hash table slot rounding and bitmap state storage use the same constructors
+/// as device allocations, so admission cannot underestimate these bytes.
+pub fn fit_segment_layout(bitmap: bool, elements: u32, state_bytes: u32, banks: u32, max_rows: u64, budget: u64) -> Result<Option<SegmentLayout>, &'static str> {
+    fit_segment_layout_compact(bitmap,elements,state_bytes,banks,max_rows,budget,false)
+}
+
+pub fn fit_segment_layout_compact(bitmap: bool, elements: u32, state_bytes: u32, banks: u32, max_rows: u64, budget: u64, compact:bool) -> Result<Option<SegmentLayout>, &'static str> {
+    if max_rows == 0 || max_rows > LOCAL_ROWS { return Err("SEGMENTED_LAYOUT_RANGE"); }
+    if bitmap && !matches!(banks,2|3) { return Err("BITMAP_LAYOUT_RANGE"); }
+    let make = |rows| if bitmap { SegmentLayout::bitmap_banks(elements, state_bytes, rows, banks) } else if compact { SegmentLayout::new_compact(elements, state_bytes, rows, banks) } else { SegmentLayout::new(elements, state_bytes, rows, banks) };
+    // Validate graph and storage shape even if budget is zero.
+    make(1)?;
+    let mut lo=0u64; let mut hi=max_rows;
+    while lo<hi {
+        let mid=lo+(hi-lo+1)/2;
+        if make(mid).map_or(false, |v| v.device_bytes<=budget) { lo=mid; } else { hi=mid-1; }
+    }
+    if lo==0 { Ok(None) } else { Ok(Some(make(lo)?)) }
 }
 
 /// Classify source queue skew separately from regeneration validation errors.

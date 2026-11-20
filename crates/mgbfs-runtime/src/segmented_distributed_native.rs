@@ -5,11 +5,12 @@ use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{generic_distributed_memory::GenericDistributedMemoryPlan as Plan,
  generic_distributed_native::DistributedAdvance,generic_memory::GenericMemoryPlan,
- generic_native::{Buffer,GenericNativeBfs,Stream},segmented_history::{SegmentLayout,LOCAL_ROWS}};
+ generic_native::{Buffer,GenericNativeBfs,Stream},segmented_history::{fit_segment_layout_compact,SegmentLayout,LOCAL_ROWS}};
 
 #[repr(C)] #[derive(Clone,Copy)]
-struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32}
+struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32,position_item_bytes:u32}
 extern "C" {
+ fn mgbfs_segmented_abi_version()->u32;
  fn cudaGetLastError()->i32;
  fn cudaEventSynchronize(event:*mut c_void)->i32;
  fn cudaEventElapsedTime(ms:*mut f32,start:*mut c_void,end:*mut c_void)->i32;
@@ -40,7 +41,7 @@ impl RawBuffer{
  fn at<T>(&self,offset:usize)->*mut T{unsafe{self.ptr.cast::<u8>().add(offset).cast()}}
 }
 impl Drop for RawBuffer{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.device);cudaFree(self.ptr);}}}
-struct Segment{desc:SegmentDescriptor,_slots:Option<RawBuffer>,_states:RawBuffer,_positions:Option<RawBuffer>,counts:RawBuffer,banks:[u64;3],retired:u64}
+struct Segment{desc:SegmentDescriptor,_slots:Option<RawBuffer>,_states:RawBuffer,_positions:Option<RawBuffer>,counts:RawBuffer,banks:[u64;3],retired:u64,device_bytes:u64}
 impl Segment{
  fn try_new(layout:SegmentLayout,device:i32,stream:*mut c_void)->Result<Option<Self>>{
   macro_rules! alloc{($n:expr)=>{match RawBuffer::try_new(usize::try_from($n).map_err(|_|"SEGMENT_ALLOCATION_RANGE")?,device)?{Some(v)=>v,None=>return Ok(None)}}}
@@ -50,8 +51,8 @@ impl Segment{
   let counts=alloc!(24u64);
   if let Some(v)=&slots{crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(v.ptr,255,v.bytes,stream)})?;}
   crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(counts.ptr,0,counts.bytes,stream)})?;
-  let desc=SegmentDescriptor{slots:slots.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),states:states.ptr,positions:positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),slots_count:layout.slots,capacity:layout.rows_per_bank,banks:layout.banks};
-  Ok(Some(Self{desc,_slots:slots,_states:states,_positions:positions,counts,banks:[0;3],retired:0}))
+  let desc=SegmentDescriptor{slots:slots.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),states:states.ptr,positions:positions.as_ref().map_or(ptr::null_mut(),|v|v.ptr.cast()),slots_count:layout.slots,capacity:layout.rows_per_bank,banks:layout.banks,position_item_bytes:layout.position_item_bytes};
+  Ok(Some(Self{desc,_slots:slots,_states:states,_positions:positions,counts,banks:[0;3],retired:0,device_bytes:layout.device_bytes}))
  }
 }
 struct Queue{records:Buffer,counts:Buffer,states:Buffer}
@@ -131,22 +132,28 @@ fn segment_sizing_memory_info()->Result<(usize,usize)>{
 }
 
 pub struct SegmentedDistributedBfs{
- base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
- segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,remaining_bytes:u64,storage_budget:u64,configured_rows:u64,bank_totals:[u64;3],capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
+ compact_positions:bool,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
+ segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,remaining_bytes:u64,storage_budget:u64,reserve_bytes:u64,configured_rows:u64,bank_totals:[u64;3],peak_live_rows:u64,last_resource:Option<serde_json::Value>,capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
  counts:Vec<u64>,depth:u64,source_retries:u64,active_batch:u32,queue_batch_ceiling:u32,peak_owner_lanes:u32,prefetched_chunks:u64,overlap_samples:u32,
  send:[Queue;2],recv:Queue,route_stream:Stream,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_enabled:bool,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,
 }
 impl SegmentedDistributedBfs{
  pub fn new(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],seed:u64,bits:u32,cuts:Option<&[u64]>)->Result<Self>{
   p.validate(g.generator_count() as u32)?;g.validate()?;
+  if unsafe{mgbfs_segmented_abi_version()}!=3{return Err("SEGMENTED_ABI_MISMATCH: expected 3".into())}
   let mut p=p;
   let bitmap_mode=std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1");
+  let compact_positions=!bitmap_mode && std::env::var("MGBFS_SEGMENT_COMPACT_POS").as_deref()==Ok("1");
+  let bitmap_banks=if bitmap_mode {match std::env::var("MGBFS_BITMAP_BANKS").as_deref(){Ok("2")=>2,Ok("3")|Err(_)=>3,_=>return Err("BITMAP_BANK_COUNT".into())}} else {3};
   let bitmap_domain=if bitmap_mode{
    if !matches!(&g.action,mgbfs_core::graph_definition::GraphAction::Permutation{..}){return Err("BITMAP_REQUIRES_PERMUTATION_ACTION".into())}
    if cuts.is_some(){return Err("BITMAP_CUSTOM_OWNER_CUTS_UNSUPPORTED".into())}
    p.history_layers=3;
    Some(crate::permutation_bitmap::MultisetDomain::new(&g.start).map_err(str::to_owned)?)
   }else{None};
+  if let Ok(v)=std::env::var("MGBFS_SEGMENT_QUEUE_CAP"){
+   let n=v.parse::<u32>().map_err(|_|"SEGMENTED_QUEUE_CAP")?;if n==0{return Err("SEGMENTED_QUEUE_CAP".into())}p.queue_capacity=p.queue_capacity.min(n);
+  }
   if let Ok(v)=std::env::var("MGBFS_SEGMENT_TEST_QUEUE_CAP"){let n=v.parse::<u32>().map_err(|_|"SEGMENTED_TEST_QUEUE_CAP")?;if n==0||n>p.queue_capacity{return Err("SEGMENTED_TEST_QUEUE_CAP".into())}p.queue_capacity=n;}
   if p.history_algorithm!="HASH"||p.sort_candidates||p.parent_transport||p.generator_backend!="cuda"{return Err("SEGMENTED_UNSUPPORTED_PROFILE".into())}
   if rank>=p.world||bits>64||p.elements as usize!=g.start.len(){return Err("SEGMENTED_PLAN_SHAPE".into())}
@@ -177,31 +184,22 @@ impl SegmentedDistributedBfs{
   let orbit=crate::generic_memory::state_space_bound(g).unwrap_or(LOCAL_ROWS);
   let divisor=u64::from(p.world)*u64::from(p.shards);
   let estimated=std::env::var("MGBFS_SEGMENT_EXPECTED_ROWS").ok().and_then(|v|v.parse::<u64>().ok()).filter(|&x|x>0).unwrap_or_else(||orbit.saturating_add(divisor-1)/divisor).max(32);
-  let(sizing_free,_sizing_total)=segment_sizing_memory_info()?;
-  let sizing_reserve=crate::generic_memory::admission_reserve_bytes()?;
-  let bitmap_bytes=if let Some(domain)=&bitmap_domain{
-   let logical=owner_map.iter().position(|&physical|physical==rank).ok_or("BITMAP_OWNER_MAP")? as u32;
-   crate::permutation_bitmap::BitmapPartition::new(domain.size(),p.world).map_err(str::to_owned)?.owner_bytes(logical).map_err(str::to_owned)?.max(8)
-  }else{0};
-  // Leave space for at least one segment per shard and one owner lane.
-  let lane_sizing=(bound as u64).checked_mul(8).and_then(|v|v.checked_add(8)).ok_or("SEGMENTED_SPILL_SIZE")?;
-  let available=(sizing_free as u64).saturating_sub(sizing_reserve).saturating_sub(bitmap_bytes).saturating_sub(lane_sizing);
-  let per_segment=available/u64::from(p.shards);
-  let make_layout=|rows|if bitmap_mode{SegmentLayout::bitmap(p.elements,p.state_bytes,rows)}else{SegmentLayout::new(p.elements,p.state_bytes,rows,p.history_layers)};
-  let rows=if let Some(exact)=explicit_rows{exact}else{
-   let mut lo=0u64;let mut hi=configured_rows.min(estimated);
-   while lo<hi{let mid=lo+(hi-lo+1)/2;if make_layout(mid).map_or(false,|layout|layout.device_bytes<=per_segment){lo=mid}else{hi=mid-1}}
-   if lo==0{return Err("SEGMENTED_NO_CAPACITY".into())}lo
-  };
-  let layout=if bitmap_mode{SegmentLayout::bitmap(p.elements,p.state_bytes,rows)}else{SegmentLayout::new(p.elements,p.state_bytes,rows,p.history_layers)}.map_err(str::to_owned)?;
+  // Exercise actual peer communication before measuring free memory. NCCL
+  // can lazily allocate transport state on its first collective/exchange.
+  crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(send[0].counts.ptr,0,send[0].counts.bytes,stream)})?;
+  crate::generic_native::checked!(mgbfs_nccl_exchange_triplets,unsafe{mgbfs_nccl_exchange_triplets(comm.ptr,rank,p.world,send[0].counts.ptr,u64::from(p.shards)*4,ptr::null(),0,ptr::null(),0,recv.counts.ptr,ptr::null_mut(),ptr::null_mut(),stream)})?;
+  crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
+  let reserve=crate::generic_memory::admission_reserve_bytes()?;
+  let storage_banks=if bitmap_mode{bitmap_banks}else{p.history_layers};
+  let min_layout=fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,1,u64::MAX,compact_positions).map_err(str::to_owned)?.ok_or("SEGMENTED_NO_CAPACITY")?;
+  let lane_bytes=(bound as u64).checked_mul(8).and_then(|v|v.checked_add(8)).ok_or("SEGMENTED_SPILL_SIZE")?;
   let bitmap=if let Some(domain)=&bitmap_domain{
    let logical=owner_map.iter().position(|&physical|physical==rank).ok_or("BITMAP_OWNER_MAP")? as u32;
    let partition=crate::permutation_bitmap::BitmapPartition::new(domain.size(),p.world).map_err(str::to_owned)?;
    let owner_len=partition.owner_len(logical).map_err(str::to_owned)?;
    let bytes=partition.owner_bytes(logical).map_err(str::to_owned)?.max(8);
-   let(mut free,mut total)=(0usize,0usize);crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
-   let reserve=crate::generic_memory::admission_reserve_bytes()?;
-   if bytes>(free as u64).saturating_sub(reserve).saturating_sub(layout.device_bytes){return Err("BITMAP_DOMAIN_NO_VRAM".into())}
+   let(free,_)=segment_sizing_memory_info()?;
+   if bytes>(free as u64).saturating_sub(reserve).saturating_sub(min_layout.device_bytes).saturating_sub(lane_bytes){return Err("BITMAP_DOMAIN_NO_VRAM".into())}
    let bit_storage=RawBuffer::try_new(usize::try_from(bytes).map_err(|_|"BITMAP_SIZE_OVERFLOW")?,d)?.ok_or("BITMAP_DOMAIN_NO_VRAM")?;
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(bit_storage.ptr,0,bit_storage.bytes,stream)})?;
    let symbols=Buffer::new(domain.symbols().len()*8,d)?;symbols.upload(domain.symbols())?;
@@ -209,29 +207,38 @@ impl SegmentedDistributedBfs{
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
    Some(BitmapState{domain:BitmapDeviceDomain{symbols:symbols.ptr.cast(),counts:counts.ptr.cast(),distinct:domain.symbols().len() as u32,elements:p.elements,total:domain.size()},_symbols:symbols,_counts:counts,bits:bit_storage,owner:logical,owner_len})
   }else{None};
-  // Release every cached extent not already taken by the base and route
-  // buffers before computing lane affordability. These extents may belong
-  // to the previous job and are reclaimable, but not usable by cudaMalloc.
-  crate::session_cache::release_unused_buffers();crate::generic_pool::trim_idle()?;
-  let(mut free,mut total)=(0usize,0usize);crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
-  let reserve=crate::generic_memory::admission_reserve_bytes()?;
-  let lane_bytes=(bound as u64).checked_mul(8).and_then(|v|v.checked_add(8)).ok_or("SEGMENTED_SPILL_SIZE")?;
-  let affordable=(free as u64).saturating_sub(reserve).saturating_sub(layout.device_bytes)/lane_bytes;
+  // Preserve only the previous layer when its global size is <1000; the
+  // next bank would otherwise overwrite it before a resource stop. This
+  // bounded device snapshot is admitted before segment sizing.
+  let previous_snapshot=if bitmap_mode&&bitmap_banks==2 {
+   let bytes=1000usize.checked_mul(p.elements as usize).and_then(|n|n.checked_mul(p.state_bytes as usize)).ok_or("BITMAP_SNAPSHOT_SIZE")?;
+   Some(Buffer::new(bytes,d)?)
+  } else {None};
+  // Fixed allocation, bitmap and all owner lanes precede segment sizing.
+  let(free,_)=segment_sizing_memory_info()?;
+  let affordable=(free as u64).saturating_sub(reserve).saturating_sub(min_layout.device_bytes)/lane_bytes;
   let requested=std::env::var("MGBFS_SEGMENT_OWNER_LANES").or_else(|_|std::env::var("MGBFS_SEGMENT_TEST_LANES")).ok().map(|v|v.parse::<u32>().map_err(|_|"SEGMENTED_OWNER_LANES".to_owned())).transpose()?.unwrap_or(4);
   if !(1..=64).contains(&requested){return Err("SEGMENTED_OWNER_LANES".into())}
   let lane_count=(requested as u64).min(u64::from(p.shards)).min(affordable) as usize;
   if lane_count==0{return Err("SEGMENTED_LANE_ADMISSION_FAILED".into())}
   let mut lanes=Vec::with_capacity(lane_count);for _ in 0..lane_count{lanes.push(Lane::new(d,bound)?);}
   eprintln!("SEGMENTED_OWNER_LANES rank={rank} lanes={lane_count}");
-  // Live fixed buffers have been taken; parked unmatched buffers cannot
-  // serve ordinary cudaMalloc segment storage and are safe to return now.
-  crate::session_cache::release_unused_buffers();crate::generic_pool::trim_idle()?;
-  crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+  let(free,_)=segment_sizing_memory_info()?;
   let mut remaining_bytes=(free as u64).saturating_sub(reserve);
+  let make_layout=|rows|if bitmap_mode{SegmentLayout::bitmap_banks(p.elements,p.state_bytes,rows,storage_banks)}else if compact_positions{SegmentLayout::new_compact(p.elements,p.state_bytes,rows,p.history_layers)}else{SegmentLayout::new(p.elements,p.state_bytes,rows,p.history_layers)};
+  let layout=if let Some(exact)=explicit_rows{make_layout(exact).map_err(str::to_owned)?}else{
+   let upper=configured_rows.min(estimated);
+   let per_shard=remaining_bytes/u64::from(p.shards);
+   match fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,upper,per_shard,compact_positions).map_err(str::to_owned)?{
+    Some(v)=>v,
+    None=>fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,upper,remaining_bytes,compact_positions).map_err(str::to_owned)?.ok_or("SEGMENTED_NO_CAPACITY")?,
+   }
+  };
   if let Ok(v)=std::env::var("MGBFS_SEGMENT_TEST_LIMIT"){let count=v.parse::<u64>().map_err(|_|"SEGMENTED_TEST_LIMIT")?;remaining_bytes=remaining_bytes.min(count.saturating_mul(layout.device_bytes));}
+  if let Ok(v)=std::env::var("MGBFS_SEGMENT_TEST_BYTES"){let bytes=v.parse::<u64>().map_err(|_|"SEGMENTED_TEST_BYTES")?;remaining_bytes=remaining_bytes.min(bytes);}
   let capacity_limit=std::env::var("MGBFS_SEGMENT_MAX_RANK_STATES").ok().map(|v|v.parse::<u64>().map_err(|_|"SEGMENTED_CAPACITY_LIMIT".to_owned())).transpose()?;
   if capacity_limit==Some(0){return Err("SEGMENTED_CAPACITY_LIMIT".into())}
-  let mut result=Self{base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,configured_rows,bank_totals:[0;3],capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:p.batch,queue_batch_ceiling:p.batch,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_enabled:std::env::var("MGBFS_SEGMENT_TEST_OVERLAP").as_deref()==Ok("1"),exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0};
+  let mut result=Self{compact_positions,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:p.batch,queue_batch_ceiling:p.batch,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_enabled:std::env::var("MGBFS_SEGMENT_TEST_OVERLAP").as_deref()==Ok("1"),exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0};
   let mut failed=0;
   if rank==root{
    let shard_hash=if bitmap_mode{mix(h)}else{h};
@@ -246,7 +253,7 @@ impl SegmentedDistributedBfs{
     }else if p.state_bytes==1{mgbfs_segmented_accept_u8(input.ptr.cast(),hashes.ptr.cast(),1,p.elements,ptr::null(),0,seg.desc,0,seg.counts.ptr.cast(),ptr::null_mut(),result.control.at(0),stream)}else{mgbfs_segmented_accept_i64(input.ptr.cast(),hashes.ptr.cast(),1,p.elements,ptr::null(),0,seg.desc,0,seg.counts.ptr.cast(),ptr::null_mut(),result.control.at(0),stream)}};
     crate::generic_native::checked!(mgbfs_segmented_accept_seed,status)?;crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
     let mut error=0u32;crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut error as *mut u32).cast(),result.control.ptr,4,2)})?;
-    if error!=0{failed=error+1}else{result.segments[shard][0].banks[0]=1;result.bank_totals[0]=1;result.current.push(Range{shard,segment:0,bank:0,begin:0,end:1});}
+    if error!=0{failed=error+1}else{result.segments[shard][0].banks[0]=1;result.bank_totals[0]=1;result.peak_live_rows=1;result.current.push(Range{shard,segment:0,bank:0,begin:0,end:1});}
    }
   }
   if result.vote(failed)?!=0{return Err("SEGMENTED_ROOT_ADMISSION_FAILED".into())}Ok(result)
@@ -262,14 +269,33 @@ impl SegmentedDistributedBfs{
      let(mut free,mut total)=(0usize,0usize);crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
      let requested=total.checked_add(1024*1024).ok_or("SEGMENTED_TEST_OOM_SIZE")?;
      match RawBuffer::try_new(requested,self.base.device)?{
-      None=>{eprintln!("SEGMENTED_TEST_REAL_OOM rank={} depth={} requested={} total={} code=2",self.rank,self.depth,requested,total);return Ok(false)},
+      None=>{self.last_resource=Some(serde_json::json!({"reason":"cuda_allocation_test","rank":self.rank,"depth":self.depth,"shard":shard,"requested_bytes":requested,"device_free_bytes":free,"device_total_bytes":total}));eprintln!("SEGMENTED_TEST_REAL_OOM rank={} depth={} requested={} total={} code=2",self.rank,self.depth,requested,total);return Ok(false)},
       Some(v)=>{drop(v);return Err("SEGMENTED_TEST_OOM_INCONCLUSIVE_ALLOCATION_SUCCEEDED".into())}
      }
     }
    }
   }
-  if self.layout.device_bytes>self.remaining_bytes{return Ok(false)}
-  if let Some(seg)=Segment::try_new(self.layout,self.base.device,self.base.stream.ptr)?{self.remaining_bytes-=self.layout.device_bytes;self.segments[shard].push(seg);Ok(true)}else{Ok(false)}
+  // Growing a descriptor temporarily holds both the old and new arrays.
+  // The old array is already charged; reserve the entire new array here.
+  let next_count=self.segments[shard].len().checked_add(1).ok_or("SEGMENTED_DESCRIPTOR_SIZE")?;
+  let descriptor_peak=if self.bitmap.is_none()&&next_count>1{next_count.checked_mul(std::mem::size_of::<SegmentDescriptor>()).ok_or("SEGMENTED_DESCRIPTOR_SIZE")? as u64}else{0};
+  let(mut free,mut total)=(0usize,0usize);
+  crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+  let available=self.remaining_bytes.min((free as u64).saturating_sub(self.reserve_bytes));
+  let budget=available.saturating_sub(descriptor_peak);
+  let mut upper=self.layout.rows_per_bank;let mut allocation_failed=false;
+  loop{
+   let layout=fit_segment_layout_compact(self.bitmap.is_some(),self.plan.elements,self.plan.state_bytes,self.layout.banks,upper,budget,self.compact_positions).map_err(str::to_owned)?;
+   let Some(layout)=layout else {
+    let minimum=fit_segment_layout_compact(self.bitmap.is_some(),self.plan.elements,self.plan.state_bytes,self.layout.banks,1,u64::MAX,self.compact_positions).map_err(str::to_owned)?.ok_or("SEGMENTED_LAYOUT_RANGE")?.device_bytes;
+    self.last_resource=Some(serde_json::json!({"reason":if allocation_failed{"cuda_allocation"}else{"segment_budget"},"rank":self.rank,"completed_depth":self.depth,"target_depth":self.depth.saturating_add(1),"shard":shard,"requested_bytes":minimum.saturating_add(descriptor_peak),"preferred_segment_bytes":self.layout.device_bytes,"remaining_budget_bytes":self.remaining_bytes,"device_free_bytes":free,"device_total_bytes":total,"reserve_bytes":self.reserve_bytes,"descriptor_transient_bytes":descriptor_peak}));
+    return Ok(false)
+   };
+   match Segment::try_new(layout,self.base.device,self.base.stream.ptr)?{
+    Some(seg)=>{self.remaining_bytes-=layout.device_bytes;self.segments[shard].push(seg);return Ok(true)},
+    None=>{allocation_failed=true;if layout.rows_per_bank==1{let minimum=layout.device_bytes.saturating_add(descriptor_peak);self.last_resource=Some(serde_json::json!({"reason":"cuda_allocation","rank":self.rank,"completed_depth":self.depth,"target_depth":self.depth.saturating_add(1),"shard":shard,"requested_bytes":minimum,"remaining_budget_bytes":self.remaining_bytes,"device_free_bytes":free,"device_total_bytes":total,"reserve_bytes":self.reserve_bytes}));return Ok(false)}upper=layout.rows_per_bank/2;}
+   }
+  }
  }
  // Called only between drained waves. All descriptors for a shard remain
  // immutable until a segment is appended; no per-chunk cudaMalloc/cudaFree.
@@ -281,10 +307,12 @@ impl SegmentedDistributedBfs{
    let bytes=count.checked_mul(std::mem::size_of::<SegmentDescriptor>()).ok_or("SEGMENTED_DESCRIPTOR_SIZE")?;
    let old=self.descriptor_cache[shard].as_ref().map_or(0,|c|c.data.bytes);
    let delta=bytes.checked_sub(old).ok_or("SEGMENTED_DESCRIPTOR_SIZE")?;
-   if delta as u64>self.remaining_bytes{return Ok(None)}
+   if bytes as u64>self.remaining_bytes{self.last_resource=Some(serde_json::json!({"reason":"descriptor_budget","rank":self.rank,"completed_depth":self.depth,"shard":shard,"requested_bytes":bytes,"remaining_budget_bytes":self.remaining_bytes}));return Ok(None)}
+    let(mut free,mut total)=(0usize,0usize);crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+    if bytes as u64>(free as u64).saturating_sub(self.reserve_bytes){self.last_resource=Some(serde_json::json!({"reason":"descriptor_budget","rank":self.rank,"completed_depth":self.depth,"shard":shard,"requested_bytes":bytes,"remaining_budget_bytes":self.remaining_bytes,"device_free_bytes":free,"device_total_bytes":total,"reserve_bytes":self.reserve_bytes}));return Ok(None)}
    // Both allocations coexist briefly. A real allocation failure is a
    // resource stop even when the final delta would fit.
-   let data=match RawBuffer::try_new(bytes,self.base.device)?{Some(v)=>v,None=>return Ok(None)};
+   let data=match RawBuffer::try_new(bytes,self.base.device)?{Some(v)=>v,None=>{self.last_resource=Some(serde_json::json!({"reason":"descriptor_cuda_allocation","rank":self.rank,"completed_depth":self.depth,"shard":shard,"requested_bytes":bytes,"remaining_budget_bytes":self.remaining_bytes,"device_free_bytes":free,"device_total_bytes":total}));return Ok(None)}};
    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(data.ptr,descriptors.as_ptr().cast(),bytes,1)})?;
    self.descriptor_cache[shard]=Some(DescriptorCache{data,count});
    self.remaining_bytes-=delta as u64;
@@ -329,7 +357,7 @@ impl SegmentedDistributedBfs{
  pub fn frontier_bucket(&self)->u32{63-self.counts.iter().copied().max().unwrap_or(0).max(1).leading_zeros()}
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn peak_owner_lanes(&self)->u32{self.peak_owner_lanes}
- pub fn memory_geometry(&self)->serde_json::Value{serde_json::json!({"rows_per_bank":self.layout.rows_per_bank,"configured_segment_rows":self.configured_rows,"banks":self.layout.banks,"slots_per_segment":self.layout.slots,"bytes_per_segment":self.layout.device_bytes,"segment_count":self.segments.iter().map(Vec::len).sum::<usize>(),"storage_budget_bytes":self.storage_budget,"storage_allocated_bytes":self.storage_budget-self.remaining_bytes,"descriptor_cache_bytes":self.descriptor_cache.iter().filter_map(|c|c.as_ref()).map(|c|c.data.bytes as u64).sum::<u64>(), "capacity_limit_per_rank":self.capacity_limit,"capacity_limit_is_hard":true,"capacity_limit_scope":if self.layout.banks==3{"one next layer per rank"}else{"all visited states per rank"},"owner_lanes":self.lanes.len(),"owner_pinned_metadata":self.lanes.iter().filter(|v|v.host.is_some()).count(),"prefetched_chunks":self.prefetched_chunks,"queue_batch_ceiling":self.queue_batch_ceiling,"exact_exchange":self.exact_exchange,"transport_trace":self.transport_trace,"remote_records_sent":self.remote_records_sent,"remote_padded_records":self.remote_padded_records,"bitmap_bytes":self.bitmap.as_ref().map_or(0,|b|b.bits.bytes),"bitmap_domain":self.bitmap.as_ref().map(|b|b.domain.total),"bitmap_logical_owner":self.bitmap.as_ref().map(|b|b.owner),"bitmap_owner_rows":self.bitmap.as_ref().map(|b|b.owner_len),"extra_send_bytes":(self.send[1].records.bytes+self.send[1].counts.bytes+self.send[1].states.bytes) as u64,"legacy_plan_capacity_is_not_the_segment_limit":true})}
+ pub fn memory_geometry(&self)->serde_json::Value{let(mut free,mut total)=(0usize,0usize);let valid=unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)}==0;let segment_rows=self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.capacity).collect::<Vec<_>>()).collect::<Vec<_>>();serde_json::json!({"rows_per_bank":self.layout.rows_per_bank,"segment_rows_per_bank_by_shard":segment_rows,"live_rows_by_bank":self.bank_totals,"peak_live_rows":self.peak_live_rows,"device_free_bytes":if valid{Some(free)}else{None},"device_total_bytes":if valid{Some(total)}else{None},"reserve_bytes":self.reserve_bytes,"resource_detail":self.last_resource,"configured_segment_rows":self.configured_rows,"banks":self.layout.banks,"compact_positions":self.compact_positions,"position_item_bytes_by_shard":self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.position_item_bytes).collect::<Vec<_>>()).collect::<Vec<_>>(),"slots_per_segment":self.layout.slots,"bytes_per_segment":self.layout.device_bytes,"segment_count":self.segments.iter().map(Vec::len).sum::<usize>(),"storage_budget_bytes":self.storage_budget,"storage_allocated_bytes":self.storage_budget-self.remaining_bytes,"descriptor_cache_bytes":self.descriptor_cache.iter().filter_map(|c|c.as_ref()).map(|c|c.data.bytes as u64).sum::<u64>(), "capacity_limit_per_rank":self.capacity_limit,"capacity_limit_is_hard":true,"capacity_limit_scope":if self.layout.banks>1{"one next layer per rank"}else{"all visited states per rank"},"owner_lanes":self.lanes.len(),"owner_pinned_metadata":self.lanes.iter().filter(|v|v.host.is_some()).count(),"prefetched_chunks":self.prefetched_chunks,"queue_batch_ceiling":self.queue_batch_ceiling,"exact_exchange":self.exact_exchange,"transport_trace":self.transport_trace,"remote_records_sent":self.remote_records_sent,"remote_padded_records":self.remote_padded_records,"bitmap_bytes":self.bitmap.as_ref().map_or(0,|b|b.bits.bytes),"bitmap_domain":self.bitmap.as_ref().map(|b|b.domain.total),"bitmap_logical_owner":self.bitmap.as_ref().map(|b|b.owner),"bitmap_owner_rows":self.bitmap.as_ref().map(|b|b.owner_len),"extra_send_bytes":(self.send[1].records.bytes+self.send[1].counts.bytes+self.send[1].states.bytes) as u64,"legacy_plan_capacity_is_not_the_segment_limit":true})}
  pub fn size_profile_events(&self)->Vec<serde_json::Value>{vec![]}
  pub fn set_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{if batch==0||batch>self.plan.batch||gemm{return Err("SEGMENTED_UNSUPPORTED_SIZE_PROFILE".into())}self.active_batch=batch;Ok(())}
  pub fn quiesce(&self)->Result<()>{
@@ -382,7 +410,7 @@ impl SegmentedDistributedBfs {
     // can consist entirely of visited candidates and require no new rows.
     // New candidates spill and cause growth in the following round.
     let segments=&self.segments[shard];
-    let pass=segments.iter().position(|v|v.banks[bank as usize]<self.layout.rows_per_bank)
+    let pass=segments.iter().position(|v|v.banks[bank as usize]<v.desc.capacity)
      .unwrap_or_else(||segments.len().saturating_sub(1));
     OwnerProgress{shard,pass,round:0,selected:selected_max}
    }).collect::<Vec<_>>();
@@ -393,12 +421,14 @@ impl SegmentedDistributedBfs {
     let mut prepared:Vec<Option<OwnerPrepared>>=(0..progress.len()).map(|_|None).collect();
     for (i,v) in progress.iter().enumerate(){
      if v.selected==0{continue}
-     if v.pass==self.segments[v.shard].len()&&!self.make_segment(v.shard)?{
-      let reason=if self.layout.device_bytes>self.remaining_bytes{"segment_budget"}else{"cuda_allocation"};
-      eprintln!("SEGMENTED_RESOURCE rank={} phase=segment_allocation reason={} completed_depth={} target_depth={} shard={} bank={} requested_bytes={} remaining_bytes={}",self.rank,reason,self.depth,self.depth.saturating_add(1),v.shard,bank,self.layout.device_bytes,self.remaining_bytes);
-      return Ok(10)
-     }
-     let (sealed,descriptor_count)=if self.bitmap.is_some(){(ptr::null(),0)}else{match self.descriptor_view(v.shard)?{Some(v)=>v,None=>{eprintln!("SEGMENTED_RESOURCE rank={} phase=descriptor_allocation completed_depth={} shard={} remaining_bytes={}",self.rank,self.depth,v.shard,self.remaining_bytes);return Ok(10)}}};
+     let inserted=v.pass==self.segments[v.shard].len();
+      if inserted&&!self.make_segment(v.shard)?{
+       let reason=self.last_resource.as_ref().and_then(|v|v.get("reason")).and_then(|v|v.as_str()).unwrap_or("unknown");eprintln!("SEGMENTED_RESOURCE rank={} phase=segment_allocation reason={} detail={}",self.rank,reason,self.last_resource.as_ref().map_or("unknown".to_owned(),|v|v.to_string()));
+       return Ok(10)
+      }
+      let (sealed,descriptor_count)=if self.bitmap.is_some(){(ptr::null(),0)}else{match self.descriptor_view(v.shard)?{Some(v)=>v,None=>{
+       if inserted{crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;let released=self.segments[v.shard].pop().ok_or("SEGMENTED_ROLLBACK_MISSING")?;self.remaining_bytes=self.remaining_bytes.checked_add(released.device_bytes).ok_or("SEGMENTED_ROLLBACK_OVERFLOW")?;drop(released);}
+       eprintln!("SEGMENTED_RESOURCE rank={} phase=descriptor_allocation detail={}",self.rank,self.last_resource.as_ref().map_or("unknown".to_owned(),|v|v.to_string()));return Ok(10)}}};
      prepared[i]=Some(OwnerPrepared{sealed,descriptor_count});
     }
     crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;
@@ -443,18 +473,19 @@ impl SegmentedDistributedBfs {
       crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut values[2] as *mut u32).cast(),active.counts.at::<c_void>(bank as usize*8),8,2)})?;
      }
      let accepted=u64::from(values[2])|(u64::from(values[3])<<32);
-     if values[0]>v.selected||accepted>self.layout.rows_per_bank||(values[1]&!8)!=0{owner_error=owner_error.max(100+(values[1]&!8).max(1));continue}
+     if values[0]>v.selected||accepted>active.desc.capacity||(values[1]&!8)!=0{owner_error=owner_error.max(100+(values[1]&!8).max(1));continue}
+     let seg=&mut self.segments[v.shard][v.pass];let old=seg.banks[bank as usize];
+     if accepted<old{owner_error=owner_error.max(101);continue}
+     self.bank_totals[bank as usize]=self.bank_totals[bank as usize].checked_add(accepted-old).ok_or("SEGMENTED_BANK_TOTAL_OVERFLOW")?;
+     let live=self.bank_totals.iter().try_fold(0u64,|a,&v|a.checked_add(v).ok_or("SEGMENTED_LIVE_COUNT_OVERFLOW"))?;self.peak_live_rows=self.peak_live_rows.max(live);
+     seg.banks[bank as usize]=accepted;
      if values[1]&8!=0{
       let mut observed=0u64;crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut observed as *mut u64).cast(),self.control.at::<c_void>(24),8,2)})?;
       if let Some(limit)=self.capacity_limit{
        eprintln!("SEGMENTED_CAPACITY_OBSERVED rank={} limit={} count={}",self.rank,limit,observed);
-       if observed>limit{owner_error=owner_error.max(199)}else{owner_error=owner_error.max(10)}
+       if observed>limit{owner_error=owner_error.max(199)}else{self.last_resource=Some(serde_json::json!({"reason":"user_capacity","rank":self.rank,"completed_depth":self.depth,"target_depth":self.depth.saturating_add(1),"shard":v.shard,"bank":bank,"limit_states":limit,"observed_states":observed}));owner_error=owner_error.max(10)}
       }else{owner_error=owner_error.max(199)}continue
      }
-     let seg=&mut self.segments[v.shard][v.pass];let old=seg.banks[bank as usize];
-     if accepted<old{owner_error=owner_error.max(101);continue}
-     self.bank_totals[bank as usize]=self.bank_totals[bank as usize].checked_add(accepted-old).ok_or("SEGMENTED_BANK_TOTAL_OVERFLOW")?;
-     seg.banks[bank as usize]=accepted;
      // Upper bound on possible tombstones, used for conservative rehashing.
      seg.retired=seg.retired.saturating_add(u64::from(values[0]));
      v.selected=values[0];v.pass+=1;v.round+=1;
@@ -505,9 +536,10 @@ impl SegmentedDistributedBfs {
   if let (Ok(r),Ok(d))=(std::env::var("MGBFS_SEGMENT_TEST_FATAL_RANK"),std::env::var("MGBFS_SEGMENT_TEST_FATAL_AFTER_DEPTH")){
    if r.parse::<u32>().ok()==Some(self.rank)&&d.parse::<u64>().ok().map_or(false,|v|self.depth>=v){return Err("SEGMENTED_TEST_ONE_RANK_FAILURE".into())}
   }
-  let st=self.base.stream.ptr;let p=self.plan.clone();let future=if self.layout.banks==3{((self.depth+1)%3) as u32}else{0};
+  let st=self.base.stream.ptr;let p=self.plan.clone();let future=if self.layout.banks>1{((self.depth+1)%u64::from(self.layout.banks)) as u32}else{0};
   let tracing=std::env::var("MGBFS_SEGMENT_TEST_TIMING").as_deref()==Ok("1");let mut tick=std::time::Instant::now();let mut phases=[0u128;7];
   macro_rules! record{($i:expr)=>{if tracing{phases[$i]+=tick.elapsed().as_micros();tick=std::time::Instant::now();}}}
+  self.snapshot_previous_before_reuse()?;
   let maintenance=self.maintain(future)?;let vote=self.vote(if maintenance==0{0}else{100+maintenance})?;
   if self.capacity_limit.is_some(){
    let initial=self.bank_totals[future as usize];
@@ -599,7 +631,7 @@ impl SegmentedDistributedBfs {
   }
   let mut next=Vec::new();let mut local=0u64;
   for(shard,bucket)in self.segments.iter().enumerate(){for(index,seg)in bucket.iter().enumerate(){
-   let end=seg.banks[future as usize];let begin=if self.layout.banks==3{0}else{before.get(shard).and_then(|b|b.get(index)).copied().unwrap_or(0)};
+   let end=seg.banks[future as usize];let begin=if self.layout.banks>1{0}else{before.get(shard).and_then(|b|b.get(index)).copied().unwrap_or(0)};
    if end<begin{return Err("SEGMENTED_COUNT_DECREASED".into())}if end>begin{next.push(Range{shard,segment:index,bank:future,begin,end});local=local.checked_add(u64::from(end-begin)).ok_or("SEGMENTED_LOCAL_COUNT_OVERFLOW")?;}
   }}
   crate::generic_native::checked!(cudaMemcpyAsync,unsafe{cudaMemcpyAsync(self.control.at::<c_void>(32),(&local as *const u64).cast(),8,1,st)})?;
@@ -609,8 +641,39 @@ impl SegmentedDistributedBfs {
   let global=counts.iter().try_fold(0u64,|a,&b|a.checked_add(b).ok_or("SEGMENTED_GLOBAL_COUNT_OVERFLOW"))?;record!(6);
   if tracing{eprintln!("SEGMENT_TIMING rank={} depth={} us={phases:?}",self.rank,self.depth);}
   if global==0{return Ok(DistributedAdvance::Complete)}
-  self.previous=std::mem::replace(&mut self.current,next);self.counts=counts;self.depth+=1;
+  self.previous_global=self.counts.iter().try_fold(0u64,|a,&b|a.checked_add(b).ok_or("SEGMENTED_GLOBAL_COUNT_OVERFLOW"))?;
+  self.previous=std::mem::replace(&mut self.current,next);self.previous_snapshot_valid=false;self.counts=counts;self.depth+=1;
   Ok(DistributedAdvance::Layer{local,global})
+ }
+ fn snapshot_previous_before_reuse(&mut self)->Result<()> {
+  if self.previous_snapshot.is_none() || self.previous_global>=1000 {self.previous_snapshot_valid=false;return Ok(())}
+  let snapshot=self.previous_snapshot.as_ref().unwrap();let st=self.base.stream.ptr;
+  let width=self.plan.elements as usize;let bytes=self.plan.state_bytes as usize;let mut offset=0usize;
+  for r in &self.previous {
+   let seg=&self.segments[r.shard][r.segment];let n=usize::try_from(r.end-r.begin).map_err(|_|"BITMAP_SNAPSHOT_SIZE")?;
+   if offset.checked_add(n).map_or(true,|x|x>1000){return Err("BITMAP_SNAPSHOT_OVERFLOW".into())}
+   let stride=seg.desc.capacity as usize*seg.desc.banks as usize;
+   let start=r.bank as usize*seg.desc.capacity as usize+r.begin as usize;
+   for e in 0..width {
+    let src=unsafe{seg.desc.states.cast::<u8>().add((e*stride+start)*bytes)};
+    let dst=unsafe{snapshot.ptr.cast::<u8>().add((e*1000+offset)*bytes)};
+    crate::generic_native::checked!(cudaMemcpyAsync,unsafe{cudaMemcpyAsync(dst.cast(),src.cast(),n*bytes,3,st)})?;
+   }
+   offset+=n;
+  }
+  crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(st)})?;
+  self.previous_snapshot_rows=offset;self.previous_snapshot_valid=true;Ok(())
+ }
+ fn sample_previous_snapshot(&self)->Result<Vec<Vec<i64>>> {
+  let snap=self.previous_snapshot.as_ref().ok_or("BITMAP_SNAPSHOT_MISSING")?;
+  let n=self.previous_snapshot_rows;let width=self.plan.elements as usize;let bytes=self.plan.state_bytes as usize;
+  let mut rows=vec![vec![0i64;width];n];
+  for e in 0..width {
+   let from=unsafe{snap.ptr.cast::<u8>().add(e*1000*bytes)};
+   if bytes==1 {let mut v=vec![0u8;n];crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(v.as_mut_ptr().cast(),from.cast(),n,2)})?;for i in 0..n{rows[i][e]=i64::from(v[i]);}}
+   else {let mut v=vec![0i64;n];crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(v.as_mut_ptr().cast(),from.cast(),n*8,2)})?;for i in 0..n{rows[i][e]=v[i];}}
+  }
+  Ok(rows)
  }
  fn sample_ranges(&self,ranges:&[Range],limit:u32)->Result<Vec<Vec<i64>>>{
   let width=self.plan.elements as usize;let bytes=self.plan.state_bytes as usize;let mut result=Vec::new();
@@ -623,7 +686,7 @@ impl SegmentedDistributedBfs {
   }Ok(result)
  }
  pub fn sample_global(&self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(self.counts[self.rank as usize]) as u32;self.sample_ranges(&self.current,quota)}
- pub fn previous_small_sample(&self,previous:u64)->Result<Vec<Vec<i64>>>{if previous>=1000{Ok(vec![])}else{self.sample_ranges(&self.previous,previous as u32)}}
+ pub fn previous_small_sample(&self,previous:u64)->Result<Vec<Vec<i64>>>{if previous>=1000{Ok(vec![])}else if self.previous_snapshot_valid{self.sample_previous_snapshot()}else{self.sample_ranges(&self.previous,previous as u32)}}
 }
 
 #[cfg(test)]

@@ -14,6 +14,18 @@ constexpr uint64_t ROW_MASK = (uint64_t(1) << 32) - 1;
 constexpr uint64_t LOCAL_ROWS = uint64_t(1) << 32;
 constexpr uint64_t PAYLOAD_MASK = (uint64_t(1) << 34) - 1;
 
+__host__ inline bool valid_position_width(const MgbfsSegment& s) {
+    return (s.position_item_bytes == 0 || s.position_item_bytes == 4 || s.position_item_bytes == 8) &&
+           (s.position_item_bytes != 4 || s.slots_count <= (uint64_t(1) << 32));
+}
+__device__ inline void position_store(const MgbfsSegment& s, uint64_t i, uint64_t value) {
+    if(s.position_item_bytes == 4) reinterpret_cast<uint32_t*>(s.positions)[i] = uint32_t(value);
+    else s.positions[i] = value;
+}
+__device__ inline uint64_t position_load(const MgbfsSegment& s, uint64_t i) {
+    return s.position_item_bytes == 4 ? uint64_t(reinterpret_cast<const uint32_t*>(s.positions)[i]) : s.positions[i];
+}
+
 template<class T> struct FlatInput {
     uint32_t elements,count;const T* input;const uint64_t* hashes;
     __device__ uint32_t child(uint32_t i)const{return i;}
@@ -131,7 +143,7 @@ __global__ void accept(Input input, const MgbfsSegment* sealed, uint32_t sealed_
             const uint64_t stride=uint64_t(active.capacity)*active.banks;
             auto* states=static_cast<T*>(active.states);
             for (uint32_t e=0;e<input.elements;++e) states[uint64_t(e)*stride+local]=static_cast<T>(input.value(child,e));
-            if(active.positions) active.positions[local]=first;
+            if(active.positions) position_store(active,local,first);
             if(future) future[row]=payload;
             cell.store(prefix|payload,cuda::memory_order_release);
             break;
@@ -154,7 +166,7 @@ __global__ void rehash(MgbfsSegment segment,uint32_t elements,uint64_t c0,uint64
         for(uint64_t probe=0;probe<segment.slots_count;probe++){
             const uint64_t slot=(start+probe)&(segment.slots_count-1);
             if(atomicCAS(reinterpret_cast<unsigned long long*>(segment.slots+slot),EMPTY,token)==EMPTY){
-                if(segment.positions)segment.positions[local]=slot;done=true;break;
+                if(segment.positions)position_store(segment,local,slot);done=true;break;
             }
         }
         if(!done)atomicOr(error,uint32_t(MGBFS_SEGMENTED_TABLE_FULL));
@@ -163,7 +175,7 @@ __global__ void rehash(MgbfsSegment segment,uint32_t elements,uint64_t c0,uint64
 template<class T>
 int launch_rehash(uint32_t elements,MgbfsSegment segment,uint64_t c0,uint64_t c1,uint64_t c2,
                   uint64_t seed,uint32_t bits,uint32_t* error,void* stream){
-    if(!elements || bits>64 || !segment.slots || !segment.states || !segment.slots_count ||
+    if(!elements || bits>64 || !valid_position_width(segment) || !segment.slots || !segment.states || !segment.slots_count ||
        (segment.slots_count&(segment.slots_count-1)) || segment.slots_count>SIZE_MAX/8 ||
        !segment.capacity || segment.capacity>LOCAL_ROWS || !(segment.banks==1||segment.banks==3) ||
        (segment.banks==3&&!segment.positions) || (segment.banks==1&&(c1||c2)) ||
@@ -176,7 +188,7 @@ int launch_rehash(uint32_t elements,MgbfsSegment segment,uint64_t c0,uint64_t c1
 }
 __global__ void retire(MgbfsSegment segment,uint32_t bank,uint64_t count,uint32_t* error) {
     for(uint64_t row=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;row<count;row+=uint64_t(blockDim.x)*gridDim.x) {
-        uint64_t slot=segment.positions[uint64_t(bank)*segment.capacity+row];
+        uint64_t slot=position_load(segment,uint64_t(bank)*segment.capacity+row);
         if(slot>=segment.slots_count) { atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE)); continue; }
         cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(segment.slots[slot]);
         uint64_t observed=cell.load(cuda::memory_order_acquire);
@@ -191,7 +203,7 @@ template<class T>
 int launch(const T* input,const uint64_t* hashes,uint32_t count,uint32_t elements,
            const MgbfsSegment* sealed,uint32_t sealed_count,MgbfsSegment active,uint32_t bank,
            uint64_t* accepted,uint64_t* future,uint32_t* error,void* stream) {
-    if (!elements || count>=0x80000000u || (sealed_count && !sealed) || !active.slots ||
+    if (!elements || !valid_position_width(active) || count>=0x80000000u || (sealed_count && !sealed) || !active.slots ||
         !active.states || (active.banks==3 && !active.positions) || !active.slots_count || (active.slots_count&(active.slots_count-1)) ||
         !active.capacity || active.capacity>LOCAL_ROWS || !(active.banks==1 || active.banks==3) || bank>=active.banks ||
         !accepted || !error || (count && (!input || !hashes))) return int(cudaErrorInvalidValue);
@@ -206,7 +218,7 @@ int launch_spill(const T* input,const uint64_t* hashes,uint32_t input_count,cons
                  uint32_t selected_count,uint32_t elements,const MgbfsSegment* sealed,uint32_t sealed_count,
                  MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* spill,
                  uint32_t* spill_count,uint32_t* error,void* stream) {
-    if(!elements || input_count>=0x80000000u || selected_count>=0x80000000u ||
+    if(!elements || !valid_position_width(active) || input_count>=0x80000000u || selected_count>=0x80000000u ||
        (!selection && selected_count>input_count) || (sealed_count && !sealed) || !active.slots ||
        !active.states || (active.banks==3 && !active.positions) || !active.slots_count || (active.slots_count&(active.slots_count-1)) ||
        !active.capacity || active.capacity>LOCAL_ROWS || !(active.banks==1 || active.banks==3) || bank>=active.banks ||
@@ -225,7 +237,7 @@ int launch_routes(uint32_t elements,const T* local,const T* remote,const Generic
                   MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* spill,
                   uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t global_limit,void* stream) {
     const uint64_t bound=uint64_t(world)*q;
-    if(!elements || (Packed&&elements>24) || !world || world>128 || rank>=world || !shards || shards>4096 || shard>=shards || !q ||
+    if(!elements || !valid_position_width(active) || (Packed&&elements>24) || !world || world>128 || rank>=world || !shards || shards>4096 || shard>=shards || !q ||
        bound>=0x80000000ULL || visible>q || selected_count>bound || (!selection && selected_count!=uint64_t(world)*visible) ||
        !local_meta || !remote_meta || !local_counts || !remote_counts || (!Packed && (!local || !remote)) ||
        (sealed_count&&!sealed) || !active.slots || !active.states || (active.banks==3 && !active.positions) || !active.slots_count ||
@@ -303,7 +315,7 @@ extern "C" int mgbfs_segmented_rehash_u8(uint32_t elements,MgbfsSegment segment,
 extern "C" int mgbfs_segmented_rehash_i64(uint32_t elements,MgbfsSegment segment,uint64_t c0,uint64_t c1,uint64_t c2,uint64_t seed,uint32_t bits,uint32_t* error,void* stream){return launch_rehash<int64_t>(elements,segment,c0,c1,c2,seed,bits,error,stream);}
 
 extern "C" int mgbfs_segmented_retire(MgbfsSegment segment,uint32_t bank,uint64_t count,uint32_t* error,void* stream) {
-    if(!segment.slots || !segment.positions || !segment.slots_count ||
+    if(!valid_position_width(segment) || !segment.slots || !segment.positions || !segment.slots_count ||
        (segment.slots_count&(segment.slots_count-1)) || !segment.capacity || segment.capacity>LOCAL_ROWS ||
        !(segment.banks==1 || segment.banks==3) || bank>=segment.banks || count>segment.capacity || !error)
         return int(cudaErrorInvalidValue);
@@ -313,4 +325,4 @@ extern "C" int mgbfs_segmented_retire(MgbfsSegment segment,uint32_t bank,uint64_
     return int(cudaGetLastError());
 }
 
-extern "C" uint32_t mgbfs_segmented_abi_version(){return 2;}
+extern "C" uint32_t mgbfs_segmented_abi_version(){return 3;}

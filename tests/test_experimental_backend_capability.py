@@ -17,7 +17,7 @@ def test_matching_native_capability_can_be_cached(tmp_path,monkeypatch,backend,k
     binary=tmp_path/'mgbfs';binary.write_bytes(b'new')
     calls=[]
     def query(*a,**kw):
-        calls.append((a,kw));return query_response({'schema':1,key:True,'segmented32_v2':True})
+        calls.append((a,kw));return query_response({'schema':1,key:True,'segmented32_v2':True,'segmented_memory_presets_v1':True})
     monkeypatch.setattr(launch,'native_query',query)
     launch._require_memory_backend(str(binary),{'LD_LIBRARY_PATH':'/one'},backend)
     launch._require_memory_backend(str(binary),{'LD_LIBRARY_PATH':'/one'},backend)
@@ -70,8 +70,15 @@ def test_capability_cache_retains_exact_exchange_feature(tmp_path, monkeypatch):
     binary=tmp_path/'mgbfs';binary.write_bytes(b'exact')
     calls=[]
     def query(*args,**kwargs):
-        calls.append(1);return query_response({'schema':1,'segmented24_v1':True,'segmented32_v2':True,'segmented_exact_exchange_v1':True})
+        calls.append(1);return query_response({'schema':1,'segmented24_v1':True,'segmented32_v2':True,'segmented_memory_presets_v1':True,'segmented_exact_exchange_v1':True})
     monkeypatch.setattr(launch,'native_query',query)
     assert launch._require_memory_backend(str(binary),{},'segmented24')['segmented_exact_exchange_v1'] is True
     assert launch._require_memory_backend(str(binary),{},'segmented24')['segmented_exact_exchange_v1'] is True
     assert len(calls)==1
+
+@pytest.mark.parametrize('backend,key',[('segmented24','segmented24_v1'),('permutation_bitmap','permutation_bitmap_v1')])
+def test_pre_vram_preset_binary_cannot_silently_ignore_new_options(tmp_path,monkeypatch,backend,key):
+    binary=tmp_path/'mgbfs';binary.write_bytes(b'abi2')
+    monkeypatch.setattr(launch,'native_query',lambda *a,**kw:query_response({'schema':1,key:True,'segmented32_v2':True}))
+    with pytest.raises(RuntimeError,match='NATIVE_MEMORY_BACKEND_UNAVAILABLE'):
+        launch._require_memory_backend(str(binary),{},backend)

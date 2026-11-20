@@ -10,6 +10,7 @@ struct MgbfsSegment {
     uint64_t slots_count;
     uint64_t capacity; // rows per bank, at most 2^32
     uint32_t banks;    // 1 (directed history) or 3 (rolling history)
+    uint32_t position_item_bytes; // 4 or 8; 0 is legacy 8-byte encoding
 };
 enum : uint32_t {
     MGBFS_SEGMENTED_TABLE_FULL = 1,

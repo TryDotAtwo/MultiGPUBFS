@@ -14,6 +14,21 @@ def _normalize_memory_backend(name):
   return name
  raise ValueError('INVALID_MEMORY_BACKEND')
 
+def _apply_memory_preset(env,backend,preset):
+ if preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
+ selected=dict(env,MGBFS_MEMORY_PRESET=preset)
+ if preset=='max_capacity':
+  if backend not in ('segmented24','permutation_bitmap'):raise ValueError('MEMORY_PRESET_UNSUPPORTED_FOR_LEGACY')
+  selected.setdefault('MGBFS_SEGMENT_OWNER_LANES','1')
+  selected.setdefault('MGBFS_SEGMENT_QUEUE_CAP','2048')
+  if backend=='segmented24':selected.setdefault('MGBFS_SEGMENT_COMPACT_POS','1')
+  else:selected.setdefault('MGBFS_BITMAP_BANKS','2')
+ else:
+  # Private settings supplied by the user remain explicit; defaults do not
+  # contaminate a later balanced job in a persistent Python process.
+  pass
+ return selected
+
 # Cache only successful capability queries. The key follows the executable
 # identity and loader search path, so replacing a binary or library path
 # cannot silently reuse a capability learned from a different installation.
@@ -27,7 +42,7 @@ def _require_memory_backend(native,env,backend):
  result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
  try: info=json.loads(result.stdout)
  except (TypeError,ValueError):info={}
- if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True:
+ if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True or info.get('segmented_memory_presets_v1') is not True:
   raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
  if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
  _memory_backend_capabilities[identity]=info
@@ -65,7 +80,7 @@ def _phase_failures(phases):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -85,6 +100,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
  memory_backend=_normalize_memory_backend(memory_backend)
+ if memory_preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  if memory_backend=='permutation_bitmap':
   if graph.action['kind']!='permutation':raise ValueError('BITMAP_REQUIRES_PERMUTATION_ACTION')
   if not 1<=len(graph.start)<=64:raise ValueError('BITMAP_UNSUPPORTED_DEGREE')
@@ -97,6 +113,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
  segmented=(memory_backend in ('segmented24','permutation_bitmap'))
  if not segmented:
   # An inherited private experiment flag must not override an explicit API choice.
