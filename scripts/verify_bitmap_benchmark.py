@@ -36,12 +36,14 @@ def compare(cases, across_owners=False):
   vector=ranks[0][0]['layer_sizes']
   if any(x[0]['layer_sizes']!=vector or x[0]['graph_digest']!=ranks[0][0]['graph_digest'] or x[0]['world']!=len(ranks) for x in ranks):raise ValueError('rank graph identity or layer vectors disagree')
   if sum(len(x[1]) for x in ranks)!=vector[-1] or sum(len(x[2]) for x in ranks)!=vector[-2]:raise ValueError('retained final layers are incomplete')
+  # Even rank-local comparisons must reject the same state present on two
+  # ranks; two identically wrong runs must never verify each other.
+  current=sorted(s for _,cur,_ in ranks for s in cur)
+  previous=sorted(s for _,_,prev in ranks for s in prev)
+  if len(current)!=len(set(current)) or len(previous)!=len(set(previous)):raise ValueError('duplicate state across owners')
   owners=[{'rank':i,'current_count':len(cur),'previous_count':len(prev),'current_set_sha256':digest(cur),'previous_set_sha256':digest(prev)} for i,(_,cur,prev) in enumerate(ranks)]
   value={'graph_digest':ranks[0][0]['graph_digest'],'world':len(ranks),'layer_sizes':vector}
   if across_owners:
-   current=sorted(s for _,cur,_ in ranks for s in cur)
-   previous=sorted(s for _,_,prev in ranks for s in prev)
-   if len(current)!=len(set(current)) or len(previous)!=len(set(previous)):raise ValueError('duplicate state across owners')
    value['global_retained']={'current_count':len(current),'previous_count':len(previous),'current_set_sha256':digest(current),'previous_set_sha256':digest(previous)}
   else:value['owners']=owners
   if baseline is None:baseline=value

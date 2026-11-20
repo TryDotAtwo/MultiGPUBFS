@@ -153,7 +153,7 @@ permutation, repeated-symbol, directed and wide-state bitmap graphs, segmented
 matrix graphs, rank caps, persistent-worker reuse, and the full S10 Mahonian
 layers. The latest transport-mode agreement check, fixed-shard measured tuner,
 preflight caching and the large-graph exchange/backend comparisons also passed
-on eight GPUs. Seventy focused Python tests passed, with one test deselected
+on eight GPUs. Seventy-three focused Python tests passed, with one test deselected
 because CayleyPy was unavailable in the host Python environment. The graph-info
 planner still uses a legacy storage estimate for these new backends.
 An eight-GPU repeated call on the same graph reused preflight in 0 s; changing

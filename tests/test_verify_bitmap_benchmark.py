@@ -40,8 +40,14 @@ def test_compare_across_different_owner_mappings(tmp_path):
  with pytest.raises(ValueError,match='disagree'):compare([a,b])
  assert compare([a,b],across_owners=True)['status']=='VERIFIED_SAME_COMPLETE_RETAINED_LAYERS'
 
-def test_across_owners_rejects_duplicate_states(tmp_path):
+@pytest.mark.parametrize('across_owners',[False,True])
+@pytest.mark.parametrize('field',['current','previous_small'])
+def test_identical_wrong_results_with_duplicate_owner_states_fail(tmp_path,across_owners,field):
  a=make_case(tmp_path,'a');b=make_case(tmp_path,'b')
- p=b/'rank-0'/'states.json';state=json.loads(p.read_text());state['current']=[[1,0]]
- raw=json.dumps(state).encode();p.write_bytes(raw);r=b/'rank-0'/'report.json';report=json.loads(r.read_text());report['states_sha256']=hashlib.sha256(raw).hexdigest();r.write_text(json.dumps(report))
- with pytest.raises(ValueError,match='duplicate state across owners'):compare([a,b],across_owners=True)
+ # Both cases contain exactly the same duplicate, so ordinary pairwise
+ # equality and the global state count would otherwise incorrectly pass.
+ for case in (a,b):
+  p=case/'rank-0'/'states.json';state=json.loads(p.read_text());other=json.loads((case/'rank-1'/'states.json').read_text())
+  state[field][0]=other[field][0]
+  raw=json.dumps(state).encode();p.write_bytes(raw);r=case/'rank-0'/'report.json';report=json.loads(r.read_text());report['states_sha256']=hashlib.sha256(raw).hexdigest();r.write_text(json.dumps(report))
+ with pytest.raises(ValueError,match='duplicate state across owners'):compare([a,b],across_owners=across_owners)
