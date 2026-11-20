@@ -2,8 +2,9 @@
 #include "generic_action.cuh"
 #include <limits>
 #include "generic_gemm.cuh"
+#include "segmented_warp_route.cuh"
 static_assert(sizeof(GenericRouteRecord)==32,"route ABI");
-template<class State,bool Packed=false> __global__ void route(ActionT<State> action,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,
+template<class State,bool Packed=false,bool Grouped=false> __global__ void route(ActionT<State> action,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,
  uint32_t shards,uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,
  GenericRouteRecord* output,uint32_t* counts,uint32_t* error){
  uint32_t children=action.count*action.generators;
@@ -26,7 +27,7 @@ template<class State,bool Packed=false> __global__ void route(ActionT<State> act
   }else owner=(uint64_t(high)*world)>>32;
   uint32_t rank=map?map[owner]:owner;if(rank>=world){atomicOr(error,2u);continue;}
   uint32_t shard=(uint64_t(uint32_t(hash))*shards)>>32;uint32_t queue=rank*shards+shard;
-  uint32_t row=atomicAdd(counts+queue,1u);if(row>=capacity){atomicOr(error,1u);continue;}
+  uint32_t row;if constexpr(Grouped)row=mgbfs_warp_route_reserve(counts,queue);else row=atomicAdd(counts+queue,1u);if(row>=capacity){atomicOr(error,1u);continue;}
   if constexpr(Packed){
    // Exact bytes, not a probabilistic identity. Origin is diagnostic only.
    const uint64_t origin=(begin+child/action.generators)*action.generators+child%action.generators;
@@ -375,4 +376,31 @@ extern "C" int mgbfs_segmented_route_storage(
  }
  if(state_bytes==8)return mgbfs_generic_route_i64_wide_stride(kind,elements,n,m,generators,static_cast<const int64_t*>(parents),count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,stream);
  return int(cudaErrorInvalidValue);
+}
+
+// Explicit entry for the separately verified warp-grouped segmented producer.
+extern "C" int mgbfs_segmented_route_storage_grouped(
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* stream){
+ if((state_bytes!=1&&state_bytes!=8)||kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||
+  count>stride||uint64_t(count)*generators>=0x7fffffffULL||bits>64||!world||world>128||source>=world||
+  !shards||shards>4096||!capacity||begin>UINT64_MAX-count||!parents||!queues||!counts||!error||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))
+  return int(cudaErrorInvalidValue);
+ if(!count)return int(cudaSuccess);
+ const uint64_t blocks=(uint64_t(count)*generators+255)/256;
+ const uint32_t grid=uint32_t(blocks>65535?65535:blocks);
+ cudaStream_t st=static_cast<cudaStream_t>(stream);
+ if(state_bytes==1){
+  ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
+  if(elements<=24)route<uint8_t,true,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+  else route<uint8_t,false,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ }else{
+  ActionT<int64_t> a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
+  route<int64_t,false,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ }
+ return int(cudaGetLastError());
 }

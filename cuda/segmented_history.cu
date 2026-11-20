@@ -150,6 +150,117 @@ __global__ void accept(Input input, const MgbfsSegment* sealed, uint32_t sealed_
         }
     }
 }
+
+// Warp-cooperative admission keeps the exact open-addressed slot CAS. A
+// claimed PENDING slot always names an origin which remains alive until the
+// whole wave (including deferred origins) has drained.
+__device__ inline uint32_t mgbfs_hash_group_reserve(uint64_t* counter,uint64_t limit,uint32_t wanted,uint64_t* base){
+ cuda::atomic_ref<uint64_t,cuda::thread_scope_device> count(*counter);
+ uint64_t old=count.load(cuda::memory_order_relaxed);
+ for(;;){
+  if(old>=limit||wanted==0){*base=old;return 0;}
+  const uint64_t available=limit-old;
+  const uint32_t grant=available<uint64_t(wanted)?uint32_t(available):wanted;
+  if(count.compare_exchange_weak(old,old+grant,cuda::memory_order_acq_rel,cuda::memory_order_relaxed)){*base=old;return grant;}
+ }
+}
+template<class T,class Input>
+__global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t sealed_count,MgbfsSegment active,
+ uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* error,const uint32_t* selection,uint32_t selected_count,
+ uint32_t* spill,uint32_t* spill_count,uint64_t* global_count,uint64_t global_limit){
+ for(uint32_t selected=blockIdx.x*blockDim.x+threadIdx.x;selected<selected_count;selected+=blockDim.x*gridDim.x){
+  const unsigned live=__activemask(),lane=threadIdx.x&31u;
+  const uint32_t child=selection?selection[selected]:input.child(selected);
+  bool eligible=input.valid(child,error),duplicate=false,claimed=false,overflow=false;
+  uint64_t slot_claimed=0,hash=0,prefix=0;
+  if(eligible&&(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed)&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY)))eligible=false;
+  if(eligible){
+   hash=input.hash(child,0,64);prefix=hash&PREFIX;
+   for(uint32_t s=0;s<sealed_count&&!duplicate&&eligible;s++){
+    MgbfsSegment seg=sealed[s];
+    if(seg.slots==active.slots)continue;
+    if(!seg.slots||!seg.states||!seg.slots_count||(seg.slots_count&(seg.slots_count-1))||
+       !seg.capacity||seg.capacity>LOCAL_ROWS||!(seg.banks==1||seg.banks==3)){
+     atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));eligible=false;break;
+    }
+    uint64_t start=mgbfs_shared_table_bucket(hash,seg.slots_count);
+    for(uint64_t probe=0;probe<seg.slots_count;probe++){
+     uint64_t observed=seg.slots[(start+probe)&(seg.slots_count-1)];
+     if(observed==EMPTY)break;
+     if(observed==RETIRED)continue;
+     if(observed&PENDING){atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));eligible=false;break;}
+     if((observed&PREFIX)==prefix&&equal_row<T>(input,child,seg,observed&PAYLOAD_MASK,error)){duplicate=true;break;}
+    }
+   }
+  }
+  if(eligible&&!duplicate&&!(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed)&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY))){
+   const uint64_t pending=prefix|PENDING|child;
+   for(;;){
+    uint64_t first=active.slots_count,available=EMPTY;
+    const uint64_t start=mgbfs_shared_table_bucket(hash,active.slots_count);
+    duplicate=false;
+    for(uint64_t probe=0;probe<active.slots_count;probe++){
+     const uint64_t slot=(start+probe)&(active.slots_count-1);
+     cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot]);
+     const uint64_t observed=cell.load(cuda::memory_order_acquire);
+     if(observed==RETIRED){if(first==active.slots_count){first=slot;available=RETIRED;}continue;}
+     if(observed==EMPTY){if(first==active.slots_count){first=slot;available=EMPTY;}break;}
+     if((observed&PREFIX)!=prefix)continue;
+     const uint32_t ref=uint32_t(observed);
+     if(observed&PENDING){
+      if(ref>=input.origin_limit()){atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));eligible=false;break;}
+      if(equal_input(input,child,ref)){duplicate=true;break;}
+     }else if(equal_row<T>(input,child,active,observed&PAYLOAD_MASK,error)){duplicate=true;break;}
+    }
+    if(!eligible||duplicate||(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed)&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY)))break;
+    if(first==active.slots_count){overflow=true;break;}
+    cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[first]);
+    uint64_t expected=available;
+    if(!cell.compare_exchange_strong(expected,pending,cuda::memory_order_acq_rel,cuda::memory_order_acquire))continue;
+    slot_claimed=first;claimed=true;break;
+   }
+  }
+  __syncwarp(live);
+  const unsigned claim_lanes=__ballot_sync(live,claimed);
+  const unsigned before=(uint32_t(1)<<lane)-1u;
+  const uint32_t ordinal=uint32_t(__popc(claim_lanes&before));
+  uint64_t base=0;uint32_t grant=0;
+  if(claim_lanes){
+   const int leader=__ffs(int(claim_lanes))-1;
+   if(int(lane)==leader){
+    const uint32_t wanted=uint32_t(__popc(claim_lanes));uint32_t rank_grant=wanted;
+    if(global_count){uint64_t ignored=0;rank_grant=mgbfs_hash_group_reserve(global_count,global_limit,wanted,&ignored);if(rank_grant<wanted)atomicOr(error,uint32_t(MGBFS_SEGMENTED_CAP_RETRY));}
+    grant=mgbfs_hash_group_reserve(accepted,active.capacity,rank_grant,&base);
+    if(global_count&&rank_grant>grant){
+     cuda::atomic_ref<uint64_t,cuda::thread_scope_device> count(*global_count);
+     count.fetch_sub(uint64_t(rank_grant-grant),cuda::memory_order_acq_rel);
+    }
+   }
+   base=__shfl_sync(live,base,leader);grant=__shfl_sync(live,grant,leader);
+  }
+  const bool deferred=overflow||(claimed&&ordinal>=grant);
+  const unsigned deferred_lanes=__ballot_sync(live,deferred);
+  uint32_t spill_base=0;
+  if(deferred_lanes){
+   const int leader=__ffs(int(deferred_lanes))-1;
+   if(int(lane)==leader)spill_base=atomicAdd(spill_count,uint32_t(__popc(deferred_lanes)));
+   spill_base=__shfl_sync(live,spill_base,leader);
+  }
+  if(deferred){
+   spill[spill_base+uint32_t(__popc(deferred_lanes&before))]=child;
+   if(claimed){cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot_claimed]);cell.store(RETIRED,cuda::memory_order_release);}
+  }else if(claimed){
+   const uint64_t row=base+ordinal,payload=(uint64_t(bank)<<32)|row;
+   const uint64_t local=uint64_t(bank)*active.capacity+row,stride=uint64_t(active.capacity)*active.banks;
+   auto* states=static_cast<T*>(active.states);
+   for(uint32_t e=0;e<input.elements;e++)states[uint64_t(e)*stride+local]=static_cast<T>(input.value(child,e));
+   if(active.positions)position_store(active,local,slot_claimed);
+   if(future)future[row]=payload;
+   cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot_claimed]);cell.store(prefix|payload,cuda::memory_order_release);
+  }
+ }
+}
+
 template<class T>
 __global__ void rehash(MgbfsSegment segment,uint32_t elements,uint64_t c0,uint64_t c1,uint64_t c2,
                        uint64_t seed,uint32_t bits,uint32_t* error) {
@@ -229,7 +340,7 @@ int launch_spill(const T* input,const uint64_t* hashes,uint32_t input_count,cons
     accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,nullptr,0);
     return int(cudaGetLastError());
 }
-template<class T,bool Packed>
+template<class T,bool Packed,bool Grouped=false>
 int launch_routes(uint32_t elements,const T* local,const T* remote,const GenericRouteRecord* local_meta,
                   const GenericRouteRecord* remote_meta,const uint32_t* local_counts,const uint32_t* remote_counts,
                   uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
@@ -247,7 +358,8 @@ int launch_routes(uint32_t elements,const T* local,const T* remote,const Generic
     if(!selected_count)return int(cudaSuccess);
     MgbfsBoundedIncomingAction<T,Packed> source{{elements,uint32_t(bound),q,1,rank,world,shard,shards,local,remote,local_meta,remote_meta,local_counts,remote_counts,nullptr},visible};
     uint32_t blocks=(selected_count+255u)/256u;if(blocks>65535u)blocks=65535u;
-    accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
+    if constexpr(Grouped)accept_grouped<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
+    else    accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
     return int(cudaGetLastError());
 }
 } // namespace
@@ -303,6 +415,16 @@ extern "C" int mgbfs_segmented_accept_routes_limited_u8(uint32_t elements,const 
  if(packed)return launch_routes<uint8_t,true>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
  return launch_routes<uint8_t,false>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
 }
+extern "C" int mgbfs_segmented_accept_routes_limited_grouped_u8(uint32_t elements,const uint8_t* local,const uint8_t* remote,
+ const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,uint32_t packed,
+ const uint32_t* selection,uint32_t selected,const MgbfsSegment* sealed,uint32_t ns,
+ MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* spill,uint32_t* sc,uint32_t* error,
+ uint64_t* global_count,uint64_t limit,void* stream){
+ if(packed>1)return int(cudaErrorInvalidValue);
+ if(packed)return launch_routes<uint8_t,true,true>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
+ return launch_routes<uint8_t,false,true>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
+}
 extern "C" int mgbfs_segmented_accept_routes_limited_i64(uint32_t elements,const int64_t* local,const int64_t* remote,
  const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
@@ -310,6 +432,14 @@ extern "C" int mgbfs_segmented_accept_routes_limited_i64(uint32_t elements,const
  MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* spill,uint32_t* sc,uint32_t* error,
  uint64_t* global_count,uint64_t limit,void* stream){
  return launch_routes<int64_t,false>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
+}
+extern "C" int mgbfs_segmented_accept_routes_limited_grouped_i64(uint32_t elements,const int64_t* local,const int64_t* remote,
+ const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
+ const uint32_t* selection,uint32_t selected,const MgbfsSegment* sealed,uint32_t ns,
+ MgbfsSegment active,uint32_t bank,uint64_t* accepted,uint64_t* future,uint32_t* spill,uint32_t* sc,uint32_t* error,
+ uint64_t* global_count,uint64_t limit,void* stream){
+ return launch_routes<int64_t,false,true>(elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,sealed,ns,active,bank,accepted,future,spill,sc,error,global_count,limit,stream);
 }
 extern "C" int mgbfs_segmented_rehash_u8(uint32_t elements,MgbfsSegment segment,uint64_t c0,uint64_t c1,uint64_t c2,uint64_t seed,uint32_t bits,uint32_t* error,void* stream){return launch_rehash<uint8_t>(elements,segment,c0,c1,c2,seed,bits,error,stream);}
 extern "C" int mgbfs_segmented_rehash_i64(uint32_t elements,MgbfsSegment segment,uint64_t c0,uint64_t c1,uint64_t c2,uint64_t seed,uint32_t bits,uint32_t* error,void* stream){return launch_rehash<int64_t>(elements,segment,c0,c1,c2,seed,bits,error,stream);}

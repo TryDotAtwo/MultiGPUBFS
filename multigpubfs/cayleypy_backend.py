@@ -2,12 +2,13 @@
 from dataclasses import dataclass, field
 from functools import wraps
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
 
 from .graph_definition import from_cayleypy, GraphDefinition, _flatten
-from .launch import run_graph
+from .launch import run_graph, _normalize_segment_strategy
 
 
 @dataclass(frozen=True)
@@ -19,8 +20,10 @@ class NativeOptions:
     memory_backend: str = "legacy"
     memory_preset: str = "balanced"
     segment_rows: int = 1 << 32
+    segment_strategy: str = field(default_factory=lambda: os.environ.get("MGBFS_SEGMENT_STRATEGY", "atomic"))
 
     def __post_init__(self):
+        _normalize_segment_strategy(self.segment_strategy)
         if self.memory_preset not in ("balanced", "max_capacity"):
             raise ValueError("INVALID_MEMORY_PRESET")
         if type(self.segment_rows) is not int or not 1 <= self.segment_rows <= 1 << 32:
@@ -124,7 +127,8 @@ def _search(original, graph, backend, options, output, kwargs):
         report = run_graph(definition, output, devices=options.devices,
                            max_seconds=options.max_seconds, autotune=options.autotune,
                            memory_backend=options.memory_backend,
-                           segment_rows=options.segment_rows, memory_preset=options.memory_preset)
+                           segment_rows=options.segment_rows, memory_preset=options.memory_preset,
+                           segment_strategy=options.segment_strategy)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

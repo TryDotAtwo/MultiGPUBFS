@@ -1,10 +1,18 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 #[cfg(all(feature="cuda",target_os="linux"))]
-extern "C" { fn mgbfs_segmented_abi_version() -> u32; }
+extern "C" { fn mgbfs_segmented_abi_version() -> u32; fn mgbfs_segmented_strategy_abi_version() -> u32; }
 fn segmented_abi_ready() -> bool {
     #[cfg(all(feature="cuda",target_os="linux"))]
     { unsafe { mgbfs_segmented_abi_version() == 3 } }
+    #[cfg(not(all(feature="cuda",target_os="linux")))]
+    { false }
+}
+
+
+fn segmented_warp_abi_ready() -> bool {
+    #[cfg(all(feature="cuda",target_os="linux"))]
+    { unsafe { mgbfs_segmented_strategy_abi_version() == 1 } }
     #[cfg(not(all(feature="cuda",target_os="linux")))]
     { false }
 }
@@ -58,7 +66,7 @@ fn execute() -> Result<(), (i32, String)> {
             #[cfg(not(all(feature="cuda",target_os="linux")))]
             return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
         }
-        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"resident_plan_rejection_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented24_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented32_v2":segmented_abi_ready(),"segmented_memory_presets_v1":segmented_abi_ready(),"segmented_exact_exchange_v1":segmented_abi_ready(),"permutation_bitmap_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
+        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"resident_plan_rejection_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented24_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented32_v2":segmented_abi_ready(),"segmented_memory_presets_v1":segmented_abi_ready(),"segmented_exact_exchange_v1":segmented_abi_ready(),"segmented_strategies_v1":{"atomic":segmented_abi_ready(),"warp":segmented_warp_abi_ready(),"batch":false},"permutation_bitmap_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
 
         Some(command @ ("graph-info" | "graph-plan" | "graph-local-plan" | "graph-rank")) => {
             #[cfg(all(feature="cuda",target_os="linux"))]

@@ -14,6 +14,10 @@ def _normalize_memory_backend(name):
   return name
  raise ValueError('INVALID_MEMORY_BACKEND')
 
+def _normalize_segment_strategy(name):
+ if name not in ('atomic','warp','batch'):raise ValueError('INVALID_SEGMENT_STRATEGY')
+ return name
+
 def _apply_memory_preset(env,backend,preset):
  if preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  selected=dict(env,MGBFS_MEMORY_PRESET=preset)
@@ -80,7 +84,7 @@ def _phase_failures(phases):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -100,6 +104,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
  memory_backend=_normalize_memory_backend(memory_backend)
+ strategy_source=_native_env if _native_env is not None else os.environ
+ if segment_strategy is None:segment_strategy=strategy_source.get('MGBFS_SEGMENT_STRATEGY','atomic')
+ segment_strategy=_normalize_segment_strategy(segment_strategy)
+ if memory_backend=='legacy' and segment_strategy!='atomic':raise ValueError('SEGMENT_STRATEGY_REQUIRES_SEGMENTED_BACKEND')
  if memory_preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  if memory_backend=='permutation_bitmap':
   if graph.action['kind']!='permutation':raise ValueError('BITMAP_REQUIRES_PERMUTATION_ACTION')
@@ -124,6 +132,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   capabilities=_require_memory_backend(native,native_env,memory_backend)
+  if segment_strategy!='atomic':
+   supported=capabilities.get('segmented_strategies_v1')
+   if not isinstance(supported,dict) or supported.get(segment_strategy) is not True:
+    raise RuntimeError('NATIVE_SEGMENT_STRATEGY_UNAVAILABLE: '+segment_strategy+' requires a matching verified native executable and CUDA library')
+  native_env['MGBFS_SEGMENT_STRATEGY']=segment_strategy
   exchange_capable=capabilities.get('segmented_exact_exchange_v1') is True
   if native_env.get('MGBFS_SEGMENT_EXACT_EXCHANGE')=='1' and not exchange_capable:raise RuntimeError('NATIVE_SEGMENTED_EXCHANGE_UNAVAILABLE: update the native runtime before requesting exact exchange')
   native_env['_MGBFS_SEGMENT_EXCHANGE_CAPABLE']='1' if exchange_capable else '0'

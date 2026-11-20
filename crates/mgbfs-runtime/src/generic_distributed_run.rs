@@ -108,6 +108,14 @@ fn valid_frontier_bucket(bucket:u32, segmented:bool)->bool{bucket<=if segmented{
 
 pub fn run(args:&[String])->Result<()>{
  let segmented=std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1");
+ if !segmented{
+  let value=match std::env::var("MGBFS_SEGMENT_STRATEGY"){
+   Ok(v)=>Some(v),Err(std::env::VarError::NotPresent)=>None,
+   Err(std::env::VarError::NotUnicode(_))=>return Err("SEGMENT_STRATEGY_INVALID".into()),
+  };
+  let strategy=crate::segmented_strategy::SegmentStrategy::parse(value.as_deref()).map_err(str::to_owned)?;
+  if strategy!=crate::segmented_strategy::SegmentStrategy::Atomic{return Err("SEGMENT_STRATEGY_REQUIRES_SEGMENTED_BACKEND".into())}
+ }
  if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}let g=graph(&args[0])?;let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
  if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
@@ -164,6 +172,6 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
  use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
  let mut memory=bfs.memory_geometry();memory["pool_idle_before_trim_bytes"]=pool_idle_before.into();memory["pool_idle_after_trim_bytes"]=pool_idle_after.into();
- let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
+ let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_strategy":bfs.strategy_name(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
  std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;bfs.quiesce()?;bfs.mark_healthy();crate::session_cache::permit_comm(true);Ok(())
 }

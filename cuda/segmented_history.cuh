@@ -16,7 +16,8 @@ enum : uint32_t {
     MGBFS_SEGMENTED_TABLE_FULL = 1,
     MGBFS_SEGMENTED_OVERFLOW = 2,
     MGBFS_SEGMENTED_BAD_REFERENCE = 4,
-    MGBFS_SEGMENTED_CAPACITY_LIMIT = 8
+    MGBFS_SEGMENTED_CAPACITY_LIMIT = 8,
+    MGBFS_SEGMENTED_CAP_RETRY = 16 // grouped admission: retry after wave drain
 };
 
 // Exactly one active input batch may write a logical shard at a time. Sealed

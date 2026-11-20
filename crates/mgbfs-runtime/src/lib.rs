@@ -102,6 +102,7 @@ pub mod native_fault;
 
 /// Checked contracts for the in-progress segmented history backend.
 pub mod segmented_history;
+pub mod segmented_strategy;
 
 #[cfg(all(feature="cuda",target_os="linux"))]
 mod segmented_distributed_native;
