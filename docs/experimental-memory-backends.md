@@ -10,9 +10,10 @@ establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The dev37 release provides separately checksummed components for the
-`segmented32_v2` ABI. Its executable and CUDA component are built from the
-same source revision. Older dev36 components use the earlier 24-bit layout
+The dev38 release provides separately checksummed components for the
+`segmented32_v2` ABI. Its executable includes the persistent-cache admission
+fix; CUDA components are reused from dev37 after verifying the CUDA-source
+digest is identical. Older dev36 components use the earlier 24-bit layout
 and are not compatible. The launcher checks the native capability before BFS
 and the actual backend in the receipt.
 See [installation and offline prefetch](install-native-package.md).
