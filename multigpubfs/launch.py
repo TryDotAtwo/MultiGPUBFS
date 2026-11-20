@@ -17,20 +17,21 @@ def _normalize_memory_backend(name):
 # Cache only successful capability queries. The key follows the executable
 # identity and loader search path, so replacing a binary or library path
 # cannot silently reuse a capability learned from a different installation.
-_memory_backend_capabilities=set()
+_memory_backend_capabilities={}
 def _require_memory_backend(native,env,backend):
  key_name={'segmented24':'segmented24_v1','permutation_bitmap':'permutation_bitmap_v1'}[backend]
  resolved=shutil.which(native) or native
  st=os.stat(resolved)
  identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,env.get('LD_LIBRARY_PATH',''),key_name)
- if identity in _memory_backend_capabilities:return
+ if identity in _memory_backend_capabilities:return _memory_backend_capabilities[identity]
  result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
  try: info=json.loads(result.stdout)
  except (TypeError,ValueError):info={}
  if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True:
   raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
  if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
- _memory_backend_capabilities.add(identity)
+ _memory_backend_capabilities[identity]=info
+ return info
 
 def _check_memory_backend_receipt(report,backend):
  expected={'segmented24':'EXPERIMENTAL_SEGMENTED24','permutation_bitmap':'EXPERIMENTAL_PERMUTATION_BITMAP'}.get(backend)
@@ -105,7 +106,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   else:native_env.setdefault('MGBFS_SEGMENT_MAX_ROWS',str(1<<32))
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
-  _require_memory_backend(native,native_env,memory_backend)
+  capabilities=_require_memory_backend(native,native_env,memory_backend)
+  exchange_capable=capabilities.get('segmented_exact_exchange_v1') is True
+  if native_env.get('MGBFS_SEGMENT_EXACT_EXCHANGE')=='1' and not exchange_capable:raise RuntimeError('NATIVE_SEGMENTED_EXCHANGE_UNAVAILABLE: update the native runtime before requesting exact exchange')
+  native_env['_MGBFS_SEGMENT_EXCHANGE_CAPABLE']='1' if exchange_capable else '0'
   native_env=dict(native_env,MGBFS_EXPERIMENTAL_SEGMENTED24='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
   if memory_backend=='permutation_bitmap':native_env['MGBFS_EXPERIMENTAL_BITMAP']='1'
   else:native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None)
@@ -165,13 +169,14 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if backend.startswith('shard_ab_'):
   if shards is not None or transport!='auto' or candidate_order!='auto':raise ValueError('SPECIALIZED_ADAPTIVE_GEOMETRY_OR_GENERIC_OPTION_CONFLICT')
   return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,max_seconds,backend,_batch,_profile_layers,None))
- if shards is None:
+ fixed_segmented_tuning=segmented and autotune and shards is not None and _batch is None and _profile_layers is None
+ if shards is None or fixed_segmented_tuning:
   if autotune:
    from .autotune import choose_size_profile,choose_profile
    # Reserve most of the caller's deadline for BFS, not cold tuning.
    tuning_budget=60 if max_seconds is None else min(60,max(1,max_seconds//3))
    native_env=dict(native_env,MGBFS_TUNING_EVIDENCE_ROOT=str(Path(output).parent/(Path(output).name+'-tuning-evidence')))
-   profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
+   profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False,fixed_shards=shards if fixed_segmented_tuning else None) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
    if segmented:shard_geometry=profile.get('shard_geometry')
    if profile.get('backend','generic')!='generic':

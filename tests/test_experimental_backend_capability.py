@@ -64,3 +64,14 @@ def test_normalize_other_memory_backends():
     assert launch._normalize_memory_backend('permutation_bitmap')=='permutation_bitmap'
     with pytest.raises(ValueError, match='INVALID_MEMORY_BACKEND'):
         launch._normalize_memory_backend('unknown')
+
+
+def test_capability_cache_retains_exact_exchange_feature(tmp_path, monkeypatch):
+    binary=tmp_path/'mgbfs';binary.write_bytes(b'exact')
+    calls=[]
+    def query(*args,**kwargs):
+        calls.append(1);return query_response({'schema':1,'segmented24_v1':True,'segmented32_v2':True,'segmented_exact_exchange_v1':True})
+    monkeypatch.setattr(launch,'native_query',query)
+    assert launch._require_memory_backend(str(binary),{},'segmented24')['segmented_exact_exchange_v1'] is True
+    assert launch._require_memory_backend(str(binary),{},'segmented24')['segmented_exact_exchange_v1'] is True
+    assert len(calls)==1

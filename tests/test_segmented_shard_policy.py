@@ -66,7 +66,7 @@ def test_tuner_does_not_try_below_sized_target(tmp_path,monkeypatch):
     monkeypatch.setattr(hardware,'startup_policy',lambda *args:{'shards':[1,4,8,16],'probe_capacity_per_rank':50000})
     def pilot(graph,target,**kwargs):
         shards=kwargs['shards']; lanes=int(kwargs['_native_env']['MGBFS_SEGMENT_OWNER_LANES']); seen.append(shards)
-        return {'backend':'EXPERIMENTAL_SEGMENTED24','segment_memory_by_rank':[{'owner_lanes':lanes} for _ in range(8)],
+        return {'backend':'EXPERIMENTAL_SEGMENTED24','segment_memory_by_rank':[{'owner_lanes':lanes,'exact_exchange':kwargs['_native_env'].get('MGBFS_SEGMENT_EXACT_EXCHANGE','0')=='1'} for _ in range(8)],
                 'layer_sizes':[1,20000,20000,20000,1], 'layer_seconds':[.1]*4,
                 'status':'INCOMPLETE','reason':'PROFILE_LAYER_LIMIT'}
     monkeypatch.setattr(launch,'run_graph',pilot)
@@ -98,7 +98,7 @@ def test_tuner_never_selects_resource_stopped_candidate(tmp_path,monkeypatch):
     monkeypatch.setattr(hardware,'startup_policy',lambda *args:{'shards':[1,4,8,16],'probe_capacity_per_rank':50000})
     def pilot(graph,target,**kwargs):
         lanes=int(kwargs['_native_env']['MGBFS_SEGMENT_OWNER_LANES'])
-        return {'backend':'EXPERIMENTAL_SEGMENTED24','segment_memory_by_rank':[{'owner_lanes':lanes} for _ in range(8)],
+        return {'backend':'EXPERIMENTAL_SEGMENTED24','segment_memory_by_rank':[{'owner_lanes':lanes,'exact_exchange':kwargs['_native_env'].get('MGBFS_SEGMENT_EXACT_EXCHANGE','0')=='1'} for _ in range(8)],
                 'layer_sizes':[1,20000,20000,20000,1], 'layer_seconds':[.01]*4,
                 'status':'INCOMPLETE','reason':'RESOURCE_10'}
     monkeypatch.setattr(launch,'run_graph',pilot)

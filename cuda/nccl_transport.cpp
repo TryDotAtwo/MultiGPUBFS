@@ -716,6 +716,65 @@ extern "C" int mgbfs_nccl_exchange_bounded_triplets(void* raw,uint32_t rank,uint
  return 0;
 }
 
+// Payload lengths are supplied from the already exchanged and synchronized
+// [peer][shard] counts. A sender and its receiver therefore submit matching
+// counts even when other peers or the local queue have different occupancies.
+extern "C" int mgbfs_nccl_exchange_exact_payload(void* raw,uint32_t rank,uint32_t world,
+ uint32_t shards,uint32_t capacity,uint64_t payload,uint32_t state_bytes,
+ const uint32_t* send_counts,const uint32_t* recv_counts,
+ const void* records,const void* states,void* recv_records,void* recv_states,void* raw_stream){
+ auto*p=static_cast<Comm*>(raw);
+ if(!p||!p->value||p->terminal_started||p->rank!=rank||p->world!=world||
+    !world||world>128||!shards||!capacity||(state_bytes!=1&&state_bytes!=8)||
+    payload%state_bytes||!send_counts||!recv_counts||!records||!recv_records||
+    (payload&&(!states||!recv_states)))return 1;
+ const uint64_t extent=uint64_t(world)*shards;
+ if(extent>SIZE_MAX/4||uint64_t(capacity)>SIZE_MAX/32/extent||
+    (payload&&uint64_t(capacity)>SIZE_MAX/payload/extent))return 1;
+ for(uint32_t peer=0;peer<world;peer++)if(peer!=rank){
+  for(uint32_t shard=0;shard<shards;shard++){
+   const auto index=uint64_t(peer)*shards+shard;
+   if(send_counts[index]>capacity||recv_counts[index]>capacity)return 1;
+  }
+ }
+ if(world==1)return 0;
+ if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+ constexpr uint64_t max_p2p_calls=256;
+ const uint64_t lanes_per_group=max_p2p_calls/(2u*(world-1u));
+ const uint64_t shard_lanes=1+payload/state_bytes;
+ const uint64_t lanes=uint64_t(shards)*shard_lanes;
+ auto stream=static_cast<cudaStream_t>(raw_stream);
+ for(uint64_t first=0;first<lanes;first+=lanes_per_group){
+  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  if(ncclGroupStart()!=ncclSuccess)return 2;
+  int status=0;
+  const uint64_t last=first+((lanes-first<lanes_per_group)?lanes-first:lanes_per_group);
+  for(uint32_t peer=0;peer<world&&!status;peer++){if(peer==rank)continue;
+   for(uint64_t lane=first;lane<last&&!status;lane++){
+    const uint64_t shard=lane/shard_lanes,field=lane%shard_lanes;
+    const uint64_t queue=uint64_t(peer)*shards+shard;
+    const uint64_t width=field?state_bytes:32;
+    const uint64_t offset=field?queue*capacity*payload+(field-1)*capacity*state_bytes:queue*capacity*32;
+    const void* src=field?states:records;void* dst=field?recv_states:recv_records;
+    const uint64_t send_bytes=uint64_t(send_counts[queue])*width;
+    const uint64_t recv_bytes=uint64_t(recv_counts[queue])*width;
+    if(send_bytes){
+     const auto sent=ncclSend(static_cast<const unsigned char*>(src)+offset,size_t(send_bytes),ncclUint8,int(peer),p->value,stream);
+     if(sent!=ncclSuccess&&sent!=ncclInProgress){status=3;break;}
+    }
+    if(recv_bytes){
+     const auto received=ncclRecv(static_cast<unsigned char*>(dst)+offset,size_t(recv_bytes),ncclUint8,int(peer),p->value,stream);
+     if(received!=ncclSuccess&&received!=ncclInProgress)status=4;
+    }
+   }
+  }
+  const auto end=ncclGroupEnd();
+  const int settled=(end==ncclSuccess||end==ncclInProgress)?await_nccl(p,end):5;
+  if(status||settled)return status?status:settled;
+ }
+ return 0;
+}
+
 extern "C" int mgbfs_nccl_all_gather_bytes(void* raw,const void* send,void* recv,uint64_t bytes,void* raw_stream){
  auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv||!bytes||bytes>SIZE_MAX/p->world)return 1;
  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;

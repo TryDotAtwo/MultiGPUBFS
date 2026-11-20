@@ -61,18 +61,127 @@ def _identity(native, devices, env):
                          or k in ('LD_LIBRARY_PATH', 'LD_PRELOAD'))))
 
 
+def _requested_memory_backend(env):
+    segmented = env.get('MGBFS_EXPERIMENTAL_SEGMENTED24') == '1'
+    bitmap = env.get('MGBFS_EXPERIMENTAL_BITMAP') == '1'
+    if bitmap and not segmented:
+        raise ValueError('BITMAP_REQUIRES_SEGMENTED_ENGINE')
+    return 'permutation_bitmap' if bitmap else 'segmented24' if segmented else 'legacy'
+
+
+def _preflight_cache_key(native, devices, env, graph):
+    # A transport receipt includes a real BFS prefix. Reusing it across a
+    # different storage backend or graph would misreport which path was tried.
+    # Transport discovery itself is reusable, but a prefix is evidence for
+    # the backend *and* the settings under which that prefix was run.  Keep
+    # these settings separate from the transport identity so a changed mode
+    # can rerun just its prefix without recalibrating NCCL.
+    execution_settings = tuple(sorted((k, v) for k, v in env.items()
+        if k.startswith(('MGBFS_SEGMENT_', 'MGBFS_GENERIC_', 'MGBFS_EXPERIMENTAL_'))))
+    return (_identity(native, devices, env), _requested_memory_backend(env),
+            None if graph is None else graph.digest(), execution_settings)
+
+
+def _run_graph_prefix(root):
+    from . import GraphDefinition
+    from .launch import run_graph
+    graph = GraphDefinition.from_dict(json.loads((root / 'graph.json').read_text()))
+    request = json.loads((root / 'request.json').read_text())
+    backend = request['memory_backend']
+    if backend not in ('legacy', 'segmented24', 'permutation_bitmap'):
+        raise ValueError('PREFLIGHT_MEMORY_BACKEND')
+    return run_graph(graph, root / 'prefix', devices=request['devices'], capacity=20000,
+                     max_seconds=20, shards=1, autotune=False, backend='generic',
+                     memory_backend=backend, _profile_layers=4)
+
+def _cached_prefix(root, native, devices, env, patch, report, graph, memory_backend):
+    # Reuse the already measured all-rank transport and NCCL reserve, but
+    # rehearse this graph with the requested backend.  A cache hit is not
+    # evidence that an unrelated graph prefix was run.
+    attempt = root / 'cached-transport'
+    attempt.mkdir()
+    candidate = dict(env, **patch)
+    candidate['MGBFS_EXECUTABLE'] = str(native)
+    candidate['NCCL_DEBUG'] = 'INFO'
+    candidate['NCCL_DEBUG_FILE'] = str(attempt / 'bfs-nccl-%h-%p.log')
+    candidate['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent)
+    _write(attempt / 'request.json', {'devices': devices, 'policy': report['policy'],
+                                      'memory_backend': memory_backend})
+    (attempt / 'graph.json').write_text(graph.to_json())
+    own_groups = candidate.get('MGBFS_DIAGNOSTIC_SUPERVISED') != '1'
+    process = None
+    try:
+        with (attempt / 'prefix.log').open('w') as log:
+            process = subprocess.Popen([sys.executable, '-u', '-m',
+                'multigpubfs.nccl_preflight', str(attempt), '--prefix'],
+                env=candidate, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=own_groups)
+            try:
+                code = process.wait(timeout=120)
+            except subprocess.TimeoutExpired as error:
+                raise TimeoutError('NCCL_PREFLIGHT_PREFIX_STARTUP_TIMEOUT') from error
+        if code:
+            raise RuntimeError('NCCL_PREFLIGHT_BFS_PREFIX_FAILED')
+        rehearsal = json.loads((attempt / 'prefix' / 'report.json').read_text())
+        if rehearsal['status'] != 'COMPLETE' and len(rehearsal.get('layer_sizes', [])) < 4:
+            raise RuntimeError('NCCL_PREFLIGHT_INSUFFICIENT_BFS_PREFIX')
+        return {k: rehearsal.get(k) for k in ('status', 'reason', 'layer_sizes')}
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                if own_groups: os.killpg(process.pid, signal.SIGTERM)
+                else: process.terminate()
+            except ProcessLookupError: pass
+            try: process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    if own_groups: os.killpg(process.pid, signal.SIGKILL)
+                    else: process.kill()
+                except ProcessLookupError: pass
+                process.wait(timeout=3)
+
+
 def prepare(native, devices, env, output, graph=None):
     if len(devices) < 2:
         return dict(env), {'status': 'SINGLE_GPU'}
     root = Path(str(output) + '-communication-evidence').absolute()
     from .generic_session import _active
-    key = _identity(native, devices, env)
+    memory_backend = _requested_memory_backend(env)
+    key = _preflight_cache_key(native, devices, env, graph)
     cache = getattr(_active, 'communication_profiles', {}) if _active else {}
     if key in cache:
         patch, report = cache[key]
-        return dict(env, **patch), dict(report, cache_hit=True)
+        # Retain the source cost separately: this invocation did no new
+        # transport probe or graph-prefix rehearsal.
+        return dict(env, **patch), dict(report, cache_hit=True,
+                                      source_preflight_seconds=report.get('seconds'),
+                                      seconds=0.0)
     root.mkdir(parents=True, exist_ok=False)
     reports = []
+    # Only transport and reserve are graph-independent.  A different graph
+    # still gets its own real backend-specific BFS prefix before admission.
+    previous = next(((patch, report) for cached_key, (patch, report) in cache.items()
+                     if len(cached_key) in (3, 4) and cached_key[:2] == key[:2]
+                     and report.get('status') == 'VERIFIED'), None)
+    if previous is not None and graph is not None:
+        patch, old_report = previous
+        started = time.monotonic()
+        try:
+            prefix = _cached_prefix(root, native, devices, env, patch, old_report,
+                                    graph, memory_backend)
+            report = dict(old_report, cache_hit=True, transport_cache_hit=True,
+                          cache_source_graph=old_report.get('rehearsal_graph'),
+                          rehearsal_graph=graph.digest(), rehearsal_backend=memory_backend,
+                          bfs_prefix=prefix, seconds=time.monotonic()-started,
+                          evidence=str(root))
+            _write(root / 'report.json', report)
+            cache[key] = (patch, report)
+            _active.communication_profiles = cache
+            return dict(env, **patch), report
+        except (RuntimeError, TimeoutError, ValueError, OSError, KeyError) as error:
+            reports.append({'mode':'cached-transport-prefix','status':'FAILED',
+                            'error':str(error),'seconds':time.monotonic()-started})
+            _write(root / 'cached-transport-failure.json', reports[-1])
     for name, policy in alternatives(env):
         attempt = root / name
         attempt.mkdir()
@@ -82,7 +191,7 @@ def prepare(native, devices, env, output, graph=None):
         candidate['NCCL_DEBUG_FILE'] = str(attempt / 'nccl-%h-%p.log')
         # Force this package in subprocesses, including source-tree validation.
         candidate['PYTHONPATH'] = str(Path(__file__).resolve().parent.parent)
-        _write(attempt / 'request.json', {'devices': devices, 'policy': policy})
+        _write(attempt / 'request.json', {'devices': devices, 'policy': policy, 'memory_backend': memory_backend})
         processes, logs = [], []
         own_groups = candidate.get("MGBFS_DIAGNOSTIC_SUPERVISED") != "1"
         started = time.monotonic()
@@ -136,6 +245,7 @@ def prepare(native, devices, env, output, graph=None):
             report = {'status': 'VERIFIED', 'selected': name, 'policy': policy,
                       'reserve_bytes': reserve, 'ranks': ranks,
                       'rehearsal_graph': graph.digest() if graph is not None else None,
+                      'rehearsal_backend': memory_backend if graph is not None else None,
                       'bfs_prefix': None if rehearsal is None else {k:rehearsal.get(k) for k in ('status','reason','layer_sizes')},
                       'prior_attempts': reports, 'cache_hit': False,
                       'seconds': time.monotonic() - started,
@@ -271,12 +381,6 @@ def _rank(root, rank):
 if __name__ == '__main__':
     root = Path(sys.argv[1])
     if sys.argv[2] == '--prefix':
-        from . import GraphDefinition
-        from .launch import run_graph
-        graph = GraphDefinition.from_dict(json.loads((root / 'graph.json').read_text()))
-        devices = json.loads((root / 'request.json').read_text())['devices']
-        run_graph(graph, root / 'prefix', devices=devices, capacity=20000,
-                  max_seconds=20, shards=1, autotune=False, backend='generic',
-                  _profile_layers=4)
+        _run_graph_prefix(root)
     else:
         _rank(root, int(sys.argv[2]))

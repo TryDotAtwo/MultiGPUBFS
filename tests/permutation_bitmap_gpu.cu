@@ -35,7 +35,10 @@ static void run(int device,std::vector<int64_t> start,bool exhaustive){
  CK(cudaSetDevice(device));std::sort(start.begin(),start.end());uint32_t n=start.size();
  std::vector<std::vector<int64_t>> states;std::vector<uint64_t> expect;
  if(exhaustive){auto s=start;do{expect.push_back(states.size());states.push_back(s);}while(std::next_permutation(s.begin(),s.end()));}
- else{for(uint64_t r:std::vector<uint64_t>{0,1,4294967313ull,6227020799ull}){states.push_back(unrank_unique(n,r));expect.push_back(r);}}
+ else{
+  uint64_t factorial=1;for(uint64_t i=2;i<=uint64_t(n);i++)factorial*=i;
+  for(uint64_t r:std::vector<uint64_t>{0,1,4294967313ull,factorial/2,factorial-1}){states.push_back(unrank_unique(n,r));expect.push_back(r);}
+ }
  std::vector<int64_t> symbols;std::vector<uint32_t> counts;
  for(auto x:start){if(symbols.empty()||symbols.back()!=x){symbols.push_back(x);counts.push_back(1);}else counts.back()++;}
  const uint32_t m=states.size();std::vector<int64_t> soa(uint64_t(n)*m);
@@ -43,7 +46,7 @@ static void run(int device,std::vector<int64_t> start,bool exhaustive){
  int64_t *ds,*dv;uint32_t *dc,*de;uint64_t *dr;
  CK(cudaMalloc(&ds,soa.size()*8));CK(cudaMalloc(&dv,symbols.size()*8));CK(cudaMalloc(&dc,counts.size()*4));CK(cudaMalloc(&de,m*4));CK(cudaMalloc(&dr,m*8));
  CK(cudaMemcpy(ds,soa.data(),soa.size()*8,cudaMemcpyHostToDevice));CK(cudaMemcpy(dv,symbols.data(),symbols.size()*8,cudaMemcpyHostToDevice));CK(cudaMemcpy(dc,counts.data(),counts.size()*4,cudaMemcpyHostToDevice));
- uint64_t total=exhaustive?m:6227020800ull;
+ uint64_t total=1;if(exhaustive)total=m;else for(uint64_t i=2;i<=uint64_t(n);i++)total*=i;
  BitmapDeviceDomain d{dv,dc,(uint32_t)symbols.size(),n,total};
  rank_test<<<(m+255)/256,256>>>(Flat{ds,m},d,dr,de,m);CK(cudaDeviceSynchronize());
  std::vector<uint64_t> got(m);std::vector<uint32_t> errors(m);
@@ -58,6 +61,11 @@ static void run(int device,std::vector<int64_t> start,bool exhaustive){
   for(uint32_t i=0;i<m;i++)if(host[i]!=1){fprintf(stderr,"claim mismatch %u %u\n",i,host[i]);exit(1);}
   CK(cudaStreamDestroy(a));CK(cudaStreamDestroy(b));CK(cudaFree(bits));CK(cudaFree(wins));
  }
+ // An input containing a duplicate in a unique domain must be rejected.
+ if(symbols.size()==n&&n>1){
+  int64_t duplicate=soa[m];CK(cudaMemcpy(ds,&duplicate,8,cudaMemcpyHostToDevice));
+  rank_test<<<(m+255)/256,256>>>(Flat{ds,m},d,dr,de,m);CK(cudaDeviceSynchronize());uint32_t bad=0;CK(cudaMemcpy(&bad,de,4,cudaMemcpyDeviceToHost));assert(bad==1);
+ }
  // Mutate first symbol outside domain and require a clean rejected state.
  int64_t invalid=INT64_MIN;CK(cudaMemcpy(ds,&invalid,8,cudaMemcpyHostToDevice));
  rank_test<<<(m+255)/256,256>>>(Flat{ds,m},d,dr,de,m);CK(cudaDeviceSynchronize());uint32_t bad=0;CK(cudaMemcpy(&bad,de,4,cudaMemcpyDeviceToHost));assert(bad==1);
@@ -69,7 +77,9 @@ int main(){
  for(int d=0;d<2;d++){
   run(d,{0,1,2,3,4,5,6,7},true);
   run(d,{-7,-7,0,99,99},true);
+  run(d,{-200,-7,13,999},true);
   run(d,{0,1,2,3,4,5,6,7,8,9,10,11,12},false);
+  run(d,{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19},false);
  }
  return 0;
 }
