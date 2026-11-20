@@ -62,6 +62,36 @@ This is a bounded two-GPU verification, not proof of performance or
 correctness on every supported GPU, topology or graph. The two-bank bitmap
 preset allocates state banks in addition to the visited bitset.
 
+## Real free-VRAM pressure test
+
+The released dev39 wheel and its checksum-verified SM86 native components were
+used offline on a different 2×RTX 3060 machine, driver 580.126.20. Before
+starting either BFS, an independent process held 9,148,694,528 bytes per GPU;
+`cudaMemGetInfo` reported approximately 3 GiB free per card before the BFS
+contexts and communication allocations. This was real device allocation, not
+the synthetic storage-byte failpoint. Both runs used S13, four shards,
+maximum-capacity preset, segment ceiling 1,048,576 rows, exact exchange, and
+a 240-second test-only time limit. They returned before that limit:
+
+| Backend | Status and reason | Last completed depth | States in completed layers | Current samples checked |
+| --- | --- | ---: | ---: | ---: |
+| Segmented hash | INCOMPLETE / RESOURCE_10 | 17 | 20,790,013 | 1,000 |
+| Permutation bitmap | INCOMPLETE / RESOURCE_10 | 20 | 67,194,554 | 1,000 |
+
+Every completed layer count matched the independent Mahonian oracle; each of
+the reported samples was independently checked to be a permutation at the
+reported inversion depth. This does not compare complete state sets of all
+layers. Rank zero reported `descriptor_budget` for hash and `segment_budget`
+for bitmap; both preserved the configured 2-GiB cold-communicator reserve.
+The reported difference in completed states is a capacity observation for
+these settings, not a same-depth speed comparison. Full S13 did not complete.
+
+[Real free-VRAM pressure evidence](real-vram-pressure-20261120-evidence.tar.gz),
+SHA-256 `66c3f2f96704897b6708d2204d82faab7edee27011e1ed5120ded5b3c60e7dda`,
+contains the harness, inputs, compact reports, rank logs and phase receipts;
+it excludes raw state files. The temporary memory holder exited and both
+GPUs returned to idle after the test.
+
 ## Limitations and retained evidence
 
 The separate existing legacy archive suite had eight passes and six failures.
