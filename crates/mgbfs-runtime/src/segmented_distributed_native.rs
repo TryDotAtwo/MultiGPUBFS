@@ -118,6 +118,17 @@ impl Drop for Comm{fn drop(&mut self){unsafe{if !self.ptr.is_null(){if !self.hea
 #[derive(Clone,Copy)]struct Range{shard:usize,segment:usize,bank:u32,begin:u64,end:u64}
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
 
+// Only quiescent, unclaimed session extents are released. Reclaim idle CUDA
+// pool allocations before admitting segment geometry, so a previous job
+// cannot make reusable memory appear unavailable to the next graph.
+fn segment_sizing_memory_info()->Result<(usize,usize)>{
+ crate::session_cache::release_unused_buffers();
+ crate::generic_pool::trim_idle()?;
+ let(mut free,mut total)=(0usize,0usize);
+ crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+ Ok((free,total))
+}
+
 pub struct SegmentedDistributedBfs{
  base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
  segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,remaining_bytes:u64,storage_budget:u64,configured_rows:u64,bank_totals:[u64;3],capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
@@ -165,8 +176,7 @@ impl SegmentedDistributedBfs{
   let orbit=crate::generic_memory::state_space_bound(g).unwrap_or(LOCAL_ROWS);
   let divisor=u64::from(p.world)*u64::from(p.shards);
   let estimated=std::env::var("MGBFS_SEGMENT_EXPECTED_ROWS").ok().and_then(|v|v.parse::<u64>().ok()).filter(|&x|x>0).unwrap_or_else(||orbit.saturating_add(divisor-1)/divisor).max(32);
-  let(mut sizing_free,mut sizing_total)=(0usize,0usize);
-  crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut sizing_free,&mut sizing_total)})?;
+  let(sizing_free,_sizing_total)=segment_sizing_memory_info()?;
   let sizing_reserve=crate::generic_memory::admission_reserve_bytes()?;
   let bitmap_bytes=if let Some(domain)=&bitmap_domain{
    let logical=owner_map.iter().position(|&physical|physical==rank).ok_or("BITMAP_OWNER_MAP")? as u32;
@@ -579,4 +589,24 @@ impl SegmentedDistributedBfs {
  }
  pub fn sample_global(&self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(self.counts[self.rank as usize]) as u32;self.sample_ranges(&self.current,quota)}
  pub fn previous_small_sample(&self,previous:u64)->Result<Vec<Vec<i64>>>{if previous>=1000{Ok(vec![])}else{self.sample_ranges(&self.previous,previous as u32)}}
+}
+
+#[cfg(test)]
+mod segment_sizing_cache_gpu_test {
+ use super::*;
+ #[test]
+ #[ignore = "requires a CUDA GPU with at least 512 MiB free"]
+ fn sizing_reclaims_idle_session_gpu_storage() {
+  crate::generic_pool::activate(0).expect("activate CUDA pool");
+  crate::session_cache::enable();
+  let bytes=256usize<<20;
+  let ptr=crate::generic_pool::allocate(bytes).expect("allocate CUDA pool storage").expect("async pool unavailable");
+  assert!(crate::session_cache::buffer_put(ptr,bytes));
+  assert!(crate::session_cache::reusable_bytes()>=bytes as u64);
+  let(mut before,mut total)=(0usize,0usize);
+  crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut before,&mut total)}).unwrap();
+  let(after,_)=segment_sizing_memory_info().expect("size after reclaim");
+  assert_eq!(crate::session_cache::reusable_bytes(),0,"idle session buffers not released before sizing");
+  assert!(after>=before.saturating_add(bytes*3/4),"free VRAM did not recover: before={before} after={after} allocated={bytes}");
+ }
 }
