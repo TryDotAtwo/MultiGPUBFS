@@ -1,10 +1,11 @@
 # Experimental BFS memory backends
 
 The existing `legacy` backend remains the default. The additional backends
-below are experimental. Checks cover exact small-oracle cases on 2x RTX 3060 and 8x RTX 3090,
-and complete S12 and segmented S13 on those devices. They do not establish
-Blackwell/B200 acceptance, full S14 execution, a BFS with more than 2^32
-states on one rank, out-of-core execution, or universal performance gains.
+below are experimental. The current 32-bit-row ABI passed exact small-oracle
+cases and complete S11 and S12 on 2x RTX 3060. Historical results for the older
+24-bit ABI include 8x RTX 3090 and complete segmented S13. These checks do not
+establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
+2^32 states on one rank, out-of-core execution, or universal performance gains.
 
 ## Native build requirement
 
@@ -98,6 +99,39 @@ problem have been validated.
 
 ## Measured scope and tuning
 
+The current 32-bit-row ABI was compared on 2x RTX 3060 with identical fixed
+settings (8 logical shards, 8 owner lanes, batch 8192, physical segments of
+1,048,576 rows per bank). Each time below is the mean of two runs, and every
+layer size matched the independent Mahonian oracle:
+
+| Graph | Segmented | Bitmap | Bitmap relative to segmented |
+|---|---:|---:|---:|
+| S11 | 6.639 s | 7.531 s | 13.4% slower |
+| S12 | 86.975 s | 104.215 s | 19.8% slower |
+
+A separate matched comparison with the legacy backend, under the same fixed
+8-shard settings, averaged 5.411 s legacy versus 6.126 s segmented on S11,
+and 70.867 s legacy versus 76.053 s segmented on S12. Both used complete
+oracles. With `autotune=False` and no manual shard count, the capacity-only
+planner selected one shard: S11 averaged 2.796 s legacy versus 17.834 s
+segmented, and S12 averaged 36.156 s legacy versus 207.768 s segmented.
+This static-planner result does not represent measured autotuning; the shard
+count and owner-lane count strongly affect these results.
+
+On a measured-autotuning run, both S11 and S12 selected 16 shards: tuning
+took 55.366 s and 58.806 s respectively, then a second graph with the same
+profile reused the cached result in 22.8 ms and 28.1 ms. Complete BFS times
+were 5.661/5.702 s for S11 and 75.621/75.352 s for S12. These are two GPU
+measurements, not evidence of a universally optimal configuration.
+
+These measurements do not establish the relative performance on B200. A
+specific S14 adjacent-transposition (Coxeter) memory model estimates around
+72.8 GB/GPU for segmented and 25.8 GB/GPU for bitmap on 8x B200, allowing
+25% for distribution imbalance but excluding several runtime allocations.
+It is not a measured fit or a bound for other generators. Current
+uncompressed frontier storage alone exceeds 8x180 GB for Coxeter S15. See
+[the calculation and test results](acceptance/segmented32-20261120/summary.json).
+
 The following historical dev36 24-bit-row measurements used eight RTX 3090
 GPUs, fixed 8 logical shards, 8 owner lanes, 8192 batch, and 1,048,576 rows
 per segment. They do not measure the new 32-bit-row ABI. One complete S12
@@ -124,9 +158,13 @@ inside a persistent context reused the exact profile in about 16-17 ms.
 Changing graph or hardware may require tuning again. Small conservative
 profiles are not claimed to be measured optima.
 
-An installed SM86 candidate and the selective offline-cache layout passed
-CayleyPy persistent S3-S5 on 2x RTX 3060 with both modes. All advertised CUDA
-components, including SM100 and SM103, were compiled and inventory-checked;
-this is not a B200 or B300 runtime acceptance.
+The older dev36 installed SM86 candidate and selective offline-cache layout
+passed CayleyPy persistent S3-S5 on 2x RTX 3060 with both modes. Compiling and
+inventory-checking CUDA components is not B200 or B300 runtime acceptance.
 
 [Reports, hashes and acceptance boundaries](acceptance/segmented-memory-20261119/manifest.json).
+
+The released dev37 wheel was installed and the SM86 runtime was prefetched
+without GPU access. With `MGBFS_NATIVE_OFFLINE=1`, the installed package then
+passed the persistent 2-GPU API test for both modes and segment maximum values
+64 and 2^32.

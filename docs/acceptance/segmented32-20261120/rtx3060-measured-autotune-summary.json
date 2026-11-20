@@ -1,0 +1,126 @@
+[
+  {
+    "n": 11,
+    "repeat": 0,
+    "status": "COMPLETE",
+    "bfs_seconds": 5.660823417,
+    "wall_seconds": 66.32464095798787,
+    "states": 39916800,
+    "workers": [
+      2663960,
+      2663961
+    ],
+    "autotune": {
+      "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE",
+      "shards": 16,
+      "segment_owner_lanes": 16,
+      "seconds": 55.3660261600744,
+      "cache_hit": false,
+      "scope": "segmented24 GPU prefix timing among admitted shard, owner-lane and batch choices; no claim of a global optimum or large-rank acceptance",
+      "common_depth": 30,
+      "winner_index": 4,
+      "scores_seconds": [
+        5.402697145,
+        4.494392059999999,
+        3.7198556689999998,
+        3.776245163,
+        3.5396710359999997,
+        4.749409613000001
+      ]
+    }
+  },
+  {
+    "n": 11,
+    "repeat": 1,
+    "status": "COMPLETE",
+    "bfs_seconds": 5.701579257,
+    "wall_seconds": 5.7922065949533135,
+    "states": 39916800,
+    "workers": [
+      2663960,
+      2663961
+    ],
+    "autotune": {
+      "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE",
+      "shards": 16,
+      "segment_owner_lanes": 16,
+      "seconds": 0.022848185966722667,
+      "cache_hit": true,
+      "scope": "segmented24 GPU prefix timing among admitted shard, owner-lane and batch choices; no claim of a global optimum or large-rank acceptance",
+      "common_depth": 30,
+      "winner_index": 4,
+      "scores_seconds": [
+        5.402697145,
+        4.494392059999999,
+        3.7198556689999998,
+        3.776245163,
+        3.5396710359999997,
+        4.749409613000001
+      ]
+    }
+  },
+  {
+    "n": 12,
+    "repeat": 0,
+    "status": "COMPLETE",
+    "bfs_seconds": 75.620609626,
+    "wall_seconds": 134.54318978602532,
+    "states": 479001600,
+    "workers": [
+      2663960,
+      2663961
+    ],
+    "autotune": {
+      "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE",
+      "shards": 16,
+      "segment_owner_lanes": 16,
+      "seconds": 58.80635379208252,
+      "cache_hit": false,
+      "scope": "segmented24 GPU prefix timing among admitted shard, owner-lane and batch choices; no claim of a global optimum or large-rank acceptance",
+      "common_depth": 18,
+      "winner_index": 4,
+      "scores_seconds": [
+        2.194621829,
+        1.746406843,
+        1.59410924,
+        1.384604799,
+        1.319622931,
+        5.089510843,
+        5.253040657,
+        1.77960802
+      ]
+    }
+  },
+  {
+    "n": 12,
+    "repeat": 1,
+    "status": "COMPLETE",
+    "bfs_seconds": 75.351781812,
+    "wall_seconds": 75.5192741190549,
+    "states": 479001600,
+    "workers": [
+      2663960,
+      2663961
+    ],
+    "autotune": {
+      "status": "MEASURED_EQUAL_PREFIX_GPU_PROFILE",
+      "shards": 16,
+      "segment_owner_lanes": 16,
+      "seconds": 0.02807669504545629,
+      "cache_hit": true,
+      "scope": "segmented24 GPU prefix timing among admitted shard, owner-lane and batch choices; no claim of a global optimum or large-rank acceptance",
+      "common_depth": 18,
+      "winner_index": 4,
+      "scores_seconds": [
+        2.194621829,
+        1.746406843,
+        1.59410924,
+        1.384604799,
+        1.319622931,
+        5.089510843,
+        5.253040657,
+        1.77960802
+      ]
+    }
+  }
+]
