@@ -42,5 +42,10 @@ with persistent_graph_workers() as workers:
                 and 0 <= x["unique_probe_plus_merge_fraction_of_owner_and_merge"] <= 1.05
                 and x["target_depth_min"] == 2 and x["target_depth_max"] == 6
                 for x in stats), stats
+            runs = [entry for rank in result["segment_memory_by_rank"]
+                    for entry in rank["batch_hash_runs_by_shard"] if entry]
+            assert any(entry["timed_window_observations"] > 0 for entry in runs), runs
+            assert all(entry["timed_window_median_observed"] is not None
+                       for entry in runs if entry["timed_window_observations"] > 0), runs
         print("PASS", name, json.dumps(stats), flush=True)
 print("TIMING_VERIFY_TWO_GPU_PASS", root, flush=True)

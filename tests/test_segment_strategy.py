@@ -1,6 +1,9 @@
 """Public strategy selection, validation and capability safety."""
 import os
+import json
+import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from multigpubfs.cayleypy_backend import NativeOptions
 from multigpubfs.graph_definition import GraphDefinition
@@ -44,6 +47,33 @@ class SegmentStrategyContract(unittest.TestCase):
             for value in ('warp','batch'):
                 with self.assertRaisesRegex(RuntimeError,'NATIVE_SEGMENT_STRATEGY_UNAVAILABLE'):
                     run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='segmented24',segment_strategy=value)
+
+    def test_capability_cache_tracks_replaced_cuda_library(self):
+        from multigpubfs.launch import _memory_backend_capabilities, _require_memory_backend
+        _memory_backend_capabilities.clear()
+        with tempfile.NamedTemporaryFile() as binary:
+            versions = iter([
+                {'cuda_library_sha256':'old','resolved_dependencies':[['libmgbfs_cuda.so','/tmp/a',1,1]]},
+                {'cuda_library_sha256':'old','resolved_dependencies':[['libmgbfs_cuda.so','/tmp/a',1,1]]},
+                {'cuda_library_sha256':'new','resolved_dependencies':[['libmgbfs_cuda.so','/tmp/a',2,2]]},
+                None, None])
+            def query(*args, **kwargs):
+                value = query.calls == 0
+                query.calls += 1
+                return SimpleNamespace(returncode=0,stdout=json.dumps(
+                    {'schema':1,'segmented24_v1':True,'segmented32_v2':True,
+                     'segmented_memory_presets_v1':True,'segmented_strategies_v1':{'batch':value}}))
+            query.calls=0
+            with patch('multigpubfs.autotune._dependency_identity',side_effect=lambda *a:next(versions)), \
+                 patch('multigpubfs.launch.native_query',side_effect=query):
+                env={'LD_LIBRARY_PATH':'/tmp'}
+                self.assertTrue(_require_memory_backend(binary.name,env,'segmented24')['segmented_strategies_v1']['batch'])
+                self.assertTrue(_require_memory_backend(binary.name,env,'segmented24')['segmented_strategies_v1']['batch'])
+                self.assertFalse(_require_memory_backend(binary.name,env,'segmented24')['segmented_strategies_v1']['batch'])
+                _require_memory_backend(binary.name,env,'segmented24')
+                _require_memory_backend(binary.name,env,'segmented24')
+                self.assertEqual(query.calls,4)
+        _memory_backend_capabilities.clear()
 
     def test_strategy_scopes_tuning_and_preflight_keys(self):
         a=_configuration_digest({'MGBFS_SEGMENT_STRATEGY':'atomic'})

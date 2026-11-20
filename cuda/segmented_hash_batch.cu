@@ -374,3 +374,6 @@ extern "C" int mgbfs_hash_batch_compact_tail(uint32_t state_bytes,uint32_t eleme
  merge_publish<<<1,1,0,st>>>(segments,runs,count,control,result,error);
  return int(cudaGetLastError());
 }
+
+// Marker for the complete batch route, bitmap and exact sorted-hash ABI.
+extern "C" unsigned int mgbfs_segmented_batch_strategy_abi_version(){return 1;}

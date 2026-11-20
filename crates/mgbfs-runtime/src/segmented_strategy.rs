@@ -16,6 +16,37 @@ pub fn agree(codes:&[u64])->Result<SegmentStrategy,&'static str>{
  if codes.iter().any(|&x|x!=first){return Err("SEGMENT_STRATEGY_RANK_MISMATCH")}
  match first{0=>Ok(SegmentStrategy::Atomic),1=>Ok(SegmentStrategy::Warp),2=>Ok(SegmentStrategy::Batch),_=>Err("SEGMENT_STRATEGY_INVALID")}
 }
+/// Every rank advertises both the selected strategy and the native batch ABI.
+/// Capability differences are harmless for Atomic/Warp; Batch fails on all ranks
+/// before routing if even one library is missing the required entry points.
+pub fn agree_capabilities(advertisements:&[u64])->Result<SegmentStrategy,&'static str>{
+ if advertisements.iter().any(|&v|v&!0x1ff!=0){return Err("SEGMENT_STRATEGY_INVALID")}
+ let codes=advertisements.iter().map(|v|v&0xff).collect::<Vec<_>>();
+ let strategy=agree(&codes)?;
+ if strategy==SegmentStrategy::Batch&&advertisements.iter().any(|v|v&0x100==0){
+  return Err("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING")
+ }
+ Ok(strategy)
+}
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn batch_abi_ready()->bool{
+ if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1") &&
+    std::env::var("MGBFS_SEGMENT_TEST_BATCH_ABI_MISSING").as_deref()==Ok("1"){return false}
+ unsafe{
+  let marker=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_segmented_batch_strategy_abi_version\0".as_ptr().cast());
+  if marker.is_null(){return false}
+  let version:unsafe extern "C" fn()->u32=std::mem::transmute(marker);
+  if version()!=1{return false}
+  let names:[&[u8];4]=[b"mgbfs_segmented_batch_route\0",
+   b"mgbfs_bitmap_accept_batch\0",b"mgbfs_hash_batch_accept_timed\0",
+   b"mgbfs_hash_batch_compact_tail\0"];
+  names.iter().all(|name|!libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast()).is_null())
+ }
+}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn batch_abi_ready()->bool{false}
+
 /// Cursor over unfiltered origins. A filtered spill is tracked separately and
 /// must drain before asking this cursor for another raw tile.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -61,6 +92,15 @@ mod tests {
   assert!(SegmentStrategy::parse(Some("wArp")).is_err());
   assert_eq!(agree(&[1,1]).unwrap(),SegmentStrategy::Warp);
   assert!(agree(&[0,1]).is_err());assert!(agree(&[3,3]).is_err());assert!(agree(&[]).is_err());
+ }
+ #[test] fn capability_agreement_checks_batch_on_every_rank(){
+  assert_eq!(agree_capabilities(&[0,0x100]).unwrap(),SegmentStrategy::Atomic);
+  assert_eq!(agree_capabilities(&[0x101,1]).unwrap(),SegmentStrategy::Warp);
+  assert_eq!(agree_capabilities(&[0x102,0x102]).unwrap(),SegmentStrategy::Batch);
+  assert_eq!(agree_capabilities(&[0x102,2]),Err("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING"));
+  assert_eq!(agree_capabilities(&[2,2]),Err("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING"));
+  assert_eq!(agree_capabilities(&[0x102,0x101]),Err("SEGMENT_STRATEGY_RANK_MISMATCH"));
+  assert_eq!(agree_capabilities(&[0x203]),Err("SEGMENT_STRATEGY_INVALID"));
  }
  #[test] fn raw_tile_cursor_preserves_unprocessed_tail(){
   let mut raw=RawTileCursor::new(6,2).unwrap();

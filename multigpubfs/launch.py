@@ -41,15 +41,26 @@ def _require_memory_backend(native,env,backend):
  key_name={'segmented24':'segmented24_v1','permutation_bitmap':'permutation_bitmap_v1'}[backend]
  resolved=shutil.which(native) or native
  st=os.stat(resolved)
- identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,env.get('LD_LIBRARY_PATH',''),key_name)
- if identity in _memory_backend_capabilities:return _memory_backend_capabilities[identity]
+ # A wheel may update its CUDA library without changing the executable or
+ # loader path. Never reuse capabilities from different dependency bytes.
+ # In persistent mode the resolver checks file stamps and caches the digest.
+ from .autotune import _dependency_identity
+ dependency=_dependency_identity(str(resolved),env)
+ dependency_key=None if dependency is None else (
+  dependency.get('cuda_library_sha256'),
+  tuple(tuple(item) for item in dependency.get('resolved_dependencies',())))
+ loader=tuple(env.get(k,'') for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT'))
+ test_options=tuple(env.get(k,'') for k in ('MGBFS_SEGMENT_TEST_BATCH','MGBFS_SEGMENT_TEST_BATCH_ABI_MISSING'))
+ identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,loader,test_options,dependency_key,key_name)
+ if dependency is not None and identity in _memory_backend_capabilities:return _memory_backend_capabilities[identity]
  result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
  try: info=json.loads(result.stdout)
  except (TypeError,ValueError):info={}
  if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True or info.get('segmented_memory_presets_v1') is not True:
   raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
- if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
- _memory_backend_capabilities[identity]=info
+ if dependency is not None:
+  if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
+  _memory_backend_capabilities[identity]=info
  return info
 
 def _check_memory_backend_receipt(report,backend):
