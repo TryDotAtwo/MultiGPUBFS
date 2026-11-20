@@ -40,7 +40,9 @@ def compare(cases, across_owners=False):
   # ranks; two identically wrong runs must never verify each other.
   current=sorted(s for _,cur,_ in ranks for s in cur)
   previous=sorted(s for _,_,prev in ranks for s in prev)
-  if len(current)!=len(set(current)) or len(previous)!=len(set(previous)):raise ValueError('duplicate state across owners')
+  current_set=set(current);previous_set=set(previous)
+  if len(current)!=len(current_set) or len(previous)!=len(previous_set):raise ValueError('duplicate state across owners')
+  if not current_set.isdisjoint(previous_set):raise ValueError('retained layers overlap')
   owners=[{'rank':i,'current_count':len(cur),'previous_count':len(prev),'current_set_sha256':digest(cur),'previous_set_sha256':digest(prev)} for i,(_,cur,prev) in enumerate(ranks)]
   value={'graph_digest':ranks[0][0]['graph_digest'],'world':len(ranks),'layer_sizes':vector}
   if across_owners:

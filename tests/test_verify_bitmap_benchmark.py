@@ -51,3 +51,14 @@ def test_identical_wrong_results_with_duplicate_owner_states_fail(tmp_path,acros
   state[field][0]=other[field][0]
   raw=json.dumps(state).encode();p.write_bytes(raw);r=case/'rank-0'/'report.json';report=json.loads(r.read_text());report['states_sha256']=hashlib.sha256(raw).hexdigest();r.write_text(json.dumps(report))
  with pytest.raises(ValueError,match='duplicate state across owners'):compare([a,b],across_owners=across_owners)
+
+@pytest.mark.parametrize('across_owners',[False,True])
+def test_identical_wrong_results_with_overlap_between_layers_fail(tmp_path,across_owners):
+ a=make_case(tmp_path,'a');b=make_case(tmp_path,'b')
+ # In both cases, a previous-layer state is also present in the current
+ # layer on a different rank. Each layer still has the expected size.
+ for case in (a,b):
+  p=case/'rank-0'/'states.json';state=json.loads(p.read_text());other=json.loads((case/'rank-1'/'states.json').read_text())
+  state['previous_small'][0]=other['current'][0]
+  raw=json.dumps(state).encode();p.write_bytes(raw);r=case/'rank-0'/'report.json';report=json.loads(r.read_text());report['states_sha256']=hashlib.sha256(raw).hexdigest();r.write_text(json.dumps(report))
+ with pytest.raises(ValueError,match='retained layers overlap'):compare([a,b],across_owners=across_owners)
