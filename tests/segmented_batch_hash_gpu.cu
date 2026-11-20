@@ -155,4 +155,36 @@ static void seed_and_retire(){
  C(cudaFree(segments));C(cudaFree(input));C(cudaFree(runs));C(cudaFree(count));C(cudaFree(accepted));C(cudaFree(error));
  puts("PASS exact seed index and bank-local run retirement");
 }
-int main(){int count=0;C(cudaGetDeviceCount(&count));CHECK(count>=2);for(int d=0;d<2;d++){C(cudaSetDevice(d));run();compact_runs();bounded_raw_tiles();seed_and_retire();}puts("BATCH_HASH_TWO_GPU_PASS");}
+
+static void directory_growth(){
+ constexpr uint32_t Q=2;auto* meta=alloc<GenericRouteRecord>(Q);auto* counts=alloc<uint32_t>();put(counts,Q);
+ MgbfsBatchHashSegment h{};h.capacity=4;h.banks=1;h.states=alloc<uint8_t>(8);h.keys=alloc<uint64_t>(4);h.rows=alloc<uint32_t>(4);
+ auto* segments=alloc<MgbfsBatchHashSegment>();C(cudaMemcpy(segments,&h,sizeof(h),cudaMemcpyHostToDevice));
+ auto* runs=alloc<MgbfsBatchHashRun>(2);auto* nruns=alloc<uint32_t>();put(nruns,uint32_t(0));
+ auto* accepted=alloc<uint64_t>();put(accepted,uint64_t(0));auto* global=alloc<uint64_t>();put(global,uint64_t(0));
+ auto* spill=alloc<uint32_t>(Q);auto* selection=alloc<uint32_t>(Q);auto* ns=alloc<uint32_t>();auto* err=alloc<uint32_t>();
+ size_t bytes=0;C(cudaError_t(mgbfs_hash_batch_scratch_bytes(Q,1,1,&bytes)));void* scratch=nullptr;C(cudaMalloc(&scratch,bytes));
+ auto call=[&](State a,State b,const uint32_t* sel,uint32_t n,uint32_t cap){
+  GenericRouteRecord host[Q]={record(a),record(b)};C(cudaMemcpy(meta,host,sizeof(host),cudaMemcpyHostToDevice));
+  put(ns,uint32_t(0));put(err,uint32_t(0));
+  C(cudaError_t(mgbfs_hash_batch_accept(1,1,2,nullptr,nullptr,meta,meta,counts,counts,
+   0,1,0,1,Q,Q,sel,n,0,segments,1,0,0,runs,nruns,cap,accepted,spill,ns,err,global,4,scratch,bytes,nullptr)));
+  C(cudaDeviceSynchronize());
+ };
+ call({1,0},{1,0},nullptr,Q,1);
+ CHECK(get(err)==0&&get(ns)==0&&get(nruns)==1&&get(accepted)==1&&get(global)==1);
+ call({1,0},{1,0},nullptr,Q,1);
+ CHECK(get(err)==0&&get(ns)==0&&get(nruns)==1&&get(accepted)==1&&get(global)==1);
+ call({1,0},{2,0},nullptr,Q,1);
+ CHECK(get(err)==MGBFS_SEGMENTED_RUN_GROW&&get(ns)==1&&get(spill)==1&&get(nruns)==1&&get(accepted)==1&&get(global)==1);
+ C(cudaMemcpy(selection,spill,4,cudaMemcpyDeviceToDevice));
+ call({1,0},{2,0},selection,1,2);
+ CHECK(get(err)==0&&get(ns)==0&&get(nruns)==2&&get(accepted)==2&&get(global)==2);
+ uint8_t states[8];C(cudaMemcpy(states,h.states,8,cudaMemcpyDeviceToHost));CHECK(states[0]==1&&states[1]==2);
+ put(counts,uint32_t(3));call({1,0},{2,0},nullptr,Q,2);
+ CHECK((get(err)&32u)!=0&&get(accepted)==2&&get(nruns)==2&&get(global)==2);
+ C(cudaFree(scratch));C(cudaFree(err));C(cudaFree(ns));C(cudaFree(selection));C(cudaFree(spill));C(cudaFree(global));C(cudaFree(accepted));
+ C(cudaFree(nruns));C(cudaFree(runs));C(cudaFree(segments));C(cudaFree(h.states));C(cudaFree(h.keys));C(cudaFree(h.rows));C(cudaFree(counts));C(cudaFree(meta));
+ puts("PASS duplicate-only full directory; deferred growth and exact replay; invalid queue remains fatal");
+}
+int main(){int count=0;C(cudaGetDeviceCount(&count));CHECK(count>=2);for(int d=0;d<2;d++){C(cudaSetDevice(d));run();compact_runs();bounded_raw_tiles();seed_and_retire();directory_growth();}puts("BATCH_HASH_TWO_GPU_PASS");}

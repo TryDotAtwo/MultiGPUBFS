@@ -48,7 +48,7 @@ template<class Action> cudaError_t layout(uint32_t n,Workspace* w){
     !region(c,temp,&w->temp))return cudaErrorInvalidValue;
  w->temp_bytes=temp;w->total=c;return cudaSuccess;
 }
-__device__ inline bool fatal(uint32_t x){return (x&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY))!=0;}
+__device__ inline bool fatal(uint32_t x){return (x&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY|MGBFS_SEGMENTED_RUN_GROW))!=0;}
 template<class Action>
 __global__ void prepare(Action action,uint32_t n,uint64_t* hashes,uint32_t* origins,uint32_t* error){
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x){
@@ -120,7 +120,7 @@ __global__ void reserve(const uint32_t* flags,const uint32_t* prefix,uint32_t n,
  uint32_t total=prefix[n-1]+flags[n-1];
  uint64_t free=seg.capacity-base;uint32_t want=free<total?uint32_t(free):total,got=want;
  uint32_t index=*run_count;
- if(want&&index>=run_capacity){atomicOr(error,uint32_t(MGBFS_SEGMENTED_OVERFLOW));return;}
+ if(want&&index>=run_capacity){*grant={base,total,0,index};*spill_count=total;atomicOr(error,uint32_t(MGBFS_SEGMENTED_RUN_GROW));return;}
  if(global_count&&want){
   cuda::atomic_ref<uint64_t,cuda::thread_scope_device> count(*global_count);uint64_t old=count.load(cuda::memory_order_relaxed);
   for(;;){if(old>=limit){got=0;break;}uint64_t remaining=limit-old;got=remaining<want?uint32_t(remaining):want;

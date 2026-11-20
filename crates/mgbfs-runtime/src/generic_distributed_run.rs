@@ -157,7 +157,14 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  crate::generic_native::checked!(cudaSetDevice,unsafe{cudaSetDevice(launch.devices[rank as usize] as i32)})?;
  let pool_idle_before=crate::generic_pool::available()?;crate::generic_pool::trim_idle()?;let pool_idle_after=crate::generic_pool::available()?;
  let _signals=Signals::new();let setup=Instant::now();
- let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,64,launch.owner_cuts.as_deref())?;
+ let hash_bits=match std::env::var("MGBFS_SEGMENT_TEST_HASH_BITS"){
+  Ok(v) if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1")=>v.parse::<u32>().map_err(|_|"SEGMENTED_TEST_HASH_BITS")?,
+  Ok(_)=>return Err("SEGMENTED_TEST_HASH_BITS_REQUIRES_TEST_GATE".into()),
+  Err(std::env::VarError::NotPresent)=>64,
+  Err(_)=>return Err("SEGMENTED_TEST_HASH_BITS".into()),
+ };
+ if hash_bits>64{return Err("SEGMENTED_TEST_HASH_BITS".into())}
+ let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,hash_bits,launch.owner_cuts.as_deref())?;
  let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];
  let(status,reason)=loop{
