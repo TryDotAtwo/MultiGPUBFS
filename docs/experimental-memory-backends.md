@@ -2,8 +2,8 @@
 
 The existing `legacy` backend remains the default. The additional backends
 below are experimental. The current 32-bit-row ABI passed exact small-oracle
-cases and complete S11 and S12 on 2x RTX 3060, plus complete segmented S13
-on 8x RTX 3090. S13 bitmap and legacy comparisons are still running. These checks do not
+cases and complete S11 and S12 on 2x RTX 3060, plus complete S13 in all three
+backends on 8x RTX 3090. These checks do not
 establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
 2^32 states on one rank, out-of-core execution, or universal performance gains.
 
@@ -99,11 +99,22 @@ problem have been validated.
 
 ## Measured scope and tuning
 
-On 8x RTX 3090 the current segmented backend completed S13 in 390.628 s
-(single measurement, 8 logical shards/owner lanes, batch 8192, physical segments
-of 1,048,576 rows per bank). All 79 layer sizes matched the independent Mahonian
-oracle, and all eight GPUs participated. See [the run evidence](acceptance/segmented32-20261120/rtx3090-through-segmented-s13.json).
-This is 6,227,020,800 states in total, not a test of more than 2^32 states on one rank.
+On 8x RTX 3090 all three backends completed S13 with 6,227,020,800 states;
+all 79 layer sizes matched the independent Mahonian oracle. Single-run BFS
+times with 8 logical shards, 8 segmented owner lanes, batch 8192 and physical
+segments of 1,048,576 rows per bank were:
+
+| Backend | BFS time | Relative to segmented |
+|---|---:|---:|
+| Segmented | 390.628 s | 1.00x |
+| Legacy | 587.988 s | 1.51x slower |
+| Permutation bitmap | 1652.309 s | 4.23x slower |
+
+Per-rank segment allocations at completion were 5.327 GB for segmented and
+1.636 GB for bitmap plus 0.097 GB for its bitmap; these figures exclude other
+allocations and are not total or peak VRAM measurements. See [the full comparison](acceptance/segmented32-20261120/rtx3090-complete-s13.json)
+and [receipts](acceptance/segmented32-20261120/rtx3090-complete-receipts.tar.gz).
+This is not a test of more than 2^32 states on one rank or evidence of B200 speed.
 
 The current 32-bit-row ABI was compared on 2x RTX 3060 with identical fixed
 settings (8 logical shards, 8 owner lanes, batch 8192, physical segments of

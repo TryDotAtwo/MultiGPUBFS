@@ -7,5 +7,5 @@
   "nccl": "2.30.7",
   "nccl_sha256": "2d19623c75a1dc0f4296fa9b9ff5cb7f38f18e42b10076636eb4e144e9010d07",
   "oracle": "Exact Mahonian layer sizes for adjacent-transposition S_n",
-  "scope": "Initial evidence: S8 three modes and S13 segmented; remaining S13 modes pending"
+  "scope": "Complete S8 and S13, three backends; one run each; all layer counts matched independent oracle"
 }
