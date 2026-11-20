@@ -183,7 +183,7 @@ pub struct SegmentedDistributedBfs{
  strategy:SegmentStrategy,compact_positions:bool,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
  segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,hash_shards:Vec<Option<BatchHashShard>>,remaining_bytes:u64,storage_budget:u64,storage_peak_requested:u64,reserve_bytes:u64,configured_rows:u64,bank_totals:[u64;3],peak_live_rows:u64,last_resource:Option<serde_json::Value>,capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
  counts:Vec<u64>,depth:u64,source_retries:u64,active_batch:u32,queue_batch_ceiling:u32,peak_owner_lanes:u32,prefetched_chunks:u64,overlap_samples:u32,
- send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_timed_tiles:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,
+ send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_timed_tiles:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,
 }
 impl SegmentedDistributedBfs{
  pub fn new(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],seed:u64,bits:u32,cuts:Option<&[u64]>)->Result<Self>{
@@ -231,6 +231,13 @@ impl SegmentedDistributedBfs{
   crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
   let strategy=crate::segmented_strategy::agree_capabilities(&strategy_codes).map_err(str::to_owned)?;
   let sorted_hash=strategy==SegmentStrategy::Batch&&!bitmap_mode;
+  // Allocate compact source offsets before measuring segment capacity. The
+  // host table is reused across waves and is copied only after count exchange.
+  let dense_input=strategy==SegmentStrategy::Batch&&std::env::var("MGBFS_SEGMENT_TEST_RECTANGULAR").as_deref()!=Ok("1");
+  let offset_count=(p.shards as usize).checked_mul(p.world as usize+1).ok_or("SEGMENTED_OFFSET_SIZE")?;
+  let batch_offsets_host=if dense_input{vec![0u32;offset_count]}else{Vec::new()};
+  let batch_offsets=if dense_input{Some(Buffer::new(offset_count.checked_mul(4).ok_or("SEGMENTED_OFFSET_SIZE")?,d)?)}else{None};
+  let batch_dense_origins=if dense_input{Some(crate::segmented_strategy::dense_origins().ok_or("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING")?)}else{None};
   let bound=usize::try_from(u64::from(p.world)*u64::from(p.queue_capacity)).map_err(|_|"SEGMENTED_SPILL_SIZE")?;
   if bound>=0x80000000usize{return Err("SEGMENTED_SPILL_SIZE".into())}
   let mut h=seed;for(e,v)in g.start.iter().enumerate(){h=mix(h^(*v as u64)^(e as u64));}h=mix(h);if bits<64{h&=if bits==0{0}else{(1u64<<bits)-1};}
@@ -350,6 +357,12 @@ impl SegmentedDistributedBfs{
    if low>high{return Err("SEGMENTED_HASH_TIMING_DEPTH".into())}
    Some((low,high))
   }else{None};
+  let input_stats_bounds=if strategy==SegmentStrategy::Batch&&std::env::var("MGBFS_SEGMENT_TEST_INPUT_STATS").as_deref()==Ok("1"){
+   let low=std::env::var("MGBFS_SEGMENT_TEST_INPUT_MIN_DEPTH").ok().map(|x|x.parse::<u64>().map_err(|_|"SEGMENTED_INPUT_STATS_DEPTH")).transpose()?.unwrap_or(0);
+   let high=std::env::var("MGBFS_SEGMENT_TEST_INPUT_MAX_DEPTH").ok().map(|x|x.parse::<u64>().map_err(|_|"SEGMENTED_INPUT_STATS_DEPTH")).transpose()?.unwrap_or(u64::MAX);
+   if low>high{return Err("SEGMENTED_INPUT_STATS_DEPTH".into())}
+   Some((low,high))
+  }else{None};
   let overlap_bounds=if std::env::var("MGBFS_SEGMENT_TEST_OVERLAP").as_deref()==Ok("1"){
    let low=std::env::var("MGBFS_SEGMENT_TEST_OVERLAP_MIN_DEPTH").ok().map(|x|x.parse::<u64>().map_err(|_|"SEGMENTED_OVERLAP_DEPTH")).transpose()?.unwrap_or(11);
    let high=std::env::var("MGBFS_SEGMENT_TEST_OVERLAP_MAX_DEPTH").ok().map(|x|x.parse::<u64>().map_err(|_|"SEGMENTED_OVERLAP_DEPTH")).transpose()?.unwrap_or(u64::MAX);
@@ -385,7 +398,7 @@ impl SegmentedDistributedBfs{
   if let Ok(v)=std::env::var("MGBFS_SEGMENT_TEST_BYTES"){let bytes=v.parse::<u64>().map_err(|_|"SEGMENTED_TEST_BYTES")?;remaining_bytes=remaining_bytes.min(bytes);}
   let capacity_limit=std::env::var("MGBFS_SEGMENT_MAX_RANK_STATES").ok().map(|v|v.parse::<u64>().map_err(|_|"SEGMENTED_CAPACITY_LIMIT".to_owned())).transpose()?;
   if capacity_limit==Some(0){return Err("SEGMENTED_CAPACITY_LIMIT".into())}
-  let mut result=Self{strategy,compact_positions,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),hash_shards:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,storage_peak_requested:0,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:admitted_batch,queue_batch_ceiling:admitted_batch,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_scratch,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,hash_owner_ms:0.,hash_lookup_ms:0.,hash_merge_ms:0.,hash_timed_tiles:0,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_bounds,exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0};
+  let mut result=Self{strategy,compact_positions,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),hash_shards:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,storage_peak_requested:0,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:admitted_batch,queue_batch_ceiling:admitted_batch,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_scratch,batch_offsets,batch_offsets_host,batch_dense_origins,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,hash_owner_ms:0.,hash_lookup_ms:0.,hash_merge_ms:0.,hash_timed_tiles:0,input_stats_bounds,input_valid:0,input_raw_elements:0,input_raw_tiles:0,input_spill_elements:0,input_spill_tiles:0,input_empty_self:0,input_empty_peer:0,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_bounds,exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0};
   let mut failed=0;
   if rank==root{
    let shard_hash=if bitmap_mode{if strategy==SegmentStrategy::Batch{mix((h/u64::from(p.world))>>6)}else{mix(h)}}else{h};
@@ -581,6 +594,8 @@ impl SegmentedDistributedBfs{
  "owner_spill_allocated_bytes":self.lanes.iter().map(|v|(v.spill[0].bytes+v.spill[1].bytes) as u64).sum::<u64>(),
  "owner_control_allocated_bytes":self.lanes.iter().map(|v|v.control.bytes as u64).sum::<u64>(),
  "previous_snapshot_allocated_bytes":self.previous_snapshot.as_ref().map_or(0,|v|v.bytes as u64),
+ "batch_input_layout":if self.strategy==SegmentStrategy::Batch{Some(if self.batch_offsets.is_some(){"dense"}else{"rectangular"})}else{None},
+ "batch_offsets_allocated_bytes":self.batch_offsets.as_ref().map_or(0,|v|v.bytes),
  "batch_hash_merge_rows":if self.batch_merge_enabled{Some(self.batch_merge_rows)}else{None},
  "batch_hash_directory_bytes":self.hash_shards.iter().flatten().map(|v|v.dir.bytes as u64).sum::<u64>(),
  "batch_hash_view_bytes":self.hash_shards.iter().flatten().filter_map(|v|v.view.as_ref()).map(|v|v.data.bytes as u64).sum::<u64>(),
@@ -589,6 +604,13 @@ impl SegmentedDistributedBfs{
  out["batch_hash_timing"]=if let Some((low,high))=self.hash_timing_bounds{
   let denom=self.hash_owner_ms+self.hash_merge_ms;
   serde_json::json!({"target_depth_min":low,"target_depth_max":high,"owner_lane_ms":self.hash_owner_ms,"unique_probe_lane_ms":self.hash_lookup_ms,"merge_lane_ms":self.hash_merge_ms,"unique_probe_plus_merge_fraction_of_owner_and_merge":if denom>0.{Some((self.hash_lookup_ms+self.hash_merge_ms)/denom)}else{None},"tiles":self.hash_timed_tiles,"method":"sum of CUDA-event intervals per lane; includes contention and scheduling gaps; overlaps between lanes are counted; not wall time"})
+ }else{serde_json::Value::Null};
+ out["batch_input_stats"]=if let Some((low,high))=self.input_stats_bounds{
+  serde_json::json!({"target_depth_min":low,"target_depth_max":high,"valid_received":self.input_valid,
+   "raw_sort_scan_elements":self.input_raw_elements,"raw_tiles":self.input_raw_tiles,
+   "spill_sort_scan_elements":self.input_spill_elements,"spill_tiles":self.input_spill_tiles,
+   "empty_self_source_queues":self.input_empty_self,"empty_peer_source_queues":self.input_empty_peer,
+   "scope":"per-rank host counts for active shard waves; raw and spill are separate actual launches"})
  }else{serde_json::Value::Null};out}
  pub fn size_profile_events(&self)->Vec<serde_json::Value>{vec![]}
  pub fn set_size_profile(&mut self,batch:u32,gemm:bool)->Result<()>{if batch==0||batch>self.plan.batch||gemm{return Err("SEGMENTED_UNSUPPORTED_SIZE_PROFILE".into())}self.active_batch=batch;Ok(())}
@@ -655,6 +677,7 @@ impl SegmentedDistributedBfs {
  // A published tail may now satisfy the size rule again. All first merges
  // have drained; repeat only successful tails, parallel over independent shards.
  // No host intervention occurs between prepare, state write and publication.
+ fn input_stats_active(&self)->bool{self.input_stats_bounds.map_or(false,|(a,b)|{let depth=self.depth.saturating_add(1);a<=depth&&depth<=b})}
  fn hash_timing_active(&self)->bool{self.hash_timing_bounds.map_or(false,|(a,b)|{let depth=self.depth.saturating_add(1);a<=depth&&depth<=b})}
  fn compact_hash_more(&mut self,prepared:&[Option<OwnerPrepared>],progress:&[OwnerProgress],active:&mut [bool])->Result<()>{
   let timed=self.hash_timing_active();
@@ -719,7 +742,10 @@ impl SegmentedDistributedBfs {
     let pass=segments.iter().position(|v|v.banks[bank as usize]<v.desc.capacity)
      .unwrap_or_else(||segments.len().saturating_sub(1));
     let tile=if self.strategy==SegmentStrategy::Batch{self.batch_tile}else{selected_max.max(1)};
-    let mut raw=RawTileCursor::new(selected_max,tile).map_err(str::to_owned)?;
+    let source_total=if self.batch_offsets.is_some(){
+     self.batch_offsets_host[shard*(p.world as usize+1)+p.world as usize]
+    }else{selected_max};
+    let mut raw=RawTileCursor::new(source_total,tile).map_err(str::to_owned)?;
     let(raw_begin,selected)=raw.next_tile().unwrap_or((0,0));
     Ok(OwnerProgress{shard,pass,round:0,selected,cap_probe:false,grow_runs:false,raw_begin,raw})
    }).collect::<Result<Vec<_>>>()?;
@@ -748,25 +774,48 @@ impl SegmentedDistributedBfs {
       v.grow_runs=false;prepared[i]=Some(view);
     }
     crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;
+    if self.input_stats_active(){
+     for v in &progress{if v.selected!=0{
+      if v.round==0{
+       self.input_raw_tiles=self.input_raw_tiles.checked_add(1).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+       self.input_raw_elements=self.input_raw_elements.checked_add(u64::from(v.selected)).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+      }else{
+       self.input_spill_tiles=self.input_spill_tiles.checked_add(1).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+       self.input_spill_elements=self.input_spill_elements.checked_add(u64::from(v.selected)).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+      }
+     }}
+    }
     let mut launched=vec![false;progress.len()];
     let mut merge_launched=vec![false;progress.len()];
     let launch_result=(||->Result<()>{
      for (i,v) in progress.iter().enumerate(){
       if v.selected==0{continue}
       let lane=&self.lanes[i];let st=lane.stream.ptr;let active=&self.segments[v.shard][v.pass];let d=prepared[i].as_ref().ok_or("SEGMENTED_DESCRIPTOR_MISSING")?;
-      let selection=if v.round==0{ptr::null()}else{lane.spill[(v.round-1)%2].ptr.cast()};
-      let sealed=d.sealed;
-      crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(lane.control.ptr,0,12,st)})?;
+      // Drain this lane even when a later submission fails: the mapping kernel,
+      // memset and events may already be in flight.
+      launched[i]=true;
       if i==0&&v.round==0{if let Some(q)=probe.as_deref_mut(){q.start_owner(st)?;}}
       if timed{lane.timing.as_ref().ok_or("SEGMENTED_HASH_TIMING_MISSING")?.record(0,st)?;}
+      let selection:*const u32=if v.round==0{
+       if let Some(offsets)=&self.batch_offsets{
+        let bytes=v.shard.checked_mul(p.world as usize+1).and_then(|x|x.checked_mul(4)).ok_or("SEGMENTED_OFFSET_SIZE")?;
+        let out=lane.spill[1].ptr.cast::<u32>();
+        let f=self.batch_dense_origins.ok_or("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING")?;
+        crate::generic_native::checked!(mgbfs_segmented_dense_origins,unsafe{f(offsets.at(bytes),p.world,p.queue_capacity,v.raw_begin,v.selected,out,st)})?;
+        out.cast_const()
+       }else{ptr::null()}
+      }else{lane.spill[(v.round-1)%2].ptr.cast()};
+      let raw_begin=if v.round==0&&selection.is_null(){v.raw_begin}else{0};
+      let sealed=d.sealed;
+      crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(lane.control.ptr,0,12,st)})?;
       let status=unsafe{if let Some(b)=&self.bitmap{
        if self.strategy==SegmentStrategy::Batch{
         let scratch=lane.scratch.as_ref().ok_or("SEGMENTED_BATCH_LANE_SCRATCH_MISSING")?;
-        mgbfs_bitmap_accept_batch(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,b.owner,b.domain.total,b.owner_len,b.bits.ptr.cast(),v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,if v.round==0{v.raw_begin}else{0},active.desc,bank,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),scratch.ptr,scratch.bytes,st)
+        mgbfs_bitmap_accept_batch(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,b.owner,b.domain.total,b.owner_len,b.bits.ptr.cast(),v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,raw_begin,active.desc,bank,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),scratch.ptr,scratch.bytes,st)
        }else if self.strategy==SegmentStrategy::Warp{mgbfs_bitmap_accept_grouped(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,b.owner,b.domain.total,b.owner_len,b.bits.ptr.cast(),v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,active.desc,bank,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}else{mgbfs_bitmap_accept(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,b.owner,b.domain.total,b.owner_len,b.bits.ptr.cast(),v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,active.desc,bank,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}
       }else if self.strategy==SegmentStrategy::Batch{
        let scratch=lane.scratch.as_ref().ok_or("SEGMENTED_BATCH_LANE_SCRATCH_MISSING")?;
-       mgbfs_hash_batch_accept_timed(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,if v.round==0{v.raw_begin}else{0},d.hash_segments,d.hash_count,u32::try_from(v.pass).map_err(|_|"SEGMENTED_DESCRIPTOR_SIZE")?,bank,d.hash_runs,d.hash_run_count,d.hash_run_capacity,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),scratch.ptr,scratch.bytes,
+       mgbfs_hash_batch_accept_timed(p.state_bytes,u32::from(p.packed_candidates()),p.elements,self.send[slot].states.ptr,self.recv.states.ptr,self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,raw_begin,d.hash_segments,d.hash_count,u32::try_from(v.pass).map_err(|_|"SEGMENTED_DESCRIPTOR_SIZE")?,bank,d.hash_runs,d.hash_run_count,d.hash_run_capacity,active.counts.at(bank as usize*8),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),scratch.ptr,scratch.bytes,
         if timed{lane.timing.as_ref().unwrap().events[2]}else{ptr::null_mut()},
         if timed{lane.timing.as_ref().unwrap().events[3]}else{ptr::null_mut()},st)
       }else if p.state_bytes==1{
@@ -774,7 +823,7 @@ impl SegmentedDistributedBfs {
       }else{
        if self.strategy==SegmentStrategy::Warp{mgbfs_segmented_accept_routes_limited_grouped_i64(p.elements,self.send[slot].states.ptr.cast(),self.recv.states.ptr.cast(),self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,sealed,d.descriptor_count,active.desc,bank,active.counts.at(bank as usize*8),ptr::null_mut(),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}else{mgbfs_segmented_accept_routes_limited_i64(p.elements,self.send[slot].states.ptr.cast(),self.recv.states.ptr.cast(),self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,sealed,d.descriptor_count,active.desc,bank,active.counts.at(bank as usize*8),ptr::null_mut(),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}
       }};
-      launched[i]=true;crate::generic_native::checked!(mgbfs_segmented_accept_routes,status)?;
+      crate::generic_native::checked!(mgbfs_segmented_accept_routes,status)?;
       if timed{lane.timing.as_ref().ok_or("SEGMENTED_HASH_TIMING_MISSING")?.record(1,st)?;}
       if !d.hash_run_count.is_null()&&self.batch_merge_enabled{
        let item=self.hash_shards[v.shard].as_ref().ok_or("SEGMENTED_HASH_DIRECTORY_MISSING")?;
@@ -1006,6 +1055,31 @@ impl SegmentedDistributedBfs {
    record!(3);let active=(0..p.shards as usize).filter(|&shard|
     (0..p.world as usize).any(|src|if src==self.rank as usize{lc[src*p.shards as usize+shard]!=0}else{rc[src*p.shards as usize+shard]!=0})
    ).collect::<Vec<_>>();
+   if let Some(offsets)=&self.batch_offsets{
+    let stride=p.world as usize+1;
+    for &shard in &active{
+     let begin=shard*stride;self.batch_offsets_host[begin]=0;
+     for src in 0..p.world as usize{
+      let n=if src==self.rank as usize{lc[src*p.shards as usize+shard]}else{rc[src*p.shards as usize+shard]};
+      if n>used{return Err("SEGMENTED_OFFSET_COUNT_BOUND".into())}
+      self.batch_offsets_host[begin+src+1]=self.batch_offsets_host[begin+src].checked_add(n).ok_or("SEGMENTED_OFFSET_SIZE")?;
+     }
+    }
+    crate::generic_native::checked!(cudaMemcpyAsync,unsafe{cudaMemcpyAsync(offsets.ptr,self.batch_offsets_host.as_ptr().cast(),offsets.bytes,1,st)})?;
+   }
+   if self.input_stats_active(){
+    let mut valid=0u64;
+    for &shard in &active{for src in 0..p.world as usize{
+     let count=if src==self.rank as usize{lc[src*p.shards as usize+shard]}else{rc[src*p.shards as usize+shard]};
+     if count>used{return Err("SEGMENTED_INPUT_STATS_COUNT_BOUND".into())}
+     if count==0{
+      if src==self.rank as usize{self.input_empty_self=self.input_empty_self.checked_add(1).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;}
+      else{self.input_empty_peer=self.input_empty_peer.checked_add(1).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;}
+     }
+     valid=valid.checked_add(u64::from(count)).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+    }}
+    self.input_valid=self.input_valid.checked_add(valid).ok_or("SEGMENTED_INPUT_STATS_OVERFLOW")?;
+   }
    if wi<work.len(){cursor=cursor.saturating_add(u64::from(batch)).min(work[wi].end);}
    rounds=rounds.checked_sub(1).ok_or("SEGMENTED_ROUND_COUNT_UNDERFLOW")?;
    while wi<work.len()&&cursor>=work[wi].end{wi+=1;if wi<work.len(){cursor=work[wi].begin;}}

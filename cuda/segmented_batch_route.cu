@@ -176,3 +176,32 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,B
  if(bitmap)return launch<int64_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
  return launch<int64_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
 }
+
+// Translate compact ordinals to the original source*q+row references.  The
+// offsets belong to one shard and are stable until all of its tiles drain.
+// Returning an invalid physical reference on bad metadata makes the existing
+// incoming-action validation report a fatal error rather than reading memory.
+namespace {
+__global__ void dense_origins(const uint32_t* offsets,uint32_t world,uint32_t q,
+ uint32_t begin,uint32_t n,uint32_t* out){
+ for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x){
+  uint32_t ordinal=begin+i;
+  uint32_t low=0,high=world+1;
+  while(low<high){uint32_t mid=low+(high-low)/2;
+   if(offsets[mid]<=ordinal)low=mid+1;else high=mid;
+  }
+  if(!low||low>world||ordinal>=offsets[world]){out[i]=UINT32_MAX;continue;}
+  uint32_t source=low-1,row=ordinal-offsets[source];
+  out[i]=row<q?source*q+row:UINT32_MAX;
+ }
+}
+}
+extern "C" int mgbfs_segmented_dense_origins(const uint32_t* offsets,uint32_t world,uint32_t q,
+ uint32_t begin,uint32_t selected,uint32_t* out,void* opaque_stream){
+ if(!offsets||!out||!world||world>128||!q||uint64_t(world)*q>=0x80000000ULL||
+    uint64_t(begin)+selected>uint64_t(world)*q)return int(cudaErrorInvalidValue);
+ if(!selected)return int(cudaSuccess);
+ uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;
+ dense_origins<<<blocks,256,0,static_cast<cudaStream_t>(opaque_stream)>>>(offsets,world,q,begin,selected,out);
+ return int(cudaGetLastError());
+}

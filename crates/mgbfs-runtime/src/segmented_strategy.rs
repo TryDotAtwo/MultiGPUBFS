@@ -38,14 +38,23 @@ pub fn batch_abi_ready()->bool{
   if marker.is_null(){return false}
   let version:unsafe extern "C" fn()->u32=std::mem::transmute(marker);
   if version()!=1{return false}
-  let names:[&[u8];4]=[b"mgbfs_segmented_batch_route\0",
+  let names:[&[u8];5]=[b"mgbfs_segmented_batch_route\0",
    b"mgbfs_bitmap_accept_batch\0",b"mgbfs_hash_batch_accept_timed\0",
-   b"mgbfs_hash_batch_compact_tail\0"];
+   b"mgbfs_hash_batch_compact_tail\0",b"mgbfs_segmented_dense_origins\0"];
   names.iter().all(|name|!libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast()).is_null())
  }
 }
 #[cfg(not(all(feature="cuda",target_os="linux")))]
 pub fn batch_abi_ready()->bool{false}
+pub type DenseOriginsFn=unsafe extern "C" fn(*const u32,u32,u32,u32,u32,*mut u32,*mut std::ffi::c_void)->i32;
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn dense_origins()->Option<DenseOriginsFn>{unsafe{
+ let p=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_segmented_dense_origins\0".as_ptr().cast());
+ if p.is_null(){None}else{Some(std::mem::transmute(p))}
+}}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn dense_origins()->Option<DenseOriginsFn>{None}
+
 
 /// Cursor over unfiltered origins. A filtered spill is tracked separately and
 /// must drain before asking this cursor for another raw tile.
