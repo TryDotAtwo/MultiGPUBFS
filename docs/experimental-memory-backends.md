@@ -121,7 +121,7 @@ problem have been validated.
 
 ## Measured scope and tuning
 
-In a later matched exact-exchange comparison on the same 8x RTX 3090, S13 took 393.32 s for hash and 593.55 s for bitmap. This was one paired run, using the earlier three-bank bitmap; see the [audit](acceptance/bitmap-audit-20261120.md).
+In a later exact-exchange comparison on the same 8x RTX 3090, S13 took 393.32 s for hash and 593.55 s for bitmap. The initial batch was the same, but bitmap retried and reduced its batch ceiling from 8192 to 2048 while hash retained 8192. This was one paired run with the earlier three-bank bitmap; it does not isolate the cost of the bitmap. See the [audit](acceptance/bitmap-audit-20261120.md) and [follow-up](acceptance/segment-vram-followup-20261120.md).
 
 For context, an earlier padded-exchange run measured the following. On 8x RTX 3090 all three backends completed S13 with 6,227,020,800 states;
 all 79 layer sizes matched the independent Mahonian oracle. Single-run BFS

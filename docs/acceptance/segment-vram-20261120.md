@@ -60,10 +60,10 @@ Runs were interleaved:
 
 The state-bank allocation fell by 33.3%; total VRAM also includes bitmap,
 queues, communication, context and other allocations. The ~1% timing
-difference is too small to establish a speedup from two runs each. For an
-older matched S13 comparison on 8x RTX 3090 (three-bank bitmap), see
+difference is too small to establish a speedup from two runs each. For an older S13 comparison on 8x RTX 3090 (three-bank bitmap), see
 [bitmap audit](bitmap-audit-20261120.md): 393.32 s hash versus 593.55 s
-bitmap, each one run.
+bitmap, each one run. Bitmap reduced its batch ceiling from 8192 to 2048
+after retries, while hash retained 8192; this is not an isolated backend cost.
 
 ## S14-S16 capacity illustration
 

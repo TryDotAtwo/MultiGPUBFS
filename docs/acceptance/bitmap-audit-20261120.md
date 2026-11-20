@@ -73,11 +73,13 @@ as unordered per-rank state sets in all four runs; one rank wrote the
 same states in a different order, changing the file SHA. This is not a
 comparison of all intermediate state sets. [Rank receipts and retained-layer digests](bitmap-audit-8gpu-s13-20261120.json) contain no raw state files.
 
-A final matched backend comparison on the same executable, library, graph,
-eight GPUs, shards, lanes, batch size, segment size and exact-length transport
+A backend comparison on the same executable, library, graph, eight GPUs,
+shards, lanes, initial batch size, segment size and exact-length transport
 completed in **393.32 s** for segmented hash and **593.55 s** for bitmap.
-The bitmap time was 1.51x that of hash in this one paired run; this is not a
-statistical or cross-GPU performance guarantee. All layers matched the
+The bitmap run retried twice and reduced its source-batch ceiling from 8192
+to 2048; hash retained 8192. The 1.51x ratio therefore compares the observed
+configurations, not isolated bitmap overhead. This single paired run is not a
+statistical or cross-GPU performance guarantee. See the [follow-up](segment-vram-followup-20261120.md) for additional fixed-profile tests. All layers matched the
 independent oracle, and the complete final two layers were equal as global
 sets despite different owner mappings. The one-second GPU sampler recorded
 a maximum of 5632 MiB per GPU for hash and 2206 MiB for bitmap, including
