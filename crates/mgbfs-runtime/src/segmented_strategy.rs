@@ -16,6 +16,23 @@ pub fn agree(codes:&[u64])->Result<SegmentStrategy,&'static str>{
  if codes.iter().any(|&x|x!=first){return Err("SEGMENT_STRATEGY_RANK_MISMATCH")}
  match first{0=>Ok(SegmentStrategy::Atomic),1=>Ok(SegmentStrategy::Warp),2=>Ok(SegmentStrategy::Batch),_=>Err("SEGMENT_STRATEGY_INVALID")}
 }
+/// Cursor over unfiltered origins. A filtered spill is tracked separately and
+/// must drain before asking this cursor for another raw tile.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct RawTileCursor { next:u32, total:u32, tile:u32 }
+impl RawTileCursor {
+ pub fn new(total:u32,tile:u32)->Result<Self,&'static str>{
+  if tile==0{return Err("SEGMENT_TILE_ZERO")}
+  Ok(Self{next:0,total,tile})
+ }
+ pub fn next_tile(&mut self)->Option<(u32,u32)>{
+  if self.next==self.total{return None}
+  let begin=self.next;
+  let count=(self.total-self.next).min(self.tile);
+  self.next+=count;
+  Some((begin,count))
+ }
+}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum OwnerDecision { Done, Same(bool), Next, Exhausted }
 // Called only after *every* owner lane in the wave has drained, so observed
@@ -44,6 +61,19 @@ mod tests {
   assert!(SegmentStrategy::parse(Some("wArp")).is_err());
   assert_eq!(agree(&[1,1]).unwrap(),SegmentStrategy::Warp);
   assert!(agree(&[0,1]).is_err());assert!(agree(&[3,3]).is_err());assert!(agree(&[]).is_err());
+ }
+ #[test] fn raw_tile_cursor_preserves_unprocessed_tail(){
+  let mut raw=RawTileCursor::new(6,2).unwrap();
+  assert_eq!(raw.next_tile(),Some((0,2)));
+  // Filtered spill belongs to this tile: the cursor does not advance while
+  // the owner replays it, including a retry in the same bank after cap drain.
+  let pending_spill=vec![1u32];
+  assert_eq!(pending_spill,vec![1]);
+  assert_eq!(raw.next_tile(),Some((2,2)));
+  assert_eq!(raw.next_tile(),Some((4,2)));
+  assert_eq!(raw.next_tile(),None);
+  assert_eq!(RawTileCursor::new(1,0).unwrap_err(),"SEGMENT_TILE_ZERO");
+  assert_eq!(RawTileCursor::new(0,1).unwrap().next_tile(),None);
  }
  #[test] fn cap_retry_waits_for_wave_drain_and_reuses_bank(){
   assert_eq!(owner_decision(3,Some(100),97,false,true,false,false).unwrap(),OwnerDecision::Same(false));

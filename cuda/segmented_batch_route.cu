@@ -93,7 +93,7 @@ __global__ void finish_counts(const uint32_t* begins,const uint32_t* ends,
 template<class T,bool Packed>
 __global__ void scatter_exact(ActionT<T> action,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* sorted_keys,const uint32_t* sorted_origins,const uint64_t* identity,
- const uint32_t* begins,uint32_t n,GenericRouteRecord* output,const uint32_t* error){
+ const uint32_t* begins,uint32_t n,GenericRouteRecord* output,T* states,const uint32_t* error){
  if(*error)return;
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x){
   uint32_t queue=sorted_keys[i],child=sorted_origins[i],row=i-begins[queue];
@@ -104,14 +104,17 @@ __global__ void scatter_exact(ActionT<T> action,uint32_t source,uint32_t shards,
     if(e<8)lo|=v<<(8*e);else if(e<16)hi|=v<<(8*(e-8));else tail|=v<<(8*(e-16));
    }
    output[uint64_t(queue)*capacity+row]={identity[child],lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(tail),uint32_t(tail>>32)};
-  }else output[uint64_t(queue)*capacity+row]={identity[child],begin+child/action.generators,source,child%action.generators,queue%shards,0};
+  }else{
+   output[uint64_t(queue)*capacity+row]={identity[child],begin+child/action.generators,source,child%action.generators,queue%shards,0};
+   for(uint32_t e=0;e<action.elements;e++)states[(uint64_t(queue)*action.elements+e)*capacity+row]=T(action.value(child,e));
+  }
  }
 }
 template<class T,bool Bitmap,bool Packed>
 int launch(ActionT<T> action,BitmapDeviceDomain domain,uint32_t word_shard,
  uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,
  uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
- uint32_t* counts,uint32_t* error,void* scratch,const BatchWorkspace& w,cudaStream_t stream){
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,const BatchWorkspace& w,cudaStream_t stream){
  uint32_t n=action.count*action.generators,buckets=world*shards;
  cudaError_t rc=cudaMemsetAsync(counts,0,size_t(buckets)*4,stream);if(rc!=cudaSuccess)return int(rc);
  if(!n)return int(cudaSuccess);
@@ -133,7 +136,7 @@ int launch(ActionT<T> action,BitmapDeviceDomain domain,uint32_t word_shard,
  uint32_t qblocks=(buckets+255)/256;if(qblocks>65535)qblocks=65535;
  finish_counts<<<qblocks,256,0,stream>>>(first,last,buckets,capacity,counts,error);
  if((rc=cudaGetLastError())!=cudaSuccess)return int(rc);
- scatter_exact<T,Packed><<<blocks,256,0,stream>>>(action,source,shards,capacity,begin,ko,oo,ids,first,n,queues,error);
+ scatter_exact<T,Packed><<<blocks,256,0,stream>>>(action,source,shards,capacity,begin,ko,oo,ids,first,n,queues,static_cast<T*>(states),error);
  return int(cudaGetLastError());
 }
 }
@@ -146,11 +149,12 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,B
  const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
- uint32_t* counts,uint32_t* error,void* scratch,size_t scratch_bytes,void* opaque_stream){
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,size_t scratch_bytes,void* opaque_stream){
  if(bitmap>1||word_shard>1||(word_shard&&!bitmap)||(state_bytes!=1&&state_bytes!=8)||
   kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||count>stride||
   uint64_t(count)*generators>=0x7fffffffULL||bits>64||!world||world>128||source>=world||
   !shards||shards>4096||!capacity||begin>UINT64_MAX-count||!parents||!queues||!counts||!error||
+  ((state_bytes!=1||elements>24)&&!states)||
   (kind==0&&(!permutations||elements!=n||m!=1))||
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements))||
   (bitmap&&(kind!=0||domain.elements!=elements||!domain.symbols||!domain.counts||!domain.total))||
@@ -162,13 +166,13 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,B
  if(state_bytes==1){
   ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
   if(bitmap){
-   if(elements<=24)return launch<uint8_t,true,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
-   return launch<uint8_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
+   if(elements<=24)return launch<uint8_t,true,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+   return launch<uint8_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
   }
-  if(elements<=24)return launch<uint8_t,false,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
-  return launch<uint8_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
+  if(elements<=24)return launch<uint8_t,false,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+  return launch<uint8_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
  }
  ActionT<int64_t> a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
- if(bitmap)return launch<int64_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
- return launch<int64_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,scratch,w,st);
+ if(bitmap)return launch<int64_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+ return launch<int64_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
 }

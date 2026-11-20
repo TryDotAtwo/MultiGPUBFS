@@ -114,6 +114,17 @@ impl SegmentLayout {
         }
         Ok(layout)
     }
+    /// One full state plus flat u64 key and u32 local row indexes per live
+    /// row. Runs describe disjoint extents; states are never duplicated.
+    pub fn sorted(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
+        if elements==0||!matches!(state_bytes,1|8)||!matches!(banks,1|3)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS{return Err("SEGMENTED_SORTED_LAYOUT_RANGE")}
+        let rows=rows_per_bank.checked_mul(u64::from(banks)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let states=rows.checked_mul(u64::from(elements)).and_then(|v|v.checked_mul(u64::from(state_bytes))).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let keys=rows.checked_mul(8).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let positions=rows.checked_mul(4).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let bytes=states.checked_add(keys).and_then(|v|v.checked_add(positions)).and_then(|v|v.checked_add(24)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        Ok(Self{rows_per_bank,banks,slots:rows,state_bytes:states,position_bytes:positions,position_item_bytes:4,device_bytes:bytes})
+    }
     /// State-only storage for a bitmap backend; visited bits are allocated
     /// independently for the full rank-owned domain and must be admitted first.
     pub fn bitmap(elements:u32,state_bytes:u32,rows_per_bank:u64)->Result<Self,&'static str>{
@@ -165,6 +176,17 @@ pub fn fit_segment_layout_compact(bitmap: bool, elements: u32, state_bytes: u32,
     if lo==0 { Ok(None) } else { Ok(Some(make(lo)?)) }
 }
 
+/// Largest sorted-index segment that fits a checked byte budget.
+pub fn fit_sorted_segment_layout(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64)->Result<Option<SegmentLayout>,&'static str>{
+    if max_rows==0||max_rows>LOCAL_ROWS{return Err("SEGMENTED_SORTED_LAYOUT_RANGE")}
+    SegmentLayout::sorted(elements,state_bytes,1,banks)?;
+    let(mut lo,mut hi)=(0u64,max_rows);
+    while lo<hi{
+        let mid=lo+(hi-lo+1)/2;
+        if SegmentLayout::sorted(elements,state_bytes,mid,banks).map_or(false,|v|v.device_bytes<=budget){lo=mid}else{hi=mid-1}
+    }
+    if lo==0{Ok(None)}else{Ok(Some(SegmentLayout::sorted(elements,state_bytes,lo,banks)?))}
+}
 /// Classify source queue skew separately from regeneration validation errors.
 /// Values above one dominate a retry in a max-reduction across ranks.
 pub fn classify_route_and_regeneration(route: u32, regen: u32) -> u32 {
@@ -192,5 +214,20 @@ pub fn decode_route_owner_vote(value:u32)->SegmentVote {
         2=>SegmentVote::OwnerFatal(value&0x3fff_ffff),
         1=>SegmentVote::Resource,
         _=>if value==0 {SegmentVote::Continue} else {SegmentVote::Retry},
+    }
+}
+
+#[cfg(test)]
+mod batch_layout_tests {
+    #[test] fn sorted_index_checked_capacity_and_bytes(){
+        use super::*;
+        let x=SegmentLayout::sorted(14,1,100,3).unwrap();
+        assert_eq!(x.state_bytes,4200);assert_eq!(x.slots,300);assert_eq!(x.position_bytes,1200);
+        assert_eq!(x.device_bytes,3*100*(14+8+4)+24);
+        assert_eq!(fit_sorted_segment_layout(14,1,3,100,x.device_bytes).unwrap().unwrap().rows_per_bank,100);
+        assert_eq!(fit_sorted_segment_layout(14,1,3,100,x.device_bytes-1).unwrap().unwrap().rows_per_bank,99);
+        let last=SegmentLayout::sorted(1,1,LOCAL_ROWS,1).unwrap();
+        assert_eq!(last.rows_per_bank,LOCAL_ROWS);assert_eq!(last.device_bytes,13*LOCAL_ROWS+24);
+        assert!(SegmentLayout::sorted(u32::MAX,8,LOCAL_ROWS,3).is_err());
     }
 }

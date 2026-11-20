@@ -15,6 +15,8 @@ extern "C" int mgbfs_hash_batch_accept(uint32_t,uint32_t,uint32_t,const void*,co
  uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,const uint32_t*,uint32_t,uint32_t,
  const MgbfsBatchHashSegment*,uint32_t,uint32_t,uint32_t,MgbfsBatchHashRun*,uint32_t*,uint32_t,
  uint64_t*,uint32_t*,uint32_t*,uint32_t*,uint64_t*,uint64_t,void*,size_t,void*);
+extern "C" int mgbfs_hash_batch_seed(uint32_t,uint32_t,const void*,MgbfsBatchHashSegment,uint64_t,MgbfsBatchHashRun*,uint32_t*,uint64_t*,void*);
+extern "C" int mgbfs_hash_batch_retire_bank(MgbfsBatchHashRun*,uint32_t*,uint32_t,const MgbfsBatchHashSegment*,uint32_t,uint32_t,uint32_t*,void*);
 extern "C" int mgbfs_hash_batch_compact_scratch_bytes(uint32_t,size_t*);
 extern "C" int mgbfs_hash_batch_compact_tail(uint32_t,uint32_t,const MgbfsBatchHashSegment*,uint32_t,
  MgbfsBatchHashRun*,uint32_t*,uint32_t,void*,size_t,uint32_t*,uint32_t*,void*);
@@ -132,4 +134,25 @@ static void bounded_raw_tiles(){
  puts("PASS bounded raw tiles; duplicate+new use last bank row; live queue and spill replay");
 }
 
-int main(){int count=0;C(cudaGetDeviceCount(&count));CHECK(count>=2);for(int d=0;d<2;d++){C(cudaSetDevice(d));run();compact_runs();bounded_raw_tiles();}puts("BATCH_HASH_TWO_GPU_PASS");}
+
+static void seed_and_retire(){
+ MgbfsBatchHashSegment hs[2]{};
+ for(auto& seg:hs){seg.capacity=2;seg.banks=3;seg.states=alloc<uint8_t>(12);seg.keys=alloc<uint64_t>(6);seg.rows=alloc<uint32_t>(6);}
+ auto* segments=alloc<MgbfsBatchHashSegment>(2);C(cudaMemcpy(segments,hs,sizeof(hs),cudaMemcpyHostToDevice));
+ auto* input=alloc<uint8_t>(2);uint8_t start[2]={4,7};C(cudaMemcpy(input,start,2,cudaMemcpyHostToDevice));
+ auto* runs=alloc<MgbfsBatchHashRun>(8);auto* count=alloc<uint32_t>();auto* accepted=alloc<uint64_t>();
+ C(cudaError_t(mgbfs_hash_batch_seed(1,2,input,hs[0],123,runs,count,accepted,nullptr)));C(cudaDeviceSynchronize());
+ CHECK(get(count)==1&&get(accepted)==1&&get(hs[0].keys)==123&&get(hs[0].rows)==0);
+ uint8_t states[12];C(cudaMemcpy(states,hs[0].states,12,cudaMemcpyDeviceToHost));CHECK(states[0]==4&&states[6]==7);
+ MgbfsBatchHashRun seeded{};C(cudaMemcpy(&seeded,runs,sizeof(seeded),cudaMemcpyDeviceToHost));
+ CHECK(seeded.segment==0&&seeded.bank==0&&seeded.length==1&&seeded.min_hash==123&&seeded.max_hash==123);
+ MgbfsBatchHashRun host[4]={{0,0,0,1,1,1},{0,1,0,1,2,2},{1,0,0,1,3,3},{1,2,0,1,4,4}};
+ C(cudaMemcpy(runs,host,sizeof(host),cudaMemcpyHostToDevice));put(count,uint32_t(4));auto* error=alloc<uint32_t>();put(error,uint32_t(0));
+ C(cudaError_t(mgbfs_hash_batch_retire_bank(runs,count,8,segments,2,0,error,nullptr)));C(cudaDeviceSynchronize());
+ CHECK(get(count)==2&&get(error)==0);MgbfsBatchHashRun retained[2];C(cudaMemcpy(retained,runs,sizeof(retained),cudaMemcpyDeviceToHost));
+ CHECK(retained[0].segment==0&&retained[0].bank==1&&retained[1].segment==1&&retained[1].bank==2);
+ for(auto& seg:hs){C(cudaFree(seg.states));C(cudaFree(seg.keys));C(cudaFree(seg.rows));}
+ C(cudaFree(segments));C(cudaFree(input));C(cudaFree(runs));C(cudaFree(count));C(cudaFree(accepted));C(cudaFree(error));
+ puts("PASS exact seed index and bank-local run retirement");
+}
+int main(){int count=0;C(cudaGetDeviceCount(&count));CHECK(count>=2);for(int d=0;d<2;d++){C(cudaSetDevice(d));run();compact_runs();bounded_raw_tiles();seed_and_retire();}puts("BATCH_HASH_TWO_GPU_PASS");}

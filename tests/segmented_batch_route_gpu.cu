@@ -21,7 +21,7 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t,uint32_t,BitmapDeviceDomain,
  uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,const void*,uint32_t,uint64_t,
  const uint32_t*,const int64_t*,const uint32_t*,uint64_t,uint32_t,uint32_t,uint32_t,
  uint32_t,uint32_t,uint64_t,const uint32_t*,const uint64_t*,GenericRouteRecord*,
- uint32_t*,uint32_t*,void*,size_t,void*);
+ uint32_t*,uint32_t*,void*,void*,size_t,void*);
 template<class T> static T* alloc(size_t n){T* x=nullptr;C(cudaMalloc((void**)&x,std::max<size_t>(n,1)*sizeof(T)));return x;}
 template<class T> static void upload(T* p,const std::vector<T>& h){if(!h.empty())C(cudaMemcpy(p,h.data(),h.size()*sizeof(T),cudaMemcpyHostToDevice));}
 using Bytes=std::array<unsigned char,sizeof(GenericRouteRecord)>;
@@ -48,8 +48,23 @@ static Result call(bool bitmap,int mode,uint32_t bytes,uint32_t world,uint32_t s
  if(mode==2){
   size_t scratch_bytes=0;C(static_cast<cudaError_t>(mgbfs_segmented_batch_route_scratch_bytes(count*G,nq,&scratch_bytes)));
   void* scratch=nullptr;C(cudaMalloc(&scratch,std::max<size_t>(scratch_bytes,1)));
-  status=mgbfs_segmented_batch_route(uint32_t(bitmap),uint32_t(word_shard),domain,bytes,0,N,N,1,G,parent,count,count,dp,nullptr,nullptr,123,64,world,0,shards,capacity,begin,dm,nullptr,records,counts,error,scratch,scratch_bytes,nullptr);
-  C(static_cast<cudaError_t>(status));C(cudaDeviceSynchronize());C(cudaFree(scratch));
+  void* routed_states=nullptr;C(cudaMalloc(&routed_states,std::max<size_t>(uint64_t(nq)*capacity*N*bytes,1)));C(cudaMemset(routed_states,0xa5,std::max<size_t>(uint64_t(nq)*capacity*N*bytes,1)));
+  status=mgbfs_segmented_batch_route(uint32_t(bitmap),uint32_t(word_shard),domain,bytes,0,N,N,1,G,parent,count,count,dp,nullptr,nullptr,123,64,world,0,shards,capacity,begin,dm,nullptr,records,counts,error,routed_states,scratch,scratch_bytes,nullptr);
+  C(static_cast<cudaError_t>(status));C(cudaDeviceSynchronize());
+  if(bytes==8){
+   uint32_t route_error=0;C(cudaMemcpy(&route_error,error,4,cudaMemcpyDeviceToHost));
+   std::vector<int64_t> payload(uint64_t(nq)*capacity*N);C(cudaMemcpy(payload.data(),routed_states,payload.size()*8,cudaMemcpyDeviceToHost));
+   if(route_error==0){
+    std::vector<uint32_t> c(nq);std::vector<GenericRouteRecord> r(uint64_t(nq)*capacity);
+    C(cudaMemcpy(c.data(),counts,nq*4,cudaMemcpyDeviceToHost));C(cudaMemcpy(r.data(),records,r.size()*sizeof(r[0]),cudaMemcpyDeviceToHost));
+    for(uint32_t q=0;q<nq;q++)for(uint32_t i=0;i<c[q];i++)for(uint32_t e=0;e<N;e++){
+     const auto& rec=r[uint64_t(q)*capacity+i];CHECK(rec.parent>=begin&&rec.parent-begin<count&&rec.generator<G);
+     auto expected=parents64[uint64_t(perms[uint64_t(rec.generator)*N+e])*count+(rec.parent-begin)];
+     CHECK(payload[(uint64_t(q)*N+e)*capacity+i]==expected);
+    }
+   }else for(auto x:payload)CHECK(uint64_t(x)==0xa5a5a5a5a5a5a5a5ULL);
+  }
+  C(cudaFree(routed_states));C(cudaFree(scratch));
  }else if(bitmap){auto fn=mode==1?mgbfs_bitmap_route_grouped:mgbfs_bitmap_route;
   status=fn(bytes,domain,N,G,parent,count,count,dp,world,0,shards,capacity,begin,dm,records,counts,error,nullptr);
  }else{auto fn=mode==1?mgbfs_segmented_route_storage_grouped:mgbfs_segmented_route_storage;

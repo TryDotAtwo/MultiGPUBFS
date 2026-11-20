@@ -212,6 +212,49 @@ extern "C" int mgbfs_hash_batch_accept(uint32_t state_bytes,uint32_t packed,uint
 }
 
 
+
+// Seed the unique canonical start using the same exact run/index contract as
+// accepted tiles. The caller has already admitted both segment and catalog.
+namespace {
+template<class T>
+__global__ void seed_exact(const T* input,uint32_t elements,MgbfsBatchHashSegment seg,uint64_t hash,
+ MgbfsBatchHashRun* runs,uint32_t* run_count,uint64_t* accepted){
+ if(blockIdx.x||threadIdx.x)return;
+ T* states=static_cast<T*>(seg.states);uint64_t stride=seg.capacity*seg.banks;
+ for(uint32_t e=0;e<elements;e++)states[uint64_t(e)*stride]=input[e];
+ seg.keys[0]=hash;seg.rows[0]=0;runs[0]={0,0,0,1,hash,hash};*run_count=1;*accepted=1;
+}
+__global__ void retire_bank_runs(MgbfsBatchHashRun* runs,uint32_t* count,uint32_t capacity,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t bank,uint32_t* error){
+ if(blockIdx.x||threadIdx.x)return;
+ uint32_t n=*count;if(n>capacity){atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));return;}
+ for(uint32_t i=0;i<n;i++){
+  auto r=runs[i];if(r.segment>=segment_count||r.bank>=segments[r.segment].banks){
+   atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));return;
+  }
+ }
+ uint32_t out=0;for(uint32_t i=0;i<n;i++)if(runs[i].bank!=bank)runs[out++]=runs[i];
+ *count=out;
+}
+}
+extern "C" int mgbfs_hash_batch_seed(uint32_t state_bytes,uint32_t elements,const void* input,
+ MgbfsBatchHashSegment seg,uint64_t hash,MgbfsBatchHashRun* runs,uint32_t* run_count,
+ uint64_t* accepted,void* stream){
+ if((state_bytes!=1&&state_bytes!=8)||!elements||!input||!seg.states||!seg.keys||!seg.rows||
+  !seg.capacity||seg.capacity>(uint64_t(1)<<32)||!(seg.banks==1||seg.banks==3)||!runs||!run_count||!accepted)
+  return int(cudaErrorInvalidValue);
+ auto st=static_cast<cudaStream_t>(stream);
+ if(state_bytes==1)seed_exact<uint8_t><<<1,1,0,st>>>(static_cast<const uint8_t*>(input),elements,seg,hash,runs,run_count,accepted);
+ else seed_exact<int64_t><<<1,1,0,st>>>(static_cast<const int64_t*>(input),elements,seg,hash,runs,run_count,accepted);
+ return int(cudaGetLastError());
+}
+extern "C" int mgbfs_hash_batch_retire_bank(MgbfsBatchHashRun* runs,uint32_t* count,uint32_t capacity,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t bank,uint32_t* error,void* stream){
+ if(!runs||!count||!capacity||!segments||!segment_count||bank>=3||!error)return int(cudaErrorInvalidValue);
+ retire_bank_runs<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(runs,count,capacity,segments,segment_count,bank,error);
+ return int(cudaGetLastError());
+}
+
 // Adjacent-run compaction is optional. Insufficient merge workspace is a
 // successful deferred result: both original published runs stay searchable.
 namespace {
