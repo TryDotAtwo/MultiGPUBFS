@@ -9,11 +9,11 @@ states on one rank, out-of-core execution, or universal performance gains.
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The 32-bit-row variant requires native ABI `segmented32_v2`: both the
-executable and CUDA component must be built from the same source revision.
-Older dev36 components have the earlier 24-bit layout and are not compatible.
-The launcher checks the native capability before BFS and the actual backend
-in the receipt.
+The dev37 release provides separately checksummed components for the
+`segmented32_v2` ABI. Its executable and CUDA component are built from the
+same source revision. Older dev36 components use the earlier 24-bit layout
+and are not compatible. The launcher checks the native capability before BFS
+and the actual backend in the receipt.
 See [installation and offline prefetch](install-native-package.md).
 
 ## Select a backend
