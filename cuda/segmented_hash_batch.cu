@@ -159,7 +159,7 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
  const uint32_t* selection,uint32_t selected,uint32_t raw_begin,const MgbfsBatchHashSegment* segments,uint32_t segment_count,
  uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,
- uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* scratch,const Workspace& w,cudaStream_t st){
+ uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* scratch,const Workspace& w,cudaEvent_t lookup_start,cudaEvent_t lookup_end,cudaStream_t st){
  if(!selected)return int(cudaSuccess);
  char* base=static_cast<char*>(scratch);auto* hashes=reinterpret_cast<uint64_t*>(base+w.hashes);
  auto* origins=reinterpret_cast<uint32_t*>(base+w.origins);auto* sorted=reinterpret_cast<uint32_t*>(base+w.sorted);
@@ -173,8 +173,10 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  GenericSortedOriginLess<SelectedAction<T,Packed>> cmp{action,hashes};size_t tmp=w.temp_bytes;
  status=cub::DeviceMergeSort::SortKeysCopy(base+w.temp,tmp,origins,sorted,int(selected),cmp,st);
  if(status!=cudaSuccess)return int(status);
+ if(lookup_start){status=cudaEventRecord(lookup_start,st);if(status!=cudaSuccess)return int(status);}
  unique_and_probe<T><<<blocks,256,0,st>>>(cmp,sorted,selected,segments,segment_count,runs,run_count,run_capacity,flags,error);
  if((status=cudaGetLastError())!=cudaSuccess)return int(status);
+ if(lookup_end){status=cudaEventRecord(lookup_end,st);if(status!=cudaSuccess)return int(status);}
  tmp=w.temp_bytes;status=cub::DeviceScan::ExclusiveSum(base+w.temp,tmp,flags,prefix,int(selected),st);
  if(status!=cudaSuccess)return int(status);
  reserve<<<1,1,0,st>>>(flags,prefix,selected,segments,active,bank,segment_count,accepted,run_count,run_capacity,global_count,limit,grant,spill_count,error);
@@ -190,25 +192,26 @@ extern "C" int mgbfs_hash_batch_scratch_bytes(uint32_t n,uint32_t state_bytes,ui
  Workspace w{};cudaError_t status=state_bytes==1?(packed?layout<SelectedAction<uint8_t,true>>(n,&w):layout<SelectedAction<uint8_t,false>>(n,&w)):layout<SelectedAction<int64_t,false>>(n,&w);
  if(status==cudaSuccess)*bytes=w.total;return int(status);
 }
-extern "C" int mgbfs_hash_batch_accept(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
+extern "C" int mgbfs_hash_batch_accept_timed(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
  const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,
  const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,
  uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,
- uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* stream){
+ uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* lookup_start,void* lookup_end,void* stream){
  uint64_t bound=uint64_t(world)*q;
  if((state_bytes!=1&&state_bytes!=8)||packed>1||(packed&&(state_bytes!=1||elements>24))||!elements||
   !world||world>128||rank>=world||!shards||shard>=shards||!q||bound>=0x7fffffffULL||visible>q||selected>bound||
   (!selection&&uint64_t(raw_begin)+selected>uint64_t(world)*visible)||(selection&&raw_begin!=0)||!lm||!rm||!lc||!rc||(!packed&&(!local||!remote))||
-  !segments||!segment_count||active>=segment_count||!runs||!run_count||!run_capacity||!accepted||!spill||!spill_count||!error)
+  !segments||!segment_count||active>=segment_count||!runs||!run_count||!run_capacity||!accepted||!spill||!spill_count||!error||
+  bool(lookup_start)!=bool(lookup_end))
   return int(cudaErrorInvalidValue);
  Workspace w{};cudaError_t status=state_bytes==1?(packed?layout<SelectedAction<uint8_t,true>>(selected,&w):layout<SelectedAction<uint8_t,false>>(selected,&w)):layout<SelectedAction<int64_t,false>>(selected,&w);
  if(status!=cudaSuccess)return int(status);
  if(selected&&(!scratch||uintptr_t(scratch)%kAlign||scratch_bytes<w.total))return int(cudaErrorInvalidValue);
  cudaStream_t st=static_cast<cudaStream_t>(stream);
- if(state_bytes==1&&packed)return launch<uint8_t,true>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,st);
- if(state_bytes==1)return launch<uint8_t,false>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,st);
- return launch<int64_t,false>(elements,static_cast<const int64_t*>(local),static_cast<const int64_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,st);
+ if(state_bytes==1&&packed)return launch<uint8_t,true>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),st);
+ if(state_bytes==1)return launch<uint8_t,false>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),st);
+ return launch<int64_t,false>(elements,static_cast<const int64_t*>(local),static_cast<const int64_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),st);
 }
 
 
@@ -237,6 +240,17 @@ __global__ void retire_bank_runs(MgbfsBatchHashRun* runs,uint32_t* count,uint32_
  *count=out;
 }
 }
+extern "C" int mgbfs_hash_batch_accept(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
+ const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,
+ uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,
+ uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* stream){
+ return mgbfs_hash_batch_accept_timed(state_bytes,packed,elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,
+  selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,
+  global_count,limit,scratch,scratch_bytes,nullptr,nullptr,stream);
+}
+
 extern "C" int mgbfs_hash_batch_seed(uint32_t state_bytes,uint32_t elements,const void* input,
  MgbfsBatchHashSegment seg,uint64_t hash,MgbfsBatchHashRun* runs,uint32_t* run_count,
  uint64_t* accepted,void* stream){
