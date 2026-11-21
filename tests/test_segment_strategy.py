@@ -44,9 +44,27 @@ class SegmentStrategyContract(unittest.TestCase):
 
     def test_old_native_rejects_new_strategies_before_calculation(self):
         with patch('multigpubfs.host_memory.admit',return_value=None), patch('multigpubfs.launch.native_runtime',return_value=('/fake/mgbfs',{})), patch('multigpubfs.launch._require_memory_backend',return_value={'segmented32_v2':True}):
-            for value in ('warp','batch'):
-                with self.assertRaisesRegex(RuntimeError,'NATIVE_SEGMENT_STRATEGY_UNAVAILABLE'):
+            for value, error in (('warp','SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING'),('batch','NATIVE_SEGMENT_STRATEGY_UNAVAILABLE')):
+                with self.subTest(value=value), self.assertRaisesRegex(RuntimeError,error):
                     run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='segmented24',segment_strategy=value)
+
+    def test_hash_warp_requires_safe_abi_even_when_strategy_is_advertised(self):
+        capabilities={'segmented32_v2':True,'segmented_strategies_v1':{'warp':True},'segmented_warp_hash_safe_v1':False}
+        with patch('multigpubfs.host_memory.admit',return_value=None), patch('multigpubfs.launch.native_runtime',return_value=('/fake/mgbfs',{})), patch('multigpubfs.launch._require_memory_backend',return_value=capabilities):
+            with self.assertRaisesRegex(RuntimeError,'SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING'):
+                run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='segmented24',segment_strategy='warp')
+
+    def test_hash_warp_requires_both_safe_abi_and_strategy_capability(self):
+        capabilities={'segmented32_v2':True,'segmented_strategies_v1':{},'segmented_warp_hash_safe_v1':True}
+        with patch('multigpubfs.host_memory.admit',return_value=None), patch('multigpubfs.launch.native_runtime',return_value=('/fake/mgbfs',{})), patch('multigpubfs.launch._require_memory_backend',return_value=capabilities):
+            with self.assertRaisesRegex(RuntimeError,'NATIVE_SEGMENT_STRATEGY_UNAVAILABLE'):
+                run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='segmented24',segment_strategy='warp')
+
+    def test_bitmap_warp_still_requires_strategy_capability(self):
+        capabilities={'segmented32_v2':True}
+        with patch('multigpubfs.host_memory.admit',return_value=None), patch('multigpubfs.launch.native_runtime',return_value=('/fake/mgbfs',{})), patch('multigpubfs.launch._require_memory_backend',return_value=capabilities):
+            with self.assertRaisesRegex(RuntimeError,'NATIVE_SEGMENT_STRATEGY_UNAVAILABLE'):
+                run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='permutation_bitmap',segment_strategy='warp')
 
     def test_capability_cache_tracks_replaced_cuda_library(self):
         from multigpubfs.launch import _memory_backend_capabilities, _require_memory_backend
