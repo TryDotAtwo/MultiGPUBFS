@@ -1,22 +1,22 @@
 # Experimental segmented and bitmap BFS
 
-Version 0.2.0.dev42 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev42-8gpu.md) before relying on it for a large calculation.
+Version 0.2.0.dev43 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev43-8gpu.md) before relying on it for a large calculation.
 
 ## Install
 
 On Linux x86-64, in the Python environment used by the job:
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261122-v42/multigpubfs-0.2.0.dev42-py3-none-any.whl"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261122-v43/multigpubfs-0.2.0.dev43-py3-none-any.whl"
 ```
 
 Alternatively, install the verified source snapshot directly from GitHub (requires Git and downloads the repository):
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@3e2df9d7325694144d4c3c46acc6089817bfcf02"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
 ```
 
-The wheel is smaller to download. The exact dev42 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44953698544); physical GPU acceptance used the release wheel and the same native component hashes.
+The wheel is smaller to download. The exact dev43 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544); physical GPU acceptance used the release wheel and the same native component hashes.
 
 Start a new Python process after updating. CUDA native components are selected from the visible GPUs and downloaded into the cache on first use. The first download includes a shared runtime of about 304 MB, the executable and the selected architecture component. Later jobs reuse checksum-verified cached files.
 
@@ -61,7 +61,7 @@ with persistent_graph_workers():
             print("diameter:", result.diameter())
 ```
 
-`device="cpu"` here constructs the CayleyPy graph definition on the CPU; the selected native BFS uses the requested GPUs. The persistent context reuses workers across calls, but it does not promise that every different graph skips all admission and tuning work.
+`device="cpu"` here constructs the CayleyPy graph definition on the CPU; the selected native BFS uses the requested GPUs. The persistent context reuses workers across calls, but it does not promise that every different graph skips all admission and tuning work. `max_capacity` compares measured candidates using an estimated admitted storage capacity, then speed; it is a heuristic, not a proof of the maximum graph that fits. The live memory check still runs, and changes in effective free memory can trigger retuning.
 
 Each segment/bank permits up to `segment_rows=2**32` rows by default; `NativeOptions(segment_rows=...)` accepts a smaller value. Multiple segments can be allocated subject to the actual memory budget. This local segment limit is not a promise that a particular graph fits. `bfs_completed=False` means only the published completed prefix is valid; inspect `result.report` and `result.output` for details. The native result exposes exact layer counts and retained samples, not CayleyPy's complete edge lists or all states.
 
