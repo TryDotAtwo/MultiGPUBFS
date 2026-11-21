@@ -1,0 +1,30 @@
+name: Select pinned dev41 release files for GPU acceptance
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/select-dev41-release-sm86.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  select:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download complete package from successful run
+        run: |
+          set -euo pipefail
+          gh run download 44940413914 --repo "$GITHUB_REPOSITORY" --name segmented-vram-dev41-release --dir "$RUNNER_TEMP/full"
+          (cd "$RUNNER_TEMP/full" && sha256sum -c SHA256SUMS)
+          mkdir "$RUNNER_TEMP/selected"
+          cp "$RUNNER_TEMP/full"/multigpubfs-0.2.0.dev41-py3-none-any.whl "$RUNNER_TEMP/full"/native-executable.tar.gz "$RUNNER_TEMP/full"/cuda-sm86.tar.gz "$RUNNER_TEMP/full"/native-assets.json "$RUNNER_TEMP/full"/component-release.json "$RUNNER_TEMP/full"/wheel-manifest.json "$RUNNER_TEMP/full"/test-provenance.json "$RUNNER_TEMP/selected"
+          (cd "$RUNNER_TEMP/selected" && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dev41-final-sm86-test-input
+          path: ${{ runner.temp }}/selected/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
