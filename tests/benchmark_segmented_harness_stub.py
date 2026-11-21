@@ -28,7 +28,6 @@ def workers():
 def fake_run_graph(graph, output, **kw):
     observed.append((graph, kw))
     assert kw["devices"] == list(range(8))
-    assert kw["autotune"] is False
     assert kw["shards"] == 8
     output.mkdir(parents=True)
     (output / "states.json").write_text(json.dumps({
@@ -58,12 +57,12 @@ def fake_subprocess(command, **kw):
         return subprocess.CompletedProcess(command, 0, "stub-commit\n", "")
     raise AssertionError(f"unexpected command: {command}")
 
-def execute(root, batch):
+def execute(root, batch, auto=False):
     native = root / "mgbfs"
     library = root / "libmgbfs_cuda.so"
     native.write_bytes(b"stub executable")
     library.write_bytes(b"stub library")
-    output = root / f"case-{batch}"
+    output = root / f"case-{batch}-auto-{auto}"
     modules = {
         "multigpubfs": types.ModuleType("multigpubfs"),
         "multigpubfs.launch": types.ModuleType("multigpubfs.launch"),
@@ -76,14 +75,17 @@ def execute(root, batch):
            "MGBFS_BENCH_REPO": str(root)}
     argv = [str(SCRIPT), "--backend", "permutation_bitmap", "--strategy", "atomic",
             "--n", "3", "--batch", str(batch), "--base", str(output)]
+    if auto:
+        argv.append("--autotune")
     with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, env), \
          mock.patch.object(sys, "argv", argv), mock.patch.object(subprocess, "run", fake_subprocess):
         runpy.run_path(str(SCRIPT), run_name="__main__")
     case = output / "S3-permutation_bitmap-atomic-1"
     initial = json.loads((case / "invocation.json").read_text())
     result = json.loads((case / "summary.json").read_text())
-    assert initial["batch"] == batch
-    assert result["plan"]["batch"] == batch
+    assert initial["batch"] == (None if auto else batch)
+    assert initial["autotune"] is auto
+    assert result["plan"]["batch"] == (None if auto else batch)
     assert result["checks"]["final_two_layers_full_exact_sets_no_duplicates"]
     assert json.loads((case / "sampled_peak_mib.json").read_text())["samples"] >= 1
 
@@ -111,6 +113,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     execute(root, 8192)
     execute(root, 32768)
+    execute(root, 32768, auto=True)
     invalid_batch(root)
-assert [kwargs["_batch"] for _, kwargs in observed] == [8192, 32768]
+assert [(kwargs["_batch"], kwargs["autotune"]) for _, kwargs in observed] == [(8192, False), (32768, False), (None, True)]
 print("PASS CPU_STUB benchmark argument and receipts; no GPU execution")
