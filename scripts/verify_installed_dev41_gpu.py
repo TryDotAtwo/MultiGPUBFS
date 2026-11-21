@@ -68,6 +68,7 @@ def synthetic(output, fail):
 
 API_CODE = r"""
 import json
+import os
 from pathlib import Path
 from cayleypy import CayleyGraph, PermutationGroups
 import multigpubfs
@@ -110,6 +111,9 @@ try:
             now=[w.process.pid for w in pool.workers]
             if pids is None:pids=now
             assert now==pids,(pids,now)
+            library=os.environ['MGBFS_EXPECTED_LIB_PATH']
+            for pid in now:
+                assert library in Path(f'/proc/{pid}/maps').read_text(),(pid,library)
             print('PUBLIC_API_PASS',n,backend,strategy,preset,now,flush=True)
 finally:
     multigpubfs.disable_native()
@@ -167,6 +171,13 @@ def gpu(source, output):
     for key, path in (('bin/mgbfs', native), ('lib/libmgbfs_cuda.so', library)):
         if digest(path) != manifest['sha256'][key]:
             raise RuntimeError('INSTALLED_COMPONENT_DIGEST_MISMATCH ' + key)
+    expected_source = os.environ.get('MGBFS_EXPECTED_SOURCE_SHA', '')
+    info = json.loads(package.with_name('_package_info.json').read_text())
+    if len(expected_source) != 40 or any(c not in '0123456789abcdef' for c in expected_source):
+        raise RuntimeError('EXPECTED_SOURCE_SHA_REQUIRED')
+    if any(value != expected_source for value in (info.get('source_commit'),
+            manifest.get('native_binary_source_commit'), manifest.get('cuda_library_source_commit'))):
+        raise RuntimeError('INSTALLED_SOURCE_IDENTITY_MISMATCH')
     selected = manifest['native_delivery']['selected_component']
     if selected != 'cuda-sm86':
         raise RuntimeError('EXPECTED_SM86_TEST_DEVICE got ' + selected)
@@ -175,7 +186,7 @@ def gpu(source, output):
     env['MGBFS_EXECUTABLE'] = str(native)
     report = {'version': version, 'package': str(package), 'native': str(native),
               'native_sha256': digest(native), 'library_sha256': digest(library),
-              'selected_component': selected, 'tests': []}
+              'selected_component': selected, 'source_commit': expected_source, 'tests': []}
     for label, filename, limit in TESTS:
         path = source / 'tests' / filename
         if not path.is_file():
@@ -185,9 +196,11 @@ def gpu(source, output):
         (output / 'progress.json').write_text(json.dumps(report, indent=2))
     api_env = dict(env)
     api_env.pop('MGBFS_EXECUTABLE', None)
+    api_env['MGBFS_EXPECTED_LIB_PATH'] = str(library.resolve())
     row = run_process('public-api-default-native', [sys.executable, '-c', API_CODE],
                       api_env, output, 900)
     report['tests'].append(row)
+    (output / 'progress.json').write_text(json.dumps(report, indent=2))
     if any(item['exit_code'] != 0 or item['timed_out'] for item in report['tests']):
         raise RuntimeError('GPU_ACCEPTANCE_TEST_FAILED ' +
                            ','.join(x['name'] for x in report['tests']
