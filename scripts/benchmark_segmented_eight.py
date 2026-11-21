@@ -1,4 +1,4 @@
-"""Same-geometry S12 comparison; raw layer states stay on this GPU host."""
+"""Segmented S_n geometry comparison; raw layer states stay on this GPU host."""
 import argparse,hashlib,json,math,os,subprocess,threading,time,traceback
 from pathlib import Path
 from multigpubfs import GraphDefinition
@@ -10,9 +10,12 @@ ap.add_argument("--backend",choices=["segmented24","permutation_bitmap"],require
 ap.add_argument("--strategy",choices=["atomic","warp","batch"],required=True)
 ap.add_argument("--repeat",type=int,default=1)
 ap.add_argument("--n",type=int,default=12)
+ap.add_argument("--batch",type=int,default=8192,help="requested batch; admission may lower it")
 ap.add_argument("--max-depth",type=int)
 ap.add_argument("--base",default="/workspace/bench-segmented-snapshot")
 a=ap.parse_args()
+if a.batch <= 0:
+ ap.error("--batch must be positive")
 n=a.n
 base=Path(a.base)
 base.mkdir(exist_ok=True)
@@ -74,7 +77,7 @@ initial={"backend":a.backend,"strategy":a.strategy,"repeat":a.repeat,
  "telemetry_interval_seconds":1,"telemetry_scope":"sampled maximum, can miss short peaks",
  "graph":"adjacent transpositions S%d, initial identity"%n,"devices":list(range(8)),"shards":8,
  "owner_lanes":4,"configured_segment_rows":2**32,"allocation_segment_rows":1048576,
- "batch":8192,"preset":"balanced","autotune":False,"exact_exchange":True,"max_depth":a.max_depth}
+ "batch":a.batch,"preset":"balanced","autotune":False,"exact_exchange":True,"max_depth":a.max_depth}
 (out/"invocation.json").write_text(json.dumps(initial,indent=2))
 thread=threading.Thread(target=sample,daemon=True);thread.start()
 try:
@@ -83,7 +86,7 @@ try:
   run_started=time.monotonic()
   r=run_graph(graph,out/"result",devices=list(range(8)),shards=8,autotune=False,
    executable=native,memory_backend=a.backend,memory_preset="balanced",
-   segment_rows=2**32,segment_strategy=a.strategy,_batch=8192,_profile_layers=a.max_depth)
+   segment_rows=2**32,segment_strategy=a.strategy,_batch=a.batch,_profile_layers=a.max_depth)
   run_finished=time.monotonic()
  context_finished=time.monotonic()
  expected=mahonian(n); sizes=r["layer_sizes"]; times=r["layer_seconds"]
