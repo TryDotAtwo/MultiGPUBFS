@@ -1,0 +1,72 @@
+name: Build dev41 SM86 validation candidate
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/build-dev41-sm86-validation.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MGBFS_COMPONENT_BUILD_SOURCE: 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Prepare package tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf binutils
+          python -m pip install build numpy packaging
+          rustup toolchain install 1.75.0 --profile minimal
+      - name: Fetch pinned SM86 and common components
+        run: |
+          gh run download 44934351537 --repo "$GITHUB_REPOSITORY" --name segmented-vram-sm86 --dir /tmp/components/sm86
+          cp -a /tmp/components/sm86 /tmp/components/universal
+          curl --fail --silent --show-error --location --retry 3 -o /tmp/common.tar.gz https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v31/common-dev31.tar.gz
+          echo '7d44d15a64d3032974801321420fda50027ce3724dba4d6d316cb759ffcb2c99  /tmp/common.tar.gz' | sha256sum -c -
+          mkdir /tmp/common
+          tar -xzf /tmp/common.tar.gz -C /tmp/common
+      - name: Assemble source-pinned SM86-only test wheel
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python scripts/build_segmented_cli.py --cuda-dir /tmp/components/sm86 --common-dir /tmp/common --receipt /tmp/cli-receipt.json
+          PYTHONPATH=. python - <<'PY'
+          import sys
+          from scripts import assemble_segmented_release as a
+          a.NATIVE_ARCHITECTURES=(86,)
+          a.PTX_ARCHITECTURES=()
+          sys.argv=['validation','--builds','/tmp/components',
+                    '--binary','target/release/mgbfs','--binary-receipt','/tmp/cli-receipt.json',
+                    '--output','/tmp/dev41-sm86-validation','--work','/tmp/dev41-sm86-work',
+                    '--tag','native-pip-20261121-v41-validation']
+          a.main()
+          PY
+          cp /tmp/dev41-sm86-validation/native-assets.json multigpubfs/native_assets.json
+          PYTHONPATH=. python -m scripts.build_lazy_native_package
+          cp dist-native/*.whl /tmp/dev41-sm86-validation/
+          cp dist-native/manifest.json /tmp/dev41-sm86-validation/wheel-manifest.json
+          cp /tmp/cli-receipt.json /tmp/dev41-sm86-validation/
+          (cd /tmp/dev41-sm86-validation && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Verify wheel on CPU
+        run: |
+          python -m venv /tmp/check-wheel
+          /tmp/check-wheel/bin/pip install --no-deps dist-native/multigpubfs-0.2.0.dev41-py3-none-any.whl
+          cd /tmp
+          /tmp/check-wheel/bin/python -m multigpubfs --help
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dev41-sm86-validation-only
+          path: /tmp/dev41-sm86-validation/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
