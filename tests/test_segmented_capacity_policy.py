@@ -10,7 +10,7 @@ from multigpubfs.launch import _apply_memory_preset
 
 
 def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
-            capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False):
+            capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False, cached_bytes=0, pool_bytes=0, total_bytes=200000, reserve_bytes=1000):
     native = tmp_path / 'native'
     native.write_bytes(b'native test executable')
     graph = GraphDefinition.permutation([[1, 0, 2], [0, 2, 1]], [0, 1, 2])
@@ -27,9 +27,9 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
 
     def admit(graph, devices, capacity, shards, native, env, directory, **kwargs):
         return {'devices': [0, 1], 'inventory': [
-            {'device': d, 'free_bytes': free_bytes, 'total_bytes': 200000,
-             'cached_reusable_bytes': 0, 'pool_reusable_bytes': 0,
-             'additional_reserve_bytes': 1000} for d in [0, 1]] if include_inventory else [], 'plan': {
+            {'device': d, 'free_bytes': free_bytes, 'total_bytes': total_bytes,
+             'cached_reusable_bytes': cached_bytes, 'pool_reusable_bytes': pool_bytes,
+             'additional_reserve_bytes': reserve_bytes} for d in [0, 1]] if include_inventory else [], 'plan': {
             'capacity': 100000, 'batch': 131072, 'queue_capacity': 16384,
             'history_algorithm': 'HASH', 'owner_lanes': 0}}
 
@@ -166,3 +166,22 @@ def test_cache_not_used_without_live_capacity_inventory(tmp_path):
 def test_inconsistent_queue_receipt_fails_closed(tmp_path):
     with pytest.raises(RuntimeError, match='QUEUE_RECEIPT_MISMATCH'):
         measure(tmp_path, invalid_queue_receipt=True)
+
+
+def test_capacity_cache_reuses_equal_effective_inventory_after_backend_switch(tmp_path):
+    # Native inventory's free_bytes already includes both reusable pools.
+    # Changes in their split alone do not change admission capacity.
+    first, first_calls, _ = measure(tmp_path, use_cache=True, cached_bytes=100, pool_bytes=900)
+    second, second_calls, _ = measure(tmp_path, use_cache=True, cached_bytes=900, pool_bytes=100)
+    assert first_calls and not first['cache_hit']
+    assert second['cache_hit'] and not second_calls
+    assert second['segment_queue_cap'] == first['segment_queue_cap']
+
+@pytest.mark.parametrize('change', [
+    {'free_bytes': 99999}, {'total_bytes': 200001}, {'reserve_bytes': 1001},
+])
+def test_capacity_cache_rechecks_actual_inventory_dimensions(tmp_path, change):
+    first, _, _ = measure(tmp_path, use_cache=True)
+    changed, changed_calls, _ = measure(tmp_path, use_cache=True, **change)
+    assert not first['cache_hit']
+    assert changed_calls and not changed['cache_hit']
