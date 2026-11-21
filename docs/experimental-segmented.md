@@ -1,22 +1,22 @@
 # Experimental segmented and bitmap BFS
 
-Version 0.2.0.dev41 adds opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](2026-11-21-dev41-package-sm86.md) before relying on it for a large calculation.
+Version 0.2.0.dev42 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev42-8gpu.md) before relying on it for a large calculation.
 
 ## Install
 
 On Linux x86-64, in the Python environment used by the job:
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261121-v41/multigpubfs-0.2.0.dev41-py3-none-any.whl"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261122-v42/multigpubfs-0.2.0.dev42-py3-none-any.whl"
 ```
 
 Alternatively, install the verified source snapshot directly from GitHub (requires Git and downloads the repository):
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@919397ff3d62f6900091675052454edac47ae4bc"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@3e2df9d7325694144d4c3c46acc6089817bfcf02"
 ```
 
-The wheel is smaller to download. The direct Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44943269395); physical GPU acceptance used the release wheel and the same native component hashes.
+The wheel is smaller to download. The exact dev42 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44953698544); physical GPU acceptance used the release wheel and the same native component hashes.
 
 Start a new Python process after updating. CUDA native components are selected from the visible GPUs and downloaded into the cache on first use. The first download includes a shared runtime of about 304 MB, the executable and the selected architecture component. Later jobs reuse checksum-verified cached files.
 
