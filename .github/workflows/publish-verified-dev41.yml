@@ -1,0 +1,70 @@
+name: Publish verified dev41 development package
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/publish-verified-dev41.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MGBFS_RELEASE_TAG: native-pip-20261121-v41
+    steps:
+      - name: Download exactly the accepted package artifact
+        run: |
+          set -euo pipefail
+          gh run download 44940413914 --repo "$GITHUB_REPOSITORY" --name segmented-vram-dev41-release --dir "$RUNNER_TEMP/assets"
+          (cd "$RUNNER_TEMP/assets" && sha256sum -c SHA256SUMS)
+          python3 - "$RUNNER_TEMP/assets" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          release=json.loads((root/'component-release.json').read_text())
+          assert release['source_commit']=='12916819cab0f9ddec62cc50a4c4c48e39b9b5d6',release
+          provenance=json.loads((root/'test-provenance.json').read_text())
+          assert provenance['test_fix_source']=='e8bdfc9ab4af1706815247f2b67d4ed8fdfc535d'
+          index=json.loads((root/'native-assets.json').read_text())
+          assert index['id']=='native-pip-20261121-v41'
+          assert index['components']['native-executable']['files']['bin/mgbfs']['sha256']=='10cb2e53915b9e8936582889445eed263cd6c370ab877aae0ee628fd8f2da687'
+          assert index['components']['cuda-sm86']['files']['libmgbfs_cuda.so']['sha256']=='ca4fba4419120aaa4a37123e56faedbb91c8e4b58e263481e9a15b517c43d908'
+          assert (root/'multigpubfs-0.2.0.dev41-py3-none-any.whl').is_file()
+          print('ACCEPTED_PACKAGE_IDENTITIES_PASS')
+          PY
+      - name: Create draft and upload complete assets
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Development release for the experimental segmented hash and permutation bitmap BFS engines.
+
+          Install on Linux x86_64:
+          ```bash
+          python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261121-v41/multigpubfs-0.2.0.dev41-py3-none-any.whl"
+          ```
+
+          The legacy backend remains the default; explicitly select a new backend to use it. GPU-specific native components are cached on demand, or can be prefetched without a GPU. This build has CUDA inventories for SM75/80/86/89/90/100/103/120 and a universal target; compilation is not a GPU acceptance for each target. Two- and eight-GPU acceptance and limitations are in [the acceptance report](https://github.com/TryDotAtwo/MultiGPUBFS/blob/385e03ba1ba12ff395a75b037304ba22ff9729ad/docs/acceptance/2026-11-21-dev41-package-sm86.md). No B200, full S14 or physical 2^32-row boundary acceptance is claimed. Batch recovery remains opt-in. The existing repository-wide Rust formatting check remains red; CPU contract/type-check and focused packaging tests passed.
+          EOF
+          gh release create "$MGBFS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target 385e03ba1ba12ff395a75b037304ba22ff9729ad --draft --prerelease --latest=false --title "MultiGPUBFS 0.2.0.dev41 (experimental)" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/assets/*
+      - name: Verify uploaded asset sizes and digests before publishing
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$MGBFS_RELEASE_TAG" > "$RUNNER_TEMP/uploaded.json"
+          python3 - "$RUNNER_TEMP/assets" "$RUNNER_TEMP/uploaded.json" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          release=json.loads(pathlib.Path(sys.argv[2]).read_text())
+          assert release['draft'] and release['prerelease']
+          found={x['name']:x for x in release['assets']}
+          wanted=[p for p in root.iterdir() if p.is_file()]
+          assert set(found)=={p.name for p in wanted},(list(found),[p.name for p in wanted])
+          for p in wanted:
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(4<<20),b''):h.update(b)
+              assert found[p.name]['size']==p.stat().st_size,p.name
+              assert found[p.name]['digest']=='sha256:'+h.hexdigest(),(p.name,found[p.name]['digest'])
+          print('UPLOAD_DIGESTS_PASS',len(wanted))
+          PY
+          gh release edit "$MGBFS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
