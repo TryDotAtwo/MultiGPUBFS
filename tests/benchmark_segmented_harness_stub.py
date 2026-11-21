@@ -57,12 +57,12 @@ def fake_subprocess(command, **kw):
         return subprocess.CompletedProcess(command, 0, "stub-commit\n", "")
     raise AssertionError(f"unexpected command: {command}")
 
-def execute(root, batch, auto=False):
+def execute(root, batch, auto=False, preset="balanced"):
     native = root / "mgbfs"
     library = root / "libmgbfs_cuda.so"
     native.write_bytes(b"stub executable")
     library.write_bytes(b"stub library")
-    output = root / f"case-{batch}-auto-{auto}"
+    output = root / f"case-{batch}-auto-{auto}-{preset}"
     modules = {
         "multigpubfs": types.ModuleType("multigpubfs"),
         "multigpubfs.launch": types.ModuleType("multigpubfs.launch"),
@@ -74,7 +74,7 @@ def execute(root, batch, auto=False):
     env = {"MGBFS_EXECUTABLE": str(native), "MGBFS_BENCH_CUDA_LIBRARY": str(library),
            "MGBFS_BENCH_REPO": str(root)}
     argv = [str(SCRIPT), "--backend", "permutation_bitmap", "--strategy", "atomic",
-            "--n", "3", "--batch", str(batch), "--base", str(output)]
+            "--n", "3", "--batch", str(batch), "--preset", preset, "--base", str(output)]
     if auto:
         argv.append("--autotune")
     with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, env), \
@@ -85,6 +85,7 @@ def execute(root, batch, auto=False):
     result = json.loads((case / "summary.json").read_text())
     assert initial["batch"] == (None if auto else batch)
     assert initial["autotune"] is auto
+    assert initial["preset"] == preset
     assert result["plan"]["batch"] == (None if auto else batch)
     assert result["checks"]["final_two_layers_full_exact_sets_no_duplicates"]
     assert json.loads((case / "sampled_peak_mib.json").read_text())["samples"] >= 1
@@ -114,6 +115,7 @@ with tempfile.TemporaryDirectory() as tmp:
     execute(root, 8192)
     execute(root, 32768)
     execute(root, 32768, auto=True)
+    execute(root, 32768, auto=True, preset="max_capacity")
     invalid_batch(root)
-assert [(kwargs["_batch"], kwargs["autotune"]) for _, kwargs in observed] == [(8192, False), (32768, False), (None, True)]
+assert [(kwargs["_batch"], kwargs["autotune"], kwargs["memory_preset"]) for _, kwargs in observed] == [(8192, False, "balanced"), (32768, False, "balanced"), (None, True, "balanced"), (None, True, "max_capacity")]
 print("PASS CPU_STUB benchmark argument and receipts; no GPU execution")
