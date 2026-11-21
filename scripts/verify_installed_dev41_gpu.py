@@ -115,6 +115,14 @@ try:
             for pid in now:
                 assert library in Path(f'/proc/{pid}/maps').read_text(),(pid,library)
             print('PUBLIC_API_PASS',n,backend,strategy,preset,now,flush=True)
+        graph=CayleyGraph(PermutationGroups.coxeter(4),device='cpu')
+        options=NativeOptions(output_root=root,devices=(0,1),autotune=True,
+            memory_backend='permutation_bitmap',memory_preset='balanced',segment_rows=3)
+        result=graph.bfs(native_options=options)
+        assert result.bfs_completed and result.layer_sizes==mahonian(4),result.report
+        assert result.report['backend']=='EXPERIMENTAL_PERMUTATION_BITMAP',result.report
+        assert [w.process.pid for w in pool.workers]==pids
+        print('PUBLIC_API_AUTOTUNE_SMALL_PASS',flush=True)
 finally:
     multigpubfs.disable_native()
 print('PUBLIC_API_ALL_PASS',flush=True)
