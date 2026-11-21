@@ -1,0 +1,51 @@
+name: Verify and publish uploaded dev41 draft
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/finalize-verified-dev41.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  finalize:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MGBFS_RELEASE_ID: '453935898'
+    steps:
+      - name: Compare every uploaded asset with accepted package
+        run: |
+          set -euo pipefail
+          gh run download 44940413914 --repo "$GITHUB_REPOSITORY" --name segmented-vram-dev41-release --dir "$RUNNER_TEMP/assets"
+          (cd "$RUNNER_TEMP/assets" && sha256sum -c SHA256SUMS)
+          gh api "repos/$GITHUB_REPOSITORY/releases/$MGBFS_RELEASE_ID" > "$RUNNER_TEMP/uploaded.json"
+          python3 - "$RUNNER_TEMP/assets" "$RUNNER_TEMP/uploaded.json" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          release=json.loads(pathlib.Path(sys.argv[2]).read_text())
+          assert release['id']==453935898 and release['draft'] and release['prerelease']
+          assert release['tag_name']=='native-pip-20261121-v41'
+          assert release['target_commitish']=='385e03ba1ba12ff395a75b037304ba22ff9729ad'
+          found={x['name']:x for x in release['assets']}
+          wanted=[p for p in root.iterdir() if p.is_file()]
+          assert set(found)=={p.name for p in wanted},(list(found),[p.name for p in wanted])
+          for p in wanted:
+              h=hashlib.sha256()
+              with p.open('rb') as f:
+                  for b in iter(lambda:f.read(4<<20),b''):h.update(b)
+              assert found[p.name]['size']==p.stat().st_size,p.name
+              assert found[p.name]['digest']=='sha256:'+h.hexdigest(),(p.name,found[p.name]['digest'])
+          print('UPLOAD_DIGESTS_PASS',len(wanted))
+          PY
+      - name: Publish the verified draft as a prerelease
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$MGBFS_RELEASE_ID" -F draft=false -F prerelease=true -f make_latest=false > "$RUNNER_TEMP/published.json"
+          python3 - "$RUNNER_TEMP/published.json" <<'PY'
+          import json,pathlib,sys
+          release=json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert release['id']==453935898 and not release['draft'] and release['prerelease']
+          assert release['tag_name']=='native-pip-20261121-v41'
+          print('PRERELEASE_PUBLISHED',release['html_url'])
+          PY
