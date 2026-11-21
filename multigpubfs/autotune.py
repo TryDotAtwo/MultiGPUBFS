@@ -332,7 +332,10 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    if lane is not None:candidate_env['MGBFS_SEGMENT_OWNER_LANES']=str(lane)
    if segmented:candidate_env['MGBFS_SEGMENT_EXACT_EXCHANGE']=exchange
-   admission=_admit(graph,selected,common_capacity,shards,native,candidate_env,temporary)
+   # Segmented pilots allocate segments lazily and are not bounded by the
+   # legacy common-capacity proxy. Re-admit the actual user request against
+   # current free memory; keep legacy pilots on their common fixed workload.
+   admission=_admit(graph,selected,capacity if segmented else common_capacity,shards,native,candidate_env,temporary)
    batch=max(1,int(admission['plan']['batch']*fraction))
    label='pilot-'+str(index)
    # For segmented modes the user cap, if any, is already in

@@ -8,12 +8,14 @@ from multigpubfs import autotune
 from multigpubfs.graph_definition import GraphDefinition
 
 
-def _measure(tmp_path, *, forced=None, bitmap=False, fixed_shards=None):
+def _measure(tmp_path, *, forced=None, bitmap=False, fixed_shards=None, strict_capacity=False, requested_capacity=None):
     native=tmp_path/'native'
     native.write_bytes(b'native test executable')
     graph=GraphDefinition.permutation([[1,0,2],[0,2,1]],[0,1,2])
     calls=[]
     def admit(graph,devices,capacity,shards,native,env,directory,**kwargs):
+        if strict_capacity:
+            assert capacity == requested_capacity, 'segmented admission must preserve the original request, not invent a common capacity'
         return {'devices':[0,1], 'inventory':[], 'plan':{'capacity':100000,'batch':131072,'history_algorithm':'HASH','owner_lanes':0}}
     def pilot(graph,target,**kw):
         assert kw['capacity'] is None, 'segmented probes must not invent a per-rank cap or atomic counter'
@@ -30,7 +32,7 @@ def _measure(tmp_path, *, forced=None, bitmap=False, fixed_shards=None):
     policy={'shards':[1,4,8,16], 'probe_capacity_per_rank':50000}
     missing=subprocess.CompletedProcess([],1,'','')
     with patch.object(autotune,'_admit',side_effect=admit), patch.object(autotune,'_system_info',return_value=missing), patch.object(autotune,'_dependency_identity',return_value=None), patch('multigpubfs.hardware_profiles.startup_policy',return_value=policy), patch('multigpubfs.hardware_profiles.small_permutation_workload',return_value=False), patch('multigpubfs.launch.run_graph',side_effect=pilot):
-        result=autotune.choose_profile(graph,[0,1],None,90,str(native),env,allow_specialized=False,fixed_shards=fixed_shards)
+        result=autotune.choose_profile(graph,[0,1],requested_capacity,90,str(native),env,allow_specialized=False,fixed_shards=fixed_shards)
     return result,calls
 
 
@@ -67,3 +69,11 @@ def test_tuner_keeps_user_shards_and_still_measures_profiles(tmp_path,bitmap):
 def test_fixed_shards_and_forced_lanes_conflict_is_explicit(tmp_path):
     with pytest.raises(ValueError,match='SEGMENTED_FIXED_SHARDS_LANES_CONFLICT'):
         _measure(tmp_path,forced=8,fixed_shards=4)
+
+
+@pytest.mark.parametrize('bitmap',[False, True])
+@pytest.mark.parametrize('requested_capacity',[None, 50000])
+def test_segmented_admission_does_not_invent_a_common_capacity(tmp_path,bitmap,requested_capacity):
+    result,calls=_measure(tmp_path,bitmap=bitmap,fixed_shards=4,strict_capacity=True,requested_capacity=requested_capacity)
+    assert result['status']=='MEASURED_EQUAL_PREFIX_GPU_PROFILE'
+    assert len(calls)>=2
