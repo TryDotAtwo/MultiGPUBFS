@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 216ed55c61baddaedbceae512e713fd1acbf8ba6
+          ref: b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           PYTHONPATH=. python -m scripts.build_lazy_native_package
           (cd dist-native && sha256sum -c SHA256SUMS)
-          python -c 'import json; x=json.load(open("dist-native/manifest.json")); assert x["source_commit"]=="216ed55c61baddaedbceae512e713fd1acbf8ba6"; assert x["wheel"]=="multigpubfs-0.2.0.dev43-py3-none-any.whl"; assert x["native_components"]=="native-pip-20261121-v41"'
+          python -c 'import json; x=json.load(open("dist-native/manifest.json")); assert x["source_commit"]=="b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"; assert x["wheel"]=="multigpubfs-0.2.0.dev43-py3-none-any.whl"; assert x["native_components"]=="native-pip-20261121-v41"'
       - name: Check wheel installation without GPUs
         run: |
           python -m venv /tmp/mgbfs-check
