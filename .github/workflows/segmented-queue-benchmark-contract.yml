@@ -1,0 +1,70 @@
+name: segmented-queue-benchmark-contract
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths:
+      - scripts/benchmark_segmented_eight.py
+      - scripts/benchmark_segmented_queue_geometry.sh
+      - tests/benchmark_segmented_harness_stub.py
+      - .github/workflows/segmented-queue-benchmark-contract.yml
+  workflow_dispatch:
+jobs:
+  cpu-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate pinned native source and benchmark syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6 HEAD -- cuda crates Cargo.toml Cargo.lock
+          git archive 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6 > "$RUNNER_TEMP/native-source.tar"
+          mkdir "$RUNNER_TEMP/native-source"
+          tar -xf "$RUNNER_TEMP/native-source.tar" -C "$RUNNER_TEMP/native-source"
+          for path in Cargo.toml Cargo.lock cuda/bitmap_owner_page.cuh cuda/CMakeLists.txt crates/mgbfs-runtime/Cargo.toml crates/mgbfs-runtime/src/segmented_distributed_native.rs; do
+            test -f "$RUNNER_TEMP/native-source/$path"
+          done
+          python -m py_compile scripts/benchmark_segmented_eight.py tests/benchmark_segmented_harness_stub.py
+          bash -n scripts/benchmark_segmented_queue_geometry.sh
+          sha256sum "$RUNNER_TEMP/native-source.tar"
+      - name: Check benchmark argument and receipt plumbing with CPU stubs
+        run: python tests/benchmark_segmented_harness_stub.py
+      - name: Check archive transport, failure evidence and overwrite guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MGBFS_QUEUE_MODE=stub
+          export MGBFS_QUEUE_ROOT="$RUNNER_TEMP/queue-ok"
+          export MGBFS_QUEUE_ARCHIVE="$RUNNER_TEMP/queue-ok.tgz"
+          bash scripts/benchmark_segmented_queue_geometry.sh
+          mkdir "$RUNNER_TEMP/extract-ok"
+          tar -xzf "$MGBFS_QUEUE_ARCHIVE" -C "$RUNNER_TEMP/extract-ok"
+          test "$(cat "$RUNNER_TEMP/extract-ok/exit-code.txt")" = 0
+          test "$(cat "$RUNNER_TEMP/extract-ok/hash-large-1/status.txt")" = COMPLETE
+          before="$(sha256sum "$MGBFS_QUEUE_ARCHIVE")"
+          set +e
+          bash scripts/benchmark_segmented_queue_geometry.sh
+          rc=$?
+          set -e
+          test "$rc" = 64
+          test "$before" = "$(sha256sum "$MGBFS_QUEUE_ARCHIVE")"
+          export MGBFS_QUEUE_ROOT="$RUNNER_TEMP/queue-fail"
+          export MGBFS_QUEUE_ARCHIVE="$RUNNER_TEMP/queue-fail.tgz"
+          export MGBFS_QUEUE_STUB_FAILURE=bitmap-large-1
+          set +e
+          bash scripts/benchmark_segmented_queue_geometry.sh
+          rc=$?
+          set -e
+          test "$rc" = 33
+          mkdir "$RUNNER_TEMP/extract-fail"
+          tar -xzf "$MGBFS_QUEUE_ARCHIVE" -C "$RUNNER_TEMP/extract-fail"
+          test "$(cat "$RUNNER_TEMP/extract-fail/exit-code.txt")" = 33
+          test "$(cat "$RUNNER_TEMP/extract-fail/bitmap-large-1/status.txt")" = 'FAILED 33'
+          grep -q 'stub partial result' "$RUNNER_TEMP/extract-fail/bitmap-large-1/run.log"
+          echo 'PASS synthetic transport and partial failure preservation; no GPU execution'
