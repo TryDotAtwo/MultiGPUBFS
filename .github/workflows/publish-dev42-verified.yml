@@ -28,29 +28,16 @@ jobs:
           assert m["source_commit"]=="3e2df9d7325694144d4c3c46acc6089817bfcf02"
           assert m["native_components"]=="native-pip-20261121-v41"
           PY
-      - name: Create draft prerelease with pinned provenance
-        run: |
-          set -euo pipefail
-          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
-          Experimental development release. This Python-only update fixes segmented autotune admission when available VRAM changes between planning queries. It does not weaken the actual capacity check, remove user limits or change the default backend.
-          
-          Install on Linux:
-          ```bash
-          python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261122-v42/multigpubfs-0.2.0.dev42-py3-none-any.whl"
-          ```
-          
-          The wheel reuses the immutable native components and cache of dev41. Its GPU acceptance is limited to the documented eight-RTX-3060 checks; it is not a B200/S14 acceptance. The previously existing repository-wide Rust formatting gate remains red. See the acceptance notes in the repository for details.
-          EOF
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target 3e2df9d7325694144d4c3c46acc6089817bfcf02 --draft --prerelease --latest=false --title "MultiGPUBFS 0.2.0.dev42 (experimental)" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/assets/*
       - name: Verify uploaded assets, then publish
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/uploaded.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/454004861" > "$RUNNER_TEMP/uploaded.json"
           python - "$RUNNER_TEMP/assets" "$RUNNER_TEMP/uploaded.json" <<'PY'
           import hashlib,json,pathlib,sys
           root=pathlib.Path(sys.argv[1])
           r=json.loads(pathlib.Path(sys.argv[2]).read_text())
-          assert r["draft"] and r["prerelease"]
+          assert r["draft"] and r["prerelease"] and r["tag_name"]=="native-pip-20261122-v42"
+          assert r["target_commitish"]=="3e2df9d7325694144d4c3c46acc6089817bfcf02"
           actual={a["name"]:a for a in r["assets"]}
           expected=[p for p in root.iterdir() if p.is_file()]
           assert set(actual)=={p.name for p in expected}
@@ -59,4 +46,4 @@ jobs:
               assert actual[p.name]["digest"]=="sha256:"+hashlib.sha256(p.read_bytes()).hexdigest()
           print("RELEASE_ASSET_DIGESTS_PASS")
           PY
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/454004861" -F draft=false -F prerelease=true -f make_latest=false --silent
