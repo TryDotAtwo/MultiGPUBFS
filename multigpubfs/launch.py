@@ -23,8 +23,14 @@ def _apply_memory_preset(env,backend,preset):
  selected=dict(env,MGBFS_MEMORY_PRESET=preset)
  if preset=='max_capacity':
   if backend not in ('segmented24','permutation_bitmap'):raise ValueError('MEMORY_PRESET_UNSUPPORTED_FOR_LEGACY')
-  selected.setdefault('MGBFS_SEGMENT_OWNER_LANES','1')
-  selected.setdefault('MGBFS_SEGMENT_QUEUE_CAP','2048')
+  # Keep the conservative values without treating them as user constraints.
+  # The scoped markers survive nested pilot launches, but do not modify
+  # os.environ or change the user's explicit geometry.
+  for key,value,marker in (
+   ('MGBFS_SEGMENT_OWNER_LANES','1','_MGBFS_PRESET_IMPLICIT_LANES'),
+   ('MGBFS_SEGMENT_QUEUE_CAP','2048','_MGBFS_PRESET_IMPLICIT_QUEUE')):
+   if key not in selected:
+    selected[key]=value;selected[marker]='1'
   if backend=='segmented24':selected.setdefault('MGBFS_SEGMENT_COMPACT_POS','1')
   else:selected.setdefault('MGBFS_BITMAP_BANKS','2')
  else:

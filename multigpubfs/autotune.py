@@ -118,7 +118,7 @@ def _transport_variants(graph,env,hardware_shards=None):
 def _configuration_digest(env):
  # Values are hashed, never copied into a public receipt (tokens may coexist).
  ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID','MGBFS_TUNING_EVIDENCE_ROOT','MGBFS_JOB_PHASE_PATH','MGBFS_JOB_SEQUENCE','MGBFS_JOB_CANCEL_PATH'}
- values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING')) and k not in ignored}
+ values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING','_MGBFS_PRESET_IMPLICIT_LANES','_MGBFS_PRESET_IMPLICIT_QUEUE')) and k not in ignored}
  return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 
 def _segmented_deep_prefix_candidates(pilots):
@@ -166,7 +166,10 @@ def _pick_segmented_profile(pilots,scores,preset):
  if preset!='max_capacity':raise ValueError('INVALID_MEMORY_PRESET')
  if any(type(p.get('capacity_score_rows')) is not int for p in pilots):
   raise RuntimeError('SEGMENTED_CAPACITY_EVIDENCE_MISSING')
- return min(range(len(scores)),key=lambda i:(-pilots[i]['capacity_score_rows'],scores[i]))
+ # A full-segment tie can still have different remaining byte budgets.
+ # This proportional partial-segment estimate is only a tie-breaker, not
+ # a guarantee: exact hash-table rounding and shard distribution vary.
+ return min(range(len(scores)),key=lambda i:(-pilots[i]['capacity_score_rows'],-pilots[i].get('capacity_equivalent_rows',0),scores[i]))
 
 def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None):
  # Omitted peer policy and public default auto are the same configuration.
@@ -189,6 +192,14 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   # Both dimensions must be measured: increasing shards alone does not add lanes.
   segmented=env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1'
   bitmap=segmented and env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
+  capacity_preset=segmented and env.get('MGBFS_MEMORY_PRESET')=='max_capacity'
+  implicit_lanes=capacity_preset and env.get('_MGBFS_PRESET_IMPLICIT_LANES')=='1'
+  implicit_queue=capacity_preset and env.get('_MGBFS_PRESET_IMPLICIT_QUEUE')=='1'
+  queue_base=None
+  if capacity_preset:
+   try:queue_base=int(env['MGBFS_SEGMENT_QUEUE_CAP'])
+   except (KeyError,TypeError,ValueError):raise ValueError('INVALID_SEGMENTED_QUEUE_CAP') from None
+   if not 1<=queue_base<=0xffffffff:raise ValueError('INVALID_SEGMENTED_QUEUE_CAP')
   shard_geometry=None
   if segmented:
    shard_geometry,baseline=_segmented_shard_plan(graph,devices,capacity,native,env,temporary,baseline,fixed_shards=fixed_shards)
@@ -198,7 +209,7 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   shard_choices=(list(dict.fromkeys([1,4,8]+hardware_policy['shards'])) if segmented else hardware_policy['shards'])
   variants=[(*v,None) for v in _transport_variants(graph,env,shard_choices)]
   if segmented:
-   forced=env.get('MGBFS_SEGMENT_OWNER_LANES')
+   forced=None if implicit_lanes else env.get('MGBFS_SEGMENT_OWNER_LANES')
    if forced is not None:
     try:forced=int(forced)
     except ValueError:raise ValueError('INVALID_SEGMENTED_OWNER_LANES') from None
@@ -228,6 +239,10 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     if forced is not None:
      if forced>ceiling:raise RuntimeError('SEGMENTED_LANES_EXCEED_SHARD_STORAGE_BUDGET')
      trial=[(max(sh,forced),f,forced) for sh,f,_ in trial]
+   if capacity_preset and implicit_lanes and fixed_shards is None:
+    # Preserve the memory-conservative geometry as a measured candidate.
+    trial.insert(0,(floor,.0625,1))
+    trial.insert(1,(floor,.0625,min(floor,4)))
    variants=list(dict.fromkeys((sh,f,default_transport,default_order,lane) for sh,f,lane in trial))
   # The same sequential startup owns these selected devices; pilot processes
   # release their allocations before the next admission. Production queries live VRAM again.
@@ -240,15 +255,23 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   hardware=_system_info(['nvidia-smi','--query-gpu=uuid,driver_version,name','--format=csv,noheader'])
   topology=_system_info(['nvidia-smi','topo','-m'])
   dependency=_dependency_identity(native,env)
-  identity={'schema':18,'selector_sha256':_content_digest(__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py'),Path(__file__).with_name('shard_policy.py'),Path(__file__).with_name('workload_geometry.py')),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':_content_digest(native),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'fixed_shards':fixed_shards,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','NCCL_NET_GDR_LEVEL','NCCL_IB_DISABLE','NCCL_NET','MGBFS_GENERIC_VRAM_RESERVE_BYTES','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
+  capacity_inventory=None
+  if capacity_preset:
+   inventory=baseline.get('inventory',[])
+   by_device={i.get('device'):i for i in inventory if isinstance(i,dict)}
+   if len(by_device)==len(selected) and all(d in by_device and type(by_device[d].get('free_bytes')) is int and by_device[d]['free_bytes']>=0 for d in selected):
+    memory_fields=('device','free_bytes','total_bytes','additional_reserve_bytes','cached_reusable_bytes','pool_reusable_bytes')
+    capacity_inventory=[{k:by_device[d].get(k) for k in memory_fields} for d in selected]
+  capacity_cache_safe=not capacity_preset or capacity_inventory is not None
+  identity={'schema':19,'capacity_inventory':capacity_inventory,'selector_sha256':_content_digest(__file__,Path(__file__).with_name('profile_families.py'),Path(__file__).with_name('size_profiles.py'),Path(__file__).with_name('shard_policy.py'),Path(__file__).with_name('workload_geometry.py')),'configuration_digest':_configuration_digest(env),'baseline_geometry':{'plan':{k:plan.get(k) for k in ('capacity','batch','queue_capacity','state_bytes','history_layers','history_algorithm','owner_lanes','sorted_owner_bytes')},'rank_capacities':[p['capacity'] for p in baseline.get('rank_plans',[])]},'hardware_policy':hardware_policy,'allow_specialized':allow_specialized,'native_dependencies':dependency,'graph':graph.digest(),'native_sha256':_content_digest(native),'devices':selected,'hardware':hardware.stdout,'topology':topology.stdout,'capacity_override':capacity,'fixed_shards':fixed_shards,'environment':{k:env.get(k) for k in ('CUDA_VISIBLE_DEVICES','NCCL_P2P_DISABLE','NCCL_SHM_DISABLE','NCCL_SOCKET_IFNAME','NCCL_NET_GDR_LEVEL','NCCL_IB_DISABLE','NCCL_NET','MGBFS_GENERIC_VRAM_RESERVE_BYTES','MGBFS_GENERIC_TRANSPORT','MGBFS_GENERIC_SORT','MGBFS_PEER_TRANSPORT')}}
   key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')));cache=root/(key+'.json')
-  if dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
+  if capacity_cache_safe and dependency is not None and hardware.returncode==0 and topology.returncode==0 and cache.is_file():
    try:saved=json.loads(cache.read_text())
    except (OSError,ValueError):saved={}
    from .specialized import match_lrx
    specialized_eligible=allow_specialized and len(selected) in (1,2,4,8) and not env.get('MGBFS_GENERIC_TRANSPORT') and not env.get('MGBFS_GENERIC_SORT') and not env.get('MGBFS_GENERIC_HISTORY') and match_lrx(graph) is not None
-   if (not segmented or (type(saved.get('segment_exact_exchange')) is bool and (env.get('MGBFS_SEGMENT_EXACT_EXCHANGE') is None or saved['segment_exact_exchange']==(env['MGBFS_SEGMENT_EXACT_EXCHANGE']=='1')))) and saved.get('generator_backend','cuda') in (('cuda','gemm') if gemm_supported(graph) else ('cuda',)) and saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and type(saved.get('shards')) is int and 1<=saved['shards']<=4096 and saved.get('batch_fraction') in ((1.0,.25,.0625) if segmented else (1.0,.25)) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order'),saved.get('segment_owner_lanes') if segmented else None) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
+   if (not segmented or (type(saved.get('segment_exact_exchange')) is bool and (env.get('MGBFS_SEGMENT_EXACT_EXCHANGE') is None or saved['segment_exact_exchange']==(env['MGBFS_SEGMENT_EXACT_EXCHANGE']=='1')))) and (not capacity_preset or (type(saved.get('segment_queue_cap')) is int and saved['segment_queue_cap']>0 and (implicit_queue or saved['segment_queue_cap']==queue_base))) and saved.get('generator_backend','cuda') in (('cuda','gemm') if gemm_supported(graph) else ('cuda',)) and saved.get('identity')==identity and saved.get('status')=='MEASURED_EQUAL_PREFIX_GPU_PROFILE' and type(saved.get('shards')) is int and 1<=saved['shards']<=4096 and saved.get('batch_fraction') in ((1.0,.25,.0625) if segmented else (1.0,.25)) and ((saved.get('backend','generic')=='generic' and (saved.get('shards'),saved.get('batch_fraction'),saved.get('transport'),saved.get('candidate_order'),saved.get('segment_owner_lanes') if segmented else None) in variants and saved.get('history_algorithm','HASH')=='HASH' or saved.get('backend','generic')=='generic' and saved.get('history_algorithm')=='SORTED_RUNS' and saved.get('owner_lanes') in (1,2,4,8) and saved.get('shards')==max(4,saved['owner_lanes']) and saved.get('transport')==default_transport and saved.get('candidate_order')=='none') or (specialized_eligible and saved.get('backend') in ('shard_ab_hash','shard_ab_sort_merge') and type(saved.get('specialized_capacity')) is int and saved['specialized_capacity']>0)):
     saved=dict(saved);saved['cache_hit']=True;saved['seconds']=time.monotonic()-started;saved['_admission_inventory']=baseline.get('inventory',[]);return saved
   from .profile_families import identity as family_identity,load as family_load,transferred
   shared_identity=family_identity(graph,plan,identity)
@@ -324,14 +347,44 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   # Compare exchange modes on the same geometry before other choices consume
   # the startup budget. Explicit user settings remain hard constraints.
   forced_exchange=env.get('MGBFS_SEGMENT_EXACT_EXCHANGE') if segmented else None
-  runs=[(entry,forced_exchange or '0') for entry in admitted]
-  if segmented and env.get('_MGBFS_SEGMENT_EXCHANGE_CAPABLE')=='1' and forced_exchange is None and len(selected)>1 and runs:
-   runs.insert(1,(runs[0][0],'1'))
-  for index,((shards,fraction,transport,order,lane,_),exchange) in enumerate(runs):
+  if capacity_preset and admitted:
+   # Compare the conservative preset and a hardware-admitted queue on the
+   # same shard geometry early, before other choices spend the time budget.
+   # Explicit user settings are never relaxed. Native admission remains live.
+   base_lane=1 if implicit_lanes else int(env['MGBFS_SEGMENT_OWNER_LANES'])
+   base=next((e for e in admitted if e[0]==baseline_shards and e[4]==base_lane),admitted[0])
+   fast=next((e for e in admitted if e[0]==base[0] and e[4]==min(base[0],4)),base)
+   def wider(entry):
+    q=entry[-1].get('queue_capacity')
+    return max(queue_base,q) if implicit_queue and type(q) is int and q>0 else queue_base
+   # Exercise the wider geometry first so later comparisons include its
+   # persistent CUDA/NCCL high-water allocations on the worker group.
+   candidates=[(fast,wider(fast)),(base,queue_base),(base,wider(base)),(fast,queue_base)]
+   candidates.extend((entry,queue_base) for entry in admitted)
+   unique=[];seen=set()
+   for entry,q in candidates:
+    candidate_key=(*entry[:5],q)
+    if candidate_key not in seen:seen.add(candidate_key);unique.append((entry,q))
+   runs=[(entry,forced_exchange or '0',q) for entry,q in unique]
+   if env.get('_MGBFS_SEGMENT_EXCHANGE_CAPABLE')=='1' and forced_exchange is None and len(selected)>1:
+    # Compare exact exchange after warming the wider geometry as well.
+    runs.insert(0,(fast,'1',wider(fast)))
+    runs.insert(1,(base,'1',queue_base))
+    distinct=[];seen=set()
+    for entry,mode,q in runs:
+     candidate_key=(*entry[:5],mode,q)
+     if candidate_key not in seen:seen.add(candidate_key);distinct.append((entry,mode,q))
+    runs=distinct
+  else:
+   runs=[(entry,forced_exchange or '0',None) for entry in admitted]
+   if segmented and env.get('_MGBFS_SEGMENT_EXCHANGE_CAPABLE')=='1' and forced_exchange is None and len(selected)>1 and runs:
+    runs.insert(1,(runs[0][0],'1',None))
+  for index,((shards,fraction,transport,order,lane,_),exchange,queue_cap) in enumerate(runs):
    if max_seconds-(time.monotonic()-started)<limit+1:break
    candidate_env=dict(env,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
    if lane is not None:candidate_env['MGBFS_SEGMENT_OWNER_LANES']=str(lane)
    if segmented:candidate_env['MGBFS_SEGMENT_EXACT_EXCHANGE']=exchange
+   if queue_cap is not None:candidate_env['MGBFS_SEGMENT_QUEUE_CAP']=str(queue_cap)
    # Segmented pilots allocate segments lazily and are not bounded by the
    # legacy common-capacity proxy. Re-admit the actual user request against
    # current free memory; keep legacy pilots on their common fixed workload.
@@ -356,13 +409,21 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     if env.get('_MGBFS_SEGMENT_EXCHANGE_CAPABLE')=='1':
      if any(type(x) is not bool or x!=(exchange=='1') for x in actual_exchange):raise RuntimeError('SEGMENTED_TUNER_EXCHANGE_RECEIPT_MISMATCH')
     elif exchange!='0' or any(x not in (None,False) for x in actual_exchange):raise RuntimeError('SEGMENTED_TUNER_EXCHANGE_RECEIPT_MISMATCH')
-    if env.get('MGBFS_MEMORY_PRESET')=='max_capacity':
-     capacities=[]
+    if capacity_preset:
+     actual_queue=[x.get('actual_queue_capacity') for x in receipts]
+     if len(actual_queue)!=len(selected) or any(type(q) is not int or not 1<=q<=queue_cap for q in actual_queue) or len(set(actual_queue))!=1:
+      raise RuntimeError('SEGMENTED_TUNER_QUEUE_RECEIPT_MISMATCH')
+     pilot.update(segment_queue_cap=queue_cap,segment_queue_capacity_by_rank=actual_queue)
+     capacities=[];equivalents=[];budgets=[]
      for r in receipts:
       budget=r.get('storage_budget_bytes');unit=r.get('bytes_per_segment');rows=r.get('rows_per_bank')
       if not all(type(x) is int and x>0 for x in (budget,unit,rows)):raise RuntimeError('SEGMENTED_CAPACITY_EVIDENCE_MISSING')
       capacities.append((budget//unit)*rows)
-     pilot.update(capacity_score_rows=min(capacities),capacity_score_rows_by_rank=capacities)
+      equivalents.append((budget*rows)//unit)
+      budgets.append(budget)
+     pilot.update(capacity_score_rows=min(capacities),capacity_score_rows_by_rank=capacities,
+      capacity_equivalent_rows=min(equivalents),capacity_equivalent_rows_by_rank=equivalents,
+      capacity_storage_budget_bytes_by_rank=budgets)
     pilot.update(segment_owner_lanes=lane,segment_owner_lanes_by_rank=actual,segment_exact_exchange=exchange=='1')
    pilots.append(pilot)
   # Compare generator on the same graph, history, capacity and transport.
@@ -433,12 +494,21 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
    if completed_depth<4 or completed_work<32768:
     excluded_prefix_candidates.append(dict(pilot,completed_depth=completed_depth,completed_work_after_warmup=completed_work,minimum_completed_depth=4,minimum_post_warmup_states=32768,native_reason=pilot['reason'],reason='INSUFFICIENT_COMPLETED_PREFIX'))
    else:pilots.append(pilot)
+  if capacity_preset and pilots and excluded_prefix_candidates:
+   priority=lambda p:(p['capacity_score_rows'],p.get('capacity_equivalent_rows',0))
+   if max(map(priority,excluded_prefix_candidates))>max(map(priority,pilots)):
+    # An uncomparable high-capacity candidate cannot silently lose to a
+    # faster, lower-capacity one. Keep the scoped conservative preset.
+    if candidate_failures:no_measured_profile()
+    return {'shard_geometry':shard_geometry,'status':'CAPACITY_COMPARISON_INSUFFICIENT_PREFIX','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':all_pilots,'excluded_prefix_candidates':excluded_prefix_candidates,'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[]),'scope':'A higher-capacity probe did not complete a comparable prefix; preset geometry retained.'}
   if len(pilots)<2:
    if candidate_failures:no_measured_profile()
    return {'shard_geometry':shard_geometry,'status':'INSUFFICIENT_PREFIX_CONSERVATIVE_PROFILE','shards':baseline_shards,'batch_fraction':1.0,'transport':default_transport,'candidate_order':default_order,'measured':False,'pilots':all_pilots,'excluded_prefix_candidates':excluded_prefix_candidates,'comparable_candidates':len(pilots),'common_depth':min(len(p['layer_seconds']) for p in all_pilots),'seconds':time.monotonic()-started,'_admission_inventory':baseline.get('inventory',[])}
-  if segmented:
+  if segmented and not capacity_preset:
    pilots,shallow=_segmented_deep_prefix_candidates(pilots)
    excluded_prefix_candidates.extend(shallow)
+  # In max_capacity, a slow short prefix must not discard a candidate with
+  # higher estimated capacity before applying the capacity-first selection.
   # Keep usable INCOMPLETE samples. Only the common completed substantial
   # prefix of the eligible candidates is compared; warmup is excluded below.
   depth=min(len(p['layer_seconds']) for p in pilots)
@@ -453,14 +523,15 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   chosen=pilots[winner]
   chosen_generator=chosen.get('generator_backend',forced_generator)
   result={'generator_backend':chosen_generator,'backend':chosen['backend'],'status':'MEASURED_EQUAL_PREFIX_GPU_PROFILE','shards':chosen['shards'],'batch_fraction':chosen['batch_fraction'],'transport':chosen['transport'],'candidate_order':chosen['candidate_order'],'measured':True,'minimum_switch_improvement':.05,'common_depth':depth,'common_layer_sizes':sizes,'scores_seconds':scores,'pilots':pilots,'identity':identity,'cache_hit':False,'seconds':time.monotonic()-started,'hardware_policy':hardware_policy,'pilot_capacity_per_rank':common_capacity,'scope':'hardware-derived prefix among admitted shard/batch and full-child/parent-origin and unsorted/radix-index transport profiles and exact bounded matrix CUDA/GEMM generators and eligible SHARD_AB hash/sorted-history owners; no claim of global optimum or large-rank acceptance'}
-  if segmented:result.update(memory_preset=env.get('MGBFS_MEMORY_PRESET','balanced'),capacity_metric_scope='minimum per-rank estimated full-segment rows; not a measured global maximum',shard_geometry=shard_geometry,resource_rejections=resource_rejections,segment_owner_lanes=chosen['segment_owner_lanes'],segment_exact_exchange=chosen['segment_exact_exchange'],winner_index=winner,scope=('permutation_bitmap' if bitmap else 'segmented24')+' GPU prefix timing among admitted shard, owner-lane, batch and exchange choices; no claim of a global optimum or large-rank acceptance')
+  if segmented:result.update(memory_preset=env.get('MGBFS_MEMORY_PRESET','balanced'),capacity_metric_scope='minimum per-rank full-segment rows, then proportional residual estimate; hash rounding, fragmentation and true graph capacity can differ',shard_geometry=shard_geometry,resource_rejections=resource_rejections,segment_owner_lanes=chosen['segment_owner_lanes'],segment_exact_exchange=chosen['segment_exact_exchange'],winner_index=winner,scope=('permutation_bitmap' if bitmap else 'segmented24')+' GPU prefix timing among admitted shard, owner-lane, queue, batch and exchange choices; no claim of a global optimum or large-rank acceptance')
+  if capacity_preset:result['segment_queue_cap']=chosen['segment_queue_cap']
   result['excluded_prefix_candidates']=excluded_prefix_candidates
   result['_admission_inventory']=[] if candidate_failures else baseline.get('inventory',[])
   if candidate_failures:result.update(candidate_failures=candidate_failures,failed_candidate_policy='REJECT_AND_MEASURE_REMAINING',winner_candidate=chosen.get('candidate'),failed_probes_retried=False)
   result.update(history_algorithm=chosen.get('history_algorithm','SORTED_RUNS' if env.get('MGBFS_GENERIC_HISTORY')=='sorted' else 'HASH'),owner_lanes=chosen.get('owner_lanes',int(env.get('MGBFS_GENERIC_OWNER_LANES','0'))))
   if chosen['backend']=='generic':result['batch']=chosen['batch']
   if chosen['backend']!='generic':result.update(specialized_capacity=chosen['specialized_capacity'],specialized_mode=chosen['specialized_mode'],specialized_transport=chosen['specialized_transport'],specialized_admission=chosen['specialized_admission'],batch=chosen['batch'])
-  if dependency is not None and hardware.returncode==0 and topology.returncode==0:
+  if capacity_cache_safe and dependency is not None and hardware.returncode==0 and topology.returncode==0:
    root.mkdir(parents=True,exist_ok=True)
    fd,path=tempfile.mkstemp(prefix=key+'-',suffix='.tmp',dir=root)
    with os.fdopen(fd,'w') as f:json.dump(result,f)
@@ -482,6 +553,7 @@ def _profile_environment(env,result):
  if result.get('history_algorithm')=='SORTED_RUNS':selected.update(MGBFS_GENERIC_HISTORY='sorted',MGBFS_GENERIC_OWNER_LANES=str(result['owner_lanes']))
  elif result.get('history_algorithm')=='HASH':selected['MGBFS_GENERIC_HISTORY']='hash'
  if result.get('segment_owner_lanes') is not None:selected['MGBFS_SEGMENT_OWNER_LANES']=str(result['segment_owner_lanes'])
+ if result.get('segment_queue_cap') is not None:selected['MGBFS_SEGMENT_QUEUE_CAP']=str(result['segment_queue_cap'])
  if result.get('segment_exact_exchange') is not None:selected['MGBFS_SEGMENT_EXACT_EXCHANGE']='1' if result['segment_exact_exchange'] else '0'
  return selected
 
