@@ -30,6 +30,7 @@ options = NativeOptions(
     memory_backend="segmented",  # or "permutation_bitmap", or "legacy"
     memory_preset="balanced",  # or "max_capacity" on the two experimental backends
     segment_rows=2**32,  # maximum rows per bank per segment; change if needed
+    segment_strategy="atomic",  # alternatively "warp" or "batch"; all are experimental
     autotune=True,
 )
 multigpubfs.enable_native(options)
@@ -51,6 +52,19 @@ finally:
 uses the GPUs named in `NativeOptions.devices`. Inspect `result.report["backend"]`
 to see what actually ran. The result contains layer sizes and compact samples;
 it is not an archive of every state. `INCOMPLETE` is not a completed diameter.
+
+## Strategy within the selected backend
+
+`segment_strategy="atomic"` is the default. `"warp"` groups reservations
+and `"batch"` uses bounded GPU batches. The strategy is independent of
+`memory_backend`, `memory_preset` and `segment_rows`; a matching native
+executable and CUDA component must support the requested strategy. You can
+also set `MGBFS_SEGMENT_STRATEGY=atomic|warp|batch` before activation.
+Unknown or unsupported strategies fail rather than silently changing the run.
+Results are workload and topology dependent: see the
+[2-GPU comparison](acceptance/2026-11-20-segmented-2gpu.md) and
+[8-GPU comparison](acceptance/2026-11-20-segmented-8gpu.md). No strategy is
+claimed fastest on B200 without a B200 measurement.
 
 ## Memory preset
 
