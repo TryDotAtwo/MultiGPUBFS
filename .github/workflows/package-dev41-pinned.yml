@@ -1,0 +1,84 @@
+name: Package pinned dev41 components after contract tests
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/package-dev41-pinned.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MGBFS_COMPONENT_BUILD_SOURCE: 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6
+      TEST_FIX_SOURCE: e8bdfc9ab4af1706815247f2b67d4ed8fdfc535d
+      COMPONENT_RUN: '44934351537'
+      RELEASE_TAG: native-pip-20261121-v41
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: 12916819cab0f9ddec62cc50a4c4c48e39b9b5d6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Install package tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf binutils
+          python -m pip install build pytest numpy packaging
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+          python -m pip install cayleypy==0.2.0
+          rustup toolchain install 1.75.0 --profile minimal
+      - name: Check configuration and packaging contracts
+        run: |
+          git fetch --no-tags origin "$TEST_FIX_SOURCE"
+          git show "$TEST_FIX_SOURCE:tests/test_segment_strategy.py" > tests/test_segment_strategy.py
+          PYTHONPATH=. python -m pytest -q tests/test_vram_release.py tests/test_segmented32_release.py tests/test_experimental_backend_capability.py tests/test_launch_cli.py tests/test_memory_preset.py
+          PYTHONPATH=. python -m pytest -q tests/test_segment_strategy.py
+          PYTHONPATH=. python -m pytest -q tests/test_segmented_shard_policy.py
+          git restore -- tests/test_segment_strategy.py
+          git diff --exit-code
+          python -c 'import json,os;json.dump({"component_build_source":os.environ["MGBFS_COMPONENT_BUILD_SOURCE"],"test_fix_source":os.environ["TEST_FIX_SOURCE"],"component_run":os.environ["COMPONENT_RUN"],"test_files":["tests/test_vram_release.py","tests/test_segmented32_release.py","tests/test_experimental_backend_capability.py","tests/test_launch_cli.py","tests/test_memory_preset.py","tests/test_segment_strategy.py","tests/test_segmented_shard_policy.py"]},open("/tmp/test-provenance.json","w"),indent=2)'
+      - name: Download matching component artifacts and shared runtime
+        run: |
+          for sm in 75 80 86 89 90 100 103 120; do
+            gh run download "$COMPONENT_RUN" --repo "$GITHUB_REPOSITORY" --name "segmented-vram-sm$sm" --dir "/tmp/components/sm$sm"
+          done
+          gh run download "$COMPONENT_RUN" --repo "$GITHUB_REPOSITORY" --name segmented-vram-smuniversal --dir /tmp/components/universal
+          curl --fail --silent --show-error --location --retry 3 -o /tmp/common.tar.gz https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261019-v31/common-dev31.tar.gz
+          echo '7d44d15a64d3032974801321420fda50027ce3724dba4d6d316cb759ffcb2c99  /tmp/common.tar.gz' | sha256sum -c -
+          mkdir /tmp/common
+          tar -xzf /tmp/common.tar.gz -C /tmp/common
+      - name: Build and verify matching native components
+        run: |
+          PYTHONPATH=. python scripts/build_segmented_cli.py --cuda-dir /tmp/components/sm86 --common-dir /tmp/common --receipt /tmp/cli-receipt.json
+          python -c 'import json; c=json.load(open("/tmp/cli-receipt.json"))["capabilities"]["segmented_strategies_v1"]; assert all(c.get(x) is True for x in ("atomic","warp","batch"))'
+          PYTHONPATH=. python scripts/assemble_segmented_release.py --builds /tmp/components --binary target/release/mgbfs --binary-receipt /tmp/cli-receipt.json --output /tmp/segmented32-release --work /tmp/segmented32-work --tag "$RELEASE_TAG"
+      - name: Assemble wheel and pin instructions
+        run: |
+          cp /tmp/segmented32-release/native-assets.json multigpubfs/native_assets.json
+          PYTHONPATH=. python -m scripts.build_lazy_native_package
+          cp dist-native/*.whl /tmp/segmented32-release/
+          cp dist-native/manifest.json /tmp/segmented32-release/wheel-manifest.json
+          cp /tmp/test-provenance.json /tmp/segmented32-release/test-provenance.json
+          (cd /tmp/segmented32-release && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Check candidate wheel without GPU
+        run: |
+          python -m venv /tmp/check-wheel
+          /tmp/check-wheel/bin/pip install --no-deps dist-native/multigpubfs-0.2.0.dev41-py3-none-any.whl
+          cd /tmp
+          /tmp/check-wheel/bin/python -m multigpubfs --help
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: segmented-vram-dev41-release
+          path: /tmp/segmented32-release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
