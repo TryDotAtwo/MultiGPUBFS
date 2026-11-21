@@ -403,7 +403,7 @@ impl SegmentedDistributedBfs{
   if rank==root{
    let shard_hash=if bitmap_mode{if strategy==SegmentStrategy::Batch{mix((h/u64::from(p.world))>>6)}else{mix(h)}}else{h};
    let shard=(((shard_hash as u32 as u64)*u64::from(p.shards))>>32) as usize;
-   if !result.make_segment(shard)?||(sorted_hash&&result.hash_view(shard,false)?.is_none()){failed=1}else{
+   if result.make_segment_prepared(shard,false)?.is_none(){failed=1}else{
     let input=Buffer::new(p.elements as usize*p.state_bytes as usize,d)?;
     if p.state_bytes==1{input.upload(&g.start.iter().map(|&v|v as u8).collect::<Vec<_>>())?;}else{input.upload(&g.start)?;}
     let hashes=Buffer::new(8,d)?;hashes.upload(&[h])?;let seg=&result.segments[shard][0];
@@ -419,7 +419,8 @@ impl SegmentedDistributedBfs{
   }
   if result.vote(failed)?!=0{return Err("SEGMENTED_ROOT_ADMISSION_FAILED".into())}Ok(result)
  }
- fn make_segment(&mut self,shard:usize)->Result<bool>{
+ fn make_segment_bounded(&mut self,shard:usize,max_rows:u64)->Result<bool>{
+  if max_rows==0{return Err("SEGMENTED_SEGMENT_RETRY_LIMIT".into())}
   // A private test failpoint triggers a real, bounded, oversized cudaMalloc
   // on this rank only after several complete layers. It never fills VRAM.
   if !self.test_oom_done{
@@ -449,7 +450,7 @@ impl SegmentedDistributedBfs{
   crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
   let available=self.remaining_bytes.min((free as u64).saturating_sub(self.reserve_bytes));
   let budget=available.saturating_sub(descriptor_peak);
-  let mut upper=self.layout.rows_per_bank;let mut allocation_failed=false;
+  let mut upper=self.layout.rows_per_bank.min(max_rows);let mut allocation_failed=false;
   loop{
    let sorted=self.strategy==SegmentStrategy::Batch&&self.bitmap.is_none();
     let fit=|rows,budget|if sorted{fit_sorted_segment_layout(self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget)}else{fit_segment_layout_compact(self.bitmap.is_some(),self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget,self.compact_positions)};
@@ -545,6 +546,41 @@ impl SegmentedDistributedBfs{
   let item=self.hash_shards[shard].as_ref().unwrap();
   let view=item.view.as_ref().ok_or("SEGMENTED_HASH_VIEW_MISSING")?;
   Ok(Some(OwnerPrepared{sealed:ptr::null(),descriptor_count:0,hash_segments:view.data.ptr.cast(),hash_count:u32::try_from(n).map_err(|_|"SEGMENTED_DESCRIPTOR_SIZE")?,hash_runs:item.dir.ptr.cast(),hash_run_count:item.count_ptr(),hash_run_capacity:item.capacity}))
+ }
+ // Allocate a segment and its owner metadata as one transaction. If metadata
+ // no longer fits after the segment allocation, undo only the new segment and
+ // retry a smaller one before declaring this rank out of capacity.
+ fn owner_prepared(&mut self,shard:usize,grow:bool)->Result<Option<OwnerPrepared>>{
+  if self.strategy==SegmentStrategy::Batch&&self.bitmap.is_none(){
+   self.hash_view(shard,grow)
+  }else{
+   let view=if self.bitmap.is_some(){Some((ptr::null(),0))}else{self.descriptor_view(shard)?};
+   Ok(view.map(|(sealed,descriptor_count)|OwnerPrepared{sealed,descriptor_count,hash_segments:ptr::null(),hash_count:0,hash_runs:ptr::null_mut(),hash_run_count:ptr::null_mut(),hash_run_capacity:0}))
+  }
+ }
+ fn make_segment_prepared(&mut self,shard:usize,mut grow:bool)->Result<Option<OwnerPrepared>>{
+  let mut max_rows=self.layout.rows_per_bank;
+  loop{
+   if !self.make_segment_bounded(shard,max_rows)?{return Ok(None)}
+   // A directory may grow successfully even if allocating its segment view
+   // then fails. Never grow the same directory twice during this retry.
+   let before=if grow&&self.strategy==SegmentStrategy::Batch&&self.bitmap.is_none(){
+    Some(self.hash_shards[shard].as_ref().ok_or("SEGMENTED_HASH_GROW_WITHOUT_DIRECTORY")?.capacity)
+   }else{None};
+   let prepared=self.owner_prepared(shard,grow)?;
+   if let Some(capacity)=before{
+    if self.hash_shards[shard].as_ref().ok_or("SEGMENTED_HASH_DIRECTORY_MISSING")?.capacity>capacity{grow=false;}
+   }
+   if prepared.is_some(){self.last_resource=None;return Ok(prepared)}
+   crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;
+   let released=self.segments[shard].pop().ok_or("SEGMENTED_ROLLBACK_MISSING")?;
+   let failed_rows=released.desc.capacity;
+   self.remaining_bytes=self.remaining_bytes.checked_add(released.device_bytes).ok_or("SEGMENTED_ROLLBACK_OVERFLOW")?;
+   drop(released);
+   if failed_rows<=1{return Ok(None)}
+   max_rows=failed_rows/2;
+   eprintln!("SEGMENTED_SEGMENT_RETRY rank={} shard={} previous_rows={} next_max_rows={}",self.rank,shard,failed_rows,max_rows);
+  }
  }
  fn vote(&self,value:u32)->Result<u32>{let s=self.base.stream.ptr;self.control.upload(&[value])?;
   crate::generic_native::checked!(mgbfs_nccl_all_reduce_max_u32,unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm.ptr,self.control.at(0),self.control.at(4),s)})?;
@@ -757,19 +793,13 @@ impl SegmentedDistributedBfs {
     for (i,v) in progress.iter_mut().enumerate(){
      if v.selected==0{continue}
      let inserted=v.pass==self.segments[v.shard].len();
-      if inserted&&!self.make_segment(v.shard)?{
-       let reason=self.last_resource.as_ref().and_then(|v|v.get("reason")).and_then(|v|v.as_str()).unwrap_or("unknown");eprintln!("SEGMENTED_RESOURCE rank={} phase=segment_allocation reason={} detail={}",self.rank,reason,self.last_resource.as_ref().map_or("unknown".to_owned(),|v|v.to_string()));
-       return Ok(10)
-      }
-      let resolved=if self.strategy==SegmentStrategy::Batch&&self.bitmap.is_none(){
-       self.hash_view(v.shard,v.grow_runs)?
+      let resolved=if inserted{
+       self.make_segment_prepared(v.shard,v.grow_runs)?
       }else{
-       let view=if self.bitmap.is_some(){Some((ptr::null(),0))}else{self.descriptor_view(v.shard)?};
-       view.map(|(sealed,descriptor_count)|OwnerPrepared{sealed,descriptor_count,hash_segments:ptr::null(),hash_count:0,hash_runs:ptr::null_mut(),hash_run_count:ptr::null_mut(),hash_run_capacity:0})
+       self.owner_prepared(v.shard,v.grow_runs)?
       };
       let Some(view)=resolved else{
-       if inserted{crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;let released=self.segments[v.shard].pop().ok_or("SEGMENTED_ROLLBACK_MISSING")?;self.remaining_bytes=self.remaining_bytes.checked_add(released.device_bytes).ok_or("SEGMENTED_ROLLBACK_OVERFLOW")?;drop(released);}
-       eprintln!("SEGMENTED_RESOURCE rank={} phase=descriptor_allocation detail={}",self.rank,self.last_resource.as_ref().map_or("unknown".to_owned(),|v|v.to_string()));return Ok(10)
+       eprintln!("SEGMENTED_RESOURCE rank={} phase=segment_or_descriptor_allocation detail={}",self.rank,self.last_resource.as_ref().map_or("unknown".to_owned(),|v|v.to_string()));return Ok(10)
       };
       v.grow_runs=false;prepared[i]=Some(view);
     }
