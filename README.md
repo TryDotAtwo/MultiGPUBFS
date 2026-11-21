@@ -2,7 +2,7 @@
 
 [Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and checksummed local outputs. Source and native wheels come from GitHub; no Kaggle Inputs are required.
 
-Experimental, opt-in memory backends: segmented hash with configurable 32-bit local segment indices and an exact permutation bitmap. The [dev42 setup and examples](docs/experimental-segmented.md) use published matching native components; the [eight-GPU acceptance](docs/acceptance/2026-11-22-dev42-8gpu.md) describes verified coverage and limits. The existing legacy backend remains the default.
+Experimental, opt-in memory backends: segmented hash with configurable 32-bit local segment indices and an exact permutation bitmap. The [dev43 setup and examples](docs/experimental-segmented.md) use published matching native components; the [eight-GPU acceptance](docs/acceptance/2026-11-22-dev43-8gpu.md) describes verified coverage and limits. The existing legacy backend remains the default.
 
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
@@ -22,7 +22,7 @@ The current implementation target is specified in
 
 The current native graph runtime supports CayleyPy permutation and int64 matrix actions through one [automatic launcher](docs/unified-launch.md). It plans memory from actual free VRAM and uses bounded same-graph GPU measurements to select history algorithms, owner lanes and shard/batch/transport profiles. Proved inverse-closed graphs use three VRAM layer banks; directed graphs retain all visited states. Exact equality resolves hash collisions. Compact output, resource limits and cancellation preserve completed-layer evidence.
 
-[Current acceptance and remaining hardware boundaries](docs/acceptance/2026-11-22-dev42-8gpu.md) distinguishes measured eight-GPU execution from unverified B200 and multi-host configurations. Historical research and native-matrix status documents describe earlier implementation stages.
+[Current acceptance and remaining hardware boundaries](docs/acceptance/2026-11-22-dev43-8gpu.md) distinguishes measured eight-GPU execution from unverified B200 and multi-host configurations. Historical research and native-matrix status documents describe earlier implementation stages.
 
 The measured one/two-rank reference is also available through
 `mgbfs bench --reference` in a Linux CUDA build. It is not the production
