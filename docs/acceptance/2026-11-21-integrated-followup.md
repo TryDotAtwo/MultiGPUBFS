@@ -43,9 +43,11 @@ VRAM maximum is not a measured instantaneous peak.
 | s12-ab-hash-on2 | COMPLETE / 66 | 173.486 | 91.933 | 2.819 | 30.780 | 1497 | 9551292 |
 | s12-ab-hash-on3 | COMPLETE / 66 | 171.049 | 91.339 | 2.837 | 30.980 | 1497 | 9550772 |
 
-For bitmap, median off/on was 123.835/95.962 s (recovery changes median BFS time by -22.5%). Off range 117.235–128.779 s; on range 95.172–102.631 s.
+For bitmap, median off/on was 123.835/95.962 s (the observed median difference was -22.5%; causation is not established). Off range 117.235–128.779 s; on range 95.172–102.631 s.
 
-For hash, median off/on was 168.179/173.486 s (recovery changes median BFS time by +3.2%). Off range 167.878–178.031 s; on range 171.049–176.186 s.
+For hash, median off/on was 168.179/173.486 s (the observed median difference was +3.2%; causation is not established). Off range 167.878–178.031 s; on range 171.049–176.186 s.
+
+**Later investigation:** In all six bitmap runs above, each rank reported 32,646 prefetched chunks and two route retries, regardless of the recovery setting. Those aggregate counters do not establish identical work per layer, but they do not support attributing the timing difference to fewer prefetched chunks. The measured advantage also did not reproduce on the subsequently packaged dev41 binary; see the [packaged follow-up](2026-11-21-dev41-package-sm86.md). The cause of the earlier timing difference remains unknown.
 
 ### S13 common-prefix check on the coordinated artifact
 
