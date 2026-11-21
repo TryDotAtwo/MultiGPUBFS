@@ -11,6 +11,7 @@ ap.add_argument("--strategy",choices=["atomic","warp","batch"],required=True)
 ap.add_argument("--repeat",type=int,default=1)
 ap.add_argument("--n",type=int,default=12)
 ap.add_argument("--batch",type=int,default=8192,help="requested batch; admission may lower it")
+ap.add_argument("--autotune",action="store_true",help="test the production automatic selector instead of --batch")
 ap.add_argument("--max-depth",type=int)
 ap.add_argument("--base",default="/workspace/bench-segmented-snapshot")
 a=ap.parse_args()
@@ -77,16 +78,16 @@ initial={"backend":a.backend,"strategy":a.strategy,"repeat":a.repeat,
  "telemetry_interval_seconds":1,"telemetry_scope":"sampled maximum, can miss short peaks",
  "graph":"adjacent transpositions S%d, initial identity"%n,"devices":list(range(8)),"shards":8,
  "owner_lanes":4,"configured_segment_rows":2**32,"allocation_segment_rows":1048576,
- "batch":a.batch,"preset":"balanced","autotune":False,"exact_exchange":True,"max_depth":a.max_depth}
+ "batch":None if a.autotune else a.batch,"preset":"balanced","autotune":a.autotune,"exact_exchange":True,"max_depth":a.max_depth}
 (out/"invocation.json").write_text(json.dumps(initial,indent=2))
 thread=threading.Thread(target=sample,daemon=True);thread.start()
 try:
  context_started=time.monotonic()
  with persistent_graph_workers():
   run_started=time.monotonic()
-  r=run_graph(graph,out/"result",devices=list(range(8)),shards=8,autotune=False,
+  r=run_graph(graph,out/"result",devices=list(range(8)),shards=8,autotune=a.autotune,
    executable=native,memory_backend=a.backend,memory_preset="balanced",
-   segment_rows=2**32,segment_strategy=a.strategy,_batch=a.batch,_profile_layers=a.max_depth)
+   segment_rows=2**32,segment_strategy=a.strategy,_batch=None if a.autotune else a.batch,_profile_layers=a.max_depth)
   run_finished=time.monotonic()
  context_finished=time.monotonic()
  expected=mahonian(n); sizes=r["layer_sizes"]; times=r["layer_seconds"]
@@ -116,7 +117,7 @@ try:
   "python_run_graph_wall_seconds":run_finished-run_started,"persistent_context_exit_seconds":context_finished-run_finished,"persistent_context_enter_seconds":run_started-context_started,
   "bfs_seconds":r["bfs_seconds"],"setup_seconds":r["setup_seconds"],
   "launch_wall_seconds":r["launch_wall_seconds"],"source_retries":r["source_retries"],
-  "window":window,"checks":checks,"plan":r["plan"],"ranks":r["segment_memory_by_rank"],
+  "window":window,"checks":checks,"plan":r["plan"],"autotune":r.get("autotune"),"ranks":r["segment_memory_by_rank"],
   "layer_sizes":sizes,"layer_seconds":times,"runtime_identity":r["runtime_identity"]}
  (out/"summary.json").write_text(json.dumps(result,indent=2))
  print("BENCH_RESULT",json.dumps(result),flush=True)
