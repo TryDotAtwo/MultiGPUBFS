@@ -1,0 +1,36 @@
+name: Refresh dev41 usage links
+on:
+  push:
+    branches: [codex/segmented-dev41-candidate]
+    paths: [.github/workflows/refresh-dev41-usage.yml]
+permissions:
+  contents: write
+jobs:
+  refresh:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Link source-install verification and final report
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/453935898" > "$RUNNER_TEMP/release.json"
+          python3 - "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/update.json" <<'PY'
+          import json,pathlib,sys
+          d=json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert d['tag_name']=='native-pip-20261121-v41' and not d['draft'] and d['prerelease']
+          old='/blob/d4f6b6c5c9dfdea4b99eb95bd3a1cbd171a6adcc/docs/'
+          new='/blob/0c3f1847aa41b150572a6d1bdfab0c10dab4bd10/docs/'
+          body=d['body']
+          assert body.count(old)==2,body
+          pathlib.Path(sys.argv[2]).write_text(json.dumps({'body':body.replace(old,new)}))
+          PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/453935898" --input "$RUNNER_TEMP/update.json" > "$RUNNER_TEMP/updated.json"
+          python3 - "$RUNNER_TEMP/updated.json" <<'PY'
+          import json,pathlib,sys
+          d=json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert not d['draft'] and d['prerelease']
+          assert d['body'].count('/blob/0c3f1847aa41b150572a6d1bdfab0c10dab4bd10/docs/')==2
+          print('RELEASE_USAGE_LINKS_REFRESHED')
+          PY
