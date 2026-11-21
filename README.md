@@ -2,13 +2,13 @@
 
 [Run a reproducible LRX / Rapaport M2 pair sweep on Kaggle](docs/reproduce-pair-sweeps.md): automatic GPU selection/tuning, compact terminal states, complete layer tables and checksummed local outputs. Source and native wheels come from GitHub; no Kaggle Inputs are required.
 
-Experimental, opt-in memory backends (24-bit local segments and exact permutation bitmap): [selection, measurements and current limits](docs/experimental-memory-backends.md). They require a matching rebuilt native runtime; current published assets do not contain them.
+Experimental, opt-in memory backends: segmented hash with configurable 32-bit local segment indices and an exact permutation bitmap. The [dev42 setup and examples](docs/experimental-segmented.md) use published matching native components; the [eight-GPU acceptance](docs/acceptance/2026-11-22-dev42-8gpu.md) describes verified coverage and limits. The existing legacy backend remains the default.
 
 CayleyPy `graph.bfs()` integration: [how `enable_native()` works, CPU/GPU selection, and source links](docs/cayleypy-native-integration.md).
 
 Current automatic per-GPU native package: [server update and calculation](docs/server-quickstart-ru.md), [GPU-free prefetch and offline shared-cache jobs](docs/native-prefetch.md), [measured prefetch acceptance](docs/native-prefetch-acceptance-2026-10-15.md).
 
-Verified Linux native development package: [installation without local compilation](docs/install-native-package.md). Current fast-tuning and certified-geometry wheel acceptance: clean Linux installation and physical2×T4 GPU tests; prior native one-GPU checks are recorded separately. Larger/Blackwell and physical multi-host configurations remain unverified.
+Verified Linux native development package: [installation without local compilation](docs/experimental-segmented.md). The latest experimental wheel was tested on eight RTX 3060 GPUs; B200, a full S14 and physical multi-host execution remain unverified for this release.
 
 Research workspace for understanding exact breadth-first search, from a small
 CPU reference to conceptual and measurement-based study of GPU and multi-GPU
@@ -22,7 +22,7 @@ The current implementation target is specified in
 
 The current native graph runtime supports CayleyPy permutation and int64 matrix actions through one [automatic launcher](docs/unified-launch.md). It plans memory from actual free VRAM and uses bounded same-graph GPU measurements to select history algorithms, owner lanes and shard/batch/transport profiles. Proved inverse-closed graphs use three VRAM layer banks; directed graphs retain all visited states. Exact equality resolves hash collisions. Compact output, resource limits and cancellation preserve completed-layer evidence.
 
-[Current acceptance and remaining hardware boundaries](docs/universal-current-audit-2026-10-10.md) separates actual one/twoRTX3060 results from logical8/128rank contracts. Physical multi-host, larger-rank and Blackwell execution remain unverified. Historical research and native-matrix status documents describe earlier implementation stages and are not the current unified launch status.
+[Current acceptance and remaining hardware boundaries](docs/acceptance/2026-11-22-dev42-8gpu.md) distinguishes measured eight-GPU execution from unverified B200 and multi-host configurations. Historical research and native-matrix status documents describe earlier implementation stages.
 
 The measured one/two-rank reference is also available through
 `mgbfs bench --reference` in a Linux CUDA build. It is not the production
