@@ -10,7 +10,7 @@ establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The dev39 release requires `segmented_memory_presets_v1` and native ABI 3.
+The dev40 release requires `segmented_memory_presets_v1`, `segmented_strategies_v1` and native ABI 3.
 The executable and CUDA component must come from the same build. The dev38
 binary and CUDA component implement ABI 2 and cannot be combined with this
 source. The launcher checks the capability before BFS and the backend in the
