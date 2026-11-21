@@ -40,6 +40,14 @@ class PreflightBackendTests(unittest.TestCase):
      self.assertEqual(launch.call_args.kwargs['devices'],[0,1])
      self.assertEqual(launch.call_args.kwargs['_profile_layers'],4)
 
+def _healthy_pool(cache):
+ from types import SimpleNamespace
+ from multigpubfs.nccl_preflight import bind_communication_group
+ process=SimpleNamespace(pid=1234,poll=lambda:None)
+ pool=SimpleNamespace(communication_profiles=cache,workers=[SimpleNamespace(process=process,job=None)],generation=1,identity=('gpu',),prepare_family=lambda env:None)
+ bind_communication_group(pool)
+ return pool
+
 class TransportReuseTests(unittest.TestCase):
  def test_new_graph_rehearses_backend_without_repeating_transport_probe(self):
   from types import SimpleNamespace
@@ -49,7 +57,7 @@ class TransportReuseTests(unittest.TestCase):
   old={'status':'VERIFIED','selected':'inherited','policy':{},'ranks':[{'rank':0}],
        'rehearsal_graph':'old-graph','rehearsal_backend':'permutation_bitmap',
        'bfs_prefix':{'status':'COMPLETE','layer_sizes':[1,1]},'seconds':3.0,'evidence':'old-evidence'}
-  active=SimpleNamespace(communication_profiles={('same','permutation_bitmap','old-graph'):({'MGBFS_GENERIC_VRAM_RESERVE_BYTES':'42'},old)})
+  active=_healthy_pool({('same','permutation_bitmap','old-graph'):({'MGBFS_GENERIC_VRAM_RESERVE_BYTES':'42'},old)})
   env={'MGBFS_EXPERIMENTAL_SEGMENTED24':'1','MGBFS_EXPERIMENTAL_BITMAP':'1'}
   with tempfile.TemporaryDirectory() as directory,patch('multigpubfs.generic_session._active',active),patch('multigpubfs.nccl_preflight._identity',return_value='same'),patch('multigpubfs.nccl_preflight._cached_prefix',return_value={'status':'COMPLETE','layer_sizes':[1,1]}) as prefix,patch('multigpubfs.nccl_preflight.alternatives',side_effect=AssertionError('transport was repeated')):
    patched,receipt=prepare('native',[0,1],env,Path(directory)/'out',graph)
@@ -58,6 +66,17 @@ class TransportReuseTests(unittest.TestCase):
    self.assertEqual(receipt['rehearsal_graph'],graph.digest())
    self.assertEqual(receipt['bfs_prefix']['layer_sizes'],[1,1])
    self.assertEqual(prefix.call_count,1)
+ def test_cross_segment_backend_rehearses_but_reuses_transport(self):
+  from multigpubfs.nccl_preflight import prepare
+  graph=GraphDefinition.permutation([[1,0,2]],[0,1,2])
+  old={'status':'VERIFIED','policy':{},'ranks':[{'rank':0}],
+       'rehearsal_graph':'old','rehearsal_backend':'segmented24',
+       'bfs_prefix':{'status':'COMPLETE','layer_sizes':[1,1]},'seconds':3.0,'evidence':'old'}
+  active=_healthy_pool({('same','segmented24','old'):({},old)})
+  env={'MGBFS_EXPERIMENTAL_SEGMENTED24':'1','MGBFS_EXPERIMENTAL_BITMAP':'1'}
+  with tempfile.TemporaryDirectory() as directory,patch('multigpubfs.generic_session._active',active),patch('multigpubfs.nccl_preflight._identity',return_value='same'),patch('multigpubfs.nccl_preflight._cached_prefix',return_value={'status':'COMPLETE','layer_sizes':[1,1]}) as prefix,patch('multigpubfs.nccl_preflight.alternatives',side_effect=AssertionError('transport was repeated')):
+   _,receipt=prepare('native',[0,1],env,Path(directory)/'out',graph)
+   self.assertTrue(receipt['transport_cache_hit']);self.assertEqual(receipt['rehearsal_backend'],'permutation_bitmap');self.assertEqual(prefix.call_count,1)
  def test_new_segment_mode_rehearses_but_reuses_transport(self):
   from types import SimpleNamespace
   from multigpubfs.nccl_preflight import prepare, _preflight_cache_key
@@ -68,7 +87,7 @@ class TransportReuseTests(unittest.TestCase):
        'rehearsal_graph':graph.digest(),'rehearsal_backend':'permutation_bitmap',
        'bfs_prefix':{'status':'COMPLETE','layer_sizes':[1,1]},'seconds':3.0,'evidence':'old'}
   with patch('multigpubfs.nccl_preflight._identity',return_value='same'):
-   active=SimpleNamespace(communication_profiles={_preflight_cache_key('native',[0,1],env,graph):({},old)})
+   active=_healthy_pool({_preflight_cache_key('native',[0,1],env,graph):({},old)})
    with tempfile.TemporaryDirectory() as directory,patch('multigpubfs.generic_session._active',active),patch('multigpubfs.nccl_preflight._cached_prefix',return_value={'status':'COMPLETE','layer_sizes':[1,1]}) as prefix,patch('multigpubfs.nccl_preflight.alternatives',side_effect=AssertionError('transport was repeated')):
     _,receipt=prepare('native',[0,1],newer,Path(directory)/'out',graph)
     self.assertTrue(receipt['transport_cache_hit'])
@@ -81,7 +100,7 @@ class TransportReuseTests(unittest.TestCase):
   graph=GraphDefinition.permutation([[1,0,2]],[0,1,2]);env={}
   old={'status':'VERIFIED','selected':'inherited','policy':{},'ranks':[],
        'rehearsal_graph':'old','rehearsal_backend':'legacy','seconds':1,'evidence':'old'}
-  active=SimpleNamespace(communication_profiles={('same','legacy','old'):({},old)})
+  active=_healthy_pool({('same','legacy','old'):({},old)})
   with tempfile.TemporaryDirectory() as directory,patch('multigpubfs.generic_session._active',active),patch('multigpubfs.nccl_preflight._identity',return_value='same'),patch('multigpubfs.nccl_preflight._cached_prefix',side_effect=RuntimeError('BROKEN_PREFIX')),patch('multigpubfs.nccl_preflight.alternatives',return_value=[]):
    with self.assertRaisesRegex(RuntimeError,'NO_VERIFIED_TRANSPORT'):
     prepare('native',[0,1],env,Path(directory)/'out',graph)

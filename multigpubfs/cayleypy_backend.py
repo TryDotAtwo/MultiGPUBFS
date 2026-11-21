@@ -21,6 +21,7 @@ class NativeOptions:
     memory_preset: str = "balanced"
     segment_rows: int = 1 << 32
     segment_strategy: str = field(default_factory=lambda: os.environ.get("MGBFS_SEGMENT_STRATEGY", "atomic"))
+    bitmap_owner_page: int | None = None
 
     def __post_init__(self):
         _normalize_segment_strategy(self.segment_strategy)
@@ -28,6 +29,11 @@ class NativeOptions:
             raise ValueError("INVALID_MEMORY_PRESET")
         if type(self.segment_rows) is not int or not 1 <= self.segment_rows <= 1 << 32:
             raise ValueError("INVALID_SEGMENT_ROWS")
+        page=self.bitmap_owner_page
+        if page is not None and (type(page) is not int or page<0 or page>1<<20 or (page and page&(page-1))):
+            raise ValueError("INVALID_BITMAP_OWNER_PAGE")
+        if page and self.memory_backend!="permutation_bitmap":
+            raise ValueError("BITMAP_OWNER_PAGE_REQUIRES_BITMAP")
 
 
 @dataclass(frozen=True)
@@ -128,7 +134,7 @@ def _search(original, graph, backend, options, output, kwargs):
                            max_seconds=options.max_seconds, autotune=options.autotune,
                            memory_backend=options.memory_backend,
                            segment_rows=options.segment_rows, memory_preset=options.memory_preset,
-                           segment_strategy=options.segment_strategy)
+                           segment_strategy=options.segment_strategy, bitmap_owner_page=options.bitmap_owner_page)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

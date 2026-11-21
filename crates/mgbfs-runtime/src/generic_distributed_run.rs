@@ -116,7 +116,17 @@ pub fn run(args:&[String])->Result<()>{
   let strategy=crate::segmented_strategy::SegmentStrategy::parse(value.as_deref()).map_err(str::to_owned)?;
   if strategy!=crate::segmented_strategy::SegmentStrategy::Atomic{return Err("SEGMENT_STRATEGY_REQUIRES_SEGMENTED_BACKEND".into())}
  }
- if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}let g=graph(&args[0])?;let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
+ if args.len()!=6{return Err("CLI_GRAPH_RANK_ARGUMENTS".into());}
+ let launch:Launch=serde_json::from_reader(std::fs::File::open(&args[1]).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+ let rank:u32=args[2].parse().map_err(|_|"CLI_GRAPH_RANK")?;
+ let bootstrap=Path::new(&args[3]);let output=Path::new(&args[4]);
+ crate::native_fault::reset(Some(rank),launch.devices.get(rank as usize).copied());
+ // File/graph validation is a local result until all segmented ranks report.
+ // A missing or malformed launch file cannot establish a world size and is
+ // still handled by the parent supervisor rather than this agreement.
+ let ready=if segmented{Some(crate::segmented_host_ready::HostAgreement::new(bootstrap,rank,launch.plan.world)?)}else{None};
+ let validated:Result<_>=(||{
+ let g=graph(&args[0])?;
  if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
  if plans.len()!=launch.devices.len(){return Err("GRAPH_RANK_PLANS".into());}
@@ -128,11 +138,35 @@ pub fn run(args:&[String])->Result<()>{
   else{if previous_base.map_or(p.minimum_frontier!=0,|previous|p.minimum_frontier<=previous){return Err("SIZE_PROFILE_BASE_INVALID".into());}previous_base=Some(p.minimum_frontier);}
  }
  if !launch.size_profiles.is_empty()&&previous_base.is_none(){return Err("SIZE_PROFILE_BASE_MISSING".into());}
+ let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;
+ if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}
+ std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
+ Ok((g,plans,seconds))
+ })();
+ if let Some(agreement)=&ready{
+  let descriptor=validated.as_ref().ok().map(|_|serde_json::json!({"schema":1,"graph_digest":launch.graph_digest,"devices":launch.devices,"plan":launch.plan,"owner_cuts":launch.owner_cuts}));
+  agreement.agree("arguments",&validated,descriptor.as_ref())?;
+ }
+ let(g,plans,seconds)=validated?;
  crate::native_fault::reset(Some(rank),Some(launch.devices[rank as usize]));
  let rank_plan=plans[rank as usize].clone();
- let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;let output=Path::new(&args[4]);if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
- let bootstrap=Path::new(&args[3]);let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}id=crate::session_cache::bootstrap_id(||{let mut fresh=[0u8;128];crate::generic_native::checked!(mgbfs_nccl_unique_id, unsafe{mgbfs_nccl_unique_id(fresh.as_mut_ptr().cast())})?;Ok(fresh)})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let waiter=crate::session_wait::FileWaiter::new(bootstrap.parent().ok_or("GRAPH_BOOTSTRAP_PARENT")?);if !waiter.wait(bootstrap,None,Some(Duration::from_secs(60)))?{return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);let cached=crate::session_cache::bootstrap_id(||Ok(id))?;if cached!=id{return Err("GENERIC_SESSION_COMM_ID_MISMATCH".into());}}
- if segmented{return run_segmented(&g,&launch,rank,rank_plan,&id,seconds,output)}
+ if let Some(agreement)=&ready {
+  // This host-only vote precedes both bootstrap-ID reuse and comm_take/create.
+  // The ordered device list and transport environment are part of the epoch.
+  let mode:Result<_>=(||{
+   crate::segmented_host_ready::injected("comm-mode")?;
+   crate::session_cache::test_drop_parked_segmented_comm()?;
+   let transport=std::env::vars().filter(|(key,_)|key.starts_with("NCCL_") ||
+     matches!(key.as_str(),"CUDA_VISIBLE_DEVICES"|"CUDA_DEVICE_ORDER"|"CUDA_MODULE_LOADING"|"CUDA_DISABLE_PTX_JIT"|"LD_LIBRARY_PATH"|"LD_PRELOAD"|"LD_AUDIT"))
+     .collect::<std::collections::BTreeMap<_,_>>();
+   Ok(serde_json::json!({"schema":1,"communicator":crate::session_cache::segmented_comm_identity()?,
+      "runtime":crate::segmented_host_ready::runtime_identity()?,"devices":launch.devices,"transport":transport}))
+  })();
+  agreement.agree("comm-mode",&mode,mode.as_ref().ok())?;
+  eprintln!("SEGMENTED_COMM_AGREEMENT rank={rank} {}",mode.as_ref().map_err(Clone::clone)?["communicator"]);
+ }
+ let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}id=crate::session_cache::bootstrap_id(||{let mut fresh=[0u8;128];crate::generic_native::checked!(mgbfs_nccl_unique_id, unsafe{mgbfs_nccl_unique_id(fresh.as_mut_ptr().cast())})?;Ok(fresh)})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let waiter=crate::session_wait::FileWaiter::new(bootstrap.parent().ok_or("GRAPH_BOOTSTRAP_PARENT")?);if !waiter.wait(bootstrap,None,Some(Duration::from_secs(60)))?{return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);let cached=crate::session_cache::bootstrap_id(||Ok(id))?;if cached!=id{return Err("GENERIC_SESSION_COMM_ID_MISMATCH".into());}}
+ if segmented{return run_segmented(&g,&launch,rank,rank_plan,&id,seconds,output,ready.as_ref().ok_or("SEGMENTED_HOST_AGREEMENT_MISSING")?)}
  let cache_shape=format!("{}:{}",serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?,std::env::var("MGBFS_GENERIC_GENERATOR").unwrap_or_default());if rank_plan.history_algorithm=="HASH"{let required=GenericDistributedBfs::buffer_requirements(&g,&rank_plan,launch.owner_cuts.as_deref())?;crate::session_cache::begin_generic(cache_shape,&required)?;}else{crate::session_cache::begin(cache_shape);}let _signals=Signals::new();let setup=Instant::now();let mut bfs=GenericDistributedBfs::new_with_cuts(&g,launch.devices[rank as usize],rank,rank_plan.clone(),&id,0x19f856a2,64,launch.owner_cuts.as_deref())?;if launch.online_size_tuning{bfs.enable_online_size_tuning();}let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={}",launch.devices[rank as usize]);
  crate::job_phase::set("bfs")?;
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let(status,reason)=loop{
@@ -148,23 +182,30 @@ pub fn run(args:&[String])->Result<()>{
 }
 
 // Private opt-in used solely for integration tests; no public API promises yet.
-fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:&[u8;128],seconds:u64,output:&Path)->Result<()>{
- if launch.online_size_tuning||launch.size_profiles.iter().any(|p|p.generator_backend!="cuda"){return Err("SEGMENTED_EXPERIMENT_PROFILE_NOT_SUPPORTED".into())}
- let backend=if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
- crate::session_cache::begin(format!("{}:{}",backend,serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?));
- // Shape changes park legacy cudaMallocAsync pages in the pool. Return idle
- // pages before this backend admits ordinary cudaMalloc segment storage.
- crate::generic_native::checked!(cudaSetDevice,unsafe{cudaSetDevice(launch.devices[rank as usize] as i32)})?;
- let pool_idle_before=crate::generic_pool::available()?;crate::generic_pool::trim_idle()?;let pool_idle_after=crate::generic_pool::available()?;
+fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:&[u8;128],seconds:u64,output:&Path,ready:&crate::segmented_host_ready::HostAgreement)->Result<()>{
+ let entry:Result<_>=(||{
+  crate::segmented_host_ready::injected("entry")?;
+  if launch.online_size_tuning||launch.size_profiles.iter().any(|p|p.generator_backend!="cuda"){return Err("SEGMENTED_EXPERIMENT_PROFILE_NOT_SUPPORTED".into())}
+  let backend=if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
+  let identity=crate::segmented_host_ready::runtime_identity()?;
+  let descriptor=serde_json::json!({"schema":1,"runtime":identity,"graph_digest":digest(g)?,"devices":launch.devices,"world":launch.plan.world,"shards":launch.plan.shards,"elements":launch.plan.elements,"state_bytes":launch.plan.state_bytes,"batch":launch.plan.batch,"queue_capacity":launch.plan.queue_capacity,"history_algorithm":launch.plan.history_algorithm,"history_layers":launch.plan.history_layers,"owner_cuts":launch.owner_cuts,"backend":backend});
+  crate::session_cache::begin(format!("{}:{}",backend,serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?));
+  crate::generic_native::checked!(cudaSetDevice,unsafe{cudaSetDevice(launch.devices[rank as usize] as i32)})?;
+  let pool_idle_before=crate::generic_pool::available()?;crate::generic_pool::trim_idle()?;let pool_idle_after=crate::generic_pool::available()?;
+  let hash_bits=match std::env::var("MGBFS_SEGMENT_TEST_HASH_BITS"){
+   Ok(v) if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1")=>v.parse::<u32>().map_err(|_|"SEGMENTED_TEST_HASH_BITS")?,
+   Ok(_)=>return Err("SEGMENTED_TEST_HASH_BITS_REQUIRES_TEST_GATE".into()),
+   Err(std::env::VarError::NotPresent)=>64,
+   Err(_)=>return Err("SEGMENTED_TEST_HASH_BITS".into()),
+  };
+  if hash_bits>64{return Err("SEGMENTED_TEST_HASH_BITS".into())}
+  Ok((backend,pool_idle_before,pool_idle_after,hash_bits,descriptor))
+ })();
+ let descriptor=entry.as_ref().ok().map(|x|&x.4);
+ ready.agree("entry",&entry,descriptor)?;
+ let(backend,pool_idle_before,pool_idle_after,hash_bits,_)=entry?;
  let _signals=Signals::new();let setup=Instant::now();
- let hash_bits=match std::env::var("MGBFS_SEGMENT_TEST_HASH_BITS"){
-  Ok(v) if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1")=>v.parse::<u32>().map_err(|_|"SEGMENTED_TEST_HASH_BITS")?,
-  Ok(_)=>return Err("SEGMENTED_TEST_HASH_BITS_REQUIRES_TEST_GATE".into()),
-  Err(std::env::VarError::NotPresent)=>64,
-  Err(_)=>return Err("SEGMENTED_TEST_HASH_BITS".into()),
- };
- if hash_bits>64{return Err("SEGMENTED_TEST_HASH_BITS".into())}
- let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,hash_bits,launch.owner_cuts.as_deref())?;
+ let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready)?;
  let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];
  let(status,reason)=loop{
@@ -174,11 +215,36 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
   if let Some(p)=launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket==Some(bfs.frontier_bucket())).or_else(||launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket.is_none()&&p.minimum_frontier<=bfs.global_frontier())){bfs.set_size_profile(p.batch,false)?;}
   let layer=Instant::now();match bfs.advance()?{DistributedAdvance::Layer{global,..}=>{sizes.push(global);crate::native_fault::completed(sizes.len() as u64-1);times.push(layer.elapsed().as_secs_f64());},DistributedAdvance::Complete=>break("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),DistributedAdvance::Resource{fatal}=>break("INCOMPLETE",format!("RESOURCE_{fatal}"))}
  };
- let bfs_seconds=start.elapsed().as_secs_f64();crate::job_phase::set("retiring")?;
- let current=bfs.sample_global(1000)?;let previous=bfs.previous_small_sample(*sizes.iter().rev().nth(1).unwrap_or(&0))?;
- let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
- use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();std::fs::write(output.join("states.json"),state_bytes).map_err(|e|e.to_string())?;
- let mut memory=bfs.memory_geometry();memory["pool_idle_before_trim_bytes"]=pool_idle_before.into();memory["pool_idle_after_trim_bytes"]=pool_idle_after.into();
- let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_strategy":bfs.strategy_name(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
- std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|e.to_string())?;bfs.quiesce()?;bfs.mark_healthy();crate::session_cache::permit_comm(true);Ok(())
+ let bfs_seconds=start.elapsed().as_secs_f64();
+ // No rank publishes a receipt or parks a communicator until every rank has
+ // sampled, written private attempt files, and drained its own streams.
+ let prepared:Result<_>=(||{
+  crate::job_phase::set("retiring")?;
+  crate::segmented_host_ready::injected("finish-prepare")?;
+  if crate::segmented_host_ready::injected("finish-write").is_err(){
+   std::fs::write(output.join(".missing-test-parent").join("states"),b"x").map_err(|e|format!("SEGMENTED_TEST_FINISH_WRITE rank={rank} {e}"))?;
+  }
+  let current=bfs.sample_global(1000)?;let previous=bfs.previous_small_sample(*sizes.iter().rev().nth(1).unwrap_or(&0))?;
+  let states=serde_json::json!({"schema":2,"state_encoding":"signed_int64_vectors","current":current,"previous_small":previous,"current_sample_global_limit":1000});let state_bytes=serde_json::to_vec(&states).map_err(|e|e.to_string())?;
+  use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();
+  std::fs::write(output.join("states.json.tmp"),state_bytes).map_err(|e|format!("SEGMENTED_FINISH_STATES rank={rank} {e}"))?;
+  let mut memory=bfs.memory_geometry();memory["pool_idle_before_trim_bytes"]=pool_idle_before.into();memory["pool_idle_after_trim_bytes"]=pool_idle_after.into();
+  let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_strategy":bfs.strategy_name(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
+  std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|format!("SEGMENTED_FINISH_REPORT rank={rank} {e}"))?;
+  bfs.quiesce()?;Ok(())
+ })();
+ let result_identity=serde_json::json!({"status":status,"reason":reason,"layer_sizes":sizes,"graph_digest":launch.graph_digest});
+ ready.agree("finish-prepared",&prepared,Some(&result_identity))?;prepared?;
+ let published:Result<_>=(||{
+  if crate::segmented_host_ready::injected("finish-publish").is_err(){
+   std::fs::remove_file(output.join("states.json.tmp")).map_err(|e|e.to_string())?;
+  }
+  std::fs::rename(output.join("states.json.tmp"),output.join("states.json")).map_err(|e|format!("SEGMENTED_PUBLISH_STATES rank={rank} {e}"))?;
+  std::fs::rename(output.join("report.json.tmp"),output.join("report.json")).map_err(|e|format!("SEGMENTED_PUBLISH_REPORT rank={rank} {e}"))?;
+  Ok(())
+ })();
+ let vote=ready.agree("finish-published",&published,Some(&result_identity));
+ if vote.is_err()||published.is_err(){let _=std::fs::remove_file(output.join("report.json"));let _=std::fs::remove_file(output.join("states.json"));}
+ vote?;published?;
+ bfs.mark_healthy();crate::session_cache::certify_segmented_comm();crate::session_cache::permit_comm(true);Ok(())
 }

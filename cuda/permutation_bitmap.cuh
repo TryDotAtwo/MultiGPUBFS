@@ -21,7 +21,7 @@ __device__ __forceinline__ uint64_t bitmap_scale(uint64_t ways,uint32_t fraction
 // Exactly one bijective 64-bit rank for each distinct multiset permutation.
 // No hash identity assumption is used; invalid inputs return false.
 template<class A>
-__device__ bool bitmap_rank(const BitmapDeviceDomain& domain,const A& a,uint32_t row,uint64_t* out){
+__device__ bool bitmap_rank_component(const BitmapDeviceDomain& domain,const A& a,uint32_t row,uint64_t* out){
  if(!out||!domain.symbols||!domain.counts||!domain.distinct||domain.distinct>64||
     !domain.elements||domain.elements>64||!domain.total)return false;
  uint8_t counts[64];
@@ -45,5 +45,39 @@ __device__ bool bitmap_rank(const BitmapDeviceDomain& domain,const A& a,uint32_t
   counts[low]--;
  }
  if(rank>=domain.total||ways!=1)return false;
+ *out=rank;return true;
+}
+
+
+// Product-domain metadata is immutable for one BFS job. Components are
+// positional orbits; every component's symbols/counts describe its own exact
+// multiset. Full-domain descriptors retain the original binary layout.
+template<class A> struct BitmapComponentAccessor {
+ const A& source;
+ const uint32_t* positions;
+ __device__ __forceinline__ int64_t value(uint32_t row,uint32_t element) const {
+  return source.value(row,positions[element]);
+ }
+};
+template<class A>
+__device__ bool bitmap_rank(const BitmapDeviceDomain& domain,const A& a,uint32_t row,uint64_t* out){
+ if(!(domain.distinct&0x80000000u))return bitmap_rank_component(domain,a,row,out);
+ if(!out||!domain.symbols||!domain.counts||!domain.elements||domain.elements>64||!domain.total)return false;
+ const uint32_t components=domain.distinct&0x7fffffffu;
+ if(!components||components>domain.elements)return false;
+ uint64_t rank=0,product=1;uint32_t element_sum=0;
+ for(uint32_t i=0;i<components;i++){
+  const uint32_t* m=domain.counts+uint64_t(i)*7;
+  const uint32_t elements=m[0],distinct=m[1];
+  const uint64_t radix=uint64_t(m[5])|(uint64_t(m[6])<<32);
+  if(!elements||!distinct||distinct>elements||elements>domain.elements-element_sum||!radix||
+     m[2]<components*7||m[4]<components*7||product>domain.total/radix)return false;
+  BitmapDeviceDomain component{domain.symbols+m[3],domain.counts+m[4],distinct,elements,radix};
+  BitmapComponentAccessor<A> accessor{a,domain.counts+m[2]};
+  uint64_t digit=0;if(!bitmap_rank_component(component,accessor,row,&digit)||digit>=radix)return false;
+  if(rank>(UINT64_MAX-digit)/radix)return false;
+  rank=rank*radix+digit;product*=radix;element_sum+=elements;
+ }
+ if(element_sum!=domain.elements||product!=domain.total||rank>=domain.total)return false;
  *out=rank;return true;
 }

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #define CK(x) do{cudaError_t e=(x);if(e!=cudaSuccess){fprintf(stderr,"%s:%d CUDA %s\n",__FILE__,__LINE__,cudaGetErrorString(e));exit(1);}}while(0)
@@ -66,6 +67,15 @@ static void run(int device,std::vector<int64_t> start,bool exhaustive){
   int64_t duplicate=soa[m];CK(cudaMemcpy(ds,&duplicate,8,cudaMemcpyHostToDevice));
   rank_test<<<(m+255)/256,256>>>(Flat{ds,m},d,dr,de,m);CK(cudaDeviceSynchronize());uint32_t bad=0;CK(cudaMemcpy(&bad,de,4,cudaMemcpyDeviceToHost));assert(bad==1);
  }
+ // An inconsistent unique descriptor must be rejected, even when the
+ // symbols themselves happen to look like a valid permutation.
+ if(symbols.size()==n){
+  int64_t restore=soa[0];CK(cudaMemcpy(ds,&restore,8,cudaMemcpyHostToDevice));
+  uint32_t bad_count=2;CK(cudaMemcpy(dc,&bad_count,4,cudaMemcpyHostToDevice));
+  rank_test<<<1,1>>>(Flat{ds,m},d,dr,de,1);CK(cudaDeviceSynchronize());
+  uint32_t bad=0;CK(cudaMemcpy(&bad,de,4,cudaMemcpyDeviceToHost));assert(bad==1);
+  bad_count=1;CK(cudaMemcpy(dc,&bad_count,4,cudaMemcpyHostToDevice));
+ }
  // Mutate first symbol outside domain and require a clean rejected state.
  int64_t invalid=INT64_MIN;CK(cudaMemcpy(ds,&invalid,8,cudaMemcpyHostToDevice));
  rank_test<<<(m+255)/256,256>>>(Flat{ds,m},d,dr,de,m);CK(cudaDeviceSynchronize());uint32_t bad=0;CK(cudaMemcpy(&bad,de,4,cudaMemcpyDeviceToHost));assert(bad==1);
@@ -75,7 +85,14 @@ static void run(int device,std::vector<int64_t> start,bool exhaustive){
 int main(){
  int devices=0;CK(cudaGetDeviceCount(&devices));if(devices<2){fprintf(stderr,"need two GPUs\n");return 1;}
  for(int d=0;d<2;d++){
+  if(std::getenv("MGBFS_TEST_SMALL")){
+   run(d,{0,1,2,3},true);
+   run(d,{-7,-7,0,99,99},true);
+   run(d,{-200,-7,13,999},true);
+   continue;
+  }
   run(d,{0,1,2,3,4,5,6,7},true);
+  run(d,{0,1,2,3,4,5,6,7,8},true);
   run(d,{-7,-7,0,99,99},true);
   run(d,{-200,-7,13,999},true);
   run(d,{0,1,2,3,4,5,6,7,8,9,10,11,12},false);

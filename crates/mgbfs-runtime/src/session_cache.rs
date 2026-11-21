@@ -14,6 +14,7 @@ struct Cache {
     comm_hits: u64,
     pool_hits: u64,
     permit_comm: bool,
+    segmented_certified: bool,
     nccl_id: Option<[u8;128]>,
     #[cfg(feature = "library-owner")]
     pool: Option<(*mut c_void, u64)>,
@@ -21,7 +22,7 @@ struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         Self { enabled:false, shape:String::new(), generic_required:None,generic_manifest:Vec::new(),buffers:Vec::new(), pinned:Vec::new(),
-            comm:std::ptr::null_mut(),streams:Vec::new(),events:Vec::new(),stream_hits:0,event_hits:0, buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,nccl_id:None,
+            comm:std::ptr::null_mut(),streams:Vec::new(),events:Vec::new(),stream_hits:0,event_hits:0, buffer_hits:0,comm_hits:0,pool_hits:0,permit_comm:false,segmented_certified:false,nccl_id:None,
             #[cfg(feature = "library-owner")]
             pool:None,
         }
@@ -84,8 +85,35 @@ pub fn enable() { CACHE.with(|c| c.borrow_mut().enabled = true); }
 pub fn enabled() -> bool { CACHE.with(|c| c.borrow().enabled) }
 pub fn warmed_communicator() -> bool { CACHE.with(|c| {let c=c.borrow();c.enabled && !c.comm.is_null() && c.permit_comm}) }
 pub fn permit_comm(value: bool) { CACHE.with(|c| {
-    let mut c=c.borrow_mut();c.permit_comm=value;if !value { c.nccl_id=None; }
+    let mut c=c.borrow_mut();c.permit_comm=value;if !value { c.nccl_id=None; c.segmented_certified=false; }
 }); }
+/// Advertise the exact previously agreed NCCL generation without taking it.
+/// A parked communicator produced by a non-certified path is rejected: mixed
+/// warm/cold ranks must never enter NCCL under different assumptions.
+pub fn segmented_comm_identity() -> mgbfs_core::Result<serde_json::Value> {
+    use sha2::{Digest,Sha256};
+    CACHE.with(|cell| {
+        let c=cell.borrow();
+        if c.comm.is_null() { return Ok(serde_json::json!({"mode":"cold"})); }
+        if !c.enabled || !c.permit_comm || !c.segmented_certified {
+            return Err("SEGMENTED_UNCERTIFIED_PARKED_COMM".into());
+        }
+        let id=c.nccl_id.ok_or("SEGMENTED_PARKED_COMM_ID_MISSING")?;
+        let generation=Sha256::digest(id).iter().map(|v|format!("{v:02x}")).collect::<String>();
+        Ok(serde_json::json!({"mode":"warm","generation":generation}))
+    })
+}
+pub fn certify_segmented_comm() { CACHE.with(|cell|cell.borrow_mut().segmented_certified=true); }
+/// Fault injection for physical tests; unavailable without both private gates.
+pub fn test_drop_parked_segmented_comm() -> mgbfs_core::Result<()> {
+ if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()!=Ok("1") || std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref()!=Ok("drop-comm") {return Ok(())}
+ if std::env::var("MGBFS_SEGMENT_TEST_FAIL_RANK").ok().as_deref()!=std::env::var("RANK").ok().as_deref(){return Ok(())}
+ let ptr=CACHE.with(|cell|{let mut c=cell.borrow_mut();c.permit_comm=false;c.segmented_certified=false;c.nccl_id=None;std::mem::replace(&mut c.comm,std::ptr::null_mut())});
+ if ptr.is_null(){return Err("SEGMENTED_TEST_NO_PARKED_COMM".into())}
+ let status=unsafe{mgbfs_nccl_abort(ptr)};eprintln!("SEGMENTED_TEST_DROPPED_COMM rank={} abort={status}",std::env::var("RANK").unwrap_or_default());
+ unsafe{mgbfs_nccl_destroy(ptr);}
+ if status!=0{return Err(format!("SEGMENTED_TEST_DROP_COMM_ABORT_{status}"))}Ok(())
+}
 pub fn bootstrap_id(create: impl FnOnce() -> mgbfs_core::Result<[u8;128]>) -> mgbfs_core::Result<[u8;128]> {
     CACHE.with(|c| {
         let mut c=c.borrow_mut();
@@ -99,7 +127,7 @@ pub fn begin(shape: String) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         c.generic_required=None;c.generic_manifest.clear();c.buffer_hits = 0;c.comm_hits = 0;c.pool_hits = 0;c.stream_hits=0;c.event_hits=0;
-        c.permit_comm = false;
+        c.permit_comm = false;c.segmented_certified=false;
         if c.enabled && c.shape != shape { c.release_storage(); c.shape = shape; }
     });
 }
@@ -125,7 +153,7 @@ pub fn begin_generic(shape:String,required:&[usize])->mgbfs_core::Result<()> {
    c.buffers=keep;
   }
   let mut required_counts=std::collections::BTreeMap::new();for &n in required{*required_counts.entry(n.max(1)).or_insert(0usize)+=1;}c.generic_required=Some(required_counts);c.generic_manifest=required.iter().map(|&n|n.max(1)).collect();c.generic_manifest.sort_unstable();
-  c.shape=format!("generic:{shape}");c.buffer_hits=0;c.comm_hits=0;c.pool_hits=0;c.stream_hits=0;c.event_hits=0;c.permit_comm=false;
+  c.shape=format!("generic:{shape}");c.buffer_hits=0;c.comm_hits=0;c.pool_hits=0;c.stream_hits=0;c.event_hits=0;c.permit_comm=false;c.segmented_certified=false;
   Ok(())
  })
 }

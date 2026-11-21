@@ -93,9 +93,56 @@ def _phase_failures(phases):
   if isinstance(error,dict) and type(error.get('code')) is int and error['code']!=0:failures.append((rank,1))
  return failures
 
+def _native_log_faults(jobs,output,cursors):
+ """Watch the separate native log even if writing the phase file fails.
+
+ Each cursor begins at this job's offset in a resident worker, so an old
+ fault cannot contaminate a later job. Read bounded increments only.
+ """
+ failures=[]
+ for rank,job in enumerate(jobs):
+  worker=getattr(job,'worker',None)
+  path=worker.root/'worker.log' if worker is not None else Path(output)/f'rank-{rank}.log'
+  offset,tail=cursors.get(rank,(getattr(job,'log_offset',0),b''))
+  try:
+   with path.open('rb') as stream:
+    stream.seek(offset);chunk=stream.read(65536);offset=stream.tell()
+  except OSError:
+   continue
+  pieces=(tail+chunk).split(b'\n');cursors[rank]=(offset,pieces.pop()[-8192:])
+  for line in pieces:
+   marker=b'MGBFS_NATIVE_ERROR ';pos=line.find(marker)
+   if pos<0:continue
+   try:fault=json.loads(line[pos+len(marker):])
+   except (ValueError,UnicodeDecodeError):fault={'message':line[pos:][-4096:].decode('utf-8','replace')}
+   failures.append((rank,fault))
+ return failures
+
+def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
+ """Terminate a failed group concurrently under shared teardown deadlines."""
+ for job in jobs:
+  if job.poll() is None:
+   try:job.terminate()
+   except ProcessLookupError:pass
+ deadline=time.monotonic()+grace
+ for job in jobs:
+  if job.poll() is None:
+   try:job.wait(timeout=max(0.0,deadline-time.monotonic()))
+   except subprocess.TimeoutExpired:pass
+ for job in jobs:
+  if job.poll() is None:
+   try:job.kill()
+   except ProcessLookupError:pass
+ deadline=time.monotonic()+kill_grace
+ for job in jobs:
+  if job.poll() is None:
+   try:job.wait(timeout=max(0.0,deadline-time.monotonic()))
+   except subprocess.TimeoutExpired:pass
+ return [getattr(job,'pid',None) for job in jobs if job.poll() is None]
+
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -113,8 +160,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
+ if bitmap_owner_page is not None and (type(bitmap_owner_page) is not int or bitmap_owner_page<0 or bitmap_owner_page>1<<20 or (bitmap_owner_page and bitmap_owner_page&(bitmap_owner_page-1))):raise ValueError('INVALID_BITMAP_OWNER_PAGE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
  memory_backend=_normalize_memory_backend(memory_backend)
+ if bitmap_owner_page and memory_backend!='permutation_bitmap':raise ValueError('BITMAP_OWNER_PAGE_REQUIRES_BITMAP')
  strategy_source=_native_env if _native_env is not None else os.environ
  if segment_strategy is None:segment_strategy=strategy_source.get('MGBFS_SEGMENT_STRATEGY','atomic')
  segment_strategy=_normalize_segment_strategy(segment_strategy)
@@ -133,6 +182,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
  native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
+ if bitmap_owner_page is not None:native_env['MGBFS_SEGMENT_BITMAP_OWNER_PAGE']=str(bitmap_owner_page)
  segmented=(memory_backend in ('segmented24','permutation_bitmap'))
  if not segmented:
   # An inherited private experiment flag must not override an explicit API choice.
@@ -143,6 +193,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   capabilities=_require_memory_backend(native,native_env,memory_backend)
+  if memory_backend=='segmented24' and segment_strategy=='warp' and capabilities.get('segmented_warp_hash_safe_v1') is not True:raise RuntimeError('SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING')
+  if memory_backend=='permutation_bitmap' and native_env.get('MGBFS_SEGMENT_BITMAP_OWNER_PAGE','0') not in ('0','') and capabilities.get('bitmap_owner_immutable_v1') is not True:raise RuntimeError('BITMAP_OWNER_PAGE_NATIVE_ABI_MISSING')
   if segment_strategy!='atomic':
    supported=capabilities.get('segmented_strategies_v1')
    if not isinstance(supported,dict) or supported.get(segment_strategy) is not True:
@@ -187,7 +239,12 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  def finish(report):
   _check_memory_backend_receipt(report,memory_backend)
-  if communication is not None:report['communication_preflight']=communication
+  if communication is not None:
+   report['communication_preflight']=communication
+   if communication.get('status')=='VERIFIED':
+    from .generic_session import _active
+    from .nccl_preflight import bind_communication_group
+    bind_communication_group(_active)
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   if shard_geometry is not None:report['shard_geometry']=shard_geometry
   from .size_profiles import save_online_profiles
@@ -293,12 +350,14 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     env=dict(native_env,RANK=str(rank),WORLD_SIZE=str(len(devices)),LOCAL_RANK=str(devices[rank]),MGBFS_JOB_PHASE_PATH=str(output/f'rank-{rank}.phase.json'))
     from .generic_session import launch as launch_rank
     jobs.append(launch_rank([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(output/f'rank-{rank}'),str(wire(max_seconds))],env,log,devices,_selection=selection))
-   next_phase_check=0.
+   next_phase_check=0.;log_cursors={}
    while any(p.poll() is None for p in jobs):
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
     if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
     now=time.monotonic()
     if now>=next_phase_check:
+     log_faults=_native_log_faults(jobs,output,log_cursors)
+     if log_faults:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr([(rank,1) for rank,_ in log_faults])+'; native_fault='+repr(log_faults))
      phases=[_job_phase(p,output,rank) for rank,p in enumerate(jobs)]
      failed=_phase_failures(phases)
      if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
@@ -319,32 +378,37 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if isinstance(error,RuntimeError):error.args=(str(error)+'; evidence='+str(output/'failure-evidence'),)
    raise
   finally:
-   for p in jobs:
-    if p.poll() is None:p.terminate()
-   for p in jobs:
-    if p.poll() is None:
-     try:p.wait(timeout=10)
-     except subprocess.TimeoutExpired:p.kill();p.wait()
+   survivors=_stop_rank_jobs(jobs);cleanup_error=None
+   if survivors:
+    note='DISTRIBUTED_TEARDOWN_INCOMPLETE pids='+repr(survivors)
+    if failure is not None:failure.args=(str(failure)+'; '+note,)
+    else:cleanup_error=RuntimeError(note)
    if failure is not None:
     from .failure_evidence import preserve_native_failure
     preserve_native_failure(jobs,output,failure,when='after_cleanup')
    for log in logs:log.close()
-  parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
-  for rank,p in enumerate(parts):
-   if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission.get('rank_plans',[admission['plan']]*len(devices))[rank]:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
-   if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
-  snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
-  current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
-  if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
-  states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-  report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device')
-  if segmented:
-   report['segment_memory_by_rank']=[dict(p['segment_memory'],rank=i,device=devices[i]) for i,p in enumerate(parts)]
-   report['segment_memory_scope']='rank 0 only; see segment_memory_by_rank for every selected GPU'
-  report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
-  if profile:report['autotune']=profile;report['profile_status']=profile['status']
-  (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
-  return finish(_receipt(output,digest))
+   if cleanup_error is not None:raise cleanup_error
+  try:
+   parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
+   for rank,p in enumerate(parts):
+    if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission.get('rank_plans',[admission['plan']]*len(devices))[rank]:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
+    if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
+   snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
+   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
+   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
+   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
+   report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device')
+   if segmented:
+    report['segment_memory_by_rank']=[dict(p['segment_memory'],rank=i,device=devices[i]) for i,p in enumerate(parts)]
+    report['segment_memory_scope']='rank 0 only; see segment_memory_by_rank for every selected GPU'
+   report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+   if profile:report['autotune']=profile;report['profile_status']=profile['status']
+   (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
+   return finish(_receipt(output,digest))
+  except BaseException:
+   from .generic_session import invalidate_launch_group
+   invalidate_launch_group(selection)
+   raise
 
 
 def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_seconds,backend,batch,profile_layers,profile):

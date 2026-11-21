@@ -18,6 +18,11 @@ POLICY_KEYS = ('NCCL_NET_GDR_LEVEL', 'NCCL_IB_DISABLE', 'NCCL_P2P_DISABLE',
                'NCCL_SHM_DISABLE', 'NCCL_NET', 'NCCL_SOCKET_IFNAME')
 
 
+class ResidentPreflightCleanupError(Exception):
+    """A failed diagnostic pool could not be safely discarded."""
+
+
+
 def reserve_bytes(ranks, explicit=None):
     if not ranks or any(not r.get('verified') for r in ranks):
         raise RuntimeError('NCCL_PREFLIGHT_UNVERIFIED')
@@ -54,11 +59,39 @@ def _write(path, data):
 
 
 def _identity(native, devices, env):
-    from .autotune import _stat_identity
+    from .autotune import _stat_identity, _dependency_identity
+    dependency = _dependency_identity(str(native), env)
+    libraries = None if dependency is None else (
+        dependency.get('cuda_library_sha256'),
+        tuple(tuple(item) for item in dependency.get('resolved_dependencies', ())))
     return (str(native), _stat_identity(native), tuple(devices),
             tuple(sorted((k, v) for k, v in env.items()
                          if k.startswith(('CUDA_', 'NCCL_', 'MGBFS_GENERIC_VRAM'))
-                         or k in ('LD_LIBRARY_PATH', 'LD_PRELOAD'))))
+                         or k in ('LD_LIBRARY_PATH', 'LD_PRELOAD'))), libraries)
+
+
+def _group_token(pool):
+    from .generic_session import _job_failed
+    workers = getattr(pool, 'workers', ()) if pool is not None else ()
+    if not workers or any(w.process.poll() is not None or _job_failed(w.job) for w in workers):
+        return None
+    return (pool.generation, pool.identity, tuple(w.process.pid for w in workers))
+
+
+def bind_communication_group(pool):
+    # Called only after a real production graph job returned successfully.
+    # A cold standalone probe cannot certify an unrelated future worker group.
+    if pool is not None:
+        pool.communication_bound_token = _group_token(pool)
+
+
+def _bound_cache(pool):
+    if pool is None:
+        return {}
+    token = _group_token(pool)
+    if token is None or token != getattr(pool, 'communication_bound_token', None):
+        pool.communication_profiles = {}
+    return getattr(pool, 'communication_profiles', {})
 
 
 def _requested_memory_backend(env):
@@ -108,6 +141,39 @@ def _cached_prefix(root, native, devices, env, patch, report, graph, memory_back
     _write(attempt / 'request.json', {'devices': devices, 'policy': report['policy'],
                                       'memory_backend': memory_backend})
     (attempt / 'graph.json').write_text(graph.to_json())
+    # A healthy persistent pool can execute the same bounded graph rehearsal
+    # itself. This is still a real BFS prefix on every selected GPU; no
+    # transport or graph validation is skipped. Preserve the production NCCL
+    # environment, because a per-attempt NCCL_DEBUG_FILE would change pool
+    # identity and force all workers to restart.
+    from .generic_session import _active
+    if _active is not None and getattr(_active, 'workers', None):
+        from .launch import run_graph
+        try:
+            rehearsal = run_graph(graph, attempt / 'prefix', devices=devices,
+                                  capacity=20000, max_seconds=20, shards=1,
+                                  autotune=False, backend='generic',
+                                  memory_backend=memory_backend, executable=str(native),
+                                  _native_env=dict(env, **patch), _profile_layers=4)
+            if rehearsal['status'] != 'COMPLETE' and len(rehearsal.get('layer_sizes', [])) < 4:
+                raise RuntimeError('NCCL_PREFLIGHT_INSUFFICIENT_BFS_PREFIX')
+            _write(attempt / 'prefix-execution.json', {'mode': 'resident', 'status': 'VERIFIED'})
+            return {k: rehearsal.get(k) for k in ('status', 'reason', 'layer_sizes')}
+        except BaseException as error:
+            # Only a bounded diagnostic prefix has run at this point. A bad
+            # resident job may poison its CUDA context: discard the entire
+            # pool before the ordinary fallback tries a transport candidate.
+            # No production BFS is restarted or resumed. Invalidate the
+            # shared transport evidence too: it predates the failed prefix.
+            try:
+                _active.close_workers()
+                getattr(_active, 'communication_profiles', {}).clear()
+            except Exception as cleanup:
+                raise ResidentPreflightCleanupError('NCCL_PREFLIGHT_RESIDENT_CLEANUP_FAILED') from cleanup
+            _write(attempt / 'prefix-execution.json', {'mode': 'resident', 'status': 'FAILED', 'error': str(error)})
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise TimeoutError('NCCL_PREFLIGHT_PREFIX_STARTUP_TIMEOUT') from error
+            raise
     own_groups = candidate.get('MGBFS_DIAGNOSTIC_SUPERVISED') != '1'
     process = None
     try:
@@ -146,9 +212,16 @@ def prepare(native, devices, env, output, graph=None):
         return dict(env), {'status': 'SINGLE_GPU'}
     root = Path(str(output) + '-communication-evidence').absolute()
     from .generic_session import _active
+    # Family changes require a new worker epoch before consulting the cache.
+    # A transport receipt from the previous communicator must not certify it.
     memory_backend = _requested_memory_backend(env)
+    if _active is not None:_active.prepare_family(env)
     key = _preflight_cache_key(native, devices, env, graph)
-    cache = getattr(_active, 'communication_profiles', {}) if _active else {}
+    cache = _bound_cache(_active)
+    # If ldd could not identify the CUDA dependency, no later invocation may
+    # accept a receipt as if the binary identity had been verified.
+    if isinstance(key[0], tuple) and key[0][-1] is None:
+        cache.clear()
     if key in cache:
         patch, report = cache[key]
         # Retain the source cost separately: this invocation did no new
@@ -161,7 +234,7 @@ def prepare(native, devices, env, output, graph=None):
     # Only transport and reserve are graph-independent.  A different graph
     # still gets its own real backend-specific BFS prefix before admission.
     previous = next(((patch, report) for cached_key, (patch, report) in cache.items()
-                     if len(cached_key) in (3, 4) and cached_key[:2] == key[:2]
+                     if len(cached_key) in (3, 4) and cached_key[0] == key[0]
                      and report.get('status') == 'VERIFIED'), None)
     if previous is not None and graph is not None:
         patch, old_report = previous
@@ -172,6 +245,8 @@ def prepare(native, devices, env, output, graph=None):
             report = dict(old_report, cache_hit=True, transport_cache_hit=True,
                           cache_source_graph=old_report.get('rehearsal_graph'),
                           rehearsal_graph=graph.digest(), rehearsal_backend=memory_backend,
+                          rehearsal_geometry={'shards':1,'profile_max_layers':4,'capacity':20000},
+                          production_geometry_status='NOT_VERIFIED_BY_PREFLIGHT',
                           bfs_prefix=prefix, seconds=time.monotonic()-started,
                           evidence=str(root))
             _write(root / 'report.json', report)
@@ -246,11 +321,13 @@ def prepare(native, devices, env, output, graph=None):
                       'reserve_bytes': reserve, 'ranks': ranks,
                       'rehearsal_graph': graph.digest() if graph is not None else None,
                       'rehearsal_backend': memory_backend if graph is not None else None,
+                      'rehearsal_geometry': None if graph is None else {'shards':1,'profile_max_layers':4,'capacity':20000},
+                      'production_geometry_status': 'NOT_VERIFIED_BY_PREFLIGHT',
                       'bfs_prefix': None if rehearsal is None else {k:rehearsal.get(k) for k in ('status','reason','layer_sizes')},
                       'prior_attempts': reports, 'cache_hit': False,
                       'seconds': time.monotonic() - started,
                       'evidence': str(root),
-                      'scope': 'all selected GPUs; checked all-peer payloads and collectives; not proof of all future BFS kernels or node health'}
+                      'scope': 'all selected GPUs; transport and one-shard bounded BFS prefix only; production geometry, all future BFS kernels and node health are not verified'}
             _write(root / 'report.json', report)
             if _active is not None:
                 cache[key] = (patch, report)

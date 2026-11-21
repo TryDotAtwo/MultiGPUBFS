@@ -1,0 +1,158 @@
+--- a/cuda/generic_action.cuh
++++ b/cuda/generic_action.cuh
+@@ -5,7 +5,11 @@
+ // Rank routing consumes high hash bits and shard routing consumes low-word high bits.
+ // Re-avalanche for the rank-local shared table so neither partition restricts buckets.
+ static __device__ __forceinline__ uint64_t mgbfs_shared_table_bucket(uint64_t hash,uint64_t capacity){return mix64(hash^0x9e3779b97f4a7c15ULL)&(capacity-1);}
+-static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
++static __device__ __forceinline__ uint64_t finish_hash(uint64_t h,uint32_t bits){h=mix64(h);
++#ifdef MGBFS_TEST_HASH_TWO_SHARDS
++if(bits==63)return h&0x8000000080000000ULL;
++#endif
++return bits==64?h:(bits? h&((uint64_t(1)<<bits)-1):0);}
+ template<class State> struct ActionT {
+  uint32_t kind,elements,n,m,generators,count;
+  uint64_t stride;
+--- a/cuda/segmented_history.cu
++++ b/cuda/segmented_history.cu
+@@ -5,6 +5,32 @@
+ #include "generic_action.cuh"
+ #include "segmented_incoming.cuh"
+ 
++// Private fault build only. Keep rank quota temporarily when the current
++// segment is already full so the other independent shard can observe it.
++#ifdef MGBFS_TEST_HASH_TWO_SHARDS
++struct MgbfsCollisionControl {uint64_t* target;uint64_t* holder;unsigned armed,held,deferred,released,replayed,child,timeouts;};
++__device__ MgbfsCollisionControl mgbfs_collision_control;
++extern "C" int mgbfs_collision_test_arm(uint64_t* target,uint64_t* holder){
++ MgbfsCollisionControl c{target,holder,1,0,0,0,0,0xffffffffu,0};
++ return int(cudaMemcpyToSymbol(mgbfs_collision_control,&c,sizeof(c)));
++}
++extern "C" int mgbfs_collision_test_read(MgbfsCollisionControl* output){return int(cudaMemcpyFromSymbol(output,mgbfs_collision_control,sizeof(*output)));}
++__device__ void mgbfs_collision_wait(unsigned* flag,unsigned timeout_bit){
++ auto start=clock64();while(!atomicAdd(flag,0u)){if(clock64()-start>400000000ULL){atomicOr(&mgbfs_collision_control.timeouts,timeout_bit);return;}__nanosleep(64);}
++}
++__device__ void mgbfs_collision_hook(int stage,const MgbfsSegment& active,uint32_t child,const uint64_t* accepted,uint64_t* global_count,uint64_t global_limit){
++ auto* c=&mgbfs_collision_control;if(!atomicAdd(&c->armed,0u)||!global_count)return;
++ if(active.slots==c->target){
++  if(stage==3&&!atomicAdd(&c->deferred,0u)){atomicCAS(&c->child,0xffffffffu,child);mgbfs_collision_wait(&c->held,1);}
++  if(stage==6&&child==atomicAdd(&c->child,0u))atomicExch(&c->deferred,1u);
++  if(stage==7&&child==atomicAdd(&c->child,0u)&&atomicAdd(&c->deferred,0u))atomicExch(&c->replayed,1u);
++ }else if(active.slots==c->holder){
++  if(stage==4&&*accepted>=active.capacity&&atomicAdd((unsigned long long*)global_count,0ULL)>=global_limit&&atomicCAS(&c->held,0u,1u)==0u){mgbfs_collision_wait(&c->deferred,2);}
++  if(stage==5&&atomicAdd(&c->held,0u))atomicExch(&c->released,1u);
++ }
++}
++#define MGBFS_SEGMENTED_TEST_HOOK(stage,segment,child) mgbfs_collision_hook(stage,segment,child,accepted,global_count,global_limit)
++#endif
+ // Compiled away outside the deterministic GPU race regression.
+ #ifndef MGBFS_SEGMENTED_TEST_HOOK
+ #define MGBFS_SEGMENTED_TEST_HOOK(stage, segment, child) ((void)0)
+@@ -274,6 +300,7 @@
+    if(active.positions)position_store(active,local,slot_claimed);
+    if(future)future[row]=payload;
+    cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot_claimed]);cell.store(prefix|payload,cuda::memory_order_release);
++   MGBFS_SEGMENTED_TEST_HOOK(7,active,child);
+   }
+  }
+ }
+--- a/crates/mgbfs-runtime/src/segmented_distributed_native.rs
++++ b/crates/mgbfs-runtime/src/segmented_distributed_native.rs
+@@ -9,11 +9,15 @@
+ 
+ #[repr(C)] #[derive(Clone,Copy)]
+ struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32,position_item_bytes:u32}
++#[repr(C)]
++struct CollisionControl{target:*mut u64,holder:*mut u64,armed:u32,held:u32,deferred:u32,released:u32,replayed:u32,child:u32,timeouts:u32}
+ #[repr(C)] #[derive(Clone,Copy)]
+ struct BatchHashSegment{states:*mut c_void,keys:*mut u64,rows:*mut u32,capacity:u64,banks:u32}
+ #[repr(C)] #[derive(Clone,Copy)]
+ struct BatchHashRun{segment:u32,bank:u32,begin:u64,length:u64,min_hash:u64,max_hash:u64}
+ extern "C" {
++ fn mgbfs_collision_test_arm(target:*mut u64,holder:*mut u64)->i32;
++ fn mgbfs_collision_test_read(output:*mut CollisionControl)->i32;
+  fn mgbfs_segmented_abi_version()->u32;
+  fn cudaGetLastError()->i32;
+  fn cudaEventSynchronize(event:*mut c_void)->i32;
+@@ -307,7 +311,7 @@
+   let batch_dense_origins=if dense_input{Some(crate::segmented_strategy::dense_origins().ok_or("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING")?)}else{None};
+   let bound=usize::try_from(u64::from(p.world)*u64::from(p.queue_capacity)).map_err(|_|"SEGMENTED_SPILL_SIZE")?;
+   if bound>=0x80000000usize{return Err("SEGMENTED_SPILL_SIZE".into())}
+-  let mut h=seed;for(e,v)in g.start.iter().enumerate(){h=mix(h^(*v as u64)^(e as u64));}h=mix(h);if bits<64{h&=if bits==0{0}else{(1u64<<bits)-1};}
++  let mut h=seed;for(e,v)in g.start.iter().enumerate(){h=mix(h^(*v as u64)^(e as u64));}h=mix(h);if bits==63 && std::env::var("MGBFS_TEST_HASH_TWO_SHARDS").as_deref()==Ok("1"){h&=0x8000000080000000u64;}else if bits<64{h&=if bits==0{0}else{(1u64<<bits)-1};}
+   if let Some(domain)=&bitmap_domain{h=page_map.ok_or("BITMAP_PAGE_MAP_MISSING")?.map(domain.rank(&g.start).map_err(str::to_owned)?).map_err(str::to_owned)?;}
+   let owner=if bitmap_mode{(h%u64::from(p.world)) as u32}else if let Some(c)=cuts{c.windows(2).position(|v|v[0]<=h>>32&&h>>32<v[1]).ok_or("SEGMENTED_ROOT_OWNER")? as u32}else{(((h>>32)*u64::from(p.world))>>32) as u32};
+   let mut owner_map=(0..p.world).collect::<Vec<_>>();if cuts.is_none(){owner_map.swap(0,owner as usize);}let root=owner_map[owner as usize];
+@@ -868,6 +872,8 @@
+   Ok(())
+  }
+  fn accept_parallel(&mut self,slot:usize,shards:&[usize],bank:u32,visible:u32,mut probe:Option<&mut OverlapProbe>)->Result<u32>{
++  static COLLISION_ACCEPT_ID:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
++  let collision_accept_id=COLLISION_ACCEPT_ID.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+   let p=self.plan.clone();let selected_max=p.world.checked_mul(visible).ok_or("SEGMENTED_QUEUE_EXTENT")?;
+   let timed=self.hash_timing_active();
+   for wave in shards.chunks(self.lanes.len()){
+@@ -906,6 +912,22 @@
+       v.grow_runs=false;prepared[i]=Some(view);
+     }
+     crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;
++    if std::env::var("MGBFS_TEST_COLLISION_CONTROL").as_deref()==Ok("1")&&progress.len()==2&&progress.iter().all(|v|v.selected>0){
++     let mut control:CollisionControl=unsafe{std::mem::zeroed()};
++     crate::generic_native::checked!(mgbfs_collision_test_read,unsafe{mgbfs_collision_test_read(&mut control)})?;
++     if (control.armed==0||(control.timeouts!=0&&control.deferred==0))&&self.capacity_limit.map_or(false,|n|self.bank_totals[bank as usize]+1==n){
++      let target=&progress[0];let holder=&progress[1];
++      let t=&self.segments[target.shard][target.pass];let h=&self.segments[holder.shard][holder.pass];
++      if t.banks[bank as usize]<t.desc.capacity&&h.banks[bank as usize]==h.desc.capacity{
++       crate::generic_native::checked!(mgbfs_collision_test_arm,unsafe{mgbfs_collision_test_arm(t.desc.slots,h.desc.slots)})?;
++       eprintln!("COLLISION_TEST_ARM {}",serde_json::json!({"rank":self.rank,"depth":self.depth+1,"accept_id":collision_accept_id,"target_shard":target.shard,"holder_shard":holder.shard,"count":self.bank_totals[bank as usize],"limit":self.capacity_limit}));
++      }
++     }
++    }
++    static COLLISION_TRACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++    let collision_trace_id=COLLISION_TRACE_ID.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
++    let collision_timing=if std::env::var("MGBFS_TEST_COLLISION_TRACE").as_deref()==Ok("1") && wave.len()==2 {Some(HashTiming::new(self.base.device)?)}else{None};
++    if let Some(t)=collision_timing.as_ref(){t.record(0,self.base.stream.ptr)?;crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;}
+     if self.input_stats_active(){
+      for v in &progress{if v.selected!=0{
+       if v.round==0{
+@@ -940,6 +962,7 @@
+       let raw_begin=if v.round==0&&selection.is_null(){v.raw_begin}else{0};
+       let sealed=d.sealed;
+       crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(lane.control.ptr,0,12,st)})?;
++      if let Some(t)=collision_timing.as_ref(){t.record(1+2*i,st)?;}
+       let status=unsafe{if let Some(b)=&self.bitmap{
+        if self.strategy==SegmentStrategy::Batch{
+         let scratch=lane.scratch.as_ref().ok_or("SEGMENTED_BATCH_LANE_SCRATCH_MISSING")?;
+@@ -956,6 +979,7 @@
+        if self.strategy==SegmentStrategy::Warp{mgbfs_segmented_accept_routes_limited_grouped_i64(p.elements,self.send[slot].states.ptr.cast(),self.recv.states.ptr.cast(),self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,sealed,d.descriptor_count,active.desc,bank,active.counts.at(bank as usize*8),ptr::null_mut(),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}else{mgbfs_segmented_accept_routes_limited_i64(p.elements,self.send[slot].states.ptr.cast(),self.recv.states.ptr.cast(),self.send[slot].records.ptr.cast(),self.recv.records.ptr.cast(),self.send[slot].counts.ptr.cast(),self.recv.counts.ptr.cast(),self.rank,p.world,v.shard as u32,p.shards,p.queue_capacity,visible,selection,v.selected,sealed,d.descriptor_count,active.desc,bank,active.counts.at(bank as usize*8),ptr::null_mut(),lane.spill[v.round%2].ptr.cast(),lane.control.at(0),lane.control.at(4),if self.capacity_limit.is_some(){self.control.at(24)}else{ptr::null_mut()},self.capacity_limit.unwrap_or(0),st)}
+       }};
+       crate::generic_native::checked!(mgbfs_segmented_accept_routes,status)?;
++      if let Some(t)=collision_timing.as_ref(){t.record(2+2*i,st)?;}
+       if timed{lane.timing.as_ref().ok_or("SEGMENTED_HASH_TIMING_MISSING")?.record(1,st)?;}
+       if !d.hash_run_count.is_null()&&self.batch_merge_enabled{
+        let item=self.hash_shards[v.shard].as_ref().ok_or("SEGMENTED_HASH_DIRECTORY_MISSING")?;
+@@ -987,6 +1011,14 @@
+      if launched[i]{if let Err(e)=crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(lane.stream.ptr)}){if failure.is_none(){failure=Some(e)}}}
+     }
+     if let Some(e)=failure{return Err(e)}
++    if std::env::var("MGBFS_TEST_COLLISION_CONTROL").as_deref()==Ok("1"){
++     let mut c:CollisionControl=unsafe{std::mem::zeroed()};crate::generic_native::checked!(mgbfs_collision_test_read,unsafe{mgbfs_collision_test_read(&mut c)})?;
++     if c.armed!=0{eprintln!("COLLISION_TEST_CONTROL {}",serde_json::json!({"rank":self.rank,"depth":self.depth+1,"accept_id":collision_accept_id,"trace_id":collision_trace_id,"held":c.held,"deferred":c.deferred,"released":c.released,"replayed":c.replayed,"child":c.child,"timeouts":c.timeouts}));}
++    }
++    if let Some(t)=collision_timing.as_ref(){if launched.len()==2&&launched[0]&&launched[1]{
++     let s0=t.elapsed(0,1)?;let e0=t.elapsed(0,2)?;let s1=t.elapsed(0,3)?;let e1=t.elapsed(0,4)?;
++     eprintln!("COLLISION_TEST_GPU_INTERVAL {}",serde_json::json!({"rank":self.rank,"depth":self.depth+1,"trace_id":collision_trace_id,"accept_id":collision_accept_id,"wave":wave,"starts_ms":[s0,s1],"ends_ms":[e0,e1],"overlap_ms":(e0.min(e1)-s0.max(s1)).max(0.0)}));
++    }}
+     let mut owner_error=0;let mut compact_repeat=vec![false;progress.len()];
+     for (i,v) in progress.iter_mut().enumerate(){
+      if !launched[i]{continue}
+@@ -1044,6 +1076,9 @@
+       let mut observed=0u64;
+       if self.capacity_limit.is_some(){crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut observed as *mut u64).cast(),self.control.at::<c_void>(24),8,2)})?;}
+       let decision=owner_decision(values[0],self.capacity_limit,observed,accepted==seg.desc.capacity,values[1]&16!=0,v.cap_probe,accepted>old).map_err(str::to_owned)?;
++      if std::env::var("MGBFS_TEST_COLLISION_TRACE").as_deref()==Ok("1") {
++       eprintln!("COLLISION_TEST_OWNER {}",serde_json::json!({"rank":self.rank,"depth":self.depth+1,"trace_id":collision_trace_id,"accept_id":collision_accept_id,"wave":wave,"shard":v.shard,"round":v.round,"raw_begin":v.raw_begin,"selected":v.selected,"spill":values[0],"error":values[1],"accepted_before":old,"accepted_after":accepted,"segment_capacity":seg.desc.capacity,"rank_observed":observed,"rank_limit":self.capacity_limit,"decision":format!("{decision:?}")}));
++      }
+       v.selected=values[0];
+       match decision{
+        OwnerDecision::Done=>{

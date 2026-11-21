@@ -10,7 +10,7 @@ establish Blackwell/B200 acceptance, full S14 execution, a BFS with more than
 ## Native build requirement
 
 These modes require a matching native executable **and** CUDA library.
-The dev40 release requires `segmented_memory_presets_v1`, `segmented_strategies_v1` and native ABI 3.
+The dev40 release requires `segmented_memory_presets_v1`, `segmented_strategies_v1` and native ABI 3. Changes documented after dev40 require a freshly built matching executable and CUDA library; they are not part of the published dev40 wheel.
 The executable and CUDA component must come from the same build. The dev38
 binary and CUDA component implement ABI 2 and cannot be combined with this
 source. The launcher checks the capability before BFS and the backend in the
@@ -61,6 +61,12 @@ and `"batch"` uses bounded GPU batches. The strategy is independent of
 executable and CUDA component must support the requested strategy. You can
 also set `MGBFS_SEGMENT_STRATEGY=atomic|warp|batch` before activation.
 Unknown or unsupported strategies fail rather than silently changing the run.
+For segmented hash with `warp`, the CUDA library must expose
+`mgbfs_segmented_warp_safe_abi_version=1`. Earlier hash-warp libraries can
+reuse a pending slot during the same accept phase and may record a duplicate
+when a segment and rank limit interact. The current executable rejects that
+old combination with `SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING`; it does not
+silently fall back. Use the executable and CUDA library from the same build.
 Results are workload and topology dependent: see the
 [2-GPU comparison](acceptance/2026-11-20-segmented-2gpu.md) and
 [8-GPU comparison](acceptance/2026-11-20-segmented-8gpu.md). No strategy is
@@ -121,13 +127,15 @@ multigpubfs graph.json result --memory-backend segmented --memory-preset max_cap
 ## `permutation_bitmap`
 
 This backend is restricted to permutation actions and ranks each distinct
-permutation of the starting multiset exactly. It supports repeated symbols; it
-rejects matrix actions, domains outside its checked 64-bit representation and
-domains whose partitioned bitmap cannot be admitted into GPU memory. Visited
-bits cover the complete multiset-permutation domain, even if the chosen
-generators reach only a small subset. Active frontier states still require
-separate storage. Ranking and bit operations have a runtime cost, so the
-bitmap is not automatically faster.
+permutation in a closed, exactly ranked domain of the starting state. It
+supports repeated symbols; it rejects matrix actions, domains outside its
+checked 64-bit representation and domains whose partitioned bitmap cannot be
+admitted into GPU memory. With a compatible native library, the visited bitmap
+uses the product of the multiset-permutation domains of the invariant position
+orbits. This exact superdomain may still include unreachable states; older
+compatible libraries use the full multiset domain. Active frontier states
+require separate storage. Ranking and bit operations have a runtime cost, so
+the bitmap is not automatically faster.
 
 Do not use this experimental implementation as evidence that a large graph
 has completed until its receipt reports `COMPLETE` and the exact hardware and
@@ -223,3 +231,59 @@ The released dev37 wheel was installed and the SM86 runtime was prefetched
 without GPU access. With `MGBFS_NATIVE_OFFLINE=1`, the installed package then
 passed the persistent 2-GPU API test for both modes and segment maximum values
 64 and 2^32.
+
+### Experimental queue-batch recovery and layer diagnostics
+
+An overflowing destination queue causes a collective retry with a smaller
+source batch. By default that reduced ceiling remains in effect for the rest
+of the BFS. Set `MGBFS_SEGMENT_BATCH_RECOVERY=1` on **all ranks** before the
+worker starts to permit recovery toward the admitted ceiling: after two fully
+drained layers with work, no retries, and peak destination-queue occupancy at
+most one half, the ceiling doubles (never beyond its admitted value). Invalid
+or inconsistent rank settings are rejected. This is an opt-in policy, not a
+claim that larger batches are always faster. Reused persistent workers receive
+the setting from the job environment; changing it between jobs is supported.
+
+For diagnostic runs, set `MGBFS_SEGMENT_LAYER_STATS=1`; optionally restrict
+completed depths with `MGBFS_SEGMENT_LAYER_STATS_MIN_DEPTH` and
+`MGBFS_SEGMENT_LAYER_STATS_MAX_DEPTH`. `SEGMENT_LAYER_STATS` JSON lines in each
+rank log include source parents, generated edge counts, sent/received counts
+per peer and shard, accepted rows, queue peaks, retries, spill traffic and
+selected storage/reserve byte counters. Spill counts include replay traffic,
+not unique states. Collection adds host work once per wave and is unsuitable
+for the final timing comparison. Its storage counters do not include every
+CUDA/NCCL transient; separately sampled `nvidia-smi` can miss short peaks.
+
+### Optional bitmap ownership page
+
+`NativeOptions(memory_backend="permutation_bitmap", bitmap_owner_page=64)`
+selects an experimental exact-ID ownership permutation; `0` (the default)
+keeps cyclic ownership. `run_graph(..., bitmap_owner_page=64)` and
+`MGBFS_SEGMENT_BITMAP_OWNER_PAGE=64` provide the same choice. Use a power of
+2 up to `2**20`, or zero for cyclic. All ranks must agree, and requesting a
+page on a native library lacking the feature fails explicitly. Profiles include
+this setting. In the current native ABI the mapping is passed to each job's
+kernels and remains immutable for that job. The default cyclic layout can
+still run with a compatible older CUDA library; a nonzero page requires the
+new immutable-layout ABI and otherwise fails explicitly.
+
+The layout rotates full groups of `world * page` exact IDs and leaves an
+incomplete final group cyclic. It permutes the range of IDs bijectively,
+retains the same bitmap size and per-owner address range, and does not change
+state values, external archive format, or the meaning of `segment_rows`. The
+page controls distribution between GPUs; it is not a shard-size cap. It can
+reduce skew for some graphs while increasing remote traffic for others, so it
+remains opt-in until measured for a workload. No migration of live layers
+between ownership layouts takes place.
+
+### Product-domain bitmap
+
+For permutation actions, positions connected by the supplied generators are
+grouped into orbits. Each orbit retains the multiset of symbols from the
+start, and the bitmap uses a mixed-radix rank across these orbit domains.
+This is an exact closed superdomain; it need not be the set of all reachable
+states. For example, fixed positions no longer multiply the bitmap domain.
+The state payload and output archive keep the original symbols and positions.
+If a compatible native library does not advertise this representation, the
+full multiset domain remains the compatibility path. Capacity and performance
+still depend on frontier size, allocation, communication, and workload.

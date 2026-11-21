@@ -47,6 +47,15 @@ pub fn begin(call: &'static str, source: &'static str, line: u32) {
     });
     if trace { eprintln!("MGBFS_NATIVE_CALL {}", snapshot()); persist(); }
 }
+/// Emit an independent supervisor-visible fatal record before stack unwinding.
+pub fn fatal_host(phase:&str, message:&str) {
+ let error=CONTEXT.with(|v|{let mut v=v.borrow_mut();let error=serde_json::json!({
+  "code":-1,"kind":"host","call":phase,"rank":v.rank,"device":v.device,"layer":v.layer,
+  "last_completed_layer":v.completed,"phase":v.phase,"message":message});
+  if v.error.is_none(){v.error=Some(error.clone());}else{v.secondary_errors=v.secondary_errors.saturating_add(1);}
+  v.last_error=Some(error.clone());v.state="failed";error});
+ eprintln!("MGBFS_NATIVE_ERROR {error}");persist();
+}
 pub fn finish(code: i32) -> Result<()> {
     if code == 0 {
         let trace = CONTEXT.with(|v| { let mut v = v.borrow_mut(); v.state = "returned"; v.trace });

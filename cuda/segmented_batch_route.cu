@@ -3,6 +3,7 @@
 #include "generic_route.h"
 #include "generic_action.cuh"
 #include "permutation_bitmap.cuh"
+#include "bitmap_owner_page.cuh"
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda_runtime.h>
 #include <cstdint>
@@ -41,16 +42,25 @@ cudaError_t layout(uint32_t children,uint32_t buckets,BatchWorkspace *w){
     !advance(cursor,temp,&w->temp))return cudaErrorInvalidValue;
  w->temp_bytes=temp;w->total=cursor;return cudaSuccess;
 }
-template<class T,bool Bitmap>
+static __device__ __constant__ uint32_t batch_bitmap_owner_page=0;
+static __device__ __constant__ uint64_t batch_bitmap_owner_boundary=0;
+extern "C" int mgbfs_bitmap_batch_set_owner_page(uint32_t page,uint64_t boundary){
+ cudaError_t code=cudaMemcpyToSymbol(batch_bitmap_owner_page,&page,sizeof(page));if(code!=cudaSuccess)return int(code);
+ return int(cudaMemcpyToSymbol(batch_bitmap_owner_boundary,&boundary,sizeof(boundary)));
+}
+
+template<class T,bool Bitmap,bool Immutable>
 __global__ void prepare(ActionT<T> action,BitmapDeviceDomain domain,uint32_t word_shard,
  uint64_t seed,uint32_t bits,uint32_t world,uint32_t shards,const uint32_t* map,
- const uint64_t* cuts,uint32_t* keys,uint32_t* origins,uint64_t* identity,uint32_t* error){
+ const uint64_t* cuts,uint32_t* keys,uint32_t* origins,uint64_t* identity,uint32_t* error,uint32_t layout_page,uint64_t layout_boundary){
  uint32_t count=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<count;child+=blockDim.x*gridDim.x){
   uint64_t id=0;uint32_t owner=0,shard=0,valid=1;
   if constexpr(Bitmap){
    if(!bitmap_rank(domain,action,child,&id)){atomicOr(error,8u);valid=0;}
    if(valid){
+    if constexpr(Immutable)id=mgbfs_bitmap_permute_owner_id(id,world,layout_page,layout_boundary);
+    else id=mgbfs_bitmap_permute_owner_id(id,world,batch_bitmap_owner_page,batch_bitmap_owner_boundary);
     owner=uint32_t(id%world);
     uint64_t key=word_shard?((id/world)>>6):id;
     shard=uint32_t((uint64_t(uint32_t(mix64(key)))*shards)>>32);
@@ -110,11 +120,11 @@ __global__ void scatter_exact(ActionT<T> action,uint32_t source,uint32_t shards,
   }
  }
 }
-template<class T,bool Bitmap,bool Packed>
+template<class T,bool Bitmap,bool Packed,bool Immutable>
 int launch(ActionT<T> action,BitmapDeviceDomain domain,uint32_t word_shard,
  uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,
  uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
- uint32_t* counts,uint32_t* error,void* states,void* scratch,const BatchWorkspace& w,cudaStream_t stream){
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,const BatchWorkspace& w,cudaStream_t stream,uint32_t layout_page,uint64_t layout_boundary){
  uint32_t n=action.count*action.generators,buckets=world*shards;
  cudaError_t rc=cudaMemsetAsync(counts,0,size_t(buckets)*4,stream);if(rc!=cudaSuccess)return int(rc);
  if(!n)return int(cudaSuccess);
@@ -126,7 +136,7 @@ int launch(ActionT<T> action,BitmapDeviceDomain domain,uint32_t word_shard,
  rc=cudaMemsetAsync(first,0,size_t(buckets)*4,stream);if(rc!=cudaSuccess)return int(rc);
  rc=cudaMemsetAsync(last,0,size_t(buckets)*4,stream);if(rc!=cudaSuccess)return int(rc);
  uint32_t blocks=(n+255)/256;if(blocks>65535)blocks=65535;
- prepare<T,Bitmap><<<blocks,256,0,stream>>>(action,domain,word_shard,seed,bits,world,shards,map,cuts,ki,oi,ids,error);
+ prepare<T,Bitmap,Immutable><<<blocks,256,0,stream>>>(action,domain,word_shard,seed,bits,world,shards,map,cuts,ki,oi,ids,error,layout_page,layout_boundary);
  if((rc=cudaGetLastError())!=cudaSuccess)return int(rc);
  size_t temp_bytes=w.temp_bytes;
  rc=cub::DeviceRadixSort::SortPairs(base+w.temp,temp_bytes,ki,ko,oi,oo,int(n),0,bits_needed(buckets),stream);
@@ -144,12 +154,16 @@ extern "C" int mgbfs_segmented_batch_route_scratch_bytes(uint32_t children,uint3
  if(!bytes)return int(cudaErrorInvalidValue);BatchWorkspace w{};cudaError_t rc=layout(children,buckets,&w);
  if(rc==cudaSuccess)*bytes=w.total;return int(rc);
 }
-extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,BitmapDeviceDomain domain,
+template<bool Immutable>
+static int mgbfs_segmented_batch_route_impl(uint32_t bitmap,uint32_t word_shard,BitmapDeviceDomain domain,
  uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
  const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
- uint32_t* counts,uint32_t* error,void* states,void* scratch,size_t scratch_bytes,void* opaque_stream){
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,size_t scratch_bytes,void* opaque_stream,uint32_t layout_page,uint64_t layout_boundary){
+ if constexpr(Immutable){
+  if(bitmap&&((!layout_page&&layout_boundary)||(layout_page&&((layout_page&(layout_page-1))||layout_page>(1u<<20)||!world||layout_boundary!=domain.total-domain.total%(uint64_t(layout_page)*world)))))return int(cudaErrorInvalidValue);
+ }
  if(bitmap>1||word_shard>1||(word_shard&&!bitmap)||(state_bytes!=1&&state_bytes!=8)||
   kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||count>stride||
   uint64_t(count)*generators>=0x7fffffffULL||bits>64||!world||world>128||source>=world||
@@ -166,16 +180,29 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,B
  if(state_bytes==1){
   ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
   if(bitmap){
-   if(elements<=24)return launch<uint8_t,true,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
-   return launch<uint8_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+   if(elements<=24)return launch<uint8_t,true,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
+   return launch<uint8_t,true,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
   }
-  if(elements<=24)return launch<uint8_t,false,true>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
-  return launch<uint8_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+  if(elements<=24)return launch<uint8_t,false,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
+  return launch<uint8_t,false,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
  }
  ActionT<int64_t> a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
- if(bitmap)return launch<int64_t,true,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
- return launch<int64_t,false,false>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st);
+ if(bitmap)return launch<int64_t,true,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
+ return launch<int64_t,false,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
 }
+extern "C" int mgbfs_segmented_batch_route(uint32_t bitmap,uint32_t word_shard,BitmapDeviceDomain domain,
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,size_t scratch_bytes,void* opaque_stream){return mgbfs_segmented_batch_route_impl<false>(bitmap,word_shard,domain,state_bytes,kind,elements,n,m,generators,parents,count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,scratch_bytes,opaque_stream,0,0);}
+extern "C" int mgbfs_segmented_batch_route_v2(uint32_t bitmap,uint32_t word_shard,BitmapDeviceDomain domain,
+ uint32_t state_bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
+ const void* parents,uint32_t count,uint64_t stride,const uint32_t* permutations,const int64_t* matrices,
+ const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
+ uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
+ uint32_t* counts,uint32_t* error,void* states,void* scratch,size_t scratch_bytes,void* opaque_stream,uint32_t layout_page,uint64_t layout_boundary){return mgbfs_segmented_batch_route_impl<true>(bitmap,word_shard,domain,state_bytes,kind,elements,n,m,generators,parents,count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,scratch_bytes,opaque_stream,layout_page,layout_boundary);}
+
 
 // Translate compact ordinals to the original source*q+row references.  The
 // offsets belong to one shard and are stable until all of its tiles drain.

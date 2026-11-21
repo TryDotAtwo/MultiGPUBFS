@@ -77,7 +77,7 @@ class Worker:
   self.log.close()
 
 class Pool:
- def __init__(self,kind='generic',owner=None):self.kind=kind;self.owner=owner;self.active_kind='generic';self.special=None;self.temporary=tempfile.TemporaryDirectory(prefix='mgbfs-generic-session-',dir=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT'));self.root=Path(self.temporary.name);self.visible_counts={};self.workers=[];self.identity=None;self.generation=0
+ def __init__(self,kind='generic',owner=None):self.kind=kind;self.owner=owner;self.active_kind='generic';self.special=None;self.temporary=tempfile.TemporaryDirectory(prefix='mgbfs-generic-session-',dir=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT'));self.root=Path(self.temporary.name);self.visible_counts={};self.workers=[];self.identity=None;self.generation=0;self.poisoned=False
  def release_memory(self):
   if not self.workers:return
   jobs=[w.submit('release-memory',[],{}) for w in self.workers]
@@ -89,12 +89,20 @@ class Pool:
    previous=root if root.active_kind=='generic' else root.special
    if previous is not None:previous.release_memory()
    root.active_kind=self.kind
+ def prepare_family(self,env):
+  family='segmented' if env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1' else 'legacy'
+  if self.identity is not None and self.identity[4]!=family:self.close_workers()
  def select(self,native,devices,env):
+  if self.poisoned:raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
   self.activate()
   from .autotune import _dependency_identity,_stat_identity
   dependency=_dependency_identity(str(native),env)
   stamps=tuple((x[0],x[1],_stat_identity(x[1])) for x in (dependency or {}).get('resolved_dependencies',[]))
-  key=(_stat_identity(native),stamps,str(native),tuple(devices),tuple((k,env.get(k)) for k in ('LD_LIBRARY_PATH','CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','CUDA_MODULE_LOADING','CUDA_DISABLE_PTX_JIT')),tuple(sorted((k,v) for k,v in env.items() if k.startswith('NCCL_'))))
+  # A legacy communicator lacks segmented all-rank commit certification.
+  # Retire that worker generation on family changes; both segmented memory
+  # backends share a family and continue reusing a healthy group.
+  comm_family='segmented' if env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1' else 'legacy'
+  key=(_stat_identity(native),stamps,str(native),tuple(devices),comm_family,tuple((k,env.get(k)) for k in ('LD_LIBRARY_PATH','CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER','CUDA_MODULE_LOADING','CUDA_DISABLE_PTX_JIT')),tuple(sorted((k,v) for k,v in env.items() if k.startswith('NCCL_'))))
   if key==self.identity and any(w.process.poll() is not None or _job_failed(w.job) for w in self.workers):raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
   if key!=self.identity:
    self.close_workers();root=self.root/str(self.generation);root.mkdir();self.generation+=1
@@ -114,6 +122,18 @@ class Pool:
  def close(self):
   if self.special is not None:self.special.close()
   self.close_workers();self.temporary.cleanup()
+
+def invalidate_launch_group(selection):
+ """Discard a generation if receipt aggregation fails after all rank jobs."""
+ if selection is None:return
+ pool,generation,workers,_,_=selection
+ if pool is not _active or generation!=pool.generation or tuple(pool.workers)!=workers:return
+ pool.poisoned=True
+ getattr(pool,'communication_profiles',{}).clear()
+ for worker in workers:
+  if worker.process.poll() is None:worker.process.terminate()
+ try:pool.close_workers()
+ except Exception as error:print('GENERIC_SESSION_POISON_CLEANUP_FAILED '+str(error),flush=True)
 
 @contextlib.contextmanager
 def persistent_graph_workers():

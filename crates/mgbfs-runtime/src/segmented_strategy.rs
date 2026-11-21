@@ -29,6 +29,105 @@ pub fn agree_capabilities(advertisements:&[u64])->Result<SegmentStrategy,&'stati
  Ok(strategy)
 }
 
+
+/// One pre-data collective advertises both recovery policy and native strategy.
+/// No rank may switch policy independently.
+pub fn agree_recovery_capabilities(advertisements:&[u64])->Result<(SegmentStrategy,bool),&'static str>{
+ if advertisements.is_empty(){return Err("SEGMENT_BATCH_RECOVERY_RANK_MISMATCH")}
+ if advertisements.iter().any(|&v|v>>9>1){return Err("SEGMENT_BATCH_RECOVERY_INVALID")}
+ let first=advertisements[0]>>9;
+ if advertisements.iter().any(|&v|v>>9!=first){return Err("SEGMENT_BATCH_RECOVERY_RANK_MISMATCH")}
+ let base=advertisements.iter().map(|v|v&0x1ff).collect::<Vec<_>>();
+ Ok((agree_capabilities(&base)?,first==1))
+}
+
+
+// Queue capacities determine peer offsets and message layout. Agreement must
+// precede all graph data, even when the optional recovery policy is disabled.
+pub fn agree_recovery_geometry(advertisements:&[u64])->Result<(SegmentStrategy,bool),&'static str>{
+ let first=*advertisements.first().ok_or("SEGMENT_BATCH_RECOVERY_RANK_MISMATCH")?;
+ let queue=first>>32;
+ if queue==0{return Err("SEGMENTED_QUEUE_CAPACITY_INVALID")}
+ if advertisements.iter().any(|v|v>>32!=queue){return Err("SEGMENTED_QUEUE_CAPACITY_RANK_MISMATCH")}
+ let strategy=advertisements.iter().map(|v|v&0xffff_ffff).collect::<Vec<_>>();
+ agree_recovery_capabilities(&strategy)
+}
+
+
+/// The optional exact-ID permutation must be uniform across ranks; old native
+/// bundles remain valid for the default cyclic layout.
+pub fn agree_owner_page_geometry(advertisements:&[u64])->Result<(SegmentStrategy,bool,u32),&'static str>{
+ let first=*advertisements.first().ok_or("BITMAP_OWNER_PAGE_RANK_MISMATCH")?;
+ let code=(first>>11)&0x3f;let bitmap=(first>>18)&1;
+ if advertisements.iter().any(|v|(v>>18)&1!=bitmap){return Err("BITMAP_MODE_RANK_MISMATCH")}
+ if bitmap!=0&&advertisements.iter().any(|v|(v>>19)&1!=(first>>19)&1){return Err("BITMAP_ORBIT_CAPABILITY_RANK_MISMATCH")}
+ if bitmap!=0&&advertisements.iter().any(|v|(v>>21)&1!=(first>>21)&1){return Err("BITMAP_IMMUTABLE_ABI_RANK_MISMATCH")}
+ if advertisements.iter().any(|v|(v>>11)&0x3f!=code){return Err("BITMAP_OWNER_PAGE_RANK_MISMATCH")}
+ if code>21||(code!=0&&bitmap==0){return Err("BITMAP_OWNER_PAGE_INVALID")}
+ if code!=0&&advertisements.iter().any(|v|(v>>21)&1==0){return Err("BITMAP_OWNER_PAGE_NATIVE_ABI_MISSING")}
+ let base=advertisements.iter().map(|v|v&0xffff_ffff_0000_07ff).collect::<Vec<_>>();
+ let(strategy,recovery)=agree_recovery_geometry(&base)?;
+ if strategy==SegmentStrategy::Warp&&bitmap==0&&advertisements.iter().any(|v|(v>>20)&1==0){
+  return Err("SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING")
+ }
+ Ok((strategy,recovery,if code==0{0}else{1u32<<(code-1)}))
+}
+
+/// The hash warp path must never silently run a library with reusable
+/// pending slots; atomic and batch remain compatible with earlier bundles.
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn warp_safe_abi_ready()->bool{unsafe{
+ if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1")&&std::env::var("MGBFS_SEGMENT_TEST_WARP_SAFE_ABI_MISSING").as_deref()==Ok("1"){return false}
+ let p=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_segmented_warp_safe_abi_version\0".as_ptr().cast());
+ if p.is_null(){return false}
+ let version:unsafe extern "C" fn()->u32=std::mem::transmute(p);version()==1
+}}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn warp_safe_abi_ready()->bool{false}
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn bitmap_orbit_abi_ready()->bool{unsafe{
+ let p=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_bitmap_orbit_domain_abi_version\0".as_ptr().cast());
+ if p.is_null(){return false}
+ let version:unsafe extern "C" fn()->u32=std::mem::transmute(p);version()==1
+}}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn bitmap_orbit_abi_ready()->bool{false}
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn bitmap_immutable_abi_ready()->bool{unsafe{
+ let p=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_bitmap_immutable_layout_abi_version\0".as_ptr().cast());
+ if p.is_null(){return false}
+ let version:unsafe extern "C" fn()->u32=std::mem::transmute(p);
+ if version()!=1{return false}
+ [b"mgbfs_bitmap_route_v2\0".as_slice(),b"mgbfs_bitmap_route_grouped_v2\0".as_slice(),b"mgbfs_segmented_batch_route_v2\0".as_slice()].iter().all(|name|!libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast()).is_null())
+}}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn bitmap_immutable_abi_ready()->bool{false}
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub type BitmapOwnerPageSetter=unsafe extern "C" fn(u32,u64)->i32;
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn bitmap_owner_page_setter()->Option<BitmapOwnerPageSetter>{
+ let p=unsafe{libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_bitmap_set_owner_page\0".as_ptr().cast())};
+ if p.is_null(){None}else{Some(unsafe{std::mem::transmute::<*mut libc::c_void,BitmapOwnerPageSetter>(p)})}
+}
+
+/// Restore the route batch only after two consecutive drained, retry-free
+/// layers with at least half of every destination queue left unused.
+#[derive(Default)]
+pub struct QueueBatchRecovery{quiet_layers:u8}
+impl QueueBatchRecovery{
+ pub fn observe(&mut self,current:u32,admitted:u32,peak:u32,capacity:u32,had_work:bool,retried:bool)->u32{
+  if current>=admitted||capacity==0||!had_work||retried||u64::from(peak)*2>u64::from(capacity){
+   self.quiet_layers=0;return current
+  }
+  self.quiet_layers=self.quiet_layers.saturating_add(1);
+  if self.quiet_layers<2{return current}
+  self.quiet_layers=0;current.saturating_mul(2).min(admitted)
+ }
+}
+
 #[cfg(all(feature="cuda",target_os="linux"))]
 pub fn batch_abi_ready()->bool{
  if std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1") &&
@@ -134,5 +233,99 @@ mod tests {
   assert!(owner_decision(3,Some(100),101,false,true,false,false).is_err());
   assert!(owner_decision(3,None,0,false,true,false,false).is_err());
   assert_eq!(owner_decision(3,None,0,true,false,false,false).unwrap(),OwnerDecision::Next);
+ }
+}
+
+#[cfg(test)]
+mod batch_recovery_policy_tests {
+ use super::QueueBatchRecovery;
+ #[test]
+ fn grows_after_two_quiet_complete_layers_and_never_exceeds_admission(){
+  let mut p=QueueBatchRecovery::default();
+  assert_eq!(p.observe(2048,8192,1024,4096,true,false),2048);
+  assert_eq!(p.observe(2048,8192,1024,4096,true,false),4096);
+  assert_eq!(p.observe(4096,8192,1024,4096,true,false),4096);
+  assert_eq!(p.observe(4096,8192,1024,4096,true,false),8192);
+  assert_eq!(p.observe(8192,8192,100,4096,true,false),8192);
+ }
+ #[test]
+ fn retry_busy_or_empty_layer_breaks_the_streak(){
+  let mut p=QueueBatchRecovery::default();
+  assert_eq!(p.observe(1024,8192,1,4096,true,false),1024);
+  assert_eq!(p.observe(1024,8192,1,4096,true,true),1024);
+  assert_eq!(p.observe(1024,8192,1,4096,true,false),1024);
+  assert_eq!(p.observe(1024,8192,3000,4096,true,false),1024);
+  assert_eq!(p.observe(1024,8192,1,4096,true,false),1024);
+  assert_eq!(p.observe(1024,8192,0,4096,false,false),1024);
+  assert_eq!(p.observe(1024,8192,1,4096,true,false),1024);
+  assert_eq!(p.observe(1024,8192,1,4096,true,false),2048);
+ }
+ #[test]
+ fn saturating_growth_obeys_non_power_of_two_limits(){
+  let mut p=QueueBatchRecovery::default();
+  assert_eq!(p.observe(3000,5000,10,4096,true,false),3000);
+  assert_eq!(p.observe(3000,5000,10,4096,true,false),5000);
+  assert_eq!(p.observe(u32::MAX-1,u32::MAX,0,u32::MAX,true,false),u32::MAX-1);
+  assert_eq!(p.observe(u32::MAX-1,u32::MAX,0,u32::MAX,true,false),u32::MAX);
+ }
+}
+
+#[cfg(test)]
+mod batch_recovery_agreement_tests {
+ use super::agree_recovery_capabilities;
+ #[test]
+ fn every_rank_agrees_on_opt_in_and_bad_values_fail_together(){
+  assert_eq!(agree_recovery_capabilities(&[0x100,0x100]),Ok((super::SegmentStrategy::Atomic,false)));
+  assert_eq!(agree_recovery_capabilities(&[0x300,0x300]),Ok((super::SegmentStrategy::Atomic,true)));
+  assert_eq!(agree_recovery_capabilities(&[0x100,0x300]),Err("SEGMENT_BATCH_RECOVERY_RANK_MISMATCH"));
+  assert_eq!(agree_recovery_capabilities(&[0x500,0x500]),Err("SEGMENT_BATCH_RECOVERY_INVALID"));
+  assert_eq!(agree_recovery_capabilities(&[]),Err("SEGMENT_BATCH_RECOVERY_RANK_MISMATCH"));
+  assert_eq!(agree_recovery_capabilities(&[0x302,0x302]),Ok((super::SegmentStrategy::Batch,true)));
+  assert_eq!(agree_recovery_capabilities(&[0x302,0x202]),Err("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING"));
+ }
+}
+
+#[cfg(test)]
+mod batch_queue_agreement_tests{
+ use super::agree_recovery_geometry;
+ #[test]
+ fn mismatched_or_zero_queue_capacity_is_collectively_rejected(){
+  let ad=|q:u64,v:u64|(q<<32)|v;
+  assert_eq!(agree_recovery_geometry(&[ad(8,0x100),ad(8,0x100)]),Ok((super::SegmentStrategy::Atomic,false)));
+  assert_eq!(agree_recovery_geometry(&[ad(8,0x300),ad(8,0x300)]),Ok((super::SegmentStrategy::Atomic,true)));
+  assert_eq!(agree_recovery_geometry(&[ad(8,0x100),ad(4,0x100)]),Err("SEGMENTED_QUEUE_CAPACITY_RANK_MISMATCH"));
+  assert_eq!(agree_recovery_geometry(&[ad(0,0x100),ad(0,0x100)]),Err("SEGMENTED_QUEUE_CAPACITY_INVALID"));
+ }
+}
+
+#[cfg(test)]
+mod bitmap_owner_page_agreement_tests{
+ use super::{agree_owner_page_geometry,SegmentStrategy};
+ fn ad(queue:u64,bitmap:u64,page_code:u64,cap:u64)->u64{
+  (queue<<32)|(bitmap<<18)|(cap<<17)|(page_code<<11)|0x100
+ }
+ #[test]
+ fn owner_page_requires_identical_bitmap_mode_mapping_and_native_capability(){
+  let v2=1<<21;
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,7,1)|v2,ad(8,1,7,1)|v2]),Ok((SegmentStrategy::Atomic,false,64)));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,0,0),ad(8,1,0,1)]),Ok((SegmentStrategy::Atomic,false,0)));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,7,1)|v2,ad(8,1,8,1)|v2]),Err("BITMAP_OWNER_PAGE_RANK_MISMATCH"));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,63,1)|v2,ad(8,1,63,1)|v2]),Err("BITMAP_OWNER_PAGE_INVALID"));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,7,1),ad(8,1,7,1)]),Err("BITMAP_OWNER_PAGE_NATIVE_ABI_MISSING"));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,0,1)|v2,ad(8,1,0,1)]),Err("BITMAP_IMMUTABLE_ABI_RANK_MISMATCH"));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,0,0,1),ad(8,1,0,1)]),Err("BITMAP_MODE_RANK_MISMATCH"));
+  assert_eq!(agree_owner_page_geometry(&[ad(8,1,0,1)|(1<<19),ad(8,1,0,1)]),Err("BITMAP_ORBIT_CAPABILITY_RANK_MISMATCH"));
+ }
+}
+
+#[cfg(test)]
+mod safe_warp_abi_tests{
+ use super::{agree_owner_page_geometry,SegmentStrategy};
+ #[test] fn all_hash_warp_ranks_require_safe_abi(){
+  let queue=8u64<<32;let safe=1u64<<20;let bitmap=1u64<<18;
+  assert_eq!(agree_owner_page_geometry(&[queue|safe|1,queue|safe|1]),Ok((SegmentStrategy::Warp,false,0)));
+  assert_eq!(agree_owner_page_geometry(&[queue|safe|1,queue|1]),Err("SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING"));
+  assert_eq!(agree_owner_page_geometry(&[queue|bitmap|1,queue|bitmap|1]),Ok((SegmentStrategy::Warp,false,0)));
+  assert_eq!(agree_owner_page_geometry(&[queue,queue]),Ok((SegmentStrategy::Atomic,false,0)));
  }
 }

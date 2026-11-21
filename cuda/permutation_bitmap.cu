@@ -5,18 +5,34 @@
 #include "generic_action.cuh"
 #include "segmented_incoming.cuh"
 #include "permutation_bitmap.cuh"
+#include "bitmap_owner_page.cuh"
 #include "segmented_history.cuh"
 #include "segmented_warp_route.cuh"
 
+extern "C" uint32_t mgbfs_bitmap_orbit_domain_abi_version(){return 1;}
+
+// Config is set once per GPU job (including reset to zero for cyclic jobs).
+// Jobs in a native graph-session are serialized; no CUDA-state migration.
+static __device__ __constant__ uint32_t bitmap_owner_page=0;
+static __device__ __constant__ uint64_t bitmap_owner_boundary=0;
+extern "C" int mgbfs_bitmap_batch_set_owner_page(uint32_t,uint64_t);
+extern "C" int mgbfs_bitmap_set_owner_page(uint32_t page,uint64_t boundary){
+ cudaError_t code=cudaMemcpyToSymbol(bitmap_owner_page,&page,sizeof(page));if(code!=cudaSuccess)return int(code);
+ code=cudaMemcpyToSymbol(bitmap_owner_boundary,&boundary,sizeof(boundary));if(code!=cudaSuccess)return int(code);
+ return mgbfs_bitmap_batch_set_owner_page(page,boundary);
+}
+
 // Rank is the exact state identifier; ownership is rank % world, and the
 // bitmap index on that owner is rank / world. The map is a rank bijection.
-template<class T,bool Packed,bool Grouped=false>
+template<class T,bool Packed,bool Grouped=false,bool Immutable=false>
 __global__ void bitmap_route(ActionT<T> action,BitmapDeviceDomain domain,uint32_t world,uint32_t source,
  uint32_t shards,uint32_t capacity,uint64_t begin,const uint32_t* map,
- GenericRouteRecord* output,uint32_t* counts,uint32_t* error){
+ GenericRouteRecord* output,uint32_t* counts,uint32_t* error,uint32_t layout_page,uint64_t layout_boundary){
  uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
   uint64_t id=0;if(!bitmap_rank(domain,action,child,&id)){atomicOr(error,8u);continue;}
+  if constexpr(Immutable)id=mgbfs_bitmap_permute_owner_id(id,world,layout_page,layout_boundary);
+  else id=mgbfs_bitmap_permute_owner_id(id,world,bitmap_owner_page,bitmap_owner_boundary);
   uint32_t owner=uint32_t(id%world),target=map?map[owner]:owner;
   if(target>=world){atomicOr(error,2u);continue;}
   uint32_t shard=(uint64_t(uint32_t(mix64(id)))*shards)>>32;
@@ -30,27 +46,41 @@ __global__ void bitmap_route(ActionT<T> action,BitmapDeviceDomain domain,uint32_
   }else output[uint64_t(queue)*capacity+row]={id,begin+child/action.generators,source,child%action.generators,shard,0};
  }
 }
-template<class T,bool Packed,bool Grouped=false>
+template<class T,bool Packed,bool Grouped=false,bool Immutable=false>
 int launch_route(BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const T* parents,uint32_t count,uint64_t stride,
  const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
- const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
+ const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream,uint32_t layout_page,uint64_t layout_boundary){
+ if constexpr(Immutable){
+  if((!layout_page&&layout_boundary)||(layout_page&&((layout_page&(layout_page-1))||layout_page>(1u<<20)||!world||layout_boundary!=domain.total-domain.total%(uint64_t(layout_page)*world))))return int(cudaErrorInvalidValue);
+ }
  if(!elements||elements!=domain.elements||!generators||!parents||count>stride||!permutations||
   !world||world>128||source>=world||!shards||shards>4096||!capacity||!output||!counts||!error||
   uint64_t(count)*generators>=0x7fffffffULL||begin>UINT64_MAX-count||(Packed&&elements>24))return int(cudaErrorInvalidValue);
  if(!count)return 0;
  ActionT<T> action{0,elements,elements,1,generators,count,stride,parents,permutations,nullptr,nullptr};
  uint64_t blocks=(uint64_t(count)*generators+255)/256;
- bitmap_route<T,Packed,Grouped><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,domain,world,source,shards,capacity,begin,map,output,counts,error);
+ bitmap_route<T,Packed,Grouped,Immutable><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,domain,world,source,shards,capacity,begin,map,output,counts,error,layout_page,layout_boundary);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_bitmap_route(uint32_t state_bytes,BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const void* parents,
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
-  return launch_route<uint8_t,false>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
+  if(elements<=24)return launch_route<uint8_t,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+  return launch_route<uint8_t,false>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
  }
- if(state_bytes==8)return launch_route<int64_t,false>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
+ if(state_bytes==8)return launch_route<int64_t,false>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+ return int(cudaErrorInvalidValue);
+}
+
+extern "C" int mgbfs_bitmap_route_v2(uint32_t state_bytes,BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const void* parents,
+ uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
+ const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream,uint32_t layout_page,uint64_t layout_boundary){
+ if(state_bytes==1){
+  if(elements<=24)return launch_route<uint8_t,true,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+  return launch_route<uint8_t,false,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+ }
+ if(state_bytes==8)return launch_route<int64_t,false,false,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
  return int(cudaErrorInvalidValue);
 }
 
@@ -217,12 +247,25 @@ extern "C" int mgbfs_bitmap_route_grouped(uint32_t state_bytes,BitmapDeviceDomai
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
-  return launch_route<uint8_t,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
+  if(elements<=24)return launch_route<uint8_t,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+  return launch_route<uint8_t,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
  }
- if(state_bytes==8)return launch_route<int64_t,false,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream);
+ if(state_bytes==8)return launch_route<int64_t,false,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+ return int(cudaErrorInvalidValue);
+}
+
+extern "C" int mgbfs_bitmap_route_grouped_v2(uint32_t state_bytes,BitmapDeviceDomain domain,uint32_t elements,uint32_t generators,const void* parents,
+ uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
+ const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream,uint32_t layout_page,uint64_t layout_boundary){
+ if(state_bytes==1){
+  if(elements<=24)return launch_route<uint8_t,true,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+  return launch_route<uint8_t,false,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+ }
+ if(state_bytes==8)return launch_route<int64_t,false,true,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
  return int(cudaErrorInvalidValue);
 }
 
 // Strategy ABI covers grouped route and grouped owner symbols together.
 extern "C" uint32_t mgbfs_segmented_strategy_abi_version(){return 1;}
+
+extern "C" uint32_t mgbfs_bitmap_immutable_layout_abi_version(){return 1;}

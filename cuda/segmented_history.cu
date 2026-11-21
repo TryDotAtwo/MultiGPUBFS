@@ -5,6 +5,11 @@
 #include "generic_action.cuh"
 #include "segmented_incoming.cuh"
 
+// Compiled away outside the deterministic GPU race regression.
+#ifndef MGBFS_SEGMENTED_TEST_HOOK
+#define MGBFS_SEGMENTED_TEST_HOOK(stage, segment, child) ((void)0)
+#endif
+
 namespace {
 constexpr uint64_t EMPTY = ~uint64_t(0);
 constexpr uint64_t RETIRED = EMPTY - 1;
@@ -175,6 +180,7 @@ __global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t s
   uint64_t slot_claimed=0,hash=0,prefix=0;
   if(eligible&&(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed)&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY)))eligible=false;
   if(eligible){
+   MGBFS_SEGMENTED_TEST_HOOK(1,active,child);
    hash=input.hash(child,0,64);prefix=hash&PREFIX;
    for(uint32_t s=0;s<sealed_count&&!duplicate&&eligible;s++){
     MgbfsSegment seg=sealed[s];
@@ -214,10 +220,11 @@ __global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t s
     }
     if(!eligible||duplicate||(cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(*error).load(cuda::memory_order_relaxed)&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY)))break;
     if(first==active.slots_count){overflow=true;break;}
+    MGBFS_SEGMENTED_TEST_HOOK(2,active,child);
     cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[first]);
     uint64_t expected=available;
     if(!cell.compare_exchange_strong(expected,pending,cuda::memory_order_acq_rel,cuda::memory_order_acquire))continue;
-    slot_claimed=first;claimed=true;break;
+    slot_claimed=first;claimed=true;MGBFS_SEGMENTED_TEST_HOOK(3,active,child);break;
    }
   }
   __syncwarp(live);
@@ -230,10 +237,12 @@ __global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t s
    if(int(lane)==leader){
     const uint32_t wanted=uint32_t(__popc(claim_lanes));uint32_t rank_grant=wanted;
     if(global_count){uint64_t ignored=0;rank_grant=mgbfs_hash_group_reserve(global_count,global_limit,wanted,&ignored);if(rank_grant<wanted)atomicOr(error,uint32_t(MGBFS_SEGMENTED_CAP_RETRY));}
+    MGBFS_SEGMENTED_TEST_HOOK(4,active,child);
     grant=mgbfs_hash_group_reserve(accepted,active.capacity,rank_grant,&base);
     if(global_count&&rank_grant>grant){
      cuda::atomic_ref<uint64_t,cuda::thread_scope_device> count(*global_count);
      count.fetch_sub(uint64_t(rank_grant-grant),cuda::memory_order_acq_rel);
+     MGBFS_SEGMENTED_TEST_HOOK(5,active,child);
     }
    }
    base=__shfl_sync(live,base,leader);grant=__shfl_sync(live,grant,leader);
@@ -247,8 +256,16 @@ __global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t s
    spill_base=__shfl_sync(live,spill_base,leader);
   }
   if(deferred){
-   spill[spill_base+uint32_t(__popc(deferred_lanes&before))]=child;
+   const uint32_t dst=spill_base+uint32_t(__popc(deferred_lanes&before));
+#ifdef MGBFS_TEST_OLD_DEFER
+   spill[dst]=child;
    if(claimed){cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot_claimed]);cell.store(RETIRED,cuda::memory_order_release);}
+#else
+   // Physical origins are strictly below 2^31. Tag claimed origins until a
+   // later kernel retires exactly their pending slots after all readers drain.
+   spill[dst]=child|(claimed?0x80000000u:0u);
+#endif
+   MGBFS_SEGMENTED_TEST_HOOK(6,active,child);
   }else if(claimed){
    const uint64_t row=base+ordinal,payload=(uint64_t(bank)<<32)|row;
    const uint64_t local=uint64_t(bank)*active.capacity+row,stride=uint64_t(active.capacity)*active.banks;
@@ -258,6 +275,38 @@ __global__ void accept_grouped(Input input,const MgbfsSegment* sealed,uint32_t s
    if(future)future[row]=payload;
    cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot_claimed]);cell.store(prefix|payload,cuda::memory_order_release);
   }
+ }
+}
+
+// Same stream, after the whole grouped accept launch. The origin input and
+// table remain leased by this shard until this kernel finishes. EMPTY ends a
+// probe chain; an expected pending token which is missing is a fatal error.
+// A tagged origin cannot alias a valid raw origin because every queue extent
+// is checked to be strictly below 2^31. Slots themselves remain full u64.
+template<class Input>
+__global__ void retire_deferred(Input input,MgbfsSegment active,uint32_t* spill,
+                                const uint32_t* spill_count,uint32_t selected_count,uint32_t* error){
+ const uint32_t count=*spill_count;
+ if(count>selected_count){if(blockIdx.x==0&&threadIdx.x==0)atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));return;}
+ for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<count;i+=blockDim.x*gridDim.x){
+  const uint32_t tagged=spill[i],child=tagged&0x7fffffffu;
+  if(!(tagged&0x80000000u)){continue;}
+  if(!input.valid(child,error)) {atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));continue;}
+  const uint64_t hash=input.hash(child,0,64),token=(hash&PREFIX)|PENDING|child;
+  const uint64_t start=mgbfs_shared_table_bucket(hash,active.slots_count);
+  bool retired=false;
+  for(uint64_t probe=0;probe<active.slots_count;probe++){
+   const uint64_t slot=(start+probe)&(active.slots_count-1);
+   cuda::atomic_ref<uint64_t,cuda::thread_scope_device> cell(active.slots[slot]);
+   uint64_t observed=cell.load(cuda::memory_order_acquire);
+   if(observed==EMPTY)break;
+   if(observed==token){
+    retired=cell.compare_exchange_strong(observed,RETIRED,cuda::memory_order_acq_rel,cuda::memory_order_acquire);
+    break;
+   }
+  }
+  if(!retired)atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+  else spill[i]=child;
  }
 }
 
@@ -358,8 +407,11 @@ int launch_routes(uint32_t elements,const T* local,const T* remote,const Generic
     if(!selected_count)return int(cudaSuccess);
     MgbfsBoundedIncomingAction<T,Packed> source{{elements,uint32_t(bound),q,1,rank,world,shard,shards,local,remote,local_meta,remote_meta,local_counts,remote_counts,nullptr},visible};
     uint32_t blocks=(selected_count+255u)/256u;if(blocks>65535u)blocks=65535u;
-    if constexpr(Grouped)accept_grouped<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
-    else    accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
+    if constexpr(Grouped){
+      accept_grouped<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
+      cudaError_t code=cudaGetLastError();if(code!=cudaSuccess)return int(code);
+      retire_deferred<<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,active,spill,spill_count,selected_count,error);
+    }else accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
     return int(cudaGetLastError());
 }
 } // namespace
@@ -456,3 +508,7 @@ extern "C" int mgbfs_segmented_retire(MgbfsSegment segment,uint32_t bank,uint64_
 }
 
 extern "C" uint32_t mgbfs_segmented_abi_version(){return 3;}
+// Advertises the no-slot-reuse-until-drain invariant for hash warp admission.
+#ifndef MGBFS_TEST_OLD_DEFER
+extern "C" uint32_t mgbfs_segmented_warp_safe_abi_version(){return 1;}
+#endif
