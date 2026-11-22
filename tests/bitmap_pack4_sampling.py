@@ -29,7 +29,7 @@ def collect_vram_samples(enabled, sampler):
 
 
 def vram_summary(enabled, samples, devices):
-    valid = [sample["gpus"] for sample in samples if "gpus" in sample]
+    valid = [sample["gpus"] for sample in samples if sample.get("gpus")]
     peaks = None
     if enabled and valid:
         peaks = {str(device): max((sample[device] for sample in valid if device in sample), default=None)

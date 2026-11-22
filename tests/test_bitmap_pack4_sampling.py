@@ -5,6 +5,7 @@ import os
 import runpy
 import sys
 import tempfile
+import time
 import threading
 import types
 import unittest
@@ -26,6 +27,9 @@ class SamplingTest(unittest.TestCase):
         self.assertEqual(vram_summary(False, [], [0, 1])["nvml_samples"], 0)
         self.assertIsNone(vram_summary(False, [], [0, 1])["nvml_max_mib_by_gpu"])
         self.assertIsNone(vram_summary(True, [], [0, 1])["nvml_max_mib_by_gpu"])
+        empty = vram_summary(True, [{"gpus": {}}], [0, 1])
+        self.assertEqual(empty["nvml_samples"], 0)
+        self.assertIsNone(empty["nvml_max_mib_by_gpu"])
 
     def test_sampler_is_started_only_when_requested(self):
         started = threading.Event()
@@ -106,6 +110,7 @@ class SamplingTest(unittest.TestCase):
                 self.assertFalse(sample_called.is_set())
             else:
                 self.assertTrue(sample_called.wait(2), "enabled sampler did not run")
+                time.sleep(.65)  # Legitimate second sample must not fail the check.
             (output/"states.json").write_text(json.dumps({
                 "current": [[2,1,0]], "previous_small": [[1,2,0],[2,0,1]]
             }))
@@ -144,7 +149,8 @@ class SamplingTest(unittest.TestCase):
             self.assertEqual(records[1]["nvml_max_mib_by_gpu"], {"0":73,"1":83})
             self.assertTrue(all(r["all_layer_counts_mahonian"] and r["terminal_full_sets"] for r in records))
             self.assertTrue(all(abs(r["window_seconds"]-.6)<1e-9 for r in records))
-            self.assertEqual(len(queries), 1)
+            self.assertGreater(len(queries), 0)
+            self.assertEqual(len(queries), records[1]["nvml_samples"])
 
 if __name__ == "__main__":
     unittest.main()
