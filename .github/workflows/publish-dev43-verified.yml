@@ -1,0 +1,68 @@
+name: Publish GPU-verified dev43 package
+on:
+  push:
+    branches: [codex/capacity-policy-autotune]
+    paths: [.github/workflows/publish-dev43-verified.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: native-pip-20261122-v43
+    steps:
+      - name: Download and verify the exact tested artifact
+        run: |
+          set -euo pipefail
+          gh run download 44959295300 --repo "$GITHUB_REPOSITORY" --name multigpubfs-dev43-wheel-candidate --dir "$RUNNER_TEMP/assets"
+          cd "$RUNNER_TEMP/assets"
+          sha256sum -c SHA256SUMS
+          python - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path("multigpubfs-0.2.0.dev43-py3-none-any.whl")
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=="7ff8ef875012ac4ac6a8c178b872b62f437bdd99e773f7efb9c0fd232d7e9583"
+          m=json.loads(pathlib.Path("manifest.json").read_text())
+          assert m["source_commit"]=="b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
+          assert m["native_components"]=="native-pip-20261121-v41"
+          PY
+      - name: Create draft and verify uploaded bytes before publishing
+        run: |
+          set -euo pipefail
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name==env.TAG) | .id')"
+          if test -n "$existing"; then
+            echo "Release tag already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          Experimental prerelease. Select segmented24 or permutation_bitmap explicitly; legacy remains the default.
+          
+          max_capacity now compares admitted lane and queue candidates using a per-rank capacity estimate and measured prefix time. Effective-memory cache identity permits safe reuse when only reusable-pool accounting moves, while admission continues to check current memory.
+          
+          The exact wheel was exercised on 2 and 8 RTX 3060 GPUs. See the acceptance document and machine-readable receipts in this repository for graph coverage, benchmark geometry, estimates and limitations. B200 and full S14 remain unverified. The included original build manifest describes the build-time status; later installed-GPU acceptance is documented separately.
+          NOTES
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9 --draft --prerelease --latest=false --title "MultiGPUBFS 0.2.0.dev43 (experimental)" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/assets/*
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name==env.TAG) | .id')"
+          [[ "$id" =~ ^[0-9]+$ ]]
+          for attempt in $(seq 1 10); do
+            gh api "repos/$GITHUB_REPOSITORY/releases/$id" > "$RUNNER_TEMP/uploaded.json"
+            if python -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["assets"] and all(a.get("digest") for a in r["assets"])' "$RUNNER_TEMP/uploaded.json"; then break; fi
+            sleep 2
+          done
+          python - "$RUNNER_TEMP/assets" "$RUNNER_TEMP/uploaded.json" <<'PY'
+          import hashlib,json,pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          r=json.loads(pathlib.Path(sys.argv[2]).read_text())
+          assert r["draft"] and r["prerelease"] and r["tag_name"]=="native-pip-20261122-v43"
+          assert r["target_commitish"]=="b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
+          actual={a["name"]:a for a in r["assets"]}
+          expected=[p for p in root.iterdir() if p.is_file()]
+          assert set(actual)=={p.name for p in expected},(set(actual),{p.name for p in expected})
+          for p in expected:
+              assert actual[p.name]["size"]==p.stat().st_size
+              assert actual[p.name]["digest"]=="sha256:"+hashlib.sha256(p.read_bytes()).hexdigest()
+          print("RELEASE_ASSET_DIGESTS_PASS")
+          PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -F prerelease=true -f make_latest=false --silent
