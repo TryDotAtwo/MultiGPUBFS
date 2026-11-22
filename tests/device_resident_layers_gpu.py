@@ -26,6 +26,10 @@ def rank_cap(g,layers):
  for d,layer in enumerate(layers):
   for state in layer:dist[d][owner[idx[tuple(state)]%world]]+=1
  return max(max(row) for row in dist),dist
+def check_packet(r):
+ expected=int(os.environ.get("MGBFS_RESIDENT_PACKET_RECORDS","1"))
+ assert [m["resident"]["packet_records"] for m in r["segment_memory_by_rank"]]==[expected]*world
+
 def checkstate(out,layer):
  actual=json.loads((out/"states.json").read_text())["current"]
  got=Counter(tuple(v) for v in actual);want=Counter(tuple(v) for v in layer)
@@ -40,6 +44,7 @@ with persistent_graph_workers() as pool:
    r=run_graph(g,out,devices=devices,autotune=False,shards=2,_batch=2,segment_rows=2,
       memory_backend="permutation_bitmap",segment_strategy="atomic",execution_engine="device",executable=os.environ["MGBFS_EXECUTABLE"],_profile_layers=depth)
    assert r["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL",r
+   check_packet(r)
    assert r["layer_sizes"]==[len(x) for x in layers[:depth+1]],(name,depth,r["layer_sizes"])
    if depth+1<len(layers):assert (r["status"],r["reason"])==("INCOMPLETE","PROFILE_LAYER_LIMIT"),r
    else:assert r["status"]=="COMPLETE",r
@@ -54,6 +59,7 @@ with persistent_graph_workers() as pool:
    out=root/f"{name}-cap-{cap}"
    r=run_graph(g,out,devices=devices,autotune=False,shards=2,_batch=2,segment_rows=2,capacity=cap,
       memory_backend="permutation_bitmap",segment_strategy="atomic",execution_engine="device",executable=os.environ["MGBFS_EXECUTABLE"])
+   check_packet(r)
    done=len(layers)-1 if first is None else first-1
    assert r["layer_sizes"]==[len(x) for x in layers[:done+1]],(name,cap,first,dist,r["layer_sizes"])
    assert r["status"]==("COMPLETE" if first is None else "INCOMPLETE"),(name,cap,r["status"])
@@ -64,6 +70,7 @@ with persistent_graph_workers() as pool:
  name,g=dup;layers=g.exact_layers(1000);out=root/name
  r=run_graph(g,out,devices=devices,autotune=False,shards=2,_batch=2,segment_rows=2,capacity=1,
    memory_backend="permutation_bitmap",segment_strategy="atomic",execution_engine="device",executable=os.environ["MGBFS_EXECUTABLE"])
+ check_packet(r)
  assert r["status"]=="COMPLETE" and r["layer_sizes"]==[len(x) for x in layers],r
  checkstate(out,layers[-1])
  duplicate_full=sum(x["resident"]["duplicates_at_rank_cap"] for x in r["segment_memory_by_rank"])

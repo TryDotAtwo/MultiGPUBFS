@@ -65,6 +65,15 @@ pub(super) struct Functions {
  pub prepare:Prepare,pub activate:Activate,pub initialize:Initialize,pub launch:Launch,pub retire:Retire,pub window_info:WindowInfo,pub peer_smoke:PeerSmoke,
  pub control_bytes:u64,
 }
+fn packet_payload_bytes(advertised:u32,records:u32)->Result<u32,String>{
+ let maximum=if advertised==0{16}else{advertised};
+ if maximum<16||maximum%16!=0{return Err(format!("RESIDENT_PACKET_ABI_INVALID bytes={maximum}"))}
+ if !(1..=8).contains(&records){return Err(format!("RESIDENT_PACKET_RECORDS_INVALID records={records}"))}
+ let requested=records.checked_mul(16).ok_or("RESIDENT_PACKET_RECORDS_OVERFLOW")?;
+ if requested>maximum{return Err(format!("RESIDENT_PACKET_UNSUPPORTED requested={requested} max={maximum}"))}
+ Ok(requested)
+}
+
 impl Functions {
  pub(super) unsafe fn load()->Result<Self,String> {
   unsafe fn symbol(name:&[u8])->Result<*mut c_void,String>{
@@ -120,7 +129,13 @@ impl Functions {
  }
  pub(super) fn mailbox(&self,world:u32,slots:u32,budget:u64)->Result<(Mailbox,u64),String>{
   let mut m=Mailbox{abi_version:0,struct_bytes:0,world:0,lanes:0,slots_per_ring:0,requested_payload_bytes:0,payload_stride_bytes:0,reserved:0,ring_count:0,slots_offset:0,payload_offset:0,close_offset:0,total_bytes:0};
-  let code=unsafe{(self.layout)(world,4,slots,16,budget,mem::size_of::<Mailbox>(),&mut m)};
+  let records=match std::env::var("MGBFS_RESIDENT_PACKET_RECORDS"){
+   Ok(v)=>v.parse::<u32>().map_err(|_|"RESIDENT_PACKET_RECORDS_INVALID".to_owned())?,
+   Err(std::env::VarError::NotPresent)=>1,
+   Err(_)=>return Err("RESIDENT_PACKET_RECORDS_INVALID".into()),
+  };
+  let payload=packet_payload_bytes(unsafe{(self.query)(6)},records)?;
+  let code=unsafe{(self.layout)(world,4,slots,payload,budget,mem::size_of::<Mailbox>(),&mut m)};
   if code!=0{return Err(format!("RESIDENT_MAILBOX_ADMISSION code={code}"))}
   let bytes=self.control_bytes.checked_add(m.total_bytes).ok_or("RESIDENT_MAILBOX_OVERFLOW")?;
   if bytes>budget{return Err("RESIDENT_MAILBOX_BUDGET".into())}
@@ -131,6 +146,16 @@ impl Functions {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]
+ fn packet_geometry_negotiation(){
+  assert_eq!(packet_payload_bytes(0,1).unwrap(),16);
+  assert!(packet_payload_bytes(0,8).unwrap_err().contains("RESIDENT_PACKET_UNSUPPORTED"));
+  assert_eq!(packet_payload_bytes(128,8).unwrap(),128);
+  assert_eq!(packet_payload_bytes(128,3).unwrap(),48);
+  assert!(packet_payload_bytes(128,0).is_err());
+  assert!(packet_payload_bytes(128,9).is_err());
+  assert!(packet_payload_bytes(17,1).is_err());
+ }
  #[test]
  #[ignore = "requires the experimental resident CUDA library and a GPU"]
  fn resident_preflight_executes_compiled_kernel() {

@@ -26,6 +26,8 @@ def rank_caps(g,layers):
  return [[sum(mapping[ids[tuple(s)]%world]==rank for s in layer) for rank in range(world)] for layer in layers]
 def verify(result,layers,completed=True):
  assert result.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL",result.report
+ expected=int(os.environ.get("MGBFS_RESIDENT_PACKET_RECORDS","1"))
+ assert [m["resident"]["packet_records"] for m in result.report["segment_memory_by_rank"]]==[expected]*world
  assert result.layer_sizes==list(map(len,layers[:len(result.layer_sizes)])),result.layer_sizes
  assert result.bfs_completed is completed,result.report
  last=result.last_layer().tolist()

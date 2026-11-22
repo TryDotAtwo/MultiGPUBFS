@@ -20,6 +20,7 @@ using BlockAtomic=cuda::atomic_ref<Word,cuda::thread_scope_block>;
 constexpr unsigned lanes=4;
 constexpr unsigned max_world=8;
 constexpr unsigned threads=32*(lanes+2);
+constexpr unsigned max_packet_records=8;
 constexpr uint32_t payload_format=1;
 
 struct Payload { uint64_t packed; uint32_t source,reserved; };
@@ -190,6 +191,22 @@ __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t*
   if(tid==64)*out=failed;
 }
 
+// The producer keeps a bounded packet alive until its ring accepts it.
+__device__ __forceinline__ bool send_packet(
+    Control& local,Control& coordinator,const Args& a,unsigned lane,unsigned destination,
+    Word epoch,const Payload* payload,unsigned count,Word& ticket,Word& sent,Word& blocked) {
+  for(;;) {
+    if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);return false;}
+    if(load(coordinator.decision.request_epoch)==epoch)return false;
+    auto result=mgbfs_packet_ring::try_send(view(&local,a,lane,destination),
+        ticket,a.job_generation,epoch,payload_format,
+        reinterpret_cast<const unsigned char*>(payload),count*sizeof(Payload));
+    if(result==mgbfs_packet_ring::Result::ok){++ticket;add(sent);return true;}
+    if(result!=mgbfs_packet_ring::Result::not_ready){failure(local,mgbfs_device_epoch::FATAL);return false;}
+    add(blocked);__nanosleep(32);
+  }
+}
+
 // All producer/consumer roles share one resident CTA. A blocked producer
 // cannot prevent the separate consumer warps from receiving and returning
 // credits. This first implementation deliberately favors a simple proof over
@@ -260,6 +277,9 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     __syncthreads();
     if(tid<lanes) {
       bool stopped=false;
+      Payload pending[max_world][max_packet_records];
+      unsigned pending_count[max_world]={};
+      const unsigned packet_records=a.mailbox.requested_payload_bytes/sizeof(Payload);
       for(Word parent=tid;parent<current&&!stopped;parent+=lanes) {
         uint64_t remaining=parent,packed=0;bool found=false;
         for(uint64_t i=0;i<a.extent_count;++i) {
@@ -283,20 +303,21 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             const unsigned source=a.permutations[uint64_t(edge)*a.dictionary.elements+e];
             child|=((packed>>(4*source))&15ull)<<(4*e);
           }
-          Payload payload{child,a.rank,0};
-          for(;;) {
-            if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
-            if(load(coordinator.decision.request_epoch)==epoch){stopped=true;break;}
-            auto result=mgbfs_packet_ring::try_send(view(&local,a,tid,destination),
-                send_ticket[destination],a.job_generation,epoch,payload_format,
-                reinterpret_cast<const unsigned char*>(&payload),sizeof(payload));
-            if(result==mgbfs_packet_ring::Result::ok){++send_ticket[destination];add(sent);break;}
-            if(result!=mgbfs_packet_ring::Result::not_ready){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
-            add(blocked);__nanosleep(32);
+          pending[destination][pending_count[destination]++]={child,a.rank,0};
+          if(pending_count[destination]==packet_records) {
+            if(!send_packet(local,coordinator,a,tid,destination,epoch,pending[destination],
+                            pending_count[destination],send_ticket[destination],sent,blocked))
+              stopped=true;
+            else pending_count[destination]=0;
           }
         }
       }
+      // Flush each partial destination packet before publishing its close.
       if(!stopped)for(unsigned dst=0;dst<a.world&&!stopped;++dst) {
+        if(pending_count[dst]&&!send_packet(local,coordinator,a,tid,dst,epoch,
+              pending[dst],pending_count[dst],send_ticket[dst],sent,blocked)) {
+          stopped=true;break;
+        }
         for(;;) {
           if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
           if(load(coordinator.decision.request_epoch)==epoch){stopped=true;break;}
@@ -314,6 +335,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       // make progress on different shards and return their producer credits.
       const unsigned receiver=tid/32-1;
       bool closed[max_world*lanes]={};
+      unsigned packet_offset[max_world*lanes]={};
       unsigned active=a.world,cursor=0;
       while(active) {
         if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);break;}
@@ -326,9 +348,14 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         auto result=mgbfs_packet_ring::try_peek(view(rank[src],a,lane,a.rank),
             ticket,a.job_generation,epoch,&header,&bytes);
         if(result==mgbfs_packet_ring::Result::ok) {
-          if(header.len!=sizeof(Payload)||header.format!=payload_format){failure(local,mgbfs_device_epoch::FATAL);break;}
+          if(!header.len||header.len%sizeof(Payload)||
+             header.len>a.mailbox.requested_payload_bytes||header.format!=payload_format||
+             packet_offset[channel]>=header.len/sizeof(Payload)) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
           Payload payload{};auto* dst=reinterpret_cast<unsigned char*>(&payload);
-          for(unsigned i=0;i<sizeof(payload);++i)dst[i]=bytes[i];
+          const unsigned byte_offset=packet_offset[channel]*sizeof(Payload);
+          for(unsigned i=0;i<sizeof(payload);++i)dst[i]=bytes[byte_offset+i];
           mgbfs_device_pack4::WordAccessor word{a.dictionary,payload.packed};
           uint64_t id=0;
           if(payload.source!=src||payload.reserved||!mgbfs_pack4_valid_word(a.dictionary,payload.packed)||
@@ -375,15 +402,20 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             failure(local,mgbfs_device_epoch::RESOURCE);failed=true;
           } else {failure(local,mgbfs_device_epoch::FATAL);failed=true;}
           if(failed)break;
-          if(mgbfs_packet_ring::try_ack(view(rank[src],a,lane,a.rank),
-              ticket,a.job_generation,epoch)!=mgbfs_packet_ring::Result::ok) {
-            failure(local,mgbfs_device_epoch::FATAL);break;
+          // Credit follows durable publication of every record in this packet.
+          if(++packet_offset[channel]==header.len/sizeof(Payload)) {
+            if(mgbfs_packet_ring::try_ack(view(rank[src],a,lane,a.rank),
+                ticket,a.job_generation,epoch)!=mgbfs_packet_ring::Result::ok) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+            packet_offset[channel]=0;
+            ++ticket;add(received);
           }
-          ++ticket;add(received);
         } else if(result!=mgbfs_packet_ring::Result::not_ready&&
                   result!=mgbfs_packet_ring::Result::future_phase) {
           failure(local,mgbfs_device_epoch::FATAL);break;
         } else {
+          if(packet_offset[channel]){failure(local,mgbfs_device_epoch::FATAL);break;}
           Word tail=0;
           auto c=mgbfs_packet_ring::try_get_close(close(rank[src],a,lane,a.rank),
               depth,a.job_generation,epoch,&tail);

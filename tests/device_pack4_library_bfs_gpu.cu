@@ -134,8 +134,11 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
  if(!props.deviceApiSupport||props.nLsaTeams!=1)return 77;
 #endif
  cudaStream_t stream{};C(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking));
+ const char* records_text=std::getenv("MGBFS_DEVICE_TEST_PACKET_RECORDS");
+ const unsigned packet_records=records_text?unsigned(std::strtoul(records_text,nullptr,10)):1;
+ CHECK(packet_records>=1&&packet_records<=max_packet_records);
  MgbfsDeviceMailboxLayoutV1 maximum{};
- CHECK(!mgbfs_device_mailbox_layout_v1(WORLD,lanes,3,sizeof(Payload),UINT64_MAX,sizeof(maximum),&maximum));
+ CHECK(!mgbfs_device_mailbox_layout_v1(WORLD,lanes,3,sizeof(Payload)*packet_records,UINT64_MAX,sizeof(maximum),&maximum));
  size_t window_bytes=sizeof(Control)+maximum.total_bytes;
 #ifdef MGBFS_LIBRARY_TEST_TRANSPORT
  CHECK(!mgbfs_nccl_resident_prepare_v1(production_comm,window_bytes,transport_error,sizeof(transport_error)));
@@ -176,7 +179,7 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
    unsigned expected_depth=first_bad<0?max_depth:unsigned(first_bad-1);
    unsigned expected_status=first_bad<0?mgbfs_device_epoch::COMPLETE:mgbfs_device_epoch::INCOMPLETE;
    MgbfsDeviceMailboxLayoutV1 layout{};
-   CHECK(!mgbfs_device_mailbox_layout_v1(WORLD,lanes,queue,sizeof(Payload),maximum.total_bytes,sizeof(layout),&layout));
+   CHECK(!mgbfs_device_mailbox_layout_v1(WORLD,lanes,queue,sizeof(Payload)*packet_records,maximum.total_bytes,sizeof(layout),&layout));
    uint32_t *perms=nullptr,*counts=nullptr,*gpu_map=nullptr,*leases=nullptr,*locks=nullptr,*terminal_word=nullptr;
    int64_t* symbols=nullptr;uint64_t *visited=nullptr,*rank_count=nullptr,*layers=nullptr,*rank_counts=nullptr,*capture_count=nullptr;
    Capture* capture=nullptr;Report* report=nullptr;mgbfs_device_pack4::Extent* extents=nullptr;uint64_t *rows[2]{},*used[2]{};

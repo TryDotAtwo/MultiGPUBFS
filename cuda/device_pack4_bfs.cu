@@ -30,6 +30,7 @@ extern "C" uint32_t mgbfs_device_pack4_bfs_abi_query(uint32_t item) {
     case 3:return sizeof(mgbfs_device_pack4::Extent);
     case 4:return sizeof(mgbfs_resident::Control);
     case 5:return sizeof(mgbfs_resident::Capture);
+    case 6:return sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records;
     default:return 0;
   }
 }
@@ -46,8 +47,12 @@ static int validate(const mgbfs_resident::Args* a,uint64_t window_bytes) {
      !a->terminal||bool(a->capture)!=bool(a->capture_count)||
      (a->capture&&!a->capture_capacity))return 1;
   MgbfsDeviceMailboxLayoutV1 expected{};
+  const uint32_t payload_bytes=a->mailbox.requested_payload_bytes;
+  if(payload_bytes<sizeof(mgbfs_resident::Payload)||
+     payload_bytes>sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records||
+     payload_bytes%sizeof(mgbfs_resident::Payload))return 2;
   if(mgbfs_device_mailbox_layout_v1(a->world,mgbfs_resident::lanes,
-       a->mailbox.slots_per_ring,sizeof(mgbfs_resident::Payload),UINT64_MAX,
+       a->mailbox.slots_per_ring,payload_bytes,UINT64_MAX,
        sizeof(expected),&expected)!=MGBFS_MAILBOX_LAYOUT_OK||
      std::memcmp(&expected,&a->mailbox,sizeof(expected))||
      expected.total_bytes>UINT64_MAX-sizeof(mgbfs_resident::Control)||
