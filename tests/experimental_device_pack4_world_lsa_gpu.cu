@@ -33,7 +33,11 @@ using SysAtomic=cuda::atomic_ref<U64,cuda::thread_scope_system>;
 #ifndef MGBFS_EXPERIMENTAL_WORLD
 #define MGBFS_EXPERIMENTAL_WORLD 2
 #endif
-constexpr unsigned WORLD=MGBFS_EXPERIMENTAL_WORLD, PRODUCERS=4, MAX_SLOTS=7, MAX_N=1024, MAX_RECORDS=4096;
+#ifndef MGBFS_EXPERIMENTAL_MAX_N
+#define MGBFS_EXPERIMENTAL_MAX_N 1024
+#endif
+constexpr unsigned WORLD=MGBFS_EXPERIMENTAL_WORLD, PRODUCERS=4, MAX_SLOTS=7,
+  MAX_N=MGBFS_EXPERIMENTAL_MAX_N, MAX_RECORDS=4u*MAX_N;
 static_assert(WORLD>=1 && WORLD<=8,"fixture supports 1 to 8 ranks");
 constexpr unsigned ADVANCE=1, COMPLETE=2, INCOMPLETE=3, ERROR=4;
 #define CUDA_OK(expr) do { auto e=(expr); if(e!=cudaSuccess) { \
@@ -303,7 +307,8 @@ static Graph graph(unsigned which) {
   if(which==1)return make_permutation_graph("repeated_001122",{1,0,2,0,1,2},adjacent(6));
   if(which==2)return make_permutation_graph("signed_directed_rotation",{-7,25,0,13},{{1,2,3,0}});
   if(which==3)return make_permutation_graph("s6_adjacent",{0,1,2,3,4,5},adjacent(6));
-  return make_permutation_graph("duplicate_when_full",{0,1,2},{{1,0,2},{1,0,2},{0,1,2}});
+  if(which==4)return make_permutation_graph("duplicate_when_full",{0,1,2},{{1,0,2},{1,0,2},{0,1,2}});
+  return make_permutation_graph("s8_adjacent",{0,1,2,3,4,5,6,7},adjacent(8));
 }
 // Independent reference uses a standard FIFO BFS and does not use the GPU protocol.
 static std::vector<int> oracle(const Graph& g) {
@@ -365,8 +370,11 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   ncclDevCommRequirements req=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;req.lsaBarrierCount=1;
   NCCL_OK(ncclDevCommCreate(comm,&req,&dev));if(dev.lsaRank!=rank||dev.lsaSize!=int(WORLD))return 77;
   unsigned case_index=0;bool any_failed=false;
-  for(unsigned graph_index=0;graph_index<5;graph_index++) {
-    Graph g=graph(graph_index);auto distance=oracle(g);
+  const bool extended=std::getenv("MGBFS_DEVICE_TEST_EXTENDED")!=nullptr;
+  for(unsigned graph_index=extended?5u:0u;graph_index<(extended?6u:5u);graph_index++) {
+    Graph g=graph(graph_index);
+    if(g.n>MAX_N){std::fprintf(stderr,"fixture domain %u exceeds configured MAX_N %u\n",g.n,MAX_N);return 6;}
+    auto distance=oracle(g);
     unsigned max_depth=0;for(int x:distance)if(x>=0)max_depth=std::max(max_depth,unsigned(x));
     unsigned needed=1;
     for(unsigned d=0;d<=max_depth;d++)for(unsigned r=0;r<WORLD;r++) {
@@ -374,6 +382,7 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       needed=std::max(needed,count);
     }
     for(unsigned qcap: {1u,7u})for(unsigned variant=0;variant<3;variant++) {
+      if(extended&&(qcap!=7||variant!=0))continue;
       if(variant==2&&needed==1)continue;
       unsigned cap=variant==0?MAX_N:variant==1?needed:needed-1;
       int first_bad=-1;
@@ -409,8 +418,9 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       for(unsigned v=0;v<g.n;v++)if(v%WORLD==unsigned(rank)&&distance[v]>=0&&unsigned(distance[v])<=expected_depth)
         want.emplace_back(unsigned(distance[v]),g.words[v]);
       std::sort(got.begin(),got.end());std::sort(want.begin(),want.end());
-      // This special duplicate-at-full assertion targets two-rank ownership only.
-      bool exercised_full_duplicate=WORLD!=2||graph_index!=4||rank!=0||cap!=1||out.duplicates_full>0;
+      // This fixture's duplicate child is always sent twice by one producer.
+      // Assert the owner actually observed it after its row cap was reached.
+      bool exercised_full_duplicate=graph_index!=4||unsigned(rank)!=(g.e[g.root][0]%WORLD)||cap!=1||out.duplicates_full>0;
       bool ok=out.status==expected_status&&out.depth==expected_depth&&got==want&&out.records<=MAX_RECORDS&&exercised_full_duplicate;
       std::printf("%s graph=%s rank=%d q=%u cap=%u status=%u depth=%u complete_records=%zu partial_records=%llu sent=%llu recv=%llu blocked=%llu duplicates=%llu duplicates_full=%llu loops=%llu\n",
         ok?"PASS":"FAIL",g.name.c_str(),rank,qcap,cap,out.status,out.depth,got.size(),
