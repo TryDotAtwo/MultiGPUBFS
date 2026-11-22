@@ -91,6 +91,33 @@ pub struct SegmentAdmission {
     /// Segment allocations plus explicitly supplied fixed buffers; excludes reserve.
     pub device_bytes: u64,
 }
+/// ABI and immutable symbol dictionary for the experimental packed bitmap
+/// resident frontier. This is an isolated contract, not an active BFS codec.
+pub const BITMAP_PACK4_ABI_VERSION: u32 = 1;
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BitmapPack4Dictionary {
+    pub elements: u32,
+    pub distinct: u32,
+    pub symbols: [i64; 16],
+}
+impl BitmapPack4Dictionary {
+    /// Canonical signed symbol ordering is independent of root position.
+    /// The complete graph fingerprint, including multiplicities, remains a
+    /// separate rank agreement; this dictionary only identifies the alphabet.
+    pub fn from_root(root: &[i64]) -> Result<Self, &'static str> {
+        if root.is_empty() || root.len() > 16 {
+            return Err("BITMAP_PACK4_ELEMENTS_RANGE");
+        }
+        let mut distinct = root.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        let mut symbols = [0i64; 16];
+        symbols[..distinct.len()].copy_from_slice(&distinct);
+        Ok(Self { elements: root.len() as u32, distinct: distinct.len() as u32, symbols })
+    }
+}
+
 impl SegmentLayout {
     pub fn new(elements: u32, state_bytes: u32, rows_per_bank: u64, banks: u32) -> Result<Self, &'static str> {
         if elements == 0 || !matches!(state_bytes, 1 | 8) || rows_per_bank == 0 || rows_per_bank > LOCAL_ROWS || !matches!(banks, 1 | 3) {
@@ -136,6 +163,18 @@ impl SegmentLayout {
         let states=rows.checked_mul(u64::from(elements)).and_then(|v|v.checked_mul(u64::from(state_bytes))).ok_or("BITMAP_LAYOUT_OVERFLOW")?;
         Ok(Self{rows_per_bank,banks,slots:0,state_bytes:states,position_bytes:0,position_item_bytes:0,device_bytes:states.checked_add(24).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
     }
+    /// Experimental packed bitmap rows: one u64 per complete state.
+    /// It is not selected by production admission until the CUDA capability,
+    /// rank agreement, route and export contracts have all been integrated.
+    pub fn bitmap_banks_pack4(elements:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
+        if elements==0||elements>16||!matches!(banks,2|3)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS {
+            return Err("BITMAP_PACK4_LAYOUT_RANGE");
+        }
+        let rows=rows_per_bank.checked_mul(u64::from(banks)).ok_or("BITMAP_PACK4_LAYOUT_OVERFLOW")?;
+        let states=rows.checked_mul(8).ok_or("BITMAP_PACK4_LAYOUT_OVERFLOW")?;
+        let device_bytes=states.checked_add(24).ok_or("BITMAP_PACK4_LAYOUT_OVERFLOW")?;
+        Ok(Self{rows_per_bank,banks,slots:0,state_bytes:states,position_bytes:0,position_item_bytes:0,device_bytes})
+    }
     /// `reserve` covers driver/NCCL headroom; `fixed` includes all other
     /// allocations, e.g. descriptors, communication pages and owner lanes.
     pub fn admit(self, free: u64, reserve: u64, fixed: u64, rank_upper_states: Option<u64>) -> Result<SegmentAdmission, &'static str> {
@@ -174,6 +213,20 @@ pub fn fit_segment_layout_compact(bitmap: bool, elements: u32, state_bytes: u32,
         if make(mid).map_or(false, |v| v.device_bytes<=budget) { lo=mid; } else { hi=mid-1; }
     }
     if lo==0 { Ok(None) } else { Ok(Some(make(lo)?)) }
+}
+
+/// Experimental packed bitmap layout for an explicit budget. The maximum
+/// applies to one bank of one segment, not to the sum of rows on a rank.
+pub fn fit_packed_bitmap_segment_layout(elements:u32,banks:u32,max_rows:u64,budget:u64)->Result<Option<SegmentLayout>,&'static str>{
+    if max_rows==0||max_rows>LOCAL_ROWS{return Err("BITMAP_PACK4_LAYOUT_RANGE")}
+    let make=|rows|SegmentLayout::bitmap_banks_pack4(elements,rows,banks);
+    make(1)?;
+    let(mut lo,mut hi)=(0u64,max_rows);
+    while lo<hi {
+        let mid=lo+(hi-lo+1)/2;
+        if make(mid).map_or(false,|layout|layout.device_bytes<=budget){lo=mid}else{hi=mid-1}
+    }
+    if lo==0{Ok(None)}else{Ok(Some(make(lo)?))}
 }
 
 /// Largest sorted-index segment that fits a checked byte budget.
@@ -229,5 +282,51 @@ mod batch_layout_tests {
         let last=SegmentLayout::sorted(1,1,LOCAL_ROWS,1).unwrap();
         assert_eq!(last.rows_per_bank,LOCAL_ROWS);assert_eq!(last.device_bytes,13*LOCAL_ROWS+24);
         assert!(SegmentLayout::sorted(u32::MAX,8,LOCAL_ROWS,3).is_err());
+    }
+}
+
+#[cfg(test)]
+mod packed_bitmap_contract_tests {
+    use super::*;
+
+    #[test]
+    fn descriptor_has_c_abi_sorted_symbols_and_checked_domain() {
+        use std::mem::{align_of,size_of};
+        let d=BitmapPack4Dictionary::from_root(&[17,-4,17,9,-4]).unwrap();
+        assert_eq!(d.elements,5);
+        assert_eq!(d.distinct,3);
+        assert_eq!(&d.symbols[..3],&[-4,9,17]);
+        assert_eq!(d,BitmapPack4Dictionary::from_root(&[9,-4,17,17,-4]).unwrap());
+        assert_eq!(size_of::<BitmapPack4Dictionary>(),136);
+        assert_eq!(align_of::<BitmapPack4Dictionary>(),8);
+        assert_eq!(BITMAP_PACK4_ABI_VERSION,1);
+        assert!(BitmapPack4Dictionary::from_root(&[]).is_err());
+        assert!(BitmapPack4Dictionary::from_root(&[0;17]).is_err());
+        let mut sixteen=[0i64;16];
+        for (i,v) in sixteen.iter_mut().enumerate(){*v=i as i64-8;}
+        let full=BitmapPack4Dictionary::from_root(&sixteen).unwrap();
+        assert_eq!(full.elements,16);assert_eq!(full.distinct,16);
+        assert_eq!(full.symbols[15],7);
+    }
+
+    #[test]
+    fn packed_bitmap_layout_checked_with_per_segment_rows() {
+        let x=SegmentLayout::bitmap_banks_pack4(14,100,2).unwrap();
+        assert_eq!(x.state_bytes,1600); assert_eq!(x.device_bytes,1624);
+        assert_eq!(x.position_bytes,0); assert_eq!(x.slots,0);
+        assert_eq!(fit_packed_bitmap_segment_layout(14,2,100,1624).unwrap().unwrap().rows_per_bank,100);
+        assert_eq!(fit_packed_bitmap_segment_layout(14,2,100,1623).unwrap().unwrap().rows_per_bank,99);
+        assert_eq!(fit_packed_bitmap_segment_layout(14,2,100,39).unwrap(),None);
+        let last=SegmentLayout::bitmap_banks_pack4(16,LOCAL_ROWS,2).unwrap();
+        assert_eq!(last.rows_per_bank,1u64<<32);
+        assert_eq!(last.state_bytes,(1u64<<32)*16);
+        let admitted=last.admit(last.device_bytes*2,0,0,None).unwrap();
+        assert_eq!(admitted.segments,2);
+        assert_eq!(admitted.rows_per_bank,1u64<<33);
+        assert!(SegmentLayout::bitmap_banks_pack4(16,LOCAL_ROWS+1,2).is_err());
+        assert!(SegmentLayout::bitmap_banks_pack4(17,100,2).is_err());
+        assert!(SegmentLayout::bitmap_banks_pack4(0,100,2).is_err());
+        assert!(SegmentLayout::bitmap_banks_pack4(8,0,2).is_err());
+        assert!(SegmentLayout::bitmap_banks_pack4(8,100,1).is_err());
     }
 }
