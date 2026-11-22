@@ -73,6 +73,13 @@ pub fn agree_owner_page_geometry(advertisements:&[u64])->Result<(SegmentStrategy
  Ok((strategy,recovery,if code==0{0}else{1u32<<(code-1)}))
 }
 
+/// Experimental packed bitmap ABI availability is only a compatibility
+/// statement; it is not GPU acceptance or an automatic profile choice.
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn bitmap_pack4_abi_ready()->bool{crate::segmented_distributed_native::pack4_capability()}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn bitmap_pack4_abi_ready()->bool{false}
+
 /// The hash warp path must never silently run a library with reusable
 /// pending slots; atomic and batch remain compatible with earlier bundles.
 #[cfg(all(feature="cuda",target_os="linux"))]

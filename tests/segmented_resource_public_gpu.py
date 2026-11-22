@@ -8,6 +8,8 @@ devices=tuple(range(world))
 cap=32 if world==2 else 8
 os.environ.setdefault('MGBFS_NATIVE_OFFLINE','1')
 os.environ.update(MGBFS_SEGMENT_ROWS='16', MGBFS_SEGMENT_MAX_RANK_STATES=str(cap))
+packed_fixture=os.environ.get('MGBFS_TEST_PACK4')=='1'
+if packed_fixture:os.environ['MGBFS_SEGMENT_PACK4']='1'
 from cayleypy import CayleyGraph,PermutationGroups
 import multigpubfs
 expected_package=os.environ.get('MGBFS_TEST_EXPECT_PACKAGE_PREFIX')
@@ -35,13 +37,14 @@ records=[]
 multigpubfs.enable_native(recovery=False)
 try:
  with persistent_graph_workers() as pool:
-  for backend in ('segmented24','permutation_bitmap'):
+  for backend in (('permutation_bitmap',) if packed_fixture else ('segmented24','permutation_bitmap')):
    for preset in ('balanced','max_capacity'):
     print('START',backend,preset,flush=True)
     opts=NativeOptions(devices=devices,autotune=True,memory_backend=backend,
                        memory_preset=preset,segment_rows=16,segment_strategy='atomic')
     result=graph.bfs(native_options=opts,output=root/(backend+'-'+preset))
     report=result.report
+    if packed_fixture:assert all(r['resident_codec']=='pack4-v1' for r in report['segment_memory_by_rank']),report
     profile=report['autotune']
     print('PROFILE',backend,preset,profile['status'],len(profile.get('resource_rejections',[])),flush=True)
     assert report['status']=='INCOMPLETE' and report['reason']=='RESOURCE_10',(backend,preset,report)

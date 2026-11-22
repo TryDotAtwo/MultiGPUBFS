@@ -92,7 +92,7 @@ pub struct SegmentAdmission {
     pub device_bytes: u64,
 }
 /// ABI and immutable symbol dictionary for the experimental packed bitmap
-/// resident frontier. This is an isolated contract, not an active BFS codec.
+/// resident frontier; active only for the explicit experimental bitmap mode.
 pub const BITMAP_PACK4_ABI_VERSION: u32 = 1;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,8 +164,8 @@ impl SegmentLayout {
         Ok(Self{rows_per_bank,banks,slots:0,state_bytes:states,position_bytes:0,position_item_bytes:0,device_bytes:states.checked_add(24).ok_or("BITMAP_LAYOUT_OVERFLOW")?})
     }
     /// Experimental packed bitmap rows: one u64 per complete state.
-    /// It is not selected by production admission until the CUDA capability,
-    /// rank agreement, route and export contracts have all been integrated.
+    /// Selection requires the experimental CUDA capability and rank agreement;
+    /// ordinary bitmap admission keeps its established resident layout.
     pub fn bitmap_banks_pack4(elements:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
         if elements==0||elements>16||!matches!(banks,2|3)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS {
             return Err("BITMAP_PACK4_LAYOUT_RANGE");

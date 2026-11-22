@@ -1,11 +1,13 @@
 # Experimental four-bit permutation frontier: isolated prototype
 
-This branch is experimental. The codec, converter, rank accessor and memory
-arithmetic below are **not connected to the production BFS, wheel, public API,
-or automatic profile selection**. An isolated two-GPU test contour now exercises
-NCCL and spills, but it copies frontier data through the host and is not the
-production runtime. There is no packed-frontier archive, persistent-session,
-8-GPU, S14/S15 capacity or performance result here.
+This branch is experimental. It includes an opt-in integration of the packed
+bitmap frontier into the native distributed runtime and the CayleyPy adapter
+when an explicitly compiled experimental library is supplied. It is not in the
+published wheel and is not selected by the normal profile. Only bitmap/atomic
+is implemented; requests for the other strategies or backends fail explicitly.
+The tests below report their exact hardware and verification scope. Eight-GPU
+acceptance, full archive export, S14/S15 capacity and B200 measurements remain
+open.
 
 ## Exactness and boundaries
 
@@ -36,8 +38,8 @@ Rust 1.75 tests: two new layout/descriptor tests, three segmented-history
 tests and all 46 runtime-library tests passed. The checked layout uses
 8 bytes per packed row per bank plus 24 counter bytes. Its virtual arithmetic
 tests permit two separately admitted segments of 2^32 rows each; they do not
-claim a physical allocation or traversal of 2^32 rows. Production admission
-and existing segment layouts remain unchanged.
+claim a physical allocation or traversal of 2^32 rows. The isolated stage did not change admission; the explicit runtime
+integration described below adds its own packed admission path.
 
 ## Reproduction and evidence
 
@@ -121,11 +123,103 @@ The NCCL fixture can be built with:
       -L$NCCL_ROOT/lib -Xlinker -rpath=$NCCL_ROOT/lib -lnccl -o /tmp/pack4-nccl-bfs
     /tmp/pack4-nccl-bfs
 
-Production integration still needs versioned ABI and capability checks,
-collective readiness and matching codec metadata, admission and real memory
-accounting, all relevant strategies, failure/rollback handling, archive and
-persistent-worker lifetimes, public CayleyPy invocation, and layer-exact
-multi-rank tests. S14/S15 and B200 remain unverified.
+The isolated driver is followed below by runtime integration checks. It does
+not by itself prove the production runtime, all strategies, full archive
+export, eight-rank behavior, or S14/S15 capacity.
 
 Stage 3 source and test evidence archive SHA-256: 
 5794eeafb43c148f51e59e5ac8adba20e211eefd491356c20a1ce6eb4f8cbe52.
+
+## Opt-in native-runtime integration on two GPUs
+
+The library is built with MGBFS_EXPERIMENTAL_PACK4=ON. A job can request
+MGBFS_SEGMENT_PACK4=1 with permutation_bitmap and atomic; it owns an
+immutable dictionary of at most 16 signed symbols. The native executable and
+library check a versioned capability and structure sizes, and every rank
+agrees on the dictionary and mode. Unsupported backend/strategy combinations,
+a missing/old library, and disagreement across ranks fail explicitly. This
+flag is experimental and is not a supported installation instruction.
+
+The two-GPU native-runtime tests used two RTX 3060 (SM86, 12 GiB), driver
+580.178.04, CUDA toolkit 12.8.93 and NCCL 2.30.7. Six small graphs, including
+S4, signed/repeated symbols, directed transitions and coupled position
+orbits, were compared to an independent CPU BFS using full multisets at
+**every** completed depth. Exact and padded exchange, two/three-bank presets,
+page/cyclic ownership and a resource cap one below sufficiency were exercised.
+The latter returned INCOMPLETE with an exact completed prefix. Switching
+packed -> ordinary bitmap -> segmented hash -> packed reused the same native
+workers and preserved the checked results.
+
+The public CayleyPy CayleyGraph.bfs() path was exercised on two GPUs using a
+source checkout of CayleyPy at 2d35a8917ee1d123d6ec8c771bc08002c974a57f
+and the experimental local runtime, not an installed release wheel. The tests
+covered distinct and repeated states, both presets, a cap-induced
+RESOURCE_10, codec switching and worker PID reuse. All layer counts and
+full terminal state multisets were checked; the native-runtime fixture above
+provides full per-layer comparisons.
+
+For the **non-packed** defaults in the same binary, atomic/warp on both
+backends and batch with exact/padded exchange passed small per-layer state-set
+checks, including empty peer queues, repeated symbols, spills and persistent
+reuse. These are not a substitute for eight-rank fault-injection acceptance.
+The CPU-only Rust library tests passed 46/46. With CUDA enabled and
+CUDA_MODULE_LOADING=EAGER, 89 tests passed, one GPU-sizing test was ignored,
+and two LSA-specific tests failed because this test library was configured
+MGBFS_NCCL_LSA=OFF (the disabled entry point returns status 7). Re-running
+the other tests with those two filtered gave 89 passed, one ignored. A first
+run without EAGER also failed the runtime's loading-policy checks. Neither
+failure is counted as a passing full CUDA suite.
+
+### S12 same-machine experiment
+
+Two complete repetitions per mode, interleaved ordinary/packed/packed/ordinary,
+used one binary and two RTX 3060. Both modes used two frontier banks,
+four shards, segment_rows=1,048,576, 4 owner lanes, queue capacity 8192,
+batch ceiling 4096 and exact exchange. These are explicit experimental
+settings, not claims about default preset geometry. All runs completed all
+479,001,600 states across 67 layers. Every layer size matched an independently
+calculated Mahonian distribution; full terminal and penultimate state sets
+matched, not every large layer's full state set.
+
+| Resident frontier | BFS seconds | Depths 27–38 seconds | Frontier bytes per GPU | Sampled max MiB per GPU |
+|---|---:|---:|---:|---:|
+| ordinary SoA | 101.2866, 101.3311 | 57.4970, 57.5254 | 402,653,184 | 723 |
+| packed u64 | 102.9840, 103.4047 | 58.5983, 58.7205 | 268,435,456 | 595 |
+
+Bitmap visited storage was 29,937,600 bytes/GPU and queues 6,291,552
+bytes/GPU in both modes; reserve was 2 GiB per GPU. Exact state-allocation
+receipts exclude the rest of device use. NVML sampling was every 0.5 s and can
+miss short peaks. Both modes reported two source retries and 25,598,186 peak
+live rows on each rank. The experiment changes both payload and the
+implementation of routing/acceptance; it does not isolate one operation.
+At S10 the packed variant was faster in two short observations, but that
+does not imply an S12 or eight-GPU speedup.
+
+Build artifact SHA-256 used for these runs:
+mgbfs 9431576ff47f834be3c649cefcd9de9f5959379c0facb839317361e269bc6f87;
+libmgbfs_cuda.so e6d51a55218cea1b4685b16d0be31e2ce7ca6532388da9761b2ab749e3840ee1.
+The work remains opt-in: full packed archive, warp/batch implementations,
+failure injection on eight GPUs, practical capacity pressure sweeps and B200
+runtime verification are not established by these measurements.
+
+### Balanced with three banks
+
+Under the same GPU pair, geometry and four-run alternating protocol as the
+two-bank test above, the balanced variant completed S12 twice in each mode.
+Ordinary SoA took 100.5546/101.5104 s (window 57.1058/57.6660 s); packed
+took 103.1903/103.0101 s (window 58.4781/58.4202 s). Frontier allocations
+were 603,979,776 versus 402,653,184 bytes per GPU. The sampled NVML maxima
+were 915 versus 723 MiB per GPU; both reported two source retries and
+38,179,213 peak live rows per rank. As above, layer counts and only the two
+terminal full state sets were validated at this scale.
+
+The CayleyPy adapter was also tested with autotune enabled and a tight
+per-rank state cap: both balanced and max_capacity correctly returned
+RESOURCE_10 with validated resource-limited pilots and exact completed
+prefixes, followed by a healthy job in the same worker processes. This does
+not establish a measured packed tuning winner on a large graph.
+
+The saved measurement snapshot includes the original source diff and binary;
+a later edit only corrected outdated comments in segmented_history.rs and did
+not change executable logic. The recorded hashes identify the actual binaries
+used in the benchmark.

@@ -188,6 +188,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
  native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
+ packed=native_env.get('MGBFS_SEGMENT_PACK4','0')
+ if packed not in ('0','1'):raise ValueError('BITMAP_PACK4_INVALID')
+ if packed=='1':
+  if memory_backend!='permutation_bitmap':raise ValueError('BITMAP_PACK4_REQUIRES_BITMAP')
+  if segment_strategy!='atomic':raise ValueError('BITMAP_PACK4_STRATEGY_UNSUPPORTED')
  if bitmap_owner_page is not None:native_env['MGBFS_SEGMENT_BITMAP_OWNER_PAGE']=str(bitmap_owner_page)
  segmented=(memory_backend in ('segmented24','permutation_bitmap'))
  if not segmented:
@@ -199,6 +204,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   capabilities=_require_memory_backend(native,native_env,memory_backend)
+  if packed=='1' and capabilities.get('bitmap_pack4_experimental_v1') is not True:
+   raise RuntimeError('BITMAP_PACK4_NATIVE_ABI_MISSING: experimental executable and CUDA library must match')
   if memory_backend=='segmented24' and segment_strategy=='warp' and capabilities.get('segmented_warp_hash_safe_v1') is not True:raise RuntimeError('SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING')
   if memory_backend=='permutation_bitmap' and native_env.get('MGBFS_SEGMENT_BITMAP_OWNER_PAGE','0') not in ('0','') and capabilities.get('bitmap_owner_immutable_v1') is not True:raise RuntimeError('BITMAP_OWNER_PAGE_NATIVE_ABI_MISSING')
   if segment_strategy!='atomic':
