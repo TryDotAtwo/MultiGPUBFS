@@ -62,9 +62,15 @@ or `--memory-backend permutation_bitmap`. Changing the configured maximum
 does not force allocation of a full segment on a smaller GPU.
 
 `INCOMPLETE` is not a completed graph or diameter. Segmented storage does
-not guarantee that a graph fits. The bitmap covers the entire multiset
-permutation domain. A cache hit, successful compilation, or a reported SM
-does not establish correctness or speed on a target GPU.
+not guarantee that a graph fits. The bitmap covers a closed multiset domain
+derived from the start state; positional orbits reduce that domain where
+supported. The domain may still be larger than the reachable set.
+
+The segmented and permutation-bitmap CayleyPy paths return exact layer counts
+and limited state samples, not a full archive of all layers, edges, hashes or
+paths. `get_layer` is available only for layers retained in full. A cache
+hit, successful compilation, or a reported SM does not establish correctness
+or speed on a target GPU.
 
 ## Diagnosis and limits
 
