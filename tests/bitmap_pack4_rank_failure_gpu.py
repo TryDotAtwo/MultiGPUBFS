@@ -6,6 +6,25 @@ from multigpubfs import GraphDefinition
 from multigpubfs.launch import run_graph
 from multigpubfs.generic_session import persistent_graph_workers
 
+# Fault injection is a property of the production job in this test. Strip
+# only the two test flags from preflight, which still runs or reuses a verified
+# transport receipt. Restore them before run_graph submits the target BFS.
+import multigpubfs.nccl_preflight as preflight
+_prepare = preflight.prepare
+def _prepare_without_injecting_fault(native, devices, env, output, graph=None):
+    clean = dict(env)
+    flags = {k: clean.pop(k) for k in ('MGBFS_SEGMENT_TEST_FATAL_RANK',
+                                      'MGBFS_SEGMENT_TEST_FATAL_AFTER_DEPTH') if k in clean}
+    prepared, evidence = _prepare(native, devices, clean, output, graph)
+    if flags:
+        assert evidence.get('status') == 'VERIFIED', evidence
+        print('TEST_VERIFIED_TRANSPORT_BEFORE_FAULT',
+              'cache_hit', evidence.get('cache_hit'),
+              'selected', evidence.get('selected'), flush=True)
+        prepared.update(flags)
+    return prepared, evidence
+preflight.prepare = _prepare_without_injecting_fault
+
 world=int(os.environ.get('MGBFS_TEST_DEVICE_COUNT','2'))
 devices=list(range(world))
 root=Path(tempfile.mkdtemp(prefix='pack4-rank-failure-',dir='/workspace'))
