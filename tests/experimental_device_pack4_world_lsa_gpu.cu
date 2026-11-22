@@ -8,6 +8,9 @@
 // All graph data, durable visited, frontiers, output and mailbox are preallocated.
 // CPU handles admission, launch and final validation only; no layer/portion host calls.
 #include "../cuda/experimental_device_ring.cuh"
+#ifdef MGBFS_PACKET_MAILBOX
+#include "../cuda/device_packet_ring.cuh"
+#endif
 #include "../cuda/bitmap_pack4_action.cuh"
 #include "../cuda/permutation_bitmap.cuh"
 #include <cuda_runtime.h>
@@ -48,11 +51,22 @@ constexpr unsigned ADVANCE=1, COMPLETE=2, INCOMPLETE=3, ERROR=4;
 } while(0)
 
 struct alignas(64) Mailbox {
+#ifdef MGBFS_PACKET_MAILBOX
+  mgbfs_packet_ring::PacketSlot out[PRODUCERS][WORLD][MAX_SLOTS];
+  unsigned char payload[PRODUCERS][WORLD][MAX_SLOTS][sizeof(Payload)];
+  mgbfs_packet_ring::CloseSlot close[PRODUCERS][WORLD];
+#else
   Slot out[PRODUCERS][WORLD][MAX_SLOTS]; // SPSC for every producer/destination
+#endif
   alignas(8) U64 final_tail[PRODUCERS][WORLD];
   alignas(8) U64 closed_epoch[PRODUCERS];
   alignas(8) U64 done_count,done_epoch,failure,decision_type,decision_epoch;
 };
+#ifdef MGBFS_PACKET_MAILBOX
+__device__ mgbfs_packet_ring::View packet_view(Mailbox* box,unsigned lane,unsigned dst,unsigned cap) {
+  return {box->out[lane][dst],&box->payload[lane][dst][0][0],cap,sizeof(Payload)};
+}
+#endif
 struct Record {unsigned layer;uint64_t word;};
 struct PackedWord {
   uint64_t word;MgbfsPack4Dictionary dictionary;
@@ -75,7 +89,16 @@ __global__ void init_box(Mailbox* m,unsigned capacity,U64 job_epoch) {
   if(blockIdx.x||threadIdx.x)return;
   for(unsigned p=0;p<PRODUCERS;p++) {
     for(unsigned d=0;d<WORLD;d++) {
-      for(unsigned i=0;i<capacity;i++)init_slot(m->out[p][d][i],job_epoch,i);
+      for(unsigned i=0;i<capacity;i++) {
+#ifdef MGBFS_PACKET_MAILBOX
+        mgbfs_packet_ring::init_slot(m->out[p][d][i],i);
+#else
+        init_slot(m->out[p][d][i],job_epoch,i);
+#endif
+      }
+#ifdef MGBFS_PACKET_MAILBOX
+      mgbfs_packet_ring::init_close(m->close[p][d]);
+#endif
       m->final_tail[p][d]=0;
     }
     m->closed_epoch[p]=0;
@@ -156,7 +179,15 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
               if(loops>250000000ull)fail(local,2);
               cancelled=true;break;
             }
+#ifdef MGBFS_PACKET_MAILBOX
+            auto packet_result=mgbfs_packet_ring::try_send(packet_view(&local,tid,target,queue_cap),
+                send_ticket[target],job_epoch,epoch,1,
+                reinterpret_cast<const unsigned char*>(&payload),sizeof(payload));
+            Result result=packet_result==mgbfs_packet_ring::Result::ok?Result::ok:
+                packet_result==mgbfs_packet_ring::Result::not_ready?Result::not_ready:Result::wrong_epoch;
+#else
             Result result=try_write(local.out[tid][target],queue_cap,job_epoch,send_ticket[target],payload);
+#endif
             if(result==Result::ok){send_ticket[target]++;block_add(total_sent);break;}
             if(result!=Result::not_ready){fail(local,2);cancelled=true;break;}
             block_add(total_blocked);__nanosleep(32);
@@ -164,8 +195,23 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
         }
       }
       if(!cancelled) {
+#ifdef MGBFS_PACKET_MAILBOX
+        for(unsigned dst=0;dst<WORLD&&!cancelled;dst++) {
+          for(;;) {
+            if(ld(coordinator.decision_epoch)==epoch||++loops>250000000ull) {
+              if(loops>250000000ull)fail(local,2);
+              cancelled=true;break;
+            }
+            auto result=mgbfs_packet_ring::try_close(local.close[tid][dst],depth,job_epoch,epoch,send_ticket[dst]);
+            if(result==mgbfs_packet_ring::Result::ok)break;
+            if(result!=mgbfs_packet_ring::Result::not_ready){fail(local,2);cancelled=true;break;}
+            __nanosleep(32);
+          }
+        }
+#else
         for(unsigned dst=0;dst<WORLD;dst++)local.final_tail[tid][dst]=send_ticket[dst];
         st(local.closed_epoch[tid],epoch);
+#endif
       }
       block_add(total_steps,loops);block_add(producers_done);
     } else if(tid>=32&&tid<32+WORLD*PRODUCERS) {
@@ -179,7 +225,21 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
         }
         if(rank==1 && loops<=delayed_reads) {__nanosleep(32);continue;}
         Payload payload{};
+#ifdef MGBFS_PACKET_MAILBOX
+        mgbfs_packet_ring::PacketHeader packet_header{};const unsigned char* packet_bytes=nullptr;
+        auto packet_result=mgbfs_packet_ring::try_peek(packet_view(boxes[src],lane,rank,queue_cap),
+            receive_ticket,job_epoch,epoch,&packet_header,&packet_bytes);
+        Result result=packet_result==mgbfs_packet_ring::Result::ok?Result::ok:
+            (packet_result==mgbfs_packet_ring::Result::not_ready||
+             packet_result==mgbfs_packet_ring::Result::future_phase)?Result::not_ready:Result::wrong_epoch;
+        if(result==Result::ok) {
+          if(packet_header.len!=sizeof(payload)||packet_header.format!=1){fail(local,2);break;}
+          auto* destination=reinterpret_cast<unsigned char*>(&payload);
+          for(unsigned i=0;i<sizeof(payload);++i)destination[i]=packet_bytes[i];
+        }
+#else
         Result result=try_read(boxes[src]->out[lane][rank],queue_cap,job_epoch,receive_ticket,payload);
+#endif
         if(result==Result::ok) {
           uint64_t id=0;PackedWord candidate{payload.value,dictionary};
           if(payload.kind!=depth+1||payload.source!=src||
@@ -199,13 +259,37 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
             if(record>=MAX_RECORDS){fail(local,2);break;}
             next[row]=payload.value;records[record]={depth+1,payload.value};
           }
+#ifdef MGBFS_PACKET_MAILBOX
+          if(mgbfs_packet_ring::try_ack(packet_view(boxes[src],lane,rank,queue_cap),
+              receive_ticket,job_epoch,epoch)!=mgbfs_packet_ring::Result::ok)
+            {fail(local,2);break;}
+#else
           if(try_release(boxes[src]->out[lane][rank],queue_cap,job_epoch,receive_ticket)!=Result::ok)
             {fail(local,2);break;}
+#endif
           receive_ticket++;block_add(total_received);
         } else if(result!=Result::not_ready){fail(local,2);break;}
+#ifdef MGBFS_PACKET_MAILBOX
+        else {
+          U64 tail=0;
+          auto close_result=mgbfs_packet_ring::try_get_close(
+              boxes[src]->close[lane][rank],depth,job_epoch,epoch,&tail);
+          if(close_result==mgbfs_packet_ring::Result::ok) {
+            if(receive_ticket>tail){fail(local,2);break;}
+            if(receive_ticket==tail) {
+              if(mgbfs_packet_ring::try_ack_close(boxes[src]->close[lane][rank],depth,
+                  job_epoch,epoch,receive_ticket)!=mgbfs_packet_ring::Result::ok)fail(local,2);
+              break;
+            }
+          } else if(close_result!=mgbfs_packet_ring::Result::not_ready&&
+                    close_result!=mgbfs_packet_ring::Result::future_phase){fail(local,2);break;}
+          __nanosleep(32);
+        }
+#else
         else if(ld(boxes[src]->closed_epoch[lane])==epoch &&
                 receive_ticket==boxes[src]->final_tail[lane][rank])break;
         else __nanosleep(32);
+#endif
       }
       // Release sequence makes all committed rows visible to the coordinator.
       block_add(total_steps,loops);block_add(consumers_done);
@@ -332,7 +416,15 @@ static bool decode(const char* s,ncclUniqueId& id) {
 }
 static int rank_main(int rank,const ncclUniqueId& id) {
   int n=0,ver=0,coop=0;
+#ifdef MGBFS_PACKET_MAILBOX
+  auto count_status=cudaGetDeviceCount(&n);
+  if(count_status==cudaErrorNoDevice)return 77;
+  if(count_status!=cudaSuccess)return 2;
+  if(n<int(WORLD))return 77;
+  NCCL_OK(ncclGetVersion(&ver));if(ver<22900)return 77;
+#else
   CUDA_OK(cudaGetDeviceCount(&n));NCCL_OK(ncclGetVersion(&ver));if(n!=int(WORLD)||ver<22900)return 77;
+#endif
   const bool swapped=std::getenv("MGBFS_DEVICE_TEST_SWAP")!=nullptr;
   const int device=swapped?int(WORLD)-1-rank:rank;
   CUDA_OK(cudaSetDevice(device));
@@ -459,11 +551,23 @@ int main(int argc,char** argv) {
     if(pids[i]<0)return 7;
   }
   bool ok=true;
+#ifdef MGBFS_PACKET_MAILBOX
+  unsigned skipped=0;
+#endif
   for(unsigned i=0;i<WORLD;i++) {
     int s=0;if(waitpid(pids[i],&s,0)<0)ok=false;
     std::printf("CHILD rank=%d exit=%d\n",i,WIFEXITED(s)?WEXITSTATUS(s):-1);
+#ifdef MGBFS_PACKET_MAILBOX
+    if(WIFEXITED(s)&&WEXITSTATUS(s)==77)++skipped;
+    else if(!WIFEXITED(s)||WEXITSTATUS(s))ok=false;
+#else
     if(!WIFEXITED(s)||WEXITSTATUS(s))ok=false;
+#endif
   }
+#ifdef MGBFS_PACKET_MAILBOX
+  if(skipped==WORLD&&ok)return 77;
+  if(skipped)ok=false;
+#endif
   if(!ok)return 8;
   std::puts("PASS experimental multi-warp packed bitmap NCCL LSA BFS vs CPU layer multisets; not production");
   return 0;
