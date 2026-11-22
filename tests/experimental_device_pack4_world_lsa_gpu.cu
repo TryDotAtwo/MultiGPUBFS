@@ -9,12 +9,15 @@
 // CPU handles admission, launch and final validation only; no layer/portion host calls.
 #include "../cuda/experimental_device_ring.cuh"
 #ifdef MGBFS_PACKET_MAILBOX
-#include "../cuda/device_packet_ring.cuh"
+#include "../cuda/device_mailbox.cuh"
 #endif
 #include "../cuda/bitmap_pack4_action.cuh"
 #include "../cuda/permutation_bitmap.cuh"
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
 #include "../cuda/device_pack4_accept.cuh"
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+#include "../cuda/device_pack4_segment_adapter.cuh"
+#endif
 #endif
 #include <cuda_runtime.h>
 #include <nccl.h>
@@ -55,9 +58,11 @@ constexpr unsigned ADVANCE=1, COMPLETE=2, INCOMPLETE=3, ERROR=4;
 
 struct alignas(64) Mailbox {
 #ifdef MGBFS_PACKET_MAILBOX
+#ifndef MGBFS_DYNAMIC_PACKET_MAILBOX
   mgbfs_packet_ring::PacketSlot out[PRODUCERS][WORLD][MAX_SLOTS];
   unsigned char payload[PRODUCERS][WORLD][MAX_SLOTS][sizeof(Payload)];
   mgbfs_packet_ring::CloseSlot close[PRODUCERS][WORLD];
+#endif
 #else
   Slot out[PRODUCERS][WORLD][MAX_SLOTS]; // SPSC for every producer/destination
 #endif
@@ -65,9 +70,25 @@ struct alignas(64) Mailbox {
   alignas(8) U64 closed_epoch[PRODUCERS];
   alignas(8) U64 done_count,done_epoch,failure,decision_type,decision_epoch;
 };
+static_assert(sizeof(Mailbox)%64==0,"mailbox trailing ring alignment");
 #ifdef MGBFS_PACKET_MAILBOX
-__device__ mgbfs_packet_ring::View packet_view(Mailbox* box,unsigned lane,unsigned dst,unsigned cap) {
+__device__ mgbfs_packet_ring::View packet_view(Mailbox* box,unsigned lane,unsigned dst,unsigned cap,
+                                              const MgbfsDeviceMailboxLayoutV1& layout) {
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+  return mgbfs_device_mailbox::view(reinterpret_cast<unsigned char*>(box)+sizeof(Mailbox),layout,dst,lane);
+#else
+  (void)layout;
   return {box->out[lane][dst],&box->payload[lane][dst][0][0],cap,sizeof(Payload)};
+#endif
+}
+__device__ mgbfs_packet_ring::CloseSlot& packet_close(Mailbox* box,unsigned lane,unsigned dst,
+                                                       const MgbfsDeviceMailboxLayoutV1& layout) {
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+  return mgbfs_device_mailbox::close(reinterpret_cast<unsigned char*>(box)+sizeof(Mailbox),layout,dst,lane);
+#else
+  (void)layout;
+  return box->close[lane][dst];
+#endif
 }
 #endif
 struct Record {unsigned layer;uint64_t word;};
@@ -79,6 +100,9 @@ struct PackedWord {
 };
 struct Report {
   U64 sent,received,blocked,duplicates,duplicates_full,loops,records;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+  U64 second_extent_accepts,bank0_accepts,bank1_accepts;
+#endif
   unsigned status,depth,rank;
 };
 __device__ __forceinline__ U64 ld(U64& x) {
@@ -88,19 +112,26 @@ __device__ __forceinline__ void st(U64& x,U64 v) {
   SysAtomic(x).store(v,cuda::memory_order_release);
 }
 
-__global__ void init_box(Mailbox* m,unsigned capacity,U64 job_epoch) {
+__global__ void init_box(Mailbox* m,unsigned capacity,U64 job_epoch
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+    ,MgbfsDeviceMailboxLayoutV1 layout
+#endif
+    ) {
+#if defined(MGBFS_PACKET_MAILBOX) && !defined(MGBFS_DYNAMIC_PACKET_MAILBOX)
+  MgbfsDeviceMailboxLayoutV1 layout{};
+#endif
   if(blockIdx.x||threadIdx.x)return;
   for(unsigned p=0;p<PRODUCERS;p++) {
     for(unsigned d=0;d<WORLD;d++) {
       for(unsigned i=0;i<capacity;i++) {
 #ifdef MGBFS_PACKET_MAILBOX
-        mgbfs_packet_ring::init_slot(m->out[p][d][i],i);
+        mgbfs_packet_ring::init_slot(packet_view(m,p,d,capacity,layout).slots[i],i);
 #else
         init_slot(m->out[p][d][i],job_epoch,i);
 #endif
       }
 #ifdef MGBFS_PACKET_MAILBOX
-      mgbfs_packet_ring::init_close(m->close[p][d]);
+      mgbfs_packet_ring::init_close(packet_close(m,p,d,layout));
 #endif
       m->final_tail[p][d]=0;
     }
@@ -130,7 +161,16 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
     ,uint64_t* segment_counts
 #endif
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+    ,MgbfsDeviceMailboxLayoutV1 layout
+#endif
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+    ,mgbfs_device_pack4::Extent extent0,mgbfs_device_pack4::Extent extent1
+#endif
     ) {
+#if defined(MGBFS_PACKET_MAILBOX) && !defined(MGBFS_DYNAMIC_PACKET_MAILBOX)
+  MgbfsDeviceMailboxLayoutV1 layout{};
+#endif
   if(blockIdx.x)return;
   __shared__ Mailbox* boxes[WORLD];
   __shared__ U64 current_count,next_count,record_count,producers_done,consumers_done;
@@ -139,6 +179,9 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
   __shared__ mgbfs_device_pack4::Extent device_extents[2];
   __shared__ unsigned owner_lock;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+  __shared__ U64 second_extent_accepts,bank0_accepts,bank1_accepts;
+#endif
 #endif
   const unsigned tid=threadIdx.x;
   if(tid==64) {
@@ -146,11 +189,17 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     current_count=next_count=record_count=producers_done=consumers_done=0;
     total_sent=total_received=total_blocked=total_duplicates=total_duplicates_full=total_steps=0;
     depth=choice=0;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+    second_extent_accepts=bank0_accepts=bank1_accepts=0;
+#endif
     bool missing=false;for(unsigned r=0;r<WORLD;r++)missing|=!boxes[r];
     if(dev.lsaRank!=int(rank)||dev.lsaSize!=int(WORLD)||missing) {
       report->status=ERROR;choice=ERROR;
     } else if(root%WORLD==rank) {
       bank0[0]=root_word;current_count=1;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+      segment_counts[0]=1; // root in bank zero of real segment zero
+#endif
       uint64_t id=root/WORLD;visited[id>>6]|=uint64_t(1)<<(id&63);
       records[0]={0,root_word};record_count=1;
     }
@@ -165,17 +214,27 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
   U64 receive_ticket=0;
   for(;;) {
     const U64 epoch=U64(depth)+1;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+    const unsigned read_bank=depth&1,write_bank=1-read_bank;
+#else
     uint64_t* current=(depth&1)?bank1:bank0;
     uint64_t* next=(depth&1)?bank0:bank1;
+#endif
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
     // One exclusive worker per shard. Multiple incoming rings use try-lock:
     // a busy shard leaves the packet leased and retries without blocking
     // other resident consumers. Both extents are preadmitted before launch.
     const unsigned first=(row_cap+1)/2;
     if(tid==64) {
-      segment_counts[0]=segment_counts[1]=0;owner_lock=0;
+      owner_lock=0;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+      segment_counts[write_bank]=0;segment_counts[2+write_bank]=0;
+      device_extents[0]=extent0;device_extents[1]=extent1;
+#else
+      segment_counts[0]=segment_counts[1]=0;
       device_extents[0]={next,segment_counts,first,1,0};
       if(row_cap>first)device_extents[1]={next+first,segment_counts+1,row_cap-first,1,0};
+#endif
     }
     __syncthreads();
 #endif
@@ -185,7 +244,17 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
       U64 loops=0;bool cancelled=false;
       for(U64 parent=tid;parent<current_count&&!cancelled;parent+=PRODUCERS) {
         for(unsigned edge=0;edge<generators&&!cancelled;edge++) {
-          uint64_t packed=current[parent],child_id=0;
+          uint64_t packed=0,child_id=0;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+          const uint64_t in_first=device_extents[0].counts[read_bank];
+          if(parent<in_first) {
+            packed=device_extents[0].rows[uint64_t(read_bank)*device_extents[0].capacity+parent];
+          } else if(row_cap>first && parent-in_first<device_extents[1].counts[read_bank]) {
+            packed=device_extents[1].rows[uint64_t(read_bank)*device_extents[1].capacity+parent-in_first];
+          } else {fail(local,2);cancelled=true;break;}
+#else
+          packed=current[parent];
+#endif
           BitmapPack4Action action{dictionary.elements,generators,1,&packed,permutations,dictionary};
           uint32_t bad=0;
           if(!action.valid(edge,&bad)||!bitmap_rank(domain,action,edge,&child_id)||child_id>=n) {
@@ -203,7 +272,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
               cancelled=true;break;
             }
 #ifdef MGBFS_PACKET_MAILBOX
-            auto packet_result=mgbfs_packet_ring::try_send(packet_view(&local,tid,target,queue_cap),
+            auto packet_result=mgbfs_packet_ring::try_send(packet_view(&local,tid,target,queue_cap,layout),
                 send_ticket[target],job_epoch,epoch,1,
                 reinterpret_cast<const unsigned char*>(&payload),sizeof(payload));
             Result result=packet_result==mgbfs_packet_ring::Result::ok?Result::ok:
@@ -225,7 +294,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
               if(loops>250000000ull)fail(local,2);
               cancelled=true;break;
             }
-            auto result=mgbfs_packet_ring::try_close(local.close[tid][dst],depth,job_epoch,epoch,send_ticket[dst]);
+            auto result=mgbfs_packet_ring::try_close(packet_close(&local,tid,dst,layout),depth,job_epoch,epoch,send_ticket[dst]);
             if(result==mgbfs_packet_ring::Result::ok)break;
             if(result!=mgbfs_packet_ring::Result::not_ready){fail(local,2);cancelled=true;break;}
             __nanosleep(32);
@@ -250,7 +319,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
         Payload payload{};
 #ifdef MGBFS_PACKET_MAILBOX
         mgbfs_packet_ring::PacketHeader packet_header{};const unsigned char* packet_bytes=nullptr;
-        auto packet_result=mgbfs_packet_ring::try_peek(packet_view(boxes[src],lane,rank,queue_cap),
+        auto packet_result=mgbfs_packet_ring::try_peek(packet_view(boxes[src],lane,rank,queue_cap,layout),
             receive_ticket,job_epoch,epoch,&packet_header,&packet_bytes);
         Result result=packet_result==mgbfs_packet_ring::Result::ok?Result::ok:
             (packet_result==mgbfs_packet_ring::Result::not_ready||
@@ -281,13 +350,22 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
           owner.domain=domain;owner.dictionary=dictionary;owner.extents=device_extents;
           owner.extent_count=row_cap>first?2:1;owner.bits=visited;
           owner.owner_len=uint64_t(n)/WORLD+unsigned(rank<n%WORLD);
-          owner.world=WORLD;owner.owner=rank;owner.shards=1;owner.shard=0;owner.bank=0;
+          owner.world=WORLD;owner.owner=rank;owner.shards=1;owner.shard=0;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+          owner.bank=write_bank;
+#else
+          owner.bank=0;
+#endif
           auto accepted=mgbfs_device_pack4::accept(owner,id,payload.value);
           bool failed=false;
           if(accepted.status==mgbfs_device_pack4::Status::duplicate) {
             block_add(total_duplicates);
             if(block_load(next_count)>=row_cap)block_add(total_duplicates_full);
           } else if(accepted.status==mgbfs_device_pack4::Status::accepted) {
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+            if(accepted.extent==1)block_add(second_extent_accepts);
+            if(write_bank==0)block_add(bank0_accepts);else block_add(bank1_accepts);
+#endif
             U64 row=(accepted.extent?first:0)+accepted.row;
             U64 record=block_reserve(record_count);
             if(row>=row_cap||record>=MAX_RECORDS){fail(local,2);failed=true;}
@@ -313,7 +391,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
           }
 #endif
 #ifdef MGBFS_PACKET_MAILBOX
-          if(mgbfs_packet_ring::try_ack(packet_view(boxes[src],lane,rank,queue_cap),
+          if(mgbfs_packet_ring::try_ack(packet_view(boxes[src],lane,rank,queue_cap,layout),
               receive_ticket,job_epoch,epoch)!=mgbfs_packet_ring::Result::ok)
             {fail(local,2);break;}
 #else
@@ -326,11 +404,11 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
         else {
           U64 tail=0;
           auto close_result=mgbfs_packet_ring::try_get_close(
-              boxes[src]->close[lane][rank],depth,job_epoch,epoch,&tail);
+              packet_close(boxes[src],lane,rank,layout),depth,job_epoch,epoch,&tail);
           if(close_result==mgbfs_packet_ring::Result::ok) {
             if(receive_ticket>tail){fail(local,2);break;}
             if(receive_ticket==tail) {
-              if(mgbfs_packet_ring::try_ack_close(boxes[src]->close[lane][rank],depth,
+              if(mgbfs_packet_ring::try_ack_close(packet_close(boxes[src],lane,rank,layout),depth,
                   job_epoch,epoch,receive_ticket)!=mgbfs_packet_ring::Result::ok)fail(local,2);
               break;
             }
@@ -394,6 +472,10 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     report->sent=total_sent;report->received=total_received;report->blocked=total_blocked;
     report->duplicates=total_duplicates;report->duplicates_full=total_duplicates_full;
     report->loops=total_steps;report->records=record_count;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+    report->second_extent_accepts=second_extent_accepts;
+    report->bank0_accepts=bank0_accepts;report->bank1_accepts=bank1_accepts;
+#endif
     report->status=choice;report->depth=depth;report->rank=rank;
   }
 }
@@ -499,7 +581,11 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   uint64_t *bank0=nullptr,*bank1=nullptr,*visited=nullptr;
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
   uint64_t* segment_counts=nullptr;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+  CUDA_OK(cudaMalloc(&segment_counts,4*sizeof(uint64_t)));
+#else
   CUDA_OK(cudaMalloc(&segment_counts,2*sizeof(uint64_t)));
+#endif
 #endif
   uint32_t *permutations=nullptr,*counts=nullptr;int64_t* symbols=nullptr;
   Record* records=nullptr;Report* report=nullptr;
@@ -507,15 +593,30 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   ncclCommProperties_t props=NCCL_COMM_PROPERTIES_INITIALIZER;
   NCCL_OK(ncclCommQueryProperties(comm,&props));
   if(!props.deviceApiSupport||props.nLsaTeams!=1)return 77;
-  NCCL_OK(ncclMemAlloc(reinterpret_cast<void**>(&box),sizeof(Mailbox)));
+  size_t window_bytes=sizeof(Mailbox);
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+  MgbfsDeviceMailboxLayoutV1 maximum_layout{};
+  if(mgbfs_device_mailbox_layout_v1(WORLD,PRODUCERS,MAX_SLOTS,sizeof(Payload),UINT64_MAX,
+      sizeof(maximum_layout),&maximum_layout)!=MGBFS_MAILBOX_LAYOUT_OK ||
+     maximum_layout.total_bytes>SIZE_MAX-window_bytes) {
+    std::fprintf(stderr,"mailbox maximum layout admission failed\n");return 6;
+  }
+  window_bytes+=size_t(maximum_layout.total_bytes);
+#endif
+  NCCL_OK(ncclMemAlloc(reinterpret_cast<void**>(&box),window_bytes));
   CUDA_OK(cudaMalloc(&barrier,sizeof(int)));
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+  // Each allocation is a distinct production-style segment, with two banks.
+  CUDA_OK(cudaMalloc(&bank0,2*MAX_N*sizeof(uint64_t)));CUDA_OK(cudaMalloc(&bank1,2*MAX_N*sizeof(uint64_t)));
+#else
   CUDA_OK(cudaMalloc(&bank0,MAX_N*sizeof(uint64_t)));CUDA_OK(cudaMalloc(&bank1,MAX_N*sizeof(uint64_t)));
+#endif
   CUDA_OK(cudaMalloc(&permutations,256*sizeof(uint32_t)));
   CUDA_OK(cudaMalloc(&counts,16*sizeof(uint32_t)));CUDA_OK(cudaMalloc(&symbols,16*sizeof(int64_t)));
   CUDA_OK(cudaMalloc(&visited,((MAX_N+63)/64)*sizeof(uint64_t)));
   CUDA_OK(cudaMalloc(&records,MAX_RECORDS*sizeof(Record)));
   CUDA_OK(cudaMalloc(&report,sizeof(Report)));CUDA_OK(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking));
-  NCCL_OK(ncclCommWindowRegister(comm,box,sizeof(Mailbox),&win,NCCL_WIN_COLL_SYMMETRIC));
+  NCCL_OK(ncclCommWindowRegister(comm,box,window_bytes,&win,NCCL_WIN_COLL_SYMMETRIC));
   ncclDevCommRequirements req=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;req.lsaBarrierCount=1;
   NCCL_OK(ncclDevCommCreate(comm,&req,&dev));if(dev.lsaRank!=rank||dev.lsaSize!=int(WORLD))return 77;
   unsigned case_index=0;bool any_failed=false;
@@ -546,7 +647,34 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       CUDA_OK(cudaMemcpyAsync(counts,g.counts.data(),g.counts.size()*sizeof(uint32_t),cudaMemcpyHostToDevice,stream));
       CUDA_OK(cudaMemcpyAsync(symbols,g.symbols.data(),g.symbols.size()*sizeof(int64_t),cudaMemcpyHostToDevice,stream));
       CUDA_OK(cudaMemsetAsync(visited,0,((MAX_N+63)/64)*sizeof(uint64_t),stream));CUDA_OK(cudaMemsetAsync(report,0,sizeof(Report),stream));
-      init_box<<<1,1,0,stream>>>(box,qcap,job_epoch);CUDA_OK(cudaGetLastError());
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+      CUDA_OK(cudaMemsetAsync(segment_counts,0,4*sizeof(uint64_t),stream));
+      const uint64_t first=(uint64_t(cap)+1)/2;
+      MgbfsSegment real0{nullptr,bank0,nullptr,0,first,2,0};
+      mgbfs_device_pack4::Extent extent0{},extent1{};
+      if(!mgbfs_device_pack4::extent_from_segment(real0,segment_counts,&extent0))return 6;
+      if(cap>first) {
+        MgbfsSegment real1{nullptr,bank1,nullptr,0,uint64_t(cap)-first,2,0};
+        if(!mgbfs_device_pack4::extent_from_segment(real1,segment_counts+2,&extent1))return 6;
+      }
+      // Invalid shapes are rejected without mutating the output descriptor.
+      auto rejected=extent0;MgbfsSegment invalid=real0;invalid.capacity=uint64_t(1)<<32;
+      if(!mgbfs_device_pack4::extent_from_segment(invalid,segment_counts,&rejected))return 6;
+      invalid.capacity++;
+      if(mgbfs_device_pack4::extent_from_segment(invalid,segment_counts,&rejected) ||
+         rejected.capacity!=(uint64_t(1)<<32))return 6;
+#endif
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+      MgbfsDeviceMailboxLayoutV1 layout{};
+      if(mgbfs_device_mailbox_layout_v1(WORLD,PRODUCERS,qcap,sizeof(Payload),maximum_layout.total_bytes,
+          sizeof(layout),&layout)!=MGBFS_MAILBOX_LAYOUT_OK) {
+        std::fprintf(stderr,"mailbox case layout admission failed\n");return 6;
+      }
+      init_box<<<1,1,0,stream>>>(box,qcap,job_epoch,layout);
+#else
+      init_box<<<1,1,0,stream>>>(box,qcap,job_epoch);
+#endif
+      CUDA_OK(cudaGetLastError());
       CUDA_OK(cudaMemsetAsync(barrier,0,sizeof(int),stream));
       NCCL_OK(ncclAllReduce(barrier,barrier,1,ncclInt,ncclSum,comm,stream));
       CUDA_OK(cudaStreamSynchronize(stream));
@@ -559,6 +687,12 @@ static int rank_main(int rank,const ncclUniqueId& id) {
                     &root,&root_word,&qcap,&cap,&job_epoch,&delay,&bank0,&bank1,&visited,&records,&report
 #ifdef MGBFS_SEGMENTED_PACK4_OWNER
                     ,&segment_counts
+#endif
+#ifdef MGBFS_DYNAMIC_PACKET_MAILBOX
+                    ,&layout
+#endif
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+                    ,&extent0,&extent1
 #endif
                     };
       CUDA_OK(cudaLaunchCooperativeKernel(reinterpret_cast<void*>(exact_layers),dim3(1),dim3(96),args,0,stream));
@@ -575,6 +709,20 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       // Assert the owner actually observed it after its row cap was reached.
       bool exercised_full_duplicate=graph_index!=4||unsigned(rank)!=(g.e[g.root][0]%WORLD)||cap!=1||out.duplicates_full>0;
       bool ok=out.status==expected_status&&out.depth==expected_depth&&got==want&&out.records<=MAX_RECORDS&&exercised_full_duplicate;
+#ifdef MGBFS_DEVICE_SEGMENT_STORAGE
+      unsigned peak_rank=0;bool even_child=false,odd_child=false;
+      for(unsigned d=1;d<=expected_depth;d++) {
+        unsigned count=0;for(unsigned v=0;v<g.n;v++)if(distance[v]==int(d)&&v%WORLD==unsigned(rank))count++;
+        peak_rank=std::max(peak_rank,count);
+        if(count&&(d&1))odd_child=true;
+        if(count&&!(d&1))even_child=true;
+      }
+      const bool needs_second=peak_rank>(uint64_t(cap)+1)/2;
+      ok=ok&&(!needs_second||out.second_extent_accepts>0)&&(!even_child||out.bank0_accepts>0)&&(!odd_child||out.bank1_accepts>0);
+      std::printf("SEGMENTS graph=%s rank=%d q=%u cap=%u second=%llu bank0=%llu bank1=%llu required_second=%d required_even=%d required_odd=%d\n",
+        g.name.c_str(),rank,qcap,cap,out.second_extent_accepts,out.bank0_accepts,out.bank1_accepts,
+        int(needs_second),int(even_child),int(odd_child));
+#endif
       std::printf("%s graph=%s rank=%d q=%u cap=%u status=%u depth=%u complete_records=%zu partial_records=%llu sent=%llu recv=%llu blocked=%llu duplicates=%llu duplicates_full=%llu loops=%llu\n",
         ok?"PASS":"FAIL",g.name.c_str(),rank,qcap,cap,out.status,out.depth,got.size(),
         out.records-got.size(),out.sent,out.received,out.blocked,out.duplicates,out.duplicates_full,out.loops);
