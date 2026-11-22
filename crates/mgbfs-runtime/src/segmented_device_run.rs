@@ -44,7 +44,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 struct Resources {
  layers:Buffer,rank_counts:Buffer,rank_count:Buffer,locks:Buffer,descriptors:Buffer,leases:Buffer,report:Buffer,smoke:Buffer,
  mapping:Vec<(usize,usize)>,args:Args,event:Event,window_bytes:u64,layer_capacity:u64,
- _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,
+ _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,hash_index:Option<Buffer>,
 }
 
 fn checked_size(n:u64,item:usize)->Result<usize>{
@@ -72,10 +72,11 @@ impl SegmentedDistributedBfs {
   let initialize=hf.map_or(f.initialize,|h|h.initialize);
   let peer_smoke=hf.map_or(f.peer_smoke,|h|h.peer_smoke);
   let launch=hf.map_or(f.launch,|h|h.launch);
-  let domain_total=if let Some((_,bound,_,_))=self.resident_hash {bound}
+  let domain_total=if let Some((_,bound,_,_,_))=self.resident_hash {bound}
                    else {self.bitmap.as_ref().ok_or("RESIDENT_BITMAP_MISSING")?.domain.total};
   let hash_parallel=self.resident_hash.map_or(false,|v|v.2);
   let hash_instrumented=self.resident_hash.map_or(false,|v|v.3);
+  let hash_indexed=self.resident_hash.map_or(false,|v|v.4);
   let geometry=f.mailbox(world,1,u64::MAX);
   let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
@@ -149,7 +150,10 @@ impl SegmentedDistributedBfs {
    while present<needed {
     let future=present.checked_add(1).ok_or("RESIDENT_EXTENT_COUNT")?;
     let extent_bytes=if hash{mem::size_of::<HashExtent>()}else{mem::size_of::<Extent>()};
-    let metadata=future.checked_mul((extent_bytes+4) as u64)
+    let per_extent=(extent_bytes+4) as u64+if hash_indexed{8}else{0};
+    let per_shard=if hash_indexed{u64::from(self.plan.shards).checked_mul(16).ok_or("RESIDENT_EXTENT_COUNT")?}else{0};
+    let metadata=future.checked_mul(per_extent)
+      .and_then(|v|v.checked_add(per_shard))
       .and_then(|v|v.checked_add(4096)).ok_or("RESIDENT_EXTENT_COUNT")?;
     let prior=self.reserve_bytes;
     self.reserve_bytes=prior.checked_add(metadata).ok_or("RESIDENT_EXTENT_COUNT")?;
@@ -180,11 +184,22 @@ impl SegmentedDistributedBfs {
    let hash_stats=if hash&&hash_instrumented {
     let b=Buffer::new(20,d)?;b.upload(&[0u32;5])?;Some(b)
    }else{None};
+   let shards=u64::from(self.plan.shards);
+   let next_offset=checked_size(shards,8)?;
+   let cursor_offset=checked_size(shards.checked_add(n).ok_or("RESIDENT_HASH_INDEX_SIZE")?,8)?;
+   let hash_index=if hash&&hash_indexed {
+    let count=n.checked_add(shards.checked_mul(2).ok_or("RESIDENT_HASH_INDEX_SIZE")?)
+      .ok_or("RESIDENT_HASH_INDEX_SIZE")?;
+    Some(Buffer::new(checked_size(count,8)?,d)?)
+   }else{None};
    let hash_config=if hash {
     let b=Buffer::new(mem::size_of::<HashConfig>(),d)?;
     let config=HashConfig{seed:self.seed,bits:self.bits,state_bytes:self.plan.state_bytes,
       owner_cuts:self.cuts.as_ref().map_or(ptr::null(),|c|c.ptr.cast()),
-      parallel_owners:u32::from(hash_parallel),owner_peak:hash_stats.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast())};
+      parallel_owners:u32::from(hash_parallel),owner_peak:hash_stats.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast()),
+      shard_head:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast()),
+      extent_next:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(next_offset)),
+      free_cursor:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(cursor_offset))};
     b.upload(&[config])?;Some(b)
    }else{None};
    let mut host_terminal=ptr::null_mut();let mut device_terminal=ptr::null_mut();
@@ -215,9 +230,10 @@ impl SegmentedDistributedBfs {
     }}
     if let Some(cuts)=&self.cuts {if let Some(r)=region(cuts.ptr,cuts.bytes,8){others.push(r)}}
     if let Some(stats)=&hash_stats {if let Some(r)=region(stats.ptr,stats.bytes,4){others.push(r)}}
+    if let Some(index)=&hash_index {if let Some(r)=region(index.ptr,index.bytes,8){others.push(r)}}
     let config=hash_config.as_ref().ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     if let Some(r)=region(config.ptr,config.bytes,8){others.push(r)}
-    let (dictionary,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
+    let (dictionary,_,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     let domain=BitmapDeviceDomain{symbols:ptr::null(),counts:ptr::null(),
       distinct:dictionary.distinct,elements:dictionary.elements,total:domain_total};
     let width=u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?;
@@ -243,7 +259,7 @@ impl SegmentedDistributedBfs {
     capture:ptr::null_mut(),capture_capacity:0,capture_count:ptr::null_mut(),terminal:device_terminal,
    };
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(report.ptr,0,report.bytes,self.base.stream.ptr)})?;
-   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats})
+   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats,hash_index})
   })();
   ready.agree("resident-admission",&resource,None)?;
   // If a rank fails while a resident kernel still accesses these buffers,
@@ -343,6 +359,8 @@ impl SegmentedDistributedBfs {
   let evidence=serde_json::json!({"transport":"NCCL_LSA_DEVICE_RING",
     "storage":if hash{"segmented_hash"}else{"packed_bitmap"},
     "hash_owner_execution":if hash{Some(if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
+    "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
+    "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
     "hash_owner_peak_active":hash_owner_stats.map(|v|v[0]),
     "hash_extent_full_seen":hash_owner_stats.map(|v|v[1]),
     "hash_freeze_retry":hash_owner_stats.map(|v|v[2]),

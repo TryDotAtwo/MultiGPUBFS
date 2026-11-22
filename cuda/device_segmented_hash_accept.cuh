@@ -28,6 +28,11 @@ struct Owner {
     uint64_t extent_count;
     uint32_t* extent_owner; // UINT32_MAX denotes a drained, reset extent
     uint64_t* rank_count;   // optional rank-wide target/history hard cap
+    // Optional job-owned index. The shard lease exclusively protects its
+    // head/cursor; each leased extent owns one next entry.
+    uint64_t* shard_head;
+    uint64_t* extent_next;
+    uint64_t* free_cursor;
     uint64_t rank_limit;
     uint32_t elements,shards,shard,bank;
 };
@@ -92,9 +97,18 @@ __device__ inline Outcome accept(const Owner& a,uint64_t hash,const Input& input
 
     uint64_t chosen=a.extent_count,chosen_slot=0,chosen_row=0;
     bool any_table_full=false;
-    for(uint64_t i=0;i<a.extent_count;++i) {
+    const bool indexed=a.shard_head!=nullptr;
+    if(indexed&&(!a.extent_next||!a.free_cursor||!a.extent_owner))return bad;
+    uint64_t i=indexed?a.shard_head[a.shard]:0;
+    uint64_t traversed=0;
+    while(i<a.extent_count) {
+        if(++traversed>a.extent_count)return bad;
+        const uint64_t next=indexed?a.extent_next[i]:i+1;
         if(a.extent_owner&&cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.extent_owner[i])
-             .load(cuda::memory_order_acquire)!=a.shard)continue;
+             .load(cuda::memory_order_acquire)!=a.shard) {
+            if(indexed)return bad;
+            i=next;continue;
+        }
         const Extent& e=a.extents[i];
         if(!valid_extent(e,a.bank,a.elements,sizeof(T)))return bad;
         const Probe p=probe<T>(e,a.bank,a.elements,hash,input);
@@ -104,10 +118,16 @@ __device__ inline Outcome accept(const Owner& a,uint64_t hash,const Input& input
             if(p.slot==e.segment.slots_count)any_table_full=true;
             else if(chosen==a.extent_count) { chosen=i;chosen_slot=p.slot;chosen_row=p.row; }
         }
+        i=next;
     }
+    if(indexed&&i!=UINT64_MAX)return bad;
     bool new_lease=false;
     if(chosen==a.extent_count&&a.extent_owner) {
-        for(uint64_t i=0;i<a.extent_count;++i) {
+        const uint64_t start=indexed?a.free_cursor[a.shard]:0;
+        if(start>=a.extent_count)return bad;
+        for(uint64_t step=0;step<a.extent_count;++step) {
+            // Compute (start+step) modulo extent_count without u64 overflow.
+            const uint64_t i=step<a.extent_count-start?start+step:step-(a.extent_count-start);
             auto lease=cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.extent_owner[i]);
             uint32_t expected=UINT32_MAX;
             if(!lease.compare_exchange_strong(expected,a.shard,cuda::memory_order_acq_rel,cuda::memory_order_acquire))
@@ -119,7 +139,9 @@ __device__ inline Outcome accept(const Owner& a,uint64_t hash,const Input& input
                       .load(cuda::memory_order_acquire)!=0)return bad;
             const Probe p=probe<T>(e,a.bank,a.elements,hash,input);
             if(!p.valid||p.duplicate||p.row!=0||p.slot==e.segment.slots_count)return bad;
-            chosen=i;chosen_slot=p.slot;chosen_row=0;new_lease=true;break;
+            chosen=i;chosen_slot=p.slot;chosen_row=0;new_lease=true;
+            if(indexed)a.free_cursor[a.shard]=(i+1<a.extent_count)?i+1:0;
+            break;
         }
     }
     if(chosen==a.extent_count)return {any_table_full?Status::table_full:Status::extent_full,0,0};
@@ -138,6 +160,10 @@ __device__ inline Outcome accept(const Owner& a,uint64_t hash,const Input& input
             }
             return {count>a.rank_limit?Status::invalid:Status::cap_full,0,0};
         }
+    }
+    if(indexed&&new_lease) {
+        a.extent_next[chosen]=a.shard_head[a.shard];
+        a.shard_head[a.shard]=chosen;
     }
     const Extent& e=a.extents[chosen];
     const MgbfsSegment& s=e.segment;

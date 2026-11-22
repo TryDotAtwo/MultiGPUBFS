@@ -36,6 +36,9 @@ struct HashConfig {
   const uint64_t* owner_cuts;
   uint32_t parallel_owners;
   uint32_t* owner_peak;
+  uint64_t* shard_head;
+  uint64_t* extent_next;
+  uint64_t* free_cursor;
 };
 struct HashWord {
   MgbfsPack4Dictionary dictionary;uint64_t packed;
@@ -276,6 +279,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       if constexpr(Hash) {
         const auto& e=hash_extents[i];
         if(!hash_config||!(hash_config->state_bytes==1||hash_config->state_bytes==8)||
+           bool(hash_config->shard_head)!=bool(hash_config->extent_next)||
+           bool(hash_config->shard_head)!=bool(hash_config->free_cursor)||
            hash_config->bits>64||!mgbfs_device_hash::valid_extent(e,0,a.dictionary.elements,hash_config->state_bytes)||
            e.segment.banks!=3||e.counts[0]>e.segment.capacity||
            current>UINT64_MAX-e.counts[0]){invalid=true;break;}
@@ -343,13 +348,26 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     }
     if(tid==32*(active_lanes+1)) {
       *a.rank_count=0;shards_this_layer=0;
-      for(unsigned s=0;s<a.shards;++s)a.shard_locks[s]=0;
+      for(unsigned s=0;s<a.shards;++s) {
+        a.shard_locks[s]=0;
+        if constexpr(Hash)if(hash_config->shard_head) {
+          hash_config->shard_head[s]=UINT64_MAX;hash_config->free_cursor[s]=0;
+        }
+      }
       for(uint64_t i=0;i<a.extent_count;++i) {
         if constexpr(Hash) {
           const auto& e=hash_extents[i];
           if(retirement_bad)continue;
           e.counts[write_bank]=0;
           if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])a.extent_owner[i]=UINT32_MAX;
+          if(hash_config->shard_head&&a.extent_owner[i]!=UINT32_MAX) {
+            const unsigned owner=a.extent_owner[i];
+            if(owner>=a.shards) {retirement_bad=1;failure(local,mgbfs_device_epoch::FATAL);}
+            else {
+              hash_config->extent_next[i]=hash_config->shard_head[owner];
+              hash_config->shard_head[owner]=i;
+            }
+          }
         } else {
           auto& e=a.extents[i];
           e.counts[write_bank]=0;
@@ -509,6 +527,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             mgbfs_device_hash::Owner owner{};
             owner.extents=hash_extents;owner.extent_count=a.extent_count;owner.extent_owner=a.extent_owner;
             owner.rank_count=a.rank_limit?a.rank_count:nullptr;owner.rank_limit=a.rank_limit;
+            owner.shard_head=hash_config->shard_head;owner.extent_next=hash_config->extent_next;
+            owner.free_cursor=hash_config->free_cursor;
             owner.elements=a.dictionary.elements;owner.shards=a.shards;owner.shard=shard;owner.bank=write_bank;
             const HashWord word{a.dictionary,payload.packed};
             auto result=hash_config->state_bytes==1?

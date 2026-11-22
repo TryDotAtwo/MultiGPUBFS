@@ -50,6 +50,7 @@ def check_receipt(r):
   assert m["resident"]["transport"]=="NCCL_LSA_DEVICE_RING"
   mode="parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank"
   assert m["resident"]["hash_owner_execution"]==mode
+  assert m["resident"]["hash_indexed_extents"]==(os.environ.get("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")=="1")
 
 records=[];workers=None;seen_shards=0;peak_owners=0
 with persistent_graph_workers() as pool:

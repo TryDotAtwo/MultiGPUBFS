@@ -45,11 +45,17 @@ template<class T> struct Fixture {
  Extent* extents=managed<Extent>(ns);
  uint32_t* leases=managed<uint32_t>(ns);
  uint64_t* rank_count=managed<uint64_t>(1);
+ uint64_t* heads=managed<uint64_t>(2);
+ uint64_t* next=managed<uint64_t>(ns);
+ uint64_t* cursors=managed<uint64_t>(2);
  Owner* owners=managed<Owner>(2);
  Input<T>* input=managed<Input<T>>(n);
  Outcome* out=managed<Outcome>(2*n);
  unsigned* gate=managed<unsigned>(1);
- Fixture(bool value):wide(value) {
+ Fixture(bool value,bool indexed=false):wide(value) {
+  std::fill(heads,heads+2,UINT64_MAX);
+  std::fill(next,next+ns,UINT64_MAX);
+  std::fill(cursors,cursors+2,0);
   for(unsigned i=0;i<ns;++i) {
    auto* slots=managed<uint64_t>(8);
    auto* rows=managed<T>(12);
@@ -67,6 +73,7 @@ template<class T> struct Fixture {
   for(unsigned s=0;s<2;++s) {
    Owner o{};o.extents=extents;o.extent_count=ns;o.extent_owner=leases;
    o.rank_count=rank_count;o.rank_limit=2;o.elements=4;o.shards=2;o.shard=s;o.bank=1;
+   if(indexed){o.shard_head=heads;o.extent_next=next;o.free_cursor=cursors;}
    owners[s]=o;
   }
   auto set=[&](unsigned i,unsigned s,int a,int b) {
@@ -217,6 +224,9 @@ int main() {
  C(e);C(cudaSetDevice(0));C(cudaFree(nullptr));
  Fixture<uint8_t> u8(false);u8.check();
  Fixture<int64_t> wide(true);wide.check();
+ Fixture<uint8_t> indexed_u8(false,true);indexed_u8.check();
+ Fixture<int64_t> indexed_wide(true,true);indexed_wide.check();
+ std::puts("PASS indexed owner lists with exact collisions and cap replay");
  chain_and_full_table<uint8_t>();chain_and_full_table<int64_t>();
  virtual_last_row();
  if(n>=2) { C(cudaSetDevice(1));Fixture<uint8_t> second(false);second.check();std::puts("PASS same primitive on second physical GPU; no cross-GPU scheduler tested"); }

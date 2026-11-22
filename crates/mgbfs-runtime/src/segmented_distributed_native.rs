@@ -257,7 +257,7 @@ pub(crate) fn resident_preflight(devices:&[u32],rank:u32)->Result<()>{
 }
 
 pub struct SegmentedDistributedBfs{
- strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool)>,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
+ strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool,bool)>,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
  segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,hash_shards:Vec<Option<BatchHashShard>>,remaining_bytes:u64,storage_budget:u64,storage_peak_requested:u64,reserve_bytes:u64,configured_rows:u64,bank_totals:[u64;3],peak_live_rows:u64,last_resource:Option<serde_json::Value>,capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
  counts:Vec<u64>,depth:u64,source_retries:u64,active_batch:u32,queue_batch_ceiling:u32,admitted_batch:u32,batch_recovery:bool,batch_recovery_policy:crate::segmented_strategy::QueueBatchRecovery,batch_recoveries:u64,layer_stats:bool,layer_stats_low:u64,layer_stats_high:u64,profile_spill:u64,profile_owner_passes:u64,peak_owner_lanes:u32,prefetched_chunks:u64,overlap_samples:u32,
  send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_timed_tiles:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,test_count_payload:bool,
@@ -306,7 +306,7 @@ impl SegmentedDistributedBfs{
     Err(std::env::VarError::NotPresent)=>Ok(false),Ok(v) if v=="0"=>Ok(false),
     Ok(v) if v=="1"=>Ok(true),_=>Err(format!("RESIDENT_HASH_FLAG_INVALID {name}")),
    }};
-   Some((dictionary,bound,flag("MGBFS_RESIDENT_HASH_SHARD_OWNERS")?,flag("MGBFS_RESIDENT_HASH_OWNER_STATS")?))
+   Some((dictionary,bound,flag("MGBFS_RESIDENT_HASH_SHARD_OWNERS")?,flag("MGBFS_RESIDENT_HASH_OWNER_STATS")?,flag("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")?))
   }else{None};
   let page_code=if !bitmap_mode{0}else{match std::env::var("MGBFS_SEGMENT_BITMAP_OWNER_PAGE"){
    Err(std::env::VarError::NotPresent)=>0u64,Ok(v) if v=="0"=>0,
@@ -336,7 +336,7 @@ impl SegmentedDistributedBfs{
   if !bitmap_mode&&p.history_layers==3&&!g.inverse_closed()?{return Err("SEGMENTED_ROLLING_REQUIRES_INVERSE_CLOSED".into())}
   if let Some(c)=cuts{if c.len()!=p.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|x|x[0]>=x[1]){return Err("SEGMENTED_OWNER_CUTS".into())}}
   let tiny=GenericMemoryPlan::with_storage(p.elements,1,p.state_bytes)?;
-  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3)});
+  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3),"resident_hash_indexed_extents":resident_hash.map(|v|v.4)});
   Ok((p,strategy_advertisement,bitmap_mode,page_code,page_setter,bitmap_orbit_abi,compact_positions,bitmap_banks,tiny,immutable_routes,pack4,descriptor,resident_hash))
   })();
   let descriptor=config.as_ref().ok().map(|x|&x.11);
