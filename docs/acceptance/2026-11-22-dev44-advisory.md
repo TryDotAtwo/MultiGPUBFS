@@ -33,6 +33,13 @@ then measured speed. A planned capacity is an estimate, not a physically
 demonstrated maximum.
 
 The isolated dev44 Python suite reported 1,149 passed and 259 subtests passed.
+[GitHub Actions](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44974671911)
+verified the public wheel SHA, pip installation, GPU-free prefetch and offline
+cache reuse. The repository-wide native CPU workflow on the dev44 wheel commit
+[failed at Rust formatting](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44973534674);
+the same formatting step also failed on the pre-existing base commit. Earlier
+CPU contract/type-check steps in that run passed; the workflow as a whole is
+not green.
 Stage-specific cache fault injection, malformed input, inconsistent rank
 receipts, CUDA/NCCL errors and divergent prefixes were included. A cache
 unavailable to an installed public API job did not prevent the measured
@@ -109,6 +116,29 @@ source snapshots; only the specified native hashes are identical. The full
 pre-final Python tree for the factorial test was not captured, so its exact
 Python snapshot cannot be reconstructed from these receipts alone. No default
 was changed from these measurements, and no B200 inference follows.
+
+## Batch recovery: isolated S12 A/B
+
+Using the publicly installed dev44 wheel on the same eight GPUs, fixed
+`permutation_bitmap/atomic`, 8 shards, 4 owner lanes and effective queue
+5632, we ran recovery off/on/on/off/off/on. Every run completed S12 with all
+Mahonian layer counts and exact full state sets for the last two layers.
+
+| Recovery | BFS, seconds | Depths 27–38, seconds |
+|---|---|---|
+| off | 38.980, 38.658, 38.700 | 21.355, 21.146, 21.155 |
+| on | 38.585, 38.750, 38.702 | 21.130, 21.230, 21.131 |
+
+Every rank reported two batch recoveries when enabled and none when disabled;
+its final batch ceiling was 8192 versus 2048. Rank-zero prefetch chunks
+were 32,646 in all six cases. Differences are within this small sample's
+variation on this graph and should not drive a default change. The first
+run's wall time included cold setup (72.542 s versus 38.980 s BFS); later
+wall times were approximately 38.86–38.97 s. These are not isolated
+measurements of every setup component.
+[Per-rank receipts](artifacts/2026-11-22-dev44-recovery-ab-s12-8gpu.json)
+and the [harness](artifacts/2026-11-22-dev44-recovery-ab-s12-8gpu.py)
+record the inputs, device list and environment-specific paths.
 
 ## S13: same completed prefix on the installed public wheel
 
