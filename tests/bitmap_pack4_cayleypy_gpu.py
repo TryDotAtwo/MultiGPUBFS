@@ -7,6 +7,7 @@ import multigpubfs
 from multigpubfs import NativeOptions,persistent_graph_workers
 from multigpubfs.graph_definition import from_cayleypy
 
+devices=tuple(range(int(os.environ.get('MGBFS_TEST_DEVICE_COUNT','2'))))
 root=Path(tempfile.mkdtemp(prefix='pack4-cayleypy-',dir='/workspace'))
 os.environ['MGBFS_SEGMENT_PACK4']='1'
 os.environ['MGBFS_SEGMENT_TEST_BATCH']='1'
@@ -44,7 +45,7 @@ try:
    os.environ['MGBFS_SEGMENT_PACK4']='1' if codec else '0'
    if cap is None:os.environ.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
    else:os.environ['MGBFS_SEGMENT_MAX_RANK_STATES']=str(cap)
-   opts=NativeOptions(devices=(0,1),autotune=False,memory_backend='permutation_bitmap',
+   opts=NativeOptions(devices=devices,autotune=False,memory_backend='permutation_bitmap',
         memory_preset=preset,segment_rows=3,segment_strategy='atomic')
    result=graph.bfs(native_options=opts,output=root/f'case-{i}',start_states=start)
    expected=layers(gens,start)
@@ -55,4 +56,4 @@ try:
    assert ids==now,(ids,now)
    print('PASS CayleyPy',i,preset,cap,'packed',codec,'depth',depth,'pids',ids,flush=True)
 finally:multigpubfs.disable_native()
-print('PACK4_CAYLEYPY_TWO_GPU_PASS',root,flush=True)
+print('PACK4_CAYLEYPY_MULTI_GPU_PASS',root,flush=True)

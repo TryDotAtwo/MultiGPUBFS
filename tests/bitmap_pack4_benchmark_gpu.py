@@ -1,4 +1,4 @@
-"""Two-GPU repeated comparison; Mahonian counts and terminal state sets."""
+"""Multi-GPU repeated comparison; Mahonian counts and terminal state sets."""
 import json,os,subprocess,sys,threading,time
 from collections import Counter
 from pathlib import Path
@@ -8,7 +8,9 @@ from multigpubfs.launch import run_graph
 
 n=int(sys.argv[1]);preset=sys.argv[2];sequence=sys.argv[3].split(',')
 native=os.environ['MGBFS_EXECUTABLE']
-root=Path('/workspace/mgbfs-pack4-evidence')/f'benchmark-s{n}-{preset}-{os.getpid()}'
+world=int(os.environ.get('MGBFS_TEST_DEVICE_COUNT','2'))
+devices=list(range(world))
+root=Path('/workspace/mgbfs-pack4-evidence')/f'benchmark-s{n}-{preset}-{world}gpu-{os.getpid()}'
 root.mkdir(exist_ok=True)
 gens=[]
 for i in range(n-1):
@@ -44,7 +46,7 @@ with persistent_graph_workers() as pool:
      MGBFS_SEGMENT_ROWS=str(segment_rows),MGBFS_SEGMENT_QUEUE_CAP='8192',
      MGBFS_SEGMENT_OWNER_LANES='4',MGBFS_SEGMENT_BATCH_RECOVERY='1')
   warm=GraphDefinition.permutation([[1,0,2],[0,2,1]],[0,1,2])
-  kw=dict(devices=[0,1],autotune=False,shards=4,_batch=4096,
+  kw=dict(devices=devices,autotune=False,shards=4,_batch=4096,
       memory_backend='permutation_bitmap',memory_preset=preset,segment_rows=segment_rows,
       segment_strategy='atomic',executable=native,_native_env=env)
   w=run_graph(warm,root/f'warm-{j}',**dict(kw,_batch=2))
@@ -64,7 +66,7 @@ with persistent_graph_workers() as pool:
   assert Counter(map(tuple,state['previous_small']))==Counter(previous)
   assert all(x['resident_codec']==('pack4-v1' if codec=='1' else 'unpacked-soa') for x in r['segment_memory_by_rank'])
   assert [x.process.pid for x in pool.workers]==ids
-  peaks={str(i):max((s['gpus'].get(i,0) for s in samples if 'gpus'in s),default=0) for i in (0,1)}
+  peaks={str(i):max((s['gpus'].get(i,0) for s in samples if 'gpus'in s),default=0) for i in devices}
   geom=[]
   for rr in r['segment_memory_by_rank']:
    rows=sum(sum(sh) for sh in rr['segment_rows_per_bank_by_shard'])
@@ -73,7 +75,7 @@ with persistent_graph_workers() as pool:
    geom.append({k:rr[k] for k in ('rank','banks','actual_queue_capacity','owner_lanes','queue_batch_ceiling',
      'segment_rows_per_bank_by_shard','segment_state_allocated_bytes','segment_counter_allocated_bytes',
      'storage_peak_requested_bytes','bitmap_bytes','peak_live_rows','queues_allocated_bytes','reserve_bytes')})
-  center=len(mahonian)//2;lo=max(1,center-6);hi=min(len(mahonian)-1,center+5)
+  center=len(mahonian)//2;lo,hi=(34,44) if n==13 else (max(1,center-6),min(len(mahonian)-1,center+5))
   item={'n':n,'preset':preset,'codec':'pack4-v1' if codec=='1' else 'unpacked-soa',
     'run':j,'status':r['status'],'bfs_seconds':r['bfs_seconds'],'launch_wall_seconds':r['launch_wall_seconds'],
     'caller_wall_seconds':wall,'setup_seconds':r['setup_seconds'],'source_retries':r['source_retries'],

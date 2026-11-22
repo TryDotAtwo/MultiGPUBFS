@@ -1,4 +1,4 @@
-"""Two-GPU opt-in packed runtime against independent full CPU layer multisets."""
+"""Multi-GPU opt-in packed runtime against independent full CPU layer multisets."""
 import itertools,json,os,tempfile
 from collections import Counter
 from pathlib import Path
@@ -7,6 +7,8 @@ from multigpubfs.generic_session import persistent_graph_workers
 from multigpubfs.launch import run_graph
 
 native=os.environ['MGBFS_EXECUTABLE']
+world=int(os.environ.get('MGBFS_TEST_DEVICE_COUNT','2'))
+devices=list(range(world))
 root=Path(tempfile.mkdtemp(prefix='pack4-runtime-',dir='/workspace'))
 def independent_layers(gens,start):
     front={tuple(start)};seen=set(front);layers=[]
@@ -40,7 +42,7 @@ with persistent_graph_workers() as pool:
         env=dict(packed_env,MGBFS_SEGMENT_EXACT_EXCHANGE=str(int(exact)))
         for depth,expected in enumerate(layers):
             out=root/f'{name}-layer-{depth}'
-            report=run_graph(graph,out,devices=[0,1],autotune=False,shards=4,_batch=2,
+            report=run_graph(graph,out,devices=devices,autotune=False,shards=4,_batch=2,
                memory_backend='permutation_bitmap',memory_preset=preset,segment_rows=3,
                segment_strategy='atomic',bitmap_owner_page=page,executable=native,
                _profile_layers=depth,_native_env=env)
@@ -56,7 +58,7 @@ with persistent_graph_workers() as pool:
             if original is None:original=ids
             assert ids==original,(name,ids,original)
         out=root/f'{name}-complete'
-        report=run_graph(graph,out,devices=[0,1],autotune=False,shards=4,_batch=2,
+        report=run_graph(graph,out,devices=devices,autotune=False,shards=4,_batch=2,
            memory_backend='permutation_bitmap',memory_preset=preset,segment_rows=3,
            segment_strategy='atomic',bitmap_owner_page=page,executable=native,_native_env=env)
         assert report['status']=='COMPLETE' and report['layer_sizes']==list(map(len,layers)),report
@@ -70,10 +72,10 @@ with persistent_graph_workers() as pool:
     # lexicographic rank of the identity is 0, hence owner=ID modulo world.
     gens=adj(4);start=[0,1,2,3];graph=GraphDefinition.permutation(gens,start)
     layers=independent_layers(gens,start);ranks={p:i for i,p in enumerate(itertools.permutations(start))}
-    cap=max(max(Counter(ranks[s]%2 for s in layer).values()) for layer in layers)
+    cap=max(max(Counter(ranks[s]%world for s in layer).values()) for layer in layers)
     for requested in (cap,cap-1):
         out=root/f'cap-{requested}'
-        report=run_graph(graph,out,devices=[0,1],autotune=False,shards=4,_batch=2,
+        report=run_graph(graph,out,devices=devices,autotune=False,shards=4,_batch=2,
            memory_backend='permutation_bitmap',memory_preset='max_capacity',segment_rows=3,
            segment_strategy='atomic',capacity=requested,executable=native,_native_env=packed_env)
         assert all(r['resident_codec']=='pack4-v1' for r in report['segment_memory_by_rank'])
@@ -82,7 +84,7 @@ with persistent_graph_workers() as pool:
             assert report['status']=='COMPLETE' and report['layer_sizes']==list(map(len,layers)),report
             depth=len(layers)-1
         else:
-            first=next(d for d,layer in enumerate(layers) if max(Counter(ranks[s]%2 for s in layer).values())>requested)
+            first=next(d for d,layer in enumerate(layers) if max(Counter(ranks[s]%world for s in layer).values())>requested)
             depth=first-1
             assert report['status']=='INCOMPLETE' and report['reason']=='RESOURCE_10',report
             assert report['layer_sizes']==list(map(len,layers[:first])),(first,report)
@@ -95,7 +97,7 @@ with persistent_graph_workers() as pool:
                                   ('segmented24','warp',plain_env),
                                   ('permutation_bitmap','atomic',packed_env)]:
         report=run_graph(graph,root/f'switch-{backend}-{strategy}-{env["MGBFS_SEGMENT_PACK4"]}',
-           devices=[0,1],autotune=False,shards=4,_batch=2,memory_backend=backend,
+           devices=devices,autotune=False,shards=4,_batch=2,memory_backend=backend,
            segment_rows=3,segment_strategy=strategy,executable=native,_native_env=env)
         assert report['status']=='COMPLETE' and report['layer_sizes']==list(map(len,layers))
         codec='pack4-v1' if env['MGBFS_SEGMENT_PACK4']=='1' else 'unpacked-soa'
