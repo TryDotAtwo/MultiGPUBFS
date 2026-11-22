@@ -5,6 +5,9 @@ on:
     paths:
       - 'scripts/verify_bitmap_benchmark.py'
       - 'tests/test_verify_bitmap_benchmark.py'
+      - 'tests/bitmap_pack4_benchmark_gpu.py'
+      - 'tests/bitmap_pack4_sampling.py'
+      - 'tests/test_bitmap_pack4_sampling.py'
       - '.github/workflows/verify-bitmap-evidence.yml'
   workflow_dispatch:
 permissions:
@@ -23,3 +26,5 @@ jobs:
         env:
           PYTHONPATH: .
         run: python3 -m pytest -q tests/test_verify_bitmap_benchmark.py
+      - name: Check optional VRAM sampling with a stub sampler (CPU only)
+        run: python3 -m unittest discover -s tests -p test_bitmap_pack4_sampling.py

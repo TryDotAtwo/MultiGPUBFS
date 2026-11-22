@@ -1,18 +1,24 @@
-"""Multi-GPU repeated comparison; Mahonian counts and terminal state sets."""
-import json,os,subprocess,sys,threading,time
+"""Multi-GPU comparison; Mahonian counts and terminal state sets.
+
+VRAM sampling is off by default. Set MGBFS_BENCH_SAMPLE_PATTERN to one
+comma-separated 0/1 per run (for example, 0,1,0) to request it explicitly.
+"""
+import json,os,subprocess,sys,time
 from collections import Counter
 from pathlib import Path
 from bitmap_pack4_timing import measured_layer_window
+from bitmap_pack4_sampling import sample_pattern, collect_vram_samples, vram_summary
 from multigpubfs import GraphDefinition
 from multigpubfs.generic_session import persistent_graph_workers
 from multigpubfs.launch import run_graph
 
 n=int(sys.argv[1]);preset=sys.argv[2];sequence=sys.argv[3].split(',')
+sampling=sample_pattern(os.environ.get('MGBFS_BENCH_SAMPLE_PATTERN'),len(sequence))
 native=os.environ['MGBFS_EXECUTABLE']
 world=int(os.environ.get('MGBFS_TEST_DEVICE_COUNT','2'))
 devices=list(range(world))
-root=Path('/workspace/mgbfs-pack4-evidence')/f'benchmark-s{n}-{preset}-{world}gpu-{os.getpid()}'
-root.mkdir(exist_ok=True)
+root=Path(os.environ.get('MGBFS_PACK4_EVIDENCE_ROOT','/workspace/mgbfs-pack4-evidence'))/f'benchmark-s{n}-{preset}-{world}gpu-{os.getpid()}'
+root.mkdir(parents=True,exist_ok=True)
 gens=[]
 for i in range(n-1):
  g=list(range(n));g[i],g[i+1]=g[i+1],g[i];gens.append(g)
@@ -56,10 +62,9 @@ with persistent_graph_workers() as pool:
   if ids is None:ids=current
   assert current==ids
   print('START',n,preset,'pack4' if codec=='1' else 'unpacked',j,flush=True)
-  stop=threading.Event();samples=[];thread=threading.Thread(target=sample,args=(stop,samples),daemon=True)
-  thread.start();start=time.perf_counter()
-  try:r=run_graph(graph,root/f'run-{j}-{codec}',**kw)
-  finally:stop.set();thread.join()
+  with collect_vram_samples(sampling[j],sample) as samples:
+   start=time.perf_counter()
+   r=run_graph(graph,root/f'run-{j}-{codec}',**kw)
   wall=time.perf_counter()-start
   assert r['status']=='COMPLETE' and r['layer_sizes']==mahonian,(j,r['status'],r['layer_sizes'])
   state=json.loads((root/f'run-{j}-{codec}'/'states.json').read_text())
@@ -67,7 +72,6 @@ with persistent_graph_workers() as pool:
   assert Counter(map(tuple,state['previous_small']))==Counter(previous)
   assert all(x['resident_codec']==('pack4-v1' if codec=='1' else 'unpacked-soa') for x in r['segment_memory_by_rank'])
   assert [x.process.pid for x in pool.workers]==ids
-  peaks={str(i):max((s['gpus'].get(i,0) for s in samples if 'gpus'in s),default=0) for i in devices}
   geom=[]
   for rr in r['segment_memory_by_rank']:
    rows=sum(sum(sh) for sh in rr['segment_rows_per_bank_by_shard'])
@@ -82,8 +86,7 @@ with persistent_graph_workers() as pool:
     'caller_wall_seconds':wall,'setup_seconds':r['setup_seconds'],'source_retries':r['source_retries'],
     'window_depths':[lo,hi],'window_seconds':measured_layer_window(r['layer_seconds'],len(r['layer_sizes']),lo,hi),
     'states':sum(mahonian),'all_layer_counts_mahonian':True,'terminal_full_sets':True,
-    'nvml_sample_interval_seconds':.5,'nvml_max_mib_by_gpu':peaks,
-    'nvml_samples':len([x for x in samples if 'gpus'in x]),'geometry':geom,'pids':ids}
+    **vram_summary(sampling[j],samples,devices),'geometry':geom,'pids':ids}
   (root/f'samples-{j}-{codec}.json').write_text(json.dumps(samples))
   records.append(item);(root/'summary.json').write_text(json.dumps(records,indent=2))
   print('DONE',json.dumps(item),flush=True)
