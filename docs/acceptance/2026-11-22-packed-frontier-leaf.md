@@ -183,8 +183,8 @@ matched, not every large layer's full state set.
 
 | Resident frontier | BFS seconds | Depths 27–38 seconds | Frontier bytes per GPU | Sampled max MiB per GPU |
 |---|---:|---:|---:|---:|
-| ordinary SoA | 101.2866, 101.3311 | 57.4970, 57.5254 | 402,653,184 | 723 |
-| packed u64 | 102.9840, 103.4047 | 58.5983, 58.7205 | 268,435,456 | 595 |
+| ordinary SoA | 101.2866, 101.3311 | 56.9041, 56.9742 | 402,653,184 | 723 |
+| packed u64 | 102.9840, 103.4047 | 57.9944, 58.0766 | 268,435,456 | 595 |
 
 Bitmap visited storage was 29,937,600 bytes/GPU and queues 6,291,552
 bytes/GPU in both modes; reserve was 2 GiB per GPU. Exact state-allocation
@@ -206,8 +206,8 @@ runtime verification are not established by these measurements.
 
 Under the same GPU pair, geometry and four-run alternating protocol as the
 two-bank test above, the balanced variant completed S12 twice in each mode.
-Ordinary SoA took 100.5546/101.5104 s (window 57.1058/57.6660 s); packed
-took 103.1903/103.0101 s (window 58.4781/58.4202 s). Frontier allocations
+Ordinary SoA took 100.5546/101.5104 s (window 56.5319/57.0970 s); packed
+took 103.1903/103.0101 s (window 57.8443/57.8312 s). Frontier allocations
 were 603,979,776 versus 402,653,184 bytes per GPU. The sampled NVML maxima
 were 915 versus 723 MiB per GPU; both reported two source retries and
 38,179,213 peak live rows per rank. As above, layer counts and only the two
@@ -223,3 +223,5 @@ The saved measurement snapshot includes the original source diff and binary;
 a later edit only corrected outdated comments in segmented_history.rs and did
 not change executable logic. The recorded hashes identify the actual binaries
 used in the benchmark.
+
+Timing correction: the original benchmark summary used a one-layer-offset time slice. Window values above have been recomputed from raw layer_seconds: index d-1 times creation of depth d. Full BFS times and correctness results are unchanged; the original summaries are retained in the evidence archive.

@@ -76,10 +76,11 @@ with persistent_graph_workers() as pool:
      'segment_rows_per_bank_by_shard','segment_state_allocated_bytes','segment_counter_allocated_bytes',
      'storage_peak_requested_bytes','bitmap_bytes','peak_live_rows','queues_allocated_bytes','reserve_bytes')})
   center=len(mahonian)//2;lo,hi=(34,44) if n==13 else (max(1,center-6),min(len(mahonian)-1,center+5))
+  assert len(r['layer_seconds'])==len(r['layer_sizes'])-1, 'layer_seconds index 0 must time depth 1'
   item={'n':n,'preset':preset,'codec':'pack4-v1' if codec=='1' else 'unpacked-soa',
     'run':j,'status':r['status'],'bfs_seconds':r['bfs_seconds'],'launch_wall_seconds':r['launch_wall_seconds'],
     'caller_wall_seconds':wall,'setup_seconds':r['setup_seconds'],'source_retries':r['source_retries'],
-    'window_depths':[lo,hi],'window_seconds':sum(r['layer_seconds'][lo:hi+1]),
+    'window_depths':[lo,hi],'window_seconds':sum(r['layer_seconds'][lo-1:hi]),
     'states':sum(mahonian),'all_layer_counts_mahonian':True,'terminal_full_sets':True,
     'nvml_sample_interval_seconds':.5,'nvml_max_mib_by_gpu':peaks,
     'nvml_samples':len([x for x in samples if 'gpus'in x]),'geometry':geom,'pids':ids}
