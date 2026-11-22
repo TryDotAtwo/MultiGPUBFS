@@ -1,0 +1,9 @@
+START smoke hash-warp
+SMOKE hash-warp actual_queue 6144
+START smoke bitmap-atomic
+SMOKE bitmap-atomic actual_queue 6144
+START hash-warp
+PASS {"name": "hash-warp", "status": "COMPLETE", "reason": "FRONTIER_EXHAUSTED", "completed_depth": 78, "bfs_seconds": 218.853759612, "wall_seconds": 236.7085056049982, "window_seconds": 108.52248055599999, "sampled_peak_mib_by_gpu": {"0": 5447, "1": 5447, "2": 5447, "3": 5447, "4": 5447, "5": 5447, "6": 5447, "7": 5447}}
+START bitmap-atomic
+PASS {"name": "bitmap-atomic", "status": "COMPLETE", "reason": "FRONTIER_EXHAUSTED", "completed_depth": 78, "bfs_seconds": 500.510883459, "wall_seconds": 500.9140732738888, "window_seconds": 234.517629566, "sampled_peak_mib_by_gpu": {"0": 2021, "1": 2021, "2": 2021, "3": 2021, "4": 2021, "5": 2021, "6": 2021, "7": 2021}}
+S13_FULL_8GPU_FINISHED

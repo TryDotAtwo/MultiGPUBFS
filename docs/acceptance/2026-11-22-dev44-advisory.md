@@ -166,6 +166,54 @@ simultaneous. The [per-rank receipts and topology](artifacts/2026-11-22-dev44-s1
 and [executed harness](artifacts/2026-11-22-dev44-s13-prefix-8gpu.py) are
 included; the harness uses environment-specific remote paths.
 
+## S13: complete run on the installed public wheel
+
+A later, sequential full run on the same eight-RTX-3060 node completed in
+both configurations using the SHA-pinned installed dev44 wheel, its public
+`run_graph` entry point and the same persistent worker processes. The graph
+was S13 with all adjacent transpositions, `autotune=False`, balanced, exact
+exchange, 8 shards and 4 owner lanes. Both runs returned
+`COMPLETE / FRONTIER_EXHAUSTED`, depth 78, with **6,227,020,800** states.
+All 79 layer sizes match the independent Mahonian recurrence; the full
+state sets of the final two layers were compared against their independently
+constructed expected sets. Full state sets of the other large layers were
+**not** compared.
+
+| Backend / strategy | BFS seconds | End-to-end call seconds | Depths 34–44, seconds | Max sampled per GPU |
+|---|---:|---:|---:|---:|
+| segmented24 / warp | 218.854 | 236.709 | 108.522 | 5447 MiB |
+| permutation_bitmap / atomic | 500.511 | 500.914 | 234.518 | 2021 MiB |
+
+The depth 34–44 window has 3,052,643,942 new states and 36,412,333,584
+generated edges. Window seconds are sums of reported layer times, not separate
+wall intervals. There is one observation per configuration, in the listed
+order. Both requested queue 8192 and admitted 6144; actual queue-batch
+ceilings were 8192 for hash and 2048 for bitmap, so the result does not
+isolate the costs of the two data structures. The configured segment-row cap
+was 2^32; the observed allocation geometry used 1,048,576 rows per bank,
+40 segments per rank and 3 banks. This is not physical validation of a single
+2^32-row segment. Maximum per-rank reported live rows were 110,750,360 for
+hash and 111,623,259 for bitmap; rank maxima need not be simultaneous.
+
+The NVML values are the maximum of one-second samples, not a guaranteed
+instantaneous VRAM peak. Reported segment-storage high-water bytes per rank
+were 5,326,769,152 for hash and 1,635,779,520 for bitmap, excluding the
+queue, scratch, CUDA and NCCL internals; bitmap additionally reported a
+97,297,200-byte visited plane per rank. These values must not be summed with
+NVML samples as if they were independent peaks.
+
+[Full per-rank receipts](artifacts/2026-11-22-dev44-s13-full-8gpu.json),
+[executed harness](artifacts/2026-11-22-dev44-s13-full-8gpu.py),
+[run log](artifacts/2026-11-22-dev44-s13-full-8gpu.log),
+[hardware](artifacts/2026-11-22-dev44-s13-full-hardware.txt),
+[topology](artifacts/2026-11-22-dev44-s13-full-topology.txt), and terminal
+states for [hash](artifacts/2026-11-22-dev44-s13-full-hash-terminal.json)
+and [bitmap](artifacts/2026-11-22-dev44-s13-full-bitmap-terminal.json) are
+provided. The complete evidence archive has SHA-256
+`bf441de4e10fb581cff72196855c31c2758ca85e15c294afb54a6652398b1978`.
+Paths in the harness are specific to the original environment. The observed
+results do not establish S14/S15 capacity or performance on B200.
+
 ## Open coverage
 
 Production pressure testing of the absolute largest graph, full-state
