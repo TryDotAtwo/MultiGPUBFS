@@ -137,6 +137,9 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
  const char* lanes_text=std::getenv("MGBFS_DEVICE_TEST_LANES");
  const unsigned lanes=lanes_text?unsigned(std::strtoul(lanes_text,nullptr,10)):mgbfs_resident::lanes;
  CHECK(lanes>=1&&lanes<=max_lanes);
+ const char* identity_text=std::getenv("MGBFS_DEVICE_TEST_PAYLOAD_ID");
+ const unsigned payload_identity=identity_text?unsigned(std::strtoul(identity_text,nullptr,10)):0;
+ CHECK(payload_identity<=2);
  const char* records_text=std::getenv("MGBFS_DEVICE_TEST_PACKET_RECORDS");
  const unsigned packet_records=records_text?unsigned(std::strtoul(records_text,nullptr,10)):1;
  CHECK(packet_records>=1&&packet_records<=max_packet_records);
@@ -214,6 +217,7 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
    a.generators=g.permutations.size()/g.dictionary.elements;a.banks=3;a.owner_len=g.n/WORLD+(owner<g.n%WORLD);
    a.job_generation=1000+(case_no++);a.rank_limit=cap;
    a.domain={symbols,counts,g.dictionary.distinct,g.dictionary.elements,g.n};a.dictionary=g.dictionary;
+   a.payload_identity=payload_identity;
    a.mailbox=layout;a.permutations=perms;a.physical_of_logical=gpu_map;a.extents=extents;a.extent_owner=leases;a.extent_count=2;
    a.shard_locks=locks;a.visited=visited;a.rank_count=rank_count;a.layer_sizes=layers;a.layer_capacity=variant==3?3:g.n+1;
    a.rank_counts=rank_counts;a.capture=capture;a.capture_capacity=g.n+1;a.capture_count=capture_count;a.terminal=terminal_word;

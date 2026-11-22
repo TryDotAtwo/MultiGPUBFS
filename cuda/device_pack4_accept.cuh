@@ -51,9 +51,24 @@ struct WordAccessor {
         return dictionary.symbols[(word>>(4*e))&15u];
     }
 };
-// rank_verified is only valid after the current caller computed the exact
-// canonical ID from this same packed payload and applied the owner mapping.
-// It must never be used for an untrusted ID sent by another GPU.
+// Optional verifier for a producer-derived exact identity. The bounded
+// internal packet protocol can carry this ID only when all ranks agreed on
+// that format and the producer ranked the very same packed word before
+// publishing both fields in the same release. General/untrusted callers
+// must still recompute and compare rather than treating the ID as verified.
+__device__ __forceinline__ bool payload_identity_matches(
+    const BitmapDeviceDomain& domain,const MgbfsPack4Dictionary& dictionary,
+    uint64_t packed,uint64_t claimed_id,uint32_t world,uint32_t owner_page,
+    uint64_t owner_boundary) {
+    if(!mgbfs_pack4_valid_word(dictionary,packed))return false;
+    const WordAccessor word{dictionary,packed};
+    uint64_t derived=0;
+    if(!bitmap_rank(domain,word,0,&derived))return false;
+    derived=mgbfs_bitmap_permute_owner_id(derived,world,owner_page,owner_boundary);
+    return derived==claimed_id;
+}
+// rank_verified is valid only after the current receiver re-ranked this
+// payload or after the explicitly agreed private producer-derived protocol.
 __device__ __forceinline__ Outcome accept_impl(const Owner& a,uint64_t claimed_id,uint64_t packed,bool rank_verified) {
     const Outcome invalid{Status::invalid,0,0};
     if(!a.world||a.world>128||a.owner>=a.world||!a.shards||a.shard>=a.shards||
@@ -138,7 +153,7 @@ __device__ __forceinline__ Outcome accept_impl(const Owner& a,uint64_t claimed_i
 __device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uint64_t packed) {
     return accept_impl(a,claimed_id,packed,false);
 }
-// The resident receiver computed this ID from the validated payload itself.
+// Only a local re-ranking or the agreed producer-derived packet protocol may call this.
 __device__ __forceinline__ Outcome accept_prevalidated(const Owner& a,uint64_t exact_id,uint64_t packed) {
     return accept_impl(a,exact_id,packed,true);
 }

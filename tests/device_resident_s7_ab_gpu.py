@@ -36,6 +36,10 @@ with persistent_graph_workers() as pool:
   lane_count=os.environ.get(lane_key)
   if lane_count is None:os.environ.pop("MGBFS_RESIDENT_LANES",None)
   else:os.environ["MGBFS_RESIDENT_LANES"]=lane_count
+  identity_key="RESIDENT_AB_"+variant.upper()+"_PAYLOAD_ID"
+  identity=os.environ.get(identity_key)
+  if identity is None:os.environ.pop("MGBFS_RESIDENT_PAYLOAD_ID",None)
+  else:os.environ["MGBFS_RESIDENT_PAYLOAD_ID"]=identity
   out=root/f"{i}-{variant}"
   started=time.time()
   r=run_graph(graph,out,devices=[0,1,2,3],autotune=False,shards=2,_batch=128,segment_rows=rows,
@@ -51,13 +55,14 @@ with persistent_graph_workers() as pool:
    expected_packet=int(packet_records or "1")
    assert all(x["packet_records"]==expected_packet for x in resident),resident
    assert all(x["lanes"]==int(lane_count or "4") for x in resident),resident
+   assert all(x["payload_identity"]==(identity or "legacy") for x in resident),resident
    assert sum(x["sent_packets"] for x in resident)==sum(x["received_packets"] for x in resident)
    if n>=7 and expected_packet>1:
     assert sum(x["sent_packets"] for x in resident)<math.factorial(n)*(n-1),resident
   snapshot=json.loads((out/"states.json").read_text())
   assert snapshot["current"]==[list(reversed(range(n)))]
   ended=time.time()
-  row={"start_unix":started,"end_unix":ended,"rank_worker_pids":r["rank_worker_pids"],"rank_geometry":[{k:m.get(k) for k in ("rank","device","rows_per_bank","segment_count","storage_allocated_bytes","bitmap_bytes","queues_allocated_bytes","resident")} for m in r["segment_memory_by_rank"]],"graph_n":n,"segment_rows":rows,"world":4,"shards":2,"variant":variant,"packet_records_requested":packet_records,"lanes_requested":lane_count,"execution_engine":r["execution_engine"],"bfs_seconds":r["bfs_seconds"],"setup_seconds":r["setup_seconds"],
+  row={"start_unix":started,"end_unix":ended,"rank_worker_pids":r["rank_worker_pids"],"rank_geometry":[{k:m.get(k) for k in ("rank","device","rows_per_bank","segment_count","storage_allocated_bytes","bitmap_bytes","queues_allocated_bytes","resident")} for m in r["segment_memory_by_rank"]],"graph_n":n,"segment_rows":rows,"world":4,"shards":2,"variant":variant,"packet_records_requested":packet_records,"lanes_requested":lane_count,"payload_identity_requested":identity,"execution_engine":r["execution_engine"],"bfs_seconds":r["bfs_seconds"],"setup_seconds":r["setup_seconds"],
        "wall_seconds":r["launch_wall_seconds"],"cuda_library_sha256":hashes[variant]}
   records.append(row);print("PASS",row,flush=True)
 (root/"comparison.json").write_text(json.dumps(records,indent=2))

@@ -64,14 +64,18 @@ impl SegmentedDistributedBfs {
   if self.pack4.is_none()||self.bitmap.is_none()||self.layout.banks!=3||self.strategy!=SegmentStrategy::Atomic {
    return Err("RESIDENT_REQUIRES_PACK4_BITMAP_ATOMIC_THREE_BANKS".into())
   }
-  let geometry=f.mailbox(world,1,u64::MAX);
-  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
+  let geometry=(|| -> Result<_>{
+   let identity=f.payload_identity()?;
+   let (mailbox,bytes)=f.mailbox(world,1,u64::MAX)?;
+   Ok((mailbox,bytes,identity))
+  })();
+  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes,identity)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
    "payload_bytes":m.requested_payload_bytes,"payload_stride_bytes":m.payload_stride_bytes,
-   "total_bytes":m.total_bytes,"window_bytes":bytes,
+   "total_bytes":m.total_bytes,"window_bytes":bytes,"payload_identity":identity,
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
-  let (mailbox,window_bytes)=geometry?;
+  let (mailbox,window_bytes,payload_identity)=geometry?;
   let mut error=[0i8;512];
   let preparation=code("RESIDENT_WINDOW_PREPARE",unsafe{(f.prepare)(self.comm.ptr,window_bytes,error.as_mut_ptr(),error.len())})
    .map_err(|e|format!("{e} {}",unsafe{std::ffi::CStr::from_ptr(error.as_ptr())}.to_string_lossy()));
@@ -182,7 +186,7 @@ impl SegmentedDistributedBfs {
    let args=Args{
     abi_version:1,struct_bytes:mem::size_of::<Args>() as u32,world,rank,
     owner:bitmap.owner,shards:self.plan.shards,generators:self.base.generators,banks:3,
-    owner_page:bitmap.owner_page,reserved0:0,owner_boundary:bitmap.owner_boundary,owner_len,
+    owner_page:bitmap.owner_page,payload_identity,owner_boundary:bitmap.owner_boundary,owner_len,
     job_generation:1,rank_limit:self.capacity_limit.unwrap_or(0),
     domain:bitmap.domain,dictionary:self.pack4.unwrap().dictionary,mailbox,
     permutations:self.base.perms.ptr.cast(),physical_of_logical:self.map.ptr.cast(),
@@ -286,6 +290,7 @@ impl SegmentedDistributedBfs {
   let evidence=serde_json::json!({"transport":"NCCL_LSA_DEVICE_RING","mailbox_bytes":res.window_bytes,
     "slots_per_ring":res.args.mailbox.slots_per_ring,"lanes":res.args.mailbox.lanes,
     "packet_records":res.args.mailbox.requested_payload_bytes/16,
+    "payload_identity":match res.args.payload_identity {0=>"legacy",1=>"carry",2=>"verify",_=>"invalid"},
     "extent_count":res.args.extent_count,"layer_log_capacity":res.layer_capacity,
     "layer_log_bytes":res.layers.bytes,"layer_log_policy":"min(domain, weakest_rank_available_bytes/8192), unless explicitly configured",
     "sent_packets":out.sent,"received_packets":out.received,"duplicates":out.duplicates,

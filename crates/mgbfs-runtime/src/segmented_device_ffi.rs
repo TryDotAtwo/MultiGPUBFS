@@ -21,7 +21,7 @@ pub(super) struct Mailbox {
 pub(super) struct Args {
  pub abi_version:u32,pub struct_bytes:u32,pub world:u32,pub rank:u32,
  pub owner:u32,pub shards:u32,pub generators:u32,pub banks:u32,
- pub owner_page:u32,pub reserved0:u32,
+ pub owner_page:u32,pub payload_identity:u32,
  pub owner_boundary:u64,pub owner_len:u64,pub job_generation:u64,pub rank_limit:u64,
  pub domain:BitmapDeviceDomain,pub dictionary:BitmapPack4Dictionary,pub mailbox:Mailbox,
  pub permutations:*const u32,pub physical_of_logical:*const u32,
@@ -64,6 +64,11 @@ pub(super) struct Functions {
  pub query:Query,pub smoke:Smoke,pub layout:Layout,pub topology:TopologyQuery,
  pub prepare:Prepare,pub activate:Activate,pub initialize:Initialize,pub launch:Launch,pub retire:Retire,pub window_info:WindowInfo,pub peer_smoke:PeerSmoke,
  pub control_bytes:u64,
+}
+fn resident_payload_identity(advertised:u32,requested:u32)->Result<u32,String>{
+ if requested>2{return Err(format!("RESIDENT_PAYLOAD_ID_INVALID mode={requested}"))}
+ if requested>advertised{return Err(format!("RESIDENT_PAYLOAD_ID_UNSUPPORTED requested={requested} max={advertised}"))}
+ Ok(requested)
 }
 fn resident_lane_count(advertised:u32,requested:u32)->Result<u32,String>{
  let maximum=if advertised==0{4}else{advertised};
@@ -135,6 +140,14 @@ impl Functions {
   }
   Ok(topology)
  }
+ pub(super) fn payload_identity(&self)->Result<u32,String>{
+  let requested=match std::env::var("MGBFS_RESIDENT_PAYLOAD_ID"){
+   Ok(v)=>match v.as_str(){"legacy"=>0,"carry"=>1,"verify"=>2,_=>return Err("RESIDENT_PAYLOAD_ID_INVALID".into())},
+   Err(std::env::VarError::NotPresent)=>0,
+   Err(_)=>return Err("RESIDENT_PAYLOAD_ID_INVALID".into()),
+  };
+  resident_payload_identity(unsafe{(self.query)(8)},requested)
+ }
  pub(super) fn mailbox(&self,world:u32,slots:u32,budget:u64)->Result<(Mailbox,u64),String>{
   let mut m=Mailbox{abi_version:0,struct_bytes:0,world:0,lanes:0,slots_per_ring:0,requested_payload_bytes:0,payload_stride_bytes:0,reserved:0,ring_count:0,slots_offset:0,payload_offset:0,close_offset:0,total_bytes:0};
   let records=match std::env::var("MGBFS_RESIDENT_PACKET_RECORDS"){
@@ -160,6 +173,14 @@ impl Functions {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]
+ fn payload_identity_negotiation(){
+  assert_eq!(resident_payload_identity(0,0).unwrap(),0);
+  assert!(resident_payload_identity(0,1).unwrap_err().contains("RESIDENT_PAYLOAD_ID_UNSUPPORTED"));
+  assert_eq!(resident_payload_identity(2,1).unwrap(),1);
+  assert_eq!(resident_payload_identity(2,2).unwrap(),2);
+  assert!(resident_payload_identity(2,3).is_err());
+ }
  #[test]
  fn lane_geometry_negotiation(){
   assert_eq!(resident_lane_count(0,4).unwrap(),4);

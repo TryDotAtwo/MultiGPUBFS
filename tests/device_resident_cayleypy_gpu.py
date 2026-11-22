@@ -28,8 +28,10 @@ def verify(result,layers,completed=True):
  assert result.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL",result.report
  expected=int(os.environ.get("MGBFS_RESIDENT_PACKET_RECORDS","1"))
  expected_lanes=int(os.environ.get("MGBFS_RESIDENT_LANES","4"))
+ expected_identity=os.environ.get("MGBFS_RESIDENT_PAYLOAD_ID","legacy")
  assert [m["resident"]["packet_records"] for m in result.report["segment_memory_by_rank"]]==[expected]*world
  assert [m["resident"]["lanes"] for m in result.report["segment_memory_by_rank"]]==[expected_lanes]*world
+ assert [m["resident"]["payload_identity"] for m in result.report["segment_memory_by_rank"]]==[expected_identity]*world
  assert result.layer_sizes==list(map(len,layers[:len(result.layer_sizes)])),result.layer_sizes
  assert result.bfs_completed is completed,result.report
  last=result.last_layer().tolist()

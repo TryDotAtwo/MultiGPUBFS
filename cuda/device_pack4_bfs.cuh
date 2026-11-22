@@ -22,8 +22,12 @@ constexpr unsigned max_lanes=8;
 constexpr unsigned max_world=8;
 constexpr unsigned threads=32*(lanes+2);
 constexpr unsigned max_packet_records=8;
-constexpr uint32_t payload_format=1;
+constexpr uint32_t payload_format=1; // legacy: source and zero
+constexpr uint32_t ranked_payload_format=2; // exact owner-mapped ID
 
+// The payload words are published together via the ring release. In format 1
+// the low word is source rank and the high word zero. In format 2 they contain
+// an exact 64-bit owner-mapped ID derived from this very same packed word.
 struct Payload { uint64_t packed; uint32_t source,reserved; };
 struct Capture { uint64_t depth,packed; };
 struct alignas(64) Control {
@@ -42,7 +46,7 @@ static_assert(sizeof(Payload)==16,"resident packet ABI");
 struct Args {
   uint32_t abi_version,struct_bytes,world,rank;
   uint32_t owner,shards,generators,banks;
-  uint32_t owner_page,reserved0;
+  uint32_t owner_page,payload_identity; // 0 legacy, 1 carried, 2 carried+verify
   uint64_t owner_boundary,owner_len,job_generation,rank_limit;
   BitmapDeviceDomain domain;
   MgbfsPack4Dictionary dictionary;
@@ -200,7 +204,7 @@ __device__ __forceinline__ bool send_packet(
     if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);return false;}
     if(load(coordinator.decision.request_epoch)==epoch)return false;
     auto result=mgbfs_packet_ring::try_send(view(&local,a,lane,destination),
-        ticket,a.job_generation,epoch,payload_format,
+        ticket,a.job_generation,epoch,a.payload_identity?ranked_payload_format:payload_format,
         reinterpret_cast<const unsigned char*>(payload),count*sizeof(Payload));
     if(result==mgbfs_packet_ring::Result::ok){++ticket;add(sent);return true;}
     if(result!=mgbfs_packet_ring::Result::not_ready){failure(local,mgbfs_device_epoch::FATAL);return false;}
@@ -293,19 +297,30 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         for(unsigned edge=0;edge<a.generators&&!stopped;++edge) {
           BitmapPack4Action action{a.dictionary.elements,a.generators,1,&packed,a.permutations,a.dictionary};
           uint32_t bad=0;uint64_t id=0;
-          if(!action.valid(edge,&bad)||!bitmap_rank(a.domain,action,edge,&id)||id>=a.domain.total) {
+          if(!action.valid(edge,&bad)||
+             (!a.payload_identity&&!bitmap_rank(a.domain,action,edge,&id))) {
             failure(local,mgbfs_device_epoch::FATAL);break;
           }
-          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
-          const unsigned logical=unsigned(id%a.world);
-          const unsigned destination=a.physical_of_logical[logical];
-          if(destination>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
           uint64_t child=0;
           for(unsigned e=0;e<a.dictionary.elements;++e) {
             const unsigned source=a.permutations[uint64_t(edge)*a.dictionary.elements+e];
             child|=((packed>>(4*source))&15ull)<<(4*e);
           }
-          pending[destination][pending_count[destination]++]={child,a.rank,0};
+          // Ranked packets derive ID directly from the same packed value that
+          // will be published; no reconstruction from another representation.
+          if(a.payload_identity) {
+            const mgbfs_device_pack4::WordAccessor exact{a.dictionary,child};
+            if(!bitmap_rank(a.domain,exact,0,&id)) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+          }
+          if(id>=a.domain.total){failure(local,mgbfs_device_epoch::FATAL);break;}
+          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+          const unsigned logical=unsigned(id%a.world);
+          const unsigned destination=a.physical_of_logical[logical];
+          if(destination>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
+          const uint64_t metadata=a.payload_identity?id:uint64_t(a.rank);
+          pending[destination][pending_count[destination]++]={child,uint32_t(metadata),uint32_t(metadata>>32)};
           if(pending_count[destination]==packet_records) {
             if(!send_packet(local,coordinator,a,tid,destination,epoch,pending[destination],
                             pending_count[destination],send_ticket[destination],sent,blocked))
@@ -351,7 +366,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             ticket,a.job_generation,epoch,&header,&bytes);
         if(result==mgbfs_packet_ring::Result::ok) {
           if(!header.len||header.len%sizeof(Payload)||
-             header.len>a.mailbox.requested_payload_bytes||header.format!=payload_format||
+             header.len>a.mailbox.requested_payload_bytes||
+             header.format!=(a.payload_identity?ranked_payload_format:payload_format)||
              packet_offset[channel]>=header.len/sizeof(Payload)) {
             failure(local,mgbfs_device_epoch::FATAL);break;
           }
@@ -360,12 +376,22 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
           for(unsigned i=0;i<sizeof(payload);++i)dst[i]=bytes[byte_offset+i];
           mgbfs_device_pack4::WordAccessor word{a.dictionary,payload.packed};
           uint64_t id=0;
-          if(payload.source!=src||payload.reserved||!mgbfs_pack4_valid_word(a.dictionary,payload.packed)||
-             !bitmap_rank(a.domain,word,0,&id)||id>=a.domain.total) {
+          if(!mgbfs_pack4_valid_word(a.dictionary,payload.packed)) {
             failure(local,mgbfs_device_epoch::FATAL);break;
           }
-          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
-          if(id%a.world!=a.owner||a.physical_of_logical[a.owner]!=a.rank) {
+          if(a.payload_identity) {
+            id=uint64_t(payload.source)|(uint64_t(payload.reserved)<<32);
+            if(a.payload_identity==2&&!mgbfs_device_pack4::payload_identity_matches(
+                 a.domain,a.dictionary,payload.packed,id,a.world,a.owner_page,a.owner_boundary)) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+          } else {
+            if(payload.source!=src||payload.reserved||!bitmap_rank(a.domain,word,0,&id)) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+            id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+          }
+          if(id>=a.domain.total||id%a.world!=a.owner||a.physical_of_logical[a.owner]!=a.rank) {
             failure(local,mgbfs_device_epoch::FATAL);break;
           }
           const unsigned shard=unsigned((uint64_t(uint32_t(mix64(id)))*a.shards)>>32);

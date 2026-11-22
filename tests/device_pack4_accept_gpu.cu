@@ -33,6 +33,16 @@ __global__ void run(Owner* owners,Candidate* candidates,unsigned n,Outcome* outc
 __global__ void one(Owner owner,Candidate candidate,Outcome* out) {
  if(!blockIdx.x&&!threadIdx.x)*out=accept(owner,candidate.id,candidate.packed);
 }
+__global__ void payload_identity_test(Owner owner,Candidate* candidates,unsigned n,unsigned* ok) {
+ const unsigned i=threadIdx.x;
+ if(blockIdx.x||i>=n)return;
+ const Candidate c=candidates[i];
+ const bool equal=payload_identity_matches(owner.domain,owner.dictionary,c.packed,c.id,
+    owner.world,owner.owner_page,owner.owner_boundary);
+ const bool wrong=payload_identity_matches(owner.domain,owner.dictionary,c.packed,
+    (c.id+1)%owner.domain.total,owner.world,owner.owner_page,owner.owner_boundary);
+ ok[i]=equal&&!wrong;
+}
 struct Fixture {
  uint32_t* counts;
  int64_t* symbols;
@@ -165,6 +175,11 @@ int main() {
  if(e==cudaErrorNoDevice || (e==cudaSuccess&&!count))return 77;
  C(e);C(cudaSetDevice(0));C(cudaFree(nullptr));
  Fixture f;
+ auto* id_checks=managed<unsigned>(f.n);
+ payload_identity_test<<<1,32>>>(f.owners[0],f.candidates,f.n,id_checks);
+ C(cudaGetLastError());C(cudaDeviceSynchronize());
+ for(unsigned i=0;i<f.n;++i)CHECK(id_checks[i]==1);
+ C(cudaFree(id_checks));
  // Two full one-row segments: untouched candidates remain retryable.
  f.owners[0].extent_count=f.owners[1].extent_count=1;
  f.launch();CHECK(f.validate(false)==2);

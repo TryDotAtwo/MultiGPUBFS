@@ -32,6 +32,7 @@ extern "C" uint32_t mgbfs_device_pack4_bfs_abi_query(uint32_t item) {
     case 5:return sizeof(mgbfs_resident::Capture);
     case 6:return sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records;
     case 7:return mgbfs_resident::max_lanes;
+    case 8:return 2; // payload identity modes 0, 1, 2
     default:return 0;
   }
 }
@@ -39,7 +40,7 @@ static int validate(const mgbfs_resident::Args* a,uint64_t window_bytes) {
   if(!a||a->abi_version!=1||a->struct_bytes!=sizeof(*a)||
      !a->world||a->world>mgbfs_resident::max_world||a->rank>=a->world||
      a->owner>=a->world||!a->shards||!a->generators||a->banks!=3||
-     a->reserved0||!a->job_generation||!a->domain.total||
+     a->payload_identity>2||!a->job_generation||!a->domain.total||
      !a->domain.symbols||!a->domain.counts||!mgbfs_pack4_valid(a->dictionary)||
      a->dictionary.elements!=a->domain.elements||!a->permutations||
      !a->physical_of_logical||(!a->extents&&a->extent_count)||
