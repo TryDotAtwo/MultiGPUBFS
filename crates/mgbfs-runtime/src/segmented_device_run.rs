@@ -44,7 +44,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 struct Resources {
  layers:Buffer,rank_counts:Buffer,rank_count:Buffer,locks:Buffer,descriptors:Buffer,leases:Buffer,report:Buffer,smoke:Buffer,
  mapping:Vec<(usize,usize)>,args:Args,event:Event,window_bytes:u64,layer_capacity:u64,
- _hash_config:Option<Buffer>,
+ _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,
 }
 
 fn checked_size(n:u64,item:usize)->Result<usize>{
@@ -72,8 +72,10 @@ impl SegmentedDistributedBfs {
   let initialize=hf.map_or(f.initialize,|h|h.initialize);
   let peer_smoke=hf.map_or(f.peer_smoke,|h|h.peer_smoke);
   let launch=hf.map_or(f.launch,|h|h.launch);
-  let domain_total=if let Some((_,bound))=self.resident_hash {bound}
+  let domain_total=if let Some((_,bound,_,_))=self.resident_hash {bound}
                    else {self.bitmap.as_ref().ok_or("RESIDENT_BITMAP_MISSING")?.domain.total};
+  let hash_parallel=self.resident_hash.map_or(false,|v|v.2);
+  let hash_instrumented=self.resident_hash.map_or(false,|v|v.3);
   let geometry=f.mailbox(world,1,u64::MAX);
   let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
@@ -175,10 +177,14 @@ impl SegmentedDistributedBfs {
    let leases=Buffer::new(checked_size(n,4)?,d)?;
    if hash{descriptors.upload(&hash_host)?}else{descriptors.upload(&host)?}
    leases.upload(&owners)?;
+   let hash_stats=if hash&&hash_instrumented {
+    let b=Buffer::new(20,d)?;b.upload(&[0u32;5])?;Some(b)
+   }else{None};
    let hash_config=if hash {
     let b=Buffer::new(mem::size_of::<HashConfig>(),d)?;
     let config=HashConfig{seed:self.seed,bits:self.bits,state_bytes:self.plan.state_bytes,
-      owner_cuts:self.cuts.as_ref().map_or(ptr::null(),|c|c.ptr.cast())};
+      owner_cuts:self.cuts.as_ref().map_or(ptr::null(),|c|c.ptr.cast()),
+      parallel_owners:u32::from(hash_parallel),owner_peak:hash_stats.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast())};
     b.upload(&[config])?;Some(b)
    }else{None};
    let mut host_terminal=ptr::null_mut();let mut device_terminal=ptr::null_mut();
@@ -208,9 +214,10 @@ impl SegmentedDistributedBfs {
      }
     }}
     if let Some(cuts)=&self.cuts {if let Some(r)=region(cuts.ptr,cuts.bytes,8){others.push(r)}}
+    if let Some(stats)=&hash_stats {if let Some(r)=region(stats.ptr,stats.bytes,4){others.push(r)}}
     let config=hash_config.as_ref().ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     if let Some(r)=region(config.ptr,config.bytes,8){others.push(r)}
-    let (dictionary,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
+    let (dictionary,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     let domain=BitmapDeviceDomain{symbols:ptr::null(),counts:ptr::null(),
       distinct:dictionary.distinct,elements:dictionary.elements,total:domain_total};
     let width=u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?;
@@ -236,7 +243,7 @@ impl SegmentedDistributedBfs {
     capture:ptr::null_mut(),capture_capacity:0,capture_count:ptr::null_mut(),terminal:device_terminal,
    };
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(report.ptr,0,report.bytes,self.base.stream.ptr)})?;
-   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config})
+   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats})
   })();
   ready.agree("resident-admission",&resource,None)?;
   // If a rank fails while a resident kernel still accesses these buffers,
@@ -283,7 +290,13 @@ impl SegmentedDistributedBfs {
   ready.agree("resident-drained",&execution,None)?;
   let out=execution?;let bfs_seconds=started.elapsed().as_secs_f64();
 
+  let mut hash_owner_stats=None;
   let readback:Result<_>=(||{
+   if let Some(stats)=&res.hash_stats {
+    let mut values=[0u32;5];
+    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),stats.ptr,20,2)})?;
+    hash_owner_stats=Some(values);
+   }
    let mut sizes=vec![0u64;usize::try_from(out.depth+1).map_err(|_|"RESIDENT_DEPTH_RANGE")?];
    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(sizes.as_mut_ptr().cast(),res.layers.ptr,sizes.len()*8,2)})?;
    let mut counts=vec![0u64;world as usize];
@@ -329,7 +342,12 @@ impl SegmentedDistributedBfs {
   };
   let evidence=serde_json::json!({"transport":"NCCL_LSA_DEVICE_RING",
     "storage":if hash{"segmented_hash"}else{"packed_bitmap"},
-    "hash_owner_execution":if hash{Some("serialized_per_rank")}else{None::<&str>},
+    "hash_owner_execution":if hash{Some(if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
+    "hash_owner_peak_active":hash_owner_stats.map(|v|v[0]),
+    "hash_extent_full_seen":hash_owner_stats.map(|v|v[1]),
+    "hash_freeze_retry":hash_owner_stats.map(|v|v[2]),
+    "hash_extent_full_recheck":hash_owner_stats.map(|v|v[3]),
+    "hash_extent_full_confirmed":hash_owner_stats.map(|v|v[4]),
     "mailbox_bytes":res.window_bytes,
     "slots_per_ring":res.args.mailbox.slots_per_ring,"lanes":res.args.mailbox.lanes,
     "packet_records":res.args.mailbox.requested_payload_bytes/16,

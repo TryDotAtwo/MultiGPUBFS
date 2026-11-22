@@ -34,6 +34,8 @@ struct HashConfig {
   uint64_t seed;
   uint32_t bits,state_bytes;
   const uint64_t* owner_cuts;
+  uint32_t parallel_owners;
+  uint32_t* owner_peak;
 };
 struct HashWord {
   MgbfsPack4Dictionary dictionary;uint64_t packed;
@@ -257,6 +259,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
   __shared__ uint32_t max_active_shards;
   __shared__ uint64_t depth;
   __shared__ unsigned choice,bootstrap_failed,retirement_bad;
+  __shared__ unsigned active_hash_owners,peak_hash_owners;
   if(tid==32*(active_lanes+1)) {
     bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
     for(unsigned r=0;r<a.world;++r) {
@@ -268,6 +271,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     sent=received=duplicates=duplicates_full=blocked=0;
     shards_this_layer=0;max_active_shards=0;
     depth=choice=bootstrap_failed=0;
+    active_hash_owners=peak_hash_owners=0;
     for(uint64_t i=0;i<a.extent_count;++i) {
       if constexpr(Hash) {
         const auto& e=hash_extents[i];
@@ -486,13 +490,20 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             }
             shard=unsigned((uint64_t(uint32_t(mix64(id)))*a.shards)>>32);
           }
-          // The first hash implementation serializes shard transactions.
-          // This makes a pool-full decision stable; competing producers and
-          // receivers still make progress because the lease is nonblocking.
-          cuda::atomic_ref<uint32_t,cuda::thread_scope_device> lease(a.shard_locks[Hash?0:shard]);
+          // Default remains the measured serial owner. Optional per-shard
+          // leases permit disjoint tables to commit concurrently.
+          const unsigned lock_index=Hash&&!hash_config->parallel_owners?0:shard;
+          cuda::atomic_ref<uint32_t,cuda::thread_scope_device> lease(a.shard_locks[lock_index]);
           uint32_t free=0;
           if(!lease.compare_exchange_strong(free,1,cuda::memory_order_acquire,
                                             cuda::memory_order_relaxed))continue;
+          bool release_single=true,counted=false;
+          if constexpr(Hash) {
+            if(hash_config->owner_peak) {
+              const unsigned active=atomicAdd(&active_hash_owners,1u)+1;
+              atomicMax(&peak_hash_owners,active);counted=true;
+            }
+          }
           bool accepted_duplicate=false,accepted_new=false,accepted_resource=false;
           if constexpr(Hash) {
             mgbfs_device_hash::Owner owner{};
@@ -500,8 +511,37 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             owner.rank_count=a.rank_limit?a.rank_count:nullptr;owner.rank_limit=a.rank_limit;
             owner.elements=a.dictionary.elements;owner.shards=a.shards;owner.shard=shard;owner.bank=write_bank;
             const HashWord word{a.dictionary,payload.packed};
-            const auto result=hash_config->state_bytes==1?
+            auto result=hash_config->state_bytes==1?
               mgbfs_device_hash::accept<uint8_t>(owner,id,word):mgbfs_device_hash::accept<int64_t>(owner,id,word);
+            if(hash_config->parallel_owners&&result.status==mgbfs_device_hash::Status::extent_full) {
+              if(hash_config->owner_peak)atomicAdd(hash_config->owner_peak+1,1u);
+              // An unused pool lease may be held transiently by another
+              // shard. Release our lease, then try to freeze every shard in
+              // fixed order; on contention release all and retry the packet.
+              // Only a full recheck under all leases proves pool exhaustion.
+              if(counted){atomicSub(&active_hash_owners,1u);counted=false;}
+              lease.store(0,cuda::memory_order_release);release_single=false;
+              unsigned locked=0;
+              for(;locked<a.shards;++locked) {
+                cuda::atomic_ref<uint32_t,cuda::thread_scope_device> other(a.shard_locks[locked]);
+                uint32_t unlocked=0;
+                if(!other.compare_exchange_strong(unlocked,1,cuda::memory_order_acquire,
+                                                 cuda::memory_order_relaxed))break;
+              }
+              if(locked!=a.shards) {
+                if(hash_config->owner_peak)atomicAdd(hash_config->owner_peak+2,1u);
+                for(unsigned j=0;j<locked;++j)
+                  cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.shard_locks[j]).store(0,cuda::memory_order_release);
+                continue;
+              }
+              if(hash_config->owner_peak)atomicAdd(hash_config->owner_peak+3,1u);
+              result=hash_config->state_bytes==1?
+                mgbfs_device_hash::accept<uint8_t>(owner,id,word):mgbfs_device_hash::accept<int64_t>(owner,id,word);
+              if(hash_config->owner_peak&&result.status==mgbfs_device_hash::Status::extent_full)
+                atomicAdd(hash_config->owner_peak+4,1u);
+              for(unsigned j=0;j<locked;++j)
+                cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.shard_locks[j]).store(0,cuda::memory_order_release);
+            }
             accepted_duplicate=result.status==mgbfs_device_hash::Status::duplicate;
             accepted_new=result.status==mgbfs_device_hash::Status::accepted;
             // A table-full response despite a free row violates the admitted
@@ -523,7 +563,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             accepted_resource=result.status==mgbfs_device_pack4::Status::extent_full||
               result.status==mgbfs_device_pack4::Status::cap_full;
           }
-          lease.store(0,cuda::memory_order_release);
+          if(counted)atomicSub(&active_hash_owners,1u);
+          if(release_single)lease.store(0,cuda::memory_order_release);
           bool failed=false;
           if(accepted_duplicate) {
             add(duplicates);
@@ -648,6 +689,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     report->capture_count=a.capture_count?*a.capture_count:0;
     report->global_next=coordinator.global_next;report->status=choice;report->rank=a.rank;
     report->max_active_shards_first64=max_active_shards;
+    if constexpr(Hash)if(hash_config->owner_peak)*hash_config->owner_peak=peak_hash_owners;
     // The request reason is published before request_epoch. The final vote
     // can upgrade a resource stop to ERROR if another rank reported a fatal.
     report->reason=choice==mgbfs_device_epoch::ERROR?reason_protocol:

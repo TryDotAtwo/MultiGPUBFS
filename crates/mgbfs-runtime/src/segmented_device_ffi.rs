@@ -18,6 +18,7 @@ pub(super) struct HashExtent {
 #[derive(Clone,Copy)]
 pub(super) struct HashConfig {
  pub seed:u64,pub bits:u32,pub state_bytes:u32,pub owner_cuts:*const u64,
+ pub parallel_owners:u32,pub owner_peak:*mut u32,
 }
 #[repr(C)]
 #[derive(Clone,Copy,Debug)]

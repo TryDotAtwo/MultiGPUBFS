@@ -48,9 +48,10 @@ def check_receipt(r):
  for m in r["segment_memory_by_rank"]:
   assert m["resident"]["storage"]=="segmented_hash"
   assert m["resident"]["transport"]=="NCCL_LSA_DEVICE_RING"
-  assert m["resident"]["hash_owner_execution"]=="serialized_per_rank"
+  mode="parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank"
+  assert m["resident"]["hash_owner_execution"]==mode
 
-records=[];workers=None;seen_shards=0
+records=[];workers=None;seen_shards=0;peak_owners=0
 with persistent_graph_workers() as pool:
  for name,g in cases:
   layers=g.exact_layers(1000)
@@ -67,6 +68,7 @@ with persistent_graph_workers() as pool:
    if workers is None:workers=pids
    assert pids==workers,(workers,pids)
    seen_shards=max(seen_shards,*(m["resident"]["max_active_shards_first64"] for m in r["segment_memory_by_rank"]))
+   peak_owners=max(peak_owners,*(m["resident"]["hash_owner_peak_active"] or 0 for m in r["segment_memory_by_rank"]))
   need=max(max(row) for row in per_rank)
   for cap in sorted({need,max(1,need-1)}):
    first=next((d for d,row in enumerate(per_rank) if max(row)>cap),None)
@@ -88,7 +90,9 @@ with persistent_graph_workers() as pool:
  assert full>0,full
  assert [w.process.pid for w in pool.workers]==workers
  if not collisions:assert seen_shards>=2,seen_shards
+ if not collisions and os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" and os.environ.get("MGBFS_RESIDENT_HASH_OWNER_STATS")=="1":
+  assert peak_owners>=2,("no measured simultaneous shard owners",peak_owners)
  records.append({"case":name,"duplicates_at_full":full})
 print("PASS exact resident hash layers",world,root,"workers",workers,flush=True)
 (root/"acceptance.json").write_text(json.dumps({"world":world,"forced_collision":collisions,
- "workers":workers,"max_active_shards":seen_shards,"records":records},indent=2))
+ "workers":workers,"max_active_shards":seen_shards,"peak_concurrent_owners":peak_owners,"records":records},indent=2))
