@@ -5204,7 +5204,464 @@
       "status": "MARKER_OBSERVED"
     }
   },
-  "created_utc": "2026-11-22T06:04:51.058798+00:00",
+  "created_utc": "2026-11-22T06:22:55.078201+00:00",
+  "cyclic_owner_capacity_arithmetic_only": [
+    {
+      "assumptions": "identity root; all adjacent swaps; exact lexical Lehmer ID; cyclic ID%world; dense visited; two live layers",
+      "by_logical_owner": [
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 0,
+          "packed_min_bytes": 58233832,
+          "peak_depth": 33,
+          "peak_live_rows": 6343679,
+          "peak_one_layer_depth": 32,
+          "peak_one_layer_rows": 3185290,
+          "unpacked_min_bytes": 83608548
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 1,
+          "packed_min_bytes": 58233832,
+          "peak_depth": 34,
+          "peak_live_rows": 6343679,
+          "peak_one_layer_depth": 33,
+          "peak_one_layer_rows": 3185290,
+          "unpacked_min_bytes": 83608548
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 2,
+          "packed_min_bytes": 59127712,
+          "peak_depth": 33,
+          "peak_live_rows": 6455414,
+          "peak_one_layer_depth": 32,
+          "peak_one_layer_rows": 3232263,
+          "unpacked_min_bytes": 84949368
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 3,
+          "packed_min_bytes": 59127712,
+          "peak_depth": 34,
+          "peak_live_rows": 6455414,
+          "peak_one_layer_depth": 33,
+          "peak_one_layer_rows": 3232263,
+          "unpacked_min_bytes": 84949368
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 4,
+          "packed_min_bytes": 59127712,
+          "peak_depth": 33,
+          "peak_live_rows": 6455414,
+          "peak_one_layer_depth": 33,
+          "peak_one_layer_rows": 3232263,
+          "unpacked_min_bytes": 84949368
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 5,
+          "packed_min_bytes": 59127712,
+          "peak_depth": 34,
+          "peak_live_rows": 6455414,
+          "peak_one_layer_depth": 34,
+          "peak_one_layer_rows": 3232263,
+          "unpacked_min_bytes": 84949368
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 6,
+          "packed_min_bytes": 58233832,
+          "peak_depth": 34,
+          "peak_live_rows": 6343679,
+          "peak_one_layer_depth": 33,
+          "peak_one_layer_rows": 3185290,
+          "unpacked_min_bytes": 83608548
+        },
+        {
+          "bitmap_bytes": 7484400,
+          "domain_ids": 59875200,
+          "logical_owner": 7,
+          "packed_min_bytes": 58233832,
+          "peak_depth": 35,
+          "peak_live_rows": 6343679,
+          "peak_one_layer_depth": 34,
+          "peak_one_layer_rows": 3185290,
+          "unpacked_min_bytes": 83608548
+        }
+      ],
+      "excludes": "segment rounding, reserved unused rows, queues, transient copies, archive, CUDA/NCCL, allocator and other overhead",
+      "max_packed_min_bytes": 59127712,
+      "max_unpacked_min_bytes": 84949368,
+      "n": 12,
+      "packed_codec_supported_by_experiment": true,
+      "states": 479001600,
+      "world": 8
+    },
+    {
+      "assumptions": "identity root; all adjacent swaps; exact lexical Lehmer ID; cyclic ID%world; dense visited; two live layers",
+      "by_logical_owner": [
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 0,
+          "packed_min_bytes": 686468960,
+          "peak_depth": 39,
+          "peak_live_rows": 73646470,
+          "peak_one_layer_depth": 38,
+          "peak_one_layer_rows": 36948034,
+          "unpacked_min_bytes": 1054701310
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 1,
+          "packed_min_bytes": 686468960,
+          "peak_depth": 40,
+          "peak_live_rows": 73646470,
+          "peak_one_layer_depth": 39,
+          "peak_one_layer_rows": 36948034,
+          "unpacked_min_bytes": 1054701310
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 2,
+          "packed_min_bytes": 694699000,
+          "peak_depth": 39,
+          "peak_live_rows": 74675225,
+          "peak_one_layer_depth": 38,
+          "peak_one_layer_rows": 37379751,
+          "unpacked_min_bytes": 1068075125
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 3,
+          "packed_min_bytes": 694699000,
+          "peak_depth": 40,
+          "peak_live_rows": 74675225,
+          "peak_one_layer_depth": 39,
+          "peak_one_layer_rows": 37379751,
+          "unpacked_min_bytes": 1068075125
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 4,
+          "packed_min_bytes": 694699000,
+          "peak_depth": 39,
+          "peak_live_rows": 74675225,
+          "peak_one_layer_depth": 39,
+          "peak_one_layer_rows": 37379751,
+          "unpacked_min_bytes": 1068075125
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 5,
+          "packed_min_bytes": 694699000,
+          "peak_depth": 40,
+          "peak_live_rows": 74675225,
+          "peak_one_layer_depth": 40,
+          "peak_one_layer_rows": 37379751,
+          "unpacked_min_bytes": 1068075125
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 6,
+          "packed_min_bytes": 686468960,
+          "peak_depth": 40,
+          "peak_live_rows": 73646470,
+          "peak_one_layer_depth": 39,
+          "peak_one_layer_rows": 36948034,
+          "unpacked_min_bytes": 1054701310
+        },
+        {
+          "bitmap_bytes": 97297200,
+          "domain_ids": 778377600,
+          "logical_owner": 7,
+          "packed_min_bytes": 686468960,
+          "peak_depth": 41,
+          "peak_live_rows": 73646470,
+          "peak_one_layer_depth": 40,
+          "peak_one_layer_rows": 36948034,
+          "unpacked_min_bytes": 1054701310
+        }
+      ],
+      "excludes": "segment rounding, reserved unused rows, queues, transient copies, archive, CUDA/NCCL, allocator and other overhead",
+      "max_packed_min_bytes": 694699000,
+      "max_unpacked_min_bytes": 1068075125,
+      "n": 13,
+      "packed_codec_supported_by_experiment": true,
+      "states": 6227020800,
+      "world": 8
+    },
+    {
+      "assumptions": "identity root; all adjacent swaps; exact lexical Lehmer ID; cyclic ID%world; dense visited; two live layers",
+      "by_logical_owner": [
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 0,
+          "packed_min_bytes": 8795909680,
+          "peak_depth": 45,
+          "peak_live_rows": 929218610,
+          "peak_one_layer_depth": 45,
+          "peak_one_layer_rows": 464609305,
+          "unpacked_min_bytes": 14371221340
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 1,
+          "packed_min_bytes": 8795909680,
+          "peak_depth": 46,
+          "peak_live_rows": 929218610,
+          "peak_one_layer_depth": 46,
+          "peak_one_layer_rows": 464609305,
+          "unpacked_min_bytes": 14371221340
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 2,
+          "packed_min_bytes": 8865771720,
+          "peak_depth": 45,
+          "peak_live_rows": 937951365,
+          "peak_one_layer_depth": 45,
+          "peak_one_layer_rows": 469860208,
+          "unpacked_min_bytes": 14493479910
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 3,
+          "packed_min_bytes": 8865771720,
+          "peak_depth": 46,
+          "peak_live_rows": 937951365,
+          "peak_one_layer_depth": 46,
+          "peak_one_layer_rows": 469860208,
+          "unpacked_min_bytes": 14493479910
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 4,
+          "packed_min_bytes": 8865771720,
+          "peak_depth": 46,
+          "peak_live_rows": 937951365,
+          "peak_one_layer_depth": 45,
+          "peak_one_layer_rows": 469860208,
+          "unpacked_min_bytes": 14493479910
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 5,
+          "packed_min_bytes": 8865771720,
+          "peak_depth": 47,
+          "peak_live_rows": 937951365,
+          "peak_one_layer_depth": 46,
+          "peak_one_layer_rows": 469860208,
+          "unpacked_min_bytes": 14493479910
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 6,
+          "packed_min_bytes": 8795909680,
+          "peak_depth": 46,
+          "peak_live_rows": 929218610,
+          "peak_one_layer_depth": 46,
+          "peak_one_layer_rows": 464609305,
+          "unpacked_min_bytes": 14371221340
+        },
+        {
+          "bitmap_bytes": 1362160800,
+          "domain_ids": 10897286400,
+          "logical_owner": 7,
+          "packed_min_bytes": 8795909680,
+          "peak_depth": 47,
+          "peak_live_rows": 929218610,
+          "peak_one_layer_depth": 47,
+          "peak_one_layer_rows": 464609305,
+          "unpacked_min_bytes": 14371221340
+        }
+      ],
+      "excludes": "segment rounding, reserved unused rows, queues, transient copies, archive, CUDA/NCCL, allocator and other overhead",
+      "max_packed_min_bytes": 8865771720,
+      "max_unpacked_min_bytes": 14493479910,
+      "n": 14,
+      "packed_codec_supported_by_experiment": true,
+      "states": 87178291200,
+      "world": 8
+    },
+    {
+      "assumptions": "identity root; all adjacent swaps; exact lexical Lehmer ID; cyclic ID%world; dense visited; two live layers",
+      "by_logical_owner": [
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 0,
+          "packed_min_bytes": 121448819056,
+          "peak_depth": 52,
+          "peak_live_rows": 12627050882,
+          "peak_one_layer_depth": 52,
+          "peak_one_layer_rows": 6313525441,
+          "unpacked_min_bytes": 209838175230
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 1,
+          "packed_min_bytes": 121448819056,
+          "peak_depth": 53,
+          "peak_live_rows": 12627050882,
+          "peak_one_layer_depth": 53,
+          "peak_one_layer_rows": 6313525441,
+          "unpacked_min_bytes": 209838175230
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 2,
+          "packed_min_bytes": 122226307392,
+          "peak_depth": 52,
+          "peak_live_rows": 12724236924,
+          "peak_one_layer_depth": 52,
+          "peak_one_layer_rows": 6371939916,
+          "unpacked_min_bytes": 211295965860
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 3,
+          "packed_min_bytes": 122226307392,
+          "peak_depth": 53,
+          "peak_live_rows": 12724236924,
+          "peak_one_layer_depth": 53,
+          "peak_one_layer_rows": 6371939916,
+          "unpacked_min_bytes": 211295965860
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 4,
+          "packed_min_bytes": 122226307392,
+          "peak_depth": 53,
+          "peak_live_rows": 12724236924,
+          "peak_one_layer_depth": 52,
+          "peak_one_layer_rows": 6371939916,
+          "unpacked_min_bytes": 211295965860
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 5,
+          "packed_min_bytes": 122226307392,
+          "peak_depth": 54,
+          "peak_live_rows": 12724236924,
+          "peak_one_layer_depth": 53,
+          "peak_one_layer_rows": 6371939916,
+          "unpacked_min_bytes": 211295965860
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 6,
+          "packed_min_bytes": 121448819056,
+          "peak_depth": 53,
+          "peak_live_rows": 12627050882,
+          "peak_one_layer_depth": 53,
+          "peak_one_layer_rows": 6313525441,
+          "unpacked_min_bytes": 209838175230
+        },
+        {
+          "bitmap_bytes": 20432412000,
+          "domain_ids": 163459296000,
+          "logical_owner": 7,
+          "packed_min_bytes": 121448819056,
+          "peak_depth": 54,
+          "peak_live_rows": 12627050882,
+          "peak_one_layer_depth": 54,
+          "peak_one_layer_rows": 6313525441,
+          "unpacked_min_bytes": 209838175230
+        }
+      ],
+      "excludes": "segment rounding, reserved unused rows, queues, transient copies, archive, CUDA/NCCL, allocator and other overhead",
+      "max_packed_min_bytes": 122226307392,
+      "max_unpacked_min_bytes": 211295965860,
+      "n": 15,
+      "packed_codec_supported_by_experiment": true,
+      "states": 1307674368000,
+      "world": 8
+    }
+  ],
+  "cyclic_owner_capacity_cpu_test_log_sha256": "22e8c689435b8528672c1770b4001113e4e22985173f073c251a79691d5206ec",
+  "cyclic_owner_capacity_physical_peak_receipt_checks": [
+    {
+      "calculated_peak_live_rows": [
+        6343679,
+        6343679,
+        6455414,
+        6455414,
+        6455414,
+        6455414,
+        6343679,
+        6343679
+      ],
+      "match": true,
+      "n": 12,
+      "observed_peak_live_rows": [
+        6343679,
+        6343679,
+        6455414,
+        6455414,
+        6455414,
+        6455414,
+        6343679,
+        6343679
+      ],
+      "report": "/workspace/mgbfs-pack4-evidence/benchmark-s12-max_capacity-8gpu-30623/run-1-1/report.json",
+      "report_sha256": "5d6736a7b3c2e385ede8e4c8466f839a17fb332544fb5c16e1744fc8451c7735"
+    },
+    {
+      "calculated_peak_live_rows": [
+        73646470,
+        73646470,
+        74675225,
+        74675225,
+        74675225,
+        74675225,
+        73646470,
+        73646470
+      ],
+      "match": true,
+      "n": 13,
+      "observed_peak_live_rows": [
+        73646470,
+        73646470,
+        74675225,
+        74675225,
+        74675225,
+        74675225,
+        73646470,
+        73646470
+      ],
+      "report": "/workspace/mgbfs-pack4-evidence/benchmark-s13-max_capacity-8gpu-2031694/run-1-1/report.json",
+      "report_sha256": "be9a89ba1852295bdd9cd231a634414f37735b6eec4f6106fd3dae9f26006133"
+    }
+  ],
   "dependencies_sha256": "2d19623c75a1dc0f4296fa9b9ff5cb7f38f18e42b10076636eb4e144e9010d07  /workspace/pydeps/nvidia/nccl/lib/libnccl.so.2\nc3a75b33af334a3486d197dbd1584a2985183ba4688d237a2be5f2f679329920  /usr/local/cuda/lib64/libcudart.so.12\n",
   "hardware": {
     "cuda": "12.8",
@@ -5264,8 +5721,9 @@
     }
   ],
   "measured_scripts_sha256": {
-    "scripts/collect_pack4_8gpu_results.py": "8a546cede33da9d7037877e044b6953f2c4015bd7b23f89f7b2f659c0cede9ad",
+    "scripts/collect_pack4_8gpu_results.py": "cc6f34c8528b261d7f2556a45afe1d1fe1b7c5375851c7c4c6ca9ae2133907c7",
     "scripts/mahonian_capacity_lower_bound.py": "360d052da7134f6f1e9325a12fb0ad8cac46dbc1681951ae96bf98a1a0f51798",
+    "scripts/mahonian_cyclic_rank_capacity.py": "e91c20495f779d3409cd5c3036332a23b6773ec38734ba0837635ac1fccdeb2c",
     "tests/bitmap_pack4_benchmark_gpu.py": "ebf5b0c66f0c53ac1b5415ec6a16a22fe8151f2aedaf62b38d8b616015b9842d",
     "tests/bitmap_pack4_cayleypy_gpu.py": "1575ae409a72c72f2cc83db4605a9bdcff69268dfc3845cd44bed4fa41e33893",
     "tests/bitmap_pack4_nvml_ab_gpu.py": "895afa931516a5a860187c84f45be68a12b81cf9349657d9f62d51803292de45",
@@ -5274,7 +5732,8 @@
     "tests/bitmap_pack4_shards_gpu.py": "6ebacf9e48fb983d54a6e5eda25576f2aa4f354c86610f75d32d2102d2481bdc",
     "tests/bitmap_pack4_timing.py": "d590cbfee00d290a445913461db7400ea298805f2ca3b1bd4b9184074702353e",
     "tests/segmented_resource_public_gpu.py": "97c531e88c99b6b31c2f53c1ea3e4ab6ed73cf3fa877610eb5c4f9c10620004c",
-    "tests/test_bitmap_pack4_timing.py": "3543f212d345b958fc8c3f97f6d6f2276f6e1deb7bda6006df92f5136c1e63e3"
+    "tests/test_bitmap_pack4_timing.py": "3543f212d345b958fc8c3f97f6d6f2276f6e1deb7bda6006df92f5136c1e63e3",
+    "tests/test_mahonian_cyclic_rank_capacity.py": "d734df49f1594dbbc8af4ad49ff8ecfcde6325d7378ed8359b9bae1421141536"
   },
   "measurement_caveats": [
     "same native executable/library across comparisons; device and exact geometry must still be compared per run",

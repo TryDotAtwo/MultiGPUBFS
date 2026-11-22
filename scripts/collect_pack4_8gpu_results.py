@@ -87,6 +87,8 @@ files = [
     'tests/bitmap_pack4_nvml_ab_gpu.py',
     'tests/segmented_resource_public_gpu.py',
     'scripts/mahonian_capacity_lower_bound.py',
+    'scripts/mahonian_cyclic_rank_capacity.py',
+    'tests/test_mahonian_cyclic_rank_capacity.py',
     'scripts/collect_pack4_8gpu_results.py',
 ]
 out = {
@@ -126,6 +128,9 @@ out = {
  ],
  'benchmarks': benchmarks,
  'mahonian_capacity_arithmetic_only': capacity,
+ 'cyclic_owner_capacity_arithmetic_only': [json.loads(line) for line in (ev/'cyclic-rank-capacity.jsonl').read_text().splitlines() if line.strip()],
+ 'cyclic_owner_capacity_physical_peak_receipt_checks': read_json(ev/'cyclic-rank-capacity-receipt-check.json'),
+ 'cyclic_owner_capacity_cpu_test_log_sha256': digest(ev/'cyclic-rank-capacity-tests.log'),
 }
 output.write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
 print('WROTE',output,'benchmark_records',len(benchmarks),'bytes',output.stat().st_size)
