@@ -551,6 +551,9 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
 extern "C" int mgbfs_device_pack4_bfs_init_v1(void*,uint64_t,const mgbfs_resident::Args*,void*);
 extern "C" int mgbfs_device_pack4_bfs_launch_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,mgbfs_resident::Report*,void*);
 extern "C" int mgbfs_device_pack4_lsa_smoke_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,uint32_t*,void*);
+extern "C" int mgbfs_device_hash_bfs_init_v1(void*,uint64_t,const mgbfs_resident::Args*,void*);
+extern "C" int mgbfs_device_hash_bfs_launch_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,mgbfs_resident::Report*,void*);
+extern "C" int mgbfs_device_hash_lsa_smoke_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,uint32_t*,void*);
 
 // Admission and the CUDA allocations are rank-local; call the existing host
 // agreement before the collective activation and again after initialization.
@@ -602,6 +605,27 @@ extern "C" int mgbfs_nccl_resident_launch_v1(void* raw,const mgbfs_resident::Arg
   auto* p=static_cast<Comm*>(raw);
   if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
   int status=mgbfs_device_pack4_bfs_launch_v1(&p->window,&p->device,args,p->states_offset,report,stream);
+  if(!status)p->lsa_used=true;
+  return status;
+}
+extern "C" int mgbfs_nccl_resident_hash_init_v1(void* raw,const mgbfs_resident::Args* args,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  return mgbfs_device_hash_bfs_init_v1(p->symmetric,p->states_offset,args,stream);
+}
+extern "C" int mgbfs_nccl_resident_hash_smoke_v1(void* raw,const mgbfs_resident::Args* args,
+                                                    uint32_t* result,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  int status=mgbfs_device_hash_lsa_smoke_v1(&p->window,&p->device,args,p->states_offset,result,stream);
+  if(!status)p->lsa_used=true;
+  return status;
+}
+extern "C" int mgbfs_nccl_resident_hash_launch_v1(void* raw,const mgbfs_resident::Args* args,
+                                                     mgbfs_resident::Report* report,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  int status=mgbfs_device_hash_bfs_launch_v1(&p->window,&p->device,args,p->states_offset,report,stream);
   if(!status)p->lsa_used=true;
   return status;
 }

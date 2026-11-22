@@ -12,7 +12,7 @@
 // for different extents must not overlap and remain live through the job.
 //
 // A shared pool lease may be returned only when all banks are empty and the
-// table has been reset. An extent_full outcome may be transient while another
+// table contains only EMPTY/RETIRED slots after checked retirement. An extent_full outcome may be transient while another
 // shard holds an unused lease; it must be retried after other owners drain
 // before it is promoted to a global resource stop. No input has been consumed
 // by extent_full/cap_full/table_full. On invalid metadata the whole job fails.

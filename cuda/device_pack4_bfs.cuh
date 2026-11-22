@@ -9,6 +9,7 @@
 #include "device_epoch_decision.cuh"
 #include "device_mailbox.cuh"
 #include "device_pack4_accept.cuh"
+#include "device_segmented_hash_accept.cuh"
 #include "bitmap_pack4_action.cuh"
 #include <nccl_device.h>
 #include <cuda_runtime.h>
@@ -26,6 +27,20 @@ constexpr uint32_t payload_format=1;
 
 struct Payload { uint64_t packed; uint32_t source,reserved; };
 struct Capture { uint64_t depth,packed; };
+// Separate opt-in ABI: in hash jobs Args.visited points to this immutable
+// device config and Args.extents points to mgbfs_device_hash::Extent records.
+// Existing bitmap Args and entry points keep their exact original layout.
+struct HashConfig {
+  uint64_t seed;
+  uint32_t bits,state_bytes;
+  const uint64_t* owner_cuts;
+};
+struct HashWord {
+  MgbfsPack4Dictionary dictionary;uint64_t packed;
+  __device__ int64_t value(uint32_t element) const {
+    return dictionary.symbols[(packed>>(4*element))&15u];
+  }
+};
 struct alignas(64) Control {
   mgbfs_device_epoch::RankStatus status;
   mgbfs_device_epoch::Decision decision;
@@ -208,21 +223,40 @@ __device__ __forceinline__ bool send_packet(
   }
 }
 
+__device__ inline uint64_t hash_word(const HashWord& word,const HashConfig& config) {
+  uint64_t hash=config.seed;
+  for(uint32_t e=0;e<word.dictionary.elements;++e)hash=mix64(hash^uint64_t(word.value(e))^uint64_t(e));
+  return finish_hash(hash,config.bits);
+}
+__device__ inline unsigned hash_owner(uint64_t hash,const Args& a,const HashConfig& config) {
+  const uint64_t high=hash>>32;
+  if(!config.owner_cuts)return unsigned((high*a.world)>>32);
+  if(config.owner_cuts[0]!=0||config.owner_cuts[a.world]!=(uint64_t(1)<<32))return a.world;
+  uint32_t low=0,upper=a.world;
+  while(low+1<upper){const uint32_t mid=(low+upper)/2;if(high<config.owner_cuts[mid])upper=mid;else low=mid;}
+  return (config.owner_cuts[low]<=high&&high<config.owner_cuts[low+1])?low:a.world;
+}
 // All producer/consumer roles share one resident CTA. A blocked producer
 // cannot prevent the separate consumer warps from receiving and returning
 // credits. This first implementation deliberately favors a simple proof over
 // throughput; more CTAs require a separate residency/progress proof.
-template<unsigned lane_capacity>
+template<unsigned lane_capacity,bool Hash=false>
 __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) {
   if(blockIdx.x)return;
   const unsigned tid=threadIdx.x, active_lanes=a.mailbox.lanes;
+  const HashConfig* hash_config=nullptr;
+  const mgbfs_device_hash::Extent* hash_extents=nullptr;
+  if constexpr(Hash) {
+    hash_config=reinterpret_cast<const HashConfig*>(a.visited);
+    hash_extents=reinterpret_cast<const mgbfs_device_hash::Extent*>(a.extents);
+  }
   __shared__ Control* rank[max_world];
   __shared__ mgbfs_device_epoch::RankStatus* ranks[max_world];
   __shared__ Word current,next,producers_done,consumers_done;
   __shared__ Word sent,received,duplicates,duplicates_full,blocked,shards_this_layer;
   __shared__ uint32_t max_active_shards;
   __shared__ uint64_t depth;
-  __shared__ unsigned choice,bootstrap_failed;
+  __shared__ unsigned choice,bootstrap_failed,retirement_bad;
   if(tid==32*(active_lanes+1)) {
     bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
     for(unsigned r=0;r<a.world;++r) {
@@ -235,11 +269,20 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     shards_this_layer=0;max_active_shards=0;
     depth=choice=bootstrap_failed=0;
     for(uint64_t i=0;i<a.extent_count;++i) {
-      const auto& e=a.extents[i];
-      if(!e.counts||!e.rows||e.banks!=3||!e.capacity||
-         e.capacity>(uint64_t(1)<<32)||e.counts[0]>e.capacity||
-         current>UINT64_MAX-e.counts[0]) {invalid=true;break;}
-      current+=e.counts[0];
+      if constexpr(Hash) {
+        const auto& e=hash_extents[i];
+        if(!hash_config||!(hash_config->state_bytes==1||hash_config->state_bytes==8)||
+           hash_config->bits>64||!mgbfs_device_hash::valid_extent(e,0,a.dictionary.elements,hash_config->state_bytes)||
+           e.segment.banks!=3||e.counts[0]>e.segment.capacity||
+           current>UINT64_MAX-e.counts[0]){invalid=true;break;}
+        current+=e.counts[0];
+      } else {
+        const auto& e=a.extents[i];
+        if(!e.counts||!e.rows||e.banks!=3||!e.capacity||
+           e.capacity>(uint64_t(1)<<32)||e.counts[0]>e.capacity||
+           current>UINT64_MAX-e.counts[0]) {invalid=true;break;}
+        current+=e.counts[0];
+      }
     }
     if(current>1)invalid=true;
     if(!invalid) {
@@ -266,45 +309,108 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     const Word epoch=depth+1;
     const unsigned read_bank=unsigned(depth%3);
     const unsigned write_bank=unsigned((depth+1)%3);
+    if constexpr(Hash) {
+      if(tid==32*(active_lanes+1))retirement_bad=0;
+      __syncthreads();
+      // All prior-layer owners drained before ADVANCE. Retire the oldest
+      // bank in parallel, while no peer or local owner can read this table.
+      for(uint64_t i=0;i<a.extent_count;++i) {
+        const auto& e=hash_extents[i];const auto& seg=e.segment;
+        if(!mgbfs_device_hash::valid_extent(e,write_bank,a.dictionary.elements,hash_config->state_bytes)) {
+          atomicExch(&retirement_bad,1u);failure(local,mgbfs_device_epoch::FATAL);continue;
+        }
+        const uint64_t count=e.counts[write_bank];
+        if(count>seg.capacity){atomicExch(&retirement_bad,1u);failure(local,mgbfs_device_epoch::FATAL);continue;}
+        for(uint64_t row=tid;row<count;row+=blockDim.x) {
+          const uint64_t pos=uint64_t(write_bank)*seg.capacity+row;
+          const uint64_t slot=seg.position_item_bytes==4?uint64_t(reinterpret_cast<const uint32_t*>(seg.positions)[pos]):seg.positions[pos];
+          if(slot>=seg.slots_count){atomicExch(&retirement_bad,1u);failure(local,mgbfs_device_epoch::FATAL);continue;}
+          auto cell=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(seg.slots[slot]);
+          uint64_t seen=cell.load(cuda::memory_order_acquire);
+          const uint64_t payload=(uint64_t(write_bank)<<32)|row;
+          if(seen==mgbfs_segmented_exact::empty||seen==mgbfs_segmented_exact::retired||
+             (seen&mgbfs_segmented_exact::pending)||(seen&mgbfs_segmented_exact::payload_mask)!=payload||
+             !cell.compare_exchange_strong(seen,mgbfs_segmented_exact::retired,
+                                           cuda::memory_order_acq_rel,cuda::memory_order_acquire))
+            {atomicExch(&retirement_bad,1u);failure(local,mgbfs_device_epoch::FATAL);}
+        }
+      }
+      __syncthreads();
+    }
     if(tid==32*(active_lanes+1)) {
       *a.rank_count=0;shards_this_layer=0;
       for(unsigned s=0;s<a.shards;++s)a.shard_locks[s]=0;
       for(uint64_t i=0;i<a.extent_count;++i) {
-        auto& e=a.extents[i];
-        e.counts[write_bank]=0;
-        if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])
-          a.extent_owner[i]=UINT32_MAX;
+        if constexpr(Hash) {
+          const auto& e=hash_extents[i];
+          if(retirement_bad)continue;
+          e.counts[write_bank]=0;
+          if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])a.extent_owner[i]=UINT32_MAX;
+        } else {
+          auto& e=a.extents[i];
+          e.counts[write_bank]=0;
+          if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])a.extent_owner[i]=UINT32_MAX;
+        }
       }
     }
     __syncthreads();
     if(tid<active_lanes) {
-      bool stopped=false;
+      bool stopped=Hash&&retirement_bad;
       Payload pending[max_world][max_packet_records];
       unsigned pending_count[max_world]={};
       const unsigned packet_records=a.mailbox.requested_payload_bytes/sizeof(Payload);
       for(Word parent=tid;parent<current&&!stopped;parent+=active_lanes) {
         uint64_t remaining=parent,packed=0;bool found=false;
         for(uint64_t i=0;i<a.extent_count;++i) {
-          const auto& e=a.extents[i];const uint64_t n=e.counts[read_bank];
-          if(remaining<n) {packed=e.rows[uint64_t(read_bank)*e.capacity+remaining];found=true;break;}
-          remaining-=n;
+          if constexpr(Hash) {
+            const auto& e=hash_extents[i];const uint64_t n=e.counts[read_bank];
+            if(remaining<n) {
+              const auto& seg=e.segment;
+              const uint64_t local=uint64_t(read_bank)*seg.capacity+remaining,stride=seg.capacity*seg.banks;
+              bool ok=true;
+              for(unsigned k=0;k<a.dictionary.elements;++k) {
+                const uint64_t offset=uint64_t(k)*stride+local;
+                const int64_t value=hash_config->state_bytes==1?
+                  int64_t(static_cast<const uint8_t*>(seg.states)[offset]):
+                  static_cast<const int64_t*>(seg.states)[offset];
+                unsigned ordinal=0;while(ordinal<a.dictionary.distinct&&a.dictionary.symbols[ordinal]!=value)++ordinal;
+                if(ordinal==a.dictionary.distinct){ok=false;break;}
+                packed|=uint64_t(ordinal)<<(4*k);
+              }
+              found=ok;break;
+            }
+            remaining-=n;
+          } else {
+            const auto& e=a.extents[i];const uint64_t n=e.counts[read_bank];
+            if(remaining<n) {packed=e.rows[uint64_t(read_bank)*e.capacity+remaining];found=true;break;}
+            remaining-=n;
+          }
         }
         if(!found){failure(local,mgbfs_device_epoch::FATAL);break;}
         for(unsigned edge=0;edge<a.generators&&!stopped;++edge) {
           BitmapPack4Action action{a.dictionary.elements,a.generators,1,&packed,a.permutations,a.dictionary};
-          uint32_t bad=0;uint64_t id=0;
-          if(!action.valid(edge,&bad)||!bitmap_rank(a.domain,action,edge,&id)||id>=a.domain.total) {
-            failure(local,mgbfs_device_epoch::FATAL);break;
-          }
-          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
-          const unsigned logical=unsigned(id%a.world);
-          const unsigned destination=a.physical_of_logical[logical];
-          if(destination>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
+          uint32_t bad=0;
+          if(!action.valid(edge,&bad)){failure(local,mgbfs_device_epoch::FATAL);break;}
           uint64_t child=0;
           for(unsigned e=0;e<a.dictionary.elements;++e) {
             const unsigned source=a.permutations[uint64_t(edge)*a.dictionary.elements+e];
             child|=((packed>>(4*source))&15ull)<<(4*e);
           }
+          unsigned logical=a.world;
+          if constexpr(Hash) {
+            const HashWord word{a.dictionary,child};
+            logical=hash_owner(hash_word(word,*hash_config),a,*hash_config);
+          } else {
+            uint64_t id=0;
+            if(!bitmap_rank(a.domain,action,edge,&id)||id>=a.domain.total) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+            id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+            logical=unsigned(id%a.world);
+          }
+          if(logical>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
+          const unsigned destination=a.physical_of_logical[logical];
+          if(destination>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
           pending[destination][pending_count[destination]++]={child,a.rank,0};
           if(pending_count[destination]==packet_records) {
             if(!send_packet(local,coordinator,a,tid,destination,epoch,pending[destination],
@@ -340,6 +446,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       unsigned packet_offset[max_world*lane_capacity]={};
       unsigned active=a.world,cursor=0;
       while(active) {
+        if constexpr(Hash) {if(retirement_bad)break;}
         if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);break;}
         if(load(coordinator.decision.request_epoch)==epoch)break;
         const unsigned channel=(cursor++%a.world)*active_lanes+receiver;
@@ -358,40 +465,71 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
           Payload payload{};auto* dst=reinterpret_cast<unsigned char*>(&payload);
           const unsigned byte_offset=packet_offset[channel]*sizeof(Payload);
           for(unsigned i=0;i<sizeof(payload);++i)dst[i]=bytes[byte_offset+i];
-          mgbfs_device_pack4::WordAccessor word{a.dictionary,payload.packed};
-          uint64_t id=0;
-          if(payload.source!=src||payload.reserved||!mgbfs_pack4_valid_word(a.dictionary,payload.packed)||
-             !bitmap_rank(a.domain,word,0,&id)||id>=a.domain.total) {
+          if(payload.source!=src||payload.reserved||!mgbfs_pack4_valid_word(a.dictionary,payload.packed)) {
             failure(local,mgbfs_device_epoch::FATAL);break;
           }
-          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
-          if(id%a.world!=a.owner||a.physical_of_logical[a.owner]!=a.rank) {
-            failure(local,mgbfs_device_epoch::FATAL);break;
+          uint64_t id=0;unsigned shard=0;
+          if constexpr(Hash) {
+            const HashWord word{a.dictionary,payload.packed};
+            id=hash_word(word,*hash_config);
+            const unsigned logical=hash_owner(id,a,*hash_config);
+            if(logical>=a.world||a.physical_of_logical[logical]!=a.rank){failure(local,mgbfs_device_epoch::FATAL);break;}
+            shard=unsigned((uint64_t(uint32_t(id))*a.shards)>>32);
+          } else {
+            mgbfs_device_pack4::WordAccessor word{a.dictionary,payload.packed};
+            if(!bitmap_rank(a.domain,word,0,&id)||id>=a.domain.total) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+            id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+            if(id%a.world!=a.owner||a.physical_of_logical[a.owner]!=a.rank) {
+              failure(local,mgbfs_device_epoch::FATAL);break;
+            }
+            shard=unsigned((uint64_t(uint32_t(mix64(id)))*a.shards)>>32);
           }
-          const unsigned shard=unsigned((uint64_t(uint32_t(mix64(id)))*a.shards)>>32);
-          mgbfs_device_pack4::Owner owner{};
-          owner.domain=a.domain;owner.dictionary=a.dictionary;
-          owner.extents=a.extents;owner.extent_count=a.extent_count;
-          owner.extent_owner=a.extent_owner;owner.bits=a.visited;
-          owner.owner_len=a.owner_len;owner.rank_count=a.rank_limit?a.rank_count:nullptr;
-          owner.rank_limit=a.rank_limit;owner.owner_boundary=a.owner_boundary;
-          owner.world=a.world;owner.owner=a.owner;owner.shards=a.shards;
-          owner.shard=shard;owner.bank=write_bank;owner.owner_page=a.owner_page;
-          // Each shard has exclusive writable extents and counts. Separate
-          // warps use a nonblocking lease so a contended shard cannot stall
-          // the warp holding its lease.
-          cuda::atomic_ref<uint32_t,cuda::thread_scope_device> lease(a.shard_locks[shard]);
+          // The first hash implementation serializes shard transactions.
+          // This makes a pool-full decision stable; competing producers and
+          // receivers still make progress because the lease is nonblocking.
+          cuda::atomic_ref<uint32_t,cuda::thread_scope_device> lease(a.shard_locks[Hash?0:shard]);
           uint32_t free=0;
           if(!lease.compare_exchange_strong(free,1,cuda::memory_order_acquire,
                                             cuda::memory_order_relaxed))continue;
-          auto accepted=mgbfs_device_pack4::accept_prevalidated(owner,id,payload.packed);
+          bool accepted_duplicate=false,accepted_new=false,accepted_resource=false;
+          if constexpr(Hash) {
+            mgbfs_device_hash::Owner owner{};
+            owner.extents=hash_extents;owner.extent_count=a.extent_count;owner.extent_owner=a.extent_owner;
+            owner.rank_count=a.rank_limit?a.rank_count:nullptr;owner.rank_limit=a.rank_limit;
+            owner.elements=a.dictionary.elements;owner.shards=a.shards;owner.shard=shard;owner.bank=write_bank;
+            const HashWord word{a.dictionary,payload.packed};
+            const auto result=hash_config->state_bytes==1?
+              mgbfs_device_hash::accept<uint8_t>(owner,id,word):mgbfs_device_hash::accept<int64_t>(owner,id,word);
+            accepted_duplicate=result.status==mgbfs_device_hash::Status::duplicate;
+            accepted_new=result.status==mgbfs_device_hash::Status::accepted;
+            // A table-full response despite a free row violates the admitted
+            // slot geometry; it is a protocol error, not a memory boundary.
+            accepted_resource=result.status==mgbfs_device_hash::Status::extent_full||
+              result.status==mgbfs_device_hash::Status::cap_full;
+          } else {
+            mgbfs_device_pack4::Owner owner{};
+            owner.domain=a.domain;owner.dictionary=a.dictionary;
+            owner.extents=a.extents;owner.extent_count=a.extent_count;
+            owner.extent_owner=a.extent_owner;owner.bits=a.visited;
+            owner.owner_len=a.owner_len;owner.rank_count=a.rank_limit?a.rank_count:nullptr;
+            owner.rank_limit=a.rank_limit;owner.owner_boundary=a.owner_boundary;
+            owner.world=a.world;owner.owner=a.owner;owner.shards=a.shards;
+            owner.shard=shard;owner.bank=write_bank;owner.owner_page=a.owner_page;
+            const auto result=mgbfs_device_pack4::accept_prevalidated(owner,id,payload.packed);
+            accepted_duplicate=result.status==mgbfs_device_pack4::Status::duplicate;
+            accepted_new=result.status==mgbfs_device_pack4::Status::accepted;
+            accepted_resource=result.status==mgbfs_device_pack4::Status::extent_full||
+              result.status==mgbfs_device_pack4::Status::cap_full;
+          }
           lease.store(0,cuda::memory_order_release);
           bool failed=false;
-          if(accepted.status==mgbfs_device_pack4::Status::duplicate) {
+          if(accepted_duplicate) {
             add(duplicates);
             if(a.rank_limit&&cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(*a.rank_count)
                  .load(cuda::memory_order_acquire)>=a.rank_limit)add(duplicates_full);
-          } else if(accepted.status==mgbfs_device_pack4::Status::accepted) {
+          } else if(accepted_new) {
             if(shard<64)atomicOr(&shards_this_layer,Word(1)<<shard);
             add(next);
             if(a.capture) {
@@ -399,8 +537,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
               if(index>=a.capture_capacity){failure(local,mgbfs_device_epoch::FATAL);failed=true;}
               else a.capture[index]={depth+1,payload.packed};
             }
-          } else if(accepted.status==mgbfs_device_pack4::Status::extent_full ||
-                    accepted.status==mgbfs_device_pack4::Status::cap_full) {
+          } else if(accepted_resource) {
             failure(local,mgbfs_device_epoch::RESOURCE);failed=true;
           } else {failure(local,mgbfs_device_epoch::FATAL);failed=true;}
           if(failed)break;

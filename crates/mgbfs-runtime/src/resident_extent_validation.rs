@@ -24,6 +24,12 @@ pub(crate) struct ExtentAllocation {
 pub(crate) fn validate_extent_allocations(
     extents:&[ExtentAllocation], other:&[AllocationRegion]
 )->Result<(), &'static str> {
+    validate_extent_allocations_with_width(extents,other,8)
+}
+pub(crate) fn validate_extent_allocations_with_width(
+    extents:&[ExtentAllocation], other:&[AllocationRegion],row_width:u64
+)->Result<(), &'static str> {
+    if row_width==0{return Err("RESIDENT_EXTENT_GEOMETRY")}
     let mut ranges=Vec::with_capacity(extents.len().saturating_mul(2).saturating_add(other.len()));
     fn add(ranges:&mut Vec<(u64,u64)>,r:AllocationRegion)->Result<(), &'static str> {
         if r.base==0 || r.bytes==0 || !r.alignment.is_power_of_two() || r.base%r.alignment!=0 {
@@ -38,7 +44,7 @@ pub(crate) fn validate_extent_allocations(
             return Err("RESIDENT_EXTENT_GEOMETRY");
         }
         let rows=e.capacity.checked_mul(u64::from(e.banks))
-            .and_then(|v|v.checked_mul(8)).ok_or("RESIDENT_EXTENT_OVERFLOW")?;
+            .and_then(|v|v.checked_mul(row_width)).ok_or("RESIDENT_EXTENT_OVERFLOW")?;
         let counts=u64::from(e.banks).checked_mul(8).ok_or("RESIDENT_EXTENT_OVERFLOW")?;
         if e.row_bytes<rows || e.count_bytes<counts {
             return Err("RESIDENT_EXTENT_UNDERSIZED");
@@ -60,6 +66,15 @@ mod tests {
 
     fn e(rows:u64,counts:u64,capacity:u64)->ExtentAllocation {
         ExtentAllocation { rows, row_bytes:capacity*24, counts, count_bytes:24, capacity, banks:3 }
+    }
+
+    #[test]
+    fn hash_width_checked_and_overlaps_rejected() {
+        let mut x=e(0x1000,0x2000,2);x.row_bytes=2*3*4;
+        assert!(validate_extent_allocations_with_width(&[x],&[],4).is_ok());
+        assert!(validate_extent_allocations_with_width(&[x],&[],5).is_err());
+        assert!(validate_extent_allocations_with_width(&[x],&[AllocationRegion{base:0x1010,bytes:8,alignment:8}],4).is_err());
+        assert!(validate_extent_allocations_with_width(&[x],&[],0).is_err());
     }
 
     #[test]

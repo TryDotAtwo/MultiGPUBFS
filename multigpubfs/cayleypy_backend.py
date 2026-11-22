@@ -38,8 +38,8 @@ class NativeOptions:
         if self.execution_engine not in ("host", "device"):
             raise ValueError("INVALID_EXECUTION_ENGINE")
         if self.execution_engine=="device":
-            if self.memory_backend!="permutation_bitmap" or self.segment_strategy!="atomic" or self.memory_preset!="balanced":
-                raise ValueError("DEVICE_REQUIRES_PACK4_BITMAP_ATOMIC_BALANCED")
+            if self.memory_backend not in ("permutation_bitmap","segmented24") or self.segment_strategy!="atomic" or self.memory_preset!="balanced":
+                raise ValueError("DEVICE_REQUIRES_SUPPORTED_BACKEND_ATOMIC_BALANCED")
             if self.autotune or self.max_seconds not in (None,0):
                 raise ValueError("DEVICE_AUTOTUNE_AND_DEADLINE_UNSUPPORTED")
 

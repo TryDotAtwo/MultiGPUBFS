@@ -192,10 +192,11 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
    _=>return Err("RESIDENT_MODE_INVALID".into())
   };
   if resident {
-   if backend!="EXPERIMENTAL_PERMUTATION_BITMAP"||std::env::var("MGBFS_SEGMENT_PACK4").as_deref()!=Ok("1")||
-      !matches!(std::env::var("MGBFS_SEGMENT_STRATEGY").as_deref(),Ok("atomic")|Err(_))||
-      std::env::var("MGBFS_BITMAP_BANKS").as_deref()==Ok("2") {
-    return Err("RESIDENT_REQUIRES_PACK4_BITMAP_ATOMIC_THREE_BANKS".into())
+   let packed=std::env::var("MGBFS_SEGMENT_PACK4").as_deref()==Ok("1");
+   if !matches!(std::env::var("MGBFS_SEGMENT_STRATEGY").as_deref(),Ok("atomic")|Err(_))||
+      (backend=="EXPERIMENTAL_PERMUTATION_BITMAP"&&(!packed||std::env::var("MGBFS_BITMAP_BANKS").as_deref()==Ok("2")))||
+      (backend=="EXPERIMENTAL_SEGMENTED24"&&packed) {
+    return Err("RESIDENT_REQUIRES_ATOMIC_THREE_BANKS_AND_SUPPORTED_STORAGE".into())
    }
    let test_profile=std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1");
    if seconds!=0||(launch.profile_max_layers.is_some()&&!test_profile)||launch.online_size_tuning||!launch.size_profiles.is_empty(){

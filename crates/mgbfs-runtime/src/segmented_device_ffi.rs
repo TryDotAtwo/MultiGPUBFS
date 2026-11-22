@@ -1,6 +1,6 @@
 // Private ABI for the experimental GPU-resident packed-bitmap path. Loading is
 // dynamic so older published native bundles continue to run the host path.
-use super::{BitmapDeviceDomain, BitmapPack4Dictionary};
+use super::{BitmapDeviceDomain, BitmapPack4Dictionary, SegmentDescriptor};
 use std::{ffi::{c_char,c_void},mem};
 
 #[repr(C)]
@@ -8,6 +8,16 @@ use std::{ffi::{c_char,c_void},mem};
 pub(super) struct Extent {
  pub rows:*mut u64, pub counts:*mut u64, pub capacity:u64,
  pub banks:u32, pub reserved:u32,
+}
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub(super) struct HashExtent {
+ pub segment:SegmentDescriptor,pub counts:*mut u64,
+}
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub(super) struct HashConfig {
+ pub seed:u64,pub bits:u32,pub state_bytes:u32,pub owner_cuts:*const u64,
 }
 #[repr(C)]
 #[derive(Clone,Copy,Debug)]
@@ -64,6 +74,31 @@ pub(super) struct Functions {
  pub query:Query,pub smoke:Smoke,pub layout:Layout,pub topology:TopologyQuery,
  pub prepare:Prepare,pub activate:Activate,pub initialize:Initialize,pub launch:Launch,pub retire:Retire,pub window_info:WindowInfo,pub peer_smoke:PeerSmoke,
  pub control_bytes:u64,
+}
+#[derive(Clone,Copy)]
+pub(super) struct HashFunctions {
+ pub initialize:Initialize,pub launch:Launch,pub peer_smoke:PeerSmoke,
+}
+impl HashFunctions {
+ pub(super) unsafe fn load()->Result<Self,String>{
+  unsafe fn symbol(name:&[u8])->Result<*mut c_void,String>{
+   let p=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast());
+   if p.is_null(){Err(format!("RESIDENT_HASH_ABI_MISSING {}",String::from_utf8_lossy(&name[..name.len()-1])))}else{Ok(p)}
+  }
+  let query:Query=mem::transmute(symbol(b"mgbfs_device_hash_bfs_abi_query\0")?);
+  let expected=[1,mem::size_of::<Args>() as u32,mem::size_of::<Report>() as u32,
+                mem::size_of::<HashExtent>() as u32,mem::size_of::<HashConfig>() as u32];
+  for (i,&size) in expected.iter().enumerate(){
+   let found=query(i as u32);
+   if found!=size{return Err(format!("RESIDENT_HASH_ABI_MISMATCH field={i} expected={size} actual={found}"))}
+  }
+  if query(999)!=0{return Err("RESIDENT_HASH_ABI_QUERY".into())}
+  Ok(Self{
+   initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_init_v1\0")?),
+   launch:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_launch_v1\0")?),
+   peer_smoke:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_smoke_v1\0")?),
+  })
+ }
 }
 fn resident_lane_count(advertised:u32,requested:u32)->Result<u32,String>{
  let maximum=if advertised==0{4}else{advertised};

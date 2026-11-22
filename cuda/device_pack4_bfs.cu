@@ -106,3 +106,73 @@ extern "C" int mgbfs_device_pack4_bfs_launch_v1(
                                            params,0,static_cast<cudaStream_t>(raw_stream));
   return result==cudaSuccess?0:1000+int(result);
 }
+
+// Separate experimental hash ABI; the original bitmap entry remains v1.
+// The shared Args prefix keeps mailbox and capture semantics identical.
+extern "C" uint32_t mgbfs_device_hash_bfs_abi_query(uint32_t item) {
+  switch(item) {
+    case 0:return 1;
+    case 1:return sizeof(mgbfs_resident::Args);
+    case 2:return sizeof(mgbfs_resident::Report);
+    case 3:return sizeof(mgbfs_device_hash::Extent);
+    case 4:return sizeof(mgbfs_resident::HashConfig);
+    default:return 0;
+  }
+}
+static int validate_hash(const mgbfs_resident::Args* a,uint64_t window_bytes) {
+  if(!a||a->abi_version!=1||a->struct_bytes!=sizeof(*a)||
+     !a->world||a->world>mgbfs_resident::max_world||a->rank>=a->world||
+     !a->shards||!a->generators||a->banks!=3||a->reserved0||!a->job_generation||
+     !a->domain.total||!mgbfs_pack4_valid(a->dictionary)||!a->permutations||
+     !a->physical_of_logical||!a->extents||!a->extent_count||!a->extent_owner||
+     !a->shard_locks||!a->visited||!a->rank_count||!a->layer_sizes||
+     !a->layer_capacity||!a->rank_counts||!a->terminal||
+     bool(a->capture)!=bool(a->capture_count)||(a->capture&&!a->capture_capacity))return 1;
+  MgbfsDeviceMailboxLayoutV1 expected{};
+  const uint32_t bytes=a->mailbox.requested_payload_bytes;
+  if(bytes<sizeof(mgbfs_resident::Payload)||
+     bytes>sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records||
+     bytes%sizeof(mgbfs_resident::Payload)||!a->mailbox.lanes||
+     a->mailbox.lanes>mgbfs_resident::max_lanes)return 2;
+  if(mgbfs_device_mailbox_layout_v1(a->world,a->mailbox.lanes,a->mailbox.slots_per_ring,
+       bytes,UINT64_MAX,sizeof(expected),&expected)!=MGBFS_MAILBOX_LAYOUT_OK||
+     std::memcmp(&expected,&a->mailbox,sizeof(expected))||
+     expected.total_bytes>UINT64_MAX-sizeof(mgbfs_resident::Control)||
+     window_bytes<sizeof(mgbfs_resident::Control)+expected.total_bytes)return 2;
+  return 0;
+}
+extern "C" int mgbfs_device_hash_bfs_init_v1(void* window,uint64_t bytes,
+    const mgbfs_resident::Args* args,void* stream) {
+  int status=validate_hash(args,bytes);if(status)return status;
+  if(!window||reinterpret_cast<uintptr_t>(window)%64)return 4;
+  mgbfs_resident::initialize<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(
+      static_cast<mgbfs_resident::Control*>(window),*args);
+  auto result=cudaGetLastError();return result==cudaSuccess?0:1000+int(result);
+}
+extern "C" int mgbfs_device_hash_lsa_smoke_v1(const void* raw_window,const void* raw_comm,
+    const mgbfs_resident::Args* args,uint64_t bytes,uint32_t* report,void* stream) {
+  int status=validate_hash(args,bytes);if(status)return status;
+  if(!raw_window||!raw_comm||!report||args->mailbox.slots_per_ring!=1)return 4;
+  auto window=*static_cast<const ncclWindow_t*>(raw_window);
+  auto comm=*static_cast<const ncclDevComm*>(raw_comm);
+  if(comm.lsaSize!=int(args->world)||comm.lsaRank!=int(args->rank))return 6;
+  auto value=*args;void* params[]={&window,&comm,&value,&report};
+  auto result=cudaLaunchCooperativeKernel(reinterpret_cast<void*>(mgbfs_resident::peer_smoke),
+      dim3(1),dim3(mgbfs_resident::threads),params,0,static_cast<cudaStream_t>(stream));
+  return result==cudaSuccess?0:1000+int(result);
+}
+extern "C" int mgbfs_device_hash_bfs_launch_v1(const void* raw_window,const void* raw_comm,
+    const mgbfs_resident::Args* args,uint64_t bytes,mgbfs_resident::Report* report,void* stream) {
+  int status=validate_hash(args,bytes);if(status)return status;
+  if(!raw_window||!raw_comm||!report)return 4;
+  auto window=*static_cast<const ncclWindow_t*>(raw_window);
+  auto comm=*static_cast<const ncclDevComm*>(raw_comm);
+  if(comm.lsaSize!=int(args->world)||comm.lsaRank!=int(args->rank))return 6;
+  auto value=*args;void* params[]={&window,&comm,&value,&report};
+  const auto kernel=args->mailbox.lanes<=mgbfs_resident::lanes?
+    reinterpret_cast<void*>(mgbfs_resident::run<mgbfs_resident::lanes,true>):
+    reinterpret_cast<void*>(mgbfs_resident::run<mgbfs_resident::max_lanes,true>);
+  auto result=cudaLaunchCooperativeKernel(kernel,dim3(1),dim3(32*(args->mailbox.lanes+2)),
+      params,0,static_cast<cudaStream_t>(stream));
+  return result==cudaSuccess?0:1000+int(result);
+}

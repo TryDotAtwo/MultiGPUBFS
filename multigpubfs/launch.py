@@ -177,8 +177,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if memory_preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  if execution_engine not in ('host','device'):raise ValueError('INVALID_EXECUTION_ENGINE')
  if execution_engine=='device':
-  if memory_backend!='permutation_bitmap' or segment_strategy!='atomic' or memory_preset!='balanced':
-   raise ValueError('DEVICE_REQUIRES_PACK4_BITMAP_ATOMIC_BALANCED')
+  if memory_backend not in ('permutation_bitmap','segmented24') or segment_strategy!='atomic' or memory_preset!='balanced':
+   raise ValueError('DEVICE_REQUIRES_SUPPORTED_BACKEND_ATOMIC_BALANCED')
+  if graph.action['kind']!='permutation':raise ValueError('DEVICE_REQUIRES_PERMUTATION_ACTION')
   if autotune or max_seconds is not None:
    raise ValueError('DEVICE_AUTOTUNE_AND_DEADLINE_UNSUPPORTED')
   if len(graph.start)>16:raise ValueError('DEVICE_PACK4_UNSUPPORTED_DEGREE')
@@ -197,7 +198,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if _native_env is not None:native_env=dict(_native_env)
  if execution_engine=='device':
   native_env['MGBFS_EXPERIMENTAL_DEVICE_BFS']='1'
-  native_env['MGBFS_SEGMENT_PACK4']='1'
+  if memory_backend=='permutation_bitmap':native_env['MGBFS_SEGMENT_PACK4']='1'
+  else:native_env.pop('MGBFS_SEGMENT_PACK4',None)
  else:native_env.pop('MGBFS_EXPERIMENTAL_DEVICE_BFS',None)
  native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
  packed=native_env.get('MGBFS_SEGMENT_PACK4','0')
@@ -216,8 +218,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
   if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   capabilities=_require_memory_backend(native,native_env,memory_backend)
-  if execution_engine=='device' and capabilities.get('device_resident_pack4_v1') is not True:
-   raise RuntimeError('DEVICE_RESIDENT_NATIVE_ABI_MISSING: the executable and loaded CUDA library must both support the resident pack4 entry')
+  if execution_engine=='device':
+   resident_capability='device_resident_pack4_v1' if memory_backend=='permutation_bitmap' else 'device_resident_hash_v1'
+   if capabilities.get(resident_capability) is not True:
+    raise RuntimeError('DEVICE_RESIDENT_NATIVE_ABI_MISSING: executable and CUDA library must support '+resident_capability)
   if packed=='1' and capabilities.get('bitmap_pack4_experimental_v1') is not True:
    raise RuntimeError('BITMAP_PACK4_NATIVE_ABI_MISSING: experimental executable and CUDA library must match')
   if memory_backend=='segmented24' and segment_strategy=='warp' and capabilities.get('segmented_warp_hash_safe_v1') is not True:raise RuntimeError('SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING')
@@ -435,7 +439,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if segmented:
     report['segment_memory_by_rank']=[dict(p['segment_memory'],rank=i,device=devices[i]) for i,p in enumerate(parts)]
     report['segment_memory_scope']='rank 0 only; see segment_memory_by_rank for every selected GPU'
-   report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope=('experimental GPU-resident pack4 bitmap path; validated only for the reported devices and graph' if execution_engine=='device' else 'single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified'))
+   report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope=(('experimental GPU-resident '+('pack4 bitmap' if memory_backend=='permutation_bitmap' else 'segmented hash')+' path; validated only for the reported devices and graph') if execution_engine=='device' else 'single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified'))
    if profile:report['autotune']=profile;report['profile_status']=profile['status']
    (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
    return finish(_receipt(output,digest))

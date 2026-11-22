@@ -1,0 +1,928 @@
+{
+  "2gpu": {
+    "world": 2,
+    "forced_collision": false,
+    "workers": [
+      113460,
+      113461
+    ],
+    "max_active_shards": 2,
+    "records": [
+      {
+        "case": "s4",
+        "cap": 3,
+        "status": "INCOMPLETE",
+        "last_depth": 2,
+        "first_incomplete": 3,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "s4",
+        "cap": 4,
+        "status": "COMPLETE",
+        "last_depth": 6,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 6,
+        "status": "INCOMPLETE",
+        "last_depth": 3,
+        "first_incomplete": 4,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            4,
+            2
+          ],
+          [
+            5,
+            4
+          ],
+          [
+            7,
+            4
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            5,
+            4
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            0,
+            3
+          ],
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 7,
+        "status": "COMPLETE",
+        "last_depth": 9,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            4,
+            2
+          ],
+          [
+            5,
+            4
+          ],
+          [
+            7,
+            4
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            5,
+            4
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            0,
+            3
+          ],
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 2,
+        "status": "INCOMPLETE",
+        "last_depth": 1,
+        "first_incomplete": 2,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 3,
+        "status": "COMPLETE",
+        "last_depth": 3,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      },
+      {
+        "case": "duplicate_at_full",
+        "duplicates_at_full": 2
+      }
+    ]
+  },
+  "4gpu": {
+    "world": 4,
+    "forced_collision": false,
+    "workers": [
+      114003,
+      114004,
+      114005,
+      114006
+    ],
+    "max_active_shards": 2,
+    "records": [
+      {
+        "case": "s4",
+        "cap": 3,
+        "status": "INCOMPLETE",
+        "last_depth": 2,
+        "first_incomplete": 3,
+        "per_rank": [
+          [
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            2,
+            0
+          ],
+          [
+            0,
+            2,
+            4,
+            0
+          ],
+          [
+            1,
+            1,
+            2,
+            1
+          ],
+          [
+            0,
+            2,
+            0,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "s4",
+        "cap": 4,
+        "status": "COMPLETE",
+        "last_depth": 6,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            3,
+            0,
+            0
+          ],
+          [
+            3,
+            0,
+            2,
+            0
+          ],
+          [
+            0,
+            2,
+            4,
+            0
+          ],
+          [
+            1,
+            1,
+            2,
+            1
+          ],
+          [
+            0,
+            2,
+            0,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 3,
+        "status": "INCOMPLETE",
+        "last_depth": 2,
+        "first_incomplete": 3,
+        "per_rank": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            3,
+            0,
+            2
+          ],
+          [
+            1,
+            4,
+            0,
+            4
+          ],
+          [
+            3,
+            4,
+            1,
+            3
+          ],
+          [
+            1,
+            4,
+            4,
+            2
+          ],
+          [
+            2,
+            3,
+            3,
+            1
+          ],
+          [
+            1,
+            2,
+            2,
+            1
+          ],
+          [
+            0,
+            0,
+            2,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 4,
+        "status": "COMPLETE",
+        "last_depth": 9,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            3,
+            0,
+            2
+          ],
+          [
+            1,
+            4,
+            0,
+            4
+          ],
+          [
+            3,
+            4,
+            1,
+            3
+          ],
+          [
+            1,
+            4,
+            4,
+            2
+          ],
+          [
+            2,
+            3,
+            3,
+            1
+          ],
+          [
+            1,
+            2,
+            2,
+            1
+          ],
+          [
+            0,
+            0,
+            2,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 1,
+        "status": "INCOMPLETE",
+        "last_depth": 0,
+        "first_incomplete": 1,
+        "per_rank": [
+          [
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            2,
+            0
+          ],
+          [
+            0,
+            2,
+            2,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            2
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 2,
+        "status": "COMPLETE",
+        "last_depth": 3,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            2,
+            0
+          ],
+          [
+            0,
+            2,
+            2,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            2
+          ]
+        ]
+      },
+      {
+        "case": "duplicate_at_full",
+        "duplicates_at_full": 2
+      }
+    ]
+  },
+  "2gpu-collision": {
+    "world": 2,
+    "forced_collision": true,
+    "workers": [
+      114983,
+      114984
+    ],
+    "max_active_shards": 1,
+    "records": [
+      {
+        "case": "s4",
+        "cap": 5,
+        "status": "INCOMPLETE",
+        "last_depth": 2,
+        "first_incomplete": 3,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "s4",
+        "cap": 6,
+        "status": "COMPLETE",
+        "last_depth": 6,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 10,
+        "status": "INCOMPLETE",
+        "last_depth": 3,
+        "first_incomplete": 4,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            9,
+            0
+          ],
+          [
+            11,
+            0
+          ],
+          [
+            11,
+            0
+          ],
+          [
+            9,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "repeated",
+        "cap": 11,
+        "status": "COMPLETE",
+        "last_depth": 9,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            9,
+            0
+          ],
+          [
+            11,
+            0
+          ],
+          [
+            11,
+            0
+          ],
+          [
+            9,
+            0
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 4,
+        "status": "INCOMPLETE",
+        "last_depth": 1,
+        "first_incomplete": 2,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            3,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "wide",
+        "cap": 5,
+        "status": "COMPLETE",
+        "last_depth": 3,
+        "first_incomplete": null,
+        "per_rank": [
+          [
+            1,
+            0
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            5,
+            0
+          ],
+          [
+            3,
+            0
+          ]
+        ]
+      },
+      {
+        "case": "duplicate_at_full",
+        "duplicates_at_full": 2
+      }
+    ]
+  },
+  "cayleypy-2gpu": {
+    "world": 2,
+    "workers": [
+      115650,
+      115651
+    ],
+    "records": [
+      {
+        "case": "s4",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "duplicates_at_full": null
+      },
+      {
+        "case": "repeated",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          3,
+          6,
+          9,
+          11,
+          11,
+          9,
+          6,
+          3,
+          1
+        ],
+        "duplicates_at_full": null
+      },
+      {
+        "case": "duplicate-full",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          1
+        ],
+        "duplicates_at_full": 2
+      },
+      {
+        "case": "resource-cap",
+        "status": "INCOMPLETE",
+        "sizes": [
+          1
+        ]
+      }
+    ]
+  },
+  "cayleypy-4gpu": {
+    "world": 4,
+    "workers": [
+      115951,
+      115952,
+      115953,
+      115954
+    ],
+    "records": [
+      {
+        "case": "s4",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          3,
+          5,
+          6,
+          5,
+          3,
+          1
+        ],
+        "duplicates_at_full": null
+      },
+      {
+        "case": "repeated",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          3,
+          6,
+          9,
+          11,
+          11,
+          9,
+          6,
+          3,
+          1
+        ],
+        "duplicates_at_full": null
+      },
+      {
+        "case": "duplicate-full",
+        "status": "COMPLETE",
+        "sizes": [
+          1,
+          1
+        ],
+        "duplicates_at_full": 2
+      },
+      {
+        "case": "resource-cap",
+        "status": "INCOMPLETE",
+        "sizes": [
+          1
+        ]
+      }
+    ]
+  },
+  "fault-2gpu": {
+    "workers_killed": [
+      116205,
+      116206
+    ],
+    "next_layers": [
+      1,
+      3,
+      5,
+      6,
+      5,
+      3,
+      1
+    ]
+  }
+}

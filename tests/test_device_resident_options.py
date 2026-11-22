@@ -13,7 +13,8 @@ class DeviceResidentOptions(unittest.TestCase):
  def test_device_requires_supported_shape(self):
   options=dict(execution_engine="device",autotune=False,memory_backend="permutation_bitmap")
   self.assertEqual(NativeOptions(**options).execution_engine,"device")
-  for override in (dict(memory_backend="segmented24"),dict(segment_strategy="warp"),
+  self.assertEqual(NativeOptions(**dict(options,memory_backend="segmented24")).execution_engine,"device")
+  for override in (dict(memory_backend="legacy"),dict(segment_strategy="warp"),
                    dict(memory_preset="max_capacity"),dict(autotune=True),dict(max_seconds=1)):
    with self.subTest(override=override),self.assertRaises(ValueError):
     NativeOptions(**dict(options,**override))
