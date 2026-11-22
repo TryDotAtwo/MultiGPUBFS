@@ -80,6 +80,12 @@ pub fn bitmap_pack4_abi_ready()->bool{crate::segmented_distributed_native::pack4
 #[cfg(not(all(feature="cuda",target_os="linux")))]
 pub fn bitmap_pack4_abi_ready()->bool{false}
 
+/// ABI availability only; topology and the peer smoke are checked at launch.
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn resident_pack4_abi_ready()->bool{crate::segmented_distributed_native::resident_capability()}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn resident_pack4_abi_ready()->bool{false}
+
 /// The hash warp path must never silently run a library with reusable
 /// pending slots; atomic and batch remain compatible with earlier bundles.
 #[cfg(all(feature="cuda",target_os="linux"))]

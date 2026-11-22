@@ -31,6 +31,10 @@ struct Owner {
     MgbfsPack4Dictionary dictionary;
     const Extent* extents;
     uint64_t extent_count;
+    // Optional shared pool. UINT32_MAX is unassigned. Otherwise a segment
+    // is exclusively leased to the corresponding local shard until a
+    // drained layer boundary returns an entirely empty segment to the pool.
+    uint32_t* extent_owner;
     uint64_t* bits;
     uint64_t owner_len;
     uint64_t* rank_count; // null means no rank limit
@@ -47,7 +51,10 @@ struct WordAccessor {
         return dictionary.symbols[(word>>(4*e))&15u];
     }
 };
-__device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uint64_t packed) {
+// rank_verified is only valid after the current caller computed the exact
+// canonical ID from this same packed payload and applied the owner mapping.
+// It must never be used for an untrusted ID sent by another GPU.
+__device__ __forceinline__ Outcome accept_impl(const Owner& a,uint64_t claimed_id,uint64_t packed,bool rank_verified) {
     const Outcome invalid{Status::invalid,0,0};
     if(!a.world||a.world>128||a.owner>=a.world||!a.shards||a.shard>=a.shards||
        !a.bits||!a.domain.total||a.domain.elements!=a.dictionary.elements||
@@ -59,11 +66,15 @@ __device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uin
     if((!a.owner_page&&a.owner_boundary)||(a.owner_page&&
        ((a.owner_page&(a.owner_page-1))||a.owner_page>(1u<<20)||!page_span||
         a.owner_boundary!=a.domain.total-a.domain.total%page_span)))return invalid;
-    const WordAccessor word{a.dictionary,packed};
-    uint64_t id=0;
-    if(!bitmap_rank(a.domain,word,0,&id))return invalid;
-    id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
-    if(id!=claimed_id||id>=a.domain.total||id%a.world!=a.owner||
+    uint64_t id=claimed_id;
+    if(!rank_verified) {
+        const WordAccessor word{a.dictionary,packed};
+        uint64_t derived=0;
+        if(!bitmap_rank(a.domain,word,0,&derived))return invalid;
+        derived=mgbfs_bitmap_permute_owner_id(derived,a.world,a.owner_page,a.owner_boundary);
+        if(derived!=claimed_id)return invalid;
+    }
+    if(id>=a.domain.total||id%a.world!=a.owner||
        (uint64_t(uint32_t(mix64(id)))*a.shards)>>32 != a.shard)return invalid;
     const uint64_t local=id/a.world;
     if(local>=a.owner_len)return invalid;
@@ -74,6 +85,9 @@ __device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uin
     uint64_t chosen=0,row=0;
     bool found=false;
     for(uint64_t i=0;i<a.extent_count;++i) {
+        if(a.extent_owner &&
+           cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.extent_owner[i])
+             .load(cuda::memory_order_acquire)!=a.shard)continue;
         const Extent& x=a.extents[i];
         if(!x.rows||!x.counts||!x.capacity||x.capacity>(uint64_t(1)<<32)||
            !x.banks||a.bank>=x.banks||x.banks>3||x.reserved)return invalid;
@@ -81,6 +95,26 @@ __device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uin
         const uint64_t n=count.load(cuda::memory_order_acquire);
         if(n>x.capacity)return invalid;
         if(n<x.capacity){chosen=i;row=n;found=true;break;}
+    }
+    if(!found && a.extent_owner) {
+        // Different shards may claim distinct empty extents concurrently. A
+        // published lease is immutable until all owners drain at a boundary.
+        for(uint64_t i=0;i<a.extent_count;++i) {
+            const Extent& x=a.extents[i];
+            if(!x.rows||!x.counts||!x.capacity||x.capacity>(uint64_t(1)<<32)||
+               !x.banks||a.bank>=x.banks||x.banks>3||x.reserved)return invalid;
+            auto lease=cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.extent_owner[i]);
+            uint32_t free=UINT32_MAX;
+            if(!lease.compare_exchange_strong(free,a.shard,
+                  cuda::memory_order_acq_rel,cuda::memory_order_acquire))continue;
+            // Only fully drained, reset extents may be published as FREE.
+            for(uint32_t bank=0;bank<x.banks;++bank) {
+                auto n=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(x.counts[bank])
+                    .load(cuda::memory_order_acquire);
+                if(n)return invalid;
+            }
+            chosen=i;row=0;found=true;break;
+        }
     }
     if(!found)return {Status::extent_full,0,0};
     if(a.rank_count) {
@@ -99,5 +133,13 @@ __device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uin
     cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(x.counts[a.bank])
         .store(row+1,cuda::memory_order_release);
     return {Status::accepted,chosen,uint32_t(row)};
+}
+// General callers validate the exact rank inside this function.
+__device__ __forceinline__ Outcome accept(const Owner& a,uint64_t claimed_id,uint64_t packed) {
+    return accept_impl(a,claimed_id,packed,false);
+}
+// The resident receiver computed this ID from the validated payload itself.
+__device__ __forceinline__ Outcome accept_prevalidated(const Owner& a,uint64_t exact_id,uint64_t packed) {
+    return accept_impl(a,exact_id,packed,true);
 }
 }

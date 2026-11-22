@@ -22,6 +22,7 @@ class NativeOptions:
     segment_rows: int = 1 << 32
     segment_strategy: str = field(default_factory=lambda: os.environ.get("MGBFS_SEGMENT_STRATEGY", "atomic"))
     bitmap_owner_page: int | None = None
+    execution_engine: str = "host"
 
     def __post_init__(self):
         _normalize_segment_strategy(self.segment_strategy)
@@ -34,6 +35,13 @@ class NativeOptions:
             raise ValueError("INVALID_BITMAP_OWNER_PAGE")
         if page and self.memory_backend!="permutation_bitmap":
             raise ValueError("BITMAP_OWNER_PAGE_REQUIRES_BITMAP")
+        if self.execution_engine not in ("host", "device"):
+            raise ValueError("INVALID_EXECUTION_ENGINE")
+        if self.execution_engine=="device":
+            if self.memory_backend!="permutation_bitmap" or self.segment_strategy!="atomic" or self.memory_preset!="balanced":
+                raise ValueError("DEVICE_REQUIRES_PACK4_BITMAP_ATOMIC_BALANCED")
+            if self.autotune or self.max_seconds not in (None,0):
+                raise ValueError("DEVICE_AUTOTUNE_AND_DEADLINE_UNSUPPORTED")
 
 
 @dataclass(frozen=True)
@@ -134,7 +142,8 @@ def _search(original, graph, backend, options, output, kwargs):
                            max_seconds=options.max_seconds, autotune=options.autotune,
                            memory_backend=options.memory_backend,
                            segment_rows=options.segment_rows, memory_preset=options.memory_preset,
-                           segment_strategy=options.segment_strategy, bitmap_owner_page=options.bitmap_owner_page)
+                           segment_strategy=options.segment_strategy, bitmap_owner_page=options.bitmap_owner_page,
+                           execution_engine=options.execution_engine)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

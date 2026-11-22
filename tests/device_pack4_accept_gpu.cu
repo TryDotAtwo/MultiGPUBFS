@@ -120,6 +120,46 @@ struct Fixture {
   return total;
  }
 };
+
+void pooled_segments(Fixture& f) {
+  f.reset();
+  const unsigned count=unsigned(f.words.size());
+  auto* shared=managed<Extent>(count);
+  auto* leases=managed<uint32_t>(count);
+  for(unsigned i=0;i<count;++i) {
+    shared[i]={managed<uint64_t>(2),managed<uint64_t>(2),1,2,0};
+    shared[i].counts[0]=shared[i].counts[1]=0;
+    shared[i].rows[0]=shared[i].rows[1]=0xccccccccccccccccULL;
+    leases[i]=UINT32_MAX;
+  }
+  for(unsigned shard=0;shard<2;++shard) {
+    f.owners[shard].extents=shared;f.owners[shard].extent_count=count;
+    f.owners[shard].extent_owner=leases;
+  }
+  f.launch();
+  std::vector<unsigned> seen(count,0);
+  unsigned per_shard[2]={};
+  for(unsigned i=0;i<count;++i) {
+    CHECK(leases[i]<2);
+    CHECK(shared[i].counts[0]==0 && shared[i].counts[1]==1);
+    const uint64_t word=shared[i].rows[1];
+    auto it=std::find(f.words.begin(),f.words.end(),word);
+    CHECK(it!=f.words.end());
+    const unsigned id=unsigned(it-f.words.begin());
+    CHECK(leases[i]==unsigned((uint64_t(uint32_t(mix_host(id)))*2)>>32));
+    CHECK(++seen[id]==1);++per_shard[leases[i]];
+  }
+  CHECK(per_shard[0]>0&&per_shard[1]>0);
+  CHECK(*f.bits==((uint64_t(1)<<count)-1));
+  for(unsigned i=0;i<f.n;++i) {
+    const unsigned shard=unsigned((uint64_t(uint32_t(mix_host(f.candidates[i].id)))*2)>>32);
+    const auto status=f.outcomes[shard*f.n+i].status;
+    CHECK(status==Status::accepted||status==Status::duplicate);
+  }
+  std::printf("PASS pool: %u one-row extents shared between active shards (%u/%u)\\n",
+              count,per_shard[0],per_shard[1]);
+}
+
 int main() {
  int count=0;auto e=cudaGetDeviceCount(&count);
  if(e==cudaErrorNoDevice || (e==cudaSuccess&&!count))return 77;
@@ -147,5 +187,6 @@ int main() {
  CHECK(result->status==Status::invalid && *f.bits==before && *f.rank_count==before_count);
  bad={0,15};one<<<1,1>>>(f.owners[0],bad,result);C(cudaGetLastError());C(cudaDeviceSynchronize());
  CHECK(result->status==Status::invalid && *f.bits==before && *f.rank_count==before_count);
+ pooled_segments(f);
  std::puts("PASS resident packed bitmap owner: exact repeated-symbol states, two shards, segments, cap and replay");
 }

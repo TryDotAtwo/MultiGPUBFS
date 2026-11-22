@@ -1,6 +1,8 @@
 //! Experimental independently segmented distributed exact BFS.
 //! Not selected by the public runtime until multi-process and failure gates pass.
 use std::{ffi::c_void,ptr};
+#[path="segmented_device_ffi.rs"] mod resident_ffi;
+#[path="segmented_device_run.rs"] mod resident_run;
 use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{segmented_strategy::{SegmentStrategy,OwnerDecision,owner_decision,RawTileCursor},generic_distributed_memory::GenericDistributedMemoryPlan as Plan,
@@ -242,6 +244,15 @@ fn segment_sizing_memory_info()->Result<(usize,usize)>{
  let(mut free,mut total)=(0usize,0usize);
  crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
  Ok((free,total))
+}
+
+pub(crate) fn resident_capability()->bool{unsafe{resident_ffi::Functions::load().is_ok()}}
+pub(crate) fn resident_preflight(devices:&[u32],rank:u32)->Result<()>{
+ let f=unsafe{resident_ffi::Functions::load()}?;
+ let topology=f.preflight(devices,rank)?;
+ eprintln!("RESIDENT_PREFLIGHT rank={rank} world={} cuda_runtime={} cuda_driver={} nccl={}",
+  topology.rank_count,topology.cuda_runtime_version,topology.cuda_driver_version,topology.nccl_version);
+ Ok(())
 }
 
 pub struct SegmentedDistributedBfs{

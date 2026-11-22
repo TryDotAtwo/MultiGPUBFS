@@ -187,8 +187,23 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
   crate::segmented_host_ready::injected("entry")?;
   if launch.online_size_tuning||launch.size_profiles.iter().any(|p|p.generator_backend!="cuda"){return Err("SEGMENTED_EXPERIMENT_PROFILE_NOT_SUPPORTED".into())}
   let backend=if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
+  let resident=match std::env::var("MGBFS_EXPERIMENTAL_DEVICE_BFS"){
+   Err(std::env::VarError::NotPresent)=>false,Ok(v) if v=="0"=>false,Ok(v) if v=="1"=>true,
+   _=>return Err("RESIDENT_MODE_INVALID".into())
+  };
+  if resident {
+   if backend!="EXPERIMENTAL_PERMUTATION_BITMAP"||std::env::var("MGBFS_SEGMENT_PACK4").as_deref()!=Ok("1")||
+      !matches!(std::env::var("MGBFS_SEGMENT_STRATEGY").as_deref(),Ok("atomic")|Err(_))||
+      std::env::var("MGBFS_BITMAP_BANKS").as_deref()==Ok("2") {
+    return Err("RESIDENT_REQUIRES_PACK4_BITMAP_ATOMIC_THREE_BANKS".into())
+   }
+   let test_profile=std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1");
+   if seconds!=0||(launch.profile_max_layers.is_some()&&!test_profile)||launch.online_size_tuning||!launch.size_profiles.is_empty(){
+    return Err("RESIDENT_DEADLINE_AND_TUNING_NOT_SUPPORTED".into())
+   }
+  }
   let identity=crate::segmented_host_ready::runtime_identity()?;
-  let descriptor=serde_json::json!({"schema":1,"runtime":identity,"graph_digest":digest(g)?,"devices":launch.devices,"world":launch.plan.world,"shards":launch.plan.shards,"elements":launch.plan.elements,"state_bytes":launch.plan.state_bytes,"batch":launch.plan.batch,"queue_capacity":launch.plan.queue_capacity,"history_algorithm":launch.plan.history_algorithm,"history_layers":launch.plan.history_layers,"owner_cuts":launch.owner_cuts,"backend":backend});
+  let descriptor=serde_json::json!({"schema":1,"runtime":identity,"graph_digest":digest(g)?,"devices":launch.devices,"world":launch.plan.world,"shards":launch.plan.shards,"elements":launch.plan.elements,"state_bytes":launch.plan.state_bytes,"batch":launch.plan.batch,"queue_capacity":launch.plan.queue_capacity,"history_algorithm":launch.plan.history_algorithm,"history_layers":launch.plan.history_layers,"owner_cuts":launch.owner_cuts,"backend":backend,"resident":resident});
   crate::session_cache::begin(format!("{}:{}",backend,serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?));
   crate::generic_native::checked!(cudaSetDevice,unsafe{cudaSetDevice(launch.devices[rank as usize] as i32)})?;
   let pool_idle_before=crate::generic_pool::available()?;crate::generic_pool::trim_idle()?;let pool_idle_after=crate::generic_pool::available()?;
@@ -199,15 +214,35 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
    Err(_)=>return Err("SEGMENTED_TEST_HASH_BITS".into()),
   };
   if hash_bits>64{return Err("SEGMENTED_TEST_HASH_BITS".into())}
-  Ok((backend,pool_idle_before,pool_idle_after,hash_bits,descriptor))
+  Ok((backend,pool_idle_before,pool_idle_after,hash_bits,descriptor,resident))
  })();
  let descriptor=entry.as_ref().ok().map(|x|&x.4);
  ready.agree("entry",&entry,descriptor)?;
- let(backend,pool_idle_before,pool_idle_after,hash_bits,_)=entry?;
+ let(backend,pool_idle_before,pool_idle_after,hash_bits,_,resident)=entry?;
+ if resident {
+  let preflight=crate::segmented_distributed_native::resident_preflight(&launch.devices,rank);
+  ready.agree("resident-preflight",&preflight,None)?;preflight?;
+ }
  let _signals=Signals::new();let setup=Instant::now();
  let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(g,launch.devices[rank as usize],rank,rank_plan.clone(),id,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready)?;
  let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];
+ let mut resident_evidence=None;let mut resident_setup_seconds=0f64;
+ let(status,reason,bfs_seconds)=if resident {
+  let result=match bfs.run_resident(ready,launch.profile_max_layers) {
+   Ok(result)=>result,
+   Err(error)=>{
+    // A failed resident launch may still have remote readers of the bitmap,
+    // segment rows and NCCL window. Keep the entire GPU owner alive until
+    // the supervisor terminates the poisoned worker generation.
+    crate::native_fault::fatal_host("resident-job",&error);
+    std::mem::forget(bfs);
+    return Err(error)
+   }
+  };
+  sizes=result.sizes;resident_setup_seconds=result.setup_seconds;resident_evidence=Some(result.evidence);
+  (result.status,result.reason.to_owned(),result.bfs_seconds)
+ }else{
  let(status,reason)=loop{
   crate::native_fault::layer(sizes.len() as u64,sizes.len() as u64-1);
   let local=if CANCELLED.load(Ordering::Relaxed)||crate::job_phase::cancelled(){1}else if launch.profile_max_layers.map_or(false,|limit|sizes.len() as u32>limit){3}else if seconds!=0&&start.elapsed()>=Duration::from_secs(seconds){2}else{0};
@@ -215,7 +250,8 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
   if let Some(p)=launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket==Some(bfs.frontier_bucket())).or_else(||launch.size_profiles.iter().rev().find(|p|p.frontier_max_rank_bucket.is_none()&&p.minimum_frontier<=bfs.global_frontier())){bfs.set_size_profile(p.batch,false)?;}
   let layer=Instant::now();match bfs.advance()?{DistributedAdvance::Layer{global,..}=>{sizes.push(global);crate::native_fault::completed(sizes.len() as u64-1);times.push(layer.elapsed().as_secs_f64());},DistributedAdvance::Complete=>break("COMPLETE","FRONTIER_EXHAUSTED".to_owned()),DistributedAdvance::Resource{fatal}=>break("INCOMPLETE",format!("RESOURCE_{fatal}"))}
  };
- let bfs_seconds=start.elapsed().as_secs_f64();
+ (status,reason,start.elapsed().as_secs_f64())
+ };
  // No rank publishes a receipt or parks a communicator until every rank has
  // sampled, written private attempt files, and drained its own streams.
  let prepared:Result<_>=(||{
@@ -229,7 +265,21 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
   use sha2::{Digest,Sha256};let sha=Sha256::digest(&state_bytes).iter().map(|v|format!("{v:02x}")).collect::<String>();
   std::fs::write(output.join("states.json.tmp"),state_bytes).map_err(|e|format!("SEGMENTED_FINISH_STATES rank={rank} {e}"))?;
   let mut memory=bfs.memory_geometry();memory["pool_idle_before_trim_bytes"]=pool_idle_before.into();memory["pool_idle_after_trim_bytes"]=pool_idle_after.into();
-  let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds,"source_retries":bfs.source_retries(),"peak_owner_lanes":bfs.peak_owner_lanes(),"segment_strategy":bfs.strategy_name(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(),"setup_seconds":setup_seconds,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
+  if resident {
+   let extent_rows=memory["segment_rows_per_bank_by_shard"].as_array()
+    .map(|groups|groups.iter().filter_map(|group|group.as_array())
+     .flat_map(|group|group.iter().cloned()).collect::<Vec<_>>()).unwrap_or_default();
+   memory["resident_extent_pool_rows_per_bank"]=serde_json::json!(extent_rows);
+   memory["resident_extent_pool_scope"]="preallocated extents; free extents can be leased by any shard".into();
+   memory["admission_last_limit"]=memory["resource_detail"].take();
+   for key in ["resource_detail","peak_live_rows","owner_lanes","actual_queue_capacity","exact_exchange","transport_trace","remote_records_sent","remote_padded_records","segment_rows_per_bank_by_shard","position_item_bytes_by_shard"] {
+    memory[key]=serde_json::Value::Null;
+   }
+   memory["resident"]=resident_evidence.clone().into();
+  }
+  let report=serde_json::json!({"schema":2,"rank":rank,"world":launch.plan.world,"device":launch.devices[rank as usize],"status":status,"reason":reason,"graph_digest":launch.graph_digest,"states_sha256":sha,"layer_sizes":sizes,"layer_seconds":times,"bfs_seconds":bfs_seconds, "source_retries":if resident{None}else{Some(bfs.source_retries())},"peak_owner_lanes":if resident{None}else{Some(bfs.peak_owner_lanes())},"segment_strategy":bfs.strategy_name(),"segment_memory":memory,"size_profile_count":launch.size_profiles.len(),"online_size_profile_events":bfs.size_profile_events(), "setup_seconds":setup_seconds+resident_setup_seconds,"resident_setup_seconds":resident_setup_seconds,
+  "execution_engine":if resident{"GPU_RESIDENT_EXPERIMENTAL"}else{"HOST_SEGMENTED"},
+  "resident":resident_evidence,"plan":rank_plan,"backend":backend,"profile_status":"NOT_THROUGHPUT_TUNED"});
   std::fs::write(output.join("report.json.tmp"),serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?).map_err(|e|format!("SEGMENTED_FINISH_REPORT rank={rank} {e}"))?;
   bfs.quiesce()?;Ok(())
  })();

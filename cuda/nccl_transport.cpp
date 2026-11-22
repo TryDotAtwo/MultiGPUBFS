@@ -15,6 +15,9 @@ namespace { int terminal_abort(Comm*); }
 #ifdef MGBFS_NCCL_LSA
 #include <nccl_device.h>
 #include <cuda/atomic>
+#ifdef MGBFS_EXPERIMENTAL_PACK4
+#include "device_pack4_bfs.cuh"
+#endif
 #if NCCL_VERSION_CODE < 22900
 #error "MGBFS_NCCL_LSA requires NCCL 2.29 or newer"
 #endif
@@ -543,6 +546,86 @@ extern "C" int mgbfs_nccl_lsa_activate(void* raw,char* error,size_t error_capaci
   if(p->device.lsaSize!=int(p->world))return 9;
   return 0;
 }
+
+#ifdef MGBFS_EXPERIMENTAL_PACK4
+extern "C" int mgbfs_device_pack4_bfs_init_v1(void*,uint64_t,const mgbfs_resident::Args*,void*);
+extern "C" int mgbfs_device_pack4_bfs_launch_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,mgbfs_resident::Report*,void*);
+extern "C" int mgbfs_device_pack4_lsa_smoke_v1(const void*,const void*,const mgbfs_resident::Args*,uint64_t,uint32_t*,void*);
+
+// Admission and the CUDA allocations are rank-local; call the existing host
+// agreement before the collective activation and again after initialization.
+extern "C" int mgbfs_nccl_resident_prepare_v1(void* raw,uint64_t bytes,char* error,size_t error_capacity) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started||p->symmetric||p->window_ready||p->device_ready||
+     !p->world||p->world>mgbfs_resident::max_world||!bytes||bytes>SIZE_MAX)return 1;
+  int version=0;if(ncclGetVersion(&version)!=ncclSuccess||version<22900)return 2;
+  ncclCommProperties_t props=NCCL_COMM_PROPERTIES_INITIALIZER;
+  auto result=ncclCommQueryProperties(p->value,&props);
+  if(result!=ncclSuccess){lsa_error(error,error_capacity,"resident_query_properties",result);return 3;}
+  if(!props.deviceApiSupport||props.nLsaTeams!=1)return 4;
+  result=ncclMemAlloc(reinterpret_cast<void**>(&p->symmetric),size_t(bytes));
+  if(result!=ncclSuccess){lsa_error(error,error_capacity,"resident_mem_alloc",result);return 5;}
+  p->states_offset=size_t(bytes);p->candidate_capacity=0;p->state_stride=0;
+  return 0;
+}
+extern "C" int mgbfs_nccl_resident_activate_v1(void* raw,char* error,size_t error_capacity) {
+  auto* p=static_cast<Comm*>(raw);
+  int status=mgbfs_nccl_lsa_activate(raw,error,error_capacity);
+  if(status)return status;
+  if(p->device.lsaSize!=int(p->world)||p->device.lsaRank!=int(p->rank)) {
+    if(error&&error_capacity)std::snprintf(error,error_capacity,"resident_lsa_mapping rank=%u actual=%d size=%d",p->rank,p->device.lsaRank,p->device.lsaSize);
+    return 10;
+  }
+  return 0;
+}
+extern "C" int mgbfs_nccl_resident_init_v1(void* raw,const mgbfs_resident::Args* args,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  return mgbfs_device_pack4_bfs_init_v1(p->symmetric,p->states_offset,args,stream);
+}
+
+extern "C" int mgbfs_nccl_resident_window_info_v1(void* raw,void** base,uint64_t* bytes) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!base||!bytes||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  *base=p->symmetric;*bytes=uint64_t(p->states_offset);return 0;
+}
+extern "C" int mgbfs_nccl_resident_smoke_v1(void* raw,const mgbfs_resident::Args* args,
+                                               uint32_t* result,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  int status=mgbfs_device_pack4_lsa_smoke_v1(&p->window,&p->device,args,p->states_offset,result,stream);
+  if(!status)p->lsa_used=true;
+  return status;
+}
+extern "C" int mgbfs_nccl_resident_launch_v1(void* raw,const mgbfs_resident::Args* args,
+                                                mgbfs_resident::Report* report,void* stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->device_ready||!p->window_ready||!p->symmetric||p->terminal_started)return 1;
+  int status=mgbfs_device_pack4_bfs_launch_v1(&p->window,&p->device,args,p->states_offset,report,stream);
+  if(!status)p->lsa_used=true;
+  return status;
+}
+// Caller must first synchronize the resident stream locally and obtain an
+// independent host-side agreement that all ranks have stopped touching every
+// window. Failure to retire is fatal to the generation, never a cache hit.
+extern "C" int mgbfs_nccl_resident_retire_v1(void* raw) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started||!p->device_ready||!p->window_ready||!p->symmetric)return 1;
+  auto failed=[&](int code){p->retirement_failed=true;return code;};
+  auto result=ncclDevCommDestroy(p->value,&p->device);
+  if(await_nccl(p,result)!=0)return failed(2);
+  p->device_ready=false;
+  result=ncclCommWindowDeregister(p->value,p->window);
+  if(await_nccl(p,result)!=0)return failed(3);
+  p->window_ready=false;
+  result=ncclMemFree(p->symmetric);
+  if(result!=ncclSuccess)return failed(4);
+  p->symmetric=nullptr;p->states_offset=0;p->candidate_capacity=0;p->state_stride=0;
+  p->lsa_used=false;p->readers_retired=false;
+  return 0;
+}
+#endif
+
 extern "C" int mgbfs_nccl_lsa_exchange_rows(void* raw,const void* sorted_hashes,
     const void* packed_states,const uint32_t* owner_counts,
     const uint32_t* group_fatal,uint32_t logical_owner,uint32_t peer,

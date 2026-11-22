@@ -1,0 +1,480 @@
+#pragma once
+
+// Internal device-resident exact BFS entry. The wrapper is compiled only with
+// NCCL device API and packed bitmap support. Public selection is explicit and experimental.
+// All pointers in Args are local-device allocations owned for the whole job.
+// The symmetric window and all its peer readers must remain alive until every
+// rank has stopped and the external supervisor has confirmed retirement.
+
+#include "device_epoch_decision.cuh"
+#include "device_mailbox.cuh"
+#include "device_pack4_accept.cuh"
+#include "bitmap_pack4_action.cuh"
+#include <nccl_device.h>
+#include <cuda_runtime.h>
+
+namespace mgbfs_resident {
+using Word=unsigned long long;
+using SystemAtomic=cuda::atomic_ref<Word,cuda::thread_scope_system>;
+using BlockAtomic=cuda::atomic_ref<Word,cuda::thread_scope_block>;
+constexpr unsigned lanes=4;
+constexpr unsigned max_world=8;
+constexpr unsigned threads=96;
+constexpr uint32_t payload_format=1;
+
+struct Payload { uint64_t packed; uint32_t source,reserved; };
+struct Capture { uint64_t depth,packed; };
+struct alignas(64) Control {
+  mgbfs_device_epoch::RankStatus status;
+  mgbfs_device_epoch::Decision decision;
+  Word done_count,done_epoch,committed_count,global_next,stop_reason;
+};
+static_assert(sizeof(Control)%64==0,"resident control alignment");
+static_assert(sizeof(Payload)==16,"resident packet ABI");
+
+// A single segment provides three banks of packed rows. All extents belong to
+// a shared pool; an owner tag of UINT32_MAX means the entire segment is free.
+// For any other tag, all three row ranges and all count words are exclusively
+// leased to that shard. Host admission must prove there is no overlap between
+// any row or count range and retain all allocations until the job is retired.
+struct Args {
+  uint32_t abi_version,struct_bytes,world,rank;
+  uint32_t owner,shards,generators,banks;
+  uint32_t owner_page,reserved0;
+  uint64_t owner_boundary,owner_len,job_generation,rank_limit;
+  BitmapDeviceDomain domain;
+  MgbfsPack4Dictionary dictionary;
+  MgbfsDeviceMailboxLayoutV1 mailbox;
+  const uint32_t* permutations;
+  const uint32_t* physical_of_logical;
+  mgbfs_device_pack4::Extent* extents;
+  uint32_t* extent_owner;
+  uint64_t extent_count;
+  uint32_t* shard_locks;
+  uint64_t* visited;
+  uint64_t* rank_count;
+  uint64_t* layer_sizes;
+  uint64_t layer_capacity;
+  uint64_t* rank_counts;
+  Capture* capture;
+  uint64_t capture_capacity;
+  uint64_t* capture_count;
+  uint32_t* terminal;
+};
+struct Report {
+  uint64_t depth,sent,received,duplicates,duplicates_full,blocked;
+  uint64_t capture_count,global_next;
+  uint32_t status,rank,reason,max_active_shards_first64;
+};
+enum : uint32_t { reason_none=0,reason_capacity=1,reason_log_capacity=2,
+                  reason_cancelled=3,reason_protocol=4,reason_capture=5 };
+
+#ifdef MGBFS_RESIDENT_IMPLEMENTATION
+__device__ __forceinline__ Word load(Word& x) {
+  return SystemAtomic(x).load(cuda::memory_order_acquire);
+}
+__device__ __forceinline__ void store(Word& x,Word v) {
+  SystemAtomic(x).store(v,cuda::memory_order_release);
+}
+__device__ __forceinline__ Word add(Word& x,Word v=1) {
+  return BlockAtomic(x).fetch_add(v,cuda::memory_order_acq_rel);
+}
+__device__ __forceinline__ Word local_load(Word& x) {
+  return BlockAtomic(x).load(cuda::memory_order_acquire);
+}
+__device__ __forceinline__ void failure(Control& x,Word bit) {
+  SystemAtomic(x.status.failure).fetch_or(bit,cuda::memory_order_acq_rel);
+}
+__device__ __forceinline__ bool terminal(const uint32_t* p) {
+  if(!p)return false;
+  auto& v=*const_cast<uint32_t*>(p);
+  return cuda::atomic_ref<uint32_t,cuda::thread_scope_system>(v)
+      .load(cuda::memory_order_acquire)!=0;
+}
+__device__ __forceinline__ unsigned char* mailbox_base(Control* c) {
+  return reinterpret_cast<unsigned char*>(c)+sizeof(Control);
+}
+__device__ __forceinline__ mgbfs_packet_ring::View view(
+    Control* c,const Args& a,unsigned lane,unsigned destination) {
+  return mgbfs_device_mailbox::view(mailbox_base(c),a.mailbox,destination,lane);
+}
+__device__ __forceinline__ mgbfs_packet_ring::CloseSlot& close(
+    Control* c,const Args& a,unsigned lane,unsigned destination) {
+  return mgbfs_device_mailbox::close(mailbox_base(c),a.mailbox,destination,lane);
+}
+
+__global__ void initialize(Control* local,Args a) {
+  if(blockIdx.x||threadIdx.x)return;
+  local->status={0,0};local->decision={0,0,0,0};
+  local->done_count=local->done_epoch=local->committed_count=local->global_next=local->stop_reason=0;
+  for(unsigned lane=0;lane<lanes;++lane)for(unsigned dst=0;dst<a.world;++dst) {
+    auto ring=view(local,a,lane,dst);
+    for(unsigned slot=0;slot<a.mailbox.slots_per_ring;++slot)
+      mgbfs_packet_ring::init_slot(ring.slots[slot],slot);
+    mgbfs_packet_ring::init_close(close(local,a,lane,dst));
+  }
+}
+
+
+// Startup-only data+credit validation through the actual registered LSA
+// window. Each rank sends twice over the single-slot ring to every rank and
+// checks the payload from every source. The caller initializes this layout,
+// synchronizes all ranks, and must synchronize all ranks again before reuse.
+// Terminal cancellation is shared with the resident job supervisor.
+__global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t* out) {
+  if(blockIdx.x)return;
+  const unsigned tid=threadIdx.x;
+  __shared__ Control* peers[max_world];
+  __shared__ unsigned failed;
+  if(tid==64) {
+    failed=(comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world)||
+            a.mailbox.slots_per_ring!=1);
+    for(unsigned r=0;r<a.world;++r) {
+      peers[r]=static_cast<Control*>(ncclGetLsaPointer(window,0,r));
+      if(!peers[r])failed=1;
+    }
+  }
+  __syncthreads();
+  constexpr Word phase=UINT64_MAX-1;
+  constexpr uint32_t format=0x736d6f6bu;
+  if(!failed&&tid==0) {
+    for(unsigned dst=0;dst<a.world&&!atomicAdd(&failed,0u);++dst) {
+      auto ring=view(peers[a.rank],a,0,dst);
+      for(Word ticket=0;ticket<2&&!atomicAdd(&failed,0u);++ticket) {
+        Payload p{(Word(a.rank)<<40)|(Word(dst)<<32)|ticket,a.rank,dst};
+        for(;;) {
+          if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
+          auto r=mgbfs_packet_ring::try_send(ring,ticket,a.job_generation,
+                     phase,format,reinterpret_cast<const unsigned char*>(&p),sizeof(p));
+          if(r==mgbfs_packet_ring::Result::ok)break;
+          if(r!=mgbfs_packet_ring::Result::not_ready){atomicExch(&failed,1u);break;}
+          __nanosleep(32);
+        }
+      }
+    }
+    // The second credit confirms the receiver has completed both reads.
+    for(unsigned dst=0;dst<a.world&&!atomicAdd(&failed,0u);++dst) {
+      auto ring=view(peers[a.rank],a,0,dst);
+      while(SystemAtomic(ring.slots[0].sequence).load(cuda::memory_order_acquire)!=4) {
+        if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
+        __nanosleep(32);
+      }
+    }
+  } else if(!failed&&tid==32) {
+    Word ticket[max_world]={};
+    unsigned remaining=a.world*2,cursor=0;
+    while(remaining&&!atomicAdd(&failed,0u)) {
+      if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
+      const unsigned src=cursor++%a.world;
+      if(ticket[src]==2)continue;
+      auto ring=view(peers[src],a,0,a.rank);
+      mgbfs_packet_ring::PacketHeader header{};
+      const unsigned char* bytes=nullptr;
+      auto r=mgbfs_packet_ring::try_peek(ring,ticket[src],a.job_generation,phase,&header,&bytes);
+      if(r==mgbfs_packet_ring::Result::not_ready)continue;
+      if(r!=mgbfs_packet_ring::Result::ok||header.len!=sizeof(Payload)||header.format!=format) {
+        atomicExch(&failed,1u);break;
+      }
+      Payload p{};auto* target=reinterpret_cast<unsigned char*>(&p);
+      for(unsigned i=0;i<sizeof(p);++i)target[i]=bytes[i];
+      if(p.source!=src||p.reserved!=a.rank||
+         p.packed!=((Word(src)<<40)|(Word(a.rank)<<32)|ticket[src])) {
+        atomicExch(&failed,1u);break;
+      }
+      if(mgbfs_packet_ring::try_ack(ring,ticket[src],a.job_generation,phase)
+         !=mgbfs_packet_ring::Result::ok){atomicExch(&failed,1u);break;}
+      ++ticket[src];--remaining;
+    }
+  }
+  __syncthreads();
+  if(tid==64)*out=failed;
+}
+
+// All producer/consumer roles share one resident CTA. A blocked producer
+// cannot prevent the separate consumer warp from receiving and returning
+// credits. This first implementation deliberately favors a simple proof over
+// throughput; more CTAs require a separate residency/progress proof.
+__global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) {
+  if(blockIdx.x)return;
+  const unsigned tid=threadIdx.x;
+  __shared__ Control* rank[max_world];
+  __shared__ mgbfs_device_epoch::RankStatus* ranks[max_world];
+  __shared__ Word current,next,producers_done,consumers_done;
+  __shared__ Word sent,received,duplicates,duplicates_full,blocked,shards_this_layer;
+  __shared__ uint32_t max_active_shards;
+  __shared__ uint64_t depth;
+  __shared__ unsigned choice,bootstrap_failed;
+  if(tid==64) {
+    bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
+    for(unsigned r=0;r<a.world;++r) {
+      rank[r]=static_cast<Control*>(ncclGetLsaPointer(window,0,r));
+      ranks[r]=rank[r]?&rank[r]->status:nullptr;
+      invalid|=!rank[r];
+    }
+    current=next=producers_done=consumers_done=0;
+    sent=received=duplicates=duplicates_full=blocked=0;
+    shards_this_layer=0;max_active_shards=0;
+    depth=choice=bootstrap_failed=0;
+    for(uint64_t i=0;i<a.extent_count;++i) {
+      const auto& e=a.extents[i];
+      if(!e.counts||!e.rows||e.banks!=3||!e.capacity||
+         e.capacity>(uint64_t(1)<<32)||e.counts[0]>e.capacity||
+         current>UINT64_MAX-e.counts[0]) {invalid=true;break;}
+      current+=e.counts[0];
+    }
+    if(current>1)invalid=true;
+    if(!invalid) {
+      store(rank[a.rank]->committed_count,current);
+      a.layer_sizes[0]=1;
+      if(a.capture_count)*a.capture_count=0;
+    } else {
+      bootstrap_failed=1;
+      report->status=mgbfs_device_epoch::ERROR;
+      report->reason=reason_protocol;
+      report->rank=a.rank;
+    }
+  }
+  __syncthreads();
+  // This is unreachable after successful group-wide capability preflight.
+  bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
+  for(unsigned r=0;r<a.world;++r)invalid|=!rank[r];
+  if(invalid||bootstrap_failed)return;
+  Control& local=*rank[a.rank];
+  Control& coordinator=*rank[0];
+  Word send_ticket[max_world]={};
+  Word receive_tickets[max_world*lanes]={};
+  for(;;) {
+    const Word epoch=depth+1;
+    const unsigned read_bank=unsigned(depth%3);
+    const unsigned write_bank=unsigned((depth+1)%3);
+    if(tid==64) {
+      *a.rank_count=0;shards_this_layer=0;
+      for(unsigned s=0;s<a.shards;++s)a.shard_locks[s]=0;
+      for(uint64_t i=0;i<a.extent_count;++i) {
+        auto& e=a.extents[i];
+        e.counts[write_bank]=0;
+        if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])
+          a.extent_owner[i]=UINT32_MAX;
+      }
+    }
+    __syncthreads();
+    if(tid<lanes) {
+      bool stopped=false;
+      for(Word parent=tid;parent<current&&!stopped;parent+=lanes) {
+        uint64_t remaining=parent,packed=0;bool found=false;
+        for(uint64_t i=0;i<a.extent_count;++i) {
+          const auto& e=a.extents[i];const uint64_t n=e.counts[read_bank];
+          if(remaining<n) {packed=e.rows[uint64_t(read_bank)*e.capacity+remaining];found=true;break;}
+          remaining-=n;
+        }
+        if(!found){failure(local,mgbfs_device_epoch::FATAL);break;}
+        for(unsigned edge=0;edge<a.generators&&!stopped;++edge) {
+          BitmapPack4Action action{a.dictionary.elements,a.generators,1,&packed,a.permutations,a.dictionary};
+          uint32_t bad=0;uint64_t id=0;
+          if(!action.valid(edge,&bad)||!bitmap_rank(a.domain,action,edge,&id)||id>=a.domain.total) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+          const unsigned logical=unsigned(id%a.world);
+          const unsigned destination=a.physical_of_logical[logical];
+          if(destination>=a.world){failure(local,mgbfs_device_epoch::FATAL);break;}
+          uint64_t child=0;
+          for(unsigned e=0;e<a.dictionary.elements;++e) {
+            const unsigned source=a.permutations[uint64_t(edge)*a.dictionary.elements+e];
+            child|=((packed>>(4*source))&15ull)<<(4*e);
+          }
+          Payload payload{child,a.rank,0};
+          for(;;) {
+            if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
+            if(load(coordinator.decision.request_epoch)==epoch){stopped=true;break;}
+            auto result=mgbfs_packet_ring::try_send(view(&local,a,tid,destination),
+                send_ticket[destination],a.job_generation,epoch,payload_format,
+                reinterpret_cast<const unsigned char*>(&payload),sizeof(payload));
+            if(result==mgbfs_packet_ring::Result::ok){++send_ticket[destination];add(sent);break;}
+            if(result!=mgbfs_packet_ring::Result::not_ready){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
+            add(blocked);__nanosleep(32);
+          }
+        }
+      }
+      if(!stopped)for(unsigned dst=0;dst<a.world&&!stopped;++dst) {
+        for(;;) {
+          if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
+          if(load(coordinator.decision.request_epoch)==epoch){stopped=true;break;}
+          const auto result=mgbfs_packet_ring::try_close(close(&local,a,tid,dst),
+              depth,a.job_generation,epoch,send_ticket[dst]);
+          if(result==mgbfs_packet_ring::Result::ok)break;
+          if(result!=mgbfs_packet_ring::Result::not_ready){failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;}
+          __nanosleep(32);
+        }
+      }
+      add(producers_done);
+    } else if(tid==32) {
+      // One resident receiver visits every inbound SPSC ring round-robin.
+      // It never waits on a particular source: a full outgoing ring cannot
+      // prevent this rank from acknowledging a different incoming ring.
+      // Serial ownership also excludes shard lockstep/warp starvation.
+      bool closed[max_world*lanes]={};
+      unsigned active=a.world*lanes,cursor=0;
+      while(active) {
+        if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);break;}
+        if(load(coordinator.decision.request_epoch)==epoch)break;
+        const unsigned channel=cursor++%(a.world*lanes);
+        if(closed[channel])continue;
+        const unsigned src=channel/lanes,lane=channel%lanes;
+        Word& ticket=receive_tickets[channel];
+        mgbfs_packet_ring::PacketHeader header{};const unsigned char* bytes=nullptr;
+        auto result=mgbfs_packet_ring::try_peek(view(rank[src],a,lane,a.rank),
+            ticket,a.job_generation,epoch,&header,&bytes);
+        if(result==mgbfs_packet_ring::Result::ok) {
+          if(header.len!=sizeof(Payload)||header.format!=payload_format){failure(local,mgbfs_device_epoch::FATAL);break;}
+          Payload payload{};auto* dst=reinterpret_cast<unsigned char*>(&payload);
+          for(unsigned i=0;i<sizeof(payload);++i)dst[i]=bytes[i];
+          mgbfs_device_pack4::WordAccessor word{a.dictionary,payload.packed};
+          uint64_t id=0;
+          if(payload.source!=src||payload.reserved||!mgbfs_pack4_valid_word(a.dictionary,payload.packed)||
+             !bitmap_rank(a.domain,word,0,&id)||id>=a.domain.total) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+          id=mgbfs_bitmap_permute_owner_id(id,a.world,a.owner_page,a.owner_boundary);
+          if(id%a.world!=a.owner||a.physical_of_logical[a.owner]!=a.rank) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+          const unsigned shard=unsigned((uint64_t(uint32_t(mix64(id)))*a.shards)>>32);
+          mgbfs_device_pack4::Owner owner{};
+          owner.domain=a.domain;owner.dictionary=a.dictionary;
+          owner.extents=a.extents;owner.extent_count=a.extent_count;
+          owner.extent_owner=a.extent_owner;owner.bits=a.visited;
+          owner.owner_len=a.owner_len;owner.rank_count=a.rank_limit?a.rank_count:nullptr;
+          owner.rank_limit=a.rank_limit;owner.owner_boundary=a.owner_boundary;
+          owner.world=a.world;owner.owner=a.owner;owner.shards=a.shards;
+          owner.shard=shard;owner.bank=write_bank;owner.owner_page=a.owner_page;
+          auto accepted=mgbfs_device_pack4::accept_prevalidated(owner,id,payload.packed);
+          bool failed=false;
+          if(accepted.status==mgbfs_device_pack4::Status::duplicate) {
+            add(duplicates);
+            if(a.rank_limit&&cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(*a.rank_count)
+                 .load(cuda::memory_order_acquire)>=a.rank_limit)add(duplicates_full);
+          } else if(accepted.status==mgbfs_device_pack4::Status::accepted) {
+            if(shard<64)shards_this_layer|=Word(1)<<shard;
+            add(next);
+            if(a.capture) {
+              const uint64_t index=atomicAdd(reinterpret_cast<unsigned long long*>(a.capture_count),1ull);
+              if(index>=a.capture_capacity){failure(local,mgbfs_device_epoch::FATAL);failed=true;}
+              else a.capture[index]={depth+1,payload.packed};
+            }
+          } else if(accepted.status==mgbfs_device_pack4::Status::extent_full ||
+                    accepted.status==mgbfs_device_pack4::Status::cap_full) {
+            failure(local,mgbfs_device_epoch::RESOURCE);failed=true;
+          } else {failure(local,mgbfs_device_epoch::FATAL);failed=true;}
+          if(failed)break;
+          if(mgbfs_packet_ring::try_ack(view(rank[src],a,lane,a.rank),
+              ticket,a.job_generation,epoch)!=mgbfs_packet_ring::Result::ok) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+          ++ticket;add(received);
+        } else if(result!=mgbfs_packet_ring::Result::not_ready&&
+                  result!=mgbfs_packet_ring::Result::future_phase) {
+          failure(local,mgbfs_device_epoch::FATAL);break;
+        } else {
+          Word tail=0;
+          auto c=mgbfs_packet_ring::try_get_close(close(rank[src],a,lane,a.rank),
+              depth,a.job_generation,epoch,&tail);
+          if(c==mgbfs_packet_ring::Result::ok) {
+            if(ticket>tail){failure(local,mgbfs_device_epoch::FATAL);break;}
+            if(ticket==tail) {
+              if(mgbfs_packet_ring::try_ack_close(close(rank[src],a,lane,a.rank),
+                 depth,a.job_generation,epoch,ticket)!=mgbfs_packet_ring::Result::ok) {
+                failure(local,mgbfs_device_epoch::FATAL);break;
+              }
+              closed[channel]=true;--active;
+            }
+          } else if(c!=mgbfs_packet_ring::Result::not_ready&&
+                    c!=mgbfs_packet_ring::Result::future_phase) {
+            failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+        }
+      }
+      add(consumers_done);
+    } else if(tid==64) {
+      bool published=false;
+      for(;;) {
+        if(terminal(a.terminal))failure(local,mgbfs_device_epoch::FATAL);
+        if(a.rank==0&&load(coordinator.decision.request_epoch)!=epoch) {
+          Word failures=0;for(unsigned r=0;r<a.world;++r)failures|=load(rank[r]->status.failure);
+          if(failures) {
+            coordinator.global_next=0; // partial next is never a completed layer
+            coordinator.stop_reason=(failures&~Word(mgbfs_device_epoch::RESOURCE))?
+                reason_protocol:reason_capacity;
+            coordinator.decision.request=(failures&~Word(mgbfs_device_epoch::RESOURCE))?
+                mgbfs_device_epoch::ERROR:mgbfs_device_epoch::INCOMPLETE;
+            store(coordinator.decision.request_epoch,epoch);
+          }
+        }
+        if(!published&&!load(local.status.failure)&&local_load(producers_done)==lanes&&
+           local_load(consumers_done)==1) {
+          local.done_count=local_load(next);store(local.done_epoch,epoch);published=true;
+        }
+        if(a.rank==0&&load(coordinator.decision.request_epoch)!=epoch) {
+          bool all=true;Word sum=0,failures=0;
+          for(unsigned r=0;r<a.world;++r) {
+            failures|=load(rank[r]->status.failure);
+            if(load(rank[r]->done_epoch)!=epoch)all=false;
+            else if(sum>UINT64_MAX-rank[r]->done_count){failures|=mgbfs_device_epoch::FATAL;failure(local,mgbfs_device_epoch::FATAL);}
+            else sum+=rank[r]->done_count;
+          }
+          if(all&&sum&&depth+1>=a.layer_capacity) {
+            failure(local,mgbfs_device_epoch::RESOURCE);failures|=mgbfs_device_epoch::RESOURCE;
+            coordinator.stop_reason=reason_log_capacity;
+          }
+          if(failures||all) {
+            coordinator.global_next=failures?0:sum;
+            if(failures && coordinator.stop_reason!=reason_log_capacity)
+              coordinator.stop_reason=(failures&~Word(mgbfs_device_epoch::RESOURCE))?reason_protocol:reason_capacity;
+            coordinator.decision.request=failures?((failures&~Word(mgbfs_device_epoch::RESOURCE))?
+                mgbfs_device_epoch::ERROR:mgbfs_device_epoch::INCOMPLETE):
+                (sum?mgbfs_device_epoch::ADVANCE:mgbfs_device_epoch::COMPLETE);
+            store(coordinator.decision.request_epoch,epoch);
+          }
+        }
+        if(load(coordinator.decision.request_epoch)==epoch){choice=unsigned(coordinator.decision.request);break;}
+        __nanosleep(32);
+      }
+    }
+    __syncthreads();
+    if(tid==64) {
+      max_active_shards=max(max_active_shards,unsigned(__popcll(shards_this_layer)));
+      mgbfs_device_epoch::publish_stopped(local.status,epoch);
+      if(a.rank==0)while(!mgbfs_device_epoch::try_finalize(coordinator.decision,ranks,a.world,epoch)) {
+        if(terminal(a.terminal)) {choice=mgbfs_device_epoch::ERROR;break;}
+        __nanosleep(32);
+      }
+      while(load(coordinator.decision.final_epoch)!=epoch) {
+        if(terminal(a.terminal)) {choice=mgbfs_device_epoch::ERROR;break;}
+        __nanosleep(32);
+      }
+      if(load(coordinator.decision.final_epoch)==epoch)choice=unsigned(coordinator.decision.final);
+    }
+    __syncthreads();
+    if(choice!=mgbfs_device_epoch::ADVANCE)break;
+    if(tid==64) {
+      current=next;next=producers_done=consumers_done=0;
+      ++depth;a.layer_sizes[depth]=coordinator.global_next;
+      store(local.committed_count,current);
+    }
+    __syncthreads();
+  }
+  if(tid==64) {
+    report->depth=depth;report->sent=sent;report->received=received;
+    report->duplicates=duplicates;report->duplicates_full=duplicates_full;report->blocked=blocked;
+    report->capture_count=a.capture_count?*a.capture_count:0;
+    report->global_next=coordinator.global_next;report->status=choice;report->rank=a.rank;
+    report->max_active_shards_first64=max_active_shards;
+    // The request reason is published before request_epoch. The final vote
+    // can upgrade a resource stop to ERROR if another rank reported a fatal.
+    report->reason=choice==mgbfs_device_epoch::ERROR?reason_protocol:
+      choice==mgbfs_device_epoch::INCOMPLETE?unsigned(coordinator.stop_reason):reason_none;
+    for(unsigned r=0;r<a.world;++r)a.rank_counts[r]=load(rank[r]->committed_count);
+  }
+}
+#endif // MGBFS_RESIDENT_IMPLEMENTATION
+}

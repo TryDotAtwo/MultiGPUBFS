@@ -97,6 +97,7 @@ mod job_phase;
 #[cfg(target_os="linux")]
 mod session_wait;
 #[cfg(feature="cuda")] mod segmented_host_ready;
+#[cfg(feature="cuda")] mod resident_extent_validation;
 
 /// Native call and layer context, also testable without CUDA.
 pub mod native_fault;
