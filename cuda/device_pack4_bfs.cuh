@@ -19,7 +19,7 @@ using SystemAtomic=cuda::atomic_ref<Word,cuda::thread_scope_system>;
 using BlockAtomic=cuda::atomic_ref<Word,cuda::thread_scope_block>;
 constexpr unsigned lanes=4;
 constexpr unsigned max_world=8;
-constexpr unsigned threads=96;
+constexpr unsigned threads=32*(lanes+2);
 constexpr uint32_t payload_format=1;
 
 struct Payload { uint64_t packed; uint32_t source,reserved; };
@@ -191,7 +191,7 @@ __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t*
 }
 
 // All producer/consumer roles share one resident CTA. A blocked producer
-// cannot prevent the separate consumer warp from receiving and returning
+// cannot prevent the separate consumer warps from receiving and returning
 // credits. This first implementation deliberately favors a simple proof over
 // throughput; more CTAs require a separate residency/progress proof.
 __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) {
@@ -204,7 +204,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
   __shared__ uint32_t max_active_shards;
   __shared__ uint64_t depth;
   __shared__ unsigned choice,bootstrap_failed;
-  if(tid==64) {
+  if(tid==32*(lanes+1)) {
     bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
     for(unsigned r=0;r<a.world;++r) {
       rank[r]=static_cast<Control*>(ncclGetLsaPointer(window,0,r));
@@ -247,7 +247,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     const Word epoch=depth+1;
     const unsigned read_bank=unsigned(depth%3);
     const unsigned write_bank=unsigned((depth+1)%3);
-    if(tid==64) {
+    if(tid==32*(lanes+1)) {
       *a.rank_count=0;shards_this_layer=0;
       for(unsigned s=0;s<a.shards;++s)a.shard_locks[s]=0;
       for(uint64_t i=0;i<a.extent_count;++i) {
@@ -308,17 +308,17 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         }
       }
       add(producers_done);
-    } else if(tid==32) {
-      // One resident receiver visits every inbound SPSC ring round-robin.
-      // It never waits on a particular source: a full outgoing ring cannot
-      // prevent this rank from acknowledging a different incoming ring.
-      // Serial ownership also excludes shard lockstep/warp starvation.
+    } else if(tid>=32 && tid<32*(lanes+1) && tid%32==0) {
+      // One receiver warp per producer lane preserves single-consumer rings.
+      // A busy shard is retried without waiting, allowing the other warps to
+      // make progress on different shards and return their producer credits.
+      const unsigned receiver=tid/32-1;
       bool closed[max_world*lanes]={};
-      unsigned active=a.world*lanes,cursor=0;
+      unsigned active=a.world,cursor=0;
       while(active) {
         if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);break;}
         if(load(coordinator.decision.request_epoch)==epoch)break;
-        const unsigned channel=cursor++%(a.world*lanes);
+        const unsigned channel=(cursor++%a.world)*lanes+receiver;
         if(closed[channel])continue;
         const unsigned src=channel/lanes,lane=channel%lanes;
         Word& ticket=receive_tickets[channel];
@@ -348,14 +348,22 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
           owner.rank_limit=a.rank_limit;owner.owner_boundary=a.owner_boundary;
           owner.world=a.world;owner.owner=a.owner;owner.shards=a.shards;
           owner.shard=shard;owner.bank=write_bank;owner.owner_page=a.owner_page;
+          // Each shard has exclusive writable extents and counts. Separate
+          // warps use a nonblocking lease so a contended shard cannot stall
+          // the warp holding its lease.
+          cuda::atomic_ref<uint32_t,cuda::thread_scope_device> lease(a.shard_locks[shard]);
+          uint32_t free=0;
+          if(!lease.compare_exchange_strong(free,1,cuda::memory_order_acquire,
+                                            cuda::memory_order_relaxed))continue;
           auto accepted=mgbfs_device_pack4::accept_prevalidated(owner,id,payload.packed);
+          lease.store(0,cuda::memory_order_release);
           bool failed=false;
           if(accepted.status==mgbfs_device_pack4::Status::duplicate) {
             add(duplicates);
             if(a.rank_limit&&cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(*a.rank_count)
                  .load(cuda::memory_order_acquire)>=a.rank_limit)add(duplicates_full);
           } else if(accepted.status==mgbfs_device_pack4::Status::accepted) {
-            if(shard<64)shards_this_layer|=Word(1)<<shard;
+            if(shard<64)atomicOr(&shards_this_layer,Word(1)<<shard);
             add(next);
             if(a.capture) {
               const uint64_t index=atomicAdd(reinterpret_cast<unsigned long long*>(a.capture_count),1ull);
@@ -395,7 +403,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         }
       }
       add(consumers_done);
-    } else if(tid==64) {
+    } else if(tid==32*(lanes+1)) {
       bool published=false;
       for(;;) {
         if(terminal(a.terminal))failure(local,mgbfs_device_epoch::FATAL);
@@ -411,7 +419,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
           }
         }
         if(!published&&!load(local.status.failure)&&local_load(producers_done)==lanes&&
-           local_load(consumers_done)==1) {
+           local_load(consumers_done)==lanes) {
           local.done_count=local_load(next);store(local.done_epoch,epoch);published=true;
         }
         if(a.rank==0&&load(coordinator.decision.request_epoch)!=epoch) {
@@ -441,7 +449,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       }
     }
     __syncthreads();
-    if(tid==64) {
+    if(tid==32*(lanes+1)) {
       max_active_shards=max(max_active_shards,unsigned(__popcll(shards_this_layer)));
       mgbfs_device_epoch::publish_stopped(local.status,epoch);
       if(a.rank==0)while(!mgbfs_device_epoch::try_finalize(coordinator.decision,ranks,a.world,epoch)) {
@@ -456,14 +464,14 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     }
     __syncthreads();
     if(choice!=mgbfs_device_epoch::ADVANCE)break;
-    if(tid==64) {
+    if(tid==32*(lanes+1)) {
       current=next;next=producers_done=consumers_done=0;
       ++depth;a.layer_sizes[depth]=coordinator.global_next;
       store(local.committed_count,current);
     }
     __syncthreads();
   }
-  if(tid==64) {
+  if(tid==32*(lanes+1)) {
     report->depth=depth;report->sent=sent;report->received=received;
     report->duplicates=duplicates;report->duplicates_full=duplicates_full;report->blocked=blocked;
     report->capture_count=a.capture_count?*a.capture_count:0;
