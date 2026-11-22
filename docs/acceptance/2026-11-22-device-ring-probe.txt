@@ -1,0 +1,20 @@
+Experimental device ring probe; not integrated into BFS.
+GPU: RTX 3060 SM86; driver 580.178.04; CUDA 12.8; same-device only.
+Compile: nvcc -std=c++17 -O2 -arch=sm_86 tests/experimental_device_ring_gpu.cu
+Run: CUDA_VISIBLE_DEVICES=0 timeout 20s ./experimental_device_ring_gpu
+726c7784b1af52a0a8d65ebbcf3a464430f1cb175fea577589a3fb80cb1edef7  cuda/experimental_device_ring.cuh
+de38a60988dbae6c44ed7e17cac50ce021f5af0c20cda7711b4ef0118164648b  tests/experimental_device_ring_gpu.cu
+56bd49db5e80eb6b1f371a284308d10b3f288cf4726a9b5c283b3a4ec2f54a8e  /workspace/eight-gpu-evidence/experimental_device_ring_gpu
+PASS boundary, backpressure, epoch, overflow
+PASS same-device ring capacity=1 records=8192
+PASS same-device ring capacity=7 records=8192
+PASS boundary, backpressure, epoch, overflow; same device only
+Boundary-only compute-sanitizer memcheck and synccheck:
+========= COMPUTE-SANITIZER
+PASS boundary, backpressure, epoch, overflow
+========= ERROR SUMMARY: 0 errors
+========= COMPUTE-SANITIZER
+PASS boundary, backpressure, epoch, overflow
+========= ERROR SUMMARY: 0 errors
+Earlier independent producer/consumer streams timed out after 45 s and 15 s; cause unknown.
+The first pipeline did not set pipefail and masked timeout; the second did set pipefail.

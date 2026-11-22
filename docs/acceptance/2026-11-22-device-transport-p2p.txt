@@ -1,0 +1,95 @@
+Sun Nov 22 06:37:18 UTC 2026
+=== P2P r ===
+ 	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	[0m
+ GPU0	X	CNS	CNS	CNS	TNS	TNS	TNS	TNS	
+ GPU1	CNS	X	CNS	CNS	TNS	TNS	TNS	TNS	
+ GPU2	CNS	CNS	X	CNS	TNS	TNS	TNS	TNS	
+ GPU3	CNS	CNS	CNS	X	TNS	TNS	TNS	TNS	
+ GPU4	TNS	TNS	TNS	TNS	X	CNS	CNS	CNS	
+ GPU5	TNS	TNS	TNS	TNS	CNS	X	CNS	CNS	
+ GPU6	TNS	TNS	TNS	TNS	CNS	CNS	X	CNS	
+ GPU7	TNS	TNS	TNS	TNS	CNS	CNS	CNS	X	
+
+Legend:
+
+  X    = Self
+  OK   = Status Ok
+  CNS  = Chipset not supported
+  GNS  = GPU not supported
+  TNS  = Topology not supported
+  NS   = Not supported
+  U    = Unknown
+=== P2P w ===
+ 	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	[0m
+ GPU0	X	CNS	CNS	CNS	TNS	TNS	TNS	TNS	
+ GPU1	CNS	X	CNS	CNS	TNS	TNS	TNS	TNS	
+ GPU2	CNS	CNS	X	CNS	TNS	TNS	TNS	TNS	
+ GPU3	CNS	CNS	CNS	X	TNS	TNS	TNS	TNS	
+ GPU4	TNS	TNS	TNS	TNS	X	CNS	CNS	CNS	
+ GPU5	TNS	TNS	TNS	TNS	CNS	X	CNS	CNS	
+ GPU6	TNS	TNS	TNS	TNS	CNS	CNS	X	CNS	
+ GPU7	TNS	TNS	TNS	TNS	CNS	CNS	CNS	X	
+
+Legend:
+
+  X    = Self
+  OK   = Status Ok
+  CNS  = Chipset not supported
+  GNS  = GPU not supported
+  TNS  = Topology not supported
+  NS   = Not supported
+  U    = Unknown
+=== P2P a ===
+ 	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	[0m
+ GPU0	X	NS	NS	NS	NS	NS	NS	NS	
+ GPU1	NS	X	NS	NS	NS	NS	NS	NS	
+ GPU2	NS	NS	X	NS	NS	NS	NS	NS	
+ GPU3	NS	NS	NS	X	NS	NS	NS	NS	
+ GPU4	NS	NS	NS	NS	X	NS	NS	NS	
+ GPU5	NS	NS	NS	NS	NS	X	NS	NS	
+ GPU6	NS	NS	NS	NS	NS	NS	X	NS	
+ GPU7	NS	NS	NS	NS	NS	NS	NS	X	
+
+Legend:
+
+  X    = Self
+  OK   = Status Ok
+  CNS  = Chipset not supported
+  GNS  = GPU not supported
+  TNS  = Topology not supported
+  NS   = Not supported
+  U    = Unknown
+=== NCCL library ===
+/workspace/pydeps/nvidia/nccl
+/workspace/pydeps/nvidia/nccl/include/nccl.h
+/workspace/pydeps/nvidia/nccl/include/nccl_device.h
+/workspace/pydeps/nvidia/nccl/include/nccl_device_wrapper.h
+/workspace/pydeps/nvidia/nccl/include/nccl_device
+/workspace/pydeps/nvidia/nccl/lib/libnccl.so.2
+/workspace/pydeps/nvidia/nccl/lib/libnccl_device.bc
+=== job progress ===
+END_GATE pack4-rank-failure rc=0 2026-11-22T06:01:13Z
+START_GATE pack4-exact-layers-shards8 2026-11-22T06:01:14Z
+END_GATE pack4-exact-layers-shards8 rc=0 2026-11-22T06:03:02Z
+START_GATE benchmark-s13-pack4-shards8 2026-11-22T06:03:02Z
+END_GATE benchmark-s13-pack4-shards8 rc=0 2026-11-22T06:35:10Z
+START_GATE nvml-ab-s12 2026-11-22T06:35:11Z
+ 	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	[0m
+ GPU0	X	NS	NS	NS	NS	NS	NS	NS	
+ GPU1	NS	X	NS	NS	NS	NS	NS	NS	
+ GPU2	NS	NS	X	NS	NS	NS	NS	NS	
+ GPU3	NS	NS	NS	X	NS	NS	NS	NS	
+ GPU4	NS	NS	NS	NS	X	NS	NS	NS	
+ GPU5	NS	NS	NS	NS	NS	X	NS	NS	
+ GPU6	NS	NS	NS	NS	NS	NS	X	NS	
+ GPU7	NS	NS	NS	NS	NS	NS	NS	X	
+
+Legend:
+
+  X    = Self
+  OK   = Status Ok
+  CNS  = Chipset not supported
+  GNS  = GPU not supported
+  TNS  = Topology not supported
+  NS   = Not supported
+  U    = Unknown
