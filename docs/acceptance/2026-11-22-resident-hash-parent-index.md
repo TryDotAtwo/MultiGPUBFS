@@ -95,6 +95,26 @@ graph. NVML peak VRAM was not sampled. The
 [compact comparison receipt](artifacts/2026-11-22-resident-hash-parent-s10.json)
 contains per-rank allocations and counters.
 
+## Host-driven reference on S10
+
+The same node, native binaries, graph, four GPUs, requested eight shards,
+8,192 segment rows, batch 128, atomic strategy and compact result were used
+for two host-driven hash jobs in a separate persistent group. BFS times were
+3.657727380 and 3.614450538 seconds; observed wall times were 15.815208856
+(cold startup) and 3.729117746 seconds. All layer counts and the final state
+were checked against the same oracle. On this case the indexed device engine
+is still about 14.5 times slower by mean BFS time.
+
+The host and device engines have different actual allocation behavior, so this
+comparison is an end-to-end engine reference, not an isolated measurement of
+transport. At the time the host receipt was emitted it reported eight segments,
+7,733,440 bytes of segment storage and 442,752 queue bytes per rank; the device
+engine preallocated 450 extents and reported 435,006,000 segment-storage bytes.
+The receipt is not a measured host-engine peak. Both engines reported the same
+2,147,483,648 byte reserve. NVML peak VRAM was not measured. The
+[host receipt](artifacts/2026-11-22-resident-hash-parent-s10-host.json)
+contains the recorded per-rank fields.
+
 ## Reproduction
 
 On a compatible four-GPU LSA topology, after building the matching CUDA
