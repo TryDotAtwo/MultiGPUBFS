@@ -16,7 +16,7 @@ Alternatively, install the verified source snapshot directly from GitHub (requir
 python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
 ```
 
-The wheel is smaller to download. The exact dev43 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544); physical GPU acceptance used the wheel and the same native component hashes.
+The wheel is smaller to download. The [public wheel install and GPU-independent prefetch](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44966337228) and [Git source install](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544) were checked in CI. Physical GPU acceptance used this exact wheel and the same native component hashes.
 
 Start a new Python process after updating. CUDA native components are selected from the visible GPUs and downloaded into the cache on first use. The first download includes a shared runtime of about 304 MB, the executable and the selected architecture component. Later jobs reuse checksum-verified cached files.
 
