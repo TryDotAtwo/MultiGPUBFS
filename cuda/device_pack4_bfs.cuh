@@ -17,7 +17,8 @@ namespace mgbfs_resident {
 using Word=unsigned long long;
 using SystemAtomic=cuda::atomic_ref<Word,cuda::thread_scope_system>;
 using BlockAtomic=cuda::atomic_ref<Word,cuda::thread_scope_block>;
-constexpr unsigned lanes=4;
+constexpr unsigned lanes=4; // legacy/default geometry
+constexpr unsigned max_lanes=8;
 constexpr unsigned max_world=8;
 constexpr unsigned threads=32*(lanes+2);
 constexpr unsigned max_packet_records=8;
@@ -108,7 +109,7 @@ __global__ void initialize(Control* local,Args a) {
   if(blockIdx.x||threadIdx.x)return;
   local->status={0,0};local->decision={0,0,0,0};
   local->done_count=local->done_epoch=local->committed_count=local->global_next=local->stop_reason=0;
-  for(unsigned lane=0;lane<lanes;++lane)for(unsigned dst=0;dst<a.world;++dst) {
+  for(unsigned lane=0;lane<a.mailbox.lanes;++lane)for(unsigned dst=0;dst<a.world;++dst) {
     auto ring=view(local,a,lane,dst);
     for(unsigned slot=0;slot<a.mailbox.slots_per_ring;++slot)
       mgbfs_packet_ring::init_slot(ring.slots[slot],slot);
@@ -211,9 +212,10 @@ __device__ __forceinline__ bool send_packet(
 // cannot prevent the separate consumer warps from receiving and returning
 // credits. This first implementation deliberately favors a simple proof over
 // throughput; more CTAs require a separate residency/progress proof.
+template<unsigned lane_capacity>
 __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) {
   if(blockIdx.x)return;
-  const unsigned tid=threadIdx.x;
+  const unsigned tid=threadIdx.x, active_lanes=a.mailbox.lanes;
   __shared__ Control* rank[max_world];
   __shared__ mgbfs_device_epoch::RankStatus* ranks[max_world];
   __shared__ Word current,next,producers_done,consumers_done;
@@ -221,7 +223,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
   __shared__ uint32_t max_active_shards;
   __shared__ uint64_t depth;
   __shared__ unsigned choice,bootstrap_failed;
-  if(tid==32*(lanes+1)) {
+  if(tid==32*(active_lanes+1)) {
     bool invalid=comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world);
     for(unsigned r=0;r<a.world;++r) {
       rank[r]=static_cast<Control*>(ncclGetLsaPointer(window,0,r));
@@ -259,12 +261,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
   Control& local=*rank[a.rank];
   Control& coordinator=*rank[0];
   Word send_ticket[max_world]={};
-  Word receive_tickets[max_world*lanes]={};
+  Word receive_tickets[max_world*lane_capacity]={};
   for(;;) {
     const Word epoch=depth+1;
     const unsigned read_bank=unsigned(depth%3);
     const unsigned write_bank=unsigned((depth+1)%3);
-    if(tid==32*(lanes+1)) {
+    if(tid==32*(active_lanes+1)) {
       *a.rank_count=0;shards_this_layer=0;
       for(unsigned s=0;s<a.shards;++s)a.shard_locks[s]=0;
       for(uint64_t i=0;i<a.extent_count;++i) {
@@ -275,12 +277,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       }
     }
     __syncthreads();
-    if(tid<lanes) {
+    if(tid<active_lanes) {
       bool stopped=false;
       Payload pending[max_world][max_packet_records];
       unsigned pending_count[max_world]={};
       const unsigned packet_records=a.mailbox.requested_payload_bytes/sizeof(Payload);
-      for(Word parent=tid;parent<current&&!stopped;parent+=lanes) {
+      for(Word parent=tid;parent<current&&!stopped;parent+=active_lanes) {
         uint64_t remaining=parent,packed=0;bool found=false;
         for(uint64_t i=0;i<a.extent_count;++i) {
           const auto& e=a.extents[i];const uint64_t n=e.counts[read_bank];
@@ -329,20 +331,20 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         }
       }
       add(producers_done);
-    } else if(tid>=32 && tid<32*(lanes+1) && tid%32==0) {
+    } else if(tid>=32 && tid<32*(active_lanes+1) && tid%32==0) {
       // One receiver warp per producer lane preserves single-consumer rings.
       // A busy shard is retried without waiting, allowing the other warps to
       // make progress on different shards and return their producer credits.
       const unsigned receiver=tid/32-1;
-      bool closed[max_world*lanes]={};
-      unsigned packet_offset[max_world*lanes]={};
+      bool closed[max_world*lane_capacity]={};
+      unsigned packet_offset[max_world*lane_capacity]={};
       unsigned active=a.world,cursor=0;
       while(active) {
         if(terminal(a.terminal)){failure(local,mgbfs_device_epoch::FATAL);break;}
         if(load(coordinator.decision.request_epoch)==epoch)break;
-        const unsigned channel=(cursor++%a.world)*lanes+receiver;
+        const unsigned channel=(cursor++%a.world)*active_lanes+receiver;
         if(closed[channel])continue;
-        const unsigned src=channel/lanes,lane=channel%lanes;
+        const unsigned src=channel/active_lanes,lane=channel%active_lanes;
         Word& ticket=receive_tickets[channel];
         mgbfs_packet_ring::PacketHeader header{};const unsigned char* bytes=nullptr;
         auto result=mgbfs_packet_ring::try_peek(view(rank[src],a,lane,a.rank),
@@ -435,7 +437,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
         }
       }
       add(consumers_done);
-    } else if(tid==32*(lanes+1)) {
+    } else if(tid==32*(active_lanes+1)) {
       bool published=false;
       for(;;) {
         if(terminal(a.terminal))failure(local,mgbfs_device_epoch::FATAL);
@@ -450,8 +452,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
             store(coordinator.decision.request_epoch,epoch);
           }
         }
-        if(!published&&!load(local.status.failure)&&local_load(producers_done)==lanes&&
-           local_load(consumers_done)==lanes) {
+        if(!published&&!load(local.status.failure)&&local_load(producers_done)==active_lanes&&
+           local_load(consumers_done)==active_lanes) {
           local.done_count=local_load(next);store(local.done_epoch,epoch);published=true;
         }
         if(a.rank==0&&load(coordinator.decision.request_epoch)!=epoch) {
@@ -481,7 +483,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       }
     }
     __syncthreads();
-    if(tid==32*(lanes+1)) {
+    if(tid==32*(active_lanes+1)) {
       max_active_shards=max(max_active_shards,unsigned(__popcll(shards_this_layer)));
       mgbfs_device_epoch::publish_stopped(local.status,epoch);
       if(a.rank==0)while(!mgbfs_device_epoch::try_finalize(coordinator.decision,ranks,a.world,epoch)) {
@@ -496,14 +498,14 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
     }
     __syncthreads();
     if(choice!=mgbfs_device_epoch::ADVANCE)break;
-    if(tid==32*(lanes+1)) {
+    if(tid==32*(active_lanes+1)) {
       current=next;next=producers_done=consumers_done=0;
       ++depth;a.layer_sizes[depth]=coordinator.global_next;
       store(local.committed_count,current);
     }
     __syncthreads();
   }
-  if(tid==32*(lanes+1)) {
+  if(tid==32*(active_lanes+1)) {
     report->depth=depth;report->sent=sent;report->received=received;
     report->duplicates=duplicates;report->duplicates_full=duplicates_full;report->blocked=blocked;
     report->capture_count=a.capture_count?*a.capture_count:0;

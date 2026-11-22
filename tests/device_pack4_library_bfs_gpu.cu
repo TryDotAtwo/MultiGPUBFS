@@ -134,6 +134,9 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
  if(!props.deviceApiSupport||props.nLsaTeams!=1)return 77;
 #endif
  cudaStream_t stream{};C(cudaStreamCreateWithFlags(&stream,cudaStreamNonBlocking));
+ const char* lanes_text=std::getenv("MGBFS_DEVICE_TEST_LANES");
+ const unsigned lanes=lanes_text?unsigned(std::strtoul(lanes_text,nullptr,10)):mgbfs_resident::lanes;
+ CHECK(lanes>=1&&lanes<=max_lanes);
  const char* records_text=std::getenv("MGBFS_DEVICE_TEST_PACKET_RECORDS");
  const unsigned packet_records=records_text?unsigned(std::strtoul(records_text,nullptr,10)):1;
  CHECK(packet_records>=1&&packet_records<=max_packet_records);

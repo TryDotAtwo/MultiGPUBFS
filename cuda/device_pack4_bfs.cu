@@ -31,6 +31,7 @@ extern "C" uint32_t mgbfs_device_pack4_bfs_abi_query(uint32_t item) {
     case 4:return sizeof(mgbfs_resident::Control);
     case 5:return sizeof(mgbfs_resident::Capture);
     case 6:return sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records;
+    case 7:return mgbfs_resident::max_lanes;
     default:return 0;
   }
 }
@@ -51,7 +52,8 @@ static int validate(const mgbfs_resident::Args* a,uint64_t window_bytes) {
   if(payload_bytes<sizeof(mgbfs_resident::Payload)||
      payload_bytes>sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records||
      payload_bytes%sizeof(mgbfs_resident::Payload))return 2;
-  if(mgbfs_device_mailbox_layout_v1(a->world,mgbfs_resident::lanes,
+  if(!a->mailbox.lanes||a->mailbox.lanes>mgbfs_resident::max_lanes)return 2;
+  if(mgbfs_device_mailbox_layout_v1(a->world,a->mailbox.lanes,
        a->mailbox.slots_per_ring,payload_bytes,UINT64_MAX,
        sizeof(expected),&expected)!=MGBFS_MAILBOX_LAYOUT_OK||
      std::memcmp(&expected,&a->mailbox,sizeof(expected))||
@@ -96,8 +98,11 @@ extern "C" int mgbfs_device_pack4_bfs_launch_v1(
   if(comm.lsaSize!=int(args->world)||comm.lsaRank!=int(args->rank))return 6;
   auto value=*args;
   void* params[]={&window,&comm,&value,&report};
-  auto result=cudaLaunchCooperativeKernel(reinterpret_cast<void*>(mgbfs_resident::run),
-                                           dim3(1),dim3(mgbfs_resident::threads),
+  const auto kernel=args->mailbox.lanes<=mgbfs_resident::lanes
+      ? reinterpret_cast<void*>(mgbfs_resident::run<mgbfs_resident::lanes>)
+      : reinterpret_cast<void*>(mgbfs_resident::run<mgbfs_resident::max_lanes>);
+  auto result=cudaLaunchCooperativeKernel(kernel,
+                                           dim3(1),dim3(32*(args->mailbox.lanes+2)),
                                            params,0,static_cast<cudaStream_t>(raw_stream));
   return result==cudaSuccess?0:1000+int(result);
 }

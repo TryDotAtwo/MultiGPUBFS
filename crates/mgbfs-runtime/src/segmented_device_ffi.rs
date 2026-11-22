@@ -65,6 +65,14 @@ pub(super) struct Functions {
  pub prepare:Prepare,pub activate:Activate,pub initialize:Initialize,pub launch:Launch,pub retire:Retire,pub window_info:WindowInfo,pub peer_smoke:PeerSmoke,
  pub control_bytes:u64,
 }
+fn resident_lane_count(advertised:u32,requested:u32)->Result<u32,String>{
+ let maximum=if advertised==0{4}else{advertised};
+ if maximum<4{return Err(format!("RESIDENT_LANES_ABI_INVALID max={maximum}"))}
+ if !(1..=8).contains(&requested){return Err(format!("RESIDENT_LANES_INVALID lanes={requested}"))}
+ if advertised==0&&requested!=4{return Err(format!("RESIDENT_LANES_UNSUPPORTED requested={requested} legacy=4"))}
+ if requested>maximum{return Err(format!("RESIDENT_LANES_UNSUPPORTED requested={requested} max={maximum}"))}
+ Ok(requested)
+}
 fn packet_payload_bytes(advertised:u32,records:u32)->Result<u32,String>{
  let maximum=if advertised==0{16}else{advertised};
  if maximum<16||maximum%16!=0{return Err(format!("RESIDENT_PACKET_ABI_INVALID bytes={maximum}"))}
@@ -135,7 +143,13 @@ impl Functions {
    Err(_)=>return Err("RESIDENT_PACKET_RECORDS_INVALID".into()),
   };
   let payload=packet_payload_bytes(unsafe{(self.query)(6)},records)?;
-  let code=unsafe{(self.layout)(world,4,slots,payload,budget,mem::size_of::<Mailbox>(),&mut m)};
+  let requested_lanes=match std::env::var("MGBFS_RESIDENT_LANES"){
+   Ok(v)=>v.parse::<u32>().map_err(|_|"RESIDENT_LANES_INVALID".to_owned())?,
+   Err(std::env::VarError::NotPresent)=>4,
+   Err(_)=>return Err("RESIDENT_LANES_INVALID".into()),
+  };
+  let lanes=resident_lane_count(unsafe{(self.query)(7)},requested_lanes)?;
+  let code=unsafe{(self.layout)(world,lanes,slots,payload,budget,mem::size_of::<Mailbox>(),&mut m)};
   if code!=0{return Err(format!("RESIDENT_MAILBOX_ADMISSION code={code}"))}
   let bytes=self.control_bytes.checked_add(m.total_bytes).ok_or("RESIDENT_MAILBOX_OVERFLOW")?;
   if bytes>budget{return Err("RESIDENT_MAILBOX_BUDGET".into())}
@@ -146,6 +160,16 @@ impl Functions {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]
+ fn lane_geometry_negotiation(){
+  assert_eq!(resident_lane_count(0,4).unwrap(),4);
+  assert!(resident_lane_count(0,1).unwrap_err().contains("RESIDENT_LANES_UNSUPPORTED"));
+  assert!(resident_lane_count(0,8).unwrap_err().contains("RESIDENT_LANES_UNSUPPORTED"));
+  assert_eq!(resident_lane_count(8,8).unwrap(),8);
+  assert!(resident_lane_count(8,0).is_err());
+  assert!(resident_lane_count(8,9).is_err());
+  assert!(resident_lane_count(3,4).is_err());
+ }
  #[test]
  fn packet_geometry_negotiation(){
   assert_eq!(packet_payload_bytes(0,1).unwrap(),16);
