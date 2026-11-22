@@ -1,6 +1,7 @@
 """Compatible-family startup reuse; borrowed evidence is not target measurement."""
 import hashlib,json,os,tempfile,math
 from pathlib import Path
+from .profile_cache import read_mapping, write_mapping
 
 def family(graph,plan):
  from .generation import gemm_supported
@@ -26,21 +27,14 @@ def path(root,identity):
  return Path(root)/('family-'+hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()+'.json')
 
 def store(root,identity,profile):
- if identity is None:return
- if profile.get('status')!='MEASURED_EQUAL_PREFIX_GPU_PROFILE' or not profile.get('measured'):return
- root=Path(root);root.mkdir(parents=True,exist_ok=True)
- fd,name=tempfile.mkstemp(prefix='family-',suffix='.tmp',dir=root)
- try:
-  with os.fdopen(fd,'w') as f:json.dump({'identity':identity,'profile':profile},f)
-  os.replace(name,path(root,identity))
- finally:
-  if Path(name).exists():Path(name).unlink()
+ if identity is None:return {'status':'SKIPPED','stage':'identity','errno':None}
+ if profile.get('status')!='MEASURED_EQUAL_PREFIX_GPU_PROFILE' or not profile.get('measured'):return {'status':'SKIPPED','stage':'unmeasured','errno':None}
+ return write_mapping(path(root,identity),{'identity':identity,'profile':profile},prefix='family-')
 
 def load(root,identity):
  if identity is None:return None
- try:data=json.loads(path(root,identity).read_text())
- except (OSError,ValueError):return None
- if not isinstance(data,dict) or data.get('identity')!=identity:return None
+ data,_status=read_mapping(path(root,identity))
+ if data is None or data.get('identity')!=identity:return None
  p=data.get('profile')
  if not isinstance(p,dict) or p.get('status')!='MEASURED_EQUAL_PREFIX_GPU_PROFILE' or p.get('measured') is not True:return None
  if p.get('backend') not in ('generic','shard_ab_hash','shard_ab_sort_merge'):return None

@@ -42,7 +42,10 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
         speed = 0.1 if (lane, queue) == (4, 16384) else 1.0
         receipts = [{'owner_lanes': lane, 'exact_exchange': False,
                      'actual_queue_capacity': queue, 'storage_budget_bytes': budget,
-                     'bytes_per_segment': 1000, 'rows_per_bank': 100} for _ in range(2)]
+                     'bytes_per_segment': 1000, 'rows_per_bank': 100,
+                     'capacity_limit_per_rank': None, 'capacity_limit_is_hard': False,
+                     'capacity_limit_scope': 'one next layer per rank',
+                     'segment_rows_per_bank_by_shard': [[100]], 'peak_live_rows': 1} for _ in range(2)]
         if invalid_queue_receipt:
             receipts[1]['actual_queue_capacity'] = queue + 1
         depth = 3 if very_short and queue == 2048 else (4 if slow_baseline and queue == 2048 else (8 if slow_baseline or very_short else 4))

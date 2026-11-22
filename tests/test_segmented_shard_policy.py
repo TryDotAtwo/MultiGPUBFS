@@ -83,7 +83,7 @@ def test_many_shards_pay_at_least_one_segment_each():
     assert p['target_shards'] <= p['minimum_shard_segment_budget']
     assert p['segment_rows_used_for_estimate'] <= 1024
 
-def test_tuner_never_selects_resource_stopped_candidate(tmp_path,monkeypatch):
+def test_tuner_does_not_measure_resource_stopped_candidate(tmp_path,monkeypatch):
     import subprocess
     import pytest
     from multigpubfs import autotune
@@ -102,8 +102,14 @@ def test_tuner_never_selects_resource_stopped_candidate(tmp_path,monkeypatch):
                 'layer_sizes':[1,20000,20000,20000,1], 'layer_seconds':[.01]*4,
                 'status':'INCOMPLETE','reason':'RESOURCE_10'}
     monkeypatch.setattr(launch,'run_graph',pilot)
-    with pytest.raises(RuntimeError,match='SEGMENTED_TUNING_RESOURCE_FAILURE'):
-        autotune.choose_profile(graph,list(range(8)),None,90,str(native),{'MGBFS_EXPERIMENTAL_SEGMENTED24':'1'},allow_specialized=False)
+    # Detailed receipt validation has independent tests. This selector fixture
+    # supplies its successful outcome without fabricating native receipt files.
+    monkeypatch.setattr(autotune,'_validate_segmented_resource_report',
+                        lambda *args:{'validated_ranks':8,'fully_retained_layer_sha256':{}})
+    result=autotune.choose_profile(graph,list(range(8)),None,90,str(native),
+                                   {'MGBFS_EXPERIMENTAL_SEGMENTED24':'1'},allow_specialized=False)
+    assert result['status']=='VALIDATED_RESOURCE_LIMIT_UNMEASURED_PROFILE'
+    assert not result['measured'] and len(result['resource_rejections'])>=2
 
 
 def test_public_configuration_accepts_maximum_segment_rows():

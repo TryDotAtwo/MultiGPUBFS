@@ -107,7 +107,7 @@ class IntegrationTests(unittest.TestCase):
         with patch.object(api, 'run_graph', side_effect=self.native):
             api.bfs(self.graph, output=self.root/'devices',
                     native_options=api.NativeOptions(devices=(1,0),max_seconds=12,autotune=False))
-        self.assertEqual(self.options, dict(devices=(1,0),max_seconds=12,autotune=False,memory_backend='legacy',segment_rows=1<<32,memory_preset='balanced'))
+        self.assertEqual(self.options, dict(devices=(1,0),max_seconds=12,autotune=False,memory_backend='legacy',segment_rows=1<<32,memory_preset='balanced',segment_strategy='atomic',bitmap_owner_page=None))
 
     def test_explicit_memory_backend_is_forwarded(self):
         for backend in ('segmented24', 'permutation_bitmap'):

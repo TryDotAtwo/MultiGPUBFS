@@ -22,8 +22,9 @@ def select_size_profiles(pilots, world, *, threshold=None):
 
 def save_online_profiles(report):
  """Persist validated live-chunk choices separately from matched prefix evidence."""
- import hashlib,json,os,tempfile
+ import hashlib,json,os
  from pathlib import Path
+ from .profile_cache import write_mapping
  profile=report.get('autotune',{})
  identity=profile.get('identity');events=report.get('online_size_profile_events',[])
  if not identity or not events or profile.get('status') not in ('MEASURED_FRONTIER_SIZE_PROFILES','REUSED_COMPATIBLE_GPU_PROFILE'):return
@@ -40,10 +41,8 @@ def save_online_profiles(report):
  entries.sort(key=lambda p:p['minimum_frontier'])
  saved=dict(profile,size_profiles=entries,online_profile_evidence=events)
  root=Path(os.environ.get('MGBFS_PROFILE_CACHE',str(Path.home()/'.cache/multigpubfs/profiles')))
- key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest();root.mkdir(parents=True,exist_ok=True)
- fd,path=tempfile.mkstemp(prefix='size-'+key+'-',suffix='.tmp',dir=root)
- with os.fdopen(fd,'w') as f:json.dump(saved,f)
- os.replace(path,root/('size-'+key+'.json'))
+ key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+ return write_mapping(root/('size-'+key+'.json'),saved,prefix='size-'+key+'-')
 
 
 def valid_profile_entries(profiles, maximum_batch, generators):

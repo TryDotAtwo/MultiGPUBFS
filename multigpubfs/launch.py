@@ -254,8 +254,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if geometry_bound is not None:report['workload_geometry_bound']=geometry_bound
   if shard_geometry is not None:report['shard_geometry']=shard_geometry
   from .size_profiles import save_online_profiles
-  try:save_online_profiles(report)
-  except OSError:report['profile_cache_write_status']='UNAVAILABLE'
+  online_cache_status=save_online_profiles(report)
+  if online_cache_status is not None:report['online_profile_cache_write_status']=online_cache_status
   from .native_distribution import runtime_identity
   report['runtime_identity']=runtime_identity(native,native_env)
   if host_memory is not None:report['host_memory']=[host_memory]
