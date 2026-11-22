@@ -1,0 +1,407 @@
+diff --git a/crates/mgbfs-runtime/src/segmented_device_ffi.rs b/crates/mgbfs-runtime/src/segmented_device_ffi.rs
+index 0352a34..b07865f 100644
+--- a/crates/mgbfs-runtime/src/segmented_device_ffi.rs
++++ b/crates/mgbfs-runtime/src/segmented_device_ffi.rs
+@@ -79,9 +79,15 @@ pub(super) struct Functions {
+ }
+ #[derive(Clone,Copy)]
+ pub(super) struct HashFunctions {
+- pub initialize:Initialize,pub launch:Launch,pub peer_smoke:PeerSmoke,
++ pub initialize:Initialize,pub launch:Launch,pub peer_smoke:PeerSmoke,pub query:Query,
++}
++fn hash_parent_cursor_support(advertised:u32,requested:bool)->Result<(),String>{
++ if requested && advertised!=1 {Err("RESIDENT_HASH_PARENT_CURSOR_UNSUPPORTED".into())} else {Ok(())}
+ }
+ impl HashFunctions {
++ pub(super) fn check_parent_cursor(&self,requested:bool)->Result<(),String>{
++  hash_parent_cursor_support(unsafe{(self.query)(5)},requested)
++ }
+  pub(super) unsafe fn load()->Result<Self,String>{
+   unsafe fn symbol(name:&[u8])->Result<*mut c_void,String>{
+    let p=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast());
+@@ -96,7 +102,7 @@ impl HashFunctions {
+   }
+   if query(999)!=0{return Err("RESIDENT_HASH_ABI_QUERY".into())}
+   Ok(Self{
+-   initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_init_v1\0")?),
++   query,initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_init_v1\0")?),
+    launch:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_launch_v1\0")?),
+    peer_smoke:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_smoke_v1\0")?),
+   })
+@@ -208,6 +214,12 @@ mod tests {
+   assert!(resident_lane_count(3,4).is_err());
+  }
+  #[test]
++ fn hash_parent_cursor_capability_negotiation(){
++  assert!(hash_parent_cursor_support(0,false).is_ok());
++  assert!(hash_parent_cursor_support(1,true).is_ok());
++  assert!(hash_parent_cursor_support(0,true).unwrap_err().contains("UNSUPPORTED"));
++ }
++ #[test]
+  fn packet_geometry_negotiation(){
+   assert_eq!(packet_payload_bytes(0,1).unwrap(),16);
+   assert!(packet_payload_bytes(0,8).unwrap_err().contains("RESIDENT_PACKET_UNSUPPORTED"));
+diff --git a/crates/mgbfs-runtime/src/segmented_device_run.rs b/crates/mgbfs-runtime/src/segmented_device_run.rs
+index 80cf574..6ac76a1 100644
+--- a/crates/mgbfs-runtime/src/segmented_device_run.rs
++++ b/crates/mgbfs-runtime/src/segmented_device_run.rs
+@@ -72,11 +72,12 @@ impl SegmentedDistributedBfs {
+   let initialize=hf.map_or(f.initialize,|h|h.initialize);
+   let peer_smoke=hf.map_or(f.peer_smoke,|h|h.peer_smoke);
+   let launch=hf.map_or(f.launch,|h|h.launch);
+-  let domain_total=if let Some((_,bound,_,_,_))=self.resident_hash {bound}
++  let domain_total=if let Some((_,bound,_,_,_,_))=self.resident_hash {bound}
+                    else {self.bitmap.as_ref().ok_or("RESIDENT_BITMAP_MISSING")?.domain.total};
+   let hash_parallel=self.resident_hash.map_or(false,|v|v.2);
+   let hash_instrumented=self.resident_hash.map_or(false,|v|v.3);
+   let hash_indexed=self.resident_hash.map_or(false,|v|v.4);
++  let hash_parent_cursor=self.resident_hash.map_or(false,|v|v.5);
+   let geometry=f.mailbox(world,1,u64::MAX);
+   let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
+    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
+@@ -233,7 +234,7 @@ impl SegmentedDistributedBfs {
+     if let Some(index)=&hash_index {if let Some(r)=region(index.ptr,index.bytes,8){others.push(r)}}
+     let config=hash_config.as_ref().ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
+     if let Some(r)=region(config.ptr,config.bytes,8){others.push(r)}
+-    let (dictionary,_,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
++    let (dictionary,_,_,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
+     let domain=BitmapDeviceDomain{symbols:ptr::null(),counts:ptr::null(),
+       distinct:dictionary.distinct,elements:dictionary.elements,total:domain_total};
+     let width=u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?;
+@@ -249,7 +250,7 @@ impl SegmentedDistributedBfs {
+    let args=Args{
+     abi_version:1,struct_bytes:mem::size_of::<Args>() as u32,world,rank,
+     owner,shards:self.plan.shards,generators:self.base.generators,banks:3,
+-    owner_page,reserved0:0,owner_boundary,owner_len,
++    owner_page,reserved0:u32::from(hash_parent_cursor),owner_boundary,owner_len,
+     job_generation:1,rank_limit:self.capacity_limit.unwrap_or(0),
+     domain,dictionary,mailbox,
+     permutations:self.base.perms.ptr.cast(),physical_of_logical:self.map.ptr.cast(),
+@@ -360,6 +361,7 @@ impl SegmentedDistributedBfs {
+     "storage":if hash{"segmented_hash"}else{"packed_bitmap"},
+     "hash_owner_execution":if hash{Some(if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
+     "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
++    "hash_parent_cursor":if hash{Some(hash_parent_cursor)}else{None},
+     "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
+     "hash_owner_peak_active":hash_owner_stats.map(|v|v[0]),
+     "hash_extent_full_seen":hash_owner_stats.map(|v|v[1]),
+diff --git a/crates/mgbfs-runtime/src/segmented_distributed_native.rs b/crates/mgbfs-runtime/src/segmented_distributed_native.rs
+index 91aee70..2d10f69 100644
+--- a/crates/mgbfs-runtime/src/segmented_distributed_native.rs
++++ b/crates/mgbfs-runtime/src/segmented_distributed_native.rs
+@@ -257,7 +257,7 @@ pub(crate) fn resident_preflight(devices:&[u32],rank:u32)->Result<()>{
+ }
+ 
+ pub struct SegmentedDistributedBfs{
+- strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool,bool)>,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
++ strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool,bool,bool)>,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
+  segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,hash_shards:Vec<Option<BatchHashShard>>,remaining_bytes:u64,storage_budget:u64,storage_peak_requested:u64,reserve_bytes:u64,configured_rows:u64,bank_totals:[u64;3],peak_live_rows:u64,last_resource:Option<serde_json::Value>,capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
+  counts:Vec<u64>,depth:u64,source_retries:u64,active_batch:u32,queue_batch_ceiling:u32,admitted_batch:u32,batch_recovery:bool,batch_recovery_policy:crate::segmented_strategy::QueueBatchRecovery,batch_recoveries:u64,layer_stats:bool,layer_stats_low:u64,layer_stats_high:u64,profile_spill:u64,profile_owner_passes:u64,peak_owner_lanes:u32,prefetched_chunks:u64,overlap_samples:u32,
+  send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_timed_tiles:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,test_count_payload:bool,
+@@ -306,7 +306,9 @@ impl SegmentedDistributedBfs{
+     Err(std::env::VarError::NotPresent)=>Ok(false),Ok(v) if v=="0"=>Ok(false),
+     Ok(v) if v=="1"=>Ok(true),_=>Err(format!("RESIDENT_HASH_FLAG_INVALID {name}")),
+    }};
+-   Some((dictionary,bound,flag("MGBFS_RESIDENT_HASH_SHARD_OWNERS")?,flag("MGBFS_RESIDENT_HASH_OWNER_STATS")?,flag("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")?))
++   let parent_cursor=flag("MGBFS_RESIDENT_HASH_PARENT_CURSOR")?;
++   unsafe{resident_ffi::HashFunctions::load()}?.check_parent_cursor(parent_cursor)?;
++   Some((dictionary,bound,flag("MGBFS_RESIDENT_HASH_SHARD_OWNERS")?,flag("MGBFS_RESIDENT_HASH_OWNER_STATS")?,flag("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")?,parent_cursor))
+   }else{None};
+   let page_code=if !bitmap_mode{0}else{match std::env::var("MGBFS_SEGMENT_BITMAP_OWNER_PAGE"){
+    Err(std::env::VarError::NotPresent)=>0u64,Ok(v) if v=="0"=>0,
+@@ -336,7 +338,7 @@ impl SegmentedDistributedBfs{
+   if !bitmap_mode&&p.history_layers==3&&!g.inverse_closed()?{return Err("SEGMENTED_ROLLING_REQUIRES_INVERSE_CLOSED".into())}
+   if let Some(c)=cuts{if c.len()!=p.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|x|x[0]>=x[1]){return Err("SEGMENTED_OWNER_CUTS".into())}}
+   let tiny=GenericMemoryPlan::with_storage(p.elements,1,p.state_bytes)?;
+-  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3),"resident_hash_indexed_extents":resident_hash.map(|v|v.4)});
++  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3),"resident_hash_indexed_extents":resident_hash.map(|v|v.4),"resident_hash_parent_cursor":resident_hash.map(|v|v.5)});
+   Ok((p,strategy_advertisement,bitmap_mode,page_code,page_setter,bitmap_orbit_abi,compact_positions,bitmap_banks,tiny,immutable_routes,pack4,descriptor,resident_hash))
+   })();
+   let descriptor=config.as_ref().ok().map(|x|&x.11);
+diff --git a/cuda/CMakeLists.txt b/cuda/CMakeLists.txt
+index 45f457b..e328ae5 100644
+--- a/cuda/CMakeLists.txt
++++ b/cuda/CMakeLists.txt
+@@ -79,6 +79,12 @@ if(BUILD_TESTING)
+   target_include_directories(mgbfs-device-mailbox-layout-cpu-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+   target_compile_features(mgbfs-device-mailbox-layout-cpu-test PRIVATE cxx_std_17)
+   add_test(NAME device-mailbox-layout-cpu COMMAND mgbfs-device-mailbox-layout-cpu-test)
++  add_executable(mgbfs-device-parent-cursor-test ../tests/device_parent_cursor_gpu.cu)
++  target_include_directories(mgbfs-device-parent-cursor-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
++  target_link_libraries(mgbfs-device-parent-cursor-test PRIVATE CUDA::cudart)
++  target_compile_features(mgbfs-device-parent-cursor-test PRIVATE cxx_std_17 cuda_std_17)
++  add_test(NAME device-parent-cursor COMMAND mgbfs-device-parent-cursor-test)
++  set_tests_properties(device-parent-cursor PROPERTIES SKIP_RETURN_CODE 77)
+   add_executable(mgbfs-device-topology-cpu-test ../tests/device_topology_cpu.cpp)
+   target_include_directories(mgbfs-device-topology-cpu-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+   target_compile_features(mgbfs-device-topology-cpu-test PRIVATE cxx_std_17)
+diff --git a/cuda/device_pack4_bfs.cu b/cuda/device_pack4_bfs.cu
+index a446984..62f6294 100644
+--- a/cuda/device_pack4_bfs.cu
++++ b/cuda/device_pack4_bfs.cu
+@@ -116,13 +116,14 @@ extern "C" uint32_t mgbfs_device_hash_bfs_abi_query(uint32_t item) {
+     case 2:return sizeof(mgbfs_resident::Report);
+     case 3:return sizeof(mgbfs_device_hash::Extent);
+     case 4:return sizeof(mgbfs_resident::HashConfig);
++    case 5:return 1; // reserved0=1 enables the monotone hash parent cursor.
+     default:return 0;
+   }
+ }
+ static int validate_hash(const mgbfs_resident::Args* a,uint64_t window_bytes) {
+   if(!a||a->abi_version!=1||a->struct_bytes!=sizeof(*a)||
+      !a->world||a->world>mgbfs_resident::max_world||a->rank>=a->world||
+-     !a->shards||!a->generators||a->banks!=3||a->reserved0||!a->job_generation||
++     !a->shards||!a->generators||a->banks!=3||a->reserved0>1||!a->job_generation||
+      !a->domain.total||!mgbfs_pack4_valid(a->dictionary)||!a->permutations||
+      !a->physical_of_logical||!a->extents||!a->extent_count||!a->extent_owner||
+      !a->shard_locks||!a->visited||!a->rank_count||!a->layer_sizes||
+diff --git a/cuda/device_pack4_bfs.cuh b/cuda/device_pack4_bfs.cuh
+index 305a551..b43add0 100644
+--- a/cuda/device_pack4_bfs.cuh
++++ b/cuda/device_pack4_bfs.cuh
+@@ -9,6 +9,7 @@
+ #include "device_epoch_decision.cuh"
+ #include "device_mailbox.cuh"
+ #include "device_pack4_accept.cuh"
++#include "device_parent_cursor.cuh"
+ #include "device_segmented_hash_accept.cuh"
+ #include "bitmap_pack4_action.cuh"
+ #include <nccl_device.h>
+@@ -40,6 +41,11 @@ struct HashConfig {
+   uint64_t* extent_next;
+   uint64_t* free_cursor;
+ };
++struct HashReadBank {
++  const mgbfs_device_hash::Extent* extents;
++  uint32_t bank;
++  __device__ uint64_t operator()(uint64_t i) const {return extents[i].counts[bank];}
++};
+ struct HashWord {
+   MgbfsPack4Dictionary dictionary;uint64_t packed;
+   __device__ int64_t value(uint32_t element) const {
+@@ -381,9 +387,17 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report)
+       Payload pending[max_world][max_packet_records];
+       unsigned pending_count[max_world]={};
+       const unsigned packet_records=a.mailbox.requested_payload_bytes/sizeof(Payload);
+-      for(Word parent=tid;parent<current&&!stopped;parent+=active_lanes) {
+-        uint64_t remaining=parent,packed=0;bool found=false;
+-        for(uint64_t i=0;i<a.extent_count;++i) {
++      mgbfs_parent_cursor::Cursor parent_cursor{};
++      for(Word parent=tid;parent<current&&!stopped;
++          parent=parent>UINT64_MAX-active_lanes?UINT64_MAX:parent+active_lanes) {
++        uint64_t remaining=parent,packed=0,first_extent=0;bool found=false;
++        if constexpr(Hash) {
++          if(a.reserved0==1 && !mgbfs_parent_cursor::locate(parent_cursor,a.extent_count,parent,
++                 HashReadBank{hash_extents,read_bank},&first_extent,&remaining)) {
++            failure(local,mgbfs_device_epoch::FATAL);break;
++          }
++        }
++        for(uint64_t i=first_extent;i<a.extent_count;++i) {
+           if constexpr(Hash) {
+             const auto& e=hash_extents[i];const uint64_t n=e.counts[read_bank];
+             if(remaining<n) {
+diff --git a/cuda/device_parent_cursor.cuh b/cuda/device_parent_cursor.cuh
+new file mode 100644
+index 0000000..4d85c5e
+--- /dev/null
++++ b/cuda/device_parent_cursor.cuh
+@@ -0,0 +1,26 @@
++#pragma once
++#include <cstdint>
++
++// Per-producer position in the immutable read bank of one layer. Parents
++// assigned to a producer have strictly increasing ordinals. Other banks may
++// change during the layer; Count must read only the immutable read bank.
++namespace mgbfs_parent_cursor {
++struct Cursor { uint64_t extent=0,base=0; };
++template<class Count>
++__device__ inline bool locate(Cursor& cursor,uint64_t extent_count,uint64_t parent,
++                              Count count,uint64_t* extent,uint64_t* row) {
++  if(!extent || !row || cursor.extent>extent_count || parent<cursor.base)return false;
++  uint64_t remaining=parent-cursor.base;
++  while(cursor.extent<extent_count) {
++    const uint64_t n=count(cursor.extent);
++    if(n>UINT64_MAX-cursor.base)return false;
++    if(remaining<n) {
++      *extent=cursor.extent;*row=remaining;return true;
++    }
++    remaining-=n;
++    cursor.base+=n;
++    ++cursor.extent;
++  }
++  return false;
++}
++}
+diff --git a/tests/device_parent_cursor_gpu.cu b/tests/device_parent_cursor_gpu.cu
+new file mode 100644
+index 0000000..2b6c6e9
+--- /dev/null
++++ b/tests/device_parent_cursor_gpu.cu
+@@ -0,0 +1,79 @@
++#include "device_parent_cursor.cuh"
++#include <cuda_runtime.h>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <vector>
++
++struct Counts {
++  const uint64_t* values;
++  __device__ uint64_t operator()(uint64_t i) const { return values[i]; }
++};
++struct Position { uint64_t ok,extent,row; };
++
++__global__ void locate_all(const uint64_t* counts,uint64_t n,
++                           const uint64_t* parents,uint64_t pcount,Position* out) {
++  if (threadIdx.x || blockIdx.x) return;
++  mgbfs_parent_cursor::Cursor cursor{};
++  for (uint64_t i=0;i<pcount;++i) {
++    uint64_t extent=0,row=0;
++    bool ok=mgbfs_parent_cursor::locate(cursor,n,parents[i],Counts{counts},&extent,&row);
++    out[i]={uint64_t(ok),extent,row};
++  }
++}
++__global__ void invalid_cases(uint32_t* result) {
++  if (threadIdx.x || blockIdx.x) return;
++  uint64_t extent=0,row=0;
++  const uint64_t overflow[]={UINT64_MAX,1};
++  mgbfs_parent_cursor::Cursor first{};
++  const bool accepted_overflow=mgbfs_parent_cursor::locate(
++      first,2,UINT64_MAX,Counts{overflow},&extent,&row);
++  const uint64_t normal[]={3,5};
++  mgbfs_parent_cursor::Cursor second{};
++  const bool initial=mgbfs_parent_cursor::locate(second,2,4,Counts{normal},&extent,&row);
++  const bool accepted_rewind=mgbfs_parent_cursor::locate(second,2,2,Counts{normal},&extent,&row);
++  *result=(!accepted_overflow&&initial&&!accepted_rewind)?1u:0u;
++}
++static void checked(cudaError_t e) {
++  if(e!=cudaSuccess) { std::fprintf(stderr,"CUDA error: %s\n",cudaGetErrorString(e)); std::exit(1); }
++}
++int main() {
++  int ndevice=0;
++  if(cudaGetDeviceCount(&ndevice)!=cudaSuccess || !ndevice)return 77;
++  // Deliberately includes empty extents and virtual boundaries at 2^32.
++  // Only metadata is allocated; this does not allocate 2^32 physical rows.
++  const std::vector<uint64_t> counts={0,2,0,1,uint64_t(1)<<32,0,3};
++  const std::vector<uint64_t> parents={0,1,2,3,(uint64_t(1)<<32)-1,
++    uint64_t(1)<<32,(uint64_t(1)<<32)+1,(uint64_t(1)<<32)+2,(uint64_t(1)<<32)+5,(uint64_t(1)<<32)+6};
++  std::vector<Position> got(parents.size());
++  uint64_t *dc=nullptr,*dp=nullptr;Position* dout=nullptr;
++  checked(cudaMalloc(&dc,counts.size()*sizeof(uint64_t)));
++  checked(cudaMalloc(&dp,parents.size()*sizeof(uint64_t)));
++  checked(cudaMalloc(&dout,got.size()*sizeof(Position)));
++  checked(cudaMemcpy(dc,counts.data(),counts.size()*sizeof(uint64_t),cudaMemcpyHostToDevice));
++  checked(cudaMemcpy(dp,parents.data(),parents.size()*sizeof(uint64_t),cudaMemcpyHostToDevice));
++  locate_all<<<1,1>>>(dc,counts.size(),dp,parents.size(),dout);
++  checked(cudaGetLastError());
++  checked(cudaMemcpy(got.data(),dout,got.size()*sizeof(Position),cudaMemcpyDeviceToHost));
++  for(size_t i=0;i<parents.size();++i) {
++    uint64_t left=parents[i],extent=0;
++    while(extent<counts.size() && left>=counts[extent])left-=counts[extent++];
++    bool ok=extent<counts.size();
++    if(got[i].ok!=uint64_t(ok) || (ok && (got[i].extent!=extent || got[i].row!=left))) {
++      std::fprintf(stderr,"parent=%llu got=%llu:%llu:%llu want=%d:%llu:%llu\n",
++        (unsigned long long)parents[i],(unsigned long long)got[i].ok,
++        (unsigned long long)got[i].extent,(unsigned long long)got[i].row,
++        int(ok),(unsigned long long)extent,(unsigned long long)left);
++      return 1;
++    }
++  }
++  uint32_t *invalid=nullptr,checked_invalid=0;
++  checked(cudaMalloc(&invalid,sizeof(uint32_t)));
++  invalid_cases<<<1,1>>>(invalid);
++  checked(cudaGetLastError());
++  checked(cudaMemcpy(&checked_invalid,invalid,sizeof(uint32_t),cudaMemcpyDeviceToHost));
++  if(checked_invalid!=1){std::fprintf(stderr,"cursor accepted overflow or an invalid rewind\n");return 1;}
++  checked(cudaFree(invalid));checked(cudaFree(dc));checked(cudaFree(dp));checked(cudaFree(dout));
++  std::puts("PASS parent cursor: empty extents, jumps, overflow and virtual 2^32 row boundary");
++  return 0;
++}
+diff --git a/tests/device_resident_hash_cayleypy_gpu.py b/tests/device_resident_hash_cayleypy_gpu.py
+index a2f8ba0..bc190bc 100644
+--- a/tests/device_resident_hash_cayleypy_gpu.py
++++ b/tests/device_resident_hash_cayleypy_gpu.py
+@@ -19,6 +19,8 @@ def verify(r,layers,completed):
+  assert r.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL"
+  assert len(r.report["segment_memory_by_rank"])==world
+  assert all(m["resident"]["storage"]=="segmented_hash" for m in r.report["segment_memory_by_rank"])
++ assert all(m["resident"]["hash_parent_cursor"]==(os.environ.get("MGBFS_RESIDENT_HASH_PARENT_CURSOR")=="1")
++            for m in r.report["segment_memory_by_rank"])
+  assert r.layer_sizes==list(map(len,layers[:len(r.layer_sizes)])),r.layer_sizes
+  assert r.bfs_completed is completed,r.report
+  got=Counter(map(tuple,r.last_layer().tolist()))
+@@ -61,6 +63,12 @@ try:
+   verify(result,oracle,True)
+   assert pids==[w.process.pid for w in pool.workers]
+   print("PASS CayleyPy healthy next job",pids,flush=True)
++  for i,mode in enumerate(("0","1","0")):
++   os.environ["MGBFS_RESIDENT_HASH_PARENT_CURSOR"]=mode
++   result=graph.bfs(output=root/f"cursor-switch-{i}")
++   verify(result,oracle,True)
++   assert pids==[w.process.pid for w in pool.workers]
++   print("PASS CayleyPy persistent cursor",mode,pids,flush=True)
+ finally:multigpubfs.disable_native()
+ (root/"acceptance.json").write_text(json.dumps({"world":world,"workers":pids,"records":records},indent=2))
+ print("EVIDENCE",root,flush=True)
+diff --git a/tests/device_resident_hash_layers_gpu.py b/tests/device_resident_hash_layers_gpu.py
+index 0cfdcd1..73db106 100644
+--- a/tests/device_resident_hash_layers_gpu.py
++++ b/tests/device_resident_hash_layers_gpu.py
+@@ -11,6 +11,9 @@ from pathlib import Path
+ from multigpubfs import GraphDefinition, run_graph
+ from multigpubfs.generic_session import persistent_graph_workers
+ 
++# This fixture inspects one requested layer at a time through the test-only profile gate.
++os.environ["MGBFS_SEGMENT_TEST_BATCH"]="1"
++
+ world=int(os.environ.get("RESIDENT_TEST_WORLD","2"))
+ devices=list(range(world))
+ root=Path(tempfile.mkdtemp(prefix=f"resident-hash-layers-{world}-",
+@@ -51,6 +54,7 @@ def check_receipt(r):
+   mode="parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank"
+   assert m["resident"]["hash_owner_execution"]==mode
+   assert m["resident"]["hash_indexed_extents"]==(os.environ.get("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")=="1")
++  assert m["resident"]["hash_parent_cursor"]==(os.environ.get("MGBFS_RESIDENT_HASH_PARENT_CURSOR")=="1")
+ 
+ records=[];workers=None;seen_shards=0;peak_owners=0
+ with persistent_graph_workers() as pool:
+diff --git a/tests/device_resident_hash_parent_cursor_compat_gpu.py b/tests/device_resident_hash_parent_cursor_compat_gpu.py
+new file mode 100644
+index 0000000..40ecac4
+--- /dev/null
++++ b/tests/device_resident_hash_parent_cursor_compat_gpu.py
+@@ -0,0 +1,34 @@
++"""Explicit cursor requests must fail on older resident hash libraries."""
++import json,os,tempfile
++from pathlib import Path
++from multigpubfs import GraphDefinition,run_graph
++from multigpubfs.generic_session import persistent_graph_workers
++
++root=Path(tempfile.mkdtemp(prefix="resident-hash-parent-compat-",dir=os.environ.get("MGBFS_TEST_TMP_ROOT")))
++os.environ["LD_LIBRARY_PATH"]=os.environ["RESIDENT_OLD_LIB"]+":"+os.environ["RESIDENT_LD_TAIL"]
++graph=GraphDefinition.permutation([[1,0,2,3],[0,2,1,3],[0,1,3,2]],[0,1,2,3])
++layers=graph.exact_layers(1000)
++def run(out):
++ return run_graph(graph,out,devices=[0,1],autotune=False,shards=2,_batch=8,segment_rows=64,
++  memory_backend="segmented24",segment_strategy="atomic",execution_engine="device",
++  executable=os.environ["MGBFS_EXECUTABLE"])
++
++os.environ["MGBFS_RESIDENT_HASH_PARENT_CURSOR"]="1"
++out=root/"unsupported"
++with persistent_graph_workers():
++ try:run(out)
++ except RuntimeError as e:assert "NATIVE_DISTRIBUTED_RANK_FAILED" in str(e),e
++ else:raise AssertionError("old library silently accepted an unsupported parent cursor")
++ logs="".join((out/f"rank-{r}.log").read_text() for r in (0,1))
++ assert "RESIDENT_HASH_PARENT_CURSOR_UNSUPPORTED" in logs,logs
++ assert not (out/"report.json").exists()
++print("PASS old library rejects explicit cursor",flush=True)
++os.environ.pop("MGBFS_RESIDENT_HASH_PARENT_CURSOR",None)
++with persistent_graph_workers():
++ r=run(root/"supported")
++ assert r["status"]=="COMPLETE" and r["layer_sizes"]==[len(x) for x in layers],r
++ assert r["runtime_identity"]["cuda_library_sha256"]==os.environ["RESIDENT_OLD_SHA"]
++print("PASS old library retains default path",flush=True)
++(root/"acceptance.json").write_text(json.dumps({"world":2,"old_cuda_library_sha256":os.environ["RESIDENT_OLD_SHA"],
++ "unsupported_explicit_cursor":True,"default_layers":[len(x) for x in layers]},indent=2))
++print("EVIDENCE",root,flush=True)
