@@ -13,6 +13,9 @@
 #endif
 #include "../cuda/bitmap_pack4_action.cuh"
 #include "../cuda/permutation_bitmap.cuh"
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+#include "../cuda/device_pack4_accept.cuh"
+#endif
 #include <cuda_runtime.h>
 #include <nccl.h>
 #include <nccl_device.h>
@@ -123,12 +126,20 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     MgbfsPack4Dictionary dictionary,unsigned generators,unsigned root,uint64_t root_word,
     unsigned queue_cap,unsigned row_cap,U64 job_epoch,
     unsigned delayed_reads,uint64_t* bank0,uint64_t* bank1,uint64_t* visited,
-    Record* records,Report* report) {
+    Record* records,Report* report
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+    ,uint64_t* segment_counts
+#endif
+    ) {
   if(blockIdx.x)return;
   __shared__ Mailbox* boxes[WORLD];
   __shared__ U64 current_count,next_count,record_count,producers_done,consumers_done;
   __shared__ U64 total_sent,total_received,total_blocked,total_duplicates,total_duplicates_full,total_steps;
   __shared__ unsigned depth,choice;
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+  __shared__ mgbfs_device_pack4::Extent device_extents[2];
+  __shared__ unsigned owner_lock;
+#endif
   const unsigned tid=threadIdx.x;
   if(tid==64) {
     for(unsigned r=0;r<WORLD;r++)boxes[r]=static_cast<Mailbox*>(ncclGetLsaPointer(win,0,r));
@@ -156,6 +167,18 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     const U64 epoch=U64(depth)+1;
     uint64_t* current=(depth&1)?bank1:bank0;
     uint64_t* next=(depth&1)?bank0:bank1;
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+    // One exclusive worker per shard. Multiple incoming rings use try-lock:
+    // a busy shard leaves the packet leased and retries without blocking
+    // other resident consumers. Both extents are preadmitted before launch.
+    const unsigned first=(row_cap+1)/2;
+    if(tid==64) {
+      segment_counts[0]=segment_counts[1]=0;owner_lock=0;
+      device_extents[0]={next,segment_counts,first,1,0};
+      if(row_cap>first)device_extents[1]={next+first,segment_counts+1,row_cap-first,1,0};
+    }
+    __syncthreads();
+#endif
     if(tid<PRODUCERS) {
       // Every producer owns distinct SPSC rings and advances a parent/generator
       // cursor only after the target ring has published that candidate.
@@ -247,6 +270,35 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
              !bitmap_rank(domain,candidate,0,&id)||id>=n||id%WORLD!=rank) {
             fail(local,2);break;
           }
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+          cuda::atomic_ref<unsigned,cuda::thread_scope_block> lock(owner_lock);
+          unsigned unlocked=0;
+          if(!lock.compare_exchange_strong(unlocked,1,cuda::memory_order_acquire,
+                                           cuda::memory_order_relaxed)) {
+            __nanosleep(32);continue;
+          }
+          mgbfs_device_pack4::Owner owner{};
+          owner.domain=domain;owner.dictionary=dictionary;owner.extents=device_extents;
+          owner.extent_count=row_cap>first?2:1;owner.bits=visited;
+          owner.owner_len=uint64_t(n)/WORLD+unsigned(rank<n%WORLD);
+          owner.world=WORLD;owner.owner=rank;owner.shards=1;owner.shard=0;owner.bank=0;
+          auto accepted=mgbfs_device_pack4::accept(owner,id,payload.value);
+          bool failed=false;
+          if(accepted.status==mgbfs_device_pack4::Status::duplicate) {
+            block_add(total_duplicates);
+            if(block_load(next_count)>=row_cap)block_add(total_duplicates_full);
+          } else if(accepted.status==mgbfs_device_pack4::Status::accepted) {
+            U64 row=(accepted.extent?first:0)+accepted.row;
+            U64 record=block_reserve(record_count);
+            if(row>=row_cap||record>=MAX_RECORDS){fail(local,2);failed=true;}
+            else {records[record]={depth+1,payload.value};block_add(next_count);}
+          } else if(accepted.status==mgbfs_device_pack4::Status::extent_full ||
+                    accepted.status==mgbfs_device_pack4::Status::cap_full) {
+            fail(local,1);failed=true;
+          } else {fail(local,2);failed=true;}
+          lock.store(0,cuda::memory_order_release);
+          if(failed)break;
+#else
           uint64_t local_id=id/WORLD,mask=uint64_t(1)<<(local_id&63);
           auto* word=reinterpret_cast<unsigned long long*>(&visited[local_id>>6]);
           if(atomicOr(word,static_cast<unsigned long long>(mask))&mask) {
@@ -259,6 +311,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
             if(record>=MAX_RECORDS){fail(local,2);break;}
             next[row]=payload.value;records[record]={depth+1,payload.value};
           }
+#endif
 #ifdef MGBFS_PACKET_MAILBOX
           if(mgbfs_packet_ring::try_ack(packet_view(boxes[src],lane,rank,queue_cap),
               receive_ticket,job_epoch,epoch)!=mgbfs_packet_ring::Result::ok)
@@ -444,6 +497,10 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   ncclComm_t comm{};ncclWindow_t win{};ncclDevComm dev{};
   Mailbox* box=nullptr;cudaStream_t stream{};int* barrier=nullptr;
   uint64_t *bank0=nullptr,*bank1=nullptr,*visited=nullptr;
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+  uint64_t* segment_counts=nullptr;
+  CUDA_OK(cudaMalloc(&segment_counts,2*sizeof(uint64_t)));
+#endif
   uint32_t *permutations=nullptr,*counts=nullptr;int64_t* symbols=nullptr;
   Record* records=nullptr;Report* report=nullptr;
   NCCL_OK(ncclCommInitRank(&comm,WORLD,id,rank));
@@ -499,7 +556,11 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       unsigned generators=unsigned(g.permutations.size()/dictionary.elements);
       uint64_t root_word=g.words[root];
       void* args[]={&win,&dev,&urank,&un,&permutations,&domain,&dictionary,&generators,
-                    &root,&root_word,&qcap,&cap,&job_epoch,&delay,&bank0,&bank1,&visited,&records,&report};
+                    &root,&root_word,&qcap,&cap,&job_epoch,&delay,&bank0,&bank1,&visited,&records,&report
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+                    ,&segment_counts
+#endif
+                    };
       CUDA_OK(cudaLaunchCooperativeKernel(reinterpret_cast<void*>(exact_layers),dim3(1),dim3(96),args,0,stream));
       CUDA_OK(cudaStreamSynchronize(stream));
       Report out{};CUDA_OK(cudaMemcpy(&out,report,sizeof(out),cudaMemcpyDeviceToHost));
@@ -530,6 +591,9 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   NCCL_OK(ncclDevCommDestroy(comm,&dev));NCCL_OK(ncclCommWindowDeregister(comm,win));
   CUDA_OK(cudaStreamDestroy(stream));
   CUDA_OK(cudaFree(bank0));CUDA_OK(cudaFree(bank1));CUDA_OK(cudaFree(visited));
+#ifdef MGBFS_SEGMENTED_PACK4_OWNER
+  CUDA_OK(cudaFree(segment_counts));
+#endif
   CUDA_OK(cudaFree(permutations));CUDA_OK(cudaFree(counts));CUDA_OK(cudaFree(symbols));
   CUDA_OK(cudaFree(records));CUDA_OK(cudaFree(report));CUDA_OK(cudaFree(barrier));
   NCCL_OK(ncclMemFree(box));NCCL_OK(ncclCommDestroy(comm));
