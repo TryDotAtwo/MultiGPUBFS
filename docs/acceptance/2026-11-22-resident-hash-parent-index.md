@@ -142,3 +142,24 @@ A second experimental receiver layout with one receiver per source was also
 tested and not merged: on this node S9 with two producer lanes it was slower
 for hash and bitmap than the existing per-lane receiver. Its code and raw
 results were retained separately; this is not evidence about other GPUs.
+
+
+## Eight-V100 topology probe
+
+A separate Vast machine 148667 was checked at $0.867/hour with eight
+V100-SXM2-32GB devices. A small SM70 CUDA kernel and cooperative-launch
+capability check succeeded on all eight. All 56 directed pairs reported peer
+access, but native peer atomics were unavailable on 24 directed pairs.
+The current device-ring protocol requires native atomics for every directed
+pair, so this machine was not used for the eight-GPU resident BFS gate.
+This is a CUDA capability probe, not an NCCL LSA or BFS execution.
+[Probe source, topology and output](artifacts/2026-11-22-8v100-148667-peer-probe.txt).
+
+## CI scope
+
+The native CPU workflow for code commit 76a65d1421740ac92be13d5a3516bd2280881d6e
+passed the CPU contracts and both other jobs, but failed its repository-wide
+Rust formatting check. The previous code commit 6b0fae55f6099c6c1a8dc8e9512e492da56bb27d
+already failed the same formatting step; the current log includes hundreds
+of formatting differences across existing files. This was not a GPU test
+failure. No claim is made that the complete CI workflow passed.

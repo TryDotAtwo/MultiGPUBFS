@@ -1,0 +1,148 @@
+===== peer_check.cu =====
+#include <cuda_runtime.h>
+#include <cstdio>
+__global__ void smoke() {}
+int main() {
+  int n=0; cudaError_t e=cudaGetDeviceCount(&n);
+  std::printf("device_count=%d result=%s\n",n,cudaGetErrorString(e));
+  if(e!=cudaSuccess||n!=8)return 3;
+  int bad=0;
+  for(int a=0;a<n;++a) {
+    cudaDeviceProp p{}; int coop=0;
+    e=cudaGetDeviceProperties(&p,a);
+    cudaError_t ce=cudaDeviceGetAttribute(&coop,cudaDevAttrCooperativeLaunch,a);
+    cudaError_t se=cudaSetDevice(a);
+    if(se==cudaSuccess) { smoke<<<1,1>>>();se=cudaGetLastError();if(se==cudaSuccess)se=cudaDeviceSynchronize(); }
+    std::printf("gpu=%d sm=%d.%d coop=%d props=%s attr=%s smoke=%s\n",a,p.major,p.minor,coop,cudaGetErrorString(e),cudaGetErrorString(ce),cudaGetErrorString(se));
+    if(e!=cudaSuccess||ce!=cudaSuccess||se!=cudaSuccess||!coop)++bad;
+  }
+  for(int a=0;a<n;++a) for(int b=0;b<n;++b)if(a!=b) {
+    int peer=0,atomic=0;
+    cudaError_t pe=cudaDeviceCanAccessPeer(&peer,a,b);
+    cudaError_t ae=cudaDeviceGetP2PAttribute(&atomic,cudaDevP2PAttrNativeAtomicSupported,a,b);
+    std::printf("pair=%d->%d peer=%d peer_status=%s native_atomic=%d atomic_status=%s\n",a,b,peer,cudaGetErrorString(pe),atomic,cudaGetErrorString(ae));
+    if(pe!=cudaSuccess||ae!=cudaSuccess||!peer||!atomic)++bad;
+  }
+  std::printf("unsupported_or_failed=%d\n",bad);
+  return bad?2:0;
+}
+
+===== peer_check.log =====
+device_count=8 result=no error
+gpu=0 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=1 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=2 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=3 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=4 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=5 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=6 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+gpu=7 sm=7.0 coop=1 props=no error attr=no error smoke=no error
+pair=0->1 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=0->2 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=0->3 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=0->4 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=0->5 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=0->6 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=0->7 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=1->0 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=1->2 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=1->3 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=1->4 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=1->5 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=1->6 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=1->7 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=2->0 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=2->1 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=2->3 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=2->4 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=2->5 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=2->6 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=2->7 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=3->0 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=3->1 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=3->2 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=3->4 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=3->5 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=3->6 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=3->7 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=4->0 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=4->1 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=4->2 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=4->3 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=4->5 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=4->6 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=4->7 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=5->0 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=5->1 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=5->2 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=5->3 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=5->4 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=5->6 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=5->7 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=6->0 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=6->1 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=6->2 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=6->3 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=6->4 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=6->5 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=6->7 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=7->0 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=7->1 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=7->2 peer=1 peer_status=no error native_atomic=0 atomic_status=no error
+pair=7->3 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=7->4 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=7->5 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+pair=7->6 peer=1 peer_status=no error native_atomic=1 atomic_status=no error
+unsupported_or_failed=24
+
+===== peer_check.exit =====
+2
+
+===== topology.txt =====
+	GPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	NIC0	CPU Affinity	NUMA Affinity	GPU NUMA ID
+GPU0	 X 	NV1	NV1	NV2	NV2	SYS	SYS	SYS	NODE	0-19,40-59	0		N/A
+GPU1	NV1	 X 	NV2	NV1	SYS	NV2	SYS	SYS	NODE	0-19,40-59	0		N/A
+GPU2	NV1	NV2	 X 	NV2	SYS	SYS	NV1	SYS	NODE	0-19,40-59	0		N/A
+GPU3	NV2	NV1	NV2	 X 	SYS	SYS	SYS	NV1	NODE	0-19,40-59	0		N/A
+GPU4	NV2	SYS	SYS	SYS	 X 	NV1	NV1	NV2	SYS	20-39,60-79	1		N/A
+GPU5	SYS	NV2	SYS	SYS	NV1	 X 	NV2	NV1	SYS	20-39,60-79	1		N/A
+GPU6	SYS	SYS	NV1	SYS	NV1	NV2	 X 	NV2	SYS	20-39,60-79	1		N/A
+GPU7	SYS	SYS	SYS	NV1	NV2	NV1	NV2	 X 	SYS	20-39,60-79	1		N/A
+NIC0	NODE	NODE	NODE	NODE	SYS	SYS	SYS	SYS	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_2
+
+
+===== gpu-versions.csv =====
+index, name, driver_version, pci.bus_id
+0, Tesla V100-SXM2-32GB, 580.178.04, 00000000:1A:00.0
+1, Tesla V100-SXM2-32GB, 580.178.04, 00000000:1B:00.0
+2, Tesla V100-SXM2-32GB, 580.178.04, 00000000:3D:00.0
+3, Tesla V100-SXM2-32GB, 580.178.04, 00000000:3E:00.0
+4, Tesla V100-SXM2-32GB, 580.178.04, 00000000:88:00.0
+5, Tesla V100-SXM2-32GB, 580.178.04, 00000000:89:00.0
+6, Tesla V100-SXM2-32GB, 580.178.04, 00000000:B2:00.0
+7, Tesla V100-SXM2-32GB, 580.178.04, 00000000:B3:00.0
+
+===== nvcc-version.txt =====
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Fri_Feb_21_20:23:50_PST_2025
+Cuda compilation tools, release 12.8, V12.8.93
+Build cuda_12.8.r12.8/compiler.35583870_0
+
+===== checksums.txt =====
+12e45856d06243dd6dec52422797c8d249015fe66b8e9b117c0a2e666c8839bf  peer_check
+6a98269184ac2a110fd914ae21b1e9533b6b2969f5064a959661687fb3fcddca  peer_check.cu
