@@ -1,0 +1,51 @@
+name: Verify dev43 immutable GitHub wheel installation
+on:
+  push:
+    branches: [codex/capacity-policy-autotune]
+    paths: [.github/workflows/verify-dev43-git-wheel.yml]
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Verify public wheel bytes
+        run: |
+          set -euo pipefail
+          url="https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/6da64ccd897ff041f1cb265cfcbac0909988bc3b/wheels/multigpubfs-0.2.0.dev43-py3-none-any.whl"
+          curl -fLsS "$url" -o "$RUNNER_TEMP/verified.whl"
+          echo "7ff8ef875012ac4ac6a8c178b872b62f437bdd99e773f7efb9c0fd232d7e9583  $RUNNER_TEMP/verified.whl" | sha256sum -c -
+      - name: Install published wheel through pip
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --upgrade "multigpubfs[cayleypy] @ https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/6da64ccd897ff041f1cb265cfcbac0909988bc3b/wheels/multigpubfs-0.2.0.dev43-py3-none-any.whl"
+          "$RUNNER_TEMP/venv/bin/python" - <<'PY'
+          import importlib.metadata,json,pathlib,multigpubfs
+          assert importlib.metadata.version('multigpubfs')=='0.2.0.dev43'
+          root=pathlib.Path(multigpubfs.__file__).parent
+          index=json.loads((root/'native_assets.json').read_text())
+          info=json.loads((root/'_package_info.json').read_text())
+          assert index['id']=='native-pip-20261121-v41'
+          assert info['source_commit']=='b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9',info
+          print('IMMUTABLE_WHEEL_INSTALL_PASS',info['source_commit'])
+          PY
+      - name: Test prefetch and offline cache reuse without GPUs
+        env:
+          CUDA_VISIBLE_DEVICES: ''
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/venv/bin/python" -m multigpubfs prefetch --sm 86 --cache "$RUNNER_TEMP/cache" --json > "$RUNNER_TEMP/online.json"
+          MGBFS_NATIVE_OFFLINE=1 "$RUNNER_TEMP/venv/bin/python" -m multigpubfs prefetch --sm 86 --cache "$RUNNER_TEMP/cache" --json > "$RUNNER_TEMP/offline.json"
+          "$RUNNER_TEMP/venv/bin/python" - "$RUNNER_TEMP/online.json" "$RUNNER_TEMP/offline.json" <<'PY'
+          import json,pathlib,sys
+          a,b=[json.loads(pathlib.Path(p).read_text()) for p in sys.argv[1:]]
+          assert a['status']=='PREFETCHED' and not a['gpu_accessed'] and a['downloaded_bytes']==322989207,a
+          assert b['status']=='PREFETCHED' and not b['gpu_accessed'] and b['downloaded_bytes']==0,b
+          print('IMMUTABLE_WHEEL_PREFETCH_PASS',a['downloaded_bytes'],b['downloaded_bytes'])
+          PY
