@@ -7,7 +7,7 @@ Version 0.2.0.dev43 provides opt-in segmented hash (`segmented24`) and permutati
 On Linux x86-64, in the Python environment used by the job:
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261122-v43/multigpubfs-0.2.0.dev43-py3-none-any.whl"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/6da64ccd897ff041f1cb265cfcbac0909988bc3b/wheels/multigpubfs-0.2.0.dev43-py3-none-any.whl"
 ```
 
 Alternatively, install the verified source snapshot directly from GitHub (requires Git and downloads the repository):
@@ -16,7 +16,7 @@ Alternatively, install the verified source snapshot directly from GitHub (requir
 python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
 ```
 
-The wheel is smaller to download. The exact dev43 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544); physical GPU acceptance used the release wheel and the same native component hashes.
+The wheel is smaller to download. The exact dev43 Git source install and GPU-independent prefetch were [checked in CI](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544); physical GPU acceptance used the wheel and the same native component hashes.
 
 Start a new Python process after updating. CUDA native components are selected from the visible GPUs and downloaded into the cache on first use. The first download includes a shared runtime of about 304 MB, the executable and the selected architecture component. Later jobs reuse checksum-verified cached files.
 
