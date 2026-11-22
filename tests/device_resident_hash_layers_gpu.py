@@ -47,6 +47,7 @@ def check_receipt(r):
  assert len(r["segment_memory_by_rank"])==world
  for m in r["segment_memory_by_rank"]:
   assert m["resident"]["storage"]=="segmented_hash"
+  assert m["resident"]["slots_per_ring"]==int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1"))
   assert m["resident"]["transport"]=="NCCL_LSA_DEVICE_RING"
   mode="parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank"
   assert m["resident"]["hash_owner_execution"]==mode

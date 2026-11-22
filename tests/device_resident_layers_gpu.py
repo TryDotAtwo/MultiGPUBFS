@@ -29,8 +29,10 @@ def rank_cap(g,layers):
 def check_packet(r):
  expected=int(os.environ.get("MGBFS_RESIDENT_PACKET_RECORDS","1"))
  expected_lanes=int(os.environ.get("MGBFS_RESIDENT_LANES","4"))
+ expected_slots=int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1"))
  assert [m["resident"]["packet_records"] for m in r["segment_memory_by_rank"]]==[expected]*world
  assert [m["resident"]["lanes"] for m in r["segment_memory_by_rank"]]==[expected_lanes]*world
+ assert [m["resident"]["slots_per_ring"] for m in r["segment_memory_by_rank"]]==[expected_slots]*world
 
 def checkstate(out,layer):
  actual=json.loads((out/"states.json").read_text())["current"]

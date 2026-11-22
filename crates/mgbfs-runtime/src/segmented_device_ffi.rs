@@ -79,7 +79,7 @@ pub(super) struct Functions {
 }
 #[derive(Clone,Copy)]
 pub(super) struct HashFunctions {
- pub initialize:Initialize,pub launch:Launch,pub peer_smoke:PeerSmoke,
+ pub initialize:Initialize,pub launch:Launch,pub peer_smoke:PeerSmoke,pub query:Query,
 }
 impl HashFunctions {
  pub(super) unsafe fn load()->Result<Self,String>{
@@ -96,11 +96,17 @@ impl HashFunctions {
   }
   if query(999)!=0{return Err("RESIDENT_HASH_ABI_QUERY".into())}
   Ok(Self{
-   initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_init_v1\0")?),
+   query,initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_init_v1\0")?),
    launch:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_launch_v1\0")?),
    peer_smoke:mem::transmute(symbol(b"mgbfs_nccl_resident_hash_smoke_v1\0")?),
   })
  }
+}
+pub(super) fn resident_slot_count(advertised:u32,requested:u32)->Result<u32,String>{
+ if !matches!(requested,1|2|4){return Err(format!("RESIDENT_MAILBOX_SLOTS_INVALID requested={requested}"))}
+ let maximum=if advertised==0{1}else{advertised};
+ if requested>maximum{return Err(format!("RESIDENT_MAILBOX_SLOTS_UNSUPPORTED requested={requested} max={maximum}"))}
+ Ok(requested)
 }
 fn resident_lane_count(advertised:u32,requested:u32)->Result<u32,String>{
  let maximum=if advertised==0{4}else{advertised};
@@ -197,6 +203,16 @@ impl Functions {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]
+ fn slot_geometry_negotiation(){
+  assert_eq!(resident_slot_count(0,1).unwrap(),1);
+  assert!(resident_slot_count(0,2).unwrap_err().contains("UNSUPPORTED"));
+  assert_eq!(resident_slot_count(4,2).unwrap(),2);
+  assert_eq!(resident_slot_count(4,4).unwrap(),4);
+  assert!(resident_slot_count(4,0).unwrap_err().contains("INVALID"));
+  assert!(resident_slot_count(4,3).unwrap_err().contains("INVALID"));
+  assert!(resident_slot_count(2,4).unwrap_err().contains("UNSUPPORTED"));
+ }
  #[test]
  fn lane_geometry_negotiation(){
   assert_eq!(resident_lane_count(0,4).unwrap(),4);

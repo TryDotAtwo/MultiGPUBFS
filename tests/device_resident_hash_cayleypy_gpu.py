@@ -19,6 +19,7 @@ def verify(r,layers,completed):
  assert r.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL"
  assert len(r.report["segment_memory_by_rank"])==world
  assert all(m["resident"]["storage"]=="segmented_hash" for m in r.report["segment_memory_by_rank"])
+ assert all(m["resident"]["slots_per_ring"]==int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1")) for m in r.report["segment_memory_by_rank"])
  assert r.layer_sizes==list(map(len,layers[:len(r.layer_sizes)])),r.layer_sizes
  assert r.bfs_completed is completed,r.report
  got=Counter(map(tuple,r.last_layer().tolist()))
@@ -61,6 +62,14 @@ try:
   verify(result,oracle,True)
   assert pids==[w.process.pid for w in pool.workers]
   print("PASS CayleyPy healthy next job",pids,flush=True)
+  graph=CayleyGraph(cases[0][1],device="cpu")
+  oracle=multigpubfs.from_cayleypy(graph).exact_layers(1000)
+  for i,slots in enumerate(("1","2","4","1")):
+   os.environ["MGBFS_RESIDENT_MAILBOX_SLOTS"]=slots
+   result=graph.bfs(output=root/f"slots-switch-{i}")
+   verify(result,oracle,True)
+   assert pids==[w.process.pid for w in pool.workers]
+   print("PASS CayleyPy persistent slots",slots,pids,flush=True)
 finally:multigpubfs.disable_native()
 (root/"acceptance.json").write_text(json.dumps({"world":world,"workers":pids,"records":records},indent=2))
 print("EVIDENCE",root,flush=True)

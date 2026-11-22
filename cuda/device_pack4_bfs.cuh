@@ -23,6 +23,7 @@ constexpr unsigned max_lanes=8;
 constexpr unsigned max_world=8;
 constexpr unsigned threads=32*(lanes+2);
 constexpr unsigned max_packet_records=8;
+constexpr unsigned max_mailbox_slots=4;
 constexpr uint32_t payload_format=1;
 
 struct Payload { uint64_t packed; uint32_t source,reserved; };
@@ -139,8 +140,9 @@ __global__ void initialize(Control* local,Args a) {
 
 
 // Startup-only data+credit validation through the actual registered LSA
-// window. Each rank sends twice over the single-slot ring to every rank and
-// checks the payload from every source. The caller initializes this layout,
+// window. Each rank sends capacity+1 packets to every rank, checking the
+// payload and all final credits, including reuse of slot zero. The caller
+// initializes this layout,
 // synchronizes all ranks, and must synchronize all ranks again before reuse.
 // Terminal cancellation is shared with the resident job supervisor.
 __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t* out) {
@@ -150,7 +152,7 @@ __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t*
   __shared__ unsigned failed;
   if(tid==64) {
     failed=(comm.lsaRank!=int(a.rank)||comm.lsaSize!=int(a.world)||
-            a.mailbox.slots_per_ring!=1);
+            !a.mailbox.slots_per_ring||a.mailbox.slots_per_ring>max_mailbox_slots);
     for(unsigned r=0;r<a.world;++r) {
       peers[r]=static_cast<Control*>(ncclGetLsaPointer(window,0,r));
       if(!peers[r])failed=1;
@@ -159,10 +161,11 @@ __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t*
   __syncthreads();
   constexpr Word phase=UINT64_MAX-1;
   constexpr uint32_t format=0x736d6f6bu;
+  const Word messages=Word(a.mailbox.slots_per_ring)+1;
   if(!failed&&tid==0) {
     for(unsigned dst=0;dst<a.world&&!atomicAdd(&failed,0u);++dst) {
       auto ring=view(peers[a.rank],a,0,dst);
-      for(Word ticket=0;ticket<2&&!atomicAdd(&failed,0u);++ticket) {
+      for(Word ticket=0;ticket<messages&&!atomicAdd(&failed,0u);++ticket) {
         Payload p{(Word(a.rank)<<40)|(Word(dst)<<32)|ticket,a.rank,dst};
         for(;;) {
           if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
@@ -174,21 +177,27 @@ __global__ void peer_smoke(ncclWindow_t window,ncclDevComm comm,Args a,uint32_t*
         }
       }
     }
-    // The second credit confirms the receiver has completed both reads.
+    // Every slot reaches the credit corresponding to its last sent ticket.
     for(unsigned dst=0;dst<a.world&&!atomicAdd(&failed,0u);++dst) {
       auto ring=view(peers[a.rank],a,0,dst);
-      while(SystemAtomic(ring.slots[0].sequence).load(cuda::memory_order_acquire)!=4) {
-        if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
-        __nanosleep(32);
+      for(unsigned slot=0;slot<ring.capacity&&!atomicAdd(&failed,0u);++slot) {
+        const Word last=slot==0?messages-1:Word(slot);
+        const Word expected=2*(last+Word(ring.capacity));
+        for(;;) {
+          Word observed=SystemAtomic(ring.slots[slot].sequence).load(cuda::memory_order_acquire);
+          if(observed==expected)break;
+          if(observed>expected||terminal(a.terminal)){atomicExch(&failed,1u);break;}
+          __nanosleep(32);
+        }
       }
     }
   } else if(!failed&&tid==32) {
     Word ticket[max_world]={};
-    unsigned remaining=a.world*2,cursor=0;
+    unsigned remaining=a.world*unsigned(messages),cursor=0;
     while(remaining&&!atomicAdd(&failed,0u)) {
       if(terminal(a.terminal)){atomicExch(&failed,1u);break;}
       const unsigned src=cursor++%a.world;
-      if(ticket[src]==2)continue;
+      if(ticket[src]==messages)continue;
       auto ring=view(peers[src],a,0,a.rank);
       mgbfs_packet_ring::PacketHeader header{};
       const unsigned char* bytes=nullptr;

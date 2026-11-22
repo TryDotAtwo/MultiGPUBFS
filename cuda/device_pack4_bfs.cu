@@ -32,6 +32,7 @@ extern "C" uint32_t mgbfs_device_pack4_bfs_abi_query(uint32_t item) {
     case 5:return sizeof(mgbfs_resident::Capture);
     case 6:return sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records;
     case 7:return mgbfs_resident::max_lanes;
+    case 8:return mgbfs_resident::max_mailbox_slots;
     default:return 0;
   }
 }
@@ -52,7 +53,8 @@ static int validate(const mgbfs_resident::Args* a,uint64_t window_bytes) {
   if(payload_bytes<sizeof(mgbfs_resident::Payload)||
      payload_bytes>sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records||
      payload_bytes%sizeof(mgbfs_resident::Payload))return 2;
-  if(!a->mailbox.lanes||a->mailbox.lanes>mgbfs_resident::max_lanes)return 2;
+  if(!a->mailbox.lanes||a->mailbox.lanes>mgbfs_resident::max_lanes||
+     !a->mailbox.slots_per_ring||a->mailbox.slots_per_ring>mgbfs_resident::max_mailbox_slots)return 2;
   if(mgbfs_device_mailbox_layout_v1(a->world,a->mailbox.lanes,
        a->mailbox.slots_per_ring,payload_bytes,UINT64_MAX,
        sizeof(expected),&expected)!=MGBFS_MAILBOX_LAYOUT_OK||
@@ -77,7 +79,7 @@ extern "C" int mgbfs_device_pack4_lsa_smoke_v1(
     const void* raw_window,const void* raw_comm,const mgbfs_resident::Args* args,
     uint64_t window_bytes,uint32_t* report,void* raw_stream) {
   int status=validate(args,window_bytes);if(status)return status;
-  if(!raw_window||!raw_comm||!report||args->mailbox.slots_per_ring!=1)return 4;
+  if(!raw_window||!raw_comm||!report)return 4;
   auto window=*static_cast<const ncclWindow_t*>(raw_window);
   auto comm=*static_cast<const ncclDevComm*>(raw_comm);
   if(comm.lsaSize!=int(args->world)||comm.lsaRank!=int(args->rank))return 6;
@@ -116,6 +118,7 @@ extern "C" uint32_t mgbfs_device_hash_bfs_abi_query(uint32_t item) {
     case 2:return sizeof(mgbfs_resident::Report);
     case 3:return sizeof(mgbfs_device_hash::Extent);
     case 4:return sizeof(mgbfs_resident::HashConfig);
+    case 6:return mgbfs_resident::max_mailbox_slots;
     default:return 0;
   }
 }
@@ -133,7 +136,8 @@ static int validate_hash(const mgbfs_resident::Args* a,uint64_t window_bytes) {
   if(bytes<sizeof(mgbfs_resident::Payload)||
      bytes>sizeof(mgbfs_resident::Payload)*mgbfs_resident::max_packet_records||
      bytes%sizeof(mgbfs_resident::Payload)||!a->mailbox.lanes||
-     a->mailbox.lanes>mgbfs_resident::max_lanes)return 2;
+     a->mailbox.lanes>mgbfs_resident::max_lanes||!a->mailbox.slots_per_ring||
+     a->mailbox.slots_per_ring>mgbfs_resident::max_mailbox_slots)return 2;
   if(mgbfs_device_mailbox_layout_v1(a->world,a->mailbox.lanes,a->mailbox.slots_per_ring,
        bytes,UINT64_MAX,sizeof(expected),&expected)!=MGBFS_MAILBOX_LAYOUT_OK||
      std::memcmp(&expected,&a->mailbox,sizeof(expected))||
@@ -152,7 +156,7 @@ extern "C" int mgbfs_device_hash_bfs_init_v1(void* window,uint64_t bytes,
 extern "C" int mgbfs_device_hash_lsa_smoke_v1(const void* raw_window,const void* raw_comm,
     const mgbfs_resident::Args* args,uint64_t bytes,uint32_t* report,void* stream) {
   int status=validate_hash(args,bytes);if(status)return status;
-  if(!raw_window||!raw_comm||!report||args->mailbox.slots_per_ring!=1)return 4;
+  if(!raw_window||!raw_comm||!report)return 4;
   auto window=*static_cast<const ncclWindow_t*>(raw_window);
   auto comm=*static_cast<const ncclDevComm*>(raw_comm);
   if(comm.lsaSize!=int(args->world)||comm.lsaRank!=int(args->rank))return 6;

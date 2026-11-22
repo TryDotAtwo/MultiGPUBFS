@@ -77,7 +77,16 @@ impl SegmentedDistributedBfs {
   let hash_parallel=self.resident_hash.map_or(false,|v|v.2);
   let hash_instrumented=self.resident_hash.map_or(false,|v|v.3);
   let hash_indexed=self.resident_hash.map_or(false,|v|v.4);
-  let geometry=f.mailbox(world,1,u64::MAX);
+  let geometry:Result<_>=(||{
+   let requested=match std::env::var("MGBFS_RESIDENT_MAILBOX_SLOTS"){
+    Ok(v)=>v.parse::<u32>().map_err(|_|"RESIDENT_MAILBOX_SLOTS_INVALID".to_owned())?,
+    Err(std::env::VarError::NotPresent)=>1,
+    Err(_)=>return Err("RESIDENT_MAILBOX_SLOTS_INVALID".into()),
+   };
+   let slots=resident_ffi::resident_slot_count(unsafe{(f.query)(8)},requested)?;
+   if let Some(h)=hf {resident_ffi::resident_slot_count(unsafe{(h.query)(6)},requested)?;}
+   f.mailbox(world,slots,u64::MAX)
+  })();
   let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
    "payload_bytes":m.requested_payload_bytes,"payload_stride_bytes":m.payload_stride_bytes,

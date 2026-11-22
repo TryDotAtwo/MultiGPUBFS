@@ -21,7 +21,7 @@ using namespace mgbfs_packet_ring;
 #ifndef MGBFS_PACKET_WORLD
 #define MGBFS_PACKET_WORLD 2
 #endif
-constexpr unsigned WORLD = MGBFS_PACKET_WORLD, LANES = 2, CAP_MAX = 2, BYTES = 96, N = 13, PHASES = 2;
+constexpr unsigned WORLD = MGBFS_PACKET_WORLD, LANES = 2, CAP_MAX = 4, BYTES = 96, N = 13, PHASES = 2;
 static_assert(WORLD >= 2 && WORLD <= 8, "test supports 2 to 8 ranks");
 constexpr U64 ITER_LIMIT = 100000000ull;
 
@@ -232,7 +232,7 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   ncclDevCommRequirements req=NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER; req.lsaBarrierCount=1;
   NCCL_OK(ncclDevCommCreate(comm,&req,&device_comm));
   bool all_ok=true;
-  for(unsigned capacity : {1u,2u}) {
+  for(unsigned capacity : {1u,2u,4u}) {
    MgbfsDeviceMailboxLayoutV1 layout{};
    if(mgbfs_device_mailbox_layout_v1(WORLD,LANES,capacity,BYTES,maximum.total_bytes,sizeof(layout),&layout)
        !=MGBFS_MAILBOX_LAYOUT_OK) return 4;
