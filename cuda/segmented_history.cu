@@ -1,4 +1,5 @@
 #include "segmented_history.cuh"
+#include "segmented_history_exact.cuh"
 #include <cuda/atomic>
 #include <cuda_runtime.h>
 #include <stdint.h>
@@ -11,13 +12,12 @@
 #endif
 
 namespace {
-constexpr uint64_t EMPTY = ~uint64_t(0);
-constexpr uint64_t RETIRED = EMPTY - 1;
-constexpr uint64_t PENDING = uint64_t(1) << 63;
-constexpr uint64_t PREFIX = 0x7ffffffc00000000ULL;
-constexpr uint64_t ROW_MASK = (uint64_t(1) << 32) - 1;
-constexpr uint64_t LOCAL_ROWS = uint64_t(1) << 32;
-constexpr uint64_t PAYLOAD_MASK = (uint64_t(1) << 34) - 1;
+constexpr uint64_t EMPTY = mgbfs_segmented_exact::empty;
+constexpr uint64_t RETIRED = mgbfs_segmented_exact::retired;
+constexpr uint64_t PENDING = mgbfs_segmented_exact::pending;
+constexpr uint64_t PREFIX = mgbfs_segmented_exact::prefix;
+constexpr uint64_t LOCAL_ROWS = mgbfs_segmented_exact::local_rows;
+constexpr uint64_t PAYLOAD_MASK = mgbfs_segmented_exact::payload_mask;
 
 __host__ inline bool valid_position_width(const MgbfsSegment& s) {
     return (s.position_item_bytes == 0 || s.position_item_bytes == 4 || s.position_item_bytes == 8) &&
@@ -48,16 +48,11 @@ __device__ bool equal_input(const Input& input, uint32_t a, uint32_t b) {
 template<class T,class Input>
 __device__ bool equal_row(const Input& input, uint32_t child,
                           const MgbfsSegment& seg, uint64_t payload, uint32_t* error) {
-    const uint64_t row=payload & ROW_MASK; const uint32_t bank=(payload >> 32) & 3u;
-    if ((payload & ~PAYLOAD_MASK) || bank >= seg.banks || row >= seg.capacity) {
-        atomicOr(error, uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE)); return false;
+    const auto comparison=mgbfs_segmented_exact::compare_row<T>(input,child,seg,payload);
+    if(comparison==mgbfs_segmented_exact::Comparison::invalid) {
+        atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));return false;
     }
-    const auto* states=static_cast<const T*>(seg.states);
-    const uint64_t stride=uint64_t(seg.capacity)*seg.banks;
-    const uint64_t local=uint64_t(bank)*seg.capacity+row;
-    for (uint32_t e=0; e<input.elements; ++e)
-        if (input.value(child,e) != int64_t(states[uint64_t(e)*stride+local])) return false;
-    return true;
+    return comparison==mgbfs_segmented_exact::Comparison::equal;
 }
 
 template<class T,class Input>
