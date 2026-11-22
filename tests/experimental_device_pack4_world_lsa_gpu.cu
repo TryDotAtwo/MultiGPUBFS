@@ -8,6 +8,7 @@
 // All graph data, durable visited, frontiers, output and mailbox are preallocated.
 // CPU handles admission, launch and final validation only; no layer/portion host calls.
 #include "../cuda/experimental_device_ring.cuh"
+#include "../cuda/device_epoch_decision.cuh"
 #ifdef MGBFS_PACKET_MAILBOX
 #include "../cuda/device_mailbox.cuh"
 #endif
@@ -68,7 +69,9 @@ struct alignas(64) Mailbox {
 #endif
   alignas(8) U64 final_tail[PRODUCERS][WORLD];
   alignas(8) U64 closed_epoch[PRODUCERS];
-  alignas(8) U64 done_count,done_epoch,failure,decision_type,decision_epoch;
+  alignas(8) U64 done_count,done_epoch;
+  mgbfs_device_epoch::RankStatus status;
+  mgbfs_device_epoch::Decision decision;
 };
 static_assert(sizeof(Mailbox)%64==0,"mailbox trailing ring alignment");
 #ifdef MGBFS_PACKET_MAILBOX
@@ -100,6 +103,9 @@ struct PackedWord {
 };
 struct Report {
   U64 sent,received,blocked,duplicates,duplicates_full,loops,records;
+#ifdef MGBFS_TEST_MIXED_FAILURE
+  U64 initial_decision,local_failure;
+#endif
 #ifdef MGBFS_DEVICE_SEGMENT_STORAGE
   U64 second_extent_accepts,bank0_accepts,bank1_accepts;
 #endif
@@ -137,7 +143,8 @@ __global__ void init_box(Mailbox* m,unsigned capacity,U64 job_epoch
     }
     m->closed_epoch[p]=0;
   }
-  m->done_count=m->done_epoch=m->failure=m->decision_type=m->decision_epoch=0;
+  m->done_count=m->done_epoch=0;
+  m->status={0,0};m->decision={0,0,0,0};
 }
 using BlockAtomic=cuda::atomic_ref<U64,cuda::thread_scope_block>;
 __device__ __forceinline__ U64 block_load(U64& v) {
@@ -150,7 +157,7 @@ __device__ __forceinline__ U64 block_reserve(U64& v) {
   return BlockAtomic(v).fetch_add(1,cuda::memory_order_acq_rel);
 }
 __device__ __forceinline__ void fail(Mailbox& m,U64 reason) {
-  SysAtomic(m.failure).fetch_or(reason,cuda::memory_order_acq_rel);
+  SysAtomic(m.status.failure).fetch_or(reason,cuda::memory_order_acq_rel);
 }
 __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     unsigned n,const uint32_t* permutations,BitmapDeviceDomain domain,
@@ -173,6 +180,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
 #endif
   if(blockIdx.x)return;
   __shared__ Mailbox* boxes[WORLD];
+  __shared__ mgbfs_device_epoch::RankStatus* epoch_ranks[WORLD];
   __shared__ U64 current_count,next_count,record_count,producers_done,consumers_done;
   __shared__ U64 total_sent,total_received,total_blocked,total_duplicates,total_duplicates_full,total_steps;
   __shared__ unsigned depth,choice;
@@ -185,7 +193,10 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
 #endif
   const unsigned tid=threadIdx.x;
   if(tid==64) {
-    for(unsigned r=0;r<WORLD;r++)boxes[r]=static_cast<Mailbox*>(ncclGetLsaPointer(win,0,r));
+    for(unsigned r=0;r<WORLD;r++) {
+      boxes[r]=static_cast<Mailbox*>(ncclGetLsaPointer(win,0,r));
+      epoch_ranks[r]=boxes[r]?&boxes[r]->status:nullptr;
+    }
     current_count=next_count=record_count=producers_done=consumers_done=0;
     total_sent=total_received=total_blocked=total_duplicates=total_duplicates_full=total_steps=0;
     depth=choice=0;
@@ -227,6 +238,11 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     const unsigned first=(row_cap+1)/2;
     if(tid==64) {
       owner_lock=0;
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      // Force resource first on rank zero; rank one reports fatal only after
+      // observing the corresponding stop request.
+      if(rank==0 && depth==0)fail(local,1);
+#endif
 #ifdef MGBFS_DEVICE_SEGMENT_STORAGE
       segment_counts[write_bank]=0;segment_counts[2+write_bank]=0;
       device_extents[0]=extent0;device_extents[1]=extent1;
@@ -267,7 +283,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
           }
           unsigned target=unsigned(child_id%WORLD);Payload payload{child_word,depth+1,rank};
           for(;;) {
-            if(ld(coordinator.decision_epoch)==epoch||++loops>250000000ull) {
+            if(ld(coordinator.decision.request_epoch)==epoch||++loops>250000000ull) {
               if(loops>250000000ull)fail(local,2);
               cancelled=true;break;
             }
@@ -290,7 +306,7 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
 #ifdef MGBFS_PACKET_MAILBOX
         for(unsigned dst=0;dst<WORLD&&!cancelled;dst++) {
           for(;;) {
-            if(ld(coordinator.decision_epoch)==epoch||++loops>250000000ull) {
+            if(ld(coordinator.decision.request_epoch)==epoch||++loops>250000000ull) {
               if(loops>250000000ull)fail(local,2);
               cancelled=true;break;
             }
@@ -310,8 +326,14 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
       // A separate resident consumer warp owns each incoming SPSC ring.
       const unsigned channel=tid-32,src=channel/PRODUCERS,lane=channel%PRODUCERS;
       U64 loops=0;
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      if(rank==1 && channel==0 && depth==0) {
+        while(ld(coordinator.decision.request_epoch)!=epoch && ++loops<=250000000ull)__nanosleep(32);
+        fail(local,2);
+      }
+#endif
       for(;;) {
-        if(ld(coordinator.decision_epoch)==epoch||++loops>250000000ull) {
+        if(ld(coordinator.decision.request_epoch)==epoch||++loops>250000000ull) {
           if(loops>250000000ull)fail(local,2);
           break;
         }
@@ -427,39 +449,59 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     } else if(tid==64) {
       bool published=false;U64 loops=0;
       for(;;) {
-        if(rank==0 && ld(coordinator.decision_epoch)!=epoch) {
-          U64 reasons=0;for(unsigned r=0;r<WORLD;r++)reasons|=ld(boxes[r]->failure);
+        if(rank==0 && ld(coordinator.decision.request_epoch)!=epoch) {
+          U64 reasons=0;for(unsigned r=0;r<WORLD;r++)reasons|=ld(boxes[r]->status.failure);
           if(reasons) {
-            coordinator.decision_type=(reasons&2u)?ERROR:INCOMPLETE;
-            st(coordinator.decision_epoch,epoch);
+            coordinator.decision.request=(reasons&2u)?ERROR:INCOMPLETE;
+            st(coordinator.decision.request_epoch,epoch);
           }
         }
-        if(!published&&ld(local.failure)==0&&block_load(producers_done)==PRODUCERS&&
+        if(!published&&ld(local.status.failure)==0&&block_load(producers_done)==PRODUCERS&&
            block_load(consumers_done)==WORLD*PRODUCERS) {
           local.done_count=block_load(next_count);st(local.done_epoch,epoch);published=true;
         }
-        if(rank==0 && ld(coordinator.decision_epoch)!=epoch) {
+        if(rank==0 && ld(coordinator.decision.request_epoch)!=epoch) {
           bool all=true;U64 sum=0,reasons=0;
           for(unsigned r=0;r<WORLD;r++) {
-            reasons|=ld(boxes[r]->failure);
+            reasons|=ld(boxes[r]->status.failure);
             if(ld(boxes[r]->done_epoch)!=epoch)all=false;
             else sum+=boxes[r]->done_count;
           }
           if(reasons||all) {
-            coordinator.decision_type=reasons?((reasons&2u)?ERROR:INCOMPLETE):(sum?ADVANCE:COMPLETE);
-            st(coordinator.decision_epoch,epoch);
+            coordinator.decision.request=reasons?((reasons&2u)?ERROR:INCOMPLETE):(sum?ADVANCE:COMPLETE);
+            st(coordinator.decision.request_epoch,epoch);
           }
         }
-        if(ld(coordinator.decision_epoch)==epoch) {
-          choice=unsigned(coordinator.decision_type);break;
+        if(ld(coordinator.decision.request_epoch)==epoch) {
+          choice=unsigned(coordinator.decision.request);break;
         }
         if(++loops>250000000ull){fail(local,2);choice=ERROR;break;}
         __nanosleep(32);
       }
       block_add(total_steps,loops);
     }
-    // On ADVANCE all senders and receivers reached their terminal state.
-    // On error they leave without publishing the partial next layer.
+    // decision.request_epoch asks the entire rank to stop this layer; it is
+    // not yet the result. Drain all local threads before publishing stopped.
+    // Rank zero then observes the final error bits of every stopped rank.
+    __syncthreads();
+    if(tid==64) {
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      report->initial_decision=choice;
+#endif
+      mgbfs_device_epoch::publish_stopped(local.status,epoch);
+      U64 finish_loops=0;bool finish_timeout=false;
+      if(rank==0) {
+        while(!mgbfs_device_epoch::try_finalize(coordinator.decision,epoch_ranks,WORLD,epoch)) {
+          if(++finish_loops>250000000ull){fail(local,2);finish_timeout=true;break;}
+          __nanosleep(32);
+        }
+      }
+      while(ld(coordinator.decision.final_epoch)!=epoch && !finish_timeout) {
+        if(++finish_loops>250000000ull){fail(local,2);finish_timeout=true;break;}
+        __nanosleep(32);
+      }
+      choice=finish_timeout?ERROR:unsigned(coordinator.decision.final);
+    }
     __syncthreads();
     if(choice!=ADVANCE)break;
     if(tid==64) {
@@ -472,6 +514,9 @@ __global__ void exact_layers(ncclWindow_t win,ncclDevComm dev,unsigned rank,
     report->sent=total_sent;report->received=total_received;report->blocked=total_blocked;
     report->duplicates=total_duplicates;report->duplicates_full=total_duplicates_full;
     report->loops=total_steps;report->records=record_count;
+#ifdef MGBFS_TEST_MIXED_FAILURE
+    report->local_failure=ld(local.status.failure);
+#endif
 #ifdef MGBFS_DEVICE_SEGMENT_STORAGE
     report->second_extent_accepts=second_extent_accepts;
     report->bank0_accepts=bank0_accepts;report->bank1_accepts=bank1_accepts;
@@ -622,6 +667,9 @@ static int rank_main(int rank,const ncclUniqueId& id) {
   unsigned case_index=0;bool any_failed=false;
   const bool extended=std::getenv("MGBFS_DEVICE_TEST_EXTENDED")!=nullptr;
   for(unsigned graph_index=extended?5u:0u;graph_index<(extended?6u:5u);graph_index++) {
+#ifdef MGBFS_TEST_MIXED_FAILURE
+    if(graph_index>0)break;
+#endif
     Graph g=graph(graph_index);
     if(g.n>MAX_N){std::fprintf(stderr,"fixture domain %u exceeds configured MAX_N %u\n",g.n,MAX_N);return 6;}
     auto distance=oracle(g);
@@ -632,6 +680,9 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       needed=std::max(needed,count);
     }
     for(unsigned qcap: {1u,7u})for(unsigned variant=0;variant<3;variant++) {
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      if(qcap!=1||variant!=0)continue;
+#endif
       if(extended&&(qcap!=7||variant!=0))continue;
       if(variant==2&&needed==1)continue;
       unsigned cap=variant==0?MAX_N:variant==1?needed:needed-1;
@@ -642,6 +693,9 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       }
       unsigned expected_status=first_bad<0?COMPLETE:INCOMPLETE;
       unsigned expected_depth=first_bad<0?max_depth:unsigned(first_bad-1);
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      expected_status=ERROR;expected_depth=0;
+#endif
       U64 job_epoch=501+(case_index++);
       CUDA_OK(cudaMemcpyAsync(permutations,g.permutations.data(),g.permutations.size()*sizeof(uint32_t),cudaMemcpyHostToDevice,stream));
       CUDA_OK(cudaMemcpyAsync(counts,g.counts.data(),g.counts.size()*sizeof(uint32_t),cudaMemcpyHostToDevice,stream));
@@ -709,6 +763,11 @@ static int rank_main(int rank,const ncclUniqueId& id) {
       // Assert the owner actually observed it after its row cap was reached.
       bool exercised_full_duplicate=graph_index!=4||unsigned(rank)!=(g.e[g.root][0]%WORLD)||cap!=1||out.duplicates_full>0;
       bool ok=out.status==expected_status&&out.depth==expected_depth&&got==want&&out.records<=MAX_RECORDS&&exercised_full_duplicate;
+#ifdef MGBFS_TEST_MIXED_FAILURE
+      ok=ok&&out.initial_decision==INCOMPLETE&&out.local_failure==(rank==0?1u:rank==1?2u:0u);
+      std::printf("MIXED_FAILURE rank=%d first=%llu local_failure=%llu final=%u\n",
+                  rank,out.initial_decision,out.local_failure,out.status);
+#endif
 #ifdef MGBFS_DEVICE_SEGMENT_STORAGE
       unsigned peak_rank=0;bool even_child=false,odd_child=false;
       for(unsigned d=1;d<=expected_depth;d++) {
