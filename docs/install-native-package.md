@@ -5,7 +5,7 @@ command works on a login host and a GPU worker; no target-host compilation is
 required. After upgrading, start a new Python process.
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://github.com/TryDotAtwo/MultiGPUBFS/releases/download/native-pip-20261121-v40/multigpubfs-0.2.0.dev40-py3-none-any.whl#sha256=02957723cd0116c4b007ccda1c62566537495e05e830dd3ed592af7c2c910857"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/b2ed1712e6c79f7402b45f961355899cb2e80c3f/wheels/multigpubfs-0.2.0.dev44-py3-none-any.whl#sha256=29b1ffdf6d31b194184e0d377e83e22b0f8b8c7b1355b36ff7b09eda5bdfd10b"
 ```
 
 For Kaggle use the same quoted argument after `%pip install --upgrade`,
@@ -80,4 +80,4 @@ and complete S14 remain unverified. Python 3.10+, Linux x86_64, a compatible
 NVIDIA driver and the GLIBC/GLIBCXX versions in the native manifest are
 required. [Architecture, timings and limitations](experimental-memory-backends.md).
 
-[Release and checksums](https://github.com/TryDotAtwo/MultiGPUBFS/releases/tag/native-pip-20261121-v40)
+[Pinned dev44 wheel and SHA-256](experimental-segmented.md) · [GPU acceptance and limitations](acceptance/2026-11-22-dev44-advisory.md)

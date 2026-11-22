@@ -1,22 +1,22 @@
 # Experimental segmented and bitmap BFS
 
-Version 0.2.0.dev43 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev43-8gpu.md) before relying on it for a large calculation.
+Version 0.2.0.dev44 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev44-advisory.md) before relying on it for a large calculation.
 
 ## Install
 
 On Linux x86-64, in the Python environment used by the job:
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/6da64ccd897ff041f1cb265cfcbac0909988bc3b/wheels/multigpubfs-0.2.0.dev43-py3-none-any.whl"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ https://raw.githubusercontent.com/TryDotAtwo/MultiGPUBFS/b2ed1712e6c79f7402b45f961355899cb2e80c3f/wheels/multigpubfs-0.2.0.dev44-py3-none-any.whl#sha256=29b1ffdf6d31b194184e0d377e83e22b0f8b8c7b1355b36ff7b09eda5bdfd10b"
 ```
 
 Alternatively, install the verified source snapshot directly from GitHub (requires Git and downloads the repository):
 
 ```bash
-python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9"
+python -m pip install --upgrade "multigpubfs[cayleypy] @ git+https://github.com/TryDotAtwo/MultiGPUBFS.git@5ed4b90e6ab3ff8ab16c78e36722e9c41fb5cd70"
 ```
 
-The wheel is smaller to download. The [public wheel install and GPU-independent prefetch](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44966337228) and [Git source install](https://github.com/TryDotAtwo/MultiGPUBFS/actions/runs/44962037544) were checked in CI. Physical GPU acceptance used this exact wheel and the same native component hashes.
+The wheel is smaller to download. Its SHA-256 is `29b1ffdf6d31b194184e0d377e83e22b0f8b8c7b1355b36ff7b09eda5bdfd10b`; pip verifies it via the URL fragment. The public URL was installed in a clean environment and that installation was exercised on eight RTX 3060 GPUs; see the acceptance report for the exact scope. GPU-independent prefetch dry-run was also checked. The Git source command is pinned to the matching dev44 source snapshot.
 
 Start a new Python process after updating. CUDA native components are selected from the visible GPUs and downloaded into the cache on first use. The first download includes a shared runtime of about 304 MB, the executable and the selected architecture component. Later jobs reuse checksum-verified cached files.
 
