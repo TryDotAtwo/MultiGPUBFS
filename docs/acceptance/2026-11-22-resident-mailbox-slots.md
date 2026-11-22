@@ -31,8 +31,9 @@ c936024ea15ac6b3cd969dc4a5c8d3d5775be35da05ee456aa81d3417d46c94b.
 
 Same executable and library for all runs: four V100 GPUs, S9 adjacent
 transpositions, 362,880 states, 37 layers, 2,903,040 generated edges, two
-shards, 8192 rows/segment, batch 128, eight device lanes and eight records per
-packet. Slots were tested in the order 1, 2, 4, 4, 2, 1 in one persistent worker
+shards, a requested 8192 rows/segment, batch 128, eight device lanes and eight
+records per packet. Admission selected 4567 rows/bank in each extent: 81
+extents/rank for hash and 21/rank for bitmap. Slots were tested in the order 1, 2, 4, 4, 2, 1 in one persistent worker
 group per backend. No NVML sampler ran during these measurements.
 
 | Backend | Slots | BFS seconds (two runs) |
@@ -54,8 +55,8 @@ not justify choosing a universal default. The two-run mean decreased by about
 ## Larger single pair and normal backend
 
 On S10 adjacent transpositions (3,628,800 states and 46 layers) the hash
-resident engine used the same geometry and binary, with 4 slots followed by
-1 slot. BFS times were 318.213 s and 351.318 s respectively: about 9.4% lower
+resident engine used two shards, 8192 actual rows/bank and 444 extents/rank
+with the same binary, with 4 slots followed by 1 slot. BFS times were 318.213 s and 351.318 s respectively: about 9.4% lower
 for four slots in this single pair. All 46 Mahonian counts and the final
 reversed state were checked; full intermediate state sets were not compared.
 The storage allocation receipt was 429,205,920 bytes per rank for both; this
@@ -114,3 +115,30 @@ tests/device_resident_hash_layers_gpu.py.
 [Machine-readable timing and correctness receipts](artifacts/2026-11-22-resident-mailbox-slots.json)
 include per-rank allocation components; the full logs are retained in the
 evidence archives above.
+
+## S9 shard-geometry comparison
+
+The same four V100s and binary were used for S9 with four mailbox slots,
+eight producer lanes and eight records per packet. Shard counts were tested in
+the order 2, 4, 8, 8, 4, 2 for each backend. Admission also changed the rows
+per bank and the number of extents, so this measures the combined geometry,
+not the isolated effect of the shard count. Times are two observations, not
+a validated default choice. The same 37 Mahonian counts and last reversed
+state passed in every run; intermediate full state sets were not compared.
+
+| Backend | Shards | Actual rows/bank/extent | Extents/rank | Storage bytes/rank | BFS seconds |
+| --- | ---: | ---: | ---: | ---: | --- |
+| segmented24 | 2 | 4567 | 81 | 40,101,885 | 12.181, 11.705 |
+| segmented24 | 4 | 2284 | 162 | 40,107,960 | 6.975, 6.689 |
+| segmented24 | 8 | 1142 | 325 | 40,235,650 | 5.434, 5.662 |
+| permutation_bitmap | 2 | 4567 | 21 | 2,302,272 | 8.215, 7.742 |
+| permutation_bitmap | 4 | 2284 | 43 | 2,358,120 | 8.588, 8.652 |
+| permutation_bitmap | 8 | 1142 | 87 | 2,386,584 | 8.999, 9.314 |
+
+Storage receipts are components, not peak VRAM. There was no NVML sampler.
+The small S9 runs are specific to this topology and do not establish a result
+for large layers, eight GPUs or B200. The
+[machine-readable per-rank receipts](artifacts/2026-11-22-resident-shards-s9.json)
+and the [executed benchmark script](artifacts/resident-shards-s9-benchmark.py)
+are included. The retained full evidence archive SHA-256 is
+14fd79fe40c2a6fd31210b457c40f9651f5076f193106b35d912e48fb6f66b14.
