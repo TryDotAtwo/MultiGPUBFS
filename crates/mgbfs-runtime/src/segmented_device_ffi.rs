@@ -102,6 +102,14 @@ impl HashFunctions {
   })
  }
 }
+pub(super) fn resident_hash_parent_index(advertised:u32,requested:&str)->Result<bool,String>{
+ match requested {
+  "0"=>Ok(false),
+  "1" if advertised>=1=>Ok(true),
+  "1"=>Err("RESIDENT_HASH_PARENT_INDEX_UNSUPPORTED".into()),
+  _=>Err("RESIDENT_HASH_PARENT_INDEX_INVALID expected=0_or_1".into()),
+ }
+}
 pub(super) fn resident_slot_count(advertised:u32,requested:u32)->Result<u32,String>{
  if !matches!(requested,1|2|4){return Err(format!("RESIDENT_MAILBOX_SLOTS_INVALID requested={requested}"))}
  let maximum=if advertised==0{1}else{advertised};
@@ -203,6 +211,13 @@ impl Functions {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]
+ fn hash_parent_index_negotiation(){
+  assert_eq!(resident_hash_parent_index(0,"0").unwrap(),false);
+  assert!(resident_hash_parent_index(0,"1").unwrap_err().contains("UNSUPPORTED"));
+  assert_eq!(resident_hash_parent_index(1,"1").unwrap(),true);
+  assert!(resident_hash_parent_index(1,"true").unwrap_err().contains("INVALID"));
+ }
  #[test]
  fn slot_geometry_negotiation(){
   assert_eq!(resident_slot_count(0,1).unwrap(),1);

@@ -10,6 +10,7 @@
 #include "device_mailbox.cuh"
 #include "device_pack4_accept.cuh"
 #include "device_segmented_hash_accept.cuh"
+#include "device_extent_prefix.cuh"
 #include "bitmap_pack4_action.cuh"
 #include <nccl_device.h>
 #include <cuda_runtime.h>
@@ -30,6 +31,8 @@ struct Payload { uint64_t packed; uint32_t source,reserved; };
 struct Capture { uint64_t depth,packed; };
 // Separate opt-in ABI: in hash jobs Args.visited points to this immutable
 // device config and Args.extents points to mgbfs_device_hash::Extent records.
+// In the hash ABI only, owner_boundary may hold the optional device pointer
+// to n+1 parent-prefix offsets. It is zero for a legacy or unindexed job.
 // Existing bitmap Args and entry points keep their exact original layout.
 struct HashConfig {
   uint64_t seed;
@@ -383,7 +386,20 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
           if(!e.counts[0]&&!e.counts[1]&&!e.counts[2])a.extent_owner[i]=UINT32_MAX;
         }
       }
+      if constexpr(Hash) if(a.owner_boundary&&!retirement_bad) {
+        auto* prefix=reinterpret_cast<uint64_t*>(a.owner_boundary);
+        uint64_t total=0;prefix[0]=0;
+        for(uint64_t i=0;i<a.extent_count;++i) {
+          const uint64_t count=hash_extents[i].counts[read_bank];
+          if(count>hash_extents[i].segment.capacity||total>UINT64_MAX-count) {
+            retirement_bad=1;failure(local,mgbfs_device_epoch::FATAL);break;
+          }
+          total+=count;prefix[i+1]=total;
+        }
+        if(total!=current){retirement_bad=1;failure(local,mgbfs_device_epoch::FATAL);}
+      }
     }
+    // All producers see the completed immutable prefix for this layer.
     __syncthreads();
     if(tid<active_lanes) {
       bool stopped=Hash&&retirement_bad;
@@ -391,8 +407,14 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args a,Report* report) 
       unsigned pending_count[max_world]={};
       const unsigned packet_records=a.mailbox.requested_payload_bytes/sizeof(Payload);
       for(Word parent=tid;parent<current&&!stopped;parent+=active_lanes) {
-        uint64_t remaining=parent,packed=0;bool found=false;
-        for(uint64_t i=0;i<a.extent_count;++i) {
+        uint64_t remaining=parent,packed=0,first=0;bool found=false;
+        if constexpr(Hash) if(a.owner_boundary) {
+          const auto* prefix=reinterpret_cast<const uint64_t*>(a.owner_boundary);
+          if(!locate_parent_extent(prefix,a.extent_count,parent,&first,&remaining)) {
+            failure(local,mgbfs_device_epoch::FATAL);stopped=true;break;
+          }
+        }
+        for(uint64_t i=first;i<a.extent_count;++i) {
           if constexpr(Hash) {
             const auto& e=hash_extents[i];const uint64_t n=e.counts[read_bank];
             if(remaining<n) {

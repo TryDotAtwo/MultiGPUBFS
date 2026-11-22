@@ -19,6 +19,9 @@ def verify(r,layers,completed):
  assert r.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL"
  assert len(r.report["segment_memory_by_rank"])==world
  assert all(m["resident"]["storage"]=="segmented_hash" for m in r.report["segment_memory_by_rank"])
+ indexed=os.environ.get("MGBFS_RESIDENT_HASH_PARENT_INDEX","0")=="1"
+ assert all(m["resident"]["hash_parent_index_enabled"] is indexed for m in r.report["segment_memory_by_rank"])
+ assert all(m["resident"]["hash_parent_index_bytes"]==((m["resident"]["extent_count"]+1)*8 if indexed else 0) for m in r.report["segment_memory_by_rank"])
  assert all(m["resident"]["slots_per_ring"]==int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1")) for m in r.report["segment_memory_by_rank"])
  assert r.layer_sizes==list(map(len,layers[:len(r.layer_sizes)])),r.layer_sizes
  assert r.bfs_completed is completed,r.report
@@ -70,6 +73,12 @@ try:
    verify(result,oracle,True)
    assert pids==[w.process.pid for w in pool.workers]
    print("PASS CayleyPy persistent slots",slots,pids,flush=True)
+  for i,indexed in enumerate(("0","1","0")):
+   os.environ["MGBFS_RESIDENT_HASH_PARENT_INDEX"]=indexed
+   result=graph.bfs(output=root/f"parent-index-switch-{i}")
+   verify(result,oracle,True)
+   assert pids==[w.process.pid for w in pool.workers]
+   print("PASS CayleyPy persistent parent index",indexed,pids,flush=True)
 finally:multigpubfs.disable_native()
 (root/"acceptance.json").write_text(json.dumps({"world":world,"workers":pids,"records":records},indent=2))
 print("EVIDENCE",root,flush=True)

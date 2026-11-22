@@ -26,6 +26,18 @@ for backend in ("permutation_bitmap","segmented24"):
    assert not (out/"report.json").exists()
   print("PASS old library rejects slots",backend,slots,flush=True)
  os.environ.pop("MGBFS_RESIDENT_MAILBOX_SLOTS",None)
+ if backend=="segmented24":
+  os.environ["MGBFS_RESIDENT_HASH_PARENT_INDEX"]="1"
+  out=root/"hash-parent-index-unsupported"
+  with persistent_graph_workers():
+   try:run(out,backend)
+   except RuntimeError as e:assert "NATIVE_DISTRIBUTED_RANK_FAILED" in str(e),e
+   else:raise AssertionError("old library silently accepted parent index")
+   logs="".join((out/f"rank-{r}.log").read_text() for r in (0,1))
+   assert "RESIDENT_HASH_PARENT_INDEX_UNSUPPORTED" in logs,logs
+   assert not (out/"report.json").exists()
+  print("PASS old library rejects parent index",flush=True)
+  os.environ.pop("MGBFS_RESIDENT_HASH_PARENT_INDEX",None)
  with persistent_graph_workers():
   r=run(root/f"{backend}-default",backend)
   assert r["status"]=="COMPLETE" and r["layer_sizes"]==[len(x) for x in layers],r

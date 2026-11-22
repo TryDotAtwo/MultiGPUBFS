@@ -44,7 +44,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 struct Resources {
  layers:Buffer,rank_counts:Buffer,rank_count:Buffer,locks:Buffer,descriptors:Buffer,leases:Buffer,report:Buffer,smoke:Buffer,
  mapping:Vec<(usize,usize)>,args:Args,event:Event,window_bytes:u64,layer_capacity:u64,
- _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,hash_index:Option<Buffer>,
+ _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,hash_index:Option<Buffer>,hash_parent_index:Option<Buffer>,
 }
 
 fn checked_size(n:u64,item:usize)->Result<usize>{
@@ -85,15 +85,23 @@ impl SegmentedDistributedBfs {
    };
    let slots=resident_ffi::resident_slot_count(unsafe{(f.query)(8)},requested)?;
    if let Some(h)=hf {resident_ffi::resident_slot_count(unsafe{(h.query)(6)},requested)?;}
-   f.mailbox(world,slots,u64::MAX)
+   let parent_index=if let Some(h)=hf {
+    let value=match std::env::var("MGBFS_RESIDENT_HASH_PARENT_INDEX"){
+     Ok(v)=>v,Err(std::env::VarError::NotPresent)=>"0".to_owned(),
+     Err(_)=>return Err("RESIDENT_HASH_PARENT_INDEX_INVALID".into()),
+    };
+    resident_ffi::resident_hash_parent_index(unsafe{(h.query)(7)},&value)?
+   }else{false};
+   let (m,bytes)=f.mailbox(world,slots,u64::MAX)?;
+   Ok((m,bytes,parent_index))
   })();
-  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes)|serde_json::json!({
+  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes,parent_index)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
    "payload_bytes":m.requested_payload_bytes,"payload_stride_bytes":m.payload_stride_bytes,
-   "total_bytes":m.total_bytes,"window_bytes":bytes,
+   "total_bytes":m.total_bytes,"window_bytes":bytes,"hash_parent_index":parent_index,
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
-  let (mailbox,window_bytes)=geometry?;
+  let (mailbox,window_bytes,hash_parent_index_enabled)=geometry?;
   let mut error=[0i8;512];
   let preparation=code("RESIDENT_WINDOW_PREPARE",unsafe{(f.prepare)(self.comm.ptr,window_bytes,error.as_mut_ptr(),error.len())})
    .map_err(|e|format!("{e} {}",unsafe{std::ffi::CStr::from_ptr(error.as_ptr())}.to_string_lossy()));
@@ -159,7 +167,8 @@ impl SegmentedDistributedBfs {
    while present<needed {
     let future=present.checked_add(1).ok_or("RESIDENT_EXTENT_COUNT")?;
     let extent_bytes=if hash{mem::size_of::<HashExtent>()}else{mem::size_of::<Extent>()};
-    let per_extent=(extent_bytes+4) as u64+if hash_indexed{8}else{0};
+    let per_extent=(extent_bytes+4) as u64+if hash_indexed{8}else{0}+
+      if hash_parent_index_enabled{8}else{0};
     let per_shard=if hash_indexed{u64::from(self.plan.shards).checked_mul(16).ok_or("RESIDENT_EXTENT_COUNT")?}else{0};
     let metadata=future.checked_mul(per_extent)
       .and_then(|v|v.checked_add(per_shard))
@@ -201,6 +210,16 @@ impl SegmentedDistributedBfs {
       .ok_or("RESIDENT_HASH_INDEX_SIZE")?;
     Some(Buffer::new(checked_size(count,8)?,d)?)
    }else{None};
+   let hash_parent_index=if hash_parent_index_enabled {
+    let count=n.checked_add(1).ok_or("RESIDENT_HASH_PARENT_INDEX_SIZE")?;
+    let bytes=checked_size(count,8)?;
+    let(mut free,mut total)=(0usize,0usize);
+    crate::generic_native::checked!(cudaMemGetInfo,unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)})?;
+    if (free as u64).saturating_sub(self.reserve_bytes)<bytes as u64 {
+     return Err("RESIDENT_HASH_PARENT_INDEX_BUDGET".into())
+    }
+    Some(Buffer::new(bytes,d)?)
+   }else{None};
    let hash_config=if hash {
     let b=Buffer::new(mem::size_of::<HashConfig>(),d)?;
     let config=HashConfig{seed:self.seed,bits:self.bits,state_bytes:self.plan.state_bytes,
@@ -240,6 +259,7 @@ impl SegmentedDistributedBfs {
     if let Some(cuts)=&self.cuts {if let Some(r)=region(cuts.ptr,cuts.bytes,8){others.push(r)}}
     if let Some(stats)=&hash_stats {if let Some(r)=region(stats.ptr,stats.bytes,4){others.push(r)}}
     if let Some(index)=&hash_index {if let Some(r)=region(index.ptr,index.bytes,8){others.push(r)}}
+    if let Some(index)=&hash_parent_index {if let Some(r)=region(index.ptr,index.bytes,8){others.push(r)}}
     let config=hash_config.as_ref().ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     if let Some(r)=region(config.ptr,config.bytes,8){others.push(r)}
     let (dictionary,_,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
@@ -247,7 +267,7 @@ impl SegmentedDistributedBfs {
       distinct:dictionary.distinct,elements:dictionary.elements,total:domain_total};
     let width=u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?;
     validate_extent_allocations_with_width(&allocations,&others,width).map_err(str::to_owned)?;
-    (rank,0,0,domain,dictionary,config.ptr.cast())
+    (rank,0,hash_parent_index.as_ref().map_or(0,|b|b.ptr as usize as u64),domain,dictionary,config.ptr.cast())
    }else{
     let b=self.bitmap.as_ref().ok_or("RESIDENT_BITMAP_MISSING")?;
     for (p,n,a) in [(b.bits.ptr,b.bits.bytes,8),(b._symbols.ptr,b._symbols.bytes,8),
@@ -268,7 +288,7 @@ impl SegmentedDistributedBfs {
     capture:ptr::null_mut(),capture_capacity:0,capture_count:ptr::null_mut(),terminal:device_terminal,
    };
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(report.ptr,0,report.bytes,self.base.stream.ptr)})?;
-   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats,hash_index})
+   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats,hash_index,hash_parent_index})
   })();
   ready.agree("resident-admission",&resource,None)?;
   // If a rank fails while a resident kernel still accesses these buffers,
@@ -370,6 +390,8 @@ impl SegmentedDistributedBfs {
     "hash_owner_execution":if hash{Some(if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
     "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
     "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
+    "hash_parent_index_enabled":hash_parent_index_enabled,
+    "hash_parent_index_bytes":res.hash_parent_index.as_ref().map_or(0,|b|b.bytes),
     "hash_owner_peak_active":hash_owner_stats.map(|v|v[0]),
     "hash_extent_full_seen":hash_owner_stats.map(|v|v[1]),
     "hash_freeze_retry":hash_owner_stats.map(|v|v[2]),

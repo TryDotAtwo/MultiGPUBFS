@@ -119,13 +119,15 @@ extern "C" uint32_t mgbfs_device_hash_bfs_abi_query(uint32_t item) {
     case 3:return sizeof(mgbfs_device_hash::Extent);
     case 4:return sizeof(mgbfs_resident::HashConfig);
     case 6:return mgbfs_resident::max_mailbox_slots;
+    case 7:return 1; // optional parent-extent prefix pointer
     default:return 0;
   }
 }
 static int validate_hash(const mgbfs_resident::Args* a,uint64_t window_bytes) {
   if(!a||a->abi_version!=1||a->struct_bytes!=sizeof(*a)||
      !a->world||a->world>mgbfs_resident::max_world||a->rank>=a->world||
-     !a->shards||!a->generators||a->banks!=3||a->reserved0||!a->job_generation||
+     !a->shards||!a->generators||a->banks!=3||a->reserved0||
+     (a->owner_boundary%alignof(uint64_t))||!a->job_generation||
      !a->domain.total||!mgbfs_pack4_valid(a->dictionary)||!a->permutations||
      !a->physical_of_logical||!a->extents||!a->extent_count||!a->extent_owner||
      !a->shard_locks||!a->visited||!a->rank_count||!a->layer_sizes||
