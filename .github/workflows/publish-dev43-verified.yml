@@ -31,11 +31,6 @@ jobs:
       - name: Create draft and verify uploaded bytes before publishing
         run: |
           set -euo pipefail
-          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name==env.TAG) | .id')"
-          if test -n "$existing"; then
-            echo "Release tag already exists; refusing to overwrite it." >&2
-            exit 1
-          fi
           cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
           Experimental prerelease. Select segmented24 or permutation_bitmap explicitly; legacy remains the default.
           
@@ -43,8 +38,22 @@ jobs:
           
           The exact wheel was exercised on 2 and 8 RTX 3060 GPUs. See the acceptance document and machine-readable receipts in this repository for graph coverage, benchmark geometry, estimates and limitations. B200 and full S14 remain unverified. The included original build manifest describes the build-time status; later installed-GPU acceptance is documented separately.
           NOTES
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9 --draft --prerelease --latest=false --title "MultiGPUBFS 0.2.0.dev43 (experimental)" --notes-file "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP"/assets/*
-          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name==env.TAG) | .id')"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish=b8e1ddd3fbbebb88ff0c82cb063560397bdbfbf9 \
+            -f name="MultiGPUBFS 0.2.0.dev43 (experimental)" \
+            -f body="$(cat "$RUNNER_TEMP/notes.md")" \
+            -F draft=true -F prerelease=true > "$RUNNER_TEMP/created.json"
+          id="$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "$RUNNER_TEMP/created.json")"
+          upload_url="$(python -c 'import json,sys;print(json.load(open(sys.argv[1]))["upload_url"].split("{")[0])' "$RUNNER_TEMP/created.json")"
+          echo "CREATED_DRAFT_RELEASE_ID=$id"
+          for asset in "$RUNNER_TEMP"/assets/*; do
+            filename="$(basename "$asset")"
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$asset" "$upload_url?name=$filename" > /dev/null
+          done
           [[ "$id" =~ ^[0-9]+$ ]]
           for attempt in $(seq 1 10); do
             gh api "repos/$GITHUB_REPOSITORY/releases/$id" > "$RUNNER_TEMP/uploaded.json"
