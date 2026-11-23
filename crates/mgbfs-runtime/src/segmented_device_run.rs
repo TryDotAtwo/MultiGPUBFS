@@ -3,7 +3,7 @@
 use super::*;
 use crate::resident_extent_validation::{AllocationRegion,ExtentAllocation,validate_extent_allocations,validate_extent_allocations_with_width};
 use std::{mem,time::{Duration,Instant},sync::atomic::{AtomicU32,Ordering}};
-use super::resident_ffi::{Args,Extent,Functions,HashConfig,HashExtent,HashFunctions,Report};
+use super::resident_ffi::{Args,BatchArgs,BatchHashArgs,BatchFunctions,Extent,Functions,HashConfig,HashExtent,HashFunctions,Report};
 
 pub(crate) struct ResidentResult {
  pub sizes:Vec<u64>,pub status:&'static str,pub reason:&'static str,
@@ -41,10 +41,21 @@ impl Event {
 }
 impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 
+#[derive(Clone,Copy)]
+struct BatchSelection {
+ functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,
+}
+struct BatchBuffers {
+ raw:Buffer,positions:Buffer,block_prefix:Buffer,offsets:Buffer,receive:Buffer,
+ shard_counts:Buffer,shard_starts:Buffer,error:Buffer,
+ spans:Option<Buffer>,parent_prefix:Option<Buffer>,grouped:Option<Buffer>,
+ args:Option<BatchArgs>,hash_args:Option<BatchHashArgs>,
+}
 struct Resources {
  layers:Buffer,rank_counts:Buffer,rank_count:Buffer,locks:Buffer,descriptors:Buffer,leases:Buffer,report:Buffer,smoke:Buffer,
  mapping:Vec<(usize,usize)>,args:Args,event:Event,window_bytes:u64,layer_capacity:u64,
  _hash_config:Option<Buffer>,hash_stats:Option<Buffer>,hash_index:Option<Buffer>,hash_parent_index:Option<Buffer>,
+ batch:Option<BatchBuffers>,
 }
 
 fn checked_size(n:u64,item:usize)->Result<usize>{
@@ -93,15 +104,41 @@ impl SegmentedDistributedBfs {
     resident_ffi::resident_hash_parent_index(unsafe{(h.query)(7)},&value)?
    }else{false};
    let (m,bytes)=f.mailbox(world,slots,u64::MAX)?;
-   Ok((m,bytes,parent_index))
+   let requested=std::env::var("MGBFS_RESIDENT_MULTICTA").unwrap_or_else(|_|"0".into());
+   let batch=match requested.as_str() {
+    "0"=>None,
+    "1"=>{
+     fn read_capacity(key:&str)->Result<u64>{
+      match std::env::var(key) {
+       Ok(s)=>s.parse::<u64>().ok().filter(|&v|v>0).ok_or_else(||format!("{key}_INVALID")),
+       Err(std::env::VarError::NotPresent)=>Ok(1<<18),
+       Err(_)=>Err(format!("{key}_INVALID")),
+      }
+     }
+     let send=read_capacity("MGBFS_RESIDENT_BATCH_EDGES")?;
+     let receive=read_capacity("MGBFS_RESIDENT_BATCH_RECEIVE")?;
+     let functions=unsafe{BatchFunctions::load(hash)}?;
+     let(mut blocks,mut threads)=(0u32,0u32);
+     code("RESIDENT_BATCH_GEOMETRY",unsafe{(functions.geometry)(&mut blocks,&mut threads)})?;
+     if blocks==0||threads!=128{return Err("RESIDENT_BATCH_GEOMETRY_INVALID".into())}
+     let window_bytes=send.checked_mul(16).and_then(|v|v.checked_add(functions.window_bytes))
+       .ok_or("RESIDENT_BATCH_WINDOW_SIZE")?;
+     checked_size(send,24)?;checked_size(receive,16)?;
+     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes})
+    },
+    _=>return Err("RESIDENT_BATCH_SCHEDULER_INVALID".into()),
+   };
+   Ok((m,bytes.max(batch.map_or(0,|x|x.window_bytes)),parent_index,batch))
   })();
-  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes,parent_index)|serde_json::json!({
+  let geometry_identity=geometry.as_ref().ok().map(|(m,bytes,parent_index,batch)|serde_json::json!({
    "world":m.world,"lanes":m.lanes,"slots_per_ring":m.slots_per_ring,
    "payload_bytes":m.requested_payload_bytes,"payload_stride_bytes":m.payload_stride_bytes,
    "total_bytes":m.total_bytes,"window_bytes":bytes,"hash_parent_index":parent_index,
+   "scheduler":if batch.is_some(){"multi_cta"}else{"single_cta"},
+   "batch_send":batch.map(|v|v.send),"batch_receive":batch.map(|v|v.receive),
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
-  let (mailbox,window_bytes,hash_parent_index_enabled)=geometry?;
+  let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
   let mut error=[0i8;512];
   let preparation=code("RESIDENT_WINDOW_PREPARE",unsafe{(f.prepare)(self.comm.ptr,window_bytes,error.as_mut_ptr(),error.len())})
    .map_err(|e|format!("{e} {}",unsafe{std::ffi::CStr::from_ptr(error.as_ptr())}.to_string_lossy()));
@@ -152,6 +189,24 @@ impl SegmentedDistributedBfs {
    let report=Buffer::new(mem::size_of::<Report>(),d)?;
    let smoke=Buffer::new(4,d)?;
    let event=Event::new()?;
+   // Admission includes these live scratch buffers before assigning free VRAM
+   // to extent banks. Route and receive positions are reused sequentially.
+   let mut batch=if let Some(sel)=batch_selection {
+    let histogram=u64::from(sel.blocks).checked_mul(u64::from(world)).ok_or("RESIDENT_BATCH_SIZE")?;
+    let shard_count=u64::from(self.plan.shards);
+    Some(BatchBuffers{
+     raw:Buffer::new(checked_size(sel.send,24)?,d)?,
+     positions:Buffer::new(checked_size(sel.send.max(sel.receive),8)?,d)?,
+     block_prefix:Buffer::new(checked_size(histogram,8)?,d)?,
+     offsets:Buffer::new(checked_size(u64::from(world)+1,8)?,d)?,
+     receive:Buffer::new(checked_size(sel.receive,16)?,d)?,
+     shard_counts:Buffer::new(checked_size(shard_count,8)?,d)?,
+     shard_starts:Buffer::new(checked_size(shard_count+1,8)?,d)?,
+     error:Buffer::new(4,d)?,spans:None,parent_prefix:None,
+     grouped:if hash{Some(Buffer::new(checked_size(sel.receive,16)?,d)?)}else{None},
+     args:None,hash_args:None,
+    })
+   }else{None};
 
    // Every unallocated extent is leaseable by any shard. The count below is
    // sufficient for the domain (or three cap-bounded live banks) including
@@ -168,7 +223,7 @@ impl SegmentedDistributedBfs {
     let future=present.checked_add(1).ok_or("RESIDENT_EXTENT_COUNT")?;
     let extent_bytes=if hash{mem::size_of::<HashExtent>()}else{mem::size_of::<Extent>()};
     let per_extent=(extent_bytes+4) as u64+if hash_indexed{8}else{0}+
-      if hash_parent_index_enabled{8}else{0};
+      if hash_parent_index_enabled{8}else{0}+if batch.is_some(){40}else{0};
     let per_shard=if hash_indexed{u64::from(self.plan.shards).checked_mul(16).ok_or("RESIDENT_EXTENT_COUNT")?}else{0};
     let metadata=future.checked_mul(per_extent)
       .and_then(|v|v.checked_add(per_shard))
@@ -194,6 +249,10 @@ impl SegmentedDistributedBfs {
    }
    let n=u64::try_from(host.len()).map_err(|_|"RESIDENT_EXTENT_COUNT")?;
    if hash&&n==0{return Err("RESIDENT_HASH_NO_ADMITTED_EXTENT".into())}
+   if let Some(b)=batch.as_mut() {
+    b.spans=Some(Buffer::new(checked_size(n.max(1),32)?,d)?);
+    b.parent_prefix=Some(Buffer::new(checked_size(n.checked_add(1).ok_or("RESIDENT_BATCH_SIZE")?,8)?,d)?);
+   }
    let extent_size=if hash{mem::size_of::<HashExtent>()}else{mem::size_of::<Extent>()};
    let descriptors=Buffer::new(checked_size(n,extent_size)?,d)?;
    let leases=Buffer::new(checked_size(n,4)?,d)?;
@@ -248,6 +307,18 @@ impl SegmentedDistributedBfs {
     (descriptors.ptr,descriptors.bytes,8),(leases.ptr,leases.bytes,4),
     (device_terminal.cast(),4,4),
    ] {if let Some(r)=region(p,n,a){others.push(r)}}
+   if let Some(b)=batch.as_ref() {
+    let spans=b.spans.as_ref().ok_or("RESIDENT_BATCH_SPANS")?;
+    let parent=b.parent_prefix.as_ref().ok_or("RESIDENT_BATCH_PARENT_PREFIX")?;
+    if let Some(g)=b.grouped.as_ref() {if let Some(r)=region(g.ptr,g.bytes,8){others.push(r)}}
+    for (p,n,a) in [(b.raw.ptr,b.raw.bytes,8),(b.positions.ptr,b.positions.bytes,8),
+      (b.block_prefix.ptr,b.block_prefix.bytes,8),(b.offsets.ptr,b.offsets.bytes,8),
+      (b.receive.ptr,b.receive.bytes,8),(b.shard_counts.ptr,b.shard_counts.bytes,8),
+      (b.shard_starts.ptr,b.shard_starts.bytes,8),(b.error.ptr,b.error.bytes,4),
+      (spans.ptr,spans.bytes,8),(parent.ptr,parent.bytes,8)] {
+     if let Some(r)=region(p,n,a){others.push(r)}
+    }
+   }
    let (owner,owner_page,owner_boundary,domain,dictionary,visited)=if hash {
     for bucket in &self.segments {for seg in bucket {
      let slots=seg._slots.as_ref().ok_or("RESIDENT_HASH_SLOTS_MISSING")?;
@@ -287,8 +358,22 @@ impl SegmentedDistributedBfs {
     layer_sizes:layers.ptr.cast(),layer_capacity,rank_counts:rank_counts.ptr.cast(),
     capture:ptr::null_mut(),capture_capacity:0,capture_count:ptr::null_mut(),terminal:device_terminal,
    };
+   if let (Some(sel),Some(b))=(batch_selection,batch.as_mut()) {
+    b.args=Some(BatchArgs{base:args,send_capacity:sel.send,receive_capacity:sel.receive,
+     raw:b.raw.ptr,positions:b.positions.ptr.cast(),block_prefix:b.block_prefix.ptr.cast(),
+     offsets:b.offsets.ptr.cast(),receive:b.receive.ptr,shard_counts:b.shard_counts.ptr.cast(),
+     shard_starts:b.shard_starts.ptr.cast(),spans:b.spans.as_ref().unwrap().ptr,
+     parent_prefix:b.parent_prefix.as_ref().unwrap().ptr.cast(),error:b.error.ptr.cast()});
+    if hash {
+     let v=b.args.as_ref().unwrap();
+     b.hash_args=Some(BatchHashArgs{base:v.base,send_capacity:v.send_capacity,receive_capacity:v.receive_capacity,
+      raw:v.raw,positions:v.positions,block_prefix:v.block_prefix,offsets:v.offsets,
+      receive:v.receive,grouped:b.grouped.as_ref().unwrap().ptr,shard_counts:v.shard_counts,
+      shard_starts:v.shard_starts,spans:v.spans,parent_prefix:v.parent_prefix,error:v.error});
+    }
+   }
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(report.ptr,0,report.bytes,self.base.stream.ptr)})?;
-   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats,hash_index,hash_parent_index})
+   Ok(Resources{layers,rank_counts,rank_count,locks,descriptors,leases,report,smoke,mapping,args,event,window_bytes:actual_window,layer_capacity,_hash_config:hash_config,hash_stats,hash_index,hash_parent_index,batch})
   })();
   ready.agree("resident-admission",&resource,None)?;
   // If a rank fails while a resident kernel still accesses these buffers,
@@ -314,6 +399,9 @@ impl SegmentedDistributedBfs {
   ready.agree("resident-peer-smoke",&smoke,None)?;smoke?;
   let reset:Result<_>=(||{
    code("RESIDENT_REINITIALIZE",unsafe{(initialize)(self.comm.ptr,&res.args,self.base.stream.ptr)})?;
+   if let Some(sel)=batch_selection {
+    code("RESIDENT_BATCH_INITIALIZE",unsafe{(sel.functions.initialize)(self.comm.ptr,sel.send,self.base.stream.ptr)})?;
+   }
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;Ok(())
   })();
   ready.agree("resident-ready",&reset,None)?;reset?;
@@ -321,7 +409,17 @@ impl SegmentedDistributedBfs {
   crate::job_phase::set("resident-bfs")?;
   let started=Instant::now();
   let execution:Result<Report>=(||{
-   code("RESIDENT_BFS_LAUNCH",unsafe{(launch)(self.comm.ptr,&res.args,res.report.ptr.cast(),self.base.stream.ptr)})?;
+   if let Some(sel)=batch_selection {
+    let buffers=res.batch.as_ref().ok_or("RESIDENT_BATCH_ARGS")?;
+    let batch_args:*const c_void=if hash {
+     (buffers.hash_args.as_ref().ok_or("RESIDENT_BATCH_HASH_ARGS")? as *const BatchHashArgs).cast()
+    }else{
+     (buffers.args.as_ref().ok_or("RESIDENT_BATCH_ARGS")? as *const BatchArgs).cast()
+    };
+    code("RESIDENT_BATCH_BFS_LAUNCH",unsafe{(sel.functions.launch)(self.comm.ptr,batch_args,res.report.ptr.cast(),self.base.stream.ptr)})?;
+   } else {
+    code("RESIDENT_BFS_LAUNCH",unsafe{(launch)(self.comm.ptr,&res.args,res.report.ptr.cast(),self.base.stream.ptr)})?;
+   }
    res.event.wait(self.base.stream.ptr,self.comm.ptr,host_terminal,false)?;
    let mut report=Report::default();
    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut report as *mut Report).cast(),res.report.ptr,mem::size_of::<Report>(),2)})?;
@@ -385,9 +483,17 @@ impl SegmentedDistributedBfs {
    (3,2)=>("INCOMPLETE","RESIDENT_RESOURCE_LAYER_LOG_CAPACITY"),
    _=>return Err(format!("RESIDENT_UNEXPECTED_STATUS status={} reason={}",out.status,out.reason)),
   };
-  let evidence=serde_json::json!({"transport":"NCCL_LSA_DEVICE_RING",
+  let batch_scratch_bytes=res.batch.as_ref().map(|b|b.raw.bytes+b.positions.bytes+
+    b.block_prefix.bytes+b.offsets.bytes+b.receive.bytes+b.shard_counts.bytes+b.shard_starts.bytes+
+    b.error.bytes+b.spans.as_ref().map_or(0,|x|x.bytes)+b.parent_prefix.as_ref().map_or(0,|x|x.bytes)+b.grouped.as_ref().map_or(0,|x|x.bytes));
+  let evidence=serde_json::json!({"transport":if batch_selection.is_some(){"NCCL_LSA_DEVICE_BATCH"}else{"NCCL_LSA_DEVICE_RING"},
+    "scheduler":if batch_selection.is_some(){"multi_cta"}else{"single_cta"},
+    "batch_send_capacity":batch_selection.map(|v|v.send),
+    "batch_receive_capacity":batch_selection.map(|v|v.receive),
+    "batch_blocks":batch_selection.map(|v|v.blocks),"batch_threads":batch_selection.map(|v|v.threads),
+    "batch_scratch_bytes":batch_scratch_bytes,
     "storage":if hash{"segmented_hash"}else{"packed_bitmap"},
-    "hash_owner_execution":if hash{Some(if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
+    "hash_owner_execution":if hash{Some(if batch_selection.is_some(){"batched_parallel_per_shard"}else if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
     "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
     "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
     "hash_parent_index_enabled":hash_parent_index_enabled,

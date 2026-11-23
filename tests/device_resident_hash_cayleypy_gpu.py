@@ -7,9 +7,11 @@ import multigpubfs
 from multigpubfs import NativeOptions
 
 world=int(os.environ.get("RESIDENT_TEST_WORLD","2"))
+scheduler=os.environ.get("RESIDENT_TEST_SCHEDULER","single")
+batch_options={"device_scheduler":"batch","device_batch_edges":33,"device_receive_records":7} if scheduler=="batch" else {}
 root=Path(tempfile.mkdtemp(prefix=f"resident-hash-cayley-{world}-",dir=os.environ.get("MGBFS_TEST_TMP_ROOT")))
 opts=NativeOptions(devices=tuple(range(world)),autotune=False,memory_backend="segmented24",
-                   segment_strategy="atomic",segment_rows=2,execution_engine="device")
+                   segment_strategy="atomic",segment_rows=2,execution_engine="device",**batch_options)
 cases=[
  ("s4",CayleyGraphDef.create([[1,0,2,3],[0,2,1,3],[0,1,3,2]])),
  ("repeated",CayleyGraphDef.create([[1,0,2,3,4],[0,2,1,3,4],[0,1,3,2,4],[0,1,2,4,3]],central_state=[0,0,1,2,3])),
@@ -19,6 +21,7 @@ def verify(r,layers,completed):
  assert r.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL"
  assert len(r.report["segment_memory_by_rank"])==world
  assert all(m["resident"]["storage"]=="segmented_hash" for m in r.report["segment_memory_by_rank"])
+ assert all(m["resident"]["scheduler"]==("multi_cta" if scheduler=="batch" else "single_cta") for m in r.report["segment_memory_by_rank"])
  indexed=os.environ.get("MGBFS_RESIDENT_HASH_PARENT_INDEX","0")=="1"
  assert all(m["resident"]["hash_parent_index_enabled"] is indexed for m in r.report["segment_memory_by_rank"])
  assert all(m["resident"]["hash_parent_index_bytes"]==((m["resident"]["extent_count"]+1)*8 if indexed else 0) for m in r.report["segment_memory_by_rank"])

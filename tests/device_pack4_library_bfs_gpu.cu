@@ -1,6 +1,12 @@
 // Integration fixture: exercises the exported resident CUDA library entry, not
 // the experimental scheduler. Capturing all states is explicit and test-only.
 #include "device_pack4_bfs.cuh"
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+#include "device_batch_bitmap_bfs.cuh"
+extern "C" int mgbfs_device_batch_bitmap_geometry_v1(uint32_t*,uint32_t*);
+extern "C" int mgbfs_device_batch_bitmap_init_v1(void*,uint64_t,uint64_t,void*);
+extern "C" int mgbfs_device_batch_bitmap_launch_v1(const void*,const void*,const mgbfs_resident_batch::Args*,uint64_t,mgbfs_resident::Report*,void*);
+#endif
 #include <nccl.h>
 #include <cuda_runtime.h>
 #include <algorithm>
@@ -143,6 +149,13 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
  MgbfsDeviceMailboxLayoutV1 maximum{};
  CHECK(!mgbfs_device_mailbox_layout_v1(WORLD,lanes,3,sizeof(Payload)*packet_records,UINT64_MAX,sizeof(maximum),&maximum));
  size_t window_bytes=sizeof(Control)+maximum.total_bytes;
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+ constexpr uint64_t batch_send=33,batch_receive=7;
+ window_bytes=std::max(window_bytes,sizeof(mgbfs_device_batch::Window)+batch_send*sizeof(mgbfs_device_batch::Payload));
+ uint32_t batch_blocks=0,batch_threads=0;
+ CHECK(!mgbfs_device_batch_bitmap_geometry_v1(&batch_blocks,&batch_threads));
+ CHECK(batch_blocks>1 && batch_threads==128);
+#endif
 #ifdef MGBFS_LIBRARY_TEST_TRANSPORT
  CHECK(!mgbfs_nccl_resident_prepare_v1(production_comm,window_bytes,transport_error,sizeof(transport_error)));
  CHECK(!mgbfs_nccl_resident_activate_v1(production_comm,transport_error,sizeof(transport_error)));
@@ -166,7 +179,11 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
    unsigned n=0;for(unsigned i=0;i<g.n;++i)n+=dist[i]==int(d)&&map[i%WORLD]==r;
    needed=std::max(needed,n);
   }
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+  for(unsigned queue:{1u})for(unsigned variant=0;variant<4;++variant){
+#else
   for(unsigned queue:{1u,3u})for(unsigned variant=0;variant<4;++variant){
+#endif
    if(failed)break;
    if(variant==2&&needed==1)continue;
    // Force metadata exhaustion independently of per-rank storage; every rank
@@ -222,6 +239,21 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
 #else
    CHECK(!mgbfs_device_pack4_bfs_init_v1(base,window_bytes,&a,stream));
 #endif
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+   using namespace mgbfs_device_batch;
+   Input* batch_raw=nullptr;
+   mgbfs_device_batch::Payload* batch_incoming=nullptr;
+   uint64_t *batch_positions=nullptr,*batch_hist=nullptr,*batch_offsets=nullptr,
+      *batch_shards=nullptr,*batch_starts=nullptr,*batch_prefix=nullptr;
+   BitmapSpan* batch_spans=nullptr;uint32_t* batch_error=nullptr;
+   C(alloc(&batch_raw,batch_send));C(alloc(&batch_incoming,batch_receive));
+   C(alloc(&batch_positions,std::max(batch_send,batch_receive)));C(alloc(&batch_hist,batch_blocks*WORLD));
+   C(alloc(&batch_offsets,WORLD+1));C(alloc(&batch_shards,a.shards));C(alloc(&batch_starts,a.shards+1));
+   C(alloc(&batch_spans,a.extent_count));C(alloc(&batch_prefix,a.extent_count+1));C(alloc(&batch_error,1));
+   mgbfs_resident_batch::Args batch{a,batch_send,batch_receive,batch_raw,batch_positions,
+     batch_hist,batch_offsets,batch_incoming,batch_shards,batch_starts,batch_spans,batch_prefix,batch_error};
+   CHECK(!mgbfs_device_batch_bitmap_init_v1(base,window_bytes,batch_send,stream));
+#endif
    uint32_t* barrier=nullptr;C(alloc(&barrier,2));C(cudaMemsetAsync(barrier,0,8,stream));
 #ifdef MGBFS_LIBRARY_TEST_TRANSPORT
    CHECK(!mgbfs_nccl_all_reduce_max_pair_u32(production_comm,barrier,barrier,stream));
@@ -245,7 +277,11 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
    }
    CHECK(!mgbfs_nccl_resident_launch_v1(production_comm,&a,report,stream));
 #else
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+   CHECK(!mgbfs_device_batch_bitmap_launch_v1(&window,&dev,&batch,window_bytes,report,stream));
+#else
    CHECK(!mgbfs_device_pack4_bfs_launch_v1(&window,&dev,&a,window_bytes,report,stream));
+#endif
 #endif
    C(cudaStreamSynchronize(stream));
    Report out{};C(cudaMemcpy(&out,report,sizeof(out),cudaMemcpyDeviceToHost));CHECK(out.capture_count<=g.n+1);
@@ -274,6 +310,11 @@ static int rank_main(unsigned rank,const ncclUniqueId& id) {
    N(ncclAllReduce(barrier,barrier,1,ncclUint32,ncclMax,comm,stream));
 #endif
    C(cudaMemcpyAsync(&fail,barrier,4,cudaMemcpyDeviceToHost,stream));C(cudaStreamSynchronize(stream));failed=fail!=0;
+#ifdef MGBFS_LIBRARY_TEST_BATCH
+   C(cudaFree(batch_error));C(cudaFree(batch_prefix));C(cudaFree(batch_spans));C(cudaFree(batch_starts));
+   C(cudaFree(batch_shards));C(cudaFree(batch_offsets));C(cudaFree(batch_hist));C(cudaFree(batch_positions));
+   C(cudaFree(batch_incoming));C(cudaFree(batch_raw));
+#endif
    C(cudaFree(barrier));C(cudaFree(perms));C(cudaFree(counts));C(cudaFree(symbols));C(cudaFree(gpu_map));C(cudaFree(leases));C(cudaFree(locks));C(cudaFree(terminal_word));
    C(cudaFree(rank_count));C(cudaFree(visited));C(cudaFree(layers));C(cudaFree(rank_counts));C(cudaFree(capture_count));C(cudaFree(capture));C(cudaFree(report));C(cudaFree(extents));
    for(unsigned i=0;i<2;++i){C(cudaFree(rows[i]));C(cudaFree(used[i]));}

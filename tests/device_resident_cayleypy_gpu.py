@@ -9,8 +9,10 @@ from multigpubfs import NativeOptions
 world=int(os.environ.get("RESIDENT_TEST_WORLD","2"))
 root=Path(tempfile.mkdtemp(prefix=f"resident-cayley-{world}-",dir=os.environ.get("MGBFS_TEST_TMP_ROOT")))
 devices=tuple(range(world))
+scheduler=os.environ.get("RESIDENT_TEST_SCHEDULER","single")
+batch_options={"device_scheduler":"batch","device_batch_edges":33,"device_receive_records":7} if scheduler=="batch" else {}
 opts=NativeOptions(devices=devices,autotune=False,memory_backend="permutation_bitmap",
-                   segment_strategy="atomic",segment_rows=2,execution_engine="device")
+                   segment_strategy="atomic",segment_rows=2,execution_engine="device",**batch_options)
 def rotation(k):return [(i+k)%6 for i in range(6)]
 cases=[
  ("s4",CayleyGraphDef.create([[1,0,2,3],[0,2,1,3],[0,1,3,2]])),
@@ -26,6 +28,7 @@ def rank_caps(g,layers):
  return [[sum(mapping[ids[tuple(s)]%world]==rank for s in layer) for rank in range(world)] for layer in layers]
 def verify(result,layers,completed=True):
  assert result.report["execution_engine"]=="GPU_RESIDENT_EXPERIMENTAL",result.report
+ assert all(m["resident"]["scheduler"]==("multi_cta" if scheduler=="batch" else "single_cta") for m in result.report["segment_memory_by_rank"])
  expected=int(os.environ.get("MGBFS_RESIDENT_PACKET_RECORDS","1"))
  expected_lanes=int(os.environ.get("MGBFS_RESIDENT_LANES","4"))
  expected_slots=int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1"))

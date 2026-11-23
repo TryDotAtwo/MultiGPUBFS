@@ -19,6 +19,18 @@ class DeviceResidentOptions(unittest.TestCase):
    with self.subTest(override=override),self.assertRaises(ValueError):
     NativeOptions(**dict(options,**override))
 
+ def test_batch_scheduler_is_explicit_and_sizes_are_validated(self):
+  options=dict(execution_engine="device",autotune=False,memory_backend="permutation_bitmap",device_scheduler="batch",device_batch_edges=33,device_receive_records=7)
+  self.assertEqual(NativeOptions(**options).device_scheduler,"batch")
+  self.assertEqual(NativeOptions(**dict(options,memory_backend="segmented24")).device_scheduler,"batch")
+  for override in (dict(execution_engine="host"),dict(memory_backend="legacy"),
+                   dict(device_scheduler="unknown"),dict(device_batch_edges=0),
+                   dict(device_receive_records=True),dict(device_receive_records=1<<64)):
+   with self.subTest(override=override),self.assertRaises(ValueError):
+    NativeOptions(**dict(options,**override))
+  with self.assertRaisesRegex(ValueError,"DEVICE_BATCH_SIZE_REQUIRES_BATCH"):
+   NativeOptions(device_batch_edges=1)
+
  def test_launch_rejects_unsupported_options_before_runtime(self):
   graph=GraphDefinition.permutation([[1,0]],[0,1])
   for kw in (dict(execution_engine="bad"),dict(execution_engine="device"),

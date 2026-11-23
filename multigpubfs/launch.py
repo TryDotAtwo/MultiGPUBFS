@@ -148,7 +148,7 @@ def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,execution_engine='host',peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,execution_engine='host',device_scheduler='single',device_batch_edges=None,device_receive_records=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -176,6 +176,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if memory_backend=='legacy' and segment_strategy!='atomic':raise ValueError('SEGMENT_STRATEGY_REQUIRES_SEGMENTED_BACKEND')
  if memory_preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  if execution_engine not in ('host','device'):raise ValueError('INVALID_EXECUTION_ENGINE')
+ if device_scheduler not in ('single','batch'):raise ValueError('INVALID_DEVICE_SCHEDULER')
+ if device_scheduler=='batch' and (execution_engine!='device' or memory_backend not in ('permutation_bitmap','segmented24')):raise ValueError('DEVICE_BATCH_REQUIRES_DEVICE_SEGMENTED')
+ for value in (device_batch_edges,device_receive_records):
+  if value is not None and (type(value) is not int or not 1<=value<=0xffffffffffffffff):raise ValueError('INVALID_DEVICE_BATCH_SIZE')
+ if device_scheduler!='batch' and (device_batch_edges is not None or device_receive_records is not None):raise ValueError('DEVICE_BATCH_SIZE_REQUIRES_BATCH')
  if execution_engine=='device':
   if memory_backend not in ('permutation_bitmap','segmented24') or segment_strategy!='atomic' or memory_preset!='balanced':
    raise ValueError('DEVICE_REQUIRES_SUPPORTED_BACKEND_ATOMIC_BALANCED')
@@ -201,6 +206,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if memory_backend=='permutation_bitmap':native_env['MGBFS_SEGMENT_PACK4']='1'
   else:native_env.pop('MGBFS_SEGMENT_PACK4',None)
  else:native_env.pop('MGBFS_EXPERIMENTAL_DEVICE_BFS',None)
+ if device_scheduler=='batch':
+  native_env['MGBFS_RESIDENT_MULTICTA']='1'
+  for key,value in (('MGBFS_RESIDENT_BATCH_EDGES',device_batch_edges),('MGBFS_RESIDENT_BATCH_RECEIVE',device_receive_records)):
+   if value is None:native_env.pop(key,None)
+   else:native_env[key]=str(value)
+ else:
+  for key in ('MGBFS_RESIDENT_MULTICTA','MGBFS_RESIDENT_BATCH_EDGES','MGBFS_RESIDENT_BATCH_RECEIVE'):native_env.pop(key,None)
  native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
  packed=native_env.get('MGBFS_SEGMENT_PACK4','0')
  if packed not in ('0','1'):raise ValueError('BITMAP_PACK4_INVALID')

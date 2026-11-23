@@ -51,6 +51,56 @@ pub(super) struct Report {
  pub status:u32,pub rank:u32,pub reason:u32,pub max_active_shards_first64:u32,
 }
 #[repr(C)]
+#[derive(Clone,Copy)]
+pub(super) struct BatchArgs {
+ pub base:Args,pub send_capacity:u64,pub receive_capacity:u64,
+ pub raw:*mut c_void,pub positions:*mut u64,pub block_prefix:*mut u64,
+ pub offsets:*mut u64,pub receive:*mut c_void,pub shard_counts:*mut u64,
+ pub shard_starts:*mut u64,pub spans:*mut c_void,pub parent_prefix:*mut u64,
+ pub error:*mut u32,
+}
+#[repr(C)]
+#[derive(Clone,Copy)]
+pub(super) struct BatchHashArgs {
+ pub base:Args,pub send_capacity:u64,pub receive_capacity:u64,
+ pub raw:*mut c_void,pub positions:*mut u64,pub block_prefix:*mut u64,
+ pub offsets:*mut u64,pub receive:*mut c_void,pub grouped:*mut c_void,
+ pub shard_counts:*mut u64,pub shard_starts:*mut u64,pub spans:*mut c_void,
+ pub parent_prefix:*mut u64,pub error:*mut u32,
+}
+type BatchGeometry=unsafe extern "C" fn(*mut u32,*mut u32)->i32;
+type BatchInit=unsafe extern "C" fn(*mut c_void,u64,*mut c_void)->i32;
+type BatchLaunch=unsafe extern "C" fn(*mut c_void,*const c_void,*mut Report,*mut c_void)->i32;
+#[derive(Clone,Copy)]
+pub(super) struct BatchFunctions {
+ pub query:Query,pub geometry:BatchGeometry,pub initialize:BatchInit,pub launch:BatchLaunch,
+ pub window_bytes:u64,
+}
+impl BatchFunctions {
+ pub(super) unsafe fn load(hash:bool)->Result<Self,String>{
+  unsafe fn symbol(name:&[u8])->Result<*mut c_void,String>{
+   let p=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast());
+   if p.is_null(){Err(format!("RESIDENT_BATCH_ABI_MISSING {}",String::from_utf8_lossy(&name[..name.len()-1])))}else{Ok(p)}
+  }
+  let (query_name,geometry_name,launch_name,expected):(&[u8],&[u8],&[u8],u32)=if hash {
+   (b"mgbfs_device_batch_hash_query_v1\0",b"mgbfs_device_batch_hash_geometry_v1\0",
+    b"mgbfs_nccl_resident_batch_hash_launch_v1\0",mem::size_of::<BatchHashArgs>() as u32)
+  }else{
+   (b"mgbfs_device_batch_bitmap_query_v1\0",b"mgbfs_device_batch_bitmap_geometry_v1\0",
+    b"mgbfs_nccl_resident_batch_launch_v1\0",mem::size_of::<BatchArgs>() as u32)
+  };
+  let query:Query=mem::transmute(symbol(query_name)?);
+  if query(0)!=1||query(1)!=expected||
+     query(2)==0||query(2)%64!=0||query(3)!=24||query(4)!=32||query(999)!=0 {
+   return Err("RESIDENT_BATCH_ABI_MISMATCH".into())
+  }
+  Ok(Self{query,geometry:mem::transmute(symbol(geometry_name)?),
+   initialize:mem::transmute(symbol(b"mgbfs_nccl_resident_batch_init_v1\0")?),
+   launch:mem::transmute(symbol(launch_name)?),window_bytes:u64::from(query(2))})
+ }
+}
+
+#[repr(C)]
 #[derive(Clone,Copy,Debug,Default)]
 pub(super) struct Topology {
  pub abi_version:u32,pub struct_size:u32,pub status:u32,pub stage:u32,

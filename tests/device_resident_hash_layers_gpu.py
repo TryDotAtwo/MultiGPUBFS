@@ -16,6 +16,8 @@ devices=list(range(world))
 root=Path(tempfile.mkdtemp(prefix=f"resident-hash-layers-{world}-",
                            dir=os.environ.get("MGBFS_TEST_TMP_ROOT")))
 collisions=os.environ.get("MGBFS_SEGMENT_TEST_HASH_BITS")=="0"
+scheduler=os.environ.get("RESIDENT_TEST_SCHEDULER","single")
+batch_options={"device_scheduler":"batch","device_batch_edges":33,"device_receive_records":7} if scheduler=="batch" else {}
 cases=[
  ("s4",GraphDefinition.permutation([[1,0,2,3],[0,2,1,3],[0,1,3,2]],[0,1,2,3])),
  ("repeated",GraphDefinition.permutation([[1,0,2,3,4],[0,2,1,3,4],[0,1,3,2,4],[0,1,2,4,3]],[0,0,1,2,3])),
@@ -26,7 +28,7 @@ duplicate=("duplicate_at_full",GraphDefinition.permutation([[1,0,2],[1,0,2],[0,1
 def execute(g,path,**kw):
  return run_graph(g,path,devices=devices,autotune=False,shards=2,_batch=2,segment_rows=2,
    memory_backend="segmented24",segment_strategy="atomic",execution_engine="device",
-   executable=os.environ["MGBFS_EXECUTABLE"],**kw)
+   executable=os.environ["MGBFS_EXECUTABLE"],**batch_options,**kw)
 
 def rank_counters(path):
  states=[]
@@ -51,8 +53,10 @@ def check_receipt(r):
   assert m["resident"]["hash_parent_index_enabled"] is indexed
   assert m["resident"]["hash_parent_index_bytes"]==((m["resident"]["extent_count"]+1)*8 if indexed else 0)
   assert m["resident"]["slots_per_ring"]==int(os.environ.get("MGBFS_RESIDENT_MAILBOX_SLOTS","1"))
-  assert m["resident"]["transport"]=="NCCL_LSA_DEVICE_RING"
-  mode="parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank"
+  assert m["resident"]["transport"]==("NCCL_LSA_DEVICE_BATCH" if scheduler=="batch" else "NCCL_LSA_DEVICE_RING")
+  assert m["resident"]["scheduler"]==("multi_cta" if scheduler=="batch" else "single_cta")
+  mode=("batched_parallel_per_shard" if scheduler=="batch" else
+        "parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank")
   assert m["resident"]["hash_owner_execution"]==mode
   assert m["resident"]["hash_indexed_extents"]==(os.environ.get("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")=="1")
 

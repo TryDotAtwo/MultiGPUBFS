@@ -23,6 +23,9 @@ class NativeOptions:
     segment_strategy: str = field(default_factory=lambda: os.environ.get("MGBFS_SEGMENT_STRATEGY", "atomic"))
     bitmap_owner_page: int | None = None
     execution_engine: str = "host"
+    device_scheduler: str = "single"
+    device_batch_edges: int | None = None
+    device_receive_records: int | None = None
 
     def __post_init__(self):
         _normalize_segment_strategy(self.segment_strategy)
@@ -37,6 +40,15 @@ class NativeOptions:
             raise ValueError("BITMAP_OWNER_PAGE_REQUIRES_BITMAP")
         if self.execution_engine not in ("host", "device"):
             raise ValueError("INVALID_EXECUTION_ENGINE")
+        if self.device_scheduler not in ("single", "batch"):
+            raise ValueError("INVALID_DEVICE_SCHEDULER")
+        if self.device_scheduler=="batch" and (self.execution_engine!="device" or self.memory_backend not in ("permutation_bitmap","segmented24")):
+            raise ValueError("DEVICE_BATCH_REQUIRES_DEVICE_SEGMENTED")
+        for value in (self.device_batch_edges,self.device_receive_records):
+            if value is not None and (type(value) is not int or not 1<=value<=0xffffffffffffffff):
+                raise ValueError("INVALID_DEVICE_BATCH_SIZE")
+        if self.device_scheduler!="batch" and (self.device_batch_edges is not None or self.device_receive_records is not None):
+            raise ValueError("DEVICE_BATCH_SIZE_REQUIRES_BATCH")
         if self.execution_engine=="device":
             if self.memory_backend not in ("permutation_bitmap","segmented24") or self.segment_strategy!="atomic" or self.memory_preset!="balanced":
                 raise ValueError("DEVICE_REQUIRES_SUPPORTED_BACKEND_ATOMIC_BALANCED")
@@ -143,7 +155,10 @@ def _search(original, graph, backend, options, output, kwargs):
                            memory_backend=options.memory_backend,
                            segment_rows=options.segment_rows, memory_preset=options.memory_preset,
                            segment_strategy=options.segment_strategy, bitmap_owner_page=options.bitmap_owner_page,
-                           execution_engine=options.execution_engine)
+                           execution_engine=options.execution_engine,
+                           device_scheduler=options.device_scheduler,
+                           device_batch_edges=options.device_batch_edges,
+                           device_receive_records=options.device_receive_records)
     import torch
     snapshot = json.loads((output / "states.json").read_text())
     sizes = report["layer_sizes"]

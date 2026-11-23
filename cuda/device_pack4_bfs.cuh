@@ -10,6 +10,7 @@
 #include "device_mailbox.cuh"
 #include "device_pack4_accept.cuh"
 #include "device_segmented_hash_accept.cuh"
+#include "device_hash_key.cuh"
 #include "device_extent_prefix.cuh"
 #include "bitmap_pack4_action.cuh"
 #include <nccl_device.h>
@@ -241,17 +242,10 @@ __device__ __forceinline__ bool send_packet(
 }
 
 __device__ inline uint64_t hash_word(const HashWord& word,const HashConfig& config) {
-  uint64_t hash=config.seed;
-  for(uint32_t e=0;e<word.dictionary.elements;++e)hash=mix64(hash^uint64_t(word.value(e))^uint64_t(e));
-  return finish_hash(hash,config.bits);
+  return mgbfs_device_hash_key::hash(word,config);
 }
 __device__ inline unsigned hash_owner(uint64_t hash,const Args& a,const HashConfig& config) {
-  const uint64_t high=hash>>32;
-  if(!config.owner_cuts)return unsigned((high*a.world)>>32);
-  if(config.owner_cuts[0]!=0||config.owner_cuts[a.world]!=(uint64_t(1)<<32))return a.world;
-  uint32_t low=0,upper=a.world;
-  while(low+1<upper){const uint32_t mid=(low+upper)/2;if(high<config.owner_cuts[mid])upper=mid;else low=mid;}
-  return (config.owner_cuts[low]<=high&&high<config.owner_cuts[low+1])?low:a.world;
+  return mgbfs_device_hash_key::owner(hash,a,config);
 }
 // All producer/consumer roles share one resident CTA. A blocked producer
 // cannot prevent the separate consumer warps from receiving and returning

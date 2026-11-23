@@ -107,7 +107,7 @@ class IntegrationTests(unittest.TestCase):
         with patch.object(api, 'run_graph', side_effect=self.native):
             api.bfs(self.graph, output=self.root/'devices',
                     native_options=api.NativeOptions(devices=(1,0),max_seconds=12,autotune=False))
-        self.assertEqual(self.options, dict(devices=(1,0),max_seconds=12,autotune=False,memory_backend='legacy',segment_rows=1<<32,memory_preset='balanced',segment_strategy='atomic',bitmap_owner_page=None,execution_engine='host'))
+        self.assertEqual(self.options, dict(devices=(1,0),max_seconds=12,autotune=False,memory_backend='legacy',segment_rows=1<<32,memory_preset='balanced',segment_strategy='atomic',bitmap_owner_page=None,execution_engine='host',device_scheduler='single',device_batch_edges=None,device_receive_records=None))
 
     def test_explicit_device_execution_is_forwarded(self):
         options=api.NativeOptions(devices=(0,1),autotune=False,
