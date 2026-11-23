@@ -69,6 +69,28 @@ pub(super) struct BatchHashArgs {
  pub shard_counts:*mut u64,pub shard_starts:*mut u64,pub spans:*mut c_void,
  pub parent_prefix:*mut u64,pub error:*mut u32,
 }
+// The extended flag is carried only in the multi-CTA hash launch copy; the
+// common initialization ABI continues to receive reserved0=0.
+pub(super) fn resident_hash_rehash(capability:u32,value:&str)->Result<bool,String>{
+ match value {
+  "0"=>Ok(false),
+  "1" if capability==1=>Ok(true),
+  "1"=>Err("RESIDENT_HASH_REHASH_UNSUPPORTED".into()),
+  _=>Err("RESIDENT_HASH_REHASH_INVALID".into()),
+ }
+}
+#[cfg(test)]
+mod resident_hash_rehash_tests {
+ use super::resident_hash_rehash;
+ #[test]
+ fn rejects_unknown_or_unsupported_but_accepts_legacy_default(){
+  assert_eq!(resident_hash_rehash(0,"0"),Ok(false));
+  assert_eq!(resident_hash_rehash(1,"1"),Ok(true));
+  assert_eq!(resident_hash_rehash(0,"1"),Err("RESIDENT_HASH_REHASH_UNSUPPORTED".into()));
+  assert_eq!(resident_hash_rehash(1,"auto"),Err("RESIDENT_HASH_REHASH_INVALID".into()));
+ }
+}
+
 type BatchGeometry=unsafe extern "C" fn(*mut u32,*mut u32)->i32;
 type BatchInit=unsafe extern "C" fn(*mut c_void,u64,*mut c_void)->i32;
 type BatchLaunch=unsafe extern "C" fn(*mut c_void,*const c_void,*mut Report,*mut c_void)->i32;

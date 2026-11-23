@@ -43,7 +43,8 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 
 #[derive(Clone,Copy)]
 struct BatchSelection {
- functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,hash_virtual_buckets:u32,
+ functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,
+ hash_virtual_buckets:u32,hash_rehash:bool,
 }
 struct BatchBuffers {
  raw:Buffer,positions:Buffer,block_prefix:Buffer,offsets:Buffer,receive:Buffer,
@@ -130,13 +131,20 @@ impl SegmentedDistributedBfs {
       if v>1&&unsafe{(functions.query)(6)}!=1{return Err("RESIDENT_HASH_VBUCKETS_UNSUPPORTED".into())}
       v
      }else{1};
+     let hash_rehash=if hash {
+      let value=match std::env::var("MGBFS_RESIDENT_HASH_REHASH"){
+       Ok(v)=>v,Err(std::env::VarError::NotPresent)=>"0".to_owned(),
+       Err(_)=>return Err("RESIDENT_HASH_REHASH_INVALID".into()),
+      };
+      resident_ffi::resident_hash_rehash(unsafe{(functions.query)(7)},&value)?
+     }else{false};
      let(mut blocks,mut threads)=(0u32,0u32);
      code("RESIDENT_BATCH_GEOMETRY",unsafe{(functions.geometry)(&mut blocks,&mut threads)})?;
      if blocks==0||threads!=128{return Err("RESIDENT_BATCH_GEOMETRY_INVALID".into())}
      let window_bytes=send.checked_mul(16).and_then(|v|v.checked_add(functions.window_bytes))
        .ok_or("RESIDENT_BATCH_WINDOW_SIZE")?;
      checked_size(send,24)?;checked_size(receive,16)?;
-     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets})
+     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets,hash_rehash})
     },
     _=>return Err("RESIDENT_BATCH_SCHEDULER_INVALID".into()),
    };
@@ -149,6 +157,7 @@ impl SegmentedDistributedBfs {
    "scheduler":if batch.is_some(){"multi_cta"}else{"single_cta"},
    "batch_send":batch.map(|v|v.send),"batch_receive":batch.map(|v|v.receive),
    "hash_virtual_buckets":batch.map(|v|v.hash_virtual_buckets),
+   "hash_rehash":batch.map(|v|v.hash_rehash),
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
   let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
@@ -391,7 +400,9 @@ impl SegmentedDistributedBfs {
      parent_prefix:b.parent_prefix.as_ref().unwrap().ptr.cast(),error:b.error.ptr.cast()});
     if hash {
      let v=b.args.as_ref().unwrap();
-     b.hash_args=Some(BatchHashArgs{base:v.base,send_capacity:v.send_capacity,receive_capacity:v.receive_capacity,
+     let mut hash_base=v.base;
+     hash_base.reserved0=u32::from(sel.hash_rehash);
+     b.hash_args=Some(BatchHashArgs{base:hash_base,send_capacity:v.send_capacity,receive_capacity:v.receive_capacity,
       raw:v.raw,positions:v.positions,block_prefix:v.block_prefix,offsets:v.offsets,
       receive:v.receive,grouped:b.grouped.as_ref().unwrap().ptr,shard_counts:v.shard_counts,
       shard_starts:v.shard_starts,spans:v.spans,parent_prefix:v.parent_prefix,error:v.error});
@@ -426,6 +437,10 @@ impl SegmentedDistributedBfs {
    code("RESIDENT_REINITIALIZE",unsafe{(initialize)(self.comm.ptr,&res.args,self.base.stream.ptr)})?;
    if let Some(sel)=batch_selection {
     code("RESIDENT_BATCH_INITIALIZE",unsafe{(sel.functions.initialize)(self.comm.ptr,sel.send,self.base.stream.ptr)})?;
+    if sel.hash_rehash {
+     let spans=res.batch.as_ref().and_then(|b|b.spans.as_ref()).ok_or("RESIDENT_HASH_REHASH_SCRATCH")?;
+     crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(spans.ptr,0,spans.bytes,self.base.stream.ptr)})?;
+    }
    }
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;Ok(())
   })();
@@ -459,7 +474,19 @@ impl SegmentedDistributedBfs {
   let out=execution?;let bfs_seconds=started.elapsed().as_secs_f64();
 
   let mut hash_owner_stats=None;
+  let mut hash_rehash_count=None;
   let readback:Result<_>=(||{
+   if batch_selection.map_or(false,|v|v.hash_rehash) {
+    let spans=res.batch.as_ref().and_then(|b|b.spans.as_ref()).ok_or("RESIDENT_HASH_REHASH_SCRATCH")?;
+    let count=usize::try_from(res.args.extent_count).map_err(|_|"RESIDENT_HASH_REHASH_SIZE")?;
+    let bytes=checked_size(res.args.extent_count,8)?;
+    if bytes.checked_mul(2).ok_or("RESIDENT_HASH_REHASH_SIZE")?>spans.bytes {
+     return Err("RESIDENT_HASH_REHASH_SCRATCH".into())
+    }
+    let mut values=vec![0u64;count];
+    if bytes>0{crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),spans.at::<c_void>(bytes),bytes,2)})?;}
+    hash_rehash_count=Some(values.iter().try_fold(0u64,|a,&b|a.checked_add(b)).ok_or("RESIDENT_HASH_REHASH_COUNT")?);
+   }
    if let Some(stats)=&res.hash_stats {
     let mut values=[0u32;6];
     let bytes=if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){24}else{20};
@@ -512,7 +539,7 @@ impl SegmentedDistributedBfs {
   let batch_scratch_bytes=res.batch.as_ref().map(|b|b.raw.bytes+b.positions.bytes+
     b.block_prefix.bytes+b.offsets.bytes+b.receive.bytes+b.shard_counts.bytes+b.shard_starts.bytes+
     b.error.bytes+b.spans.as_ref().map_or(0,|x|x.bytes)+b.parent_prefix.as_ref().map_or(0,|x|x.bytes)+b.grouped.as_ref().map_or(0,|x|x.bytes));
-  let evidence=serde_json::json!({"transport":if batch_selection.is_some(){"NCCL_LSA_DEVICE_BATCH"}else{"NCCL_LSA_DEVICE_RING"},
+  let mut evidence=serde_json::json!({"transport":if batch_selection.is_some(){"NCCL_LSA_DEVICE_BATCH"}else{"NCCL_LSA_DEVICE_RING"},
     "scheduler":if batch_selection.is_some(){"multi_cta"}else{"single_cta"},
     "batch_send_capacity":batch_selection.map(|v|v.send),
     "batch_receive_capacity":batch_selection.map(|v|v.receive),
@@ -544,6 +571,8 @@ impl SegmentedDistributedBfs {
     "max_active_shards_first64":out.max_active_shards_first64,
     "max_active_shards_scope":"accepted rows per attempted layer on this rank; first 64 shards",
     "layer_seconds_scope":"not measured","peak_live_rows_scope":"not measured"});
+  evidence["hash_rehash_enabled"]=serde_json::json!(if hash{Some(batch_selection.map_or(false,|v|v.hash_rehash))}else{None});
+  evidence["hash_rehash_count"]=serde_json::json!(hash_rehash_count);
   // All ranks completed readback and retired the shared window before any
   // of these buffers may be returned to the persistent pool.
   unsafe{std::mem::ManuallyDrop::drop(&mut res);}

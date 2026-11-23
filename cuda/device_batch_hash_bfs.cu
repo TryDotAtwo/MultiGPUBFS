@@ -11,6 +11,7 @@ extern "C" uint32_t mgbfs_device_batch_hash_query_v1(uint32_t item) {
     case 4:return sizeof(mgbfs_device_batch::HashSpan);
     case 5:return 1; // pack4 hash segment and seed support
     case 6:return 1; // cooperative virtual-bucket owners
+    case 7:return 1; // optional no-reader completed-layer table rebuild
     default:return 0;
   }
 }
@@ -57,7 +58,7 @@ extern "C" int mgbfs_device_batch_hash_launch_v1(
   const auto& a=args->base;
   if(a.abi_version!=1||a.struct_bytes!=sizeof(a)||!a.world||a.world>mgbfs_device_batch::max_world||
      a.rank>=a.world||a.owner>=a.world||!a.shards||!a.generators||a.banks!=3||
-     !a.job_generation||
+     !a.job_generation||a.reserved0>1||
      !mgbfs_pack4_valid(a.dictionary)||(!a.extents&&a.extent_count)||(!a.extent_owner&&a.extent_count)||
      !a.visited||!a.rank_count||!a.layer_sizes||!a.layer_capacity||!a.rank_counts||
      !a.permutations||!a.physical_of_logical||!a.terminal||!args->send_capacity||!args->receive_capacity||

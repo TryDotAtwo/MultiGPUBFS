@@ -24,6 +24,9 @@ struct Args {
   uint64_t* parent_prefix;
   uint32_t* error;
 };
+}
+#include "device_batch_hash_rehash.cuh"
+namespace mgbfs_resident_hash_batch {
 #ifdef MGBFS_BATCH_HASH_BFS_IMPLEMENTATION
 __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_resident::Report* report) {
   using namespace mgbfs_resident;
@@ -80,7 +83,14 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       } else {
         const uint64_t count=x.counts[write_bank];
         if(count>seg.capacity) {if(!tid)fail(local,WINDOW_PROTOCOL);}
-        else for(uint64_t row=tid;row<count;row+=grid.size()) {
+        else {
+          if(a.reserved0&&!tid) {
+            auto* retired_counts=reinterpret_cast<uint64_t*>(args.spans);
+            const uint64_t threshold=rehash_threshold(seg.slots_count);
+            const uint64_t old=retired_counts[e];
+            retired_counts[e]=(old>=threshold||count>=threshold-old)?threshold:old+count;
+          }
+          for(uint64_t row=tid;row<count;row+=grid.size()) {
           const uint64_t pos=uint64_t(write_bank)*seg.capacity+row;
           const uint64_t slot=seg.position_item_bytes==4?
             uint64_t(reinterpret_cast<const uint32_t*>(seg.positions)[pos]):seg.positions[pos];
@@ -94,10 +104,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
              !cell.compare_exchange_strong(value,mgbfs_segmented_exact::retired,
                          cuda::memory_order_acq_rel,cuda::memory_order_acquire))
             fail(local,WINDOW_PROTOCOL);
+          }
         }
       }
     }
     grid.sync();
+    if(a.reserved0)rehash_completed_boundary(args,*config,local,write_bank);
     if(!tid) {
       // Obtain the same completed frontier sizes on every rank before deriving
       // the common number of rounds. Empty ranks participate with zero records.
