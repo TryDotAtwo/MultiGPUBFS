@@ -30,7 +30,7 @@ struct HashBatch {
   uint64_t* rank_count;
   uint64_t rank_limit;
   uint32_t shards,bank,state_bytes;
-  Payload* grouped;
+  uint64_t* grouped_origins; // offsets into the still-leased receive buffer
   uint64_t* positions;
   uint64_t* shard_counts;
   uint64_t* shard_starts;
@@ -51,7 +51,8 @@ __device__ inline uint32_t hash_shard(uint64_t hash,uint32_t shards) {
   return uint32_t((uint64_t(uint32_t(hash))*shards)>>32);
 }
 template<class T>
-__device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard,HashBatch a) {
+__device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
+                                  const uint64_t* origins,uint64_t n,uint32_t shard,HashBatch a) {
   constexpr unsigned block_threads=128;
   using Sort=cub::BlockRadixSort<unsigned long long,block_threads,1,unsigned long long>;
   using Scan=cub::BlockScan<unsigned,block_threads>;
@@ -71,7 +72,9 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
     if(stopped)break;
     const unsigned length=unsigned(min(uint64_t(block_threads),n-begin));
     const bool present=tid<length;
-    const Payload original=present?input[begin+tid]:Payload{UINT64_MAX,UINT64_MAX};
+    const uint64_t origin=present?origins[begin+tid]:0;
+    const bool valid_origin=!present || origin<input_count;
+    const Payload original=present&&valid_origin?input[origin]:Payload{UINT64_MAX,UINT64_MAX};
     unsigned long long keys[1]={original.packed},values[1]={original.key};
     Sort(storage.sort).Sort(keys,values);
     __syncthreads();
@@ -80,6 +83,8 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
     __syncthreads();
     hashes[tid]=keys[0];words[tid]=values[0];
     if(!tid){tile_error=0;span_count=0;tile_total=0;}
+    __syncthreads();
+    if(!valid_origin)atomicOr(&tile_error,uint32_t(HASH_FATAL));
     __syncthreads();
     bool fresh=present && (!tid || hashes[tid]!=hashes[tid-1] || words[tid]!=words[tid-1]);
     if(fresh) {
@@ -238,7 +243,7 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   if(!tid)*a.error=0;
   for(uint64_t s=tid;s<a.shards;s+=grid.size())a.shard_counts[s]=0;
   grid.sync();
-  if(blockDim.x!=128 || !a.shards || a.bank>=3 || !a.rank_count || !a.grouped ||
+  if(blockDim.x!=128 || !a.shards || a.bank>=3 || !a.rank_count || !a.grouped_origins ||
      !a.positions || !a.shard_counts || !a.shard_starts ||
      ((!a.extents||!a.owners)&&a.extent_count) ||
      !a.extent_count || !a.shard_head || !a.extent_next || !a.free_cursor ||
@@ -284,7 +289,7 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
     for(uint64_t i=tid;i<n;i+=grid.size()) {
       const Payload x=input[i];const uint32_t shard=hash_shard(x.key,a.shards);
       const uint64_t at=a.shard_starts[shard]+a.positions[i];
-      if(at>=n)atomicOr(a.error,uint32_t(HASH_FATAL));else a.grouped[at]=x;
+      if(at>=n)atomicOr(a.error,uint32_t(HASH_FATAL));else a.grouped_origins[at]=i;
     }
   }
   grid.sync();
@@ -294,8 +299,8 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   if(block_run) {
     for(uint32_t shard=blockIdx.x;shard<a.shards;shard+=gridDim.x) {
       const uint64_t begin=a.shard_starts[shard],end=a.shard_starts[shard+1];
-      if(a.state_bytes==1)hash_accept_shard<uint8_t>(a.grouped+begin,end-begin,shard,a);
-      else hash_accept_shard<int64_t>(a.grouped+begin,end-begin,shard,a);
+      if(a.state_bytes==1)hash_accept_shard<uint8_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
+      else hash_accept_shard<int64_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
     }
   }
   grid.sync();

@@ -17,7 +17,7 @@ struct Args {
   uint64_t* block_prefix;
   uint64_t* offsets;
   Payload* receive;
-  Payload* grouped;
+  uint64_t* grouped_origins;
   uint64_t* shard_counts;
   uint64_t* shard_starts;
   void* spans;
@@ -153,9 +153,15 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       const uint64_t edges=local->current*a.generators;
       const uint64_t begin=round*args.send_capacity;
       const uint64_t n=begin<edges?min(args.send_capacity,edges-begin):0;
-      for(uint64_t i=tid;i<n;i+=grid.size()) {
-        const uint64_t edge=begin+i,parent=edge/a.generators;
-        const uint32_t generator=uint32_t(edge%a.generators);
+      // Each thread decodes a parent once, then emits only the generators
+      // belonging to this bounded edge window (including partial endpoints).
+      const uint64_t first_parent=begin/a.generators;
+      const uint64_t parent_end=n?1+(begin+n-1)/a.generators:first_parent;
+      for(uint64_t parent_offset=tid;parent_offset<parent_end-first_parent;parent_offset+=grid.size()) {
+        const uint64_t parent=first_parent+parent_offset,edge_base=parent*a.generators;
+        const uint32_t first_generator=begin>edge_base?uint32_t(begin-edge_base):0;
+        const uint64_t available=begin+n-edge_base;
+        const uint32_t end_generator=uint32_t(min(uint64_t(a.generators),available));
         uint64_t extent=0,row=0;
         if(!locate_parent_extent(args.parent_prefix,a.extent_count,parent,&extent,&row)) {
           fail(local,WINDOW_PROTOCOL);continue;
@@ -174,19 +180,22 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
           packed|=uint64_t(ordinal)<<(4*k);
         }
         BitmapPack4Action action{a.dictionary.elements,a.generators,1,&packed,a.permutations,a.dictionary};
-        uint32_t bad=0;uint64_t child=0;
-        if(!valid||!action.valid(generator,&bad)) {fail(local,WINDOW_PROTOCOL);continue;}
-        for(uint32_t k=0;k<a.dictionary.elements;++k) {
-          const unsigned source=a.permutations[uint64_t(generator)*a.dictionary.elements+k];
-          child|=((packed>>(4*source))&15ull)<<(4*k);
+        if(!valid){fail(local,WINDOW_PROTOCOL);continue;}
+        for(uint32_t generator=first_generator;generator<end_generator;++generator) {
+          uint32_t bad=0;uint64_t child=0;
+          if(!action.valid(generator,&bad)) {fail(local,WINDOW_PROTOCOL);break;}
+          for(uint32_t k=0;k<a.dictionary.elements;++k) {
+            const unsigned source=a.permutations[uint64_t(generator)*a.dictionary.elements+k];
+            child|=((packed>>(4*source))&15ull)<<(4*k);
+          }
+          const HashWord word{a.dictionary,child};
+          const uint64_t key=mgbfs_device_hash_key::hash(word,*config);
+          const unsigned logical=mgbfs_device_hash_key::owner(key,a,*config);
+          if(logical>=a.world){fail(local,WINDOW_PROTOCOL);break;}
+          const unsigned destination=a.physical_of_logical[logical];
+          if(destination>=a.world){fail(local,WINDOW_PROTOCOL);break;}
+          args.raw[edge_base+generator-begin]={key,child,destination,0};
         }
-        const HashWord word{a.dictionary,child};
-        const uint64_t key=mgbfs_device_hash_key::hash(word,*config);
-        const unsigned logical=mgbfs_device_hash_key::owner(key,a,*config);
-        if(logical>=a.world){fail(local,WINDOW_PROTOCOL);continue;}
-        const unsigned destination=a.physical_of_logical[logical];
-        if(destination>=a.world){fail(local,WINDOW_PROTOCOL);continue;}
-        args.raw[i]={key,child,destination,0};
       }
       grid.sync();
       if(!tid)propagate_failure(local,peers,a.world,a.terminal);
@@ -239,7 +248,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         HashBatch batch{extents,a.extent_owner,a.extent_count,
           config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
           a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,
-          args.grouped,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
+          args.grouped_origins,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
         const uint64_t before=*a.rank_count;
         hash_accept(args.receive,count,batch);

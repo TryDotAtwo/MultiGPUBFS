@@ -29,7 +29,7 @@ template<class T> void check_type(bool tight) {
  }
  MgbfsPack4Dictionary dictionary{};dictionary.elements=4;dictionary.distinct=4;
  for(unsigned i=0;i<4;++i)dictionary.symbols[i]=sizeof(T)==1?int64_t(i):int64_t(i)*10000000000LL-10000000000LL;
- auto* input=managed<Payload>(capacity);auto* grouped=managed<Payload>(capacity);
+ auto* input=managed<Payload>(capacity);auto* grouped=managed<uint64_t>(capacity);
  auto* offsets=managed<uint64_t>(shards+1);auto* counts=managed<uint64_t>(shards);
  auto* positions=managed<uint64_t>(capacity);auto* rank_count=managed<uint64_t>(1);
  auto* error=managed<uint32_t>(1);auto* mask=managed<uint64_t>(1);

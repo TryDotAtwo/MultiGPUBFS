@@ -34,7 +34,7 @@ extern "C" int mgbfs_device_batch_hash_launch_v1(
      !mgbfs_pack4_valid(a.dictionary)||(!a.extents&&a.extent_count)||(!a.extent_owner&&a.extent_count)||
      !a.visited||!a.rank_count||!a.layer_sizes||!a.layer_capacity||!a.rank_counts||
      !a.permutations||!a.physical_of_logical||!a.terminal||!args->send_capacity||!args->receive_capacity||
-     !args->raw||!args->positions||!args->block_prefix||!args->offsets||!args->receive||!args->grouped||
+     !args->raw||!args->positions||!args->block_prefix||!args->offsets||!args->receive||!args->grouped_origins||
      !args->shard_counts||!args->shard_starts||!args->spans||!args->parent_prefix||!args->error||
      args->send_capacity>(UINT64_MAX-sizeof(mgbfs_device_batch::Window))/sizeof(mgbfs_device_batch::Payload)||
      window_bytes<sizeof(mgbfs_device_batch::Window)+args->send_capacity*sizeof(mgbfs_device_batch::Payload))return 2;

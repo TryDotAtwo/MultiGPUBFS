@@ -206,7 +206,9 @@ impl SegmentedDistributedBfs {
      shard_counts:Buffer::new(checked_size(shard_count,8)?,d)?,
      shard_starts:Buffer::new(checked_size(shard_count+1,8)?,d)?,
      error:Buffer::new(4,d)?,spans:None,parent_prefix:None,
-     grouped:if hash{Some(Buffer::new(checked_size(sel.receive,16)?,d)?)}else{None},
+     // Shard grouping stores offsets, not a second copy of every payload.
+     // The receive buffer remains leased until all owner CTAs finish.
+     grouped:if hash{Some(Buffer::new(checked_size(sel.receive,8)?,d)?)}else{None},
      args:None,hash_args:None,
     })
    }else{None};
