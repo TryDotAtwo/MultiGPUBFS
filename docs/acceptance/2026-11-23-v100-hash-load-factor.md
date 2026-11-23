@@ -24,3 +24,9 @@ The complete load and pressure archives on the compute host are `multicta-hash-l
 The small 4-GPU oracle compares exact per-layer state multisets for S4 during 50 → 75 → 50 persistent jobs, including a resource stop followed by a healthy job. S6 with ordinary and deliberately colliding hashes also passed full per-layer checks. These do not replace a full large-state-set, 8-GPU or B200 check.
 
 The compressed machine-readable comparisons of the earlier snapshot are alongside this report. The evidence snapshot containing these completed cases and test logs is `multicta-hash-load-midpoint.tgz`, SHA-256 `c7dd12932c81e29200813d3704f1482ca768204b7c34d9606b0ae9fbc782f39c`. State/index allocation receipts and sampled NVML values are different measurements and must not be combined into a claimed exact peak.
+
+## S13 heavy-layer timing and useful payload
+
+For the same single S13 observations, source depths 34–44 contain 3,052,643,942 parents and 36,631,727,304 generated edges, producing 3,034,361,132 states at depths 35–45. Summing the slowest recorded rank's per-layer GPU intervals gives approximately 184.098 s at load 50 and 321.331 s at load 75. This yields approximately 16.48 million versus 9.44 million newly completed states/s, and 198.98 million versus 114.00 million generated edges/s, respectively. The rank-0 receive/dedup/commit interval total was 156.229 s versus 282.754 s; its generation/partition total was 14.363 s versus 14.241 s.
+
+These are instrumented GPU-clock intervals, not a direct global wall-clock measurement; the different GPUs' intervals cannot be summed as serial time. The whole S13 traversal reported rank-0 remote useful payload of 224,176,678,528 bytes in 14,011,042,408 16-byte records. This excludes protocol/header overhead and is not measured physical link traffic. All figures are single observations on these 4×V100 GPUs; they do not establish B200 or 8-GPU performance.
