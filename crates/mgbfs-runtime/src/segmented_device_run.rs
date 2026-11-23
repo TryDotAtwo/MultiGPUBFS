@@ -44,7 +44,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 #[derive(Clone,Copy)]
 struct BatchSelection {
  functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,
- hash_virtual_buckets:u32,hash_rehash:bool,hash_metrics:bool,metrics_layers:u64,hash_bucket_extents:bool,
+ hash_virtual_buckets:u32,hash_rehash:bool,hash_metrics:bool,metrics_layers:u64,hash_bucket_extents:bool,hash_independent_buckets:bool,
 }
 struct BatchBuffers {
  raw:Buffer,positions:Buffer,block_prefix:Buffer,offsets:Buffer,receive:Buffer,
@@ -159,13 +159,27 @@ impl SegmentedDistributedBfs {
       };
       resident_ffi::resident_hash_bucket_extents(unsafe{(functions.query)(9)},&value,self.resident_hash_pack4)?
      }else{false};
+     let hash_independent_buckets=if hash {
+      let value=match std::env::var("MGBFS_RESIDENT_HASH_INDEPENDENT_BUCKETS"){
+       Ok(v)=>v,Err(std::env::VarError::NotPresent)=>"0".to_owned(),
+       Err(_)=>return Err("RESIDENT_HASH_INDEPENDENT_INVALID".into()),
+      };
+      resident_ffi::resident_hash_independent_buckets(unsafe{(functions.query)(10)},&value,hash_bucket_extents,hash_virtual_buckets)?
+     }else{
+      match std::env::var("MGBFS_RESIDENT_HASH_INDEPENDENT_BUCKETS"){
+       Ok(v) if v=="0"=>false,
+       Err(std::env::VarError::NotPresent)=>false,
+       Ok(_)=>return Err("RESIDENT_HASH_INDEPENDENT_REQUIRES_HASH".into()),
+       Err(_)=>return Err("RESIDENT_HASH_INDEPENDENT_INVALID".into()),
+      }
+     };
      let(mut blocks,mut threads)=(0u32,0u32);
      code("RESIDENT_BATCH_GEOMETRY",unsafe{(functions.geometry)(&mut blocks,&mut threads)})?;
      if blocks==0||threads!=128{return Err("RESIDENT_BATCH_GEOMETRY_INVALID".into())}
      let window_bytes=send.checked_mul(16).and_then(|v|v.checked_add(functions.window_bytes))
        .ok_or("RESIDENT_BATCH_WINDOW_SIZE")?;
      checked_size(send,24)?;checked_size(receive,16)?;
-     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets,hash_rehash,hash_metrics,metrics_layers,hash_bucket_extents})
+     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets,hash_rehash,hash_metrics,metrics_layers,hash_bucket_extents,hash_independent_buckets})
     },
     _=>return Err("RESIDENT_BATCH_SCHEDULER_INVALID".into()),
    };
@@ -181,6 +195,7 @@ impl SegmentedDistributedBfs {
    "hash_rehash":batch.map(|v|v.hash_rehash),
    "hash_metrics":batch.map(|v|v.hash_metrics),"metrics_layers":batch.map(|v|v.metrics_layers),
    "hash_bucket_extents":batch.map(|v|v.hash_bucket_extents),
+   "hash_independent_buckets":batch.map(|v|v.hash_independent_buckets),
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
   let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
@@ -436,7 +451,7 @@ impl SegmentedDistributedBfs {
     if hash {
      let v=b.args.as_ref().unwrap();
      let mut hash_base=v.base;
-     hash_base.reserved0=u32::from(sel.hash_rehash)|(u32::from(sel.hash_metrics)<<1)|(u32::from(sel.hash_bucket_extents)<<2);
+     hash_base.reserved0=u32::from(sel.hash_rehash)|(u32::from(sel.hash_metrics)<<1)|(u32::from(sel.hash_bucket_extents)<<2)|(u32::from(sel.hash_independent_buckets)<<3);
      b.hash_args=Some(BatchHashArgs{base:hash_base,send_capacity:v.send_capacity,receive_capacity:v.receive_capacity,
       raw:v.raw,positions:v.positions,block_prefix:v.block_prefix,offsets:v.offsets,
       receive:v.receive,grouped:b.grouped.as_ref().unwrap().ptr,shard_counts:v.shard_counts,
@@ -654,6 +669,7 @@ impl SegmentedDistributedBfs {
   evidence["hash_rehash_count"]=serde_json::json!(hash_rehash_count);
   evidence["hash_bucket_extents"]=serde_json::json!(if hash{Some(batch_selection.map_or(false,|v|v.hash_bucket_extents))}else{None});
   evidence["hash_extent_owner_groups"]=serde_json::json!(if hash{Some(hash_owner_groups)}else{None});
+  evidence["hash_independent_buckets"]=serde_json::json!(if hash{Some(batch_selection.map_or(false,|v|v.hash_independent_buckets))}else{None});
   evidence["hash_metrics"]=serde_json::json!(hash_metrics);
   // All ranks completed readback and retired the shared window before any
   // of these buffers may be returned to the persistent pool.

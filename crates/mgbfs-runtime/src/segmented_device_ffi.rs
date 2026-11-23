@@ -96,9 +96,19 @@ pub(super) fn resident_hash_bucket_extents(capability:u32,value:&str,packed:bool
   _=>Err("RESIDENT_HASH_BUCKET_EXTENTS_INVALID".into()),
  }
 }
+pub(super) fn resident_hash_independent_buckets(capability:u32,value:&str,owned:bool,buckets:u32)->Result<bool,String>{
+ match value {
+  "0"=>Ok(false),
+  "1" if !owned=>Err("RESIDENT_HASH_INDEPENDENT_REQUIRES_BUCKET_EXTENTS".into()),
+  "1" if buckets<=1=>Err("RESIDENT_HASH_INDEPENDENT_REQUIRES_VBUCKETS".into()),
+  "1" if capability==1=>Ok(true),
+  "1"=>Err("RESIDENT_HASH_INDEPENDENT_UNSUPPORTED".into()),
+  _=>Err("RESIDENT_HASH_INDEPENDENT_INVALID".into()),
+ }
+}
 #[cfg(test)]
 mod resident_hash_rehash_tests {
- use super::{resident_hash_rehash,resident_hash_metrics,resident_hash_bucket_extents};
+ use super::{resident_hash_rehash,resident_hash_metrics,resident_hash_bucket_extents,resident_hash_independent_buckets};
  #[test]
  fn rejects_unknown_or_unsupported_but_accepts_legacy_default(){
   assert_eq!(resident_hash_rehash(0,"0"),Ok(false));
@@ -114,6 +124,12 @@ mod resident_hash_rehash_tests {
   assert_eq!(resident_hash_bucket_extents(0,"1",true),Err("RESIDENT_HASH_BUCKET_EXTENTS_UNSUPPORTED".into()));
   assert_eq!(resident_hash_bucket_extents(1,"1",false),Err("RESIDENT_HASH_BUCKET_EXTENTS_PACKED_REQUIRED".into()));
   assert_eq!(resident_hash_bucket_extents(1,"auto",true),Err("RESIDENT_HASH_BUCKET_EXTENTS_INVALID".into()));
+  assert_eq!(resident_hash_independent_buckets(0,"0",false,1),Ok(false));
+  assert_eq!(resident_hash_independent_buckets(1,"1",true,4),Ok(true));
+  assert_eq!(resident_hash_independent_buckets(1,"1",false,4),Err("RESIDENT_HASH_INDEPENDENT_REQUIRES_BUCKET_EXTENTS".into()));
+  assert_eq!(resident_hash_independent_buckets(1,"1",true,1),Err("RESIDENT_HASH_INDEPENDENT_REQUIRES_VBUCKETS".into()));
+  assert_eq!(resident_hash_independent_buckets(0,"1",true,4),Err("RESIDENT_HASH_INDEPENDENT_UNSUPPORTED".into()));
+  assert_eq!(resident_hash_independent_buckets(1,"auto",true,4),Err("RESIDENT_HASH_INDEPENDENT_INVALID".into()));
  }
 }
 

@@ -64,9 +64,11 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   const uint32_t state_elements=config->packed_states?1:a.dictionary.elements;
   const uint64_t state_size=config->packed_states?8:config->state_bytes;
   const bool bucket_extents=(a.reserved0&4u)!=0;
+  const bool independent_buckets=(a.reserved0&8u)!=0;
   const uint64_t owner_groups=bucket_extents?
     uint64_t(a.shards)*config->virtual_buckets:uint64_t(a.shards);
-  if(owner_groups>UINT32_MAX || (bucket_extents&&!config->packed_states)) {
+  if(owner_groups>UINT32_MAX || (bucket_extents&&!config->packed_states) ||
+     (independent_buckets&&(!bucket_extents||config->virtual_buckets<=1))) {
     if(!tid)fail(local,WINDOW_PROTOCOL);
     grid.sync();return;
   }
@@ -325,7 +327,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         if(acquire(local->status.failure))break;
         HashBatch batch{extents,a.extent_owner,a.extent_count,
           config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
-          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,config->virtual_buckets,uint32_t(bucket_extents),config->owner_peak,
+          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,config->virtual_buckets,uint32_t(bucket_extents),uint32_t(independent_buckets),config->owner_peak,
           args.grouped_origins,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
         const uint64_t before=*a.rank_count;

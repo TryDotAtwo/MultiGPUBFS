@@ -29,7 +29,7 @@ struct HashBatch {
   MgbfsPack4Dictionary dictionary;
   uint64_t* rank_count;
   uint64_t rank_limit;
-  uint32_t shards,bank,state_bytes,packed_states,virtual_buckets,bucket_extents;
+  uint32_t shards,bank,state_bytes,packed_states,virtual_buckets,bucket_extents,independent_buckets;
   uint32_t* owner_stats;
   uint64_t* grouped_origins; // offsets into the still-leased receive buffer
   uint64_t* positions;
@@ -84,6 +84,15 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
     __syncthreads();
     hashes[tid]=keys[0];words[tid]=values[0];
     if(!tid){tile_error=0;span_count=0;tile_total=0;}
+    const uint32_t physical_shard=a.bucket_extents?shard/a.virtual_buckets:shard;
+    if(!tid && a.independent_buckets && a.owner_stats && length) {
+      const uint32_t active=atomicAdd(a.owner_stats+1,1u)+1;
+      atomicMax(a.owner_stats,active);
+      const uint32_t same=atomicAdd(a.owner_stats+6+physical_shard,1u)+1;
+      atomicMax(a.owner_stats+5,same);
+      unsigned sm=0;asm volatile("mov.u32 %0, %%smid;" : "=r"(sm));
+      if(sm<96)atomicOr(a.owner_stats+2+sm/32,1u<<(sm%32));
+    }
     __syncthreads();
     if(!valid_origin)atomicOr(&tile_error,uint32_t(HASH_FATAL));
     __syncthreads();
@@ -137,11 +146,24 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
         for(unsigned pass=0;pass<2 && left && !tile_error;++pass) {
           const uint64_t start=pass?a.free_cursor[shard]:0;
           if(start>=a.extent_count){tile_error|=HASH_FATAL;break;}
+          // In the independent-bucket path this CTA exclusively owns the
+          // group's list. Visit only its extents instead of scanning the
+          // entire rank pool for every 128-record tile.
+          uint64_t next_owned=a.shard_head[shard];
           for(uint64_t step=0;step<a.extent_count && left;++step) {
-            const uint64_t e=pass?(step<a.extent_count-start?start+step:step-(a.extent_count-start)):step;
+            const uint64_t e=pass?(step<a.extent_count-start?start+step:step-(a.extent_count-start)):
+              (a.independent_buckets?next_owned:step);
+            if(!pass && a.independent_buckets) {
+              if(e==UINT64_MAX)break;
+              if(e>=a.extent_count){tile_error|=HASH_FATAL;break;}
+              next_owned=a.extent_next[e];
+            }
             uint32_t owner=cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.owners[e])
                 .load(cuda::memory_order_acquire);
-            if(pass==0 && owner!=shard)continue;
+            if(pass==0 && owner!=shard) {
+              if(a.independent_buckets){tile_error|=HASH_FATAL;break;}
+              continue;
+            }
             if(pass==1) {
               if(owner!=UINT32_MAX)continue;
               uint32_t free=UINT32_MAX;
@@ -239,8 +261,12 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
           cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(x.counts[a.bank])
             .store(span.row+span.count,cuda::memory_order_release);
         }
-        if(a.accepted_shard_mask && shard<64)
-          atomicOr(reinterpret_cast<unsigned long long*>(a.accepted_shard_mask),1ull<<shard);
+        if(a.accepted_shard_mask && physical_shard<64)
+          atomicOr(reinterpret_cast<unsigned long long*>(a.accepted_shard_mask),1ull<<physical_shard);
+      }
+      if(a.independent_buckets && a.owner_stats && length) {
+        atomicSub(a.owner_stats+1,1u);
+        atomicSub(a.owner_stats+6+physical_shard,1u);
       }
     }
     __syncthreads();
@@ -254,7 +280,8 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   if(!tid)*a.error=0;
   grid.sync();
   if(!a.virtual_buckets || (a.virtual_buckets&(a.virtual_buckets-1)) ||
-     a.virtual_buckets>64 || !a.shards || a.shards>UINT32_MAX/a.virtual_buckets) {
+     a.virtual_buckets>64 || !a.shards || a.shards>UINT32_MAX/a.virtual_buckets ||
+     (a.independent_buckets&&(!a.bucket_extents||a.virtual_buckets<=1))) {
     if(!tid)*a.error=HASH_FATAL;
     grid.sync();return;
   }
@@ -322,6 +349,16 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
         if(a.state_bytes==1)hash_accept_shard<uint8_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
         else hash_accept_shard<int64_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
       }
+    }
+  } else if(a.independent_buckets && block_run) {
+    // Every exact key has one immutable virtual bucket and that bucket owns
+    // its extent list. A group is assigned to exactly one CTA until all its
+    // tiles finish; groups can therefore advance independently. Different
+    // CTAs lease free extents through the existing atomic owner field.
+    for(uint32_t group=blockIdx.x;group<groups;group+=gridDim.x) {
+      const uint64_t begin=a.shard_starts[group],end=a.shard_starts[group+1];
+      if(a.state_bytes==1)hash_accept_shard<uint8_t>(input,n,a.grouped_origins+begin,end-begin,group,a);
+      else hash_accept_shard<int64_t>(input,n,a.grouped_origins+begin,end-begin,group,a);
     }
   } else if(block_run) {
     // block_run is uniform: the grid has just synchronized after grouping.
