@@ -11,9 +11,16 @@ Four Tesla V100-SXM2-32GB, same resident multi-CTA segmented24 executable SHA-25
 | S12 adjacent transpositions | 50 | COMPLETE, depth 66 | 19.428 | 5,570 | 3,299,408,384 |
 | S12 adjacent transpositions | 75 | COMPLETE, depth 66 | 21.612 | 4,546 | 2,225,666,560 |
 | S13 adjacent transpositions | 50 | COMPLETE, depth 78 | 349.952 | 28,242 | 27,262,982,240 |
+| S13 adjacent transpositions | 75 | COMPLETE, depth 78 | 567.036 | 19,922 | 18,538,829,920 |
 
-S12 covers 479,001,600 states; S13 covers 6,227,020,800 states. Every recorded layer count matched the Mahonian coefficients and the final reverse permutation was checked. These large runs did not compare the complete intermediate state sets. The 75% S13 run had not produced a verified receipt when the node became temporarily unreachable; no result or speedup for that case is claimed here. The allocation numbers cover segment states, hash index and counters, not all GPU allocations. NVML was sampled at 0.5 s and may miss short peaks.
+S12 covers 479,001,600 states; S13 covers 6,227,020,800 states. Every recorded layer count matched the Mahonian coefficients and the final reverse permutation was checked. These large runs did not compare the complete intermediate state sets. The allocation numbers cover segment states, hash index and counters, not all GPU allocations. NVML was sampled at 0.5 s and may miss short peaks.
+
+## Equal-budget S13 pressure
+
+With an identical segment-storage budget of 9,000,000,000 bytes per GPU/rank, load 50 stopped at depth 28 with 636,298,069 completed states; load 75 stopped at depth 35 with 2,102,968,914 completed states. Both reported `INCOMPLETE / RESIDENT_RESOURCE_CAPACITY`, and the published completed layer counts matched Mahonian values. The rank-0 segment storage receipts were 8,999,995,852 and 8,999,993,936 bytes respectively. This budget excludes transport, queues, CUDA/NCCL and other overhead. These prefixes end at different depths, so their total elapsed times are not a valid speed comparison.
+
+The complete load and pressure archives on the compute host are `multicta-hash-load-retry-evidence.tgz` (SHA-256 `6358483dbe572f927b3126354203d01ef3185d741b76b235cb99c3528d27c17e`) and `multicta-hash-load-pressure-retry-evidence.tgz` (SHA-256 `c0ed7af31c0dca536aeb875ec41a4fe44f28b76c18db2d2a1a28a07763f57c00`).
 
 The small 4-GPU oracle compares exact per-layer state multisets for S4 during 50 → 75 → 50 persistent jobs, including a resource stop followed by a healthy job. S6 with ordinary and deliberately colliding hashes also passed full per-layer checks. These do not replace a full large-state-set, 8-GPU or B200 check.
 
-The compressed machine-readable comparisons are alongside this report. The evidence snapshot containing these completed cases and test logs is `multicta-hash-load-midpoint.tgz`, SHA-256 `c7dd12932c81e29200813d3704f1482ca768204b7c34d9606b0ae9fbc782f39c`. State/index allocation receipts and sampled NVML values are different measurements and must not be combined into a claimed exact peak.
+The compressed machine-readable comparisons of the earlier snapshot are alongside this report. The evidence snapshot containing these completed cases and test logs is `multicta-hash-load-midpoint.tgz`, SHA-256 `c7dd12932c81e29200813d3704f1482ca768204b7c34d9606b0ae9fbc782f39c`. State/index allocation receipts and sampled NVML values are different measurements and must not be combined into a claimed exact peak.
