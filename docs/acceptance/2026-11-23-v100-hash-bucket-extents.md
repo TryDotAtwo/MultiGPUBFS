@@ -26,3 +26,18 @@ S12 requests 262144 rows/segment and a cap of 8,000,000 rows/rank; S13 requests 
 Per-case JSON receipts are compressed beside this report. Full logs and source/driver/topology evidence are archived as `multicta-hash-group-pressure-evidence.tgz`, SHA-256 `47d2807f8fbfdfc842b7f2af96d46567962240886b523b111497190d8a9e05c4`, and `multicta-hash-group-evidence.tgz`, SHA-256 `8e346a2ca68d044432b5958dd5a39fa689ca621617c16816c58068cdeb47845b`.
 
 To reproduce the equal-budget decision, use the published build/test harness `tests/device_resident_multicta_bench_gpu.py`, configure 4 GPUs, `RESIDENT_AB_BACKEND=segmented24`, `RESIDENT_AB_WORLD=4`, `RESIDENT_AB_SHARDS=32`, `MGBFS_SEGMENT_TEST_BATCH=1`, `MGBFS_RESIDENT_HASH_REHASH=1`, `MGBFS_RESIDENT_HASH_VBUCKETS=4`, `MGBFS_SEGMENT_COMPACT_POS=1`, `MGBFS_RESIDENT_HASH_METRICS=1`, and set the budgets/row limits shown above. Run each graph with bucket extents 0 then 1. Keep the allocation receipts and 0.5 s samples separate.
+
+## S13: reducing segment rows at the same storage budget
+
+A follow-up on the same four V100 GPUs and the same executable/CUDA library changed the configured segment rows while keeping the **9,000,000,000 B segment-storage budget per rank**, 32 shards, four virtual buckets, 80M target-layer cap, transport and instrumentation. Each cell is one observation. The budget excludes queues, scratch and CUDA/NCCL reserve.
+
+| Rows per segment | Extent ownership | Outcome | Completed states | BFS s | Worst sampled MiB |
+|---:|---|---|---:|---:|---:|
+| 1,048,576 | shared | INCOMPLETE, depth 28 | 636,298,069 | 26.968 | 10,848 |
+| 1,048,576 | bucket-owned | INCOMPLETE, depth 3 | 441 | 0.010 | 2,254* |
+| 262,144 | shared | COMPLETE, depth 78 | 6,227,020,800 | 550.692 | 11,190 |
+| 262,144 | bucket-owned | INCOMPLETE, depth 35 | 2,102,968,914 | 127.453 | 11,190 |
+
+*The 1,048,576-row bucket case ended between NVML samples. Rank 0 allocated 8,999,983,340 bytes of segment storage in each 262,144-row case. Smaller extents substantially reduce stranded capacity for this workload, but the separately owned buckets still stop earlier than the shared pool. Elapsed times from different completed depths are not comparable as whole-graph speed.
+
+Every completed layer count was checked against Mahonian coefficients, and the complete run's terminal reverse permutation was checked. This is not a full-state-set check for the large intermediate layers. The two 262,144-row machine-readable receipts are `artifacts/2026-11-23-hash-fragmentation-262144-shared.json.gz` and `artifacts/2026-11-23-hash-fragmentation-262144-bucket.json.gz`. The interim archive `multicta-hash-fragmentation-midpoint.tgz` has SHA-256 `f19519521cdbec134b201a55d7924bb647d71b7f0b1c4322792b04d75c28a8ea`. No 8-GPU or B200 inference follows from these cases.
