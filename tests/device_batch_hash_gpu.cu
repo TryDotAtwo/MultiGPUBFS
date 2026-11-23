@@ -16,6 +16,10 @@ template<class T> void check_type(bool tight) {
  constexpr unsigned extents_n=32,shards=2,capacity=512;
  auto* ext=managed<mgbfs_device_hash::Extent>(extents_n);
  auto* owners=managed<uint32_t>(extents_n);
+ auto* heads=managed<uint64_t>(shards);auto* next=managed<uint64_t>(extents_n);
+ auto* cursor=managed<uint64_t>(shards);
+ std::fill(heads,heads+shards,UINT64_MAX);std::fill(next,next+extents_n,UINT64_MAX);
+ std::fill(cursor,cursor+shards,0);
  for(unsigned e=0;e<extents_n;++e) {
   auto* slots=managed<uint64_t>(8);std::fill(slots,slots+8,UINT64_MAX);
   auto* rows=managed<T>(4*3);std::fill(rows,rows+12,T(0));
@@ -30,7 +34,7 @@ template<class T> void check_type(bool tight) {
  auto* positions=managed<uint64_t>(capacity);auto* rank_count=managed<uint64_t>(1);
  auto* error=managed<uint32_t>(1);auto* mask=managed<uint64_t>(1);
  *rank_count=0;*error=0;*mask=0;
- HashBatch batch{ext,owners,extents_n,dictionary,rank_count,tight?2ull:24ull,
+ HashBatch batch{ext,owners,extents_n,heads,next,cursor,dictionary,rank_count,tight?2ull:24ull,
                  shards,1,uint32_t(sizeof(T)),grouped,positions,counts,offsets,mask,error,nullptr,0,nullptr,0};
  std::array<unsigned,4> perm{0,1,2,3};std::vector<Payload> all;
  do {
@@ -61,6 +65,15 @@ template<class T> void check_type(bool tight) {
   }
  }
  CHECK(got.size()==(tight?2:24));for(auto x:got)CHECK(x.second==1);
+ // Every live extent occurs exactly once in its owner's list; no unrelated
+ // extent or cycle may be hidden from the next collision/duplicate lookup.
+ std::vector<unsigned> linked(extents_n,0);
+ for(unsigned shard=0;shard<shards;++shard) {
+  for(uint64_t e=heads[shard];e!=UINT64_MAX;e=next[e]) {
+   CHECK(e<extents_n);CHECK(owners[e]==shard);CHECK(++linked[e]==1);
+  }
+ }
+ for(unsigned e=0;e<extents_n;++e)CHECK(linked[e]==unsigned(owners[e]!=UINT32_MAX));
  launch(first);CHECK(*error==0);CHECK(*rank_count==(tight?2:24));
  if(tight){launch(std::vector<Payload>{all[2]});CHECK(*error==HASH_RESOURCE);CHECK(*rank_count==2);}
  std::printf("PASS %s batch exact collision, two shards, small extents, duplicate%s\n",

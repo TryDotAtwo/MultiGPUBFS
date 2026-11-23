@@ -12,6 +12,7 @@ from multigpubfs import GraphDefinition, run_graph
 from multigpubfs.generic_session import persistent_graph_workers
 
 world=int(os.environ.get("RESIDENT_TEST_WORLD","2"))
+shards=int(os.environ.get("RESIDENT_TEST_SHARDS","2"))
 devices=list(range(world))
 root=Path(tempfile.mkdtemp(prefix=f"resident-hash-layers-{world}-",
                            dir=os.environ.get("MGBFS_TEST_TMP_ROOT")))
@@ -26,7 +27,7 @@ cases=[
 duplicate=("duplicate_at_full",GraphDefinition.permutation([[1,0,2],[1,0,2],[0,1,2]],[0,1,2]))
 
 def execute(g,path,**kw):
- return run_graph(g,path,devices=devices,autotune=False,shards=2,_batch=2,segment_rows=2,
+ return run_graph(g,path,devices=devices,autotune=False,shards=shards,_batch=2,segment_rows=2,
    memory_backend="segmented24",segment_strategy="atomic",execution_engine="device",
    executable=os.environ["MGBFS_EXECUTABLE"],**batch_options,**kw)
 
@@ -58,7 +59,7 @@ def check_receipt(r):
   mode=("batched_parallel_per_shard" if scheduler=="batch" else
         "parallel_per_shard" if os.environ.get("MGBFS_RESIDENT_HASH_SHARD_OWNERS")=="1" else "serialized_per_rank")
   assert m["resident"]["hash_owner_execution"]==mode
-  assert m["resident"]["hash_indexed_extents"]==(os.environ.get("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")=="1")
+  assert m["resident"]["hash_indexed_extents"]==(scheduler=="batch" or os.environ.get("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")=="1")
 
 records=[];workers=None;seen_shards=0;peak_owners=0
 with persistent_graph_workers() as pool:
@@ -104,4 +105,4 @@ with persistent_graph_workers() as pool:
  records.append({"case":name,"duplicates_at_full":full})
 print("PASS exact resident hash layers",world,root,"workers",workers,flush=True)
 (root/"acceptance.json").write_text(json.dumps({"world":world,"forced_collision":collisions,
- "workers":workers,"max_active_shards":seen_shards,"peak_concurrent_owners":peak_owners,"records":records},indent=2))
+ "workers":workers,"shards":shards,"max_active_shards":seen_shards,"peak_concurrent_owners":peak_owners,"records":records},indent=2))

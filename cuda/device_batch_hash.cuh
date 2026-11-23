@@ -22,6 +22,10 @@ struct HashBatch {
   mgbfs_device_hash::Extent* extents;
   uint32_t* owners;
   uint64_t extent_count;
+  // One CTA owns each shard during accept; only that CTA changes its list.
+  uint64_t* shard_head;
+  uint64_t* extent_next;
+  uint64_t* free_cursor;
   MgbfsPack4Dictionary dictionary;
   uint64_t* rank_count;
   uint64_t rank_limit;
@@ -83,10 +87,13 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
         atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;
       } else {
         HashInput word{a.dictionary,words[tid]};
-        for(uint64_t e=0;e<a.extent_count;++e) {
-          const uint32_t owner=cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.owners[e])
-            .load(cuda::memory_order_acquire);
-          if(owner!=shard)continue;
+        uint64_t e=a.shard_head[shard],traversed=0;
+        while(e!=UINT64_MAX) {
+          if(e>=a.extent_count || ++traversed>a.extent_count ||
+             cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.owners[e])
+               .load(cuda::memory_order_acquire)!=shard) {
+            atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;
+          }
           const auto extent=a.extents[e];
           if(!mgbfs_device_hash::valid_extent(extent,a.bank,a.dictionary.elements,sizeof(T))) {
             atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;
@@ -94,6 +101,7 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
           const auto p=mgbfs_device_hash::probe<T>(extent,a.bank,a.dictionary.elements,hashes[tid],word);
           if(!p.valid) {atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;}
           if(p.duplicate){fresh=false;break;}
+          e=a.extent_next[e];
         }
       }
     }
@@ -118,7 +126,10 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
         }
         uint64_t left=total,position=0;
         for(unsigned pass=0;pass<2 && left && !tile_error;++pass) {
-          for(uint64_t e=0;e<a.extent_count && left;++e) {
+          const uint64_t start=pass?a.free_cursor[shard]:0;
+          if(start>=a.extent_count){tile_error|=HASH_FATAL;break;}
+          for(uint64_t step=0;step<a.extent_count && left;++step) {
+            const uint64_t e=pass?(step<a.extent_count-start?start+step:step-(a.extent_count-start)):step;
             uint32_t owner=cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.owners[e])
                 .load(cuda::memory_order_acquire);
             if(pass==0 && owner!=shard)continue;
@@ -135,6 +146,11 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t n,uint32_t shard
             }
             if(pass==1 && (x.counts[0]||x.counts[1]||x.counts[2])) {
               tile_error|=HASH_FATAL;break;
+            }
+            if(pass==1) {
+              a.extent_next[e]=a.shard_head[shard];
+              a.shard_head[shard]=e;
+              a.free_cursor[shard]=(e+1<a.extent_count)?e+1:0;
             }
             const uint64_t row=x.counts[a.bank];
             if(row>x.segment.capacity){tile_error|=HASH_FATAL;break;}
@@ -225,6 +241,7 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   if(blockDim.x!=128 || !a.shards || a.bank>=3 || !a.rank_count || !a.grouped ||
      !a.positions || !a.shard_counts || !a.shard_starts ||
      ((!a.extents||!a.owners)&&a.extent_count) ||
+     !a.extent_count || !a.shard_head || !a.extent_next || !a.free_cursor ||
      !(a.state_bytes==1 || a.state_bytes==8) || !mgbfs_pack4_valid(a.dictionary) ||
      bool(a.capture)!=bool(a.capture_count) || (a.capture && !a.capture_capacity)) {
     if(!tid)atomicOr(a.error,uint32_t(HASH_FATAL));

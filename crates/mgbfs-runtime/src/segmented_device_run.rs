@@ -87,7 +87,7 @@ impl SegmentedDistributedBfs {
                    else {self.bitmap.as_ref().ok_or("RESIDENT_BITMAP_MISSING")?.domain.total};
   let hash_parallel=self.resident_hash.map_or(false,|v|v.2);
   let hash_instrumented=self.resident_hash.map_or(false,|v|v.3);
-  let hash_indexed=self.resident_hash.map_or(false,|v|v.4);
+  let hash_index_requested=self.resident_hash.map_or(false,|v|v.4);
   let geometry:Result<_>=(||{
    let requested=match std::env::var("MGBFS_RESIDENT_MAILBOX_SLOTS"){
     Ok(v)=>v.parse::<u32>().map_err(|_|"RESIDENT_MAILBOX_SLOTS_INVALID".to_owned())?,
@@ -139,6 +139,9 @@ impl SegmentedDistributedBfs {
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
   let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
+  // Multi-CTA hash uses a job-private shard-to-extent index. Admission below
+  // includes its buffers; no state ownership changes during the job.
+  let hash_indexed=hash&&(hash_index_requested||batch_selection.is_some());
   let mut error=[0i8;512];
   let preparation=code("RESIDENT_WINDOW_PREPARE",unsafe{(f.prepare)(self.comm.ptr,window_bytes,error.as_mut_ptr(),error.len())})
    .map_err(|e|format!("{e} {}",unsafe{std::ffi::CStr::from_ptr(error.as_ptr())}.to_string_lossy()));

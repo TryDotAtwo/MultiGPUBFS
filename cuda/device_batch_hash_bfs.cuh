@@ -43,6 +43,10 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   if(!pointers_ok)return;
   Window* local=peers[a.rank];
   Window* coordinator=peers[0];
+  if(!config->shard_head||!config->extent_next||!config->free_cursor) {
+    if(!tid)fail(local,WINDOW_PROTOCOL);
+    grid.sync();return;
+  }
   uint64_t depth=0,sequence=1;
   unsigned choice=mgbfs_device_epoch::ERROR;
   if(!tid) {
@@ -110,6 +114,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       local->rounds=edges?1+(edges-1)/args.send_capacity:0;
       local->shard_mask=0;*a.rank_count=0;
       uint64_t prefix=0;args.parent_prefix[0]=0;
+      // Rebuild after bank retirement, before any shard CTA can probe. The
+      // index contains exactly the extents with live rows for each owner.
+      for(uint32_t shard=0;shard<a.shards;++shard) {
+        config->shard_head[shard]=UINT64_MAX;
+        config->free_cursor[shard]=0;
+      }
       for(uint64_t e=0;e<a.extent_count;++e) {
         auto x=extents[e];
         if(!mgbfs_device_hash::valid_extent(x,read_bank,a.dictionary.elements,config->state_bytes)||
@@ -117,7 +127,15 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
           fail(local,WINDOW_PROTOCOL);break;
         }
         x.counts[write_bank]=0;
-        if(!x.counts[0]&&!x.counts[1]&&!x.counts[2])a.extent_owner[e]=UINT32_MAX;
+        if(!x.counts[0]&&!x.counts[1]&&!x.counts[2]) {
+          a.extent_owner[e]=UINT32_MAX;
+          config->extent_next[e]=UINT64_MAX;
+        } else {
+          const uint32_t owner=a.extent_owner[e];
+          if(owner>=a.shards){fail(local,WINDOW_PROTOCOL);break;}
+          config->extent_next[e]=config->shard_head[owner];
+          config->shard_head[owner]=e;
+        }
         prefix+=x.counts[read_bank];args.parent_prefix[e+1]=prefix;
       }
       if(prefix!=local->current)fail(local,WINDOW_PROTOCOL);
@@ -218,7 +236,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         if(!tid)propagate_failure(local,peers,a.world,a.terminal);
         grid.sync();
         if(acquire(local->status.failure))break;
-        HashBatch batch{extents,a.extent_owner,a.extent_count,a.dictionary,
+        HashBatch batch{extents,a.extent_owner,a.extent_count,
+          config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
           a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,
           args.grouped,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
