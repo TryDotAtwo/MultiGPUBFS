@@ -54,6 +54,11 @@ def verify(path, result, depth):
     assert all(count == 1 for count in observed.values())
     for memory in result["segment_memory_by_rank"]:
         resident = memory["resident"]
+        load = int(os.environ.get("MGBFS_RESIDENT_HASH_LOAD_PERCENT", "50"))
+        assert memory["resident_hash_load_percent"] == load
+        logical_rows = memory["rows_per_bank"] * memory["banks"]
+        needed = (logical_rows * 100 + load - 1) // load
+        assert memory["slots_per_segment"] == 1 << (needed - 1).bit_length()
         assert resident["hash_rehash_enabled"] is True
         assert resident["hash_rehash_count"] is not None
         peak_rebuilds = max(peak_rebuilds, resident["hash_rehash_count"])
