@@ -291,7 +291,8 @@ impl SegmentedDistributedBfs {
       parallel_owners:u32::from(hash_parallel),owner_peak:hash_stats.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast()),
       shard_head:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast()),
       extent_next:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(next_offset)),
-      free_cursor:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(cursor_offset))};
+      free_cursor:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(cursor_offset)),
+      packed_states:u32::from(self.resident_hash_pack4),reserved:0};
     b.upload(&[config])?;Some(b)
    }else{None};
    let mut host_terminal=ptr::null_mut();let mut device_terminal=ptr::null_mut();
@@ -341,7 +342,9 @@ impl SegmentedDistributedBfs {
     let (dictionary,_,_,_,_)=self.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?;
     let domain=BitmapDeviceDomain{symbols:ptr::null(),counts:ptr::null(),
       distinct:dictionary.distinct,elements:dictionary.elements,total:domain_total};
-    let width=u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?;
+    let width=if self.resident_hash_pack4{8}else{
+     u64::from(self.plan.elements).checked_mul(u64::from(self.plan.state_bytes)).ok_or("RESIDENT_ROW_WIDTH")?
+    };
     validate_extent_allocations_with_width(&allocations,&others,width).map_err(str::to_owned)?;
     (rank,0,hash_parent_index.as_ref().map_or(0,|b|b.ptr as usize as u64),domain,dictionary,config.ptr.cast())
    }else{
@@ -500,6 +503,7 @@ impl SegmentedDistributedBfs {
     "storage":if hash{"segmented_hash"}else{"packed_bitmap"},
     "hash_owner_execution":if hash{Some(if batch_selection.is_some(){"batched_parallel_per_shard"}else if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
     "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
+    "hash_packed_states":if hash{Some(self.resident_hash_pack4)}else{None},
     "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
     "hash_parent_index_enabled":hash_parent_index_enabled,
     "hash_parent_index_bytes":res.hash_parent_index.as_ref().map_or(0,|b|b.bytes),

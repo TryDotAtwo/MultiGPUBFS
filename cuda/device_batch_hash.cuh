@@ -29,7 +29,7 @@ struct HashBatch {
   MgbfsPack4Dictionary dictionary;
   uint64_t* rank_count;
   uint64_t rank_limit;
-  uint32_t shards,bank,state_bytes;
+  uint32_t shards,bank,state_bytes,packed_states;
   uint64_t* grouped_origins; // offsets into the still-leased receive buffer
   uint64_t* positions;
   uint64_t* shard_counts;
@@ -100,10 +100,13 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
             atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;
           }
           const auto extent=a.extents[e];
-          if(!mgbfs_device_hash::valid_extent(extent,a.bank,a.dictionary.elements,sizeof(T))) {
+          if(!mgbfs_device_hash::valid_extent(extent,a.bank,
+              a.packed_states?1:a.dictionary.elements,a.packed_states?8:sizeof(T))) {
             atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;
           }
-          const auto p=mgbfs_device_hash::probe<T>(extent,a.bank,a.dictionary.elements,hashes[tid],word);
+          const auto p=a.packed_states?
+            mgbfs_device_hash::probe<T,HashInput,true>(extent,a.bank,a.dictionary.elements,hashes[tid],word):
+            mgbfs_device_hash::probe<T>(extent,a.bank,a.dictionary.elements,hashes[tid],word);
           if(!p.valid) {atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;}
           if(p.duplicate){fresh=false;break;}
           e=a.extent_next[e];
@@ -146,7 +149,8 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
                                             cuda::memory_order_acquire))continue;
             }
             const auto x=a.extents[e];
-            if(!mgbfs_device_hash::valid_extent(x,a.bank,a.dictionary.elements,sizeof(T))) {
+            if(!mgbfs_device_hash::valid_extent(x,a.bank,
+                a.packed_states?1:a.dictionary.elements,a.packed_states?8:sizeof(T))) {
               tile_error|=HASH_FATAL;break;
             }
             if(pass==1 && (x.counts[0]||x.counts[1]||x.counts[2])) {
@@ -195,12 +199,16 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
         else if(claimed==s.slots_count)atomicOr(&tile_error,uint32_t(HASH_RESOURCE));
         else {
           const uint64_t local=uint64_t(a.bank)*s.capacity+row,stride=s.capacity*s.banks;
-          auto* states=static_cast<T*>(s.states);
-          const HashInput word{a.dictionary,words[tid]};
-          for(uint32_t e=0;e<a.dictionary.elements;++e) {
-            const int64_t value=word.value(e);
-            if(int64_t(static_cast<T>(value))!=value)atomicOr(&tile_error,uint32_t(HASH_FATAL));
-            states[uint64_t(e)*stride+local]=static_cast<T>(value);
+          if(a.packed_states) {
+            static_cast<uint64_t*>(s.states)[local]=words[tid];
+          } else {
+            auto* states=static_cast<T*>(s.states);
+            const HashInput word{a.dictionary,words[tid]};
+            for(uint32_t e=0;e<a.dictionary.elements;++e) {
+              const int64_t value=word.value(e);
+              if(int64_t(static_cast<T>(value))!=value)atomicOr(&tile_error,uint32_t(HASH_FATAL));
+              states[uint64_t(e)*stride+local]=static_cast<T>(value);
+            }
           }
           if(s.positions) {
             if(s.position_item_bytes==4)reinterpret_cast<uint32_t*>(s.positions)[local]=uint32_t(claimed);
@@ -247,7 +255,8 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
      !a.positions || !a.shard_counts || !a.shard_starts ||
      ((!a.extents||!a.owners)&&a.extent_count) ||
      !a.extent_count || !a.shard_head || !a.extent_next || !a.free_cursor ||
-     !(a.state_bytes==1 || a.state_bytes==8) || !mgbfs_pack4_valid(a.dictionary) ||
+     !(a.state_bytes==1 || a.state_bytes==8) || a.packed_states>1 ||
+     !mgbfs_pack4_valid(a.dictionary) ||
      bool(a.capture)!=bool(a.capture_count) || (a.capture && !a.capture_capacity)) {
     if(!tid)atomicOr(a.error,uint32_t(HASH_FATAL));
     grid.sync();return;

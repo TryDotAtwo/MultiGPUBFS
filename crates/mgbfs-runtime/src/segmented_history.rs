@@ -141,6 +141,19 @@ impl SegmentLayout {
         }
         Ok(layout)
     }
+    /// Resident permutation hash: one exact dictionary-coded u64 per row,
+    /// with the ordinary hash table and rolling-bank position metadata.
+    pub fn hash_banks_pack4(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32,compact:bool)->Result<Self,&'static str>{
+        if elements==0||elements>16{return Err("HASH_PACK4_LAYOUT_RANGE")}
+        let mut layout=if compact{Self::new_compact(elements,state_bytes,rows_per_bank,banks)?}
+                       else{Self::new(elements,state_bytes,rows_per_bank,banks)?};
+        let states=rows_per_bank.checked_mul(u64::from(banks))
+            .and_then(|v|v.checked_mul(8)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        layout.device_bytes=layout.device_bytes.checked_sub(layout.state_bytes)
+            .and_then(|v|v.checked_add(states)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        layout.state_bytes=states;
+        Ok(layout)
+    }
     /// One full state plus flat u64 key and u32 local row indexes per live
     /// row. Runs describe disjoint extents; states are never duplicated.
     pub fn sorted(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
@@ -229,6 +242,19 @@ pub fn fit_packed_bitmap_segment_layout(elements:u32,banks:u32,max_rows:u64,budg
     if lo==0{Ok(None)}else{Ok(Some(make(lo)?))}
 }
 
+/// Checked admission for packed resident hash segments.
+pub fn fit_packed_hash_segment_layout(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64,compact:bool)->Result<Option<SegmentLayout>,&'static str>{
+    if max_rows==0||max_rows>LOCAL_ROWS{return Err("HASH_PACK4_LAYOUT_RANGE")}
+    let make=|rows|SegmentLayout::hash_banks_pack4(elements,state_bytes,rows,banks,compact);
+    make(1)?;
+    let(mut lo,mut hi)=(0u64,max_rows);
+    while lo<hi{
+        let mid=lo+(hi-lo+1)/2;
+        if make(mid).map_or(false,|v|v.device_bytes<=budget){lo=mid}else{hi=mid-1}
+    }
+    if lo==0{Ok(None)}else{Ok(Some(make(lo)?))}
+}
+
 /// Largest sorted-index segment that fits a checked byte budget.
 pub fn fit_sorted_segment_layout(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64)->Result<Option<SegmentLayout>,&'static str>{
     if max_rows==0||max_rows>LOCAL_ROWS{return Err("SEGMENTED_SORTED_LAYOUT_RANGE")}
@@ -307,6 +333,26 @@ mod packed_bitmap_contract_tests {
         let full=BitmapPack4Dictionary::from_root(&sixteen).unwrap();
         assert_eq!(full.elements,16);assert_eq!(full.distinct,16);
         assert_eq!(full.symbols[15],7);
+    }
+
+    #[test]
+    fn packed_hash_layout_uses_exact_rows_and_checked_per_segment_capacity() {
+        let ordinary=SegmentLayout::new_compact(14,1,100,3).unwrap();
+        let packed=SegmentLayout::hash_banks_pack4(14,1,100,3,true).unwrap();
+        assert_eq!(packed.state_bytes,100*3*8);
+        assert_eq!(packed.slots,ordinary.slots);
+        assert_eq!(packed.position_bytes,ordinary.position_bytes);
+        assert_eq!(packed.device_bytes,ordinary.device_bytes-100*3*14+100*3*8);
+        assert_eq!(fit_packed_hash_segment_layout(14,1,3,100,packed.device_bytes,true).unwrap().unwrap().rows_per_bank,100);
+        assert_eq!(fit_packed_hash_segment_layout(14,1,3,100,packed.device_bytes-1,true).unwrap().unwrap().rows_per_bank,99);
+        assert_eq!(fit_packed_hash_segment_layout(14,1,3,100,0,true).unwrap(),None);
+        let boundary=SegmentLayout::hash_banks_pack4(16,8,LOCAL_ROWS,3,false).unwrap();
+        assert_eq!(boundary.rows_per_bank,1u64<<32);
+        assert_eq!(boundary.state_bytes,3*(1u64<<32)*8);
+        assert_eq!(StateAddress::new(1,2,LOCAL_ROWS-1).unwrap().row(),u32::MAX);
+        assert!(StateAddress::new(1,2,LOCAL_ROWS).is_err());
+        assert!(SegmentLayout::hash_banks_pack4(16,8,LOCAL_ROWS+1,3,false).is_err());
+        assert!(SegmentLayout::hash_banks_pack4(17,8,100,3,false).is_err());
     }
 
     #[test]

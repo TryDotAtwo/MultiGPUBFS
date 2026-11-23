@@ -9,8 +9,34 @@ extern "C" uint32_t mgbfs_device_batch_hash_query_v1(uint32_t item) {
     case 2:return sizeof(mgbfs_device_batch::Window);
     case 3:return sizeof(mgbfs_device_batch::Input);
     case 4:return sizeof(mgbfs_device_batch::HashSpan);
+    case 5:return 1; // pack4 hash segment and seed support
     default:return 0;
   }
+}
+namespace {
+__global__ void seed_hash_pack4(MgbfsSegment segment,uint64_t* counts,uint64_t hash,
+                                uint64_t word,uint32_t* error) {
+  if(blockIdx.x||threadIdx.x)return;
+  const mgbfs_device_hash::Extent extent{segment,counts};
+  if(!error||!mgbfs_device_hash::valid_extent(extent,0,1,8)||counts[0]||counts[1]||counts[2]) {
+    if(error)*error=1;return;
+  }
+  const uint64_t slot=mgbfs_shared_table_bucket(hash,segment.slots_count);
+  if(segment.slots[slot]!=mgbfs_segmented_exact::empty){*error=1;return;}
+  static_cast<uint64_t*>(segment.states)[0]=word;
+  if(segment.position_item_bytes==4)
+    reinterpret_cast<uint32_t*>(segment.positions)[0]=uint32_t(slot);
+  else segment.positions[0]=slot;
+  segment.slots[slot]=hash&mgbfs_segmented_exact::prefix;
+  counts[0]=1;*error=0;
+}
+}
+extern "C" int mgbfs_device_batch_hash_seed_pack4_v1(
+    MgbfsSegment segment,uint64_t* counts,uint64_t hash,uint64_t word,uint32_t* error,void* stream) {
+  if(!counts||!error)return 1;
+  seed_hash_pack4<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(segment,counts,hash,word,error);
+  const auto status=cudaGetLastError();
+  return status==cudaSuccess?0:1000+int(status);
 }
 extern "C" int mgbfs_device_batch_hash_geometry_v1(uint32_t* blocks,uint32_t* threads) {
   if(!blocks||!threads)return 1;

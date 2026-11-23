@@ -12,7 +12,7 @@
 using namespace mgbfs_device_batch;
 template<class T>T* managed(size_t n){T* p=nullptr;C(cudaMallocManaged(&p,n*sizeof(T)));return p;}
 __global__ void run_hash(const Payload* input,uint64_t n,HashBatch a){hash_accept(input,n,a);}
-template<class T> void check_type(bool tight) {
+template<class T> void check_type(bool tight,bool packed) {
  constexpr unsigned extents_n=32,shards=2,capacity=512;
  auto* ext=managed<mgbfs_device_hash::Extent>(extents_n);
  auto* owners=managed<uint32_t>(extents_n);
@@ -22,7 +22,9 @@ template<class T> void check_type(bool tight) {
  std::fill(cursor,cursor+shards,0);
  for(unsigned e=0;e<extents_n;++e) {
   auto* slots=managed<uint64_t>(8);std::fill(slots,slots+8,UINT64_MAX);
-  auto* rows=managed<T>(4*3);std::fill(rows,rows+12,T(0));
+  void* rows=nullptr;
+  if(packed){auto* p=managed<uint64_t>(3);std::fill(p,p+3,0);rows=p;}
+  else{auto* p=managed<T>(4*3);std::fill(p,p+12,T(0));rows=p;}
   auto* pos=managed<uint64_t>(3);std::fill(pos,pos+3,0);
   auto* counts=managed<uint64_t>(3);std::fill(counts,counts+3,0);
   ext[e]={MgbfsSegment{slots,rows,pos,8,1,3,8},counts};owners[e]=UINT32_MAX;
@@ -35,7 +37,7 @@ template<class T> void check_type(bool tight) {
  auto* error=managed<uint32_t>(1);auto* mask=managed<uint64_t>(1);
  *rank_count=0;*error=0;*mask=0;
  HashBatch batch{ext,owners,extents_n,heads,next,cursor,dictionary,rank_count,tight?2ull:24ull,
-                 shards,1,uint32_t(sizeof(T)),grouped,positions,counts,offsets,mask,error,nullptr,0,nullptr,0};
+                 shards,1,uint32_t(sizeof(T)),uint32_t(packed),grouped,positions,counts,offsets,mask,error,nullptr,0,nullptr,0};
  std::array<unsigned,4> perm{0,1,2,3};std::vector<Payload> all;
  do {
   uint64_t word=0;for(unsigned k=0;k<4;++k)word|=uint64_t(perm[k])<<(4*k);
@@ -55,11 +57,15 @@ template<class T> void check_type(bool tight) {
  for(unsigned e=0;e<extents_n;++e)if(owners[e]!=UINT32_MAX){
   CHECK(owners[e]<2);CHECK(ext[e].counts[1]<=1);
   if(ext[e].counts[1]){
-   uint64_t word=0;auto* values=static_cast<T*>(ext[e].segment.states);
-   for(unsigned k=0;k<4;++k){
-    const auto value=int64_t(values[k*3+1]);unsigned ord=0;
-    while(ord<4&&dictionary.symbols[ord]!=value)++ord;
-    CHECK(ord<4);word|=uint64_t(ord)<<(4*k);
+   uint64_t word=0;
+   if(packed)word=static_cast<uint64_t*>(ext[e].segment.states)[1];
+   else{
+    auto* values=static_cast<T*>(ext[e].segment.states);
+    for(unsigned k=0;k<4;++k){
+     const auto value=int64_t(values[k*3+1]);unsigned ord=0;
+     while(ord<4&&dictionary.symbols[ord]!=value)++ord;
+     CHECK(ord<4);word|=uint64_t(ord)<<(4*k);
+    }
    }
    ++got[word];
   }
@@ -76,13 +82,15 @@ template<class T> void check_type(bool tight) {
  for(unsigned e=0;e<extents_n;++e)CHECK(linked[e]==unsigned(owners[e]!=UINT32_MAX));
  launch(first);CHECK(*error==0);CHECK(*rank_count==(tight?2:24));
  if(tight){launch(std::vector<Payload>{all[2]});CHECK(*error==HASH_RESOURCE);CHECK(*rank_count==2);}
- std::printf("PASS %s batch exact collision, two shards, small extents, duplicate%s\n",
-  sizeof(T)==1?"u8":"wide",tight?" at cap + resource":" repeated across tiles");
+ std::printf("PASS %s %s batch exact collision, two shards, small extents, duplicate%s\n",
+  sizeof(T)==1?"u8":"wide",packed?"packed":"unpacked",tight?" at cap + resource":" repeated across tiles");
 }
 int main(){
  int n=0;C(cudaGetDeviceCount(&n));if(!n)return 77;
  C(cudaSetDevice(0));C(cudaFree(nullptr));
- check_type<uint8_t>(false);check_type<int64_t>(false);
- check_type<uint8_t>(true);check_type<int64_t>(true);
+ for(bool packed:{false,true}){
+  check_type<uint8_t>(false,packed);check_type<int64_t>(false,packed);
+  check_type<uint8_t>(true,packed);check_type<int64_t>(true,packed);
+ }
  std::puts("PASS batched resident hash owner primitive; no distributed BFS claim");
 }

@@ -7,7 +7,7 @@ use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{segmented_strategy::{SegmentStrategy,OwnerDecision,owner_decision,RawTileCursor},generic_distributed_memory::GenericDistributedMemoryPlan as Plan,
  generic_distributed_native::DistributedAdvance,generic_memory::GenericMemoryPlan,
- generic_native::{Buffer,GenericNativeBfs,Stream},segmented_history::{fit_segment_layout_compact,fit_packed_bitmap_segment_layout,fit_sorted_segment_layout,BitmapPack4Dictionary,SegmentLayout,LOCAL_ROWS}};
+ generic_native::{Buffer,GenericNativeBfs,Stream},segmented_history::{fit_segment_layout_compact,fit_packed_bitmap_segment_layout,fit_packed_hash_segment_layout,fit_sorted_segment_layout,BitmapPack4Dictionary,SegmentLayout,LOCAL_ROWS}};
 
 #[repr(C)] #[derive(Clone,Copy)]
 struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32,position_item_bytes:u32}
@@ -164,6 +164,26 @@ impl Pack4Fns{
 }
 #[derive(Clone,Copy)]
 struct Pack4State{dictionary:BitmapPack4Dictionary,fns:Pack4Fns}
+type ResidentHashPack4Seed=unsafe extern "C" fn(SegmentDescriptor,*mut u64,u64,u64,*mut u32,*mut c_void)->i32;
+unsafe fn resident_hash_pack4_seed()->Option<ResidentHashPack4Seed>{
+ let query=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_device_batch_hash_query_v1\0".as_ptr().cast());
+ let seed=libc::dlsym(libc::RTLD_DEFAULT,b"mgbfs_device_batch_hash_seed_pack4_v1\0".as_ptr().cast());
+ if query.is_null()||seed.is_null(){return None}
+ let query:unsafe extern "C" fn(u32)->u32=std::mem::transmute(query);
+ if query(5)!=1{return None}
+ Some(std::mem::transmute(seed))
+}
+fn encode_pack4(d:BitmapPack4Dictionary,values:&[i64])->Result<u64>{
+ if values.len()!=d.elements as usize||d.elements==0||d.elements>16||d.distinct==0||d.distinct>d.elements{
+  return Err("HASH_PACK4_DICTIONARY".into())
+ }
+ let mut word=0u64;
+ for (i,value) in values.iter().enumerate(){
+  let ordinal=d.symbols[..d.distinct as usize].iter().position(|x|x==value).ok_or("HASH_PACK4_SYMBOL")?;
+  word|=(ordinal as u64)<<(4*i);
+ }
+ Ok(word)
+}
 pub(crate) fn pack4_capability()->bool{unsafe{Pack4Fns::load().is_some()}}
 fn decode_pack4(d:BitmapPack4Dictionary,word:u64)->Result<Vec<i64>>{
  if d.elements==0||d.elements>16||d.distinct==0||d.distinct>d.elements{return Err("BITMAP_PACK4_DICTIONARY".into())}
@@ -257,7 +277,7 @@ pub(crate) fn resident_preflight(devices:&[u32],rank:u32)->Result<()>{
 }
 
 pub struct SegmentedDistributedBfs{
- strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool,bool)>,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
+ strategy:SegmentStrategy,compact_positions:bool,pack4:Option<Pack4State>,resident_hash:Option<(BitmapPack4Dictionary,u64,bool,bool,bool)>,resident_hash_pack4:bool,previous_snapshot:Option<Buffer>,previous_snapshot_rows:usize,previous_snapshot_valid:bool,previous_global:u64,base:GenericNativeBfs,plan:Plan,rank:u32,seed:u64,bits:u32,layout:SegmentLayout,bitmap:Option<BitmapState>,
  segments:Vec<Vec<Segment>>,descriptor_cache:Vec<Option<DescriptorCache>>,hash_shards:Vec<Option<BatchHashShard>>,remaining_bytes:u64,storage_budget:u64,storage_peak_requested:u64,reserve_bytes:u64,configured_rows:u64,bank_totals:[u64;3],peak_live_rows:u64,last_resource:Option<serde_json::Value>,capacity_limit:Option<u64>,current:Vec<Range>,previous:Vec<Range>,
  counts:Vec<u64>,depth:u64,source_retries:u64,active_batch:u32,queue_batch_ceiling:u32,admitted_batch:u32,batch_recovery:bool,batch_recovery_policy:crate::segmented_strategy::QueueBatchRecovery,batch_recoveries:u64,layer_stats:bool,layer_stats_low:u64,layer_stats_high:u64,profile_spill:u64,profile_owner_passes:u64,peak_owner_lanes:u32,prefetched_chunks:u64,overlap_samples:u32,
  send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_timed_tiles:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,test_count_payload:bool,
@@ -308,6 +328,10 @@ impl SegmentedDistributedBfs{
    }};
    Some((dictionary,bound,flag("MGBFS_RESIDENT_HASH_SHARD_OWNERS")?,flag("MGBFS_RESIDENT_HASH_OWNER_STATS")?,flag("MGBFS_RESIDENT_HASH_INDEXED_EXTENTS")?))
   }else{None};
+  let resident_hash_pack4=resident_hash.is_some()&&std::env::var("MGBFS_RESIDENT_MULTICTA").as_deref()==Ok("1");
+  if resident_hash_pack4&&unsafe{resident_hash_pack4_seed()}.is_none(){
+   return Err("RESIDENT_HASH_PACK4_ABI_MISSING".into())
+  }
   let page_code=if !bitmap_mode{0}else{match std::env::var("MGBFS_SEGMENT_BITMAP_OWNER_PAGE"){
    Err(std::env::VarError::NotPresent)=>0u64,Ok(v) if v=="0"=>0,
    Ok(v)=>match v.parse::<u32>(){Ok(page) if page.is_power_of_two()&&page<=(1<<20)=>u64::from(page.trailing_zeros()+1),_=>63},
@@ -336,12 +360,13 @@ impl SegmentedDistributedBfs{
   if !bitmap_mode&&p.history_layers==3&&!g.inverse_closed()?{return Err("SEGMENTED_ROLLING_REQUIRES_INVERSE_CLOSED".into())}
   if let Some(c)=cuts{if c.len()!=p.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|x|x[0]>=x[1]){return Err("SEGMENTED_OWNER_CUTS".into())}}
   let tiny=GenericMemoryPlan::with_storage(p.elements,1,p.state_bytes)?;
-  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3),"resident_hash_indexed_extents":resident_hash.map(|v|v.4)});
+  let descriptor=serde_json::json!({"world":p.world,"shards":p.shards,"elements":p.elements,"state_bytes":p.state_bytes,"batch":p.batch,"queue_capacity":p.queue_capacity,"bitmap":bitmap_mode,"bitmap_banks":bitmap_banks,"bitmap_pack4_symbols":pack4.map(|v|v.dictionary.symbols[..v.dictionary.distinct as usize].to_vec()),"strategy":strategy_advertisement,"compact_positions":compact_positions,"hash_bits":bits,"owner_cuts":cuts,"resident_hash_symbols":resident_hash.map(|v|v.0.symbols[..v.0.distinct as usize].to_vec()),"resident_hash_bound":resident_hash.map(|v|v.1),"resident_hash_shard_owners":resident_hash.map(|v|v.2),"resident_hash_owner_stats":resident_hash.map(|v|v.3),"resident_hash_indexed_extents":resident_hash.map(|v|v.4),"resident_hash_pack4":resident_hash_pack4});
   Ok((p,strategy_advertisement,bitmap_mode,page_code,page_setter,bitmap_orbit_abi,compact_positions,bitmap_banks,tiny,immutable_routes,pack4,descriptor,resident_hash))
   })();
   let descriptor=config.as_ref().ok().map(|x|&x.11);
   ready.agree("configuration",&config,descriptor)?;
   let(p,strategy_advertisement,bitmap_mode,page_code,page_setter,bitmap_orbit_abi,compact_positions,bitmap_banks,tiny,immutable_routes,pack4,_,resident_hash)=config?;
+  let resident_hash_pack4=resident_hash.is_some()&&std::env::var("MGBFS_RESIDENT_MULTICTA").as_deref()==Ok("1");
   let prepared:Result<_>=(||{crate::segmented_host_ready::injected("base")?;GenericNativeBfs::new_unseeded(g,device,tiny,seed,bits)})();
   ready.agree("base",&prepared,None)?;
   let base=prepared?;let d=base.device;let stream=base.stream.ptr;
@@ -432,7 +457,7 @@ impl SegmentedDistributedBfs{
   let prepared:Result<_>=(||{
   let reserve=crate::generic_memory::admission_reserve_bytes()?;
   let storage_banks=if bitmap_mode{bitmap_banks}else{p.history_layers};
-  let fit_layout=|rows,budget|if sorted_hash{fit_sorted_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget)}else if pack4.is_some(){fit_packed_bitmap_segment_layout(p.elements,storage_banks,rows,budget)}else{fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)};
+  let fit_layout=|rows,budget|if sorted_hash{fit_sorted_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget)}else if resident_hash_pack4{fit_packed_hash_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)}else if pack4.is_some(){fit_packed_bitmap_segment_layout(p.elements,storage_banks,rows,budget)}else{fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)};
   let min_layout=fit_layout(1,u64::MAX).map_err(str::to_owned)?.ok_or("SEGMENTED_NO_CAPACITY")?;
   let mut min_owner_scratch=0usize;
   if strategy==SegmentStrategy::Batch{
@@ -547,7 +572,7 @@ impl SegmentedDistributedBfs{
   })();
   ready.agree("memory",&prepared,None)?;
   let(reserve,storage_banks,bitmap,previous_snapshot,mut admitted_batch,route_scratch,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,input_stats_bounds,overlap_bounds,lanes)=prepared?;
-  let fit_layout=|rows,budget|if sorted_hash{fit_sorted_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget)}else if pack4.is_some(){fit_packed_bitmap_segment_layout(p.elements,storage_banks,rows,budget)}else{fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)};
+  let fit_layout=|rows,budget|if sorted_hash{fit_sorted_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget)}else if resident_hash_pack4{fit_packed_hash_segment_layout(p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)}else if pack4.is_some(){fit_packed_bitmap_segment_layout(p.elements,storage_banks,rows,budget)}else{fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)};
   if strategy==SegmentStrategy::Batch{
    // Different available VRAM may yield different local route ceilings. All
    // ranks use their minimum before source rounds, keeping exchange in lockstep.
@@ -566,7 +591,7 @@ impl SegmentedDistributedBfs{
   let prepared:Result<_>=(||{
   let(free,_)=segment_sizing_memory_info()?;
   let mut remaining_bytes=(free as u64).saturating_sub(reserve);
-  let make_layout=|rows|if sorted_hash{SegmentLayout::sorted(p.elements,p.state_bytes,rows,storage_banks)}else if pack4.is_some(){SegmentLayout::bitmap_banks_pack4(p.elements,rows,storage_banks)}else if bitmap_mode{SegmentLayout::bitmap_banks(p.elements,p.state_bytes,rows,storage_banks)}else if compact_positions{SegmentLayout::new_compact(p.elements,p.state_bytes,rows,p.history_layers)}else{SegmentLayout::new(p.elements,p.state_bytes,rows,p.history_layers)};
+  let make_layout=|rows|if sorted_hash{SegmentLayout::sorted(p.elements,p.state_bytes,rows,storage_banks)}else if resident_hash_pack4{SegmentLayout::hash_banks_pack4(p.elements,p.state_bytes,rows,storage_banks,compact_positions)}else if pack4.is_some(){SegmentLayout::bitmap_banks_pack4(p.elements,rows,storage_banks)}else if bitmap_mode{SegmentLayout::bitmap_banks(p.elements,p.state_bytes,rows,storage_banks)}else if compact_positions{SegmentLayout::new_compact(p.elements,p.state_bytes,rows,p.history_layers)}else{SegmentLayout::new(p.elements,p.state_bytes,rows,p.history_layers)};
   let layout=if let Some(exact)=explicit_rows{make_layout(exact).map_err(str::to_owned)?}else{
    let upper=configured_rows.min(estimated);
    let per_shard=remaining_bytes/u64::from(p.shards);
@@ -586,7 +611,7 @@ impl SegmentedDistributedBfs{
   })();
   ready.agree("layout",&prepared,None)?;
   let(remaining_bytes,layout,capacity_limit,layer_stats,layer_stats_low,layer_stats_high)=prepared?;
-  let mut result=Self{strategy,compact_positions,pack4,resident_hash,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),hash_shards:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,storage_peak_requested:0,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:admitted_batch,queue_batch_ceiling:admitted_batch,admitted_batch,batch_recovery,batch_recovery_policy:Default::default(),batch_recoveries:0,layer_stats,layer_stats_low,layer_stats_high,profile_spill:0,profile_owner_passes:0,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_scratch,batch_offsets,batch_offsets_host,batch_dense_origins,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,hash_owner_ms:0.,hash_lookup_ms:0.,hash_merge_ms:0.,hash_timed_tiles:0,input_stats_bounds,input_valid:0,input_raw_elements:0,input_raw_tiles:0,input_spill_elements:0,input_spill_tiles:0,input_empty_self:0,input_empty_peer:0,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_bounds,exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0,test_count_payload:std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1") && std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref()==Ok("count-payload")};
+  let mut result=Self{strategy,compact_positions,pack4,resident_hash,resident_hash_pack4,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),descriptor_cache:(0..p.shards).map(|_|None).collect(),hash_shards:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,storage_peak_requested:0,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:admitted_batch,queue_batch_ceiling:admitted_batch,admitted_batch,batch_recovery,batch_recovery_policy:Default::default(),batch_recoveries:0,layer_stats,layer_stats_low,layer_stats_high,profile_spill:0,profile_owner_passes:0,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_scratch,batch_offsets,batch_offsets_host,batch_dense_origins,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,hash_owner_ms:0.,hash_lookup_ms:0.,hash_merge_ms:0.,hash_timed_tiles:0,input_stats_bounds,input_valid:0,input_raw_elements:0,input_raw_tiles:0,input_spill_elements:0,input_spill_tiles:0,input_empty_self:0,input_empty_peer:0,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_bounds,exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0,test_count_payload:std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1") && std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref()==Ok("count-payload")};
   let seed_result:Result<u32>=(||{
   let mut failed=0;
   if rank==root{
@@ -602,6 +627,11 @@ impl SegmentedDistributedBfs{
      if let Some(packed)=result.pack4{
       (packed.fns.seed)(Pack4SeedArgs{dictionary:packed.dictionary,input:input.ptr.cast(),row:seg.desc.states.cast(),bits:b.bits.ptr.cast(),accepted:seg.counts.ptr.cast(),error:result.control.at(0),local:h/u64::from(p.world),owner_len:b.owner_len},stream)
      }else{mgbfs_bitmap_seed(p.state_bytes,input.ptr,p.elements,seg.desc,b.bits.ptr.cast(),h/u64::from(p.world),seg.counts.ptr.cast(),stream)}
+    }else if result.resident_hash_pack4{
+     let dictionary=result.resident_hash.ok_or("RESIDENT_HASH_CONFIG_MISSING")?.0;
+     let word=encode_pack4(dictionary,&g.start)?;
+     let seed=resident_hash_pack4_seed().ok_or("RESIDENT_HASH_PACK4_ABI_MISSING")?;
+     seed(seg.desc,seg.counts.ptr.cast(),h,word,result.control.at(0),stream)
     }else if sorted_hash{let hs=result.hash_shards[shard].as_ref().ok_or("SEGMENTED_HASH_DIRECTORY_MISSING")?;mgbfs_hash_batch_seed(p.state_bytes,p.elements,input.ptr,seg.sorted_view(),h,hs.dir.ptr.cast(),hs.count_ptr(),seg.counts.ptr.cast(),stream)
      }else if p.state_bytes==1{mgbfs_segmented_accept_u8(input.ptr.cast(),hashes.ptr.cast(),1,p.elements,ptr::null(),0,seg.desc,0,seg.counts.ptr.cast(),ptr::null_mut(),result.control.at(0),stream)}else{mgbfs_segmented_accept_i64(input.ptr.cast(),hashes.ptr.cast(),1,p.elements,ptr::null(),0,seg.desc,0,seg.counts.ptr.cast(),ptr::null_mut(),result.control.at(0),stream)}};
     crate::generic_native::checked!(mgbfs_segmented_accept_seed,status)?;crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
@@ -650,7 +680,7 @@ impl SegmentedDistributedBfs{
   let mut upper=self.layout.rows_per_bank.min(max_rows);let mut allocation_failed=false;
   loop{
    let sorted=self.strategy==SegmentStrategy::Batch&&self.bitmap.is_none();
-    let fit=|rows,budget|if sorted{fit_sorted_segment_layout(self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget)}else if self.pack4.is_some(){fit_packed_bitmap_segment_layout(self.plan.elements,self.layout.banks,rows,budget)}else{fit_segment_layout_compact(self.bitmap.is_some(),self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget,self.compact_positions)};
+    let fit=|rows,budget|if sorted{fit_sorted_segment_layout(self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget)}else if self.resident_hash_pack4{fit_packed_hash_segment_layout(self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget,self.compact_positions)}else if self.pack4.is_some(){fit_packed_bitmap_segment_layout(self.plan.elements,self.layout.banks,rows,budget)}else{fit_segment_layout_compact(self.bitmap.is_some(),self.plan.elements,self.plan.state_bytes,self.layout.banks,rows,budget,self.compact_positions)};
     let layout=fit(upper,budget).map_err(str::to_owned)?;
    let Some(layout)=layout else {
     let minimum=fit(1,u64::MAX).map_err(str::to_owned)?.ok_or("SEGMENTED_LAYOUT_RANGE")?.device_bytes;
@@ -821,7 +851,7 @@ impl SegmentedDistributedBfs{
  }
  pub fn source_retries(&self)->u64{self.source_retries}
  pub fn peak_owner_lanes(&self)->u32{self.peak_owner_lanes}
- pub fn memory_geometry(&self)->serde_json::Value{let(mut free,mut total)=(0usize,0usize);let valid=unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)}==0;let segment_rows=self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.capacity).collect::<Vec<_>>()).collect::<Vec<_>>();let mut out=serde_json::json!({"segment_strategy":self.strategy.name(),"resident_codec":if self.pack4.is_some(){"pack4-v1"}else{"unpacked-soa"},"rows_per_bank":self.layout.rows_per_bank,"segment_rows_per_bank_by_shard":segment_rows,"live_rows_by_bank":self.bank_totals,"peak_live_rows":self.peak_live_rows,"device_free_bytes":if valid{Some(free)}else{None},"device_total_bytes":if valid{Some(total)}else{None},"reserve_bytes":self.reserve_bytes,"resource_detail":self.last_resource,"configured_segment_rows":self.configured_rows,"banks":self.layout.banks,"compact_positions":self.compact_positions,"position_item_bytes_by_shard":self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.position_item_bytes).collect::<Vec<_>>()).collect::<Vec<_>>(),"slots_per_segment":self.layout.slots,"bytes_per_segment":self.layout.device_bytes,"segment_count":self.segments.iter().map(Vec::len).sum::<usize>(),"storage_budget_bytes":self.storage_budget,"storage_allocated_bytes":self.storage_budget-self.remaining_bytes,"descriptor_cache_bytes":self.descriptor_cache.iter().filter_map(|c|c.as_ref()).map(|c|c.data.bytes as u64).sum::<u64>(), "capacity_limit_per_rank":self.capacity_limit,"capacity_limit_is_hard":true,"capacity_limit_scope":if self.layout.banks>1{"one next layer per rank"}else{"all visited states per rank"},"owner_lanes":self.lanes.len(), "batch_owner_tile":if self.strategy==SegmentStrategy::Batch{Some(self.batch_tile)}else{None},"batch_route_scratch_bytes":self.route_scratch.as_ref().map_or(0,|x|x.bytes),"batch_owner_scratch_bytes_by_lane":self.lanes.iter().map(|x|x.scratch.as_ref().map_or(0,|s|s.bytes)).collect::<Vec<_>>(),"owner_pinned_metadata":self.lanes.iter().filter(|v|v.host.is_some()).count(),"prefetched_chunks":self.prefetched_chunks,"queue_batch_ceiling":self.queue_batch_ceiling,"exact_exchange":self.exact_exchange,"transport_trace":self.transport_trace,"remote_records_sent":self.remote_records_sent,"remote_padded_records":self.remote_padded_records,"bitmap_bytes":self.bitmap.as_ref().map_or(0,|b|b.bits.bytes),"bitmap_domain":self.bitmap.as_ref().map(|b|b.domain.total),"bitmap_logical_owner":self.bitmap.as_ref().map(|b|b.owner),"bitmap_owner_rows":self.bitmap.as_ref().map(|b|b.owner_len),"bitmap_owner_page":self.bitmap.as_ref().map(|b|b.owner_page),"extra_send_bytes":(self.send[1].records.bytes+self.send[1].counts.bytes+self.send[1].states.bytes) as u64,"legacy_plan_capacity_is_not_the_segment_limit":true});let extra=serde_json::json!({"admitted_batch":self.admitted_batch,"batch_recovery":self.batch_recovery,"batch_recoveries":self.batch_recoveries,"storage_peak_requested_bytes":self.storage_peak_requested,
+ pub fn memory_geometry(&self)->serde_json::Value{let(mut free,mut total)=(0usize,0usize);let valid=unsafe{mgbfs_cuda::native_owner::cudaMemGetInfo(&mut free,&mut total)}==0;let segment_rows=self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.capacity).collect::<Vec<_>>()).collect::<Vec<_>>();let mut out=serde_json::json!({"segment_strategy":self.strategy.name(),"resident_codec":if self.pack4.is_some()||self.resident_hash_pack4{"pack4-v1"}else{"unpacked-soa"},"rows_per_bank":self.layout.rows_per_bank,"segment_rows_per_bank_by_shard":segment_rows,"live_rows_by_bank":self.bank_totals,"peak_live_rows":self.peak_live_rows,"device_free_bytes":if valid{Some(free)}else{None},"device_total_bytes":if valid{Some(total)}else{None},"reserve_bytes":self.reserve_bytes,"resource_detail":self.last_resource,"configured_segment_rows":self.configured_rows,"banks":self.layout.banks,"compact_positions":self.compact_positions,"position_item_bytes_by_shard":self.segments.iter().map(|bucket|bucket.iter().map(|s|s.desc.position_item_bytes).collect::<Vec<_>>()).collect::<Vec<_>>(),"slots_per_segment":self.layout.slots,"bytes_per_segment":self.layout.device_bytes,"segment_count":self.segments.iter().map(Vec::len).sum::<usize>(),"storage_budget_bytes":self.storage_budget,"storage_allocated_bytes":self.storage_budget-self.remaining_bytes,"descriptor_cache_bytes":self.descriptor_cache.iter().filter_map(|c|c.as_ref()).map(|c|c.data.bytes as u64).sum::<u64>(), "capacity_limit_per_rank":self.capacity_limit,"capacity_limit_is_hard":true,"capacity_limit_scope":if self.layout.banks>1{"one next layer per rank"}else{"all visited states per rank"},"owner_lanes":self.lanes.len(), "batch_owner_tile":if self.strategy==SegmentStrategy::Batch{Some(self.batch_tile)}else{None},"batch_route_scratch_bytes":self.route_scratch.as_ref().map_or(0,|x|x.bytes),"batch_owner_scratch_bytes_by_lane":self.lanes.iter().map(|x|x.scratch.as_ref().map_or(0,|s|s.bytes)).collect::<Vec<_>>(),"owner_pinned_metadata":self.lanes.iter().filter(|v|v.host.is_some()).count(),"prefetched_chunks":self.prefetched_chunks,"queue_batch_ceiling":self.queue_batch_ceiling,"exact_exchange":self.exact_exchange,"transport_trace":self.transport_trace,"remote_records_sent":self.remote_records_sent,"remote_padded_records":self.remote_padded_records,"bitmap_bytes":self.bitmap.as_ref().map_or(0,|b|b.bits.bytes),"bitmap_domain":self.bitmap.as_ref().map(|b|b.domain.total),"bitmap_logical_owner":self.bitmap.as_ref().map(|b|b.owner),"bitmap_owner_rows":self.bitmap.as_ref().map(|b|b.owner_len),"bitmap_owner_page":self.bitmap.as_ref().map(|b|b.owner_page),"extra_send_bytes":(self.send[1].records.bytes+self.send[1].counts.bytes+self.send[1].states.bytes) as u64,"legacy_plan_capacity_is_not_the_segment_limit":true});let extra=serde_json::json!({"admitted_batch":self.admitted_batch,"batch_recovery":self.batch_recovery,"batch_recoveries":self.batch_recoveries,"storage_peak_requested_bytes":self.storage_peak_requested,
  "storage_peak_scope":"segment states, index, counters, run directory and descriptors; excludes queue, scratch, CUDA/NCCL internals",
  "segment_state_allocated_bytes":self.segments.iter().flatten().map(|v|v._states.bytes as u64).sum::<u64>(),
  "segment_index_allocated_bytes":self.segments.iter().flatten().map(|v|v._slots.as_ref().map_or(0,|x|x.bytes as u64)+v._positions.as_ref().map_or(0,|x|x.bytes as u64)).sum::<u64>(),
@@ -1484,7 +1514,9 @@ impl SegmentedDistributedBfs {
  }
  fn sample_ranges(&self,ranges:&[Range],limit:u32)->Result<Vec<Vec<i64>>>{
   let width=self.plan.elements as usize;let bytes=self.plan.state_bytes as usize;let mut result=Vec::new();
-  if let Some(packed)=self.pack4 {
+  let dictionary=self.pack4.map(|v|v.dictionary)
+   .or_else(||if self.resident_hash_pack4{self.resident_hash.map(|v|v.0)}else{None});
+  if let Some(dictionary)=dictionary {
    for r in ranges{
     let seg=&self.segments[r.shard][r.segment];
     let available=usize::try_from(r.end-r.begin).map_err(|_|"BITMAP_PACK4_SAMPLE_RANGE")?;
@@ -1493,7 +1525,7 @@ impl SegmentedDistributedBfs {
     let offset=usize::try_from(row.checked_mul(8).ok_or("BITMAP_PACK4_SAMPLE_RANGE")?).map_err(|_|"BITMAP_PACK4_SAMPLE_RANGE")?;
     let from=unsafe{seg.desc.states.cast::<u8>().add(offset)};
     let mut words=vec![0u64;n];crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(words.as_mut_ptr().cast(),from.cast(),n*8,2)})?;
-    for word in words{result.push(decode_pack4(packed.dictionary,word)?)}
+    for word in words{result.push(decode_pack4(dictionary,word)?)}
    }
    return Ok(result)
   }
@@ -1507,6 +1539,24 @@ impl SegmentedDistributedBfs {
  }
  pub fn sample_global(&self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(self.counts[self.rank as usize]) as u32;self.sample_ranges(&self.current,quota)}
  pub fn previous_small_sample(&self,previous:u64)->Result<Vec<Vec<i64>>>{if previous>=1000{Ok(vec![])}else if self.previous_snapshot_valid{self.sample_previous_snapshot()}else{self.sample_ranges(&self.previous,previous as u32)}}
+}
+
+#[cfg(test)]
+mod resident_hash_packed_codec_tests {
+ use super::*;
+ #[test]
+ fn arbitrary_signed_and_repeated_symbols_round_trip_exactly() {
+  for state in [vec![17,-4,17,9,-4],vec![i64::MIN,0,i64::MAX,-1234567890123],
+                (0..16).map(|v|v as i64-8).collect()] {
+   let dictionary=BitmapPack4Dictionary::from_root(&state).unwrap();
+   let word=encode_pack4(dictionary,&state).unwrap();
+   assert_eq!(decode_pack4(dictionary,word).unwrap(),state);
+   let mut other=state.clone();other[0]=i64::MAX;
+   if !dictionary.symbols[..dictionary.distinct as usize].contains(&i64::MAX){
+    assert!(encode_pack4(dictionary,&other).is_err());
+   }
+  }
+ }
 }
 
 #[cfg(test)]

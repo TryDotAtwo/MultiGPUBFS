@@ -43,17 +43,19 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   if(!pointers_ok)return;
   Window* local=peers[a.rank];
   Window* coordinator=peers[0];
-  if(!config->shard_head||!config->extent_next||!config->free_cursor) {
+  if(!config->shard_head||!config->extent_next||!config->free_cursor||config->packed_states>1) {
     if(!tid)fail(local,WINDOW_PROTOCOL);
     grid.sync();return;
   }
+  const uint32_t state_elements=config->packed_states?1:a.dictionary.elements;
+  const uint64_t state_size=config->packed_states?8:config->state_bytes;
   uint64_t depth=0,sequence=1;
   unsigned choice=mgbfs_device_epoch::ERROR;
   if(!tid) {
     uint64_t current=0;
     for(uint64_t e=0;e<a.extent_count;++e) {
       const auto x=extents[e];
-      if(!mgbfs_device_hash::valid_extent(x,0,a.dictionary.elements,config->state_bytes)||
+      if(!mgbfs_device_hash::valid_extent(x,0,state_elements,state_size)||
          x.counts[0]>x.segment.capacity||UINT64_MAX-current<x.counts[0]) {
         fail(local,WINDOW_PROTOCOL);break;
       }
@@ -73,7 +75,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
     // boundary. A slot is checked against its exact bank/row before retirement.
     for(uint64_t e=0;e<a.extent_count;++e) {
       const auto x=extents[e];const auto seg=x.segment;
-      if(!mgbfs_device_hash::valid_extent(x,write_bank,a.dictionary.elements,config->state_bytes)) {
+      if(!mgbfs_device_hash::valid_extent(x,write_bank,state_elements,state_size)) {
         if(!tid)fail(local,WINDOW_PROTOCOL);
       } else {
         const uint64_t count=x.counts[write_bank];
@@ -122,7 +124,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       }
       for(uint64_t e=0;e<a.extent_count;++e) {
         auto x=extents[e];
-        if(!mgbfs_device_hash::valid_extent(x,read_bank,a.dictionary.elements,config->state_bytes)||
+        if(!mgbfs_device_hash::valid_extent(x,read_bank,state_elements,state_size)||
            x.counts[read_bank]>x.segment.capacity||UINT64_MAX-prefix<x.counts[read_bank]) {
           fail(local,WINDOW_PROTOCOL);break;
         }
@@ -169,7 +171,10 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         const auto x=extents[extent];const auto seg=x.segment;
         const uint64_t local_row=uint64_t(read_bank)*seg.capacity+row,stride=seg.capacity*seg.banks;
         uint64_t packed=0;bool valid=true;
-        for(uint32_t k=0;k<a.dictionary.elements;++k) {
+        if(config->packed_states) {
+          packed=static_cast<const uint64_t*>(seg.states)[local_row];
+          valid=mgbfs_pack4_valid_word(a.dictionary,packed);
+        } else for(uint32_t k=0;k<a.dictionary.elements;++k) {
           const uint64_t offset=uint64_t(k)*stride+local_row;
           const int64_t value=config->state_bytes==1?
             int64_t(static_cast<const uint8_t*>(seg.states)[offset]):
@@ -247,7 +252,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         if(acquire(local->status.failure))break;
         HashBatch batch{extents,a.extent_owner,a.extent_count,
           config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
-          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,
+          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,
           args.grouped_origins,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
         const uint64_t before=*a.rank_count;

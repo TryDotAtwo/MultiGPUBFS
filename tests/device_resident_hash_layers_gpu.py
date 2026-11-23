@@ -50,6 +50,7 @@ def check_receipt(r):
  assert len(r["segment_memory_by_rank"])==world
  for m in r["segment_memory_by_rank"]:
   assert m["resident"]["storage"]=="segmented_hash"
+  assert m["resident"]["hash_packed_states"] is (scheduler=="batch")
   indexed=os.environ.get("MGBFS_RESIDENT_HASH_PARENT_INDEX","0")=="1"
   assert m["resident"]["hash_parent_index_enabled"] is indexed
   assert m["resident"]["hash_parent_index_bytes"]==((m["resident"]["extent_count"]+1)*8 if indexed else 0)

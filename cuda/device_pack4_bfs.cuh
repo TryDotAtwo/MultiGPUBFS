@@ -44,6 +44,7 @@ struct HashConfig {
   uint64_t* shard_head;
   uint64_t* extent_next;
   uint64_t* free_cursor;
+  uint32_t packed_states,reserved;
 };
 struct HashWord {
   MgbfsPack4Dictionary dictionary;uint64_t packed;

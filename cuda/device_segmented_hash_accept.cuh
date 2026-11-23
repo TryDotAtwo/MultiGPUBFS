@@ -54,7 +54,7 @@ __device__ inline bool valid_extent(const Extent& e,uint32_t bank,uint32_t eleme
     const uint64_t stride=s.capacity*s.banks;
     return stride<=UINT64_MAX/elements && stride*elements<=UINT64_MAX/type_size;
 }
-template<class T,class Input>
+template<class T,class Input,bool Packed=false>
 __device__ inline Probe probe(const Extent& e,uint32_t bank,uint32_t elements,uint64_t hash,const Input& input) {
     const MgbfsSegment& s=e.segment;
     uint64_t count=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(e.counts[bank])
@@ -77,10 +77,18 @@ __device__ inline Probe probe(const Extent& e,uint32_t bank,uint32_t elements,ui
            row>=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(e.counts[row_bank])
                     .load(cuda::memory_order_acquire))return {false,false,0,0};
         if((seen&prefix)==wanted) {
-            const InputView<Input> view{input,elements};
-            const Comparison c=compare_row<T>(view,0,s,payload);
-            if(c==Comparison::invalid)return {false,false,0,0};
-            if(c==Comparison::equal)return {true,true,0,count};
+            if constexpr(Packed) {
+                // The job dictionary is immutable and the complete packed
+                // word is an injective encoding, not a hash fingerprint.
+                const auto* rows=static_cast<const uint64_t*>(s.states);
+                if(rows[uint64_t(row_bank)*s.capacity+row]==input.packed)
+                    return {true,true,0,count};
+            } else {
+                const InputView<Input> view{input,elements};
+                const Comparison c=compare_row<T>(view,0,s,payload);
+                if(c==Comparison::invalid)return {false,false,0,0};
+                if(c==Comparison::equal)return {true,true,0,count};
+            }
         }
     }
     return {true,false,first,count};
