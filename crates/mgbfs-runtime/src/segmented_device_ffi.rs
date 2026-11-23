@@ -79,15 +79,27 @@ pub(super) fn resident_hash_rehash(capability:u32,value:&str)->Result<bool,Strin
   _=>Err("RESIDENT_HASH_REHASH_INVALID".into()),
  }
 }
+pub(super) fn resident_hash_metrics(capability:u32,value:&str)->Result<bool,String>{
+ match value {
+  "0"=>Ok(false),
+  "1" if capability==1=>Ok(true),
+  "1"=>Err("RESIDENT_HASH_METRICS_UNSUPPORTED".into()),
+  _=>Err("RESIDENT_HASH_METRICS_INVALID".into()),
+ }
+}
 #[cfg(test)]
 mod resident_hash_rehash_tests {
- use super::resident_hash_rehash;
+ use super::{resident_hash_rehash,resident_hash_metrics};
  #[test]
  fn rejects_unknown_or_unsupported_but_accepts_legacy_default(){
   assert_eq!(resident_hash_rehash(0,"0"),Ok(false));
   assert_eq!(resident_hash_rehash(1,"1"),Ok(true));
   assert_eq!(resident_hash_rehash(0,"1"),Err("RESIDENT_HASH_REHASH_UNSUPPORTED".into()));
   assert_eq!(resident_hash_rehash(1,"auto"),Err("RESIDENT_HASH_REHASH_INVALID".into()));
+  assert_eq!(resident_hash_metrics(0,"0"),Ok(false));
+  assert_eq!(resident_hash_metrics(1,"1"),Ok(true));
+  assert_eq!(resident_hash_metrics(0,"1"),Err("RESIDENT_HASH_METRICS_UNSUPPORTED".into()));
+  assert_eq!(resident_hash_metrics(1,"auto"),Err("RESIDENT_HASH_METRICS_INVALID".into()));
  }
 }
 

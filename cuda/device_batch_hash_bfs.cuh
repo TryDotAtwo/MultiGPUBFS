@@ -28,6 +28,17 @@ struct Args {
 #include "device_batch_hash_rehash.cuh"
 namespace mgbfs_resident_hash_batch {
 #ifdef MGBFS_BATCH_HASH_BFS_IMPLEMENTATION
+// Diagnostic only: target-specific PTX timer, sampled by the same local
+// coordinator thread. It is never used for a correctness decision.
+__device__ inline uint64_t metric_clock_ns() {
+  uint64_t v; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(v)); return v;
+}
+__device__ inline uint64_t metric_accumulate(uint64_t* dst,uint64_t start,Window* local) {
+  const uint64_t now=metric_clock_ns();
+  if(now<start||UINT64_MAX-*dst<now-start)fail(local,WINDOW_PROTOCOL);
+  else *dst+=now-start;
+  return now;
+}
 __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_resident::Report* report) {
   using namespace mgbfs_resident;
   auto grid=cooperative_groups::this_grid();
@@ -53,6 +64,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   const uint32_t state_elements=config->packed_states?1:a.dictionary.elements;
   const uint64_t state_size=config->packed_states?8:config->state_bytes;
   uint64_t depth=0,sequence=1;
+  auto* metric_meta=reinterpret_cast<uint64_t*>(args.spans);
+  const bool metric_on=(a.reserved0&2u)!=0;
+  const uint64_t metric_cap=metric_on?metric_meta[2*a.extent_count+1]:0;
+  // One boundary array, then four per-layer accumulated stage arrays.
+  uint64_t* metrics=metric_meta+4*a.extent_count;
+  uint64_t metric_start=0;
   unsigned choice=mgbfs_device_epoch::ERROR;
   if(!tid) {
     uint64_t current=0;
@@ -68,6 +85,10 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
     local->current=current;local->committed_count=current;
     local->sequence=sequence;a.layer_sizes[0]=1;
     if(a.capture_count)*a.capture_count=0;
+    if(metric_on) {
+      if(!metric_cap)fail(local,WINDOW_PROTOCOL);
+      else metrics[0]=metric_clock_ns();
+    }
     release(local->committed_epoch,1);
   }
   grid.sync();
@@ -84,7 +105,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         const uint64_t count=x.counts[write_bank];
         if(count>seg.capacity) {if(!tid)fail(local,WINDOW_PROTOCOL);}
         else {
-          if(a.reserved0&&!tid) {
+          if((a.reserved0&1u)&&!tid) {
             auto* retired_counts=reinterpret_cast<uint64_t*>(args.spans);
             const uint64_t threshold=rehash_threshold(seg.slots_count);
             const uint64_t old=retired_counts[e];
@@ -109,7 +130,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       }
     }
     grid.sync();
-    if(a.reserved0)rehash_completed_boundary(args,*config,local,write_bank);
+    if(a.reserved0&1u)rehash_completed_boundary(args,*config,local,write_bank);
     if(!tid) {
       // Obtain the same completed frontier sizes on every rank before deriving
       // the common number of rounds. Empty ranks participate with zero records.
@@ -157,8 +178,11 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
     grid.sync();
     const uint64_t rounds=local->rounds;
     for(uint64_t round=0;round<rounds;++round) {
+      if(!tid&&metric_on&&depth<metric_cap)metric_start=metric_clock_ns();
       if(!tid && sequence>1)wait_ack(local,peers,a.world,sequence-1,a.terminal);
       grid.sync();
+      if(!tid&&metric_on&&depth<metric_cap)
+        metric_start=metric_accumulate(&metrics[4*metric_cap+1+depth],metric_start,local);
       if(acquire(local->status.failure))break;
       if(local->current>UINT64_MAX/a.generators) {
         if(!tid)fail(local,WINDOW_PROTOCOL);
@@ -222,16 +246,26 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
                 args.block_prefix,args.offsets,args.error);
       if(!tid && *args.error)fail(local,WINDOW_PROTOCOL);
       grid.sync();
+      if(!tid&&metric_on&&depth<metric_cap)
+        metric_start=metric_accumulate(&metrics[metric_cap+1+depth],metric_start,local);
       if(acquire(local->status.failure))break;
       __threadfence_system();
       grid.sync();
       if(!tid) {
         publish(local,a.job_generation,round,sequence,args.offsets,a.world);
         local->sent+=n;
+        if(metric_on) {
+          const uint64_t self=args.offsets[a.rank+1]-args.offsets[a.rank];
+          uint64_t& total=metric_meta[2*a.extent_count];
+          if(UINT64_MAX-total<self)fail(local,WINDOW_PROTOCOL);
+          else total+=self;
+        }
       }
       grid.sync();
       if(!tid)wait_ready(local,peers,a.world,a.job_generation,round,sequence,args.send_capacity,a.terminal);
       grid.sync();
+      if(!tid&&metric_on&&depth<metric_cap)
+        metric_start=metric_accumulate(&metrics[2*metric_cap+1+depth],metric_start,local);
       if(acquire(local->status.failure))break;
       uint64_t incoming=0;
       for(unsigned src=0;src<a.world;++src)
@@ -283,6 +317,8 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         grid.sync();
         if(acquire(local->status.failure))break;
       }
+      if(!tid&&metric_on&&depth<metric_cap)
+        metric_accumulate(&metrics[3*metric_cap+1+depth],metric_start,local);
       __threadfence_system();
       grid.sync();
       if(acquire(local->status.failure))break;
@@ -290,9 +326,12 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       grid.sync();
       ++sequence;
     }
+    if(!tid&&metric_on&&depth<metric_cap)metric_start=metric_clock_ns();
     if(!tid && !acquire(local->status.failure) && sequence>1)
       wait_ack(local,peers,a.world,sequence-1,a.terminal);
     grid.sync();
+    if(!tid&&metric_on&&depth<metric_cap)
+      metric_accumulate(&metrics[4*metric_cap+1+depth],metric_start,local);
     if(!tid) {
       const unsigned active=__popcll(local->shard_mask);
       if(active>local->max_active_shards)local->max_active_shards=active;
@@ -341,6 +380,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
     }
     grid.sync();
     choice=unsigned(coordinator->decision.final);
+    if(!tid&&metric_on&&depth<metric_cap)metrics[depth+1]=metric_clock_ns();
     if(choice!=mgbfs_device_epoch::ADVANCE)break;
     if(!tid) {
       local->current=*a.rank_count;local->committed_count=local->current;

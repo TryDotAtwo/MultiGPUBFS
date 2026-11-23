@@ -93,7 +93,7 @@ with persistent_graph_workers() as pool:
   "sample_period_seconds":0.5,**vram_summary(True,samples,devices),
   "rank_allocations":r["segment_memory_by_rank"],"rank_worker_pids":pids,
   "executable_sha256":exe_sha,"cuda_sha256":lib_sha,
-  "timing_scope":"whole BFS; stage and individual layer times not instrumented in multi-CTA path"}
+  "timing_scope":("whole BFS; optional per-rank GPU metrics in rank_allocations" if any(m.get("resident",{}).get("hash_metrics") for m in r["segment_memory_by_rank"]) else "whole BFS; stage and individual layer times not instrumented in multi-CTA path")}
  (root/"samples.json").write_text(json.dumps(samples))
  (root/"comparison.json").write_text(json.dumps(result,indent=2))
  print("DONE",json.dumps(result),flush=True)

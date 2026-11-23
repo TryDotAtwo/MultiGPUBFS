@@ -44,7 +44,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 #[derive(Clone,Copy)]
 struct BatchSelection {
  functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,
- hash_virtual_buckets:u32,hash_rehash:bool,
+ hash_virtual_buckets:u32,hash_rehash:bool,hash_metrics:bool,metrics_layers:u64,
 }
 struct BatchBuffers {
  raw:Buffer,positions:Buffer,block_prefix:Buffer,offsets:Buffer,receive:Buffer,
@@ -138,13 +138,27 @@ impl SegmentedDistributedBfs {
       };
       resident_ffi::resident_hash_rehash(unsafe{(functions.query)(7)},&value)?
      }else{false};
+     let hash_metrics=if hash {
+      let value=match std::env::var("MGBFS_RESIDENT_HASH_METRICS"){
+       Ok(v)=>v,Err(std::env::VarError::NotPresent)=>"0".to_owned(),
+       Err(_)=>return Err("RESIDENT_HASH_METRICS_INVALID".into()),
+      };
+      resident_ffi::resident_hash_metrics(unsafe{(functions.query)(8)},&value)?
+     }else{false};
+     let metrics_layers=if hash_metrics {
+      match std::env::var("MGBFS_RESIDENT_HASH_METRICS_LAYERS"){
+       Ok(v)=>v.parse::<u64>().ok().filter(|&x|x>0).ok_or("RESIDENT_HASH_METRICS_LAYERS")?,
+       Err(std::env::VarError::NotPresent)=>4096,
+       Err(_)=>return Err("RESIDENT_HASH_METRICS_LAYERS".into()),
+      }
+     }else{0};
      let(mut blocks,mut threads)=(0u32,0u32);
      code("RESIDENT_BATCH_GEOMETRY",unsafe{(functions.geometry)(&mut blocks,&mut threads)})?;
      if blocks==0||threads!=128{return Err("RESIDENT_BATCH_GEOMETRY_INVALID".into())}
      let window_bytes=send.checked_mul(16).and_then(|v|v.checked_add(functions.window_bytes))
        .ok_or("RESIDENT_BATCH_WINDOW_SIZE")?;
      checked_size(send,24)?;checked_size(receive,16)?;
-     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets,hash_rehash})
+     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets,hash_rehash,hash_metrics,metrics_layers})
     },
     _=>return Err("RESIDENT_BATCH_SCHEDULER_INVALID".into()),
    };
@@ -158,6 +172,7 @@ impl SegmentedDistributedBfs {
    "batch_send":batch.map(|v|v.send),"batch_receive":batch.map(|v|v.receive),
    "hash_virtual_buckets":batch.map(|v|v.hash_virtual_buckets),
    "hash_rehash":batch.map(|v|v.hash_rehash),
+   "hash_metrics":batch.map(|v|v.hash_metrics),"metrics_layers":batch.map(|v|v.metrics_layers),
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
   let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
@@ -204,6 +219,12 @@ impl SegmentedDistributedBfs {
   })();
   ready.agree("resident-log-gather",&gathered,None)?;gathered?;
   let layer_capacity=*candidates.iter().min().ok_or("RESIDENT_LAYER_LOG_CONSENSUS")?;
+  // Instrumentation has a separate finite capacity and never limits BFS.
+  let metrics_capacity=batch_selection.map_or(0,|v|v.metrics_layers).min(layer_capacity);
+  let metrics_words=if metrics_capacity>0 {
+   metrics_capacity.checked_mul(5).and_then(|n|n.checked_add(1)).ok_or("RESIDENT_HASH_METRICS_SIZE")?
+  }else{0};
+  let metrics_bytes=checked_size(metrics_words,8)?;
 
   let resource:Result<Resources>=(||{
    let d=self.base.device;
@@ -254,6 +275,7 @@ impl SegmentedDistributedBfs {
     let per_shard=if hash_indexed{u64::from(self.plan.shards).checked_mul(16).ok_or("RESIDENT_EXTENT_COUNT")?}else{0};
     let metadata=future.checked_mul(per_extent)
       .and_then(|v|v.checked_add(per_shard))
+      .and_then(|v|v.checked_add(metrics_bytes as u64))
       .and_then(|v|v.checked_add(4096)).ok_or("RESIDENT_EXTENT_COUNT")?;
     let prior=self.reserve_bytes;
     self.reserve_bytes=prior.checked_add(metadata).ok_or("RESIDENT_EXTENT_COUNT")?;
@@ -277,7 +299,8 @@ impl SegmentedDistributedBfs {
    let n=u64::try_from(host.len()).map_err(|_|"RESIDENT_EXTENT_COUNT")?;
    if hash&&n==0{return Err("RESIDENT_HASH_NO_ADMITTED_EXTENT".into())}
    if let Some(b)=batch.as_mut() {
-    b.spans=Some(Buffer::new(checked_size(n.max(1),32)?,d)?);
+    let span_bytes=checked_size(n.max(1),32)?.checked_add(metrics_bytes).ok_or("RESIDENT_BATCH_SIZE")?;
+    b.spans=Some(Buffer::new(span_bytes,d)?);
     b.parent_prefix=Some(Buffer::new(checked_size(n.checked_add(1).ok_or("RESIDENT_BATCH_SIZE")?,8)?,d)?);
    }
    let extent_size=if hash{mem::size_of::<HashExtent>()}else{mem::size_of::<Extent>()};
@@ -401,7 +424,7 @@ impl SegmentedDistributedBfs {
     if hash {
      let v=b.args.as_ref().unwrap();
      let mut hash_base=v.base;
-     hash_base.reserved0=u32::from(sel.hash_rehash);
+     hash_base.reserved0=u32::from(sel.hash_rehash)|(u32::from(sel.hash_metrics)<<1);
      b.hash_args=Some(BatchHashArgs{base:hash_base,send_capacity:v.send_capacity,receive_capacity:v.receive_capacity,
       raw:v.raw,positions:v.positions,block_prefix:v.block_prefix,offsets:v.offsets,
       receive:v.receive,grouped:b.grouped.as_ref().unwrap().ptr,shard_counts:v.shard_counts,
@@ -437,9 +460,16 @@ impl SegmentedDistributedBfs {
    code("RESIDENT_REINITIALIZE",unsafe{(initialize)(self.comm.ptr,&res.args,self.base.stream.ptr)})?;
    if let Some(sel)=batch_selection {
     code("RESIDENT_BATCH_INITIALIZE",unsafe{(sel.functions.initialize)(self.comm.ptr,sel.send,self.base.stream.ptr)})?;
-    if sel.hash_rehash {
+    if sel.hash_rehash||sel.hash_metrics {
      let spans=res.batch.as_ref().and_then(|b|b.spans.as_ref()).ok_or("RESIDENT_HASH_REHASH_SCRATCH")?;
      crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(spans.ptr,0,spans.bytes,self.base.stream.ptr)})?;
+     if sel.hash_metrics {
+      let at=res.args.extent_count.checked_mul(2).and_then(|x|x.checked_add(1)).ok_or("RESIDENT_HASH_METRICS_SIZE")?;
+      let offset=checked_size(at,8)?;
+      if offset.checked_add(8).ok_or("RESIDENT_HASH_METRICS_SIZE")?>spans.bytes{return Err("RESIDENT_HASH_METRICS_SIZE".into())}
+      crate::generic_native::checked!(cudaMemcpyAsync,unsafe{cudaMemcpyAsync(
+       spans.at::<c_void>(offset),(&metrics_capacity as *const u64).cast(),8,1,self.base.stream.ptr)})?;
+     }
     }
    }
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(self.base.stream.ptr)})?;Ok(())
@@ -475,6 +505,7 @@ impl SegmentedDistributedBfs {
 
   let mut hash_owner_stats=None;
   let mut hash_rehash_count=None;
+  let mut hash_metrics=None;
   let readback:Result<_>=(||{
    if batch_selection.map_or(false,|v|v.hash_rehash) {
     let spans=res.batch.as_ref().and_then(|b|b.spans.as_ref()).ok_or("RESIDENT_HASH_REHASH_SCRATCH")?;
@@ -486,6 +517,42 @@ impl SegmentedDistributedBfs {
     let mut values=vec![0u64;count];
     if bytes>0{crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),spans.at::<c_void>(bytes),bytes,2)})?;}
     hash_rehash_count=Some(values.iter().try_fold(0u64,|a,&b|a.checked_add(b)).ok_or("RESIDENT_HASH_REHASH_COUNT")?);
+   }
+   if batch_selection.map_or(false,|v|v.hash_metrics) {
+    let spans=res.batch.as_ref().and_then(|b|b.spans.as_ref()).ok_or("RESIDENT_HASH_METRICS_SCRATCH")?;
+    let base=checked_size(res.args.extent_count.checked_mul(4).ok_or("RESIDENT_HASH_METRICS_SIZE")?,8)?;
+    if base.checked_add(metrics_bytes).ok_or("RESIDENT_HASH_METRICS_SIZE")?>spans.bytes {
+     return Err("RESIDENT_HASH_METRICS_SIZE".into())
+    }
+    let n=usize::try_from(metrics_capacity).map_err(|_|"RESIDENT_HASH_METRICS_SIZE")?;
+    let mut values=vec![0u64;usize::try_from(metrics_words).map_err(|_|"RESIDENT_HASH_METRICS_SIZE")?];
+    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),spans.at::<c_void>(base),metrics_bytes,2)})?;
+    let attempted=out.depth.checked_add(1).ok_or("RESIDENT_HASH_METRICS_SIZE")?;
+    let recorded=usize::try_from(attempted.min(metrics_capacity)).map_err(|_|"RESIDENT_HASH_METRICS_SIZE")?;
+    let mut intervals=Vec::with_capacity(recorded);
+    for i in 0..recorded {
+     let elapsed=values[i+1].checked_sub(values[i]).ok_or("RESIDENT_HASH_METRICS_CLOCK")?;
+     intervals.push(elapsed as f64*1e-9);
+    }
+    let seconds=|offset:usize|->Vec<f64>{
+     values[offset..offset+recorded].iter().map(|&x|x as f64*1e-9).collect()
+    };
+    let self_offset=checked_size(res.args.extent_count.checked_mul(2).ok_or("RESIDENT_HASH_METRICS_SIZE")?,8)?;
+    let mut self_records=0u64;
+    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy((&mut self_records as *mut u64).cast(),spans.at::<c_void>(self_offset),8,2)})?;
+    let remote=out.sent.checked_sub(self_records).ok_or("RESIDENT_HASH_METRICS_RECORDS")?;
+    let remote_bytes=remote.checked_mul(16).ok_or("RESIDENT_HASH_METRICS_RECORDS")?;
+    hash_metrics=Some(serde_json::json!({
+     "clock":"per-rank PTX globaltimer, target-specific; diagnostic only",
+     "scope":"one attempted expansion per entry, final entry may be incomplete or empty",
+     "recorded_expansions":recorded,"total_attempted_expansions":attempted,
+     "truncated":(attempted>metrics_capacity),
+     "layer_seconds":intervals,"generate_partition_seconds":seconds(n+1),
+     "publish_wait_ready_seconds":seconds(2*n+1),"receive_dedup_commit_seconds":seconds(3*n+1),
+     "wait_ack_seconds":seconds(4*n+1),
+     "local_records":self_records,"remote_records":remote,"remote_payload_bytes":remote_bytes,
+     "wire_bytes_scope":"useful records x 16; excludes protocol and actual link overhead"
+    }));
    }
    if let Some(stats)=&res.hash_stats {
     let mut values=[0u32;6];
@@ -573,6 +640,7 @@ impl SegmentedDistributedBfs {
     "layer_seconds_scope":"not measured","peak_live_rows_scope":"not measured"});
   evidence["hash_rehash_enabled"]=serde_json::json!(if hash{Some(batch_selection.map_or(false,|v|v.hash_rehash))}else{None});
   evidence["hash_rehash_count"]=serde_json::json!(hash_rehash_count);
+  evidence["hash_metrics"]=serde_json::json!(hash_metrics);
   // All ranks completed readback and retired the shared window before any
   // of these buffers may be returned to the persistent pool.
   unsafe{std::mem::ManuallyDrop::drop(&mut res);}
