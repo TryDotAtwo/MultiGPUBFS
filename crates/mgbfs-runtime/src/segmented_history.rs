@@ -144,14 +144,25 @@ impl SegmentLayout {
     /// Resident permutation hash: one exact dictionary-coded u64 per row,
     /// with the ordinary hash table and rolling-bank position metadata.
     pub fn hash_banks_pack4(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32,compact:bool)->Result<Self,&'static str>{
+        Self::hash_banks_pack4_load(elements,state_bytes,rows_per_bank,banks,compact,50)
+    }
+    /// Maximum occupied slots as a percentage of the full physical row
+    /// capacity; the table size is rounded upwards to a power of two. The
+    /// 50% default is identical to the established layout. A higher opt-in
+    /// load reduces allocation but may increase probing time.
+    pub fn hash_banks_pack4_load(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32,compact:bool,load_percent:u32)->Result<Self,&'static str>{
         if elements==0||elements>16{return Err("HASH_PACK4_LAYOUT_RANGE")}
-        let mut layout=if compact{Self::new_compact(elements,state_bytes,rows_per_bank,banks)?}
-                       else{Self::new(elements,state_bytes,rows_per_bank,banks)?};
-        let states=rows_per_bank.checked_mul(u64::from(banks))
-            .and_then(|v|v.checked_mul(8)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
-        layout.device_bytes=layout.device_bytes.checked_sub(layout.state_bytes)
-            .and_then(|v|v.checked_add(states)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
-        layout.state_bytes=states;
+        if !(50..=75).contains(&load_percent){return Err("HASH_PACK4_LOAD_RANGE")}
+        let mut layout=Self::new(elements,state_bytes,rows_per_bank,banks)?;
+        let rows=rows_per_bank.checked_mul(u64::from(banks)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        let load=u64::from(load_percent);
+        let needed=rows.checked_mul(100).and_then(|v|v.checked_add(load-1)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?/load;
+        layout.slots=needed.checked_next_power_of_two().ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        layout.state_bytes=rows.checked_mul(8).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        layout.position_item_bytes=if banks==3 {if compact&&layout.slots<=(1u64<<32){4}else{8}}else{0};
+        layout.position_bytes=rows.checked_mul(u64::from(layout.position_item_bytes)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
+        layout.device_bytes=layout.slots.checked_mul(8).and_then(|v|v.checked_add(layout.state_bytes))
+            .and_then(|v|v.checked_add(layout.position_bytes)).and_then(|v|v.checked_add(24)).ok_or("HASH_PACK4_LAYOUT_OVERFLOW")?;
         Ok(layout)
     }
     /// One full state plus flat u64 key and u32 local row indexes per live
@@ -244,8 +255,13 @@ pub fn fit_packed_bitmap_segment_layout(elements:u32,banks:u32,max_rows:u64,budg
 
 /// Checked admission for packed resident hash segments.
 pub fn fit_packed_hash_segment_layout(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64,compact:bool)->Result<Option<SegmentLayout>,&'static str>{
+    fit_packed_hash_segment_layout_load(elements,state_bytes,banks,max_rows,budget,compact,50)
+}
+
+/// Admission uses exactly the same load and rounding as segment allocation.
+pub fn fit_packed_hash_segment_layout_load(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64,compact:bool,load_percent:u32)->Result<Option<SegmentLayout>,&'static str>{
     if max_rows==0||max_rows>LOCAL_ROWS{return Err("HASH_PACK4_LAYOUT_RANGE")}
-    let make=|rows|SegmentLayout::hash_banks_pack4(elements,state_bytes,rows,banks,compact);
+    let make=|rows|SegmentLayout::hash_banks_pack4_load(elements,state_bytes,rows,banks,compact,load_percent);
     make(1)?;
     let(mut lo,mut hi)=(0u64,max_rows);
     while lo<hi{
@@ -353,6 +369,28 @@ mod packed_bitmap_contract_tests {
         assert!(StateAddress::new(1,2,LOCAL_ROWS).is_err());
         assert!(SegmentLayout::hash_banks_pack4(16,8,LOCAL_ROWS+1,3,false).is_err());
         assert!(SegmentLayout::hash_banks_pack4(17,8,100,3,false).is_err());
+    }
+
+    #[test]
+    fn packed_hash_load_is_checked_and_budget_matches_real_allocation() {
+        let n=1u64<<20;
+        let old=SegmentLayout::hash_banks_pack4_load(13,1,n,3,true,50).unwrap();
+        let dense=SegmentLayout::hash_banks_pack4_load(13,1,n,3,true,75).unwrap();
+        assert_eq!(old,SegmentLayout::hash_banks_pack4(13,1,n,3,true).unwrap());
+        assert_eq!(old.slots,1u64<<23);assert_eq!(dense.slots,1u64<<22);
+        assert_eq!(old.device_bytes-dense.device_bytes,(1u64<<22)*8);
+        assert_eq!(dense.position_item_bytes,4);assert_eq!(dense.state_bytes,n*3*8);
+        assert_eq!(fit_packed_hash_segment_layout_load(13,1,3,n,dense.device_bytes,true,75).unwrap().unwrap(),dense);
+        assert!(fit_packed_hash_segment_layout_load(13,1,3,n,dense.device_bytes-1,true,75).unwrap().unwrap().rows_per_bank<n);
+        let last=SegmentLayout::hash_banks_pack4_load(16,8,LOCAL_ROWS,3,true,75).unwrap();
+        assert_eq!(last.rows_per_bank,1u64<<32);assert_eq!(last.slots,1u64<<34);assert_eq!(last.position_item_bytes,8);
+        assert_eq!(StateAddress::new(1,2,LOCAL_ROWS-1).unwrap().row(),u32::MAX);
+        assert!(SegmentLayout::hash_banks_pack4_load(13,1,n,3,true,49).is_err());
+        assert!(SegmentLayout::hash_banks_pack4_load(13,1,n,3,true,76).is_err());
+        for rows in 1..=101 { for load in 50..=75 {
+            let x=SegmentLayout::hash_banks_pack4_load(6,1,rows,3,true,load).unwrap();
+            assert!(x.slots.is_power_of_two());assert!(x.slots*u64::from(load)>=rows*3*100);
+        }}
     }
 
     #[test]
