@@ -13,8 +13,10 @@ The earlier uninstrumented comparisons and their limitations remain in
 Each case is one run on the same four V100-SXM2-32GB devices, with four
 virtual buckets per shard, rehash enabled, 32 physical shards, 262,144-record
 send and receive tiles, packed exact states and a single LSA exchange slot.
-S12 used 262,144 rows per segment bank and an 8M per-rank cap; S13 used
-1,048,576 rows and a 100M cap. The executable SHA-256 was
+S12 requested up to 262,144 rows per segment bank and an 8M per-rank cap;
+each of its 128 admitted extents had 249,983 rows per bank. S13 requested up
+to 1,048,576 rows and a 100M cap; on rank 0, 251 of its 253 extents had the
+maximum size, and two had 699,050 and 272,042 rows. The executable SHA-256 was
 `5316b0d1745fbb48560e8fd1097145f50dcc78d9c9aa9aa27a6f153a500ddf03`;
 the loaded CUDA library SHA-256 was
 `b51269b1d1e12b19d71cc04e288e7bad6bf44694ebaec3e6938f620835601345`.

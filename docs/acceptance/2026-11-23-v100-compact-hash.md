@@ -8,9 +8,11 @@ one segment's slot table, not to all rows on a GPU.
 
 All four cells used the same binary and four V100-SXM2-32GB GPUs, adjacent
 transpositions from identity, four virtual buckets per shard, rehash, and a
-single-slot LSA transport. S12 used 32 shards, 262,144 rows per segment bank
-and an 8M next-layer cap per rank; S13 used the same shards, 1,048,576 rows
-and an 80M cap. Send and receive tiles were each 262,144 records. The S12
+single-slot LSA transport. S12 used 32 shards, a requested maximum of 262,144 rows per segment bank
+and an 8M next-layer cap per rank; its 128 admitted extents each held 249,983
+rows. S13 used the same shards, a requested maximum of 1,048,576 rows and an
+80M cap. On rank 0, the ordinary case had 251 full-sized extents and two of
+699,050 and 272,148 rows; all 260 compact-case extents had 1,048,576 rows. Send and receive tiles were each 262,144 records. The S12
 ordinary run belongs to the preceding rehash experiment; both S13 runs were
 consecutive. These are single observations.
 

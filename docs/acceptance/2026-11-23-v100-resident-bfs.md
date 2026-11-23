@@ -30,10 +30,11 @@ These large runs establish layer **counts** and exact terminal state, not full
 state sets at every intermediate layer. Different backends have different
 internal geometry; compare like backends and graph parameters.
 
-The S13 hash benchmark used 32 shards, 1,048,576 rows per segment bank, a
-100,000,000-state per-rank next-layer cap, four virtual buckets per shard,
-262,144 records for each send/receive tile, packed 8-byte permutation rows,
-and opt-in rehash. The four rank allocations contained 253 segments each.
+The S13 hash benchmark used 32 shards, a configured maximum of 1,048,576
+rows per segment bank, a 100,000,000-state per-rank next-layer cap, four
+virtual buckets per shard, 262,144 records for each send/receive tile,
+packed 8-byte permutation rows, and opt-in rehash. The four rank allocations
+contained 253 segments each; most have the maximum size and two are smaller.
 For rank 0, requested state storage was 6,339,930,576 bytes, hash index
 storage 23,234,587,088 bytes and total segment storage 29,574,523,736 bytes;
 the separately reported reserve was 2,147,483,648 bytes. Scratch and the
