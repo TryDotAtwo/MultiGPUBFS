@@ -10,6 +10,7 @@ extern "C" uint32_t mgbfs_device_batch_hash_query_v1(uint32_t item) {
     case 3:return sizeof(mgbfs_device_batch::Input);
     case 4:return sizeof(mgbfs_device_batch::HashSpan);
     case 5:return 1; // pack4 hash segment and seed support
+    case 6:return 1; // cooperative virtual-bucket owners
     default:return 0;
   }
 }

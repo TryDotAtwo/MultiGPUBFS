@@ -43,7 +43,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   if(!pointers_ok)return;
   Window* local=peers[a.rank];
   Window* coordinator=peers[0];
-  if(!config->shard_head||!config->extent_next||!config->free_cursor||config->packed_states>1) {
+  if(!config->shard_head||!config->extent_next||!config->free_cursor||config->packed_states>1||!config->virtual_buckets) {
     if(!tid)fail(local,WINDOW_PROTOCOL);
     grid.sync();return;
   }
@@ -252,7 +252,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         if(acquire(local->status.failure))break;
         HashBatch batch{extents,a.extent_owner,a.extent_count,
           config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
-          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,
+          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,config->virtual_buckets,config->owner_peak,
           args.grouped_origins,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
         const uint64_t before=*a.rank_count;

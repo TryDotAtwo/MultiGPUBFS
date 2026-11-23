@@ -22,6 +22,7 @@ def verify(r,layers,completed):
  assert len(r.report["segment_memory_by_rank"])==world
  assert all(m["resident"]["storage"]=="segmented_hash" for m in r.report["segment_memory_by_rank"])
  assert all(m["resident"]["hash_packed_states"] is (scheduler=="batch") for m in r.report["segment_memory_by_rank"])
+ assert all(m["resident"]["hash_virtual_buckets_per_shard"]==(int(os.environ.get("MGBFS_RESIDENT_HASH_VBUCKETS","1")) if scheduler=="batch" else 1) for m in r.report["segment_memory_by_rank"])
  assert all(m["resident"]["scheduler"]==("multi_cta" if scheduler=="batch" else "single_cta") for m in r.report["segment_memory_by_rank"])
  indexed=os.environ.get("MGBFS_RESIDENT_HASH_PARENT_INDEX","0")=="1"
  assert all(m["resident"]["hash_parent_index_enabled"] is indexed for m in r.report["segment_memory_by_rank"])

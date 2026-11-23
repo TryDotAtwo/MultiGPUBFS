@@ -43,7 +43,7 @@ impl Drop for Event{fn drop(&mut self){unsafe{cudaEventDestroy(self.0);}}}
 
 #[derive(Clone,Copy)]
 struct BatchSelection {
- functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,
+ functions:BatchFunctions,send:u64,receive:u64,blocks:u32,threads:u32,window_bytes:u64,hash_virtual_buckets:u32,
 }
 struct BatchBuffers {
  raw:Buffer,positions:Buffer,block_prefix:Buffer,offsets:Buffer,receive:Buffer,
@@ -118,13 +118,25 @@ impl SegmentedDistributedBfs {
      let send=read_capacity("MGBFS_RESIDENT_BATCH_EDGES")?;
      let receive=read_capacity("MGBFS_RESIDENT_BATCH_RECEIVE")?;
      let functions=unsafe{BatchFunctions::load(hash)}?;
+     let hash_virtual_buckets=if hash{
+      let v=match std::env::var("MGBFS_RESIDENT_HASH_VBUCKETS"){
+       Ok(s)=>s.parse::<u32>().map_err(|_|"RESIDENT_HASH_VBUCKETS_INVALID")?,
+       Err(std::env::VarError::NotPresent)=>1,
+       Err(_)=>return Err("RESIDENT_HASH_VBUCKETS_INVALID".into()),
+      };
+      if v==0||v>64||!v.is_power_of_two()||self.plan.shards.checked_mul(v).is_none(){
+       return Err("RESIDENT_HASH_VBUCKETS_INVALID".into())
+      }
+      if v>1&&unsafe{(functions.query)(6)}!=1{return Err("RESIDENT_HASH_VBUCKETS_UNSUPPORTED".into())}
+      v
+     }else{1};
      let(mut blocks,mut threads)=(0u32,0u32);
      code("RESIDENT_BATCH_GEOMETRY",unsafe{(functions.geometry)(&mut blocks,&mut threads)})?;
      if blocks==0||threads!=128{return Err("RESIDENT_BATCH_GEOMETRY_INVALID".into())}
      let window_bytes=send.checked_mul(16).and_then(|v|v.checked_add(functions.window_bytes))
        .ok_or("RESIDENT_BATCH_WINDOW_SIZE")?;
      checked_size(send,24)?;checked_size(receive,16)?;
-     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes})
+     Some(BatchSelection{functions,send,receive,blocks,threads,window_bytes,hash_virtual_buckets})
     },
     _=>return Err("RESIDENT_BATCH_SCHEDULER_INVALID".into()),
    };
@@ -136,6 +148,7 @@ impl SegmentedDistributedBfs {
    "total_bytes":m.total_bytes,"window_bytes":bytes,"hash_parent_index":parent_index,
    "scheduler":if batch.is_some(){"multi_cta"}else{"single_cta"},
    "batch_send":batch.map(|v|v.send),"batch_receive":batch.map(|v|v.receive),
+   "hash_virtual_buckets":batch.map(|v|v.hash_virtual_buckets),
   }));
   ready.agree("resident-mailbox-layout",&geometry,geometry_identity.as_ref())?;
   let (mailbox,window_bytes,hash_parent_index_enabled,batch_selection)=geometry?;
@@ -196,7 +209,7 @@ impl SegmentedDistributedBfs {
    // to extent banks. Route and receive positions are reused sequentially.
    let mut batch=if let Some(sel)=batch_selection {
     let histogram=u64::from(sel.blocks).checked_mul(u64::from(world)).ok_or("RESIDENT_BATCH_SIZE")?;
-    let shard_count=u64::from(self.plan.shards);
+    let shard_count=u64::from(self.plan.shards).checked_mul(u64::from(sel.hash_virtual_buckets)).ok_or("RESIDENT_BATCH_SIZE")?;
     Some(BatchBuffers{
      raw:Buffer::new(checked_size(sel.send,24)?,d)?,
      positions:Buffer::new(checked_size(sel.send.max(sel.receive),8)?,d)?,
@@ -264,7 +277,11 @@ impl SegmentedDistributedBfs {
    if hash{descriptors.upload(&hash_host)?}else{descriptors.upload(&host)?}
    leases.upload(&owners)?;
    let hash_stats=if hash&&hash_instrumented {
-    let b=Buffer::new(20,d)?;b.upload(&[0u32;5])?;Some(b)
+    let words=if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){
+     usize::try_from(u64::from(self.plan.shards)+6).map_err(|_|"RESIDENT_HASH_STATS_SIZE")?
+    }else{5};
+    let bytes=words.checked_mul(4).ok_or("RESIDENT_HASH_STATS_SIZE")?;
+    let b=Buffer::new(bytes,d)?;b.upload(&vec![0u32;words])?;Some(b)
    }else{None};
    let shards=u64::from(self.plan.shards);
    let next_offset=checked_size(shards,8)?;
@@ -292,7 +309,7 @@ impl SegmentedDistributedBfs {
       shard_head:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.ptr.cast()),
       extent_next:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(next_offset)),
       free_cursor:hash_index.as_ref().map_or(ptr::null_mut(),|b|b.at(cursor_offset)),
-      packed_states:u32::from(self.resident_hash_pack4),reserved:0};
+      packed_states:u32::from(self.resident_hash_pack4),virtual_buckets:batch_selection.map_or(1,|v|v.hash_virtual_buckets)};
     b.upload(&[config])?;Some(b)
    }else{None};
    let mut host_terminal=ptr::null_mut();let mut device_terminal=ptr::null_mut();
@@ -444,8 +461,9 @@ impl SegmentedDistributedBfs {
   let mut hash_owner_stats=None;
   let readback:Result<_>=(||{
    if let Some(stats)=&res.hash_stats {
-    let mut values=[0u32;5];
-    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),stats.ptr,20,2)})?;
+    let mut values=[0u32;6];
+    let bytes=if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){24}else{20};
+    crate::generic_native::checked!(cudaMemcpy,unsafe{cudaMemcpy(values.as_mut_ptr().cast(),stats.ptr,bytes,2)})?;
     hash_owner_stats=Some(values);
    }
    let mut sizes=vec![0u64;usize::try_from(out.depth+1).map_err(|_|"RESIDENT_DEPTH_RANGE")?];
@@ -504,14 +522,18 @@ impl SegmentedDistributedBfs {
     "hash_owner_execution":if hash{Some(if batch_selection.is_some(){"batched_parallel_per_shard"}else if hash_parallel{"parallel_per_shard"}else{"serialized_per_rank"})}else{None::<&str>},
     "hash_indexed_extents":if hash{Some(hash_indexed)}else{None},
     "hash_packed_states":if hash{Some(self.resident_hash_pack4)}else{None},
+    "hash_virtual_buckets_per_shard":if hash{Some(batch_selection.map_or(1,|v|v.hash_virtual_buckets))}else{None},
+    "hash_virtual_cta_peak":if hash&&batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){hash_owner_stats.map(|v|v[0])}else{None},
+    "hash_virtual_cta_peak_same_shard":if hash&&batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){hash_owner_stats.map(|v|v[5])}else{None},
+    "hash_virtual_sm_mask_first96":if hash&&batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){hash_owner_stats.map(|v|[v[2],v[3],v[4]])}else{None},
     "hash_extent_index_bytes":res.hash_index.as_ref().map_or(0,|b|b.bytes),
     "hash_parent_index_enabled":hash_parent_index_enabled,
     "hash_parent_index_bytes":res.hash_parent_index.as_ref().map_or(0,|b|b.bytes),
     "hash_owner_peak_active":hash_owner_stats.map(|v|v[0]),
-    "hash_extent_full_seen":hash_owner_stats.map(|v|v[1]),
-    "hash_freeze_retry":hash_owner_stats.map(|v|v[2]),
-    "hash_extent_full_recheck":hash_owner_stats.map(|v|v[3]),
-    "hash_extent_full_confirmed":hash_owner_stats.map(|v|v[4]),
+    "hash_extent_full_seen":if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){None}else{hash_owner_stats.map(|v|v[1])},
+    "hash_freeze_retry":if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){None}else{hash_owner_stats.map(|v|v[2])},
+    "hash_extent_full_recheck":if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){None}else{hash_owner_stats.map(|v|v[3])},
+    "hash_extent_full_confirmed":if batch_selection.map_or(false,|v|v.hash_virtual_buckets>1){None}else{hash_owner_stats.map(|v|v[4])},
     "mailbox_bytes":res.window_bytes,
     "slots_per_ring":res.args.mailbox.slots_per_ring,"lanes":res.args.mailbox.lanes,
     "packet_records":res.args.mailbox.requested_payload_bytes/16,

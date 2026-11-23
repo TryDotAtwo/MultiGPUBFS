@@ -29,7 +29,8 @@ struct HashBatch {
   MgbfsPack4Dictionary dictionary;
   uint64_t* rank_count;
   uint64_t rank_limit;
-  uint32_t shards,bank,state_bytes,packed_states;
+  uint32_t shards,bank,state_bytes,packed_states,virtual_buckets;
+  uint32_t* owner_stats;
   uint64_t* grouped_origins; // offsets into the still-leased receive buffer
   uint64_t* positions;
   uint64_t* shard_counts;
@@ -245,11 +246,20 @@ __device__ void hash_accept_shard(const Payload* input,uint64_t input_count,
     __syncthreads();
   }
 }
+#include "device_batch_hash_virtual.cuh"
+
 __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) {
   auto grid=cooperative_groups::this_grid();
   const uint64_t tid=grid.thread_rank();
   if(!tid)*a.error=0;
-  for(uint64_t s=tid;s<a.shards;s+=grid.size())a.shard_counts[s]=0;
+  grid.sync();
+  if(!a.virtual_buckets || (a.virtual_buckets&(a.virtual_buckets-1)) ||
+     a.virtual_buckets>64 || !a.shards || a.shards>UINT32_MAX/a.virtual_buckets) {
+    if(!tid)*a.error=HASH_FATAL;
+    grid.sync();return;
+  }
+  const uint32_t groups=a.shards*a.virtual_buckets;
+  for(uint64_t s=tid;s<groups;s+=grid.size())a.shard_counts[s]=0;
   grid.sync();
   if(blockDim.x!=128 || !a.shards || a.bank>=3 || !a.rank_count || !a.grouped_origins ||
      !a.positions || !a.shard_counts || !a.shard_starts ||
@@ -267,7 +277,7 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   for(uint64_t begin=uint64_t(blockIdx.x)*blockDim.x;begin<n;) {
     const uint64_t i=begin+threadIdx.x;
     const bool present=i>=begin&&i<n;
-    const uint32_t shard=present?hash_shard(input[i].key,a.shards):0;
+    const uint32_t shard=present?hash_virtual_group(input[i].key,input[i].packed,a.shards,a.virtual_buckets):0;
     const unsigned mask=__ballot_sync(0xffffffffu,present);
     if(present) {
       const unsigned group=__match_any_sync(mask,shard);
@@ -285,18 +295,18 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   grid.sync();
   if(!tid) {
     uint64_t prefix=0;
-    for(uint32_t s=0;s<a.shards;++s) {
+    for(uint32_t s=0;s<groups;++s) {
       a.shard_starts[s]=prefix;
       if(UINT64_MAX-prefix<a.shard_counts[s]){*a.error|=HASH_FATAL;break;}
       prefix+=a.shard_counts[s];
     }
-    a.shard_starts[a.shards]=prefix;
+    a.shard_starts[groups]=prefix;
     if(prefix!=n)*a.error|=HASH_FATAL;
   }
   grid.sync();
   if(!*a.error) {
     for(uint64_t i=tid;i<n;i+=grid.size()) {
-      const Payload x=input[i];const uint32_t shard=hash_shard(x.key,a.shards);
+      const Payload x=input[i];const uint32_t shard=hash_virtual_group(x.key,x.packed,a.shards,a.virtual_buckets);
       const uint64_t at=a.shard_starts[shard]+a.positions[i];
       if(at>=n)atomicOr(a.error,uint32_t(HASH_FATAL));else a.grouped_origins[at]=i;
     }
@@ -305,12 +315,18 @@ __device__ inline void hash_accept(const Payload* input,uint64_t n,HashBatch a) 
   __shared__ unsigned block_run;
   if(!threadIdx.x)block_run=atomicAdd(a.error,0u)==0;
   __syncthreads();
-  if(block_run) {
-    for(uint32_t shard=blockIdx.x;shard<a.shards;shard+=gridDim.x) {
-      const uint64_t begin=a.shard_starts[shard],end=a.shard_starts[shard+1];
-      if(a.state_bytes==1)hash_accept_shard<uint8_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
-      else hash_accept_shard<int64_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
+  if(a.virtual_buckets==1) {
+    if(block_run) {
+      for(uint32_t shard=blockIdx.x;shard<a.shards;shard+=gridDim.x) {
+        const uint64_t begin=a.shard_starts[shard],end=a.shard_starts[shard+1];
+        if(a.state_bytes==1)hash_accept_shard<uint8_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
+        else hash_accept_shard<int64_t>(input,n,a.grouped_origins+begin,end-begin,shard,a);
+      }
     }
+  } else if(block_run) {
+    // block_run is uniform: the grid has just synchronized after grouping.
+    if(a.state_bytes==1)hash_accept_virtual<uint8_t>(input,n,a);
+    else hash_accept_virtual<int64_t>(input,n,a);
   }
   grid.sync();
 }
