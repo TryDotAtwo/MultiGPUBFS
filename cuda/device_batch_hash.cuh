@@ -29,7 +29,7 @@ struct HashBatch {
   MgbfsPack4Dictionary dictionary;
   uint64_t* rank_count;
   uint64_t rank_limit;
-  uint32_t shards,bank,state_bytes,packed_states,virtual_buckets;
+  uint32_t shards,bank,state_bytes,packed_states,virtual_buckets,bucket_extents;
   uint32_t* owner_stats;
   uint64_t* grouped_origins; // offsets into the still-leased receive buffer
   uint64_t* positions;

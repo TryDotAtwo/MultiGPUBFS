@@ -63,6 +63,13 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
   }
   const uint32_t state_elements=config->packed_states?1:a.dictionary.elements;
   const uint64_t state_size=config->packed_states?8:config->state_bytes;
+  const bool bucket_extents=(a.reserved0&4u)!=0;
+  const uint64_t owner_groups=bucket_extents?
+    uint64_t(a.shards)*config->virtual_buckets:uint64_t(a.shards);
+  if(owner_groups>UINT32_MAX || (bucket_extents&&!config->packed_states)) {
+    if(!tid)fail(local,WINDOW_PROTOCOL);
+    grid.sync();return;
+  }
   uint64_t depth=0,sequence=1;
   auto* metric_meta=reinterpret_cast<uint64_t*>(args.spans);
   const bool metric_on=(a.reserved0&2u)!=0;
@@ -82,6 +89,26 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       current+=x.counts[0];
     }
     if(current>1)fail(local,WINDOW_PROTOCOL);
+    // Before the first lookup, relabel the single live root extent from the
+    // host's physical shard to its stable exact-key virtual bucket.
+    if(bucket_extents&&current==1) {
+      for(uint64_t e=0;e<a.extent_count;++e)if(extents[e].counts[0]) {
+        const auto x=extents[e];const auto seg=x.segment;
+        const uint64_t packed=static_cast<const uint64_t*>(seg.states)[0];
+        if(x.counts[0]!=1||x.counts[1]||x.counts[2]||
+           !mgbfs_pack4_valid_word(a.dictionary,packed)) {
+          fail(local,WINDOW_PROTOCOL);break;
+        }
+        const HashWord word{a.dictionary,packed};
+        const uint64_t key=mgbfs_device_hash_key::hash(word,*config);
+        const uint32_t physical_shard=hash_shard(key,a.shards);
+        const uint32_t group=hash_virtual_group(key,packed,a.shards,config->virtual_buckets);
+        if(a.extent_owner[e]!=physical_shard||group>=owner_groups) {
+          fail(local,WINDOW_PROTOCOL);break;
+        }
+        a.extent_owner[e]=group;
+      }
+    }
     local->current=current;local->committed_count=current;
     local->sequence=sequence;a.layer_sizes[0]=1;
     if(a.capture_count)*a.capture_count=0;
@@ -151,9 +178,9 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
       uint64_t prefix=0;args.parent_prefix[0]=0;
       // Rebuild after bank retirement, before any shard CTA can probe. The
       // index contains exactly the extents with live rows for each owner.
-      for(uint32_t shard=0;shard<a.shards;++shard) {
-        config->shard_head[shard]=UINT64_MAX;
-        config->free_cursor[shard]=0;
+      for(uint64_t group=0;group<owner_groups;++group) {
+        config->shard_head[group]=UINT64_MAX;
+        config->free_cursor[group]=0;
       }
       for(uint64_t e=0;e<a.extent_count;++e) {
         auto x=extents[e];
@@ -167,7 +194,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
           config->extent_next[e]=UINT64_MAX;
         } else {
           const uint32_t owner=a.extent_owner[e];
-          if(owner>=a.shards){fail(local,WINDOW_PROTOCOL);break;}
+          if(owner>=owner_groups){fail(local,WINDOW_PROTOCOL);break;}
           config->extent_next[e]=config->shard_head[owner];
           config->shard_head[owner]=e;
         }
@@ -298,7 +325,7 @@ __global__ void run(ncclWindow_t window,ncclDevComm comm,Args args,mgbfs_residen
         if(acquire(local->status.failure))break;
         HashBatch batch{extents,a.extent_owner,a.extent_count,
           config->shard_head,config->extent_next,config->free_cursor,a.dictionary,
-          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,config->virtual_buckets,config->owner_peak,
+          a.rank_count,a.rank_limit,a.shards,write_bank,config->state_bytes,config->packed_states,config->virtual_buckets,uint32_t(bucket_extents),config->owner_peak,
           args.grouped_origins,args.positions,args.shard_counts,args.shard_starts,reinterpret_cast<uint64_t*>(&local->shard_mask),
           args.error,reinterpret_cast<HashCapture*>(a.capture),a.capture_capacity,a.capture_count,depth+1};
         const uint64_t before=*a.rank_count;

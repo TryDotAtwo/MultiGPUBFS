@@ -37,7 +37,7 @@ template<class T> void check_type(bool tight,bool packed,uint32_t buckets) {
  auto* error=managed<uint32_t>(1);auto* mask=managed<uint64_t>(1);auto* stats=managed<uint32_t>(6+shards);std::fill(stats,stats+6+shards,0);
  *rank_count=0;*error=0;*mask=0;
  HashBatch batch{ext,owners,extents_n,heads,next,cursor,dictionary,rank_count,tight?2ull:24ull,
-                 shards,1,uint32_t(sizeof(T)),uint32_t(packed),buckets,stats,grouped,positions,counts,offsets,mask,error,nullptr,0,nullptr,0};
+                 shards,1,uint32_t(sizeof(T)),uint32_t(packed),buckets,0u,stats,grouped,positions,counts,offsets,mask,error,nullptr,0,nullptr,0};
  std::array<unsigned,4> perm{0,1,2,3};std::vector<Payload> all;
  do {
   uint64_t word=0;for(unsigned k=0;k<4;++k)word|=uint64_t(perm[k])<<(4*k);

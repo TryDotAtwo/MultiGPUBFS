@@ -87,9 +87,18 @@ pub(super) fn resident_hash_metrics(capability:u32,value:&str)->Result<bool,Stri
   _=>Err("RESIDENT_HASH_METRICS_INVALID".into()),
  }
 }
+pub(super) fn resident_hash_bucket_extents(capability:u32,value:&str,packed:bool)->Result<bool,String>{
+ match value {
+  "0"=>Ok(false),
+  "1" if capability==1 && packed=>Ok(true),
+  "1" if !packed=>Err("RESIDENT_HASH_BUCKET_EXTENTS_PACKED_REQUIRED".into()),
+  "1"=>Err("RESIDENT_HASH_BUCKET_EXTENTS_UNSUPPORTED".into()),
+  _=>Err("RESIDENT_HASH_BUCKET_EXTENTS_INVALID".into()),
+ }
+}
 #[cfg(test)]
 mod resident_hash_rehash_tests {
- use super::{resident_hash_rehash,resident_hash_metrics};
+ use super::{resident_hash_rehash,resident_hash_metrics,resident_hash_bucket_extents};
  #[test]
  fn rejects_unknown_or_unsupported_but_accepts_legacy_default(){
   assert_eq!(resident_hash_rehash(0,"0"),Ok(false));
@@ -100,6 +109,11 @@ mod resident_hash_rehash_tests {
   assert_eq!(resident_hash_metrics(1,"1"),Ok(true));
   assert_eq!(resident_hash_metrics(0,"1"),Err("RESIDENT_HASH_METRICS_UNSUPPORTED".into()));
   assert_eq!(resident_hash_metrics(1,"auto"),Err("RESIDENT_HASH_METRICS_INVALID".into()));
+  assert_eq!(resident_hash_bucket_extents(0,"0",false),Ok(false));
+  assert_eq!(resident_hash_bucket_extents(1,"1",true),Ok(true));
+  assert_eq!(resident_hash_bucket_extents(0,"1",true),Err("RESIDENT_HASH_BUCKET_EXTENTS_UNSUPPORTED".into()));
+  assert_eq!(resident_hash_bucket_extents(1,"1",false),Err("RESIDENT_HASH_BUCKET_EXTENTS_PACKED_REQUIRED".into()));
+  assert_eq!(resident_hash_bucket_extents(1,"auto",true),Err("RESIDENT_HASH_BUCKET_EXTENTS_INVALID".into()));
  }
 }
 

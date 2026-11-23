@@ -50,6 +50,10 @@ def check_receipt(r):
  assert len(r["segment_memory_by_rank"])==world
  for m in r["segment_memory_by_rank"]:
   assert m["resident"]["storage"]=="segmented_hash"
+  groups=os.environ.get("MGBFS_RESIDENT_HASH_BUCKET_EXTENTS","0")=="1"
+  assert m["resident"]["hash_bucket_extents"] is groups
+  expected_groups=shards*(int(os.environ.get("MGBFS_RESIDENT_HASH_VBUCKETS","1")) if groups else 1)
+  assert m["resident"]["hash_extent_owner_groups"]==expected_groups
   assert m["resident"]["hash_packed_states"] is (scheduler=="batch")
   assert m["resident"]["hash_virtual_buckets_per_shard"]==(int(os.environ.get("MGBFS_RESIDENT_HASH_VBUCKETS","1")) if scheduler=="batch" else 1)
   indexed=os.environ.get("MGBFS_RESIDENT_HASH_PARENT_INDEX","0")=="1"

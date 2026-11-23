@@ -61,17 +61,20 @@ __device__ void hash_accept_virtual(const Payload* input,uint64_t input_count,Ha
       if(!valid_origin)atomicOr(&tile_error,uint32_t(HASH_FATAL));
       bool fresh=present && (!tid || hashes[tid]!=hashes[tid-1] || words[tid]!=words[tid-1]);
       const uint32_t shard=group<groups?uint32_t(group/a.virtual_buckets):0;
+      // Equal exact words have the same stable group for the entire job.
+      // With bucket-owned extents no different group can contain that word.
+      const uint32_t extent_group=a.bucket_extents?uint32_t(group):shard;
       if(fresh) {
         if(!mgbfs_pack4_valid_word(a.dictionary,words[tid])) {
           atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;
         } else {
           const HashInput word{a.dictionary,words[tid]};
-          uint64_t e=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[shard])
+          uint64_t e=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[extent_group])
                        .load(cuda::memory_order_acquire),traversed=0;
           while(e!=UINT64_MAX) {
             if(e>=a.extent_count || ++traversed>a.extent_count ||
                cuda::atomic_ref<uint32_t,cuda::thread_scope_device>(a.owners[e])
-                  .load(cuda::memory_order_acquire)!=shard) {
+                  .load(cuda::memory_order_acquire)!=extent_group) {
               atomicOr(&tile_error,uint32_t(HASH_FATAL));fresh=false;break;
             }
             const auto extent=a.extents[e];
@@ -123,7 +126,7 @@ __device__ void hash_accept_virtual(const Payload* input,uint64_t input_count,Ha
         // Existing same-shard extents first, then unowned extents from the
         // shared rank pool. Each count reservation is bounded and 64-bit.
         for(unsigned pass=0;pass<2 && left && !tile_error;++pass) {
-          uint64_t e=pass?0:cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[shard])
+          uint64_t e=pass?0:cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[extent_group])
                                 .load(cuda::memory_order_acquire);
           uint64_t visited=0;
           while(left && visited<a.extent_count) {
@@ -137,9 +140,9 @@ __device__ void hash_accept_virtual(const Payload* input,uint64_t input_count,Ha
             if(pass) {
               if(who!=UINT32_MAX)continue;
               uint32_t empty_owner=UINT32_MAX;
-              if(!owner.compare_exchange_strong(empty_owner,shard,cuda::memory_order_acq_rel,
+              if(!owner.compare_exchange_strong(empty_owner,extent_group,cuda::memory_order_acq_rel,
                                                cuda::memory_order_acquire))continue;
-            } else if(who!=shard){tile_error|=HASH_FATAL;break;}
+            } else if(who!=extent_group){tile_error|=HASH_FATAL;break;}
             auto x=a.extents[e];
             if(!mgbfs_device_hash::valid_extent(x,a.bank,
                 a.packed_states?1:a.dictionary.elements,a.packed_states?8:sizeof(T))) {
@@ -147,7 +150,7 @@ __device__ void hash_accept_virtual(const Payload* input,uint64_t input_count,Ha
             }
             if(pass) {
               if(x.counts[0]||x.counts[1]||x.counts[2]){tile_error|=HASH_FATAL;break;}
-              auto head=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[shard]);
+              auto head=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[extent_group]);
               uint64_t old_head=head.load(cuda::memory_order_acquire);
               do {a.extent_next[e]=old_head;}
               while(!head.compare_exchange_weak(old_head,e,cuda::memory_order_acq_rel,
@@ -174,7 +177,7 @@ __device__ void hash_accept_virtual(const Payload* input,uint64_t input_count,Ha
       // retried against the complete list before reporting a real shortage.
       grid.sync();
       if(!tid && left && !tile_error && !atomicAdd(a.error,0u)) {
-        uint64_t e=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[shard])
+        uint64_t e=cuda::atomic_ref<uint64_t,cuda::thread_scope_device>(a.shard_head[extent_group])
                      .load(cuda::memory_order_acquire),visited=0;
         while(left && e!=UINT64_MAX && visited++<a.extent_count) {
           if(e>=a.extent_count){tile_error|=HASH_FATAL;break;}
