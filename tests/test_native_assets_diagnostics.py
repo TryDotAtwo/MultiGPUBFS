@@ -131,6 +131,63 @@ class Assets(unittest.TestCase):
   with patch.object(d,"__file__",str(package/"native_distribution.py")),patch.object(self.module,"ensure_runtime",return_value=expected),patch.dict(os.environ,{},clear=True):
    binary,env=d.native_runtime();self.assertEqual(Path(binary),expected/"bin/mgbfs");self.assertEqual(env["LD_LIBRARY_PATH"].split(":")[0],str(expected/"lib"))
    self.assertEqual(d.native_runtime("/explicit/native")[0],"/explicit/native")
+
+ def test_external_native_runtime_uses_the_same_pinned_library_on_different_sm_ranks(self):
+  from multigpubfs import native_distribution as distribution
+
+  directory = Path(self.tmp.name)
+  package = directory / "package"
+  package.mkdir()
+  (package / "native_assets.json").write_text(json.dumps(dict(self.index, diagnostics={})))
+  manager = self.module.AssetManager
+  cache_lock = (patch.object(manager, "_lock", side_effect=lambda *_: contextlib.nullcontext())
+                if os.name != "posix" else contextlib.nullcontext())
+  with (cache_lock,
+        patch.object(distribution, "__file__", str(package / "native_distribution.py")),
+        patch.object(self.module.platform, "system", return_value="Linux"),
+        patch.object(self.module.platform, "machine", return_value="x86_64"),
+        patch.object(self.module, "AssetManager", side_effect=lambda index, cache:
+                     manager(index, cache, opener=self.opener, timeout=15)),
+        patch.object(self.module, "run_hardware_probe", return_value=hardware(75)) as discovery,
+        patch.dict(self.module._roots, {}, clear=True),
+        patch.dict(os.environ, {"MGBFS_NATIVE_CACHE": str(directory / "a"),
+                               "LD_LIBRARY_PATH": "system-test-lib"}, clear=True)):
+   local_binary, local_env = distribution.native_runtime()
+   local = Path(local_binary).parent.parent / "lib/libmgbfs_cuda.so"
+   self.assertTrue(local_env["LD_LIBRARY_PATH"].startswith(str(local.parent) + ":"))
+   self.assertEqual(local.read_bytes(), b"cuda 75")
+   with patch.dict(os.environ, {"WORLD_SIZE": "2", "RANK": "0"}):
+    first_binary, first_env = distribution.native_runtime()
+    first = Path(first_binary).parent.parent / "lib/libmgbfs_cuda.so"
+    self.assertTrue(first_env["LD_LIBRARY_PATH"].startswith(str(first.parent) + ":"))
+    self.assertEqual(distribution.native_root(), Path(first_binary).parent.parent)
+    self.assertEqual(first.read_bytes(), b"universal")
+   with patch.dict(os.environ, {"WORLD_SIZE": "2", "RANK": "1",
+                               "MGBFS_NATIVE_CACHE": str(directory / "b")}):
+    discovery.return_value = hardware(120)
+    second_binary, second_env = distribution.native_runtime()
+    second = Path(second_binary).parent.parent / "lib/libmgbfs_cuda.so"
+    self.assertTrue(second_env["LD_LIBRARY_PATH"].startswith(str(second.parent) + ":"))
+    self.assertNotEqual(first, second)
+    self.assertEqual(h(first.read_bytes()), h(second.read_bytes()))
+    self.assertEqual(distribution.native_runtime("/explicit/native")[0], "/explicit/native")
+    self.assertEqual(discovery.call_count, 3)
+   self.assertEqual(distribution.native_root(), Path(local_binary).parent.parent)
+   self.assertEqual([name for name, _ in self.calls].count("cuda-universal.tar.gz"), 2)
+   self.assertNotIn("cuda-sm120.tar.gz", {name for name, _ in self.calls})
+
+ def test_external_selection_requires_a_published_compatible_universal_component(self):
+  index = copy.deepcopy(self.index)
+  build = index["components"][index["production"]["universal"]]["build"]
+  build.update(architectures=[120], ptx_architectures=[])
+  self.assertEqual(self.manager(index).select(hardware(75)), "cuda-sm75")
+  with self.assertRaisesRegex(self.module.AssetError, "NATIVE_ASSET_CLUSTER_UNIVERSAL_UNSUPPORTED"):
+   self.manager(index).prepare(hardware(75), universal=True)
+  del index["production"]["universal"]
+  with self.assertRaisesRegex(self.module.AssetError, "NATIVE_ASSET_CLUSTER_UNIVERSAL_UNAVAILABLE"):
+   self.manager(index).prepare(hardware(75), universal=True)
+  self.assertEqual(self.calls, [])
+
  def test_inventory_declares_optional_payloads_without_fetch_and_environment_verifies_on_selection(self):
   from multigpubfs import runtime_variants as variants
   manager=self.manager();root=manager.prepare(hardware(75));verified=variants.inventory(root,environ={})

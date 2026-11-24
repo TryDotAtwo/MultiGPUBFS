@@ -109,7 +109,7 @@ class AssetManager:
     except BlockingIOError:self._remaining(deadline);time.sleep(.05)
    try:yield
    finally:fcntl.flock(f,fcntl.LOCK_UN)
- def select(self,hardware):
+ def select(self,hardware,*,universal=False):
   if type(hardware.get('driver_api')) is not int or hardware['driver_api']<self.index.get('driver_minimum',12000):raise AssetError('NATIVE_ASSET_DRIVER_UNSUPPORTED: compatible CUDA driver is required')
   devices=hardware.get('devices',[])
   if not devices or len(devices)>128 or {d.get('logical_id') for d in devices}!=set(range(len(devices))):raise AssetError('NATIVE_ASSET_NO_VISIBLE_GPU: run inside the allocated CUDA GPU job')
@@ -118,15 +118,20 @@ class AssetManager:
    cc=d.get('compute_capability')
    if not isinstance(cc,list) or len(cc)!=2 or any(type(v) is not int or v<0 for v in cc):raise AssetError('NATIVE_ASSET_COMPUTE_CAPABILITY')
    caps.append(10*cc[0]+cc[1])
-  candidates=[]
-  for key,name in self.index['production'].items():
-   if key=='universal':continue
-   target=int(key)
-   if all(target//10==cc//10 and target%10<=cc%10 for cc in caps):candidates.append((target,name))
-  if candidates:return max(candidates)[1]
+  if not universal:
+   candidates=[]
+   for key,name in self.index['production'].items():
+    if key=='universal':continue
+    target=int(key)
+    if all(target//10==cc//10 and target%10<=cc%10 for cc in caps):candidates.append((target,name))
+   if candidates:return max(candidates)[1]
   name=self.index['production'].get('universal');build=self.index['components'].get(name,{}).get('build',{})
   def supported(cc):return any(a//10==cc//10 and a%10<=cc%10 for a in build.get('architectures',[])) or any(a<=cc for a in build.get('ptx_architectures',[]))
   if name and all(supported(cc) for cc in caps):return name
+  if universal:
+   if not name:raise AssetError('NATIVE_ASSET_CLUSTER_UNIVERSAL_UNAVAILABLE: the package has no pinned universal component')
+   unsupported=','.join('SM'+str(cc) for cc in sorted(set(caps)) if not supported(cc))
+   raise AssetError('NATIVE_ASSET_CLUSTER_UNIVERSAL_UNSUPPORTED: '+unsupported)
   raise AssetError('NATIVE_ASSET_ARCHITECTURE_UNSUPPORTED: no compatible published cubin/PTX component')
  def _component(self,name,deadline):
   c=self.index['components'][name];folder=self.cache/'components'/c['sha256']
@@ -233,8 +238,8 @@ class AssetManager:
   destination.parent.mkdir(parents=True,exist_ok=True)
   try:os.link(source,destination)
   except OSError:shutil.copyfile(source,destination);destination.chmod(source.stat().st_mode&0o777)
- def prepare(self,hardware):
-  selected=self.select(hardware);deadline=time.monotonic()+self.timeout;root=self.cache/'bundles'/(self.identity+'-v'+str(LAYOUT_SCHEMA)+'-'+selected)
+ def prepare(self,hardware,*,universal=False):
+  selected=self.select(hardware,universal=universal);deadline=time.monotonic()+self.timeout;root=self.cache/'bundles'/(self.identity+'-v'+str(LAYOUT_SCHEMA)+'-'+selected)
   with self._lock('bundle-'+root.name,deadline):
    if root.exists():return self._verify(root,selected)
    common=self._component(self.index['common'],deadline);cli=self._component(self.index['executable'],deadline) if 'executable' in self.index else None;cuda=self._component(selected,deadline)
@@ -268,20 +273,20 @@ class AssetManager:
 _roots={}
 def index_path():return Path(__file__).with_name('native_assets.json')
 def cache_path():return Path(os.environ.get('MGBFS_NATIVE_CACHE') or Path(os.environ.get('XDG_CACHE_HOME') or Path.home()/'.cache')/'multigpubfs/native')
-def _key(path):
+def _key(path,universal):
  path=Path(path)
  try:st=path.stat();revision=(st.st_size,st.st_mtime_ns)
  except OSError:revision=None
- return (str(path.resolve()),revision,str(cache_path().expanduser().resolve()),os.environ.get('CUDA_VISIBLE_DEVICES'),os.environ.get('NVIDIA_VISIBLE_DEVICES'),os.environ.get('LD_LIBRARY_PATH'),os.environ.get('LD_PRELOAD'))
-def current_root(path=None):
- value=_roots.get(_key(path or index_path()));return value[0] if value and (value[0]/'bin/mgbfs').is_file() else None
-def ensure_runtime(path=None):
+ return (str(path.resolve()),revision,str(cache_path().expanduser().resolve()),os.environ.get('CUDA_VISIBLE_DEVICES'),os.environ.get('NVIDIA_VISIBLE_DEVICES'),os.environ.get('LD_LIBRARY_PATH'),os.environ.get('LD_PRELOAD'),universal)
+def current_root(path=None,*,universal=False):
+ value=_roots.get(_key(path or index_path(),universal));return value[0] if value and (value[0]/'bin/mgbfs').is_file() else None
+def ensure_runtime(path=None,*,universal=False):
  if _probe_blocked:raise AssetError('OWNED_DIAGNOSTIC_PROCESS_COULD_NOT_BE_REAPED: native launch is blocked')
- path=Path(path or index_path());key=_key(path)
+ path=Path(path or index_path());key=_key(path,universal)
  if key in _roots and (_roots[key][0]/'bin/mgbfs').is_file():return _roots[key][0]
  if platform.system()!='Linux' or platform.machine() not in ('x86_64','AMD64'):raise AssetError('NATIVE_ASSET_PLATFORM_UNSUPPORTED: Linux x86_64 NVIDIA execution is required')
  if not path.is_file():raise AssetError('NATIVE_ASSET_INDEX_NOT_INSTALLED')
- index=json.loads(path.read_text());manager=AssetManager(index,cache_path());hardware=run_hardware_probe();root=manager.prepare(hardware);_roots[key]=(root,manager,hardware);return root
+ index=json.loads(path.read_text());manager=AssetManager(index,cache_path());hardware=run_hardware_probe();root=manager.prepare(hardware,universal=universal);_roots[key]=(root,manager,hardware);return root
 def ensure_variant(root,identifier,*,deadline=None):
  root=Path(root).resolve()
  for prepared,manager,hardware in _roots.values():

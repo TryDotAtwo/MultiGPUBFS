@@ -22,19 +22,25 @@ def _file_digest(path):
 
 def native_root(*,prepare=False):
  """Resolve a full installed bundle or this package's verified user cache."""
+def _external_ranks():
+ # The cluster launcher exports WORLD_SIZE for both torchrun and SLURM.
+ world=os.environ.get('WORLD_SIZE','1')
+ return world.isdecimal() and int(world)>1
+
  root=Path(__file__).resolve().parent/'_native'
  if (root/'bin/mgbfs').is_file():return root
  index=Path(__file__).resolve().parent/'native_assets.json'
  if not index.is_file():return root
  from .native_assets import ensure_runtime,current_root
- return ensure_runtime(index) if prepare else current_root(index) or root
+ universal=_external_ranks()
+ return ensure_runtime(index,universal=universal) if prepare else current_root(index,universal=universal) or root
 
 def prepare_for_activation():
  """Prefetch outside the first BFS budget, when a GPU node is present."""
  package=Path(__file__).resolve().parent;index=package/"native_assets.json"
  if os.environ.get("MGBFS_EXECUTABLE") or (package/"_native/bin/mgbfs").is_file() or not index.is_file() or not os.path.exists("/dev/nvidiactl"):return
  from .native_assets import current_root
- if current_root(index) is None:native_runtime()
+ if current_root(index,universal=_external_ranks()) is None:native_runtime()
 
 def native_runtime(explicit=None):
  env=dict(os.environ)
