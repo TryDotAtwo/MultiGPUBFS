@@ -217,7 +217,7 @@ def test_native_metrics_are_scoped_and_do_not_invent_missing_values():
 
 @pytest.mark.parametrize("compare_transport, compact_presets, registry_export", [
     (None, False, False), ("balanced", False, False), ("maxmemory", False, False),
-    (None, True, False), (None, False, True),
+    (None, True, False), (None, False, "verified"), (None, False, "drift"),
 ])
 def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, compare_transport, compact_presets,
                                                      registry_export):
@@ -242,6 +242,11 @@ def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, co
 
         @contextmanager
         def sample_memory(self, snapshot):
+            if registry_export == "drift":
+                baseline, peak = ((1000, 1050) if not calls else (900, 1000))
+                yield {"baseline_bytes_by_rank": [baseline, 500], "samples": 10,
+                       "peak_bytes_by_rank": [peak, 600]}
+                return
             yield {"baseline_bytes_by_rank": [10, 10], "samples": 10,
                    "peak_bytes_by_rank": [31, 24] if len(calls) == 0 else [20, 19]}
 
@@ -321,7 +326,17 @@ def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, co
         pair = tmp_path / "run" / "pair-1"
         summary = json.loads((pair / "comparison.json").read_text())
         exported = summary["registry_evidence"]
+        if registry_export == "drift":
+            assert summary["full"]["status"] == bench.WITHIN_BOUND
+            assert exported["status"] == bench.UNVERIFIED
+            assert exported["boundary_vram_drift_bytes_by_rank"] == [100, 0]
+            assert exported["maxmemory_peak_gap_after_drift_bytes"] == -50
+            assert not (pair / "profile").exists()
+            report = json.loads((pair / "maxmemory" / "report.json").read_text())
+            assert "profile_peak_vram_bytes_by_rank" not in report
+            return
         assert exported["status"] == "EXPORTED"
+        assert exported["maxmemory_peak_gap_after_drift_bytes"] == 11
         catalog = pair / exported["catalog"]
         verify_publication(catalog, pair / "profile" / "evidence")
         entry = read_profile_registry(catalog, sha256=exported["catalog_sha256"])["entries"][0]

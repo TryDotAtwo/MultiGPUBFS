@@ -501,6 +501,23 @@ def _export_registry_pair(graph, pair_path, legs, comparison):
             ],
         )
         receipts[label] = report
+    reference, candidate = (legs[label]["profile_vram_sampling"] for label in ("balanced", "maxmemory"))
+    free_at_boundaries = [[gpu["free_bytes"] for gpu in leg[boundary]["devices"]]
+                          for leg in legs.values() for boundary in ("before", "after")]
+    drift = [max(max(samples) - min(samples), abs(left - right))
+             for samples, left, right in zip(zip(*free_at_boundaries, strict=True),
+                                             reference["baseline_bytes_by_rank"],
+                                             candidate["baseline_bytes_by_rank"], strict=True)]
+    reference_peak = max(reference["peak_bytes_by_rank"])
+    candidate_peak = max(candidate["peak_bytes_by_rank"])
+    # Device-wide peaks include unrelated resident bytes. Give the candidate
+    # the largest measured boundary drift on each physical GPU before comparing maxima.
+    guarded_peak = max(peak + extra for peak, extra in zip(candidate["peak_bytes_by_rank"], drift, strict=True))
+    drift_evidence = {"boundary_vram_drift_bytes_by_rank": drift,
+                      "maxmemory_peak_gap_after_drift_bytes": reference_peak - guarded_peak}
+    if reference_peak > candidate_peak and reference_peak <= guarded_peak:
+        return {"status": UNVERIFIED, "reason": "measured idle VRAM drift can explain the lower device peak",
+                **drift_evidence}
     for label, report in receipts.items():
         target = pair_path / label / "report.json"
         temporary = target.with_suffix(".json.tmp")
@@ -520,6 +537,7 @@ def _export_registry_pair(graph, pair_path, legs, comparison):
         "pressure_namespace": namespace, "catalog": "profile/registry.json",
         "catalog_sha256": hashlib.sha256(catalog.read_bytes()).hexdigest(),
         "evidence": f"profile/evidence/{entry['evidence_sha256']}.json",
+        **drift_evidence,
     }
 
 
