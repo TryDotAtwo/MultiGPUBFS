@@ -7,8 +7,8 @@ use super::{
 };
 use crate::segmented_packet_transport::{
     decode_runs, encode_runs, packet_wire_kernel, Frame as PacketFrame, Packet, PacketBytes,
-    PacketClient, PacketEndpoint, PacketJobToken, PacketWireFn, ShardRun,
-    PACKET_CANCELLED, PACKET_DEADLINE, REMOTE_FAILURE, SHARD_DESCRIPTOR_BYTES,
+    PacketClient, PacketEndpoint, PacketJobToken, PacketWireFn, ShardRun, PACKET_CANCELLED,
+    PACKET_DEADLINE, REMOTE_FAILURE, SHARD_DESCRIPTOR_BYTES,
 };
 use mgbfs_core::Result;
 use mgbfs_cuda::ffi::{
@@ -22,7 +22,9 @@ use std::{
 };
 
 mod owner_banks;
+mod raw;
 mod receive;
+pub(crate) use raw::{RawPacketTransport, RawShardRun};
 use receive::{ReceiveCarousel, ReceiveSlot};
 
 const PACKET_ROUTE_STATUS_WORDS: usize = 2;
@@ -92,7 +94,7 @@ fn packet_window(
 
 type Pack4PacketRouteFn =
     unsafe extern "C" fn(Pack4RouteArgs, *mut c_void, usize, u32, *mut c_void) -> i32;
-type CompactRouteFn = unsafe extern "C" fn(
+pub(crate) type CompactRouteFn = unsafe extern "C" fn(
     u32,
     u32,
     BitmapDeviceDomain,
@@ -196,12 +198,40 @@ pub(super) struct PacketConfig {
     pub(super) pack4_owner: Option<Pack4PacketOwnerFn>,
     pub(super) pack4_wire_owner: Option<Pack4PacketOwnerFn>,
     pub(super) byte_wire_owner: Option<(u32, ByteWireOwnerFn)>,
-    compact_route: CompactRouteFn,
+    compact_route: Option<CompactRouteFn>,
     pack4_route: Option<Pack4PacketRouteFn>,
     pub(super) codec: Option<PacketCodec>,
 }
 
+pub(crate) fn compact_route_kernel() -> Result<CompactRouteFn> {
+    let symbol = unsafe {
+        libc::dlsym(
+            libc::RTLD_DEFAULT,
+            b"mgbfs_segmented_compact_route_v1\0".as_ptr().cast(),
+        )
+    };
+    if symbol.is_null() {
+        return Err("SEGMENT_PACKET_COMPACT_ROUTE_ABI_UNAVAILABLE".into());
+    }
+    Ok(unsafe { std::mem::transmute::<*mut c_void, CompactRouteFn>(symbol) })
+}
+
 impl PacketConfig {
+    fn raw(endpoint: PacketEndpoint) -> Result<Self> {
+        Ok(Self {
+            endpoint,
+            wire: packet_wire_kernel()?,
+            bitmap_owner: None,
+            bitmap_batch: None,
+            pack4_owner: None,
+            pack4_wire_owner: None,
+            byte_wire_owner: None,
+            compact_route: None,
+            pack4_route: None,
+            codec: None,
+        })
+    }
+
     pub(super) fn load(
         world: u32,
         rank: u32,
@@ -262,16 +292,7 @@ impl PacketConfig {
             bitmap_batch =
                 Some(unsafe { std::mem::transmute::<*mut c_void, BitmapPacketBatchFn>(batch) });
         }
-        let compact = unsafe {
-            libc::dlsym(
-                libc::RTLD_DEFAULT,
-                b"mgbfs_segmented_compact_route_v1\0".as_ptr().cast(),
-            )
-        };
-        if compact.is_null() {
-            return Err("SEGMENT_PACKET_COMPACT_ROUTE_ABI_UNAVAILABLE".into());
-        }
-        let compact_route = unsafe { std::mem::transmute::<*mut c_void, CompactRouteFn>(compact) };
+        let compact_route = Some(compact_route_kernel()?);
         let pack4_codec_mode = std::env::var("MGBFS_SEGMENT_PACKET_PACK4");
         let pack4_codec = if pack4_wire && pack4_codec_mode.as_deref() != Ok("0") {
             let symbol = unsafe {
@@ -511,8 +532,45 @@ impl PacketRuntime {
         let producer_rows = producer_batch
             .checked_mul(generators)
             .ok_or("SEGMENT_PACKET_PRODUCER_SIZE")?;
-        let descriptors = plan.shards.min(plan.queue_capacity);
-        let state_bytes = plan.queue_payload_bytes();
+        let metadata_words = (plan.world as usize)
+            .checked_mul(plan.shards as usize)
+            .and_then(|words| words.checked_add(PACKET_ROUTE_STATUS_WORDS))
+            .ok_or("SEGMENT_PACKET_METADATA_SIZE")?;
+        let metadata_bytes = metadata_words
+            .checked_mul(std::mem::size_of::<u32>())
+            .ok_or("SEGMENT_PACKET_METADATA_SIZE")?;
+        let route_metadata = PinnedStatus::try_new(metadata_bytes)?;
+        let route_receive_progress = plan.compact_packet_slots == 3
+            || (route_metadata.is_some()
+                && (plan.compact_route_lookahead
+                    || std::env::var("MGBFS_SEGMENT_PACKET_ROUTE_PROGRESS").as_deref() == Ok("1")));
+        let mut transport = Self::new_exchange(
+            config,
+            id,
+            plan.shards,
+            plan.queue_capacity,
+            plan.queue_payload_bytes(),
+            [plan.compact_packet_slots, plan.compact_receive_slots],
+            device,
+        )?;
+        transport.route_metadata = route_metadata;
+        transport.producer_rows = producer_rows;
+        transport.route_receive_progress = route_receive_progress;
+        transport.route_lookahead = plan.compact_route_lookahead;
+        Ok(transport)
+    }
+
+    fn new_exchange(
+        config: PacketConfig,
+        id: &[u8; 128],
+        shards: u32,
+        queue_capacity: u32,
+        state_bytes: usize,
+        slots: [u32; 2],
+        device: i32,
+    ) -> Result<Self> {
+        let [tx_slots, rx_slots] = slots;
+        let descriptors = shards.min(queue_capacity);
         let wire_payload_bytes = match config.codec {
             Some(PacketCodec::Binary(..)) => 8,
             Some(PacketCodec::Range16(..)) => state_bytes / 4,
@@ -522,39 +580,30 @@ impl PacketRuntime {
         let wire_record_bytes = match config.codec {
             Some(PacketCodec::Pack4(_)) => 16,
             Some(_) => 8,
-            None => 32,
+            None => std::mem::size_of::<GenericRouteRecord>(),
         };
         let decoded_bytes = if config.codec.is_some()
             && config.pack4_wire_owner.is_none()
             && config.byte_wire_owner.is_none()
         {
-            (plan.queue_capacity as usize)
+            (queue_capacity as usize)
                 .checked_mul(32 + state_bytes)
                 .ok_or("SEGMENT_PACKET_BUFFER_SIZE")?
         } else {
             0
         };
         let packet = PacketBytes::new(
-            descriptors, plan.queue_capacity, wire_record_bytes, wire_payload_bytes,
+            descriptors,
+            queue_capacity,
+            wire_record_bytes,
+            wire_payload_bytes,
         )?;
-        let metadata_words = (plan.world as usize)
-            .checked_mul(plan.shards as usize)
-            .and_then(|words| words.checked_add(PACKET_ROUTE_STATUS_WORDS))
-            .ok_or("SEGMENT_PACKET_METADATA_SIZE")?;
-        let metadata_bytes = metadata_words
-            .checked_mul(std::mem::size_of::<u32>())
-            .ok_or("SEGMENT_PACKET_METADATA_SIZE")?;
-        let route_metadata = PinnedStatus::try_new(metadata_bytes)?;
-        let pipelined = plan.compact_packet_slots == 3;
-        let route_receive_progress = pipelined
-            || (route_metadata.is_some()
-                && (plan.compact_route_lookahead
-                    || std::env::var("MGBFS_SEGMENT_PACKET_ROUTE_PROGRESS").as_deref() == Ok("1")));
+        let pipelined = tx_slots == 3;
         let carousel = if pipelined {
             Some(TransmitCarousel {
                 pack: Stream::new(device)?,
                 source_read: [PacketEvent::new(device)?, PacketEvent::new(device)?],
-                queue: VecDeque::with_capacity(plan.compact_packet_slots as usize),
+                queue: VecDeque::with_capacity(tx_slots as usize),
                 progress: TransmitProgress::Ready,
                 next_slot: 0,
                 peak_live: 0,
@@ -562,8 +611,8 @@ impl PacketRuntime {
         } else {
             None
         };
-        let mut tx = Vec::with_capacity(plan.compact_packet_slots as usize);
-        for _ in 0..plan.compact_packet_slots {
+        let mut tx = Vec::with_capacity(tx_slots as usize);
+        for _ in 0..tx_slots {
             tx.push(TransmitSlot {
                 payload: Buffer::new(packet.total, device)?,
                 header: PinnedStatus::try_new(packet.header)?,
@@ -574,12 +623,12 @@ impl PacketRuntime {
                 },
             });
         }
-        let receive = if plan.compact_receive_slots == 3 {
-            Some(ReceiveCarousel::new(plan.shards as usize, device)?)
+        let receive = if rx_slots == 3 {
+            Some(ReceiveCarousel::new(shards as usize, device)?)
         } else {
             None
         };
-        let rx = (0..plan.compact_receive_slots)
+        let rx = (0..rx_slots)
             .map(|_| {
                 ReceiveSlot::new(
                     packet.total,
@@ -611,12 +660,94 @@ impl PacketRuntime {
             sent_bytes: 0,
             sent_header_bytes: 0,
             split_destination_windows: 0,
-            route_metadata,
-            producer_rows,
-            route_receive_progress,
-            route_lookahead: plan.compact_route_lookahead,
+            route_metadata: None,
+            producer_rows: 0,
+            route_receive_progress: false,
+            route_lookahead: false,
         })
     }
+    fn stage_payload(
+        &mut self,
+        slot: usize,
+        runs: &[ShardRun],
+        total_rows: u32,
+        elements: u32,
+        width: usize,
+        input: QueueSide,
+    ) -> Result<()> {
+        let pack_stream = self
+            .carousel
+            .as_ref()
+            .map_or(&self.stream, |ring| &ring.pack);
+        let st = pack_stream.ptr;
+        let transmit = &self.tx[slot];
+        let layout = PacketBytes::new(
+            runs.len() as u32,
+            total_rows,
+            self.wire_record_bytes,
+            self.wire_payload_bytes,
+        )?;
+        if layout.total > transmit.payload.bytes {
+            return Err("SEGMENT_PACKET_BUFFER_BOUNDS".into());
+        }
+        encode_runs(runs, &mut self.header);
+        let header = layout.header;
+        if let Some(pinned) = &transmit.header {
+            // The host may format another packet while this header is being uploaded.
+            unsafe {
+                ptr::copy_nonoverlapping(self.header.as_ptr(), pinned.ptr.cast(), header);
+            }
+            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                cudaMemcpyAsync(transmit.payload.ptr, pinned.ptr.cast(), header, 1, st)
+            })?;
+        } else {
+            crate::generic_native::checked!(cudaMemcpy, unsafe {
+                cudaMemcpy(transmit.payload.ptr, self.header.as_ptr().cast(), header, 1)
+            })?;
+        }
+        let rows = total_rows as usize;
+        if let Some(codec) = self.config.codec {
+            crate::generic_native::checked!(segmented_packet_encode, unsafe {
+                codec.transform(
+                    transmit.payload.ptr,
+                    runs.len() as u32,
+                    total_rows,
+                    elements,
+                    input.states,
+                    input.records,
+                    transmit.payload.at(header),
+                    0,
+                    st,
+                )
+            })?;
+        } else {
+            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                cudaMemcpyAsync(
+                    transmit.payload.at(header),
+                    input.records,
+                    rows * self.wire_record_bytes,
+                    3,
+                    st,
+                )
+            })?;
+            if width != 0 {
+                crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                    cudaMemcpyAsync(
+                        transmit.payload.at(layout.states),
+                        input.states,
+                        rows * width,
+                        3,
+                        st,
+                    )
+                })?;
+            }
+        }
+        if let Some(packed) = &transmit.packed {
+            packed.record(pack_stream)?;
+        }
+        Ok(())
+    }
+
     fn tx_bytes(&self) -> usize {
         self.tx.iter().map(|slot| slot.payload.bytes).sum()
     }
@@ -689,6 +820,33 @@ impl PacketRuntime {
    "producer_queue_allocated_bytes":producer_queue_bytes,
    "chunk_collectives":0})
     }
+    fn enqueue_transmit(&mut self, staged: StagedSend) -> Result<()> {
+        let slots = self.tx.len();
+        let ring = self
+            .carousel
+            .as_mut()
+            .ok_or("SEGMENT_PACKET_CAROUSEL_MISSING")?;
+        if ring.queue.len() >= slots || staged.slot != ring.next_slot {
+            return Err("SEGMENT_PACKET_TX_SLOT".into());
+        }
+        ring.queue.push_back(staged);
+        ring.next_slot = (staged.slot + 1) % slots;
+        ring.peak_live = ring.peak_live.max(ring.queue.len());
+        Ok(())
+    }
+
+    fn source_read_event(&self, slot: usize) -> Result<(&PacketEvent, &Stream)> {
+        let ring = self
+            .carousel
+            .as_ref()
+            .ok_or("SEGMENT_PACKET_CAROUSEL_MISSING")?;
+        let event = ring
+            .source_read
+            .get(slot)
+            .ok_or("SEGMENT_PACKET_LOCAL_SLOT")?;
+        Ok((event, &ring.pack))
+    }
+
     fn poll_transmit(&mut self) -> PacketResult<TransmitPoll> {
         let head = self
             .carousel
@@ -753,7 +911,8 @@ pub(super) struct PacketLayerStats {
 fn packet_prefix_stop(code: u32) -> bool {
     matches!(code, 10 | PACKET_CANCELLED | PACKET_DEADLINE)
 }
-enum PacketError {
+#[derive(Debug)]
+pub(crate) enum PacketError {
     Failure(String),
     Terminal(u32),
 }
@@ -767,7 +926,7 @@ impl From<&str> for PacketError {
         Self::Failure(value.into())
     }
 }
-type PacketResult<T> = std::result::Result<T, PacketError>;
+pub(crate) type PacketResult<T> = std::result::Result<T, PacketError>;
 
 fn check_packet_stop(stop: &impl Fn() -> u32) -> PacketResult<()> {
     match stop() {
@@ -992,7 +1151,10 @@ impl SegmentedDistributedBfs {
                 })?;
             } else {
                 crate::generic_native::checked!(mgbfs_segmented_compact_route_v1, unsafe {
-                    (transport.config.compact_route)(
+                    (transport
+                        .config
+                        .compact_route
+                        .ok_or("SEGMENT_PACKET_COMPACT_ROUTE_ABI_UNAVAILABLE")?)(
                         bitmap,
                         word_shard,
                         domain,
@@ -1045,81 +1207,22 @@ impl SegmentedDistributedBfs {
         tile_begin: usize,
     ) -> Result<()> {
         let p = &self.plan;
-        let pack_stream = transport
-            .carousel
-            .as_ref()
-            .map_or(&transport.stream, |ring| &ring.pack);
-        let st = pack_stream.ptr;
-        let transmit = &transport.tx[slot];
         let first = runs.first().ok_or("SEGMENT_PACKET_EMPTY_RUNS")?;
-        let layout = PacketBytes::new(
-            runs.len() as u32, total_rows, transport.wire_record_bytes, transport.wire_payload_bytes,
-        )?;
-        if runs.len() as u32 > p.shards.min(p.queue_capacity)
-            || layout.total > transmit.payload.bytes
-        {
+        if runs.len() as u32 > p.shards.min(p.queue_capacity) {
             return Err("SEGMENT_PACKET_BUFFER_BOUNDS".into());
-        }
-        encode_runs(runs, &mut transport.header);
-        let header = layout.header;
-        if let Some(pinned) = &transmit.header {
-            // The host may format another packet while this header is being uploaded.
-            unsafe {
-                ptr::copy_nonoverlapping(transport.header.as_ptr(), pinned.ptr.cast(), header);
-            }
-            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                cudaMemcpyAsync(transmit.payload.ptr, pinned.ptr.cast(), header, 1, st)
-            })?;
-        } else {
-            crate::generic_native::checked!(cudaMemcpy, unsafe {
-                cudaMemcpy(
-                    transmit.payload.ptr,
-                    transport.header.as_ptr().cast(),
-                    header,
-                    1,
-                )
-            })?;
         }
         // Runs are consecutive nonempty shards in the sorted producer tile. Their
         // records and their SoA state planes form two contiguous source spans.
         let queue = destination as usize * p.shards as usize + first.shard as usize;
         let input = output.slice(queue, tile_begin, p);
-        let rows = total_rows as usize;
-        if let Some(codec) = transport.config.codec {
-            crate::generic_native::checked!(segmented_packet_encode, unsafe {
-                codec.transform(
-                    transmit.payload.ptr,
-                    runs.len() as u32,
-                    total_rows,
-                    p.elements,
-                    input.states,
-                    input.records,
-                    transmit.payload.at(header),
-                    0,
-                    st,
-                )
-            })?;
-        } else {
-            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                cudaMemcpyAsync(transmit.payload.at(header), input.records, rows * 32, 3, st)
-            })?;
-            let width = p.queue_payload_bytes();
-            if width != 0 {
-                crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                    cudaMemcpyAsync(
-                        transmit.payload.at(layout.states),
-                        input.states,
-                        rows * width,
-                        3,
-                        st,
-                    )
-                })?;
-            }
-        }
-        if let Some(packed) = &transmit.packed {
-            packed.record(pack_stream)?;
-        }
-        Ok(())
+        transport.stage_payload(
+            slot,
+            runs,
+            total_rows,
+            p.elements,
+            p.queue_payload_bytes(),
+            input,
+        )
     }
 
     fn count_packet_owner_input(&mut self, shards: &[PacketOwnerShard]) -> Result<()> {
@@ -1503,10 +1606,8 @@ impl SegmentedDistributedBfs {
                             packet: outgoing,
                             slot: transmit_slot,
                         };
-                        if let Some(ring) = &mut transport.carousel {
-                            ring.queue.push_back(staged);
-                            ring.next_slot = (transmit_slot + 1) % slots;
-                            ring.peak_live = ring.peak_live.max(ring.queue.len());
+                        if transport.carousel.is_some() {
+                            transport.enqueue_transmit(staged)?;
                             packed_tile = true;
                             self.service_source_grant(transport, future, &mut stats, stop)?;
                             continue;
@@ -1556,12 +1657,9 @@ impl SegmentedDistributedBfs {
                     }
                 }
                 if packed_tile {
-                    let ring = transport
-                        .carousel
-                        .as_ref()
-                        .ok_or("SEGMENT_PACKET_CAROUSEL_MISSING")?;
                     // Route reuse waits for all reads from this tile on the pack stream.
-                    ring.source_read[slot].record(&ring.pack)?;
+                    let (event, pack) = transport.source_read_event(slot)?;
+                    event.record(pack)?;
                 }
                 if !local_owner.is_empty() {
                     if transport.receive.is_some() {

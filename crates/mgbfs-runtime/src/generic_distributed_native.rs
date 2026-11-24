@@ -3,9 +3,16 @@
 use std::{ffi::c_void,ptr,rc::Rc};
 use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
 use crate::generic_route::RoundVote;
+use crate::segmented_packet_transport::PacketEndpoint;
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 extern "C" {fn cudaDeviceSynchronize()->i32;}
+mod compact_path;
+
+pub fn compact_path_available() -> bool { compact_path::abi_ready() }
+pub(crate) fn compact_path_scratch_bound(world:u32,shards:u32,generators:u32)->Result<u64>{
+ Ok(compact_path::route_scratch_bound(world,shards,generators)? as u64)
+}
 use crate::{generic_native::{GenericNativeBfs,Buffer,Stream,check},generic_memory::GenericMemoryPlan,generic_distributed_memory::GenericDistributedMemoryPlan};
 extern "C" {
  fn mgbfs_generic_regenerate_all_routes_count_storage(
@@ -154,9 +161,18 @@ impl Drop for PathCommunicator {
   }
  }
 }
+impl PathCommunicator {
+ fn abort(&self, rank: u32) {
+  if self.aborted.replace(true) { return; }
+  crate::session_cache::permit_comm(false);
+  let status=unsafe { mgbfs_nccl_abort(self.ptr) };
+  if status!=0{eprintln!("MGBFS_FAILED_COMM_ABORT rank={rank} code={status}");}
+ }
+}
 pub struct GenericDistributedBfs{
+ compact_path:Option<compact_path::Workspace>,
  online_size_tuning:bool,online_bucket:Option<u32>,online_choices:std::collections::BTreeMap<u32,(u32,bool)>,profile_events:Vec<serde_json::Value>,active_batch:u32,use_gemm:bool,gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:Rc<PathCommunicator>,
- sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,queues:Rc<QueueWorkspace>,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
+ sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,queues:Option<Rc<QueueWorkspace>>,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  host_owner_map:Vec<u32>,host_owner_cuts:Option<Vec<u64>>,
  streams:Vec<Stream>,ready:Event,done:Vec<Event>,depth:u64,parent_cursor:u64,max_frontier:u32,counts:Vec<u32>,source_retries:u64,positions:Option<Buffer>,rolling_counts:[u32;3],retired_rows:u64,
 }
@@ -207,7 +223,11 @@ impl GenericDistributedBfs{
   // The two producer banks exist on every rank. Only a distributed rank
   // allocates an inbox, so a single-GPU job must not reserve its extents.
   if needs_queues{
-   for _ in 0..p.dense_queue_bank_count(){sizes.extend(p.dense_queue_bank_extents());}
+   if p.compact_transport{
+    sizes.extend(compact_path::Geometry::new(p,g.generator_count() as u32)?.buffer_requirements(p.shards)?);
+   }else{
+    for _ in 0..p.dense_queue_bank_count(){sizes.extend(p.dense_queue_bank_extents());}
+   }
   }
   if p.sort_candidates{let count=w*p.queue_capacity as usize;let size=count*shards;sizes.extend([size*8,size*8,size*4,size*4,(count*64+65536)*shards]);}
   if p.parent_transport{let size=b*n*bytes;sizes.extend([size,size,size*w,w*8,w*4]);}
@@ -220,16 +240,24 @@ impl GenericDistributedBfs{
   Self::new_with_cuts(graph,device,rank,plan,id,seed,hash_bits,None)
  }
  pub fn new_with_cuts(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32,cuts:Option<&[u64]>)->Result<Self>{
-  Self::new_with_roots(graph,device,rank,plan,id,seed,hash_bits,cuts,None,None)
+  Self::new_with_roots(graph,device,rank,plan,id,seed,hash_bits,cuts,None,None,None)
+ }
+ pub(crate) fn new_compact_forward(
+  graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],
+  seed:u64,hash_bits:u32,cuts:Option<&[u64]>,endpoint:PacketEndpoint,
+ )->Result<Self>{
+  Self::new_with_roots(graph,device,rank,plan,id,seed,hash_bits,cuts,None,None,Some(endpoint))
  }
  /// Both search directions retain the routing of graph.start. Reverse roots
  /// select the initial frontier without changing its owner partition.
  fn new_with_roots(
   graph: &GraphDefinitionV2, device: u32, rank: u32, plan: GenericDistributedMemoryPlan,
   id: &[u8; 128], seed: u64, hash_bits: u32, cuts: Option<&[u64]>, roots: Option<&[Vec<i64>]>, shared: Option<&Self>,
+  endpoint: Option<PacketEndpoint>,
  ) -> Result<Self> {
   if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
+  if plan.compact_transport!=endpoint.is_some(){return Err("NATIVE_PATH_COMPACT_ENDPOINT".into());}
   if crate::generic_gemm::requested()?&&!crate::generic_gemm::eligible(graph){return Err("GEMM_GRAPH_NOT_EXACTLY_SUPPORTED".into());}
   let use_sorted=plan.history_algorithm=="SORTED_RUNS";
   if !use_sorted&&std::env::var("MGBFS_GENERIC_HISTORY").as_deref()==Ok("sorted"){return Err("SORTED_HISTORY_REQUIRES_SERIALIZED_ADMISSION".into());}
@@ -307,11 +335,16 @@ impl GenericDistributedBfs{
   }
   crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(bfs.stream.ptr)})?;
   let queues=match shared {
-   Some(forward)=>Rc::clone(&forward.queues),
-   None=>Rc::new(QueueWorkspace::new(&plan,d)?),
+   Some(forward)=>forward.queues.clone(),
+   None if endpoint.is_some()=>None,
+   None=>Some(Rc::new(QueueWorkspace::new(&plan,d)?)),
   };
+  let mut compact_path=endpoint.map(|endpoint|
+   compact_path::Workspace::new(&plan,bfs.generators,rank,id,endpoint,d)
+  ).transpose()?;
   let control=Buffer::new(64+plan.world as usize*8,d)?;
-  let lanes=if use_sorted{plan.owner_lanes}else{plan.shards};
+  // Raw paths share one exact table and consume runs in order on bfs.stream.
+  let lanes=if compact_path.is_some(){0}else if use_sorted{plan.owner_lanes}else{plan.shards};
   let mut streams=vec![];let mut done=vec![];for _ in 0..lanes{streams.push(Stream::new(d)?);done.push(Event::new(d)?);}
   let sorted_owner=if use_sorted{
    let input=SortedInput{elements:plan.elements,world:plan.world,rank,shards:plan.shards,queue_capacity:plan.queue_capacity,state_bytes:plan.state_bytes,transport:if plan.packed_candidates(){1}else if plan.parent_transport{2}else{0},kind:bfs.kind,rows:bfs.rows,cols:bfs.cols,generators:bfs.generators,parent_stride:plan.batch,hash_bits,seed,..Default::default()};
@@ -343,14 +376,20 @@ impl GenericDistributedBfs{
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
   let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
-  Ok(Self{online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,queues,control,owner_map,owner_cuts,host_owner_map:map,host_owner_cuts:cuts.map(<[u64]>::to_vec),streams,ready,done,depth:0,parent_cursor:0,max_frontier,counts,source_retries:0})
+  if let Some(workspace)=compact_path.as_mut(){
+   if let Err(error)=unsafe{workspace.transport.connect(comm.ptr)}{
+    comm.abort(rank);
+    return Err(error);
+   }
+  }
+  Ok(Self{compact_path,online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,queues,control,owner_map,owner_cuts,host_owner_map:map,host_owner_cuts:cuts.map(<[u64]>::to_vec),streams,ready,done,depth:0,parent_cursor:0,max_frontier,counts,source_retries:0})
  }
  pub(crate) fn reverse_path_arena(
   &self, graph: &GraphDefinitionV2, cuts: Option<&[u64]>, goals: &[Vec<i64>],
  ) -> Result<Self> {
   self.plan.shared_path_queue_bytes()?;
   Self::new_with_roots(graph,self.bfs.device as u32,self.rank,self.plan.clone(),&[0;128],
-   self.bfs.seed,self.bfs.hash_bits,cuts,Some(goals),Some(self))
+   self.bfs.seed,self.bfs.hash_bits,cuts,Some(goals),Some(self),None)
  }
  pub fn quiesce(&self)->Result<()>{crate::generic_native::checked!(cudaDeviceSynchronize, unsafe{cudaDeviceSynchronize()})?;crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device)})?;crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(self.bfs.stream.ptr)})?;for stream in &self.streams{crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(stream.ptr)})?;}Ok(())}
  pub fn enable_online_size_tuning(&mut self){self.online_size_tuning=true;}
@@ -457,6 +496,9 @@ impl GenericDistributedBfs{
      tile.counts.len()!=self.plan.world as usize*self.plan.shards as usize{
    return Err("NATIVE_WINDOW_TILE_WORKSPACE".into());
   }
+  if self.compact_path.is_some(){
+   return self.advance_compact_path(None,Some((spool,child_ids,tile)),checkpoint);
+  }
   self.advance_internal(Some((spool,child_ids,tile)),None,Some(checkpoint))
  }
  pub(crate) fn advance_nearest(&mut self, parents:&Buffer, checkpoint:&dyn Fn()->Result<()>)->Result<DistributedAdvance>{
@@ -466,13 +508,41 @@ impl GenericDistributedBfs{
      parents.device!=self.bfs.device||parents.bytes<p.capacity as usize*crate::generic_path_native::PARENT_BYTES{
    return Err("NATIVE_NEAREST_PARENT_LAYOUT".into());
   }
+  if self.compact_path.is_some(){
+   return self.advance_compact_path(Some(parents),None,checkpoint);
+  }
   self.advance_internal(None,Some(parents),Some(checkpoint))
+ }
+ fn advance_compact_path(
+  &mut self, parents:Option<&Buffer>,
+  lineage:Option<(&mut crate::path_csr::TransitionSpool,&Buffer,&mut WindowTile)>,
+  checkpoint:&dyn Fn()->Result<()>,
+ )->Result<DistributedAdvance>{
+  let window=lineage.is_some();
+  if self.bfs.terminal{return Err("GENERIC_DISTRIBUTED_TERMINAL".into());}
+  self.bfs.terminal=true;
+  let mut workspace=self.compact_path.take().ok_or("NATIVE_PATH_COMPACT_WORKSPACE")?;
+  let expanded=(||{
+   let b=&mut self.bfs;
+   crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;
+   if window{Self::prepare_window_bank(b)?;}
+   crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.control.at::<c_void>(4),0,4,b.stream.ptr)})?;
+   workspace.expand(self,parents,lineage,checkpoint)
+  })();
+  if expanded.is_err(){
+   workspace.transport.notify_failure();
+   self.comm.abort(self.rank);
+   let _=workspace.transport.drain_after_abort();
+  }
+  self.compact_path=Some(workspace);
+  self.finish_layer(window,None,Some(checkpoint),expanded?)
  }
  fn advance_internal(
   &mut self, mut lineage:Option<(&mut crate::path_csr::TransitionSpool,&Buffer,&mut WindowTile)>,
   path_parents:Option<&Buffer>, checkpoint:Option<&dyn Fn()->Result<()>>,
  )->Result<DistributedAdvance>{
   let mut path_error=None;
+  let dense_queues=self.queues.as_deref().ok_or("GENERIC_DISTRIBUTED_QUEUE_LAYOUT")?;
 
   let b=&mut self.bfs;if b.terminal{return Err("GENERIC_DISTRIBUTED_TERMINAL".into());}b.terminal=true;
   crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;let stream=b.stream.ptr;let p=&self.plan;
@@ -490,18 +560,7 @@ impl GenericDistributedBfs{
     self.retired_rows=0;
    }
   }else if lineage.is_none()&&path_parents.is_none(){crate::generic_native::checked!(mgbfs_generic_gather_storage, unsafe{mgbfs_generic_gather_storage(p.state_bytes,p.elements,b.visited.ptr.cast(),b.arena_stride,b.front.ptr.cast(),b.count,b.parents.ptr.cast(),p.capacity,stream)})?;}
-  if lineage.is_some(){
-   // Window CSR IDs are arena rows, not the insertion order of the
-   // frontier queue. Keep these rows in the source bank; dedup writes
-   // the next depth into the other bank with a fresh table.
-   if b.current_start!=0||b.visited_used!=b.count||b.parents.bytes!=b.visited.bytes{
-    return Err("NATIVE_WINDOW_BANK_LAYOUT".into());
-   }
-   std::mem::swap(&mut b.parents,&mut b.visited);
-   crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.slots.ptr,255,b.slots.bytes,stream)})?;
-   crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.control.ptr,0,4,stream)})?;
-   b.visited_used=0;
-  }
+  if lineage.is_some(){Self::prepare_window_bank(b)?;}
   // Current remains immutable; generation reads its bank directly.
   // Nearest uses stable arena row IDs. Frontier queue order can differ
   // from row allocation order, so generate directly from contiguous rows.
@@ -538,7 +597,7 @@ impl GenericDistributedBfs{
    if profiling&&trial<schedule.len(){let choice=choices[schedule[trial]];batch=choice.0;self.use_gemm=choice.1;}
    let trial_started=if profiling&&trial<schedule.len(){Some(std::time::Instant::now())}else{None};
 
-   let bank=&self.queues.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
+   let bank=&dense_queues.banks[((self.depth+round)%2) as usize];let begin=global_begin.min(u64::from(b.count)) as u32;let count=batch.min(b.count-begin);
    let origin_begin=if lineage.is_some(){u64::from(begin)}else if path_parents.is_some(){u64::from(b.current_start)+u64::from(begin)}else{self.parent_cursor+u64::from(begin)};
    crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(self.control.at::<c_void>(8),0,4,stream)})?;
    crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(bank.counts.ptr,0,bank.counts.bytes,stream)})?;
@@ -598,8 +657,8 @@ impl GenericDistributedBfs{
    }
    // A single rank consumes its source queues directly. Owner kernels select
    // local inputs by sender rank; the remote arguments are read-only.
-   let inbox=self.queues.inbox.as_ref().unwrap_or(bank);
-   if self.queues.inbox.is_some(){
+   let inbox=dense_queues.inbox.as_ref().unwrap_or(bank);
+   if dense_queues.inbox.is_some(){
     if let Some(counts)=exact_counts.as_mut(){
      let (outgoing,incoming)=counts.split_at_mut(queues);
      crate::generic_native::checked!(mgbfs_nccl_exchange_triplets,unsafe{
@@ -705,6 +764,30 @@ impl GenericDistributedBfs{
    if profiling&&trial==schedule.len(){batch=self.active_batch;}
   }
   if round>0{for event in &self.done{crate::generic_native::checked!(cudaStreamWaitEvent, unsafe{cudaStreamWaitEvent(stream,event.ptr,0)})?;}}
+  self.finish_layer(lineage.is_some(),rolling.then_some(future_bank),checkpoint,path_error)
+ }
+
+ fn prepare_window_bank(b: &mut GenericNativeBfs) -> Result<()> {
+  // CSR IDs are arena rows. Dedup writes a fresh depth into the other bank.
+  if b.current_start!=0||b.visited_used!=b.count||b.parents.bytes!=b.visited.bytes{
+   return Err("NATIVE_WINDOW_BANK_LAYOUT".into());
+  }
+  std::mem::swap(&mut b.parents,&mut b.visited);
+  let stream=b.stream.ptr;
+  crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.slots.ptr,255,b.slots.bytes,stream)})?;
+  crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(b.control.ptr,0,4,stream)})?;
+  b.visited_used=0;
+  Ok(())
+ }
+
+ /// All producer and owner streams must precede this boundary on the BFS
+ /// stream. Publish counters and swap banks only after the rank agreement.
+ fn finish_layer(
+  &mut self, window: bool, rolling_bank: Option<usize>,
+  checkpoint: Option<&dyn Fn()->Result<()>>, path_error: Option<String>,
+ )->Result<DistributedAdvance>{
+  let b=&self.bfs;
+  let stream=b.stream.ptr;
   crate::generic_native::checked!(mgbfs_nccl_all_reduce_max_u32, unsafe{mgbfs_nccl_all_reduce_max_u32(self.comm.ptr,b.control.at(8),self.control.at(0),stream)})?;
   crate::generic_native::checked!(mgbfs_nccl_all_gather_u32, unsafe{mgbfs_nccl_all_gather_u32(self.comm.ptr,b.control.at(4),self.control.at(32),stream)})?;
   // Keep the current layer's counts available when the last owner wave
@@ -734,7 +817,7 @@ impl GenericDistributedBfs{
   if let RoundVote::Capacity(fatal) = vote {return Ok(DistributedAdvance::Resource{fatal});}
   let global=next_counts.iter().map(|&v|u64::from(v)).sum::<u64>();if global==0{return Ok(DistributedAdvance::Complete);}
   let local=next_counts[self.rank as usize];if local>p.capacity{return Err("GENERIC_DISTRIBUTED_COUNT_BOUNDS".into());}
-  b.previous=if lineage.is_some(){None}else{Some((b.current_start,b.count))};if rolling{b.current_start=future_base;self.rolling_counts[future_bank]=local;}else{b.current_start=b.visited_used;b.visited_used=visited;}
+  b.previous=if window{None}else{Some((b.current_start,b.count))};if let Some(future_bank)=rolling_bank{b.current_start=future_bank as u32*p.capacity;self.rolling_counts[future_bank]=local;}else{b.current_start=b.visited_used;b.visited_used=visited;}
   self.parent_cursor=self.parent_cursor.checked_add(u64::from(b.count)).ok_or("GENERIC_PARENT_CURSOR_OVERFLOW")?;
   if let Some(cache)=&self.parent_cache{crate::generic_native::checked!(mgbfs_generic_advance_parent_cursors, unsafe{mgbfs_generic_advance_parent_cursors(cache.cursors.ptr.cast(),cache.frontiers.ptr.cast(),self.control.at(32),p.world,stream)})?;}
   self.counts.copy_from_slice(next_counts);
@@ -868,12 +951,10 @@ impl Drop for GenericDistributedBfs{
  fn drop(&mut self){unsafe{
   mgbfs_cuda::native_owner::cudaSetDevice(self.bfs.device);
   let failed=crate::native_fault::failed();
-  if failed && !self.comm.aborted.replace(true){
+  if failed {
    // A fatal rank cannot finish pending collectives normally. Abort before
    // stream drains; never park this communicator in the healthy session cache.
-   crate::session_cache::permit_comm(false);
-   let status=mgbfs_nccl_abort(self.comm.ptr);
-   if status!=0{eprintln!("MGBFS_FAILED_COMM_ABORT rank={} code={status}",self.rank);}
+   self.comm.abort(self.rank);
   }
   cudaStreamSynchronize(self.bfs.stream.ptr);
   for stream in &self.streams{cudaStreamSynchronize(stream.ptr);}

@@ -8,7 +8,7 @@ use crate::{segmented_strategy::{SegmentStrategy,OwnerDecision,owner_decision,Ra
  generic_native::{Buffer,GenericNativeBfs,Stream},segmented_history::{fit_segment_layout_compact,fit_packed_bitmap_segment_layout,fit_sorted_segment_layout,BitmapPack4Dictionary,HashLookupDirectorySeries,SegmentLayout,LOCAL_ROWS}};
 mod hash_index;
 mod layer;
-mod packet;
+pub(crate) mod packet;
 use hash_index::{hash_directory_bytes, initial_hash_run_capacity};
 use packet::{PacketCodec,PacketConfig,PacketOwnerShard,PacketRuntime,PACKET_ROUTE_STATUS_BYTES};
 use crate::segmented_packet_transport::{Frame as PacketFrame,PacketJobToken,PACKET_CANCELLED,PACKET_DEADLINE,REMOTE_FAILURE};
@@ -285,7 +285,10 @@ impl Lane{fn new(device:i32,bound:usize,scratch_bytes:usize,enable_hash_timing:b
 }}
 struct OwnerProgress{shard:usize,pass:usize,round:usize,selected:u32,cap_probe:bool,grow_runs:bool,raw_begin:u32,raw:RawTileCursor}
 #[repr(C)] #[derive(Clone,Copy)]
-struct BitmapDeviceDomain{symbols:*const i64,counts:*const u32,distinct:u32,elements:u32,total:u64}
+pub(crate) struct BitmapDeviceDomain{symbols:*const i64,counts:*const u32,distinct:u32,elements:u32,total:u64}
+impl BitmapDeviceDomain {
+ pub(crate) const EMPTY: Self=Self{symbols:ptr::null(),counts:ptr::null(),distinct:0,elements:0,total:0};
+}
 // The packed path is opt-in and capability-gated; no old library is allowed
 // to silently interpret these structs. Sizes and ABI version are checked.
 #[repr(C)] #[derive(Clone,Copy)]

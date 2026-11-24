@@ -100,3 +100,42 @@ extern "C" int mgbfs_generic_accept_path_parents_v2(
  uint64_t* slots,uint64_t slot_capacity,void* visited,uint32_t visited_capacity,
  uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,
  GenericPathParent* lineage,uint32_t* error,void* stream);
+
+// One raw contiguous run with one state plane per coordinate, each of length
+// rows. Every record retains its source rank, parent row and generator label.
+struct MgbfsCompactPathInputV1 {
+    uint32_t state_bytes, elements, generators, rows, source, shard;
+    const void* states;
+    const GenericRouteRecord* records;
+};
+
+struct MgbfsCompactPathOwnerV1 {
+    uint32_t capacity;
+    uint64_t slot_count;
+    uint64_t* slots;
+    void* states;
+    uint32_t* visited_count;
+    uint32_t* future;
+    uint32_t* future_count;
+    GenericPathParent* lineage;
+    uint32_t* error;
+};
+
+struct MgbfsCompactWindowEdgeV1 {
+    uint64_t parent;
+    uint32_t child, generator;
+};
+
+// All runs for one table use one ordered stream. Keep the run live until
+// its owner operations drain. Nonnull lineage records the first parent.
+extern "C" int mgbfs_generic_accept_compact_path_v1(
+    const MgbfsCompactPathInputV1*, const MgbfsCompactPathOwnerV1*, void* stream);
+
+// Resolve every candidate in the requested subrange, including duplicates,
+// to a committed row relative to first_child. Advance the run's lease only
+// after both the output and owner error are available. Any owner error
+// invalidates this output.
+extern "C" int mgbfs_generic_resolve_compact_window_edges_v1(
+    const MgbfsCompactPathInputV1*, const MgbfsCompactPathOwnerV1*,
+    uint32_t first_child, uint32_t begin, uint32_t length,
+    MgbfsCompactWindowEdgeV1* children, uint32_t output_capacity, void* stream);

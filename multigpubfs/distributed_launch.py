@@ -57,7 +57,8 @@ def _native_artifact_hashes(native,env):
  return {'native':_file_digest(native),'cuda':dependency['cuda_library_sha256'] if dependency else None}
 
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None):
- from .launch import _rank_launch_config,_receipt,_with_packet_job_token
+ from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
+                      _compact_forward_path_env,_rank_launch_config,_receipt,_with_packet_job_token)
  from .cluster import current_cluster
  cluster=current_cluster()
  segmented=native_env.get('MGBFS_SEGMENT_EXTERNAL_LINK')=='1'
@@ -73,6 +74,9 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,600 if max_seconds is None else max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
  started=time.monotonic();profile=None
  try:
+  path_compact=path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
+  if path_compact:
+   native_env=_compact_forward_path_env(native,native_env,world,path_bidirectional,external=True)
   from .host_memory import admit as admit_host
   host_memory=admit_host(graph,world,True,output)
   store.put(f'host-memory/{rank}',host_memory)
@@ -87,6 +91,9 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     identity['path_fused_route']=native_env.get('MGBFS_GENERIC_PATH_FUSED_ROUTE','1')!='0'
     identity['path_exact_exchange']=native_env.get('MGBFS_GENERIC_PATH_EXACT_EXCHANGE')=='1'
     identity['path_targets_sha256']=hashlib.sha256(json.dumps(path_targets,separators=(',',':')).encode()).hexdigest()
+    if path_compact:
+     # Listen address can differ on rank 0 behind port forwarding.
+     identity['path_compact']={key:native_env[key] for key in (_PACKET_ADDR,_PACKET_RING,_PACKET_RX)}
    if segmented:
     identity['segmented']={k:v for k,v in native_env.items() if (k.startswith(('MGBFS_SEGMENT_', 'MGBFS_BITMAP_')) or k in ('MGBFS_MEMORY_PRESET','MGBFS_EXPERIMENTAL_BITMAP')) and k!='MGBFS_SEGMENT_PACKET_BIND_ADDR'}
    store.put(f'identity/{rank}',identity)
@@ -102,7 +109,12 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      store.put(label+f'/inventory/{rank}',inventory)
      if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
      return None
-    probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
+    inventory_env=dict(native_env,MGBFS_GENERIC_HISTORY='hash')
+    if path_compact:
+     # This legacy one-GPU probe contributes hardware only. Rank 0 admits
+     # the actual compact plan from the inventory of the entire world.
+     for key in (_PATH_COMPACT,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
+    probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=inventory_env,capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
     from .autotune import _gemm_hardware_available

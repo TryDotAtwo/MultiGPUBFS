@@ -22,8 +22,12 @@ fn is_false(value:&bool)->bool{!*value}
 fn one_packet_slot() -> u32 { 1 }
 fn uses_one_packet_slot(value: &u32) -> bool { *value == 1 }
 fn compact_transport_requested(world:u32)->bool{
- world>1&&std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1")&&
-  std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_some()
+ world>1&&std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_some()&&
+  (std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1")||compact_path_requested())
+}
+pub(crate) fn compact_path_requested()->bool{
+ std::env::var("MGBFS_GENERIC_PATH_COMPACT").as_deref()==Ok("1")&&
+  std::env::var("MGBFS_GENERIC_PATH_APPEND_ONLY").as_deref()==Ok("1")
 }
 pub(crate) fn compact_producer_factor(world:u32)->u32{world.clamp(2,4)}
 fn dense_queue_bank_count(world:u32)->usize{if world==1{2}else{3}}

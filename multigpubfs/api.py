@@ -13,7 +13,7 @@ import threading
 from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
-from .launch import _require_memory_backend, run_graph
+from .launch import _PACKET_ADDR, _PATH_COMPACT, _require_memory_backend, run_graph
 from .memory_admission import resolve_traversal_memory
 from .native_distribution import native_runtime
 from .process_control import query as native_query
@@ -30,6 +30,23 @@ def _preset(value):
     if value not in ("balanced", "maxmemory"):
         raise ValueError("INVALID_MEMORY_PRESET")
     return value
+
+
+def _validate_compact_path_request(direction, world, distributed_enabled):
+    if direction != "forward":
+        raise ValueError("NATIVE_PATH_COMPACT_FORWARD_ONLY")
+    if world is not None and world < 2:
+        raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS")
+    if not distributed_enabled:
+        raise ValueError("NATIVE_PATH_COMPACT_DISTRIBUTED_DISABLED")
+
+
+def _require_compact_path_capabilities(capabilities, *, window):
+    required = ("graph_path_compact_forward_v1", "graph_path_nearest_distributed_v1")
+    if window:
+        required += ("graph_path_window_forward_v1",)
+    if any(capabilities.get(key) is not True for key in required):
+        raise RuntimeError("NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library")
 
 
 def _record_graph(output, graph):
@@ -235,18 +252,30 @@ class BfsSession:
 
     def _native_nearest(self, devices, direction="forward", *, window=False, maxmemory=False):
         distributed_enabled = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST") != "0"
-        if (direction == "bidirectional" or window or maxmemory) and not distributed_enabled:
-            return None
-        if devices is not None and len(devices) != 1 and not distributed_enabled:
+        compact = os.environ.get(_PATH_COMPACT) == "1"
+        if compact:
+            _validate_compact_path_request(direction, None if devices is None else len(devices), distributed_enabled)
+        elif not distributed_enabled and (
+            direction == "bidirectional" or window or maxmemory or devices is not None and len(devices) != 1
+        ):
             return None
         try:
             native, env = native_runtime(self._executable)
+            compact = env.get(_PATH_COMPACT) == "1"
             capabilities = _require_memory_backend(native, env, "segmented24")
-            if capabilities.get("graph_path_nearest_v1") is not True:
+            if not compact and capabilities.get("graph_path_nearest_v1") is not True:
                 return None
             devices = self._native_devices(native, env)
         except (OSError, RuntimeError):
+            if compact:
+                raise
             return None
+        if compact:
+            _validate_compact_path_request(direction, len(devices), distributed_enabled)
+            _require_compact_path_capabilities(capabilities, window=window)
+            if _PACKET_ADDR not in env:
+                env = dict(env, **{_PACKET_ADDR: self._local_packet_address()})
+            return native, env, tuple(devices), True
         if window:
             return (native, env, tuple(devices), True) if capabilities.get(f"graph_path_window_{direction}_v1") is True else None
         if direction == "bidirectional":
@@ -355,14 +384,17 @@ class BfsSession:
             if devices is None and self._gpus is not None:
                 devices = tuple(range(self._gpus))
             native = None
-            native_query = goal_mode in ("nearest", "window")
-            if (direction in ("forward", "bidirectional") and native_query
+            native_mode = goal_mode in ("nearest", "window")
+            compact = os.environ.get(_PATH_COMPACT) == "1"
+            if (direction in ("forward", "bidirectional") and native_mode
                     and graph.generator_count < 0x7fff_ffff):
                 native = self._native_nearest(devices, direction, window=goal_mode == "window",
                                               maxmemory=preset == "maxmemory")
                 if native is not None:
                     options["native"] = native
             if native is None:
+                if compact and direction in ("forward", "bidirectional") and native_mode:
+                    raise RuntimeError("NATIVE_PATH_COMPACT_UNAVAILABLE_FOR_QUERY")
                 if not self._path_ran:
                     self._pool.release_memory()
                 self._path_ran = True

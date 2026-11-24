@@ -72,7 +72,7 @@ pub(super) struct ReceiveCarousel {
     wire_slot: Option<usize>,
     live: usize,
     double_shards: usize,
-    local_live: usize,
+    local_live: [usize; 2],
     commit: bool,
     pub(super) peak_live: usize,
     pub(super) peak_double: usize,
@@ -91,7 +91,7 @@ impl ReceiveCarousel {
             wire_slot: None,
             live: 0,
             double_shards: 0,
-            local_live: 0,
+            local_live: [0; 2],
             commit: false,
             peak_live: 0,
             peak_double: 0,
@@ -132,7 +132,10 @@ impl PacketRuntime {
             return Err("SEGMENT_PACKET_UNEXPECTED_GRANT".into());
         }
         let layout = PacketBytes::new(
-            packet.descriptors, packet.rows, self.wire_record_bytes, self.wire_payload_bytes,
+            packet.descriptors,
+            packet.rows,
+            self.wire_record_bytes,
+            self.wire_payload_bytes,
         )?;
         let stream = self.stream.ptr;
         let peer = if source {
@@ -199,8 +202,12 @@ impl PacketRuntime {
     ) -> Result<()> {
         let slot = &self.rx[index];
         let header = PacketBytes::new(
-            packet.descriptors, packet.rows, self.wire_record_bytes, self.wire_payload_bytes,
-        )?.header;
+            packet.descriptors,
+            packet.rows,
+            self.wire_record_bytes,
+            self.wire_payload_bytes,
+        )?
+        .header;
         if let (Some(codec), Some(decoded)) = (self.config.codec, slot.decoded.as_ref()) {
             crate::generic_native::checked!(segmented_packet_decode, unsafe {
                 codec.transform(
@@ -233,7 +240,10 @@ impl PacketRuntime {
     ) -> Result<()> {
         let slot = &self.rx[index];
         let layout = PacketBytes::new(
-            packet.descriptors, packet.rows, self.wire_record_bytes, self.wire_payload_bytes,
+            packet.descriptors,
+            packet.rows,
+            self.wire_record_bytes,
+            self.wire_payload_bytes,
         )?;
         let header = layout.header;
         let incoming_header = if let Some(pinned) = &slot.header {
@@ -395,7 +405,7 @@ impl PacketRuntime {
         Ok(progress)
     }
 
-    fn progress_carousel(
+    pub(super) fn progress_carousel(
         &mut self,
         ctx: WireContext,
         stats: &mut PacketLayerStats,
@@ -426,7 +436,7 @@ impl PacketRuntime {
             Some(PacketFrame::Commit(depth)) if sealed && depth == ctx.depth => {
                 let ring = self.receive.as_mut().ok_or("SEGMENT_PACKET_RX_MISSING")?;
                 if ring.live != 0
-                    || ring.local_live != 0
+                    || ring.local_live.iter().any(|&count| count != 0)
                     || !ring.banks.is_empty()
                     || offered.is_some()
                 {
@@ -439,6 +449,82 @@ impl PacketRuntime {
             None => return Ok(progress),
         };
         Ok(true)
+    }
+
+    pub(super) fn offer_local_span(&mut self, slot: usize, span: PacketOwnerShard) -> Result<bool> {
+        let ring = self.receive.as_mut().ok_or("SEGMENT_PACKET_RX_MISSING")?;
+        let local = ring
+            .local_live
+            .get_mut(slot)
+            .ok_or("SEGMENT_PACKET_LOCAL_SLOT")?;
+        if !ring.banks.offer(span, OwnerSource::Local(slot))? {
+            return Ok(false);
+        }
+        *local += 1;
+        if ring.banks.has_sibling(span.shard) {
+            ring.double_shards += 1;
+            ring.peak_double = ring.peak_double.max(ring.double_shards);
+        }
+        Ok(true)
+    }
+
+    pub(super) fn has_pending_local(&self, slot: usize) -> Result<bool> {
+        let ring = self.receive.as_ref().ok_or("SEGMENT_PACKET_RX_MISSING")?;
+        let local = ring
+            .local_live
+            .get(slot)
+            .ok_or("SEGMENT_PACKET_LOCAL_SLOT")?;
+        Ok(*local != 0)
+    }
+
+    pub(super) fn owner_wave(&mut self, lanes: usize) -> Result<Vec<OwnerLease>> {
+        let ring = self.receive.as_mut().ok_or("SEGMENT_PACKET_RX_MISSING")?;
+        ring.banks.begin_wave(lanes, &mut ring.wave)?;
+        if ring.wave.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(std::mem::take(&mut ring.wave))
+    }
+
+    pub(super) fn complete_owner_wave(&mut self, wave: Vec<OwnerLease>) -> PacketResult<()> {
+        let ring = self.receive.as_mut().ok_or("SEGMENT_PACKET_RX_MISSING")?;
+        for lease in &wave {
+            if ring.banks.has_sibling(lease.span.shard) {
+                ring.double_shards -= 1;
+            }
+        }
+        ring.banks.complete_wave(&wave)?;
+        for lease in &wave {
+            match lease.source {
+                OwnerSource::Local(slot) => {
+                    self.receive
+                        .as_mut()
+                        .ok_or("SEGMENT_PACKET_RX_MISSING")?
+                        .local_live[slot] -= 1;
+                }
+                OwnerSource::Remote(index) => self.retire_receive(index)?,
+            }
+        }
+        self.receive
+            .as_mut()
+            .ok_or("SEGMENT_PACKET_RX_MISSING")?
+            .wave = wave;
+        Ok(())
+    }
+
+    pub(super) fn owner_source_rank(&self, lease: &OwnerLease, rank: u32) -> Result<u32> {
+        match lease.source {
+            OwnerSource::Local(_) => Ok(rank),
+            OwnerSource::Remote(index) => self.rx[index]
+                .packet
+                .map(|packet| packet.source)
+                .ok_or_else(|| "SEGMENT_PACKET_RX_STATE".into()),
+        }
+    }
+
+    pub(super) fn take_commit(&mut self) -> Result<bool> {
+        let ring = self.receive.as_mut().ok_or("SEGMENT_PACKET_RX_MISSING")?;
+        Ok(std::mem::take(&mut ring.commit))
     }
 
     fn retire_receive(&mut self, index: usize) -> PacketResult<()> {
@@ -493,15 +579,14 @@ impl SegmentedDistributedBfs {
     ) -> PacketResult<bool> {
         let ctx = self.packet_wire_context();
         let progress = transport.progress_carousel(ctx, stats, stop, &[], sealed)?;
+        let wave = transport.owner_wave(self.lanes.len())?;
+        if wave.is_empty() {
+            return Ok(progress);
+        }
         let ring = transport
             .receive
             .as_mut()
             .ok_or("SEGMENT_PACKET_RX_MISSING")?;
-        ring.banks.begin_wave(self.lanes.len(), &mut ring.wave)?;
-        if ring.wave.is_empty() {
-            return Ok(progress);
-        }
-        let wave = std::mem::take(&mut ring.wave);
         let mut spans = std::mem::take(&mut ring.spans);
         spans.clear();
         spans.extend(wave.iter().map(|lease| lease.span));
@@ -537,34 +622,12 @@ impl SegmentedDistributedBfs {
             10 => return Err(PacketError::Terminal(10)),
             other => return Err(format!("SEGMENTED_OWNER_{other}").into()),
         }
-        let ring = transport
+        transport.complete_owner_wave(wave)?;
+        transport
             .receive
             .as_mut()
-            .ok_or("SEGMENT_PACKET_RX_MISSING")?;
-        for lease in &wave {
-            if ring.banks.has_sibling(lease.span.shard) {
-                ring.double_shards -= 1;
-            }
-        }
-        ring.banks.complete_wave(&wave)?;
-        for lease in &wave {
-            match lease.source {
-                OwnerSource::Local(_) => {
-                    transport
-                        .receive
-                        .as_mut()
-                        .ok_or("SEGMENT_PACKET_RX_MISSING")?
-                        .local_live -= 1;
-                }
-                OwnerSource::Remote(index) => transport.retire_receive(index)?,
-            }
-        }
-        let ring = transport
-            .receive
-            .as_mut()
-            .ok_or("SEGMENT_PACKET_RX_MISSING")?;
-        ring.wave = wave;
-        ring.spans = spans;
+            .ok_or("SEGMENT_PACKET_RX_MISSING")?
+            .spans = spans;
         Ok(true)
     }
 
@@ -579,16 +642,7 @@ impl SegmentedDistributedBfs {
     ) -> PacketResult<()> {
         for &span in spans {
             loop {
-                let ring = transport
-                    .receive
-                    .as_mut()
-                    .ok_or("SEGMENT_PACKET_RX_MISSING")?;
-                if ring.banks.offer(span, OwnerSource::Local(slot))? {
-                    ring.local_live += 1;
-                    if ring.banks.has_sibling(span.shard) {
-                        ring.double_shards += 1;
-                        ring.peak_double = ring.peak_double.max(ring.double_shards);
-                    }
+                if transport.offer_local_span(slot, span)? {
                     break;
                 }
                 if !self.service_receive_carousel(transport, future, stats, stop, false)? {
@@ -596,11 +650,7 @@ impl SegmentedDistributedBfs {
                 }
             }
         }
-        while transport
-            .receive
-            .as_ref()
-            .is_some_and(|ring| ring.local_live != 0)
-        {
+        while transport.has_pending_local(slot)? {
             if !self.service_receive_carousel(transport, future, stats, stop, false)? {
                 return Err("SEGMENT_PACKET_OWNER_LOCAL_STALLED".into());
             }
@@ -620,11 +670,7 @@ impl SegmentedDistributedBfs {
                 // hub times outstanding credits and detects lost connections.
                 std::thread::sleep(Duration::from_micros(50));
             }
-            let ring = transport
-                .receive
-                .as_mut()
-                .ok_or("SEGMENT_PACKET_RX_MISSING")?;
-            if std::mem::take(&mut ring.commit) {
+            if transport.take_commit()? {
                 self.note_sync(|counts| counts.packet_hub_layer_commits += 1);
                 return Ok(stats);
             }

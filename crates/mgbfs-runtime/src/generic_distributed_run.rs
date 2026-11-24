@@ -3,7 +3,7 @@ use std::{path::Path,time::{Duration,Instant},sync::atomic::Ordering};
 use mgbfs_core::{graph_definition::{GraphDefinitionV2,GraphAction},Result};
 use mgbfs_cuda::{ffi::*,native_owner::{cudaSetDevice,cudaMemGetInfo}};
 use crate::{generic_native::check,generic_distributed_memory::{GenericDistributedMemoryPlan as Plan,HistoryMemory},generic_distributed_native::{GenericDistributedBfs,DistributedAdvance},generic_run::{Signals,CANCELLED}};
-use crate::segmented_packet_transport::{parse_job_token,PacketJobToken};
+use crate::segmented_packet_transport::{parse_job_token,PacketEndpoint,PacketJobToken};
 extern "C" {fn mgbfs_generic_hardware_info(device:i32,values:*mut u64)->i32;}
 fn graph(path:&str)->Result<GraphDefinitionV2>{let g:GraphDefinitionV2=serde_json::from_reader(std::fs::File::open(path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;g.validate()?;Ok(g)}
 fn digest(g:&GraphDefinitionV2)->Result<String>{Ok(g.semantic_digest()?.iter().map(|v|format!("{v:02x}")).collect())}
@@ -67,10 +67,18 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  let state_bytes=if wide_path{8}else if resident_alphabet{1}else{crate::generic_memory::preferred_state_bytes(g)};
  if (bidirectional||window)&&!path_mode{return Err("NATIVE_PATH_REQUIRES_APPEND_ONLY".into());}
  let arenas=if bidirectional{2}else{1};
- let path_workspace=if window{g.start.len() as u64*(8+u64::from(state_bytes))+12+GenericDistributedBfs::WINDOW_ROWS_PER_COPY as u64*GenericDistributedBfs::WINDOW_EDGE_BYTES as u64}else if path_mode{
+ let mut path_workspace=if window{g.start.len() as u64*(8+u64::from(state_bytes))+12+GenericDistributedBfs::WINDOW_ROWS_PER_COPY as u64*GenericDistributedBfs::WINDOW_EDGE_BYTES as u64}else if path_mode{
   crate::generic_path_native::distributed_workspace(g.start.len() as u64,state_bytes,devices.len(),bidirectional)?
    .into_iter().try_fold(0u64,|total,size|total.checked_add(size as u64)).ok_or("NATIVE_PATH_GATHER_SIZE")?
  }else{0};
+ if crate::generic_distributed_memory::compact_path_requested(){
+  if devices.len()<2||bidirectional||std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_none(){
+   return Err("NATIVE_PATH_COMPACT_FORWARD_LAYOUT".into());
+  }
+  if !crate::generic_distributed_native::compact_path_available(){return Err("NATIVE_PATH_COMPACT_CUDA_ABI_UNAVAILABLE".into());}
+  let scratch=crate::generic_distributed_native::compact_path_scratch_bound(devices.len() as u32,shards,g.generator_count() as u32)?;
+  path_workspace=path_workspace.checked_add(scratch).ok_or("NATIVE_PATH_WORKSPACE_HEADROOM")?;
+ }
  let history_memory=HistoryMemory{extra_row_bytes,shared_path_queues:bidirectional};
  let available_for_history=|free:u64|->Result<u64>{
   free.checked_sub(path_workspace).ok_or_else(||"NATIVE_PATH_WORKSPACE_HEADROOM".into())
@@ -191,7 +199,15 @@ pub fn run(args:&[String])->Result<()>{
   ||launch.plan.sort_candidates||launch.plan.generator_backend!="cuda"||launch.online_size_tuning){
   return Err("NATIVE_DISTRIBUTED_PATH_OWNER_LAYOUT".into());
  }
- if launch.plan.compact_transport&&!segmented{return Err("SEGMENT_PACKET_PLAN_REQUIRES_SEGMENTED_BACKEND".into());}
+ let compact_path=crate::generic_distributed_memory::compact_path_requested();
+ if !segmented && launch.plan.compact_transport!=compact_path{
+  return Err("NATIVE_PATH_COMPACT_ADMISSION_MODE_MISMATCH".into());
+ }
+ if compact_path&&(segmented||launch.path_targets.is_none()||launch.path_bidirectional||
+  launch.plan.world<2||launch.plan.compact_packet_slots!=3||launch.plan.compact_receive_slots!=3||
+  !crate::generic_distributed_native::compact_path_available()){
+  return Err("NATIVE_PATH_COMPACT_FORWARD_LAYOUT".into());
+ }
  if segmented && launch.plan.state_bytes == 1
   && crate::generic_memory::preferred_state_bytes(&g) != 1
   && segmented_byte_dictionary(&g).is_none()
@@ -201,7 +217,7 @@ pub fn run(args:&[String])->Result<()>{
  if launch.path_targets.is_some()&&(segmented||launch.plan.history_layers!=1||launch.plan.history_algorithm!="HASH"||launch.profile_max_layers.is_some()){
   return Err("NATIVE_DISTRIBUTED_PATH_REQUIRES_APPEND_ONLY_HASH".into());
  }
- let packet_job_token=if segmented&&launch.plan.world>1&&std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_some(){
+ let packet_job_token=if launch.plan.compact_transport&&launch.plan.world>1&&std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_some(){
   Some(parse_job_token(launch.packet_job_token.as_deref())?)
  }else{None};
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
@@ -253,6 +269,10 @@ pub fn run(args:&[String])->Result<()>{
   let goals=launch.path_targets.as_deref().ok_or("NATIVE_PATH_TARGETS")?;
   Some(g.reversed_for_paths(goals)?)
  }else{None};
+ let device=launch.devices[rank as usize];
+ if rank_plan.compact_transport{
+  crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;
+ }
  let cache_shape=format!("{}:{}",serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?,std::env::var("MGBFS_GENERIC_GENERATOR").unwrap_or_default());if rank_plan.history_algorithm=="HASH"{let mut required=GenericDistributedBfs::buffer_requirements(&g,&rank_plan,launch.owner_cuts.as_deref())?;
  if let Some(reverse)=&reverse_graph{required.extend(GenericDistributedBfs::reverse_buffer_requirements(reverse,&rank_plan,launch.owner_cuts.as_deref())?);}
  if launch.path_window.is_some(){
@@ -265,7 +285,18 @@ pub fn run(args:&[String])->Result<()>{
   required.push(rank_plan.capacity as usize*crate::generic_path_native::PARENT_BYTES);
   if launch.path_bidirectional{required.push(rank_plan.capacity as usize*crate::generic_path_native::PARENT_BYTES);}
  }
- crate::session_cache::begin_generic(cache_shape,&required)?;}else{crate::session_cache::begin(cache_shape);}let _signals=Signals::new();let setup=Instant::now();let mut bfs=GenericDistributedBfs::new_with_cuts(&g,launch.devices[rank as usize],rank,rank_plan.clone(),&id,0x19f856a2,64,launch.owner_cuts.as_deref())?;if launch.online_size_tuning{bfs.enable_online_size_tuning();}let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={}",launch.devices[rank as usize]);
+ crate::session_cache::begin_generic(cache_shape,&required)?;}else{crate::session_cache::begin(cache_shape);}
+ let _signals=Signals::new();
+ let setup=Instant::now();
+ let cuts=launch.owner_cuts.as_deref();
+ let mut bfs=if rank_plan.compact_transport{
+  let endpoint=PacketEndpoint::from_env(rank_plan.world,rank,packet_job_token)?.ok_or("NATIVE_PATH_COMPACT_ENDPOINT")?;
+  GenericDistributedBfs::new_compact_forward(&g,device,rank,rank_plan.clone(),&id,0x19f856a2,64,cuts,endpoint)?
+ }else{
+  GenericDistributedBfs::new_with_cuts(&g,device,rank,rank_plan.clone(),&id,0x19f856a2,64,cuts)?
+ };
+ if launch.online_size_tuning{bfs.enable_online_size_tuning();}
+ let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={device}");
  crate::job_phase::set("bfs")?;
  if let Some(goals)=&launch.path_targets {
   let mut reverse=if let Some(graph)=&reverse_graph{
@@ -275,7 +306,7 @@ pub fn run(args:&[String])->Result<()>{
    }
    Some(setup?)
   }else{None};
-  let result=if let Some(window)=&launch.path_window{
+  let mut result=if let Some(window)=&launch.path_window{
    if let Some(reverse)=reverse.as_mut(){
     crate::generic_path_native::distributed_window_bidirectional(&mut bfs,reverse,goals,
      window.min_length,window.max_length,window.disk_budget,seconds,output)?
@@ -287,6 +318,9 @@ pub fn run(args:&[String])->Result<()>{
   }else{
    crate::generic_path_native::distributed_forward(&mut bfs,goals,seconds)?
   };
+  if rank_plan.compact_transport{
+   result.receipt["native_exchange"]=serde_json::json!("COMPACT_RAW_TX3_RX3");
+  }
   crate::job_phase::set("retiring")?;
   bfs.quiesce()?;
   if let Some(reverse)=reverse.as_ref(){reverse.quiesce()?;}

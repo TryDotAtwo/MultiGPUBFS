@@ -1,5 +1,6 @@
 #include "generic_visited.h"
 #include <cuda_runtime.h>
+#include <cstddef>
 #include <cstdint>
 #include <cuda/atomic>
 
@@ -190,6 +191,91 @@ extern "C" int mgbfs_generic_accept_path_parents_v2(
   future,future_capacity,future_count,error,stream,lineage,generators);
  return int(cudaErrorInvalidValue);
 }
+
+static_assert(sizeof(MgbfsCompactPathInputV1) == 40);
+static_assert(offsetof(MgbfsCompactPathInputV1, states) == 24);
+static_assert(sizeof(MgbfsCompactPathOwnerV1) == 72);
+static_assert(offsetof(MgbfsCompactPathOwnerV1, slot_count) == 8);
+static_assert(offsetof(MgbfsCompactPathOwnerV1, error) == 64);
+
+template<class State>
+struct CompactPathAction {
+    uint32_t elements, count, generators = 1;
+    uint32_t source_rank, shard, path_generators;
+    const State* states;
+    const GenericRouteRecord* records;
+    bool store_parent;
+
+    __device__ uint32_t child(uint32_t i) const { return i; }
+    __device__ uint32_t origin_limit() const { return count; }
+    __device__ uint64_t bucket(uint64_t h, uint64_t capacity) const {
+        return mgbfs_shared_table_bucket(h, capacity);
+    }
+    __device__ uint32_t source(uint32_t) const { return source_rank; }
+    __device__ const GenericRouteRecord& route(uint32_t row) const { return records[row]; }
+    __device__ uint64_t hash(uint32_t row, uint64_t, uint32_t) const { return route(row).hash; }
+    __device__ int64_t value(uint32_t row, uint32_t e) const {
+        return states[uint64_t(e) * count + row];
+    }
+    __device__ bool valid(uint32_t row, uint32_t* error) const {
+        const auto& r = route(row);
+        if (r.source == source_rank && r.shard == shard && r.generator < path_generators
+            && (!store_parent || r.parent < UINT32_MAX)) return true;
+        atomicOr(error, 128u);
+        return false;
+    }
+};
+
+template<class State>
+static CompactPathAction<State> compact_path_action(const MgbfsCompactPathInputV1& in,
+                                                    bool store_parent) {
+    return {in.elements, in.rows, 1, in.source, in.shard, in.generators,
+            static_cast<const State*>(in.states), in.records, store_parent};
+}
+
+static bool valid_compact_path(const MgbfsCompactPathInputV1& in,
+                               const MgbfsCompactPathOwnerV1& owner) {
+    return (in.state_bytes == 1 || in.state_bytes == 8)
+        && in.elements && in.generators && in.rows && in.rows < 0x7fffffffU
+        && in.source < 128 && in.shard < 4096 && in.states && in.records
+        && owner.capacity && owner.capacity < 0x80000000U && owner.slot_count
+        && !(owner.slot_count & (owner.slot_count - 1))
+        && owner.slot_count <= SIZE_MAX / sizeof(uint64_t)
+        && uint64_t(in.elements) * in.rows <= SIZE_MAX / in.state_bytes
+        && uint64_t(in.elements) * owner.capacity <= SIZE_MAX / in.state_bytes
+        && owner.slots && owner.states && owner.visited_count && owner.error;
+}
+
+template<class State, bool StoreParent>
+static void accept_compact_path(const MgbfsCompactPathInputV1& in,
+                                const MgbfsCompactPathOwnerV1& owner, cudaStream_t stream) {
+    const auto action = compact_path_action<State>(in, StoreParent);
+    accept_candidates<CompactPathAction<State>, State, StoreParent>
+        <<<grid(in.rows), 256, 0, stream>>>(
+            action, owner.slots, owner.slot_count, static_cast<State*>(owner.states),
+            owner.capacity, owner.visited_count, owner.future, owner.capacity,
+            owner.future_count, 0, 64, owner.error, owner.lineage, in.generators);
+}
+
+extern "C" int mgbfs_generic_accept_compact_path_v1(
+    const MgbfsCompactPathInputV1* input, const MgbfsCompactPathOwnerV1* output, void* raw_stream) {
+    if (!input || !output || !valid_compact_path(*input, *output)
+        || !output->future || !output->future_count
+        || (output->lineage && (uint64_t(input->source) + 1) * input->generators > UINT32_MAX)) {
+        return cudaErrorInvalidValue;
+    }
+    const auto stream = static_cast<cudaStream_t>(raw_stream);
+    const auto& in = *input;
+    const auto& owner = *output;
+    if (in.state_bytes == 1) {
+        if (owner.lineage) accept_compact_path<uint8_t, true>(in, owner, stream);
+        else accept_compact_path<uint8_t, false>(in, owner, stream);
+    } else {
+        if (owner.lineage) accept_compact_path<int64_t, true>(in, owner, stream);
+        else accept_compact_path<int64_t, false>(in, owner, stream);
+    }
+    return cudaGetLastError();
+}
 extern "C" int mgbfs_generic_accept_all_i64_wide(uint32_t elements,const int64_t* local,const int64_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
  const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
  uint64_t* slots,uint64_t slot_capacity,int64_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
@@ -237,11 +323,8 @@ extern "C" int mgbfs_generic_seed_shared_u8_wide(uint32_t elements,const uint8_t
 
 // Window replay runs after the owner kernels for this immutable queue tile
 // complete. A duplicate can then use the published row of its representative.
-struct WindowEdge {
-    uint64_t parent;
-    uint32_t child, generator;
-};
-static_assert(sizeof(WindowEdge)==16,"window edge ABI");
+using WindowEdge = MgbfsCompactWindowEdgeV1;
+static_assert(sizeof(WindowEdge) == 16, "window edge ABI");
 
 __device__ void window_edge(uint32_t& output, uint32_t child, const GenericRouteRecord&) {
     output = child;
@@ -250,12 +333,21 @@ __device__ void window_edge(WindowEdge& output, uint32_t child, const GenericRou
     output = {route.parent, child, route.generator};
 }
 
-template<class State, class Edge>
+template<class State, class Edge, class Candidate, bool ReadChildLimit = false>
 __global__ void resolve_incoming_edges(
-    IncomingAllAction<State, false, true> action, const uint64_t* slots,
+    Candidate action, const uint64_t* slots,
     uint64_t slot_count, const State* arena, uint32_t stride,
     uint32_t first_child, uint32_t child_limit, uint32_t begin, uint32_t length,
-    Edge* children, uint32_t* error) {
+    Edge* children, uint32_t* error, const uint32_t* visited_count) {
+    if constexpr (ReadChildLimit) {
+        if (cuda::atomic_ref<uint32_t, cuda::thread_scope_device>(*error)
+                .load(cuda::memory_order_relaxed)) return;
+        child_limit = *visited_count;
+        if (child_limit > stride || first_child > child_limit) {
+            atomicOr(error, 256u);
+            return;
+        }
+    }
     constexpr uint64_t prefix_mask = 0x7fffffff00000000ULL;
     for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
          i < length; i += blockDim.x * gridDim.x) {
@@ -321,17 +413,17 @@ static int resolve_window_edges(
             elements, count, queue_capacity, 1, rank, world, shard, shards,
             static_cast<const uint8_t*>(local), static_cast<const uint8_t*>(remote),
             local_meta, remote_meta, local_counts, remote_counts};
-        resolve_incoming_edges<<<grid(length), 256, 0, stream>>>(
+        resolve_incoming_edges<uint8_t, Edge><<<grid(length), 256, 0, stream>>>(
             action, slots, slot_count, static_cast<const uint8_t*>(arena), stride,
-            first_child, child_limit, begin, length, children, error);
+            first_child, child_limit, begin, length, children, error, nullptr);
     } else {
         const IncomingAllAction<int64_t, false, true> action{
             elements, count, queue_capacity, 1, rank, world, shard, shards,
             static_cast<const int64_t*>(local), static_cast<const int64_t*>(remote),
             local_meta, remote_meta, local_counts, remote_counts};
-        resolve_incoming_edges<<<grid(length), 256, 0, stream>>>(
+        resolve_incoming_edges<int64_t, Edge><<<grid(length), 256, 0, stream>>>(
             action, slots, slot_count, static_cast<const int64_t*>(arena), stride,
-            first_child, child_limit, begin, length, children, error);
+            first_child, child_limit, begin, length, children, error, nullptr);
     }
     return cudaGetLastError();
 }
@@ -360,6 +452,37 @@ extern "C" int mgbfs_generic_resolve_incoming_edges_v3(
     return resolve_window_edges(state_bytes, elements, local, remote, local_meta, remote_meta, local_counts, remote_counts,
         rank, world, shard, shards, queue_capacity, slots, slot_count, arena, stride,
         first_child, child_limit, children, output_capacity, begin, length, error, raw_stream);
+}
+
+template<class State>
+static void resolve_compact_window_edges(
+    const MgbfsCompactPathInputV1& in, const MgbfsCompactPathOwnerV1& owner,
+    uint32_t first_child, uint32_t begin, uint32_t length, WindowEdge* children,
+    cudaStream_t stream) {
+    const auto action = compact_path_action<State>(in, false);
+    resolve_incoming_edges<State, WindowEdge, CompactPathAction<State>, true>
+        <<<grid(length), 256, 0, stream>>>(
+            action, owner.slots, owner.slot_count, static_cast<const State*>(owner.states),
+            owner.capacity, first_child, 0, begin, length, children, owner.error,
+            owner.visited_count);
+}
+
+extern "C" int mgbfs_generic_resolve_compact_window_edges_v1(
+    const MgbfsCompactPathInputV1* input, const MgbfsCompactPathOwnerV1* output,
+    uint32_t first_child, uint32_t begin, uint32_t length, WindowEdge* children,
+    uint32_t output_capacity, void* raw_stream) {
+    if (!input || !output || !valid_compact_path(*input, *output) || !children
+        || first_child > output->capacity || !length || length > output_capacity
+        || begin > input->rows || length > input->rows - begin) {
+        return cudaErrorInvalidValue;
+    }
+    const auto stream = static_cast<cudaStream_t>(raw_stream);
+    if (input->state_bytes == 1) {
+        resolve_compact_window_edges<uint8_t>(*input, *output, first_child, begin, length, children, stream);
+    } else {
+        resolve_compact_window_edges<int64_t>(*input, *output, first_child, begin, length, children, stream);
+    }
+    return cudaGetLastError();
 }
 
 extern "C" int mgbfs_generic_resolve_incoming_edges_v1(

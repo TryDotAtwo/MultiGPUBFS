@@ -22,6 +22,20 @@ def current_cluster():
     return _active.get()
 
 
+def _path_native_runtime(job):
+    from .launch import _PACKET_ADDR, _PATH_COMPACT
+    from .native_distribution import native_runtime
+
+    native, env = native_runtime(job["executable"])
+    address = job.get("compact_path_packet_address")
+    if address is not None or _PATH_COMPACT in env:
+        env = dict(env)
+        env.pop(_PATH_COMPACT, None)
+        if address is not None:
+            env.update({_PATH_COMPACT: "1", _PACKET_ADDR: address})
+    return native, env
+
+
 @dataclass(frozen=True)
 class Placement:
     rank: int
@@ -244,14 +258,13 @@ class Cluster:
         from math import ceil
         from time import perf_counter
         from .launch import _require_memory_backend, run_graph
-        from .native_distribution import native_runtime
         from .path_search import (
             _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
         )
 
         started = perf_counter()
         self.close_path()
-        native, env = native_runtime(job["executable"])
+        native, env = _path_native_runtime(job)
         capabilities = _require_memory_backend(native, env, "segmented24")
         options = job["options"]
         direction = options.get("direction", "forward")
@@ -289,7 +302,6 @@ class Cluster:
         from time import perf_counter
 
         from .launch import _require_memory_backend, run_graph
-        from .native_distribution import native_runtime
         from .path_search import (
             _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
         )
@@ -297,7 +309,7 @@ class Cluster:
 
         started = perf_counter()
         self.close_path()
-        native, env = native_runtime(job["executable"])
+        native, env = _path_native_runtime(job)
         options = job["options"]
         direction = options.get("direction", "forward")
         if _require_memory_backend(native, env, "segmented24").get(f"graph_path_window_{direction}_v1") is not True:
@@ -392,6 +404,9 @@ class Cluster:
         return self._dispatch(job, output)
 
     def solve(self, session, graph, output, options):
+        from .api import _require_compact_path_capabilities, _validate_compact_path_request
+        from .launch import _PACKET_ADDR, _PATH_COMPACT, _require_memory_backend
+        from .native_distribution import native_runtime
         from .path_search import (
             _deadline, _empty_output_dir, _graph_and_targets, _path_options, _reserve_output, inverse_action,
         )
@@ -409,18 +424,30 @@ class Cluster:
                 "max_lineage_bytes", "lineage_cache_bytes",
             ) if name in options
         })
-        if direction == "bidirectional" and graph.action["kind"] == "matrix":
-            inverse_action(graph)
         setting = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST")
+        compact = os.environ.get(_PATH_COMPACT) == "1"
+        if compact:
+            _validate_compact_path_request(direction, self.placement.world, setting != "0")
+        elif direction == "bidirectional" and graph.action["kind"] == "matrix":
+            inverse_action(graph)
         use_native = False
-        if (setting != "0" and mode in ("nearest", "window")
+        compact_address = None
+        if compact:
+            if graph.generator_count >= 0x7fff_ffff:
+                raise RuntimeError("NATIVE_PATH_COMPACT_UNAVAILABLE_FOR_QUERY")
+            native, env = native_runtime(executable)
+            compact_address = env.get(_PACKET_ADDR)
+            if not compact_address:
+                raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
+            _require_compact_path_capabilities(
+                _require_memory_backend(native, env, "segmented24"), window=mode == "window",
+            )
+            use_native = True
+        elif (setting != "0" and mode in ("nearest", "window")
                 and direction in ("forward", "bidirectional") and graph.generator_count < 0x7fff_ffff):
             if setting == "1":
                 use_native = True
             else:
-                from .launch import _require_memory_backend
-                from .native_distribution import native_runtime
-
                 if mode == "window":
                     capability = f"graph_path_window_{direction}_v1"
                 elif direction == "bidirectional":
@@ -447,9 +474,12 @@ class Cluster:
                 lineage.mkdir(parents=True, exist_ok=True)
         else:
             _empty_output_dir(output)
-        return self._dispatch({"mode": "solve", "graph": graph.to_dict(), "options": options,
-                               "native_nearest": use_native, "native_window": use_window,
-                               "window_output_reserved": use_window, "executable": executable}, output)
+        job = {"mode": "solve", "graph": graph.to_dict(), "options": options,
+               "native_nearest": use_native, "native_window": use_window,
+               "window_output_reserved": use_window, "executable": executable}
+        if compact_address is not None:
+            job["compact_path_packet_address"] = compact_address
+        return self._dispatch(job, output)
 
     def _check_generation(self):
         if self.failure is not None:

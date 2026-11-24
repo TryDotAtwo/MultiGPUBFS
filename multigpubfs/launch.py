@@ -1,5 +1,5 @@
 """Single-host native launch. CPU control never generates or deduplicates states."""
-import hashlib,json,os,secrets,shutil,subprocess,tempfile,time,signal
+import hashlib,json,os,secrets,shutil,socket,subprocess,tempfile,time,signal
 from pathlib import Path
 from .process_control import query as native_query, run as native_run
 from .graph_definition import _normalize_graph
@@ -8,6 +8,12 @@ from .native_distribution import native_runtime
 
 _LEGACY_ARENA_CAPACITY = 0x7fff_fffe
 _LEGACY_ROLLING_CAPACITY = (0xffff_ffff - 3) // 3
+_PATH_COMPACT = 'MGBFS_GENERIC_PATH_COMPACT'
+_PACKET_ADDR = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
+_PACKET_BIND = 'MGBFS_SEGMENT_PACKET_BIND_ADDR'
+_PACKET_RING = 'MGBFS_SEGMENT_PACKET_RING_SLOTS'
+_PACKET_RX = 'MGBFS_SEGMENT_PACKET_RX_SLOTS'
+_PATH_PACKET_ENV = (_PACKET_ADDR,_PACKET_BIND,_PACKET_RING,_PACKET_RX)
 
 def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_targets=None,
                         path_bidirectional=False, path_window=None):
@@ -23,8 +29,13 @@ def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_tar
  return config
 
 def _with_packet_job_token(config,env):
- if (env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1'
-     and 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR' in env and config['plan']['world']>1):
+ plan=config['plan']
+ if config.get('path_targets') is not None and env.get(_PATH_COMPACT)=='1':
+  if (plan.get('compact_transport') is not True or plan.get('compact_packet_slots')!=3
+      or plan.get('compact_receive_slots')!=3 or plan['world']<2 or not env.get(_PACKET_ADDR)):
+   raise RuntimeError('NATIVE_PATH_COMPACT_PLAN_MISMATCH')
+ uses_packets=plan.get('compact_transport') or env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1'
+ if uses_packets and _PACKET_ADDR in env and plan['world']>1:
   # The communicator may be parked and reused by a later launch.
   return dict(config,packet_job_token=secrets.token_hex(16))
  return config
@@ -74,8 +85,7 @@ def _apply_memory_preset(env,backend,preset):
 # identity and loader search path, so replacing a binary or library path
 # cannot silently reuse a capability learned from a different installation.
 _memory_backend_capabilities={}
-def _require_memory_backend(native,env,backend):
- key_name={'segmented24':'segmented24_v1','permutation_bitmap':'permutation_bitmap_v1'}[backend]
+def _native_key_info(native,env):
  resolved=shutil.which(native) or native
  st=os.stat(resolved)
  # A wheel may update its CUDA library without changing the executable or
@@ -88,17 +98,37 @@ def _require_memory_backend(native,env,backend):
   tuple(tuple(item) for item in dependency.get('resolved_dependencies',())))
  loader=tuple(env.get(k,'') for k in ('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT'))
  test_options=tuple(env.get(k,'') for k in ('MGBFS_SEGMENT_TEST_BATCH','MGBFS_SEGMENT_TEST_BATCH_ABI_MISSING'))
- identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,loader,test_options,dependency_key,key_name)
+ identity=(str(Path(resolved).resolve()),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,loader,test_options,dependency_key)
  if dependency is not None and identity in _memory_backend_capabilities:return _memory_backend_capabilities[identity]
  result=native_query([str(native),'key-info'],env=env,capture_output=True,text=True)
  try: info=json.loads(result.stdout)
  except (TypeError,ValueError):info={}
- if result.returncode or not isinstance(info,dict) or info.get('schema')!=1 or info.get(key_name) is not True or info.get('segmented32_v2') is not True or info.get('segmented_memory_presets_v1') is not True:
-  raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
+ if result.returncode or not isinstance(info,dict) or info.get('schema')!=1:return {}
  if dependency is not None:
   if len(_memory_backend_capabilities)>=64:_memory_backend_capabilities.clear()
   _memory_backend_capabilities[identity]=info
  return info
+
+def _require_memory_backend(native,env,backend):
+ key_name={'segmented24':'segmented24_v1','permutation_bitmap':'permutation_bitmap_v1'}[backend]
+ info=_native_key_info(native,env)
+ if info.get(key_name) is not True or info.get('segmented32_v2') is not True or info.get('segmented_memory_presets_v1') is not True:
+  raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
+ return info
+
+def _compact_forward_path_env(native,env,world,bidirectional,*,external):
+ if bidirectional:raise ValueError('NATIVE_PATH_COMPACT_FORWARD_ONLY')
+ if world<2:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS')
+ address=env.get(_PACKET_ADDR)
+ if external and not address:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR')
+ if address=='':raise ValueError('NATIVE_PATH_COMPACT_PACKET_ADDR')
+ if _native_key_info(native,env).get('graph_path_compact_forward_v1') is not True:
+  raise RuntimeError('NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library')
+ if address is None:
+  with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as probe:
+   probe.bind(('127.0.0.1',0))
+   address=f'127.0.0.1:{probe.getsockname()[1]}'
+ return dict(env,**{_PACKET_ADDR:address,_PACKET_RING:'3',_PACKET_RX:'3'})
 
 def _check_memory_backend_receipt(report,backend):
  expected={'segmented24':'EXPERIMENTAL_SEGMENTED24','permutation_bitmap':'EXPERIMENTAL_PERMUTATION_BITMAP'}.get(backend)
@@ -272,6 +302,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   ) else '0'
   if memory_backend!='legacy' or backend!='generic' or autotune or _profile_layers is not None:raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
   native_env.update(MGBFS_GENERIC_PATH_APPEND_ONLY='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
+ else:native_env.pop(_PATH_COMPACT,None)
  if bitmap_pack4 is not None:native_env['MGBFS_SEGMENT_PACK4']=packed
  native_env=_apply_memory_preset(native_env,memory_backend,'balanced' if _path_targets is not None else memory_preset)
  if resident_alphabet8 is not None:native_env['MGBFS_SEGMENT_RESIDENT_ALPHABET8']='1' if resident_alphabet8 else '0'
@@ -333,6 +364,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    count=native_query([native,'graph-count'],env=native_env,capture_output=True,text=True)
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
+  path_compact=_path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
+  if path_compact:
+   native_env=_compact_forward_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
+   devices=selected
   from .nccl_preflight import prepare
   # The communication prefix uses its own admission. Request-local limits
   # belong to the actual search, where a resource stop preserves its prefix.
@@ -348,7 +383,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     search_limits[key]=preflight_env.pop(key)
   if _path_targets is not None:
    for key in tuple(preflight_env):
-    if key.startswith('MGBFS_GENERIC_PATH_'):
+    if key.startswith('MGBFS_GENERIC_PATH_') or (path_compact and key in _PATH_PACKET_ENV):
      search_limits[key]=preflight_env.pop(key)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)
   native_env.update(search_limits)
@@ -473,7 +508,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if profile:
     result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    return finish(result)
-  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(_with_packet_job_token(admission,native_env)));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];failure=None;started=time.monotonic()
+  launch_config=_with_packet_job_token(admission,native_env)
+  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(launch_config));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];failure=None;started=time.monotonic()
   try:
    if _profile_deadline is not None and time.monotonic()>=_profile_deadline:raise RuntimeError('AUTOTUNE_PILOT_WALL_DEADLINE')
    from .generic_session import launch_group_selection
