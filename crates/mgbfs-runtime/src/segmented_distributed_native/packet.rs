@@ -977,6 +977,18 @@ extern "C" fn packet_cancel(context: *mut c_void) -> i32 {
 }
 
 impl SegmentedDistributedBfs {
+    pub(crate) fn signal_packet_failure(&mut self) {
+        if let Some(client) = self
+            .packet
+            .as_mut()
+            .and_then(|transport| transport.client.as_mut())
+        {
+            if client.terminal_code() == 0 {
+                let _ = client.send(PacketFrame::Fail(REMOTE_FAILURE));
+            }
+        }
+    }
+
     pub(super) fn wait_boundary_stream(&mut self) -> Result<()> {
         let stream = self.base.stream.ptr;
         if let Some(client) = self

@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 
 const PROBE_ROWS: u64 = 1 << 20;
 const PROBE_LAUNCH_WINDOW: usize = 8;
+const MEETING_FOUND: u64 = 1;
+const MEETING_UNCHECKED: u64 = 2;
 
 #[repr(C)]
 #[derive(Default)]
@@ -135,13 +137,13 @@ impl SegmentedDistributedBfs {
             };
             let words = match &local {
                 Ok(LocalMeeting::Found { source, opposite }) if active == 0 => {
-                    [u64::from(stop()), *source, *opposite, 1]
+                    [u64::from(stop()), *source, *opposite, MEETING_FOUND]
                 }
                 Ok(LocalMeeting::Found { source, opposite }) => {
-                    [u64::from(stop()), *opposite, *source, 1]
+                    [u64::from(stop()), *opposite, *source, MEETING_FOUND]
                 }
                 Ok(LocalMeeting::Missing) => [u64::from(stop()), 0, 0, 0],
-                Ok(LocalMeeting::Stopped(code)) => [*code, 0, 0, 0],
+                Ok(LocalMeeting::Stopped(code)) => [*code, 0, 0, MEETING_UNCHECKED],
                 Err(_) => [FAILED, 0, 0, 0],
             };
             match forward.nearest_exchange(words, &mut workspace)? {
@@ -153,7 +155,15 @@ impl SegmentedDistributedBfs {
                 RESOURCE => break Receipt::incomplete("CUDA_MEMORY", None),
                 code => {
                     if let Some(reason) = stopped(code) {
-                        break Receipt::incomplete(reason, None);
+                        let fully_checked =
+                            workspace.replies.iter().all(|r| r[3] != MEETING_UNCHECKED);
+                        if fully_checked {
+                            checked = Some(depth);
+                        }
+                        let distance = (fully_checked
+                            && workspace.replies.iter().any(|r| r[3] == MEETING_FOUND))
+                        .then_some(depth);
+                        break Receipt::incomplete(reason, distance);
                     }
                 }
             }
@@ -163,7 +173,7 @@ impl SegmentedDistributedBfs {
                 .replies
                 .iter()
                 .enumerate()
-                .find(|(_, reply)| reply[3] == 1)
+                .find(|(_, reply)| reply[3] == MEETING_FOUND)
             {
                 // Every path of length <= f + r meets the committed balls.
                 // Their first intersection therefore lies at this depth sum.

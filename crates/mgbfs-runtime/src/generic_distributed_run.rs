@@ -502,9 +502,10 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  if nearest {
   let targets=launch.path_targets.as_deref().ok_or("SEGMENTED_NEAREST_TARGETS")?;
   let receipt=if let Some(reverse)=reverse.as_mut(){
-   SegmentedDistributedBfs::solve_nearest_bidirectional(&mut bfs,reverse,launch.path_max_depth,seconds)?
-  }else{bfs.solve_nearest(g,targets,launch.path_max_depth,seconds)?};
-  publish_segmented_nearest(&mut bfs, reverse.as_ref(), receipt, output, ready, rank)?;
+   SegmentedDistributedBfs::solve_nearest_bidirectional(&mut bfs,reverse,launch.path_max_depth,seconds)
+  }else{bfs.solve_nearest(g,targets,launch.path_max_depth,seconds)};
+  if receipt.is_err(){bfs.signal_packet_failure();}
+  publish_segmented_nearest(&mut bfs, reverse.as_ref(), receipt?, output, ready, rank)?;
   return Ok(());
  }
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let mut committed=vec![0.0];

@@ -14,7 +14,7 @@ use hash_index::{hash_directory_bytes, initial_hash_run_capacity};
 pub(crate) use nearest::{RootSpec, PATH_PARENT_BYTES};
 use nearest::{state_hash, NearestFns, NearestState, ParentLink};
 use packet::{PacketCodec,PacketConfig,PacketOwnerShard,PacketRuntime,PACKET_ROUTE_STATUS_BYTES};
-use crate::segmented_packet_transport::{Frame as PacketFrame,PacketJobToken,PACKET_CANCELLED,PACKET_DEADLINE,REMOTE_FAILURE};
+use crate::segmented_packet_transport::{PacketJobToken,PACKET_CANCELLED,PACKET_DEADLINE};
 
 #[repr(C)] #[derive(Clone,Copy)]
 struct SegmentDescriptor{slots:*mut u64,states:*mut c_void,positions:*mut u64,slots_count:u64,capacity:u64,banks:u32,position_item_bytes:u32}
@@ -1430,9 +1430,7 @@ impl SegmentedDistributedBfs{
 // Rust errors must not put a potentially poisoned communicator in the cache.
 impl Drop for SegmentedDistributedBfs{fn drop(&mut self){
   if !self.comm.healthy.get()||crate::native_fault::failed(){
-   if let Some(client)=self.packet.as_mut().and_then(|transport|transport.client.as_mut()){
-    if client.terminal_code()==0{let _=client.send(PacketFrame::Fail(REMOTE_FAILURE));}
-   }
+   self.signal_packet_failure();
   }
   // Abort failed communicators before any blocking stream drain. An
   // outstanding transfer can depend on a rank that already exited.
