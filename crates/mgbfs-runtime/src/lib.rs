@@ -86,6 +86,9 @@ pub mod generic_distributed_native;
 #[cfg(all(feature="cuda",target_os="linux"))]
 pub mod generic_distributed_run;
 
+#[cfg(any(all(feature = "cuda", target_os = "linux"), test))]
+mod terminal_evidence;
+
 #[cfg(feature="cuda")]
 mod generic_sorted_native;
 

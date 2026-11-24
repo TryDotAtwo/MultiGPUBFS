@@ -2467,6 +2467,22 @@ impl SegmentedDistributedBfs {
  }
  pub fn sample_global(&self,limit:u32)->Result<Vec<Vec<i64>>>{let preceding=self.counts[..self.rank as usize].iter().sum::<u64>();let quota=u64::from(limit).saturating_sub(preceding).min(self.counts[self.rank as usize]) as u32;self.sample_ranges(&self.current,quota)}
  pub fn previous_small_sample(&self,previous:u64)->Result<Vec<Vec<i64>>>{if previous>=1000{Ok(vec![])}else if self.previous_snapshot_valid{self.sample_previous_snapshot()}else{self.sample_ranges(&self.previous,previous as u32)}}
+
+ // Call only at a committed boundary, before advance can reuse a rolling bank.
+ // The caller has already bounded the global serialized size of both layers.
+ pub(crate) fn terminal_layer_samples(&self) -> Result<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
+  let count_error = || "PROFILE_TERMINAL_EVIDENCE_COUNT".to_owned();
+  let sample = |ranges: &[Range], committed_count: Option<u64>| -> Result<_> {
+   let count = ranges.iter().try_fold(0u64, |rows, range| {
+    rows.checked_add(range.end.checked_sub(range.begin)?)
+   }).ok_or_else(count_error)?;
+   if committed_count.is_some_and(|expected| count != expected) { return Err(count_error()); }
+   let states = self.sample_ranges(ranges, u32::try_from(count).map_err(|_| count_error())?)?;
+   if states.len() as u64 != count { return Err(count_error()); }
+   Ok(states)
+  };
+  Ok((sample(&self.current, Some(self.counts[self.rank as usize]))?, sample(&self.previous, None)?))
+ }
 }
 
 #[cfg(test)]
