@@ -20,6 +20,9 @@ const FAN_IN: u64 = 16;
 const RECORD_BYTES: usize = 24;
 const CSR_EDGE_BYTES: u64 = 16;
 const CHECK_ROWS: usize = 4096;
+const SHARD_ROW_BITS: u32 = 52;
+const SHARD_ROW_LIMIT: u64 = 1 << SHARD_ROW_BITS;
+const MAX_SHARDS: usize = 1 << (u64::BITS - SHARD_ROW_BITS);
 
 impl Transition {
     fn write(self, writer: &mut impl Write) -> Result<()> {
@@ -153,7 +156,22 @@ impl TransitionSpool {
         Ok(())
     }
 
-    pub(crate) fn add(&mut self, mut records: &mut [Transition]) -> Result<()> {
+    pub(crate) fn add(&mut self, records: &mut [Transition]) -> Result<()> {
+        self.add_shard(0, records)
+    }
+
+    // A provisional child ID sorts by shard and local row. The final merge
+    // converts it to a dense rank-local ID once all shard counts are known.
+    pub(crate) fn add_shard(&mut self, shard: u32, mut records: &mut [Transition]) -> Result<()> {
+        if shard as usize >= MAX_SHARDS || records.iter().any(|edge| edge.child >= SHARD_ROW_LIMIT) {
+            return Err("PATH_LINEAGE_SHARD_ROW".into());
+        }
+        if shard != 0 {
+            let prefix = u64::from(shard) << SHARD_ROW_BITS;
+            for edge in records.iter_mut() {
+                edge.child |= prefix;
+            }
+        }
         while !records.is_empty() {
             if self.pending.len() == RUN_ROWS {
                 self.flush_run()?;
@@ -206,9 +224,23 @@ impl TransitionSpool {
         &mut self,
         staging: &Path,
         committed: &Path,
-        rows: u64,
+        rows_by_shard: &[u64],
         mut checkpoint: impl FnMut() -> Result<()>,
     ) -> Result<(u64, u64)> {
+        let (prefixes, rows) = shard_prefixes(rows_by_shard)?;
+        let dense = |edge: Result<Transition>| {
+            let mut edge = edge?;
+            if prefixes.len() == 1 {
+                return Ok(edge);
+            }
+            let shard = (edge.child >> SHARD_ROW_BITS) as usize;
+            let row = edge.child & (SHARD_ROW_LIMIT - 1);
+            if row >= rows_by_shard.get(shard).copied().unwrap_or(0) {
+                return Err("PATH_LINEAGE_SHARD_ROW".into());
+            }
+            edge.child = prefixes[shard] + row;
+            Ok(edge)
+        };
         if self.runs == 0 {
             // All edges fit in the bounded pending buffer. Sort once and
             // build the CSR directly, without writing and rereading a run.
@@ -221,7 +253,7 @@ impl TransitionSpool {
             self.pending.sort_unstable();
             let bytes = write_owner_csr(
                 staging, committed, rows, self.budget,
-                self.pending.iter().copied().map(Ok), checkpoint,
+                self.pending.iter().copied().map(Ok).map(dense), checkpoint,
             )?;
             self.pending.clear();
             return Ok((bytes, self.peak));
@@ -280,11 +312,27 @@ impl TransitionSpool {
             committed,
             rows,
             self.budget - self.live,
-            Merge::new(&inputs)?.with_tail(std::mem::take(&mut self.pending)),
+            Merge::new(&inputs)?.with_tail(std::mem::take(&mut self.pending)).map(dense),
             checkpoint,
         )?;
         Ok((bytes, self.peak))
     }
+}
+
+fn shard_prefixes(counts: &[u64]) -> Result<(Vec<u64>, u64)> {
+    if counts.is_empty() || counts.len() > MAX_SHARDS {
+        return Err("PATH_LINEAGE_SHARD_COUNT".into());
+    }
+    let mut prefixes = Vec::with_capacity(counts.len());
+    let mut total = 0u64;
+    for &rows in counts {
+        if rows > SHARD_ROW_LIMIT {
+            return Err("PATH_LINEAGE_SHARD_ROW".into());
+        }
+        prefixes.push(total);
+        total = total.checked_add(rows).ok_or("PATH_LINEAGE_SIZE")?;
+    }
+    Ok((prefixes, total))
 }
 
 impl Drop for TransitionSpool {
@@ -430,7 +478,7 @@ mod tests {
             spool.add(&mut vec![edge; RUN_ROWS]).unwrap();
         }
         let mut calls = 0;
-        let result = spool.finish(&stage, &committed, 1, || {
+        let result = spool.finish(&stage, &committed, &[1], || {
             calls += 1;
             if calls == 3 {
                 Err("CANCELLED".into())
@@ -460,7 +508,7 @@ mod tests {
             generator: 7,
         }]).unwrap();
         let mut calls = 0;
-        let result = spool.finish(&staging, &committed, 1, || {
+        let result = spool.finish(&staging, &committed, &[1], || {
             calls += 1;
             if calls == 3 { Err("CANCELLED".into()) } else { Ok(()) }
         });
@@ -482,7 +530,7 @@ mod tests {
         spool.add(&mut vec![edge; RUN_ROWS]).unwrap();
         assert_eq!(spool.runs, 0);
         assert_eq!(
-            spool.finish(&root.join("stage"), &root.join("csr"), 1, || Ok(())).unwrap(),
+            spool.finish(&root.join("stage"), &root.join("csr"), &[1], || Ok(())).unwrap(),
             (budget, budget),
         );
         drop(spool);
@@ -490,18 +538,18 @@ mod tests {
     }
 
     #[test]
-    fn final_merge_includes_the_tail_without_spilling_it() {
+    fn final_merge_includes_the_tail_and_compacts_shard_rows() {
         let root = std::env::temp_dir().join(format!("mgbfs-csr-tail-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let final_bytes = 24 + (RUN_ROWS as u64 + 1) * CSR_EDGE_BYTES;
         let budget = final_bytes + (RUN_ROWS * RECORD_BYTES) as u64;
         let mut spool = TransitionSpool::new(root.join("spool"), budget).unwrap();
-        let edge = Transition { child: 1, parent_rank: 1, parent: 7, generator: 3 };
-        spool.add(&mut vec![edge; RUN_ROWS]).unwrap();
+        let edge = Transition { child: 0, parent_rank: 1, parent: 7, generator: 3 };
+        spool.add_shard(2, &mut vec![edge; RUN_ROWS]).unwrap();
         spool.add(&mut [Transition { child: 0, generator: 11, ..edge }]).unwrap();
         let committed = root.join("csr");
         assert_eq!(
-            spool.finish(&root.join("stage"), &committed, 2, || Ok(())).unwrap(),
+            spool.finish(&root.join("stage"), &committed, &[1, 0, 1], || Ok(())).unwrap(),
             (final_bytes, budget),
         );
         let offsets = fs::read(committed.join("offsets")).unwrap();
@@ -564,7 +612,7 @@ mod tests {
                     .unwrap();
             }
             assert_eq!(spool.runs, 0);
-            spool.finish(&staging, &committed, 2, || Ok(()))
+            spool.finish(&staging, &committed, &[2], || Ok(()))
         };
 
         assert_eq!(build(295).unwrap_err(), "LINEAGE_LIMIT");

@@ -1298,7 +1298,7 @@ pub(crate) fn distributed_window_forward(
                 let written = spool.finish(
                     &output.join(format!("{next}.staging")),
                     &csr_path,
-                    local,
+                    &[local],
                     || query_checkpoint(&time),
                 );
                 peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
@@ -1461,7 +1461,7 @@ pub(crate) fn distributed_window_bidirectional(
                         let written = spool.finish(
                             &root.join(format!("{depth}.staging")),
                             &csr_path,
-                            local,
+                            &[local],
                             || query_checkpoint(&time),
                         );
                         peak_bytes = peak_bytes.max(committed_bytes + spool.peak_reserved_bytes());
