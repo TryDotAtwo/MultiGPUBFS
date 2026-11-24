@@ -366,6 +366,11 @@ impl PacketRuntime {
             if self.rx[index].to_unpack {
                 let slot = &self.rx[index];
                 if slot.events()?.1.is_ready()? {
+                    // Both events can complete after this poll checked the
+                    // wire. Publish the owner lease only after Received.
+                    if self.receive.as_ref().and_then(|ring| ring.wire_slot) == Some(index) {
+                        continue;
+                    }
                     let packet = slot.packet.ok_or("SEGMENT_PACKET_RX_STATE")?;
                     self.read_incoming(ctx, packet, index, stats)?;
                     let slot = &mut self.rx[index];
