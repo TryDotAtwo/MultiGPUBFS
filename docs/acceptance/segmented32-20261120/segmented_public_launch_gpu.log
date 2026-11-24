@@ -1,6 +1,0 @@
-PASS persistent s4 pids [1536074, 1536075]
-PASS persistent directed pids [1536074, 1536075]
-PASS persistent repeated pids [1536074, 1536075]
-PASS explicit capacity 3 INCOMPLETE
-PASS explicit capacity 4294967313 COMPLETE
-EVIDENCE /workspace/seg24-launch-lfjtzt9t

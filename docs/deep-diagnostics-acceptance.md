@@ -1,6 +1,6 @@
 # Comprehensive diagnostic acceptance
 
-Current extended package: [v15 runtime/SM120 comparison acceptance](diagnostic-build-acceptance-2026-10-14.md). The v14 measurements below are retained as historical evidence.
+Current extended package: [v15 runtime/SM120 comparison acceptance](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/diagnostic-build-acceptance-2026-10-14.md). The v14 measurements below are retained as historical evidence.
 
 Final package: 0.2.0.dev14, release native-pip-20261014-v14.
 Wheel SHA256: 5fa2adb9d048e2025b873f3b616cb1530c01ad4a5cb8877348e7da993181fa69.

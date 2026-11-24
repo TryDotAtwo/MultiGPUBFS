@@ -86,4 +86,4 @@ and complete S14 remain unverified. Python 3.10+, Linux x86_64, a compatible
 NVIDIA driver and the GLIBC/GLIBCXX versions in the native manifest are
 required. [Architecture, timings and limitations](experimental-memory-backends.md).
 
-[Pinned dev44 wheel and SHA-256](experimental-segmented.md) · [GPU acceptance and limitations](acceptance/2026-11-22-dev44-advisory.md)
+[Pinned dev44 wheel and SHA-256](experimental-segmented.md) · [GPU acceptance and limitations](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/2026-11-22-dev44-advisory.md)

@@ -1,5 +1,0 @@
-{"backend": "segmented", "configured_segment_rows": 64, "actual_rows": [64, 64], "shards": 1, "bfs_seconds": 0.061872913, "workers": [3165207, 3165208]}
-{"backend": "segmented", "configured_segment_rows": 4294967296, "actual_rows": [64, 64], "shards": 1, "bfs_seconds": 0.031228373, "workers": [3165207, 3165208]}
-{"backend": "permutation_bitmap", "configured_segment_rows": 64, "actual_rows": [64, 64], "shards": 1, "bfs_seconds": 0.021581092, "workers": [3165207, 3165208]}
-{"backend": "permutation_bitmap", "configured_segment_rows": 4294967296, "actual_rows": [64, 64], "shards": 1, "bfs_seconds": 0.033354729, "workers": [3165207, 3165208]}
-EVIDENCE /workspace/segment-config-api-nm865pwx

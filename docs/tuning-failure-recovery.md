@@ -6,4 +6,4 @@ Short successful probes are validated and recorded in `excluded_prefix_candidate
 
 Only exact recognized capacity refusals of additional generator plans can be rejected without cancelling a previously admitted measured choice. They remain visible in `size_generator_rejections`. Python verifies submitted command and response identity; Rust permits resident reuse only for read-only plan commands without a recorded native fault. The original error response remains intact. A failed BFS, real CUDA/NCCL fault, unknown error or dead process is never reused or automatically restarted by this rule.
 
-[Physical GPU receipt and scope](measured-tuning-acceptance-2026-10-17.md). The original eight-GPU server CUDA999 root cause is unknown; a missing graph definition prevents exact reproduction.
+[Physical GPU receipt and scope](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/measured-tuning-acceptance-2026-10-17.md). The original eight-GPU server CUDA999 root cause is unknown; a missing graph definition prevents exact reproduction.

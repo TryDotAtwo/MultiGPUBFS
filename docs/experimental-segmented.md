@@ -1,6 +1,6 @@
 # Experimental segmented and bitmap BFS
 
-Version 0.2.0.dev44 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](acceptance/2026-11-22-dev44-advisory.md) before relying on it for a large calculation.
+Version 0.2.0.dev44 provides opt-in segmented hash (`segmented24`) and permutation bitmap (`permutation_bitmap`) backends. The existing `legacy` backend remains the default. This is a development release: see the [GPU acceptance and limitations](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/2026-11-22-dev44-advisory.md) before relying on it for a large calculation.
 
 ## Install
 

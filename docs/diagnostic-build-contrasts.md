@@ -1,7 +1,7 @@
 # One-run CUDA startup investigation
 
 Install the [pinned GitHub package](install-native-package.md) and read the
-[measured diagnostic acceptance](diagnostic-build-acceptance-2026-10-14.md).
+[measured diagnostic acceptance](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/diagnostic-build-acceptance-2026-10-14.md).
 
 The small package carries a pinned index, not four complete CUDA libraries. Ordinary native preparation fetches the common component and one compatible production library. Optional alternatives download only when their diagnostic case is reached; a declaration without installed bytes is explicitly `PINNED_DECLARATION_NOT_INSTALLED`, not verified execution.
 
@@ -77,4 +77,4 @@ or JIT. The finite suite cannot guarantee coverage of every graph/API
 parameter, multi-node transport, security policy or inaccessible kernel state.
 It is a startup/correctness investigation, not a throughput benchmark.
 
-Both ordinary and deep doctor can recover the visible logical GPU set from agreeing independent driver/runtime probes after a native-count failure. They retain the original failure and execute the same real-BFS/printed-command gate before declaring a recipe READY. See [current release acceptance](selective-native-acceptance-2026-10-15.md).
+Both ordinary and deep doctor can recover the visible logical GPU set from agreeing independent driver/runtime probes after a native-count failure. They retain the original failure and execute the same real-BFS/printed-command gate before declaring a recipe READY. See [current release acceptance](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/selective-native-acceptance-2026-10-15.md).

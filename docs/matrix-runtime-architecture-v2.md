@@ -2,7 +2,7 @@
 
 Дата: 2026-09-03. Режим: автономная проработка по запросу пользователя.
 Это единый актуальный design contract первого backend. История:
-[ARCHITECTURE_NEED](../ARCHITECTURE_NEED.md). Hash wire algorithm:
+[ARCHITECTURE_NEED](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/ARCHITECTURE_NEED.md). Hash wire algorithm:
 [GEMM_U8_P32X4_V1](gemm-hash-v1.md).
 
 Статус: спецификация и самостоятельный статический аудит; production runtime
@@ -11,13 +11,13 @@
 Переход к коду — только после замыкания перечисленных contract gates.
 
 Первые исполняемые проверки контрактов и оставшиеся gates:
-[architecture-models](validation/2026-09-03-architecture-models.md).
+[architecture-models](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-architecture-models.md).
 Они не являются реализацией production scheduling.
 
-Следующий исполняемый срез: [rank layout / StateRef / schema2 frames](validation/2026-09-03-rank-layout-wire.md).
+Следующий исполняемый срез: [rank layout / StateRef / schema2 frames](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-rank-layout-wire.md).
 Он закрывает часть CPU-контрактов. Реальные query adapters для
-[generation/hash](validation/2026-09-03-cuda-allocation-queries.md) и
-[CUB route](validation/2026-09-03-route-allocation-query.md) реализованы отдельно;
+[generation/hash](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-cuda-allocation-queries.md) и
+[CUB route](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-route-allocation-query.md) реализованы отдельно;
 отчёты различают локальные проверки и hardware gates конкретных commits.
 Полный rank-wide query provider и production data plane пока не реализованы.
 
@@ -38,7 +38,7 @@
 В измеренной конфигурации m24 эти owner arrays занимают 7.1085 GiB без CUB
 scratch из 11.0273 GiB native allocation delta. Две state arenas — 0.9537 GiB.
 Это объясняет перерасход памяти; точный вклад стадий во время ещё не измерен.
-Источник чисел: [large comparison](validation/2026-09-03-large-single-gpu-result.md).
+Источник чисел: [large comparison](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-large-single-gpu-result.md).
 
 Запрещено переносить этот owner в production с переименованием в shard.
 Ни один owner job не получает указатель и count целого rank-local hash layer.
@@ -594,14 +594,14 @@ future owner and end-to-end macro runtime remain unmeasured.
 Implementation update: the sorted-input bounded CUDA owner leaf now implements
 Compare, stable compaction, credit checking and merge/copyback Commit using
 I/J/K-bounded scratch. Its independent two-T4 checks and four sanitizer modes
-passed; see [owner evidence](validation/2026-09-03-bounded-cuda-owner.md).
+passed; see [owner evidence](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-bounded-cuda-owner.md).
 Upstream multi-source merge/job splitting, Rust scheduling and real reservation
 integration remain pending. This is not completion of production architecture
 or of the full-state/multi-rank gate in section 14.
 
 The owner is also connected to GPU state reservation and dense materialization;
 full layer sets for U4(2)/U4(3) passed with all sanitizer modes on two independent
-T4s in a CPU-fed verification harness. See [state commit evidence](validation/2026-09-03-state-commit.md).
+T4s in a CPU-fed verification harness. See [state commit evidence](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-state-commit.md).
 This does not implement production job preparation, reclamation/archive leases
 or the native multi-rank scheduler.
 

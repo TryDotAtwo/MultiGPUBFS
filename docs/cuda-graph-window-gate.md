@@ -1,8 +1,8 @@
 # 32-batch CUDA Graph hardware gate
 
 Earlier checkpoints below are historical. Current automatic/HF/release evidence
-is recorded in [the automatic and release gate](validation/2026-10-03-automatic-and-release.md)
-and [the repeated-query gate](validation/2026-10-03-memory-query-rendezvous.md).
+is recorded in [the automatic and release gate](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-10-03-automatic-and-release.md)
+and [the repeated-query gate](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-10-03-memory-query-rendezvous.md).
 Remaining target-hardware checks must be assessed against those newer results.
 
 Explicit switch: `MGBFS_CUDA_GRAPH_BATCHES=32`; default remains 0 until the

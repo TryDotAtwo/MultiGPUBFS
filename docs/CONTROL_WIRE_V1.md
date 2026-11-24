@@ -26,7 +26,7 @@ GPU event readiness, buffer reservation, or NCCL overlap.
 
 Status: implemented codec, rank-bound connection, bootstrap rendezvous, and real
 loopback TCP tests. The reference benchmark now calls rendezvous before NCCL;
-setup integration passed the [v30 two-T4 gate](validation/2026-09-06-bootstrap-two-t4-gate.md).
+setup integration passed the [v30 two-T4 gate](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-06-bootstrap-two-t4-gate.md).
 **Not yet wired into the GPU dispatcher**.
 This specifies transport framing, not a complete
 sequencer or proof of asynchronous NCCL issue order.

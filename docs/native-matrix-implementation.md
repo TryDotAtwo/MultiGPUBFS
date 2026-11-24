@@ -133,7 +133,7 @@ This is not yet a scheduler, a full frontier allocator, or performance evidence.
 The GPU primitives passed on both physical T4s in private Kaggle version 1
 (40 executable invocations), then the connected pipeline also passed in version
 2 (50 invocations). Both versions include all four sanitizer tools. See the
-[evidence and exact scope](validation/2026-09-02-t4-primitives.md).
+[evidence and exact scope](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-02-t4-primitives.md).
 The connected generation/hash/route/owner test checks CPU full-state layers
 for m=2..6, first two expansion depths and both pre-dedup modes. Real NCCL
 multi-rank BFS remains an unchecked gate; no performance comparison is claimed.
@@ -143,12 +143,12 @@ were archived into five Parquet shards, atomically promoted on Hugging Face and
 verified through the final repository file listing.  The fixed 20 MiB pinned
 ring absorbed the complete short producer burst; this is not yet a capacity or
 bandwidth proof for S13.  See
-[the exact evidence and boundary](validation/2026-09-04-hf-streaming-s8.md).
+[the exact evidence and boundary](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-04-hf-streaming-s8.md).
 
 The two cluster capacity policies were then exercised on the complete S11
 graph. `EQUAL_GLOBAL` preserved all 39,916,800 states while reducing the CUDA
 peak from 7,107 MiB to 4,081 MiB per T4.  See the
-[full S11 A/B boundary](validation/2026-09-04-capacity-modes-s11-2xt4.md).
+[full S11 A/B boundary](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-04-capacity-modes-s11-2xt4.md).
 
 ### Materialization and full-depth GPU feedback
 
@@ -191,4 +191,4 @@ Update 2026-09-03: an explicit `new_pipelined` constructor now implements two
 preallocated candidate banks with event-protected reuse on producer and consumer
 streams. The default constructor remains serial. Local Nsight shows kernel
 overlap; this does not establish a speedup or close the missing production
-contracts above. See [the boundary audit and evidence](validation/2026-09-03-ping-pong.md).
+contracts above. See [the boundary audit and evidence](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-09-03-ping-pong.md).

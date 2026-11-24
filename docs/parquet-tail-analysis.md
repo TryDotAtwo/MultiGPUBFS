@@ -56,7 +56,7 @@ contract. Per-case statistics and launch reproducibility remain in each manifest
 CPU integration gates cover sharing, widths, shard boundaries, partial offsets,
 cache reuse, corruption rejection, payload-before-manifest commits and shared
 HF readback. Repeated native query and complete-case CPU oracle evidence is linked in
-[the startup-query gate](validation/2026-10-03-memory-query-rendezvous.md).
+[the startup-query gate](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-10-03-memory-query-rendezvous.md).
 Remote cohort publication and the bounded disk-release path require their own
 GPU-host/HF readback gates; successful conversion alone does not prove delivery.
 

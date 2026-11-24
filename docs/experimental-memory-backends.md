@@ -68,8 +68,8 @@ when a segment and rank limit interact. The current executable rejects that
 old combination with `SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING`; it does not
 silently fall back. Use the executable and CUDA library from the same build.
 Results are workload and topology dependent: see the
-[2-GPU comparison](acceptance/2026-11-20-segmented-2gpu.md) and
-[8-GPU comparison](acceptance/2026-11-20-segmented-8gpu.md). No strategy is
+[2-GPU comparison](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/2026-11-20-segmented-2gpu.md) and
+[8-GPU comparison](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/2026-11-20-segmented-8gpu.md). No strategy is
 claimed fastest on B200 without a B200 measurement.
 
 ## Memory preset
@@ -91,7 +91,7 @@ configuration can require tuning again.
 
 The two-bank bitmap keeps global visited bits and retains a bounded sample of
 the previous complete layer before reusing its state bank. A resource stop
-reports only complete layers. See [validation and limits](acceptance/segment-vram-20261120.md).
+reports only complete layers. See [validation and limits](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segment-vram-20261120.md).
 
 ## `segmented`
 
@@ -143,7 +143,7 @@ problem have been validated.
 
 ## Measured scope and tuning
 
-In a later exact-exchange comparison on the same 8x RTX 3090, S13 took 393.32 s for hash and 593.55 s for bitmap. The initial batch was the same, but bitmap retried and reduced its batch ceiling from 8192 to 2048 while hash retained 8192. This was one paired run with the earlier three-bank bitmap; it does not isolate the cost of the bitmap. See the [audit](acceptance/bitmap-audit-20261120.md) and [follow-up](acceptance/segment-vram-followup-20261120.md).
+In a later exact-exchange comparison on the same 8x RTX 3090, S13 took 393.32 s for hash and 593.55 s for bitmap. The initial batch was the same, but bitmap retried and reduced its batch ceiling from 8192 to 2048 while hash retained 8192. This was one paired run with the earlier three-bank bitmap; it does not isolate the cost of the bitmap. See the [audit](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/bitmap-audit-20261120.md) and [follow-up](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segment-vram-followup-20261120.md).
 
 For context, an earlier padded-exchange run measured the following. On 8x RTX 3090 all three backends completed S13 with 6,227,020,800 states;
 all 79 layer sizes matched the independent Mahonian oracle. Single-run BFS
@@ -158,7 +158,7 @@ segments of 1,048,576 rows per bank were:
 
 Per-rank segment allocations at completion were 5.327 GB for segmented and
 1.636 GB for bitmap plus 0.097 GB for its bitmap; these figures exclude other
-allocations and are not total or peak VRAM measurements. See [the full comparison](acceptance/segmented32-20261120/rtx3090-complete-s13.json)
+allocations and are not total or peak VRAM measurements. See [the full comparison](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented32-20261120/rtx3090-complete-s13.json)
 and [receipts](acceptance/segmented32-20261120/rtx3090-complete-receipts.tar.gz).
 This is not a test of more than 2^32 states on one rank or evidence of B200 speed.
 
