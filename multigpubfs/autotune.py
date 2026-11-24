@@ -2,7 +2,7 @@
 import hashlib,json,math,os,subprocess,tempfile,time
 from pathlib import Path
 from .artifact_paths import artifact_path
-from .process_control import query as native_query
+from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout, query as native_query
 from .profile_cache import read_mapping as _read_profile_cache, write_mapping as _write_profile_cache
 
 def _admit(graph,devices,capacity,shards,native,env,directory,*,batch=None):
@@ -35,7 +35,7 @@ def _system_info(command):
   if cache is None:cache={};_active.hardware_metadata=cache
   key=(tuple(command),tuple(os.environ.get(k) for k in ('CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER')), _active.generation)
   if key in cache:return subprocess.CompletedProcess(command,0,cache[key],'')
- try:result=subprocess.run(command,capture_output=True,text=True,timeout=10)
+ try:result=subprocess.run(command,capture_output=True,text=True,timeout=profile_timeout(10))
  except (OSError,subprocess.TimeoutExpired):return subprocess.CompletedProcess(command,1,'unavailable','')
  if cache is not None and result.returncode==0:
   if len(cache)>=32:cache.clear()
@@ -65,7 +65,7 @@ def _gemm_hardware_available():
 
 def _dependency_identity_uncached(native,env):
  from .native_distribution import _file_digest
- try:resolved=subprocess.run(['ldd',native],capture_output=True,text=True,env=env,timeout=10)
+ try:resolved=subprocess.run(['ldd',native],capture_output=True,text=True,env=env,timeout=profile_timeout(10))
  except (OSError,subprocess.TimeoutExpired):return None
  dependencies=[]
  for line in resolved.stdout.splitlines():
@@ -342,12 +342,28 @@ def _validate_segmented_resource_report(report,output,digest,devices,env,state_e
          'snapshot_current_count':len(current),'snapshot_current_layer_size':sizes[-1],
          'validation_scope':'rank consensus, layer counts and bounded snapshot integrity; fully retained layers can be compared across probes; not an independent full-prefix state proof'}
 
-def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None,capacity_slowdown_limit=None,pilot_limit=None,pilot_wall_seconds=None):
+def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized=True,fixed_shards=None,capacity_slowdown_limit=None,pilot_limit=None,pilot_wall_seconds=None,startup_deadline=None):
+ if pilot_wall_seconds is not None and (type(pilot_wall_seconds) is not int or pilot_wall_seconds<2):raise ValueError('INVALID_PROFILE_PILOT_WALL_SECONDS')
+ started=time.monotonic() if pilot_wall_seconds is not None or startup_deadline is not None else None
+ deadline=startup_deadline
+ if pilot_wall_seconds is not None:
+  local=started+min(max_seconds,pilot_wall_seconds)
+  deadline=local if deadline is None else min(deadline,local)
+ with profile_budget(deadline):
+  try:
+   return _choose_profile(graph,devices,capacity,max_seconds,native,env,
+    allow_specialized=allow_specialized,fixed_shards=fixed_shards,capacity_slowdown_limit=capacity_slowdown_limit,
+    pilot_limit=pilot_limit,pilot_wall_seconds=pilot_wall_seconds,budget_deadline=deadline,started=started)
+  except ProfileBudgetExpired:
+   return {'status':'TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE','shards':fixed_shards,
+    'measured':False,'seconds':time.monotonic()-started}
+
+
+def _choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_specialized,fixed_shards,capacity_slowdown_limit,pilot_limit,pilot_wall_seconds,budget_deadline,started):
  # Omitted peer policy and public default auto are the same configuration.
  env=dict(env);env.setdefault('MGBFS_PEER_TRANSPORT','auto')
  if capacity_slowdown_limit is not None and (type(capacity_slowdown_limit) not in (int,float) or not 1<=capacity_slowdown_limit<float('inf')):raise ValueError('INVALID_CAPACITY_SLOWDOWN_LIMIT')
  if pilot_limit is not None and (type(pilot_limit) is not int or pilot_limit<1):raise ValueError('INVALID_PROFILE_PILOT_LIMIT')
- if pilot_wall_seconds is not None and (type(pilot_wall_seconds) is not int or pilot_wall_seconds<2):raise ValueError('INVALID_PROFILE_PILOT_WALL_SECONDS')
  from .specialized import exact_specialized_supported
  allow_specialized=allow_specialized and exact_specialized_supported(graph)
  from .generation import gemm_supported
@@ -357,7 +373,9 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
  forced_generator=env.get('MGBFS_GENERIC_GENERATOR','cuda')
  if forced_generator not in ('cuda','gemm'):raise ValueError('INVALID_GENERIC_GENERATOR')
  if forced_generator=='gemm' and not gemm_supported(graph):raise ValueError('GEMM_GRAPH_NOT_EXACTLY_SUPPORTED')
- started=time.monotonic();variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
+ if started is None:started=time.monotonic()
+ profile_timeout(max_seconds)
+ variants=_transport_variants(graph,env);default_transport=variants[0][2];default_order=variants[0][3]
  with _evidence_directory(env,'mgbfs-profile-') as temporary:
   baseline_shards=fixed_shards if fixed_shards is not None else variants[0][0]
   baseline=_admit(graph,devices,capacity,baseline_shards,native,env,temporary)
@@ -368,7 +386,6 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
   bitmap=segmented and env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
   capacity_preset=segmented and env.get('MGBFS_MEMORY_PRESET')=='max_capacity'
   bounded_capacity=capacity_preset and capacity_slowdown_limit is not None
-  budget_deadline=started+max_seconds if pilot_wall_seconds is not None else None
   def fallback(result):
    if bounded_capacity:
     alternatives=[p for p in result.get('pilots',[]) if p['segment_runtime_preset']=='max_capacity']
@@ -534,6 +551,9 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      if segmented and str(report.get('reason','')).startswith('RESOURCE_'):
       report=dict(report,_validated_resource_receipt=_validate_segmented_resource_report(report,target,graph.digest(),selected,candidate_env,graph.state_elements))
      return report
+   except ProfileBudgetExpired:
+    timed_out_trials.append(label)
+    return None
    except RuntimeError as error:
     if pilot_wall_seconds is not None and str(error).split(';',1)[0]=='AUTOTUNE_PILOT_WALL_DEADLINE' and 'TEARDOWN_INCOMPLETE' not in str(error):
      timed_out_trials.append(label)
@@ -604,7 +624,8 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
      scheduled.insert(3,(first_admitted,'0',balanced_queue,'balanced'))
   for index,((shards,fraction,transport,order,lane,_),exchange,queue_cap,runtime_preset) in enumerate(scheduled):
    if pilot_limit is not None and index>=pilot_limit:break
-   remaining=max_seconds-(time.monotonic()-started)
+   now=time.monotonic()
+   remaining=max_seconds-(now-started) if budget_deadline is None else budget_deadline-now
    if remaining<(limit+1 if pilot_wall_seconds is None else 2):break
    candidate_base=balanced_env if bounded_capacity and runtime_preset=='balanced' else env
    candidate_env=dict(candidate_base,MGBFS_GENERIC_TRANSPORT=transport,MGBFS_GENERIC_SORT=order)
@@ -619,6 +640,9 @@ def choose_profile(graph,devices,capacity,max_seconds,native,env,*,allow_special
     pilot_deadline=min(budget_deadline,time.monotonic()+pilot_wall_seconds)
     candidate_env['MGBFS_NATIVE_QUERY_SECONDS']=str(min(pilot_wall_seconds,float(env.get('MGBFS_NATIVE_QUERY_SECONDS','60'))))
    try:admission=_admit(graph,selected,capacity if segmented else common_capacity,shards,native,candidate_env,temporary)
+   except ProfileBudgetExpired:
+    timed_out_trials.append('pilot-'+str(index))
+    break
    except RuntimeError as error:
     if pilot_deadline is None or not str(error).startswith('NATIVE_STARTUP_QUERY_TIMEOUT: standalone query child terminated'):raise
     timed_out_trials.append('pilot-'+str(index));continue

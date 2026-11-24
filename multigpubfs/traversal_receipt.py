@@ -4,6 +4,46 @@ import hashlib
 import json
 
 
+def read_terminal_evidence(directory, report):
+    digest = report.get("terminal_states_sha256")
+    if digest is None:
+        return None
+    with (directory / "terminal_states.json").open("rb") as stream:
+        raw = stream.read((1 << 20) + 1)
+    if len(raw) > 1 << 20 or hashlib.sha256(raw).hexdigest() != digest:
+        raise RuntimeError("TERMINAL_EVIDENCE_DIGEST_MISMATCH")
+    value = json.loads(raw)
+    if (value.get("schema") != 1 or value.get("graph_digest") != report["graph_digest"]
+            or value.get("depth") != len(report["layer_sizes"]) - 1):
+        raise RuntimeError("TERMINAL_EVIDENCE_IDENTITY_MISMATCH")
+    return value
+
+
+def merge_terminal_evidence(report, rank_evidence):
+    if all(part is None for part in rank_evidence):
+        return None
+    if (any(part is None for part in rank_evidence) or report["status"] != "COMPLETE"
+            or report["reason"] != "FRONTIER_EXHAUSTED"):
+        raise RuntimeError("TERMINAL_EVIDENCE_RANK_CONSENSUS_MISMATCH")
+    sizes = report["layer_sizes"]
+    value = {"schema": 1, "graph_digest": report["graph_digest"], "depth": len(sizes) - 1}
+    for field, length in (("current", sizes[-1]), ("previous_small", sizes[-2] if len(sizes) > 1 else 0)):
+        rows = [row for part in rank_evidence for row in part[field]]
+        if len(rows) != length or len({tuple(row) for row in rows}) != length:
+            raise RuntimeError("TERMINAL_EVIDENCE_LAYER_COVERAGE_MISMATCH")
+        value[field] = rows
+    text = json.dumps(value, separators=(",", ":"))
+    report["terminal_states_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return text
+
+
+def write_terminal_evidence(directory, text):
+    if text is not None:
+        temporary = directory / "terminal_states.json.tmp"
+        temporary.write_text(text, encoding="utf-8")
+        temporary.replace(directory / "terminal_states.json")
+
+
 def merge_rank_traversal(reports, snapshots, config, *, error_prefix, segmented, bitmap,
                          sample_limit_field=False, require_admitted_cuts=False):
     devices = config["devices"]

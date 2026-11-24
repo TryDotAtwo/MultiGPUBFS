@@ -9,13 +9,15 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 
 from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
 from .launch import (
     _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
-    _compact_path_capability, _require_memory_backend, _require_segmented_path_capabilities, run_graph,
+    _compact_path_capability, _require_memory_backend, _require_segmented_path_capabilities,
+    _supports_segmented_path, run_graph,
 )
 from .memory_admission import resolve_traversal_memory
 from .native_distribution import native_runtime
@@ -152,7 +154,7 @@ class BfsSession:
     """Reuse native ranks and their buffers across sequential calls in one context."""
 
     def __init__(self, *, gpus=None, devices=None, output_root=None, tune="auto",
-                 executable=None):
+                 executable=None, profile_registry=None, profile_registry_sha256=None):
         if gpus is not None and (type(gpus) is not int or gpus < 1):
             raise ValueError("INVALID_GPU_COUNT")
         if devices is not None:
@@ -167,6 +169,8 @@ class BfsSession:
         self._output_root = Path(output_root) if output_root is not None else artifact_path("bfs-results")
         self._tune = tune
         self._executable = executable
+        self._profile_registry = profile_registry
+        self._profile_registry_sha256 = profile_registry_sha256
         self._local_devices = None
         self._packet_address = None
         self._lock = threading.RLock()
@@ -241,24 +245,32 @@ class BfsSession:
                 self._packet_address = f"127.0.0.1:{reserve.getsockname()[1]}"
         return self._packet_address
 
+    def _live_inventory(self, native, devices, env, *, optional=False):
+        from .process_control import profile_timeout
+
+        probe_env = dict(env, MGBFS_EXPERIMENTAL_SEGMENTED24="1", MGBFS_GENERIC_HISTORY="hash")
+        timeout = startup_timeout(probe_env)
+        try:
+            return self._pool.inventory(native, devices, probe_env,
+                                        profile_timeout(timeout) if optional else timeout)
+        except subprocess.TimeoutExpired as error:
+            raise startup_timeout_error(error) from error
+
     def _memory_policy(self, graph, devices, native, env, preset, options):
         capabilities = _require_memory_backend(native, env, options.get("memory_backend", "segmented24"))
-
-        def load_inventory():
-            probe_env = dict(env, MGBFS_EXPERIMENTAL_SEGMENTED24="1", MGBFS_GENERIC_HISTORY="hash")
-            try:
-                return self._pool.inventory(native, devices, probe_env, startup_timeout(probe_env))
-            except subprocess.TimeoutExpired as error:
-                raise startup_timeout_error(error) from error
-
-        return resolve_traversal_memory(graph, preset, capabilities, env, options, load_inventory), capabilities
+        memory = resolve_traversal_memory(
+            graph, preset, capabilities, env, options,
+            lambda: self._live_inventory(native, devices, env),
+        )
+        return memory, capabilities
 
     def _native_nearest(self, devices, direction="forward", *, window=False, maxmemory=False):
         distributed_enabled = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST") != "0"
         compact = os.environ.get(_PATH_COMPACT) == "1"
         eligible = direction in ("forward", "bidirectional") and (devices is None or len(devices) > 1)
-        segmented_window = window and os.environ.get(_PATH_SEGMENTED_WINDOW) == "1"
-        segmented_nearest = not window and eligible and os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
+        setting = os.environ.get(_PATH_SEGMENTED_WINDOW if window else _PATH_SEGMENTED_NEAREST)
+        segmented_window = window and setting == "1"
+        segmented_nearest = not window and eligible and setting == "1"
         segmented = segmented_window or segmented_nearest
         if segmented_window:
             _validate_compact_path_request(None if devices is None else len(devices), distributed_enabled)
@@ -275,13 +287,18 @@ class BfsSession:
             env.pop(_PATH_SEGMENTED_WINDOW, None)
             compact = env.get(_PATH_COMPACT) == "1"
             capabilities = _require_memory_backend(native, env, "segmented24")
-            if not (compact or segmented) and capabilities.get("graph_path_nearest_v1") is not True:
+            preferred = (not compact and setting is None and eligible and distributed_enabled
+                         and _supports_segmented_path(capabilities, direction == "bidirectional", window=window))
+            if not (compact or segmented or preferred) and capabilities.get("graph_path_nearest_v1") is not True:
                 return None
             devices = self._native_devices(native, env)
         except (OSError, RuntimeError):
             if compact or segmented:
                 raise
             return None
+        if preferred and len(devices) > 1:
+            segmented = True
+            segmented_window = window
         if segmented_window:
             _validate_compact_path_request(len(devices), distributed_enabled)
         if segmented and len(devices) > 1:
@@ -343,6 +360,8 @@ class BfsSession:
                 policy = {"preset": preset, "memory_backend": report["cluster_memory_backend"], "placement": "external_ranks"}
                 if "cluster_memory_selection_reason" in report:
                     policy["selection_reason"] = report["cluster_memory_selection_reason"]
+                if "cluster_profile_registry" in report:
+                    policy["profile_registry"] = report["cluster_profile_registry"]
                 if preset == "maxmemory":
                     policy["capacity_slowdown_status"] = "UNVERIFIED"
                 return _traversal_result(graph, output, report, policy)
@@ -356,17 +375,47 @@ class BfsSession:
                 env.pop(_PATH_SEGMENTED_NEAREST, None)
                 env.pop(_PATH_SEGMENTED_WINDOW, None)
             devices = self._native_devices(native, env)
-            memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual)
+            from .profile_selection import local_hardware, registry_source, select_registry_recipe
+
+            registry = registry_source(self._profile_registry, self._profile_registry_sha256, env) if not manual else None
+            deadline = None
+            recipe, profile_status = None, None
+            if registry is not None:
+                capabilities = _require_memory_backend(native, env, "segmented24")
+                deadline = time.monotonic() + 5
+                inventory = None
+
+                def all_ranks():
+                    nonlocal inventory
+                    if inventory is None:
+                        inventory = self._live_inventory(native, devices, env, optional=True)
+                    return inventory
+
+                def hardware():
+                    identity = local_hardware()
+                    return (all_ranks(), devices, *identity) if identity is not None else None
+
+                recipe, profile_status = select_registry_recipe(
+                    registry, graph, preset, native, env, capabilities, deadline,
+                    hardware=hardware, inventory=all_ranks, packet_address=self._local_packet_address,
+                )
+            if recipe is None:
+                memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual)
+            else:
+                memory, settings = recipe
+                env = dict(env, **settings)
             backend = memory.backend
             manual = memory.launch_options
             transport = manual.pop("transport", None)
-            autotune = self._tune != "off" and not native_options
+            autotune = self._tune != "off" and not native_options and recipe is None
             env = _traversal_exchange_env(
                 env, capabilities, len(devices), transport, preset, autotune, self._local_packet_address,
             )
             tuning = {"capacity_slowdown_limit": 4.0}
             if self._tune == "auto":
                 tuning.update(pilot_limit=3, pilot_wall_seconds=5)
+                if deadline is not None:
+                    tuning["startup_deadline"] = deadline
             report = run_graph(
                 graph, output, devices=devices, executable=native, backend="generic",
                 autotune=autotune, max_seconds=max_seconds,
@@ -374,6 +423,8 @@ class BfsSession:
                 _native_env=env, _profile_options=tuning, **manual,
             )
             policy = {"preset": preset, "memory_backend": backend, "selection_reason": memory.reason}
+            if profile_status is not None:
+                policy["profile_registry"] = profile_status
             if preset == "maxmemory":
                 slowdown = report.get("autotune", {}).get("capacity_slowdown", {})
                 if slowdown:
@@ -449,7 +500,8 @@ class BfsSession:
 
 
 def open_session(*, gpus=None, devices=None, output_root=None, tune="auto",
-                 executable=None):
+                 executable=None, profile_registry=None, profile_registry_sha256=None):
     """Open a session with all visible GPUs, a count, or explicit device IDs."""
     return BfsSession(gpus=gpus, devices=devices, output_root=output_root, tune=tune,
-                      executable=executable)
+                      executable=executable, profile_registry=profile_registry,
+                      profile_registry_sha256=profile_registry_sha256)

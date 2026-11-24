@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 from .network_control import ControlStore
 
@@ -229,13 +230,18 @@ class Cluster:
         capabilities["segmented_strategies_v1"] = dict.fromkeys(preflight["strategies"], True)
         network = capabilities.get("segmented_network_agreement_v1") is True
         preset = job["preset"]
-        autotune = job["tune"] != "off"
+        autotune = job["tune"] == "full" or (network and job["tune"] == "auto")
         if transport is not None and not network:
             raise RuntimeError("CLUSTER_TRANSPORT_REQUIRES_SEGMENTED_NETWORK_RUNTIME")
         if preset == "maxmemory" and not network:
             raise RuntimeError("CLUSTER_MAXMEMORY_REQUIRES_SEGMENTED_NETWORK_RUNTIME: rebuild or update the native runtime")
 
+        inventory = None
+
         def load_inventory():
+            nonlocal inventory
+            if inventory is not None:
+                return inventory
             inventory_env = dict(env, MGBFS_EXPERIMENTAL_SEGMENTED24="1", MGBFS_GENERIC_HISTORY="hash")
             local = self.inventory(native, inventory_env, self._local_device())
             self.store.put(prefix + f"inventory/{rank}", local)
@@ -243,12 +249,52 @@ class Cluster:
                 self.store.put(prefix + "inventory", [
                     self.store.get(prefix + f"inventory/{peer}") for peer in range(world)
                 ])
-            return self.store.get(prefix + "inventory")
+            inventory = self.store.get(prefix + "inventory")
+            return inventory
 
-        memory = resolve_traversal_memory(
-            graph, preset, capabilities if network else {}, env, manual, load_inventory,
-            default_backend="segmented24" if network else "legacy",
-        )
+        recipe = profile_status = None
+        registry = job.get("profile_registry")
+        if registry is not None and network:
+            from .process_control import ProfileBudgetExpired, profile_budget
+            from .profile_selection import cluster_hardware, cluster_rank_hardware, select_registry_recipe
+
+            deadline = time.monotonic() + 5
+            # The same live snapshot is also used by the fallback storage policy.
+            inventory = load_inventory()
+            try:
+                with profile_budget(deadline):
+                    metadata = cluster_rank_hardware(env, socket.gethostname())
+            except ProfileBudgetExpired:
+                metadata = None
+            self.store.put(prefix + f"profile-hardware/{rank}", metadata)
+            if rank == 0:
+                def hardware():
+                    metadata = [self.store.get(prefix + f"profile-hardware/{peer}") for peer in range(world)]
+                    return cluster_hardware(metadata, inventory)
+
+                recipe, profile_status = select_registry_recipe(
+                    registry, graph, preset, native, env, capabilities, deadline,
+                    hardware=hardware, inventory=load_inventory,
+                    packet_address=self._packet_address if self.placement.packet_port is not None else None,
+                )
+                resolved = None if recipe is None else {"memory": vars(recipe[0]), "settings": recipe[1]}
+                self.store.put(prefix + "profile-selection", {"recipe": resolved, "receipt": profile_status})
+            else:
+                profile = self.store.get(prefix + "profile-selection")
+                profile_status = profile["receipt"]
+                if profile["recipe"] is not None:
+                    from .memory_admission import TraversalMemory
+
+                    recipe = TraversalMemory(**profile["recipe"]["memory"]), profile["recipe"]["settings"]
+        if recipe is None:
+            memory = resolve_traversal_memory(
+                graph, preset, capabilities if network else {}, env, manual, load_inventory,
+                default_backend="segmented24" if network else "legacy",
+            )
+        else:
+            memory, settings = recipe
+            env = dict(env, **settings)
+            autotune = False
         if network:
             env = _traversal_exchange_env(
                 env, capabilities, world, transport, preset, autotune,
@@ -260,6 +306,8 @@ class Cluster:
                            autotune=autotune, max_seconds=job["max_seconds"], **memory.launch_options)
         report["cluster_memory_backend"] = memory.backend
         report["cluster_memory_selection_reason"] = memory.reason
+        if profile_status is not None:
+            report["cluster_profile_registry"] = profile_status
         return report
 
     def _run_external_nearest(self, job, graph, output):
@@ -416,12 +464,19 @@ class Cluster:
         job = {"mode": "traverse", "graph": graph.to_dict(), "executable": None if session._executable is None else str(session._executable),
                "tune": "off" if native_options else session._tune, "max_seconds": max_seconds,
                "preset": preset, "native_options": native_options}
+        if not native_options:
+            from .profile_selection import registry_source
+
+            registry = registry_source(session._profile_registry, session._profile_registry_sha256, os.environ)
+            if registry is not None:
+                job["profile_registry"] = registry
         return self._dispatch(job, output)
 
     def solve(self, session, graph, output, options):
         from .api import _require_compact_path_capabilities, _validate_compact_path_request
         from .launch import (_PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
-                             _require_memory_backend, _require_segmented_path_capabilities)
+                             _require_memory_backend, _require_segmented_path_capabilities,
+                             _supports_segmented_path)
         from .native_distribution import native_runtime
         from .path_search import (
             _deadline, _empty_output_dir, _graph_and_targets, _path_options, _reserve_output, inverse_action,
@@ -441,10 +496,9 @@ class Cluster:
             ) if name in options
         })
         setting = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST")
-        segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
-                             and mode == "nearest" and direction in ("forward", "bidirectional")
-                             and self.placement.world > 1)
-        segmented_window = mode == "window" and os.environ.get(_PATH_SEGMENTED_WINDOW) == "1"
+        path_setting = os.environ.get(_PATH_SEGMENTED_WINDOW if mode == "window" else _PATH_SEGMENTED_NEAREST)
+        segmented_nearest = mode == "nearest" and path_setting == "1" and self.placement.world > 1
+        segmented_window = mode == "window" and path_setting == "1"
         segmented = segmented_nearest or segmented_window
         compact = not segmented and os.environ.get(_PATH_COMPACT) == "1"
         if segmented_nearest and setting == "0":
@@ -453,19 +507,34 @@ class Cluster:
             _validate_compact_path_request(self.placement.world, setting != "0")
         if direction == "bidirectional" and graph.action["kind"] == "matrix":
             inverse_action(graph)
+        capabilities = None
+        if (not compact and not segmented and path_setting is None and setting != "0"
+                and graph.generator_count < 0x7fff_ffff and self.placement.world > 1
+                and self.placement.packet_port is not None):
+            try:
+                native, env = native_runtime(executable)
+                capabilities = _require_memory_backend(native, env, "segmented24")
+            except (OSError, RuntimeError):
+                pass
+            if (capabilities is not None and capabilities.get("segmented_network_agreement_v1") is True
+                    and _supports_segmented_path(capabilities, direction == "bidirectional", window=mode == "window")):
+                segmented = True
+                segmented_window = mode == "window"
+                segmented_nearest = mode == "nearest"
         use_native = False
         compact_address = None
         if compact or segmented:
             if graph.generator_count >= 0x7fff_ffff:
                 mode_name = "SEGMENTED_WINDOW" if segmented_window else "SEGMENTED_NEAREST" if segmented_nearest else "COMPACT"
                 raise RuntimeError(f"NATIVE_PATH_{mode_name}_UNAVAILABLE_FOR_QUERY")
-            native, env = native_runtime(executable)
+            if capabilities is None:
+                native, env = native_runtime(executable)
+                capabilities = _require_memory_backend(native, env, "segmented24")
             compact_address = env.get(_PACKET_ADDR)
             if compact_address is None and self.placement.packet_port is not None:
                 compact_address = self._packet_address()
             if not compact_address:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
-            capabilities = _require_memory_backend(native, env, "segmented24")
             if segmented:
                 _require_segmented_path_capabilities(capabilities, direction == "bidirectional", window=segmented_window)
                 if capabilities.get("segmented_network_agreement_v1") is not True:
@@ -485,8 +554,10 @@ class Cluster:
                 else:
                     capability = "graph_path_nearest_distributed_v1"
                 try:
-                    native, env = native_runtime(executable)
-                    use_native = _require_memory_backend(native, env, "segmented24").get(capability) is True
+                    if capabilities is None:
+                        native, env = native_runtime(executable)
+                        capabilities = _require_memory_backend(native, env, "segmented24")
+                    use_native = capabilities.get(capability) is True
                 except (OSError, RuntimeError):
                     pass
         use_window = use_native and mode == "window"

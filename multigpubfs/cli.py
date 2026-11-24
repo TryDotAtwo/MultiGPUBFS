@@ -22,6 +22,8 @@ def _session_main(argv):
  parser.add_argument('--extra-steps',type=int)
  parser.add_argument('--preset',choices=('balanced','maxmemory'),default='balanced')
  parser.add_argument('--tune',choices=('auto','off','full'),default='auto')
+ parser.add_argument('--profile-registry',help='Local catalog or pinned GitHub URL')
+ parser.add_argument('--profile-registry-sha256',help='Required SHA-256 for a remote catalog')
  parser.add_argument('--native-options',type=json.loads,help='JSON graph traversal settings for reproducible runs')
  parser.add_argument('--seconds',type=int)
  parser.add_argument('--max-paths',type=int)
@@ -45,7 +47,10 @@ def _session_main(argv):
  options={'start':args.start,'preset':args.preset,'output':args.output,'max_seconds':args.seconds}
  if args.native_options is not None:options['native_options']=args.native_options
  try:
-  with open_session(gpus=args.gpus,devices=args.devices,tune=args.tune) as session:
+  profiles={}
+  if args.profile_registry is not None:profiles['profile_registry']=args.profile_registry
+  if args.profile_registry_sha256 is not None:profiles['profile_registry_sha256']=args.profile_registry_sha256
+  with open_session(gpus=args.gpus,devices=args.devices,tune=args.tune,**profiles) as session:
    result=session.traverse(graph,**options) if args.targets is None else session.solve(graph,targets=args.targets,**options,**path_options)
  except (OSError,ValueError,RuntimeError,TypeError,NotImplementedError) as error:
   print(str(error),file=sys.stderr);return 1
@@ -67,8 +72,11 @@ def main(argv=None):
  if argv and argv[0]=='doctor':
   from .diagnostics import main as doctor_main
   return doctor_main(argv[1:])
+ if argv and argv[0]=='profiles':
+  from .profile_registry import main as profiles_main
+  return profiles_main(argv[1:])
  parser=argparse.ArgumentParser(description='Exact GPU BFS for CayleyPy permutation and matrix actions. Defaults: all visible GPUs, measured startup tuning and compact terminal retention.')
- parser.epilog='See multigpubfs run --help, multigpubfs cluster --help, multigpubfs prefetch --help and multigpubfs doctor --help.'
+ parser.epilog='See multigpubfs run --help, multigpubfs cluster --help, multigpubfs profiles --help and multigpubfs doctor --help.'
  parser.add_argument('definition',help='Schema2 JSON file, or Family.constructor with --catalog')
  parser.add_argument('--catalog',action='store_true',help='Resolve an exact public CayleyPy constructor name without evaluated source')
  parser.add_argument('--catalog-args',help='JSON positional argument list for the constructor')

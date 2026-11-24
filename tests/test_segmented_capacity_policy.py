@@ -1,12 +1,27 @@
 """Capacity-first autotuning must distinguish preset defaults from user limits."""
 import os
 import subprocess
+import time
 from unittest.mock import patch
 
 import pytest
 from multigpubfs import autotune
 from multigpubfs.graph_definition import GraphDefinition
 from multigpubfs.launch import _apply_memory_preset
+
+
+def test_expired_startup_budget_does_not_start_optional_admission(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("expired profile started native admission")
+
+    monkeypatch.setattr(autotune, "_admit", unexpected)
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+    result = autotune.choose_profile(
+        graph, [0], None, 60, "mgbfs", {}, pilot_limit=3, pilot_wall_seconds=5,
+        startup_deadline=time.monotonic() - 1,
+    )
+    assert result["status"] == "TUNING_BUDGET_EXHAUSTED_CONSERVATIVE_PROFILE"
+    assert result["shards"] is None and not result["measured"]
 
 
 def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
@@ -205,6 +220,7 @@ def test_capacity_bound_times_a_real_balanced_anchor_and_rejects_slow_capacity(t
     result, calls, initial_env = measure(tmp_path, bitmap=bitmap, capacity_loss=True, bounded=True, trace=trace)
     assert calls == [(4, 16384), (4, 16384), (1, 2048)]
     assert len(trace) == 3 and all(isinstance(probe[3], float) and probe[4] <= 4 for probe in trace)
+    assert len({probe[3] for probe in trace}) == 1
     assert trace[0][:3] == ('balanced', None, None)
     assert trace[1][:3] == (('max_capacity', None, '2') if bitmap else ('max_capacity', '1', None))
     bound = result['capacity_slowdown']

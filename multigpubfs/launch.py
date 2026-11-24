@@ -133,10 +133,14 @@ def _segmented_window_capability(bidirectional):
  return 'graph_path_segmented_window_bidirectional_v1' if bidirectional else 'graph_path_segmented_window_v1'
 
 
+def _supports_segmented_path(info,bidirectional,*,window=False):
+ return (info.get(_segmented_nearest_capability(bidirectional)) is True
+         and (not window or info.get(_segmented_window_capability(bidirectional)) is True))
+
+
 def _require_segmented_path_capabilities(info,bidirectional,*,window=False):
  mode='SEGMENTED_WINDOW' if window else 'SEGMENTED_NEAREST'
- if (info.get(_segmented_nearest_capability(bidirectional)) is not True
-     or window and info.get(_segmented_window_capability(bidirectional)) is not True):
+ if not _supports_segmented_path(info,bidirectional,window=window):
   raise RuntimeError(f'NATIVE_PATH_{mode}_UNAVAILABLE: rebuild the native executable and CUDA library')
 
 
@@ -526,6 +530,11 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False,fixed_shards=shards if fixed_segmented_tuning else None,**(_profile_options or {})) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
    if segmented:shard_geometry=profile.get('shard_geometry')
+   if shards is None:
+    from .autotune import _segmented_shard_plan
+    with tempfile.TemporaryDirectory(prefix='mgbfs-segment-shards-') as shard_dir:
+     shard_geometry,_=_segmented_shard_plan(graph,devices,capacity,native,native_env,shard_dir)
+    shards=shard_geometry['admitted_shards']
    if profile.get('backend','generic')!='generic':
     remaining=remaining_work(max_seconds,profile['seconds'])
     return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
@@ -658,12 +667,16 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    return dict(result, native_workspace={'ranks':[path_workspace(job) for job in jobs]})
   try:
    parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
-   from .traversal_receipt import merge_rank_traversal
+   from .traversal_receipt import (merge_rank_traversal, merge_terminal_evidence,
+                                  read_terminal_evidence, write_terminal_evidence)
    snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
    receipt_plan=dict(devices=devices,rank_plans=admission.get('rank_plans',[admission['plan']]*len(devices)),
                      owner_cuts=admission.get('owner_cuts'))
    report,states=merge_rank_traversal(parts,snapshots,receipt_plan,error_prefix='DISTRIBUTED',
       segmented=segmented,bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',sample_limit_field=True)
+   if any(part.get('terminal_states_sha256') is not None for part in parts):
+    evidence=[read_terminal_evidence(output/f'rank-{rank}',part) for rank,part in enumerate(parts)]
+    write_terminal_evidence(output,merge_terminal_evidence(report,evidence))
    (output/'states.json').write_bytes(json.dumps(states).encode())
    report.update(rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],
                  launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],

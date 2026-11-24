@@ -48,7 +48,8 @@ def test_cluster_session_does_not_allocate_a_second_local_pool(monkeypatch):
 def test_cluster_segmented_window_uses_its_assigned_packet_port(tmp_path, monkeypatch, override, expected):
     from multigpubfs import launch, native_distribution
 
-    monkeypatch.setenv("MGBFS_SEGMENT_WINDOW_V1", "1")
+    monkeypatch.delenv("MGBFS_SEGMENT_WINDOW_V1", raising=False)
+    monkeypatch.delenv("MGBFS_GENERIC_PATH_COMPACT", raising=False)
     monkeypatch.setenv("MGBFS_NATIVE_DISTRIBUTED_NEAREST", "1")
     monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("mgbfs", override))
     monkeypatch.setattr(launch, "_require_memory_backend", lambda *_: {
@@ -525,7 +526,6 @@ def test_window_owner_reads_slices_without_copying_and_drains_on_deadline(tmp_pa
 
 
 def test_native_window_rejects_invalid_lineage_directory_before_dispatch(tmp_path, monkeypatch):
-    from types import SimpleNamespace
     from multigpubfs import launch, native_distribution
     from multigpubfs.cluster import Cluster
 
@@ -535,8 +535,9 @@ def test_native_window_rejects_invalid_lineage_directory_before_dispatch(tmp_pat
                         lambda *args: {"graph_path_window_forward_v1": True})
     invalid = tmp_path / "not-a-directory"
     invalid.write_bytes(b"existing file")
-    coordinator = SimpleNamespace(_validate_session=lambda session: None)
-    session = SimpleNamespace(_executable=None)
+    placement = Placement(0, 0, 2, "127.0.0.1", 29501, 29502, 29503, "test", 29504)
+    coordinator = Cluster(placement, None, tmp_path)
+    session = open_session(gpus=2)
     graph = GraphDefinition.permutation([[1, 0]], [0, 1])
     options = dict(goal_mode="window", direction="forward", preset="balanced",
                    lineage_dir=invalid, targets=[[1, 0]])

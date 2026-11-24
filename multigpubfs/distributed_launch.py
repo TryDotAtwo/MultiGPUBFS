@@ -245,18 +245,27 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       for i in range(world):store.get(label+f'/consumed/{i}')
       store.release_prefix(label+'/')
      return result
-    report=_receipt(folder/f'rank-{rank}',digest);states=json.loads((folder/f'rank-{rank}/states.json').read_text());store.put(label+f'/receipt/{rank}',{'report':report,'states':states,'pid':job.pid,'hostname':socket.gethostname()})
+    from .traversal_receipt import (merge_rank_traversal, merge_terminal_evidence,
+                                   read_terminal_evidence, write_terminal_evidence)
+    rank_output=folder/f'rank-{rank}'
+    report=_receipt(rank_output,digest);states=json.loads((rank_output/'states.json').read_text())
+    evidence=read_terminal_evidence(rank_output,report)
+    store.put(label+f'/receipt/{rank}',{'report':report,'states':states,'pid':job.pid,
+                                      'hostname':socket.gethostname(),'terminal_evidence':evidence})
     if rank==0:
      parts=[store.get(label+f'/receipt/{i}') for i in range(world)];reports=[v['report'] for v in parts]
-     from .traversal_receipt import merge_rank_traversal
      result,states=merge_rank_traversal(reports,[part['states'] for part in parts],config,error_prefix='EXTERNAL',
          segmented=segmented,bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',require_admitted_cuts=True)
      result.update(host_memory=[store.get(f'host-memory/{i}') for i in range(world)],
                    scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
      result['rank_worker_pids']=[part['pid'] for part in parts]
      result['rank_hostnames']=[part['hostname'] for part in parts]
-     store.put(label+'/result',{'report':result,'states':states})
-    result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2))
+     evidence=merge_terminal_evidence(result,[part['terminal_evidence'] for part in parts])
+     store.put(label+'/result',{'report':result,'states':states,'terminal_evidence':evidence})
+    result=store.get(label+'/result')
+    (folder/'states.json').write_bytes(json.dumps(result['states']).encode())
+    write_terminal_evidence(folder,result['terminal_evidence'])
+    (folder/'report.json').write_text(json.dumps(result['report'],indent=2))
     store.put(label+f'/consumed/{rank}',True)
     if rank==0:
      for i in range(world):store.get(label+f'/consumed/{i}')

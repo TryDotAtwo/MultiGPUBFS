@@ -7,9 +7,10 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import time
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import urlopen
 
 from .artifact_paths import artifact_path
@@ -346,19 +347,21 @@ def read_profile_registry(source, *, sha256=None, timeout=5, cache_dir=None, off
     return result
 
 
-def matching_profile(registry, graph_digest, hardware_key, runtime):
-    """Return one paired v2 recipe with the same runtime and ordered hardware."""
+def matching_profiles(registry, graph_digest, hardware_key, runtime):
+    """Return paired v2 recipes for the same runtime and ordered hardware."""
     if registry["schema"] != SCHEMA or hardware_key is None:
-        return None
+        return []
     identity = _runtime_projection(runtime)
-    candidates = (entry for entry in registry["entries"]
-                  if entry["graph_digest"] == graph_digest and entry["hardware"] == hardware_key
-                  and entry["runtime"] == identity)
-    return min(candidates, default=None,
-               key=lambda entry: (entry["capacity_verification"] != "LOWER_PHYSICAL_PEAK",
-                                  entry["profiles"]["balanced"]["bfs_seconds"],
-                                  entry["profiles"]["max_capacity"]["bfs_seconds"],
-                                  entry["evidence_sha256"]))
+    return sorted((entry for entry in registry["entries"]
+                   if entry["graph_digest"] == graph_digest and entry["hardware"] == hardware_key
+                   and entry["runtime"] == identity),
+                  key=lambda entry: (entry["profiles"]["balanced"]["bfs_seconds"],
+                                     entry["profiles"]["max_capacity"]["bfs_seconds"],
+                                     entry["evidence_sha256"]))
+
+
+def matching_profile(registry, graph_digest, hardware_key, runtime):
+    return next(iter(matching_profiles(registry, graph_digest, hardware_key, runtime)), None)
 
 
 def _oracle(graph):
@@ -595,11 +598,47 @@ def export_profiles(graph, inventory, topology, baseline, capacity, registry, ev
 
 
 def verify_publication(registry, evidence_dir):
-    payload = read_profile_registry(registry)
+    raw = _read(registry)
+    payload = _decode(raw)
     for entry in payload["entries"]:
         data = _read(Path(evidence_dir) / (entry["evidence_sha256"] + ".json"))
         if verify_evidence(data) != entry:
             raise ValueError("PROFILE_PUBLICATION_ENTRY_MISMATCH")
+    return raw
+
+
+def publish_github_registry(registry, evidence_dir, *, repo, release):
+    """Attach one verified, content-addressed catalog to an existing GitHub release."""
+    if (not isinstance(repo, str) or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
+            or not isinstance(release, str) or not release or release.startswith("-")):
+        raise ValueError("PROFILE_GITHUB_RELEASE")
+    raw = verify_publication(registry, evidence_dir)
+    digest = _sha256(raw)
+    asset_name = f"profiles-{digest}.json"
+
+    def existing():
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo}/releases/tags/{quote(release, safe='')}"],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        return next((asset for asset in json.loads(result.stdout)["assets"] if asset["name"] == asset_name), None)
+
+    asset = existing()
+    if asset is None:
+        with tempfile.TemporaryDirectory(prefix="mgbfs-profile-publish-") as folder:
+            base = Path(folder) / asset_name
+            base.write_bytes(raw)
+            upload = subprocess.run(["gh", "release", "upload", release, os.fspath(base), "--repo", repo],
+                                    capture_output=True, text=True, timeout=60)
+        asset = existing()
+        if asset is None:
+            upload.check_returncode()
+            raise RuntimeError("PROFILE_GITHUB_ASSET_NOT_FOUND")
+    url = asset.get("browser_download_url")
+    if asset.get("digest") != f"sha256:{digest}" or not isinstance(url, str):
+        raise RuntimeError("PROFILE_GITHUB_ASSET_DIGEST_MISMATCH")
+    _github_source(url, digest)
+    return {"url": url, "sha256": digest}
 
 
 def main(argv=None):
@@ -617,6 +656,9 @@ def main(argv=None):
     verify = commands.add_parser("verify-publication")
     verify.add_argument("--registry", required=True)
     verify.add_argument("--evidence-dir", required=True)
+    publish = commands.add_parser("publish-github")
+    for field in ("registry", "evidence-dir", "repo", "release"):
+        publish.add_argument("--" + field, required=True)
     args = parser.parse_args(argv)
     if args.command == "export":
         export_profiles(json.loads(_read(args.graph)), json.loads(_read(args.inventory)),
@@ -626,6 +668,9 @@ def main(argv=None):
         catalog = read_profile_registry(args.source, sha256=args.sha256, cache_dir=args.cache_dir,
                                         offline=args.offline)
         _write_registry(args.output, catalog)
+    elif args.command == "publish-github":
+        print(json.dumps(publish_github_registry(args.registry, args.evidence_dir,
+                                                repo=args.repo, release=args.release), sort_keys=True))
     else:
         verify_publication(args.registry, args.evidence_dir)
 

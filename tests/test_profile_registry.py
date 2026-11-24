@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -12,9 +13,11 @@ from multigpubfs.profile_registry import (
     export_profiles,
     hardware_key,
     matching_profile,
+    publish_github_registry,
     read_profile_registry,
     verify_publication,
 )
+from multigpubfs.traversal_receipt import merge_terminal_evidence, read_terminal_evidence, write_terminal_evidence
 
 
 RUNTIME = {"native_sha256": "a" * 64, "cuda_library_sha256": "b" * 64}
@@ -63,8 +66,9 @@ def _case(path, graph, layers, *, seconds, pack4=False, full=False, compact=None
         "profile_peak_vram_bytes_by_rank": [11, 12] if pack4 else [16, 13],
     }
     if full:
-        report["terminal_states_sha256"] = _write(path / "terminal_states.json",
-            {"schema": 1, "graph_digest": digest, "depth": len(layers) - 1, **terminal})
+        ranks = [{key: rows[rank::2] for key, rows in terminal.items()} for rank in range(2)]
+        write_terminal_evidence(path, merge_terminal_evidence(report, ranks))
+        assert read_terminal_evidence(path, report)["depth"] == len(layers) - 1
     _write(path / "report.json", report)
     return path
 
@@ -116,6 +120,22 @@ def test_pair_export_pin_cache_and_exact_matching(tmp_path, monkeypatch):
     assert preferred["profiles"]["max_capacity"]["compact_receive_slots"] == 3
     assert preferred["profiles"]["max_capacity"]["queue_capacity"] == 3072
     assert preferred["profiles"]["balanced"]["rank_geometry"][1]["admitted_batch"] == 64
+    asset = {"name": f"profiles-{digest}.json", "digest": f"sha256:{digest}",
+             "browser_download_url": f"https://github.com/owner/repo/releases/download/v1/profiles-{digest}.json"}
+    uploads = []
+
+    def github(command, **options):
+        if command[1] == "api":
+            return subprocess.CompletedProcess(command, 0, json.dumps({"assets": [asset] if uploads else []}), "")
+        assert command[1:4] == ["release", "upload", "v1"] and command[-2:] == ["--repo", "owner/repo"]
+        uploads.append(Path(command[4]).read_bytes())
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("multigpubfs.profile_registry.subprocess.run", github)
+    publication = {"url": asset["browser_download_url"], "sha256": digest}
+    assert publish_github_registry(catalog, evidence, repo="owner/repo", release="v1") == publication
+    assert publish_github_registry(catalog, evidence, repo="owner/repo", release="v1") == publication
+    assert uploads == [data]
     evidence_path = evidence / (preferred["evidence_sha256"] + ".json")
     if os.name == "nt":
         evidence_path = Path(f"\\\\?\\{evidence_path}")
