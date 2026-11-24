@@ -1164,7 +1164,7 @@ pub(crate) fn distributed_bidirectional(
     })
 }
 
-fn process_peak_rss_bytes() -> Option<u64> {
+pub(crate) fn process_peak_rss_bytes() -> Option<u64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
         return None;

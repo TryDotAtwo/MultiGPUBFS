@@ -627,6 +627,20 @@ impl SegmentedDistributedBfs {
             10 => return Err(PacketError::Terminal(10)),
             other => return Err(format!("SEGMENTED_OWNER_{other}").into()),
         }
+        if self.window.is_some() {
+            for lease in &wave {
+                let source = transport.owner_source_rank(lease, self.rank)?;
+                self.window_record_edges(lease.span, source, stop)
+                    .map_err(|error| match error.as_str() {
+                        "SEGMENTED_WINDOW_LOOKUP_RESOURCE" => PacketError::Terminal(10),
+                        "CANCELLED" => PacketError::Terminal(PACKET_CANCELLED),
+                        "TIME_LIMIT" => PacketError::Terminal(PACKET_DEADLINE),
+                        "LINEAGE_LIMIT" => PacketError::Terminal(PACKET_LINEAGE_LIMIT),
+                        "LINEAGE_DISK_FULL" => PacketError::Terminal(PACKET_LINEAGE_DISK_FULL),
+                        _ => PacketError::Failure(error),
+                    })?;
+            }
+        }
         transport.complete_owner_wave(wave)?;
         transport
             .receive

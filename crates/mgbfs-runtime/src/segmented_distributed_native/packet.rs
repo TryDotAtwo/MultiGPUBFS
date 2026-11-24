@@ -8,7 +8,8 @@ use super::{
 use crate::segmented_packet_transport::{
     decode_runs, encode_runs, packet_wire_kernel, Frame as PacketFrame, Packet, PacketBytes,
     PacketClient, PacketEndpoint, PacketJobToken, PacketWireFn, ShardRun, PACKET_CANCELLED,
-    PACKET_DEADLINE, REMOTE_FAILURE, SHARD_DESCRIPTOR_BYTES,
+    PACKET_DEADLINE, PACKET_LINEAGE_DISK_FULL, PACKET_LINEAGE_LIMIT, REMOTE_FAILURE,
+    SHARD_DESCRIPTOR_BYTES,
 };
 use mgbfs_core::Result;
 use mgbfs_cuda::ffi::{
@@ -911,7 +912,10 @@ pub(super) struct PacketLayerStats {
 }
 
 fn packet_prefix_stop(code: u32) -> bool {
-    matches!(code, 10 | PACKET_CANCELLED | PACKET_DEADLINE)
+    matches!(
+        code,
+        10 | PACKET_CANCELLED | PACKET_DEADLINE | PACKET_LINEAGE_LIMIT | PACKET_LINEAGE_DISK_FULL
+    )
 }
 #[derive(Debug)]
 pub(crate) enum PacketError {
@@ -1042,7 +1046,7 @@ impl SegmentedDistributedBfs {
         crate::generic_native::checked!(cudaMemsetAsync, unsafe {
             cudaMemsetAsync(error.cast(), 0, PACKET_ROUTE_STATUS_BYTES, stream)
         })?;
-        let segment = &self.segments[range.shard][range.segment];
+        let segment = self.packet_parent_segment(range);
         let stride = segment
             .desc
             .capacity
@@ -1065,10 +1069,14 @@ impl SegmentedDistributedBfs {
         let parent = unsafe { segment.desc.states.cast::<u8>().add(offset) };
         let count = u32::try_from(u64::from(batch).min(range.end - cursor))
             .map_err(|_| "SEGMENT_PACKET_PARENT_RANGE")?;
-        let parent_base = if self.nearest.is_some() {
-            range.logical_start.checked_add(cursor - range.begin)
+        let parent_base = if self.ownership.is_some() {
+            range
+                .logical_start
+                .checked_add(cursor - range.begin)
                 .ok_or("SEGMENTED_PATH_ROW_OVERFLOW")?
-        } else { 0 };
+        } else {
+            0
+        };
         let scratch = self
             .route_scratch
             .as_ref()

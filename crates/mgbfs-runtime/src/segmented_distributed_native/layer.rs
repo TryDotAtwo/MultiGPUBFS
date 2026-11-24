@@ -142,12 +142,16 @@ impl SegmentedDistributedBfs {
         Ok(counts)
     }
 
-    pub(super) fn publish_layer(&mut self, mut layer: CompletedLayer) -> Result<DistributedAdvance> {
+    pub(super) fn publish_layer(
+        &mut self,
+        mut layer: CompletedLayer,
+    ) -> Result<DistributedAdvance> {
         self.previous_global = total(&self.counts)?;
         if let Some(nearest) = &mut self.nearest {
             nearest.publish(&mut layer.current, &self.segments, self.depth + 1);
         }
         self.current = layer.current;
+        self.number_window_roots()?;
         self.previous_snapshot_valid = false;
         self.counts = layer.counts;
         self.depth += 1;

@@ -33,10 +33,7 @@ impl SegmentedDistributedBfs {
         if targets.is_empty() || u32::try_from(targets.len()).is_err() {
             return Err("SEGMENTED_NEAREST_TARGET_COUNT".into());
         }
-        let nearest = self
-            .nearest
-            .as_ref()
-            .ok_or("SEGMENTED_NEAREST_UNAVAILABLE")?;
+        let ownership = self.ownership.as_ref().ok_or("SEGMENTED_PATH_OWNERSHIP")?;
         let mut buckets: Vec<Vec<TargetRoot<'_>>> =
             (0..self.plan.shards).map(|_| Vec::new()).collect();
         for (index, coords) in targets.iter().enumerate() {
@@ -46,7 +43,7 @@ impl SegmentedDistributedBfs {
                 return Err("SEGMENTED_NEAREST_TARGET_SHAPE".into());
             }
             let hash = state_hash(coords, self.seed, self.bits);
-            if nearest.rank_for(hash) == self.rank {
+            if ownership.rank_for(hash) == self.rank {
                 let shard = ((u64::from(hash as u32) * u64::from(self.plan.shards)) >> 32) as usize;
                 buckets[shard].push(TargetRoot {
                     hash,
@@ -155,7 +152,11 @@ impl SegmentedDistributedBfs {
         {
             return Err("SEGMENTED_ROOT_ADMISSION_FAILED".into());
         }
-        self.nearest.as_mut().unwrap().root_targets = ids;
+        if let Some(nearest) = &mut self.nearest {
+            nearest.root_targets = ids;
+        } else {
+            self.set_window_root_targets(ids)?;
+        }
         self.bank_totals[0] = count as u64;
         self.peak_live_rows = count as u64;
         // Stage the rank count before the constructor agrees to enter NCCL.

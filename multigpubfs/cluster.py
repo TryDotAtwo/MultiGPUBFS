@@ -23,18 +23,21 @@ def current_cluster():
 
 
 def _path_native_runtime(job):
-    from .launch import _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST
+    from .launch import _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW
     from .native_distribution import native_runtime
 
     native, env = native_runtime(job["executable"])
     address = job.get("compact_path_packet_address")
-    if address is not None or _PATH_COMPACT in env or _PATH_SEGMENTED_NEAREST in env:
+    modes = (_PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW)
+    if address is not None or any(mode in env for mode in modes):
         env = dict(env)
-        env.pop(_PATH_COMPACT, None)
-        env.pop(_PATH_SEGMENTED_NEAREST, None)
+        for mode in modes:
+            env.pop(mode, None)
         if address is not None:
-            mode = _PATH_SEGMENTED_NEAREST if job.get("segmented_nearest") else _PATH_COMPACT
+            mode = _PATH_SEGMENTED_NEAREST if job.get("segmented_nearest") or job.get("segmented_window") else _PATH_COMPACT
             env.update({mode: "1", _PACKET_ADDR: address})
+            if job.get("segmented_window"):
+                env[_PATH_SEGMENTED_WINDOW] = "1"
     return native, env
 
 
@@ -310,7 +313,7 @@ class Cluster:
         from math import ceil
         from time import perf_counter
 
-        from .launch import _require_memory_backend, run_graph
+        from .launch import _require_memory_backend, _require_segmented_path_capabilities, _window_shards, run_graph
         from .path_search import (
             _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
         )
@@ -321,7 +324,10 @@ class Cluster:
         native, env = _path_native_runtime(job)
         options = job["options"]
         direction = options.get("direction", "forward")
-        if _require_memory_backend(native, env, "segmented24").get(f"graph_path_window_{direction}_v1") is not True:
+        capabilities = _require_memory_backend(native, env, "segmented24")
+        if job.get("segmented_window"):
+            _require_segmented_path_capabilities(capabilities, direction == "bidirectional", window=True)
+        elif capabilities.get(f"graph_path_window_{direction}_v1") is not True:
             raise RuntimeError("CLUSTER_NATIVE_WINDOW_UNAVAILABLE")
         graph, targets = _graph_and_targets(graph, None, options["targets"])
         roots = [state for _, state in _active_path_targets(graph, targets, direction)]
@@ -338,7 +344,7 @@ class Cluster:
             def launch(folder, config, seconds):
                 return run_graph(
                     graph, root / folder, device=self._local_device(), executable=native,
-                    backend="generic", autotune=False, shards=1, _native_env=env,
+                    backend="generic", autotune=False, shards=_window_shards(env), _native_env=env,
                     max_seconds=seconds, _path_targets=roots, _path_window=config,
                     _path_bidirectional=direction == "bidirectional",
                     memory_preset=options.get("preset", "balanced"),
@@ -414,8 +420,8 @@ class Cluster:
 
     def solve(self, session, graph, output, options):
         from .api import _require_compact_path_capabilities, _validate_compact_path_request
-        from .launch import (_PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST,
-                             _require_memory_backend, _segmented_nearest_capability)
+        from .launch import (_PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
+                             _require_memory_backend, _require_segmented_path_capabilities)
         from .native_distribution import native_runtime
         from .path_search import (
             _deadline, _empty_output_dir, _graph_and_targets, _path_options, _reserve_output, inverse_action,
@@ -438,28 +444,30 @@ class Cluster:
         segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
                              and mode == "nearest" and direction in ("forward", "bidirectional")
                              and self.placement.world > 1)
-        compact = not segmented_nearest and os.environ.get(_PATH_COMPACT) == "1"
+        segmented_window = mode == "window" and os.environ.get(_PATH_SEGMENTED_WINDOW) == "1"
+        segmented = segmented_nearest or segmented_window
+        compact = not segmented and os.environ.get(_PATH_COMPACT) == "1"
         if segmented_nearest and setting == "0":
             raise ValueError("NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED")
-        if compact:
+        if compact or segmented_window:
             _validate_compact_path_request(self.placement.world, setting != "0")
         if direction == "bidirectional" and graph.action["kind"] == "matrix":
             inverse_action(graph)
         use_native = False
         compact_address = None
-        if compact or segmented_nearest:
+        if compact or segmented:
             if graph.generator_count >= 0x7fff_ffff:
-                mode_name = "SEGMENTED_NEAREST" if segmented_nearest else "COMPACT"
+                mode_name = "SEGMENTED_WINDOW" if segmented_window else "SEGMENTED_NEAREST" if segmented_nearest else "COMPACT"
                 raise RuntimeError(f"NATIVE_PATH_{mode_name}_UNAVAILABLE_FOR_QUERY")
             native, env = native_runtime(executable)
             compact_address = env.get(_PACKET_ADDR)
             if not compact_address:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
             capabilities = _require_memory_backend(native, env, "segmented24")
-            if segmented_nearest:
-                if (capabilities.get(_segmented_nearest_capability(direction == "bidirectional")) is not True
-                        or capabilities.get("segmented_network_agreement_v1") is not True):
-                    raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE: rebuild the native executable and CUDA library")
+            if segmented:
+                _require_segmented_path_capabilities(capabilities, direction == "bidirectional", window=segmented_window)
+                if capabilities.get("segmented_network_agreement_v1") is not True:
+                    raise RuntimeError("NATIVE_SEGMENTED_NETWORK_AGREEMENT_UNAVAILABLE")
             else:
                 _require_compact_path_capabilities(capabilities, direction=direction, window=mode == "window")
             use_native = True
@@ -501,6 +509,8 @@ class Cluster:
             job["compact_path_packet_address"] = compact_address
         if segmented_nearest:
             job["segmented_nearest"] = True
+        if segmented_window:
+            job["segmented_window"] = True
         return self._dispatch(job, output)
 
     def _check_generation(self):

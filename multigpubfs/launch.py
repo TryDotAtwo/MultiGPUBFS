@@ -10,6 +10,7 @@ _LEGACY_ARENA_CAPACITY = 0x7fff_fffe
 _LEGACY_ROLLING_CAPACITY = (0xffff_ffff - 3) // 3
 _PATH_COMPACT = 'MGBFS_GENERIC_PATH_COMPACT'
 _PATH_SEGMENTED_NEAREST = 'MGBFS_SEGMENT_NEAREST_V1'
+_PATH_SEGMENTED_WINDOW = 'MGBFS_SEGMENT_WINDOW_V1'
 _SEGMENTED_NEAREST_CAPABILITY = 'graph_path_segmented_nearest_v1'
 _PACKET_ADDR = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
 _PACKET_BIND = 'MGBFS_SEGMENT_PACKET_BIND_ADDR'
@@ -34,7 +35,7 @@ def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_tar
 def _with_packet_job_token(config,env):
  plan=config['plan']
  if config.get('path_targets') is not None and any(
-     env.get(key)=='1' for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST)):
+     env.get(key)=='1' for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW)):
   if (plan.get('compact_transport') is not True or plan.get('compact_packet_slots')!=3
       or plan.get('compact_receive_slots')!=3 or plan['world']<2 or not env.get(_PACKET_ADDR)):
    raise RuntimeError('NATIVE_PATH_COMPACT_PLAN_MISMATCH')
@@ -128,16 +129,36 @@ def _segmented_nearest_capability(bidirectional):
  return 'graph_path_segmented_nearest_bidirectional_v1' if bidirectional else _SEGMENTED_NEAREST_CAPABILITY
 
 
+def _segmented_window_capability(bidirectional):
+ return 'graph_path_segmented_window_bidirectional_v1' if bidirectional else 'graph_path_segmented_window_v1'
+
+
+def _require_segmented_path_capabilities(info,bidirectional,*,window=False):
+ mode='SEGMENTED_WINDOW' if window else 'SEGMENTED_NEAREST'
+ if (info.get(_segmented_nearest_capability(bidirectional)) is not True
+     or window and info.get(_segmented_window_capability(bidirectional)) is not True):
+  raise RuntimeError(f'NATIVE_PATH_{mode}_UNAVAILABLE: rebuild the native executable and CUDA library')
+
+
+def _window_shards(env):
+ if env.get(_PATH_SEGMENTED_WINDOW) != '1':
+  return 1
+ text=env.get('MGBFS_SEGMENT_WINDOW_SHARDS','1')
+ if not text.isascii() or not text.isdecimal() or len(text)>4 or not 1<=int(text)<=4096:
+  raise ValueError('INVALID_NATIVE_SEGMENTED_WINDOW_SHARDS')
+ return int(text)
+
+
 def _compact_path_env(native,env,world,bidirectional,*,external):
  if world<2:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS')
  address=env.get(_PACKET_ADDR)
  if external and not address:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR')
  if address=='':raise ValueError('NATIVE_PATH_COMPACT_PACKET_ADDR')
- segmented_nearest=env.get(_PATH_SEGMENTED_NEAREST)=='1'
- capability=_segmented_nearest_capability(bidirectional) if segmented_nearest else _compact_path_capability(bidirectional)
- if _native_key_info(native,env).get(capability) is not True:
-  mode='SEGMENTED_NEAREST' if segmented_nearest else 'COMPACT'
-  raise RuntimeError(f'NATIVE_PATH_{mode}_UNAVAILABLE: rebuild the native executable and CUDA library')
+ info=_native_key_info(native,env)
+ if env.get(_PATH_SEGMENTED_WINDOW)=='1' or env.get(_PATH_SEGMENTED_NEAREST)=='1':
+  _require_segmented_path_capabilities(info,bidirectional,window=env.get(_PATH_SEGMENTED_WINDOW)=='1')
+ elif info.get(_compact_path_capability(bidirectional)) is not True:
+  raise RuntimeError('NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library')
  if address is None:
   with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as probe:
    probe.bind(('127.0.0.1',0))
@@ -253,9 +274,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  external=os.environ.get('WORLD_SIZE','1')!='1'
  strategy_source=_native_env if _native_env is not None else os.environ
  native_selection=None
- segmented_nearest=False
- if (_path_targets is not None and _path_window is None
-     and strategy_source.get(_PATH_SEGMENTED_NEAREST)=='1'):
+ segmented_nearest=segmented_window=False
+ requested_window=_path_window is not None and strategy_source.get(_PATH_SEGMENTED_WINDOW)=='1'
+ requested_nearest=_path_window is None and strategy_source.get(_PATH_SEGMENTED_NEAREST)=='1'
+ if _path_targets is not None and (requested_nearest or requested_window):
   if external:
    world=int(os.environ['WORLD_SIZE'])
   else:
@@ -264,16 +286,20 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     native,env=native_selection
     discovery_env=dict(_native_env if _native_env is not None else env)
     discovery_env.pop(_PATH_SEGMENTED_NEAREST,None)
+    discovery_env.pop(_PATH_SEGMENTED_WINDOW,None)
     count=native_query([native,'graph-count'],env=discovery_env,capture_output=True,text=True)
     if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
     devices=list(range(int(count.stdout.strip())))
    world=len(devices)
-  segmented_nearest=world>1
- if segmented_nearest:
+  segmented_nearest=requested_nearest and world>1
+  if requested_window and world<2:raise ValueError('NATIVE_PATH_SEGMENTED_WINDOW_REQUIRES_MULTIPLE_GPUS')
+  segmented_window=requested_window
+ segmented_path=segmented_nearest or segmented_window
+ if segmented_path:
   if (memory_backend is not None and _normalize_memory_backend(memory_backend)!='segmented24'
       or segment_strategy not in (None,'batch') or bitmap_pack4 or resident_alphabet8
       or graph.generator_count>=0x7fff_ffff):
-   raise ValueError('INVALID_NATIVE_SEGMENTED_NEAREST_LAUNCH')
+   raise ValueError('INVALID_NATIVE_SEGMENTED_PATH_LAUNCH')
   if strategy_source.get('MGBFS_NATIVE_DISTRIBUTED_NEAREST')=='0':
    raise ValueError('NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED')
   memory_backend,segment_strategy,bitmap_pack4,resident_alphabet8='segmented24','batch',False,False
@@ -325,11 +351,13 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  host_memory=admit(graph,output=output) if not external else None
  native,native_env=native_selection or native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
- if _PATH_SEGMENTED_NEAREST in native_env:
+ if _PATH_SEGMENTED_NEAREST in native_env or _PATH_SEGMENTED_WINDOW in native_env:
   native_env=dict(native_env)
   native_env.pop(_PATH_SEGMENTED_NEAREST,None)
- if segmented_nearest:
-  native_env=dict(native_env,**{_PATH_SEGMENTED_NEAREST:'1'},
+  native_env.pop(_PATH_SEGMENTED_WINDOW,None)
+ if segmented_path:
+  key=_PATH_SEGMENTED_WINDOW if segmented_window else _PATH_SEGMENTED_NEAREST
+  native_env=dict(native_env,**{key:'1'},
                   MGBFS_SEGMENT_HASH_SERIES='1',MGBFS_SEGMENT_EXACT_EXCHANGE='0')
   native_env.pop(_PATH_COMPACT,None)
  for value,key,marker in (
@@ -349,7 +377,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   native_env['MGBFS_GENERIC_PATH_BYTE_TARGETS']='1' if (
    _path_bidirectional and all(0 <= value <= 255 for goal in _path_targets for value in goal)
   ) else '0'
-  if (memory_backend!=('segmented24' if segmented_nearest else 'legacy') or backend!='generic'
+  if (memory_backend!=('segmented24' if segmented_path else 'legacy') or backend!='generic'
       or autotune or _profile_layers is not None):raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
   native_env.update(MGBFS_GENERIC_PATH_APPEND_ONLY='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
  else:native_env.pop(_PATH_COMPACT,None)
@@ -414,7 +442,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    count=native_query([native,'graph-count'],env=native_env,capture_output=True,text=True)
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
-  path_compact=_path_targets is not None and (segmented_nearest or native_env.get(_PATH_COMPACT)=='1')
+  path_compact=_path_targets is not None and (segmented_path or native_env.get(_PATH_COMPACT)=='1')
   if path_compact:
    native_env=_compact_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
    devices=selected
@@ -433,7 +461,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     search_limits[key]=preflight_env.pop(key)
   if _path_targets is not None:
    for key in tuple(preflight_env):
-    if (key.startswith('MGBFS_GENERIC_PATH_') or key==_PATH_SEGMENTED_NEAREST
+    if (key.startswith('MGBFS_GENERIC_PATH_') or key in (_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW)
         or (path_compact and key in _PATH_PACKET_ENV)):
      search_limits[key]=preflight_env.pop(key)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)

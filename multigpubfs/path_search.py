@@ -435,6 +435,8 @@ def _agree_window_receipts(replies):
     if bidirectional:
         fields += ("first_cut_length", "last_cut_length")
     first = replies[0]
+    mode_fields = ("native_storage", "native_exchange", "native_state_bytes")
+    fields += tuple(key for key in mode_fields if any(key in reply for reply in replies))
 
     def nonnegative(value):
         return type(value) is int and value >= 0
@@ -570,6 +572,12 @@ def _read_native_window(root, receipt, distance, limit, target_ids, check, add, 
               else _read_native_forward_window)
     if "native_workspace" in receipt:
         report["native_window_workspace"] = receipt["native_workspace"]
+    for key in ("native_storage", "native_exchange", "native_state_bytes"):
+        if key in receipt:
+            report[key.replace("native_", "native_window_", 1)] = receipt[key]
+    if receipt.get("native_storage") == "SEGMENTED_LAYER_BATCH_HASH":
+        layer_key = "side_layer_rows" if report["direction"] == "bidirectional" else "layer_rows"
+        report["native_window_layer_rows_by_rank"] = [item[layer_key] for item in receipt["ranks"]]
     available = receipt["graph_completed_through_depth"]
     report["window_graph_completed_through_length"] = receipt.get("native_graph_completed_through_depth", available)
     report["window_lineage_available_through_length"] = available
@@ -586,7 +594,7 @@ def _read_native_window(root, receipt, distance, limit, target_ids, check, add, 
 
 def _run_native_window(native, graph, targets, output, deadline, check, add, report, lineage_dir, flush):
     from math import ceil
-    from .launch import run_graph
+    from .launch import _window_shards, run_graph
 
     executable, environment, devices, *_ = native
     bidirectional = report["direction"] == "bidirectional"
@@ -599,7 +607,7 @@ def _run_native_window(native, graph, targets, output, deadline, check, add, rep
         check()
         return run_graph(
             graph, root, devices=devices, executable=executable, backend="generic",
-            autotune=False, shards=1, _native_env=environment, _path_targets=native_targets,
+            autotune=False, shards=_window_shards(environment), _native_env=environment, _path_targets=native_targets,
             _path_window=config, _path_bidirectional=bidirectional,
             memory_preset=report["preset"],
             max_seconds=None if deadline is None else max(1, ceil(deadline - perf_counter())),

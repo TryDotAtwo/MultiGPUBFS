@@ -18,6 +18,9 @@ pub(crate) const REMOTE_FAILURE: u32 = u32::MAX;
 pub(crate) const PACKET_CANCELLED: u32 = 101;
 #[cfg(any(test, all(feature = "cuda", target_os = "linux")))]
 pub(crate) const PACKET_DEADLINE: u32 = 102;
+/// A Window owner cannot stage the rest of the uncommitted layer.
+pub(crate) const PACKET_LINEAGE_LIMIT: u32 = 103;
+pub(crate) const PACKET_LINEAGE_DISK_FULL: u32 = 104;
 type Result<T> = std::result::Result<T, String>;
 pub(crate) type PacketJobToken = [u8; 16];
 

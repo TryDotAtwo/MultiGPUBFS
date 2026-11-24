@@ -58,7 +58,7 @@ def _native_artifact_hashes(native,env):
 
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
-                      _PATH_SEGMENTED_NEAREST,_compact_path_env,_rank_launch_config,
+                      _PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,_compact_path_env,_rank_launch_config,
                       _receipt,_with_packet_job_token)
  from .cluster import current_cluster
  cluster=current_cluster()
@@ -76,7 +76,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  started=time.monotonic();profile=None
  try:
   segmented_nearest=path_targets is not None and native_env.get(_PATH_SEGMENTED_NEAREST)=='1'
-  path_compact=path_targets is not None and (segmented_nearest or native_env.get(_PATH_COMPACT)=='1')
+  segmented_window=path_window is not None and native_env.get(_PATH_SEGMENTED_WINDOW)=='1'
+  path_compact=path_targets is not None and (segmented_nearest or segmented_window or native_env.get(_PATH_COMPACT)=='1')
   if path_compact:
    native_env=_compact_path_env(native,native_env,world,path_bidirectional,external=True)
   from .host_memory import admit as admit_host
@@ -98,6 +99,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      identity['path_compact']={key:native_env[key] for key in (_PACKET_ADDR,_PACKET_RING,_PACKET_RX)}
     if segmented_nearest:
      identity['path_segmented_nearest']={'max_depth':path_max_depth}
+    if segmented_window:
+     identity['path_segmented_window']=True
    if segmented:
     identity['segmented']={k:v for k,v in native_env.items() if (k.startswith(('MGBFS_SEGMENT_', 'MGBFS_BITMAP_')) or k in ('MGBFS_MEMORY_PRESET','MGBFS_EXPERIMENTAL_BITMAP')) and k!='MGBFS_SEGMENT_PACKET_BIND_ADDR'}
    store.put(f'identity/{rank}',identity)
@@ -110,9 +113,10 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    def inventories(label):
     if resident_admission:
      inventory_env=native_env
-     if segmented_nearest:
+     if segmented_nearest or segmented_window:
       inventory_env=dict(inventory_env)
       inventory_env.pop(_PATH_SEGMENTED_NEAREST,None)
+      inventory_env.pop(_PATH_SEGMENTED_WINDOW,None)
      inventory=cluster.inventory(native,inventory_env,device)
      store.put(label+f'/inventory/{rank}',inventory)
      if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
@@ -121,7 +125,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if path_compact:
      # This legacy one-GPU probe contributes hardware only. Rank 0 admits
      # the actual compact plan from the inventory of the entire world.
-     for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
+     for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,_PATH_SEGMENTED_WINDOW,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
     probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=inventory_env,capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])

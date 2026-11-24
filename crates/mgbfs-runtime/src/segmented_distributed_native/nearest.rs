@@ -1,11 +1,11 @@
 //! Append-only path history. Logical IDs never embed a vector index or GPU address.
 
 use super::{
-    mix, BatchHashRun, BatchHashSegment, Buffer, DistributedAdvance, HashSeriesDirectory, Range,
-    Segment, SegmentedDistributedBfs,
+    mix, BatchHashRun, BatchHashSegment, Buffer, DistributedAdvance, HashSeriesDirectory,
+    OwnerPrepared, Range, Segment, SegmentedDistributedBfs,
 };
 use crate::generic_path_native::nearest_witness::Receipt;
-use mgbfs_core::{graph_definition::GraphDefinitionV2, Result};
+use mgbfs_core::Result;
 use mgbfs_cuda::ffi::{cudaMemcpy, cudaMemcpyAsync, cudaMemsetAsync, cudaStreamSynchronize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -131,18 +131,25 @@ impl NearestFns {
                 libc::RTLD_DEFAULT,
                 b"mgbfs_hash_batch_accept_path_v1\0".as_ptr().cast(),
             );
-            let find = libc::dlsym(
-                libc::RTLD_DEFAULT,
-                b"mgbfs_hash_batch_find_targets_v1\0".as_ptr().cast(),
-            );
-            if accept.is_null() || find.is_null() {
+            let find = target_lookup_kernel()?;
+            if accept.is_null() {
                 return None;
             }
             Some(Self {
                 accept: std::mem::transmute(accept),
-                find: std::mem::transmute(find),
+                find,
             })
         }
+    }
+}
+
+pub(super) fn target_lookup_kernel() -> Option<FindTargets> {
+    unsafe {
+        let find = libc::dlsym(
+            libc::RTLD_DEFAULT,
+            b"mgbfs_hash_batch_find_targets_v1\0".as_ptr().cast(),
+        );
+        (!find.is_null()).then(|| std::mem::transmute::<*mut c_void, FindTargets>(find))
     }
 }
 
@@ -157,8 +164,6 @@ struct Extent {
 
 pub(super) struct NearestState {
     pub(super) fns: NearestFns,
-    owner_map: Vec<u32>,
-    cuts: Option<Vec<u64>>,
     workspace: Option<Workspace>,
     extents: Vec<Extent>,
     index_by_segment: HashMap<usize, Vec<usize>>,
@@ -167,16 +172,9 @@ pub(super) struct NearestState {
 }
 
 impl NearestState {
-    pub(super) fn new(
-        fns: NearestFns,
-        owner_map: Vec<u32>,
-        cuts: Option<Vec<u64>>,
-        workspace: Option<Workspace>,
-    ) -> Self {
+    pub(super) fn new(fns: NearestFns, workspace: Option<Workspace>) -> Self {
         Self {
             fns,
-            owner_map,
-            cuts,
             workspace,
             extents: Vec::new(),
             index_by_segment: HashMap::new(),
@@ -245,8 +243,19 @@ impl NearestState {
             usize::try_from(extent.physical + row).map_err(|_| "SEGMENTED_PATH_PARENT_ROW")?;
         Ok((extent.parents as *const ParentLink).wrapping_add(physical))
     }
+}
 
-    fn rank_for(&self, hash: u64) -> u32 {
+pub(super) struct PathOwnership {
+    owner_map: Vec<u32>,
+    cuts: Option<Vec<u64>>,
+}
+
+impl PathOwnership {
+    pub(super) fn new(owner_map: Vec<u32>, cuts: Option<Vec<u64>>) -> Self {
+        Self { owner_map, cuts }
+    }
+
+    pub(super) fn rank_for(&self, hash: u64) -> u32 {
         let high = hash >> 32;
         let owner = match &self.cuts {
             Some(cuts) => cuts.partition_point(|&cut| cut <= high) - 1,
@@ -265,31 +274,28 @@ pub(super) fn state_hash(state: &[i64], seed: u64, bits: u32) -> u64 {
 }
 
 #[derive(Clone, Copy)]
-struct Target {
-    index: u32,
-    hash: u64,
+pub(super) struct Target {
+    pub(super) index: u32,
+    pub(super) hash: u64,
 }
 
-struct Targets<'a> {
-    states: &'a [Vec<i64>],
-    local: Vec<Vec<Target>>,
+pub(super) struct Targets<'a> {
+    pub(super) states: &'a [Vec<i64>],
+    pub(super) local: Vec<Vec<Target>>,
 }
 
-pub(super) struct Workspace {
+pub(super) struct TargetLookup {
     coordinates: Buffer,
     hashes: Buffer,
     hits: Buffer,
     error: Buffer,
-    tx: Buffer,
-    rx: Buffer,
     coordinates_host: Vec<i64>,
     hashes_host: Vec<u64>,
     hits_host: Vec<TargetHit>,
-    replies: Vec<Reply>,
 }
 
-impl Workspace {
-    pub(super) fn new(elements: u32, world: u32, device: i32) -> Result<Self> {
+impl TargetLookup {
+    pub(super) fn new(elements: u32, device: i32) -> Result<Self> {
         let state_bytes = (elements as usize)
             .checked_mul(size_of::<i64>())
             .filter(|&bytes| bytes > 0)
@@ -300,11 +306,103 @@ impl Workspace {
             hashes: Buffer::new(tile * size_of::<u64>(), device)?,
             hits: Buffer::new(tile * size_of::<TargetHit>(), device)?,
             error: Buffer::new(size_of::<u32>(), device)?,
-            tx: Buffer::new(size_of::<Reply>(), device)?,
-            rx: Buffer::new(size_of::<Reply>() * world as usize, device)?,
             coordinates_host: Vec::with_capacity(tile * elements as usize),
             hashes_host: Vec::with_capacity(tile),
             hits_host: vec![TargetHit::default(); tile],
+        })
+    }
+
+    pub(super) fn tile_rows(&self) -> usize {
+        self.hits_host.len()
+    }
+
+    pub(super) fn find(
+        &mut self,
+        bfs: &SegmentedDistributedBfs,
+        find: FindTargets,
+        view: &OwnerPrepared,
+        directory: &HashSeriesDirectory,
+        limit: u32,
+        targets: &[Vec<i64>],
+        tile: &[Target],
+    ) -> Result<&[TargetHit]> {
+        self.coordinates_host.clear();
+        self.hashes_host.clear();
+        for target in tile {
+            self.coordinates_host
+                .extend_from_slice(&targets[target.index as usize]);
+            self.hashes_host.push(target.hash);
+        }
+        self.coordinates.upload(&self.coordinates_host)?;
+        self.hashes.upload(&self.hashes_host)?;
+        let stream = bfs.base.stream.ptr;
+        let mut error = 0u32;
+        let queued = (|| -> Result<()> {
+            crate::generic_native::checked!(cudaMemsetAsync, unsafe {
+                cudaMemsetAsync(self.error.ptr, 0, size_of::<u32>(), stream)
+            })?;
+            crate::generic_native::checked!(mgbfs_hash_batch_find_targets_v1, unsafe {
+                find(
+                    bfs.plan.state_bytes,
+                    bfs.plan.elements,
+                    self.coordinates.ptr.cast(),
+                    self.hashes.ptr.cast(),
+                    tile.len() as u32,
+                    view.hash_segments,
+                    view.hash_count,
+                    view.hash_runs,
+                    view.hash_run_count,
+                    view.hash_run_capacity,
+                    self.hits.ptr.cast(),
+                    self.error.ptr.cast(),
+                    stream,
+                    directory,
+                    limit,
+                )
+            })?;
+            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                cudaMemcpyAsync(
+                    (&mut error as *mut u32).cast(),
+                    self.error.ptr,
+                    size_of::<u32>(),
+                    2,
+                    stream,
+                )
+            })?;
+            crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
+                cudaMemcpyAsync(
+                    self.hits_host.as_mut_ptr().cast(),
+                    self.hits.ptr,
+                    tile.len() * size_of::<TargetHit>(),
+                    2,
+                    stream,
+                )
+            })
+        })();
+        let drained = crate::generic_native::checked!(cudaStreamSynchronize, unsafe {
+            cudaStreamSynchronize(stream)
+        });
+        queued.and(drained)?;
+        if error != 0 {
+            return Err(format!("SEGMENTED_PATH_TARGET_LOOKUP_{error}"));
+        }
+        Ok(&self.hits_host[..tile.len()])
+    }
+}
+
+pub(super) struct Workspace {
+    lookup: TargetLookup,
+    tx: Buffer,
+    rx: Buffer,
+    replies: Vec<Reply>,
+}
+
+impl Workspace {
+    pub(super) fn new(elements: u32, world: u32, device: i32) -> Result<Self> {
+        Ok(Self {
+            lookup: TargetLookup::new(elements, device)?,
+            tx: Buffer::new(size_of::<Reply>(), device)?,
+            rx: Buffer::new(size_of::<Reply>() * world as usize, device)?,
             replies: vec![[0; 4]; world as usize],
         })
     }
@@ -319,9 +417,28 @@ fn stopped(code: u64) -> Option<&'static str> {
 }
 
 impl SegmentedDistributedBfs {
+    pub(super) fn path_targets<'a>(&self, targets: &'a [Vec<i64>]) -> Result<Targets<'a>> {
+        let owner = self.ownership.as_ref().ok_or("SEGMENTED_PATH_OWNERSHIP")?;
+        let mut local = vec![Vec::new(); self.plan.shards as usize];
+        for (index, target) in targets.iter().enumerate() {
+            if target.len() != self.plan.elements as usize {
+                return Err("SEGMENTED_PATH_TARGET_SHAPE".into());
+            }
+            let index = u32::try_from(index).map_err(|_| "SEGMENTED_PATH_TARGET_COUNT")?;
+            let hash = state_hash(target, self.seed, self.bits);
+            if owner.rank_for(hash) == self.rank {
+                let shard = ((u64::from(hash as u32) * u64::from(self.plan.shards)) >> 32) as usize;
+                local[shard].push(Target { index, hash });
+            }
+        }
+        Ok(Targets {
+            states: targets,
+            local,
+        })
+    }
+
     pub(crate) fn solve_nearest(
         &mut self,
-        graph: &GraphDefinitionV2,
         targets: &[Vec<i64>],
         max_depth: Option<u32>,
         max_seconds: u64,
@@ -352,22 +469,7 @@ impl SegmentedDistributedBfs {
             .position(|&rows| rows == 1)
             .filter(|_| self.depth == 0)
             .ok_or("SEGMENTED_NEAREST_ROOT")?;
-        let mut local = vec![Vec::new(); self.plan.shards as usize];
-        for (index, target) in targets.iter().enumerate() {
-            if target.len() != graph.start.len() {
-                return Err("SEGMENTED_NEAREST_TARGET_SHAPE".into());
-            }
-            let index = u32::try_from(index).map_err(|_| "SEGMENTED_NEAREST_TARGET_COUNT")?;
-            let hash = state_hash(target, self.seed, self.bits);
-            if state.rank_for(hash) == self.rank {
-                let shard = ((u64::from(hash as u32) * u64::from(self.plan.shards)) >> 32) as usize;
-                local[shard].push(Target { index, hash });
-            }
-        }
-        let targets = Targets {
-            states: targets,
-            local,
-        };
+        let targets = self.path_targets(targets)?;
         let (receipt, checked) =
             self.search_nearest(&targets, max_depth, root, &stop, &mut workspace)?;
         let mut output = serde_json::to_value(receipt).map_err(|e| e.to_string())?;
@@ -487,8 +589,7 @@ impl SegmentedDistributedBfs {
                 return Ok(LocalTarget::Stopped(RESOURCE));
             }
             let directory = catalog.snapshot_directory();
-            let stream = self.base.stream.ptr;
-            for tile in local.chunks(workspace.hits_host.len()) {
+            for tile in local.chunks(workspace.lookup.tile_rows()) {
                 if best.is_some_and(|(index, _)| tile[0].index >= index) {
                     break;
                 }
@@ -496,67 +597,16 @@ impl SegmentedDistributedBfs {
                 if stop_code != 0 {
                     return Ok(LocalTarget::Stopped(u64::from(stop_code)));
                 }
-                workspace.coordinates_host.clear();
-                workspace.hashes_host.clear();
-                for target in tile {
-                    workspace
-                        .coordinates_host
-                        .extend_from_slice(&targets.states[target.index as usize]);
-                    workspace.hashes_host.push(target.hash);
-                }
-                workspace.coordinates.upload(&workspace.coordinates_host)?;
-                workspace.hashes.upload(&workspace.hashes_host)?;
-                let mut error = 0u32;
-                let queued = (|| -> Result<()> {
-                    crate::generic_native::checked!(cudaMemsetAsync, unsafe {
-                        cudaMemsetAsync(workspace.error.ptr, 0, size_of::<u32>(), stream)
-                    })?;
-                    crate::generic_native::checked!(mgbfs_hash_batch_find_targets_v1, unsafe {
-                        find(
-                            self.plan.state_bytes,
-                            self.plan.elements,
-                            workspace.coordinates.ptr.cast(),
-                            workspace.hashes.ptr.cast(),
-                            tile.len() as u32,
-                            view.hash_segments,
-                            view.hash_count,
-                            view.hash_runs,
-                            view.hash_run_count,
-                            view.hash_run_capacity,
-                            workspace.hits.ptr.cast(),
-                            workspace.error.ptr.cast(),
-                            stream,
-                            &directory,
-                            limit,
-                        )
-                    })?;
-                    crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                        cudaMemcpyAsync(
-                            (&mut error as *mut u32).cast(),
-                            workspace.error.ptr,
-                            size_of::<u32>(),
-                            2,
-                            stream,
-                        )
-                    })?;
-                    crate::generic_native::checked!(cudaMemcpyAsync, unsafe {
-                        cudaMemcpyAsync(
-                            workspace.hits_host.as_mut_ptr().cast(),
-                            workspace.hits.ptr,
-                            tile.len() * size_of::<TargetHit>(),
-                            2,
-                            stream,
-                        )
-                    })
-                })();
-                let drained = crate::generic_native::checked!(cudaStreamSynchronize, unsafe {
-                    cudaStreamSynchronize(stream)
-                });
-                queued.and(drained)?;
-                if error != 0 {
-                    return Err(format!("SEGMENTED_NEAREST_LOOKUP_{error}"));
-                }
-                for (target, hit) in tile.iter().zip(&workspace.hits_host) {
+                let hits = workspace.lookup.find(
+                    self,
+                    find,
+                    &view,
+                    &directory,
+                    limit,
+                    targets.states,
+                    tile,
+                )?;
+                for (target, hit) in tile.iter().zip(hits) {
                     if hit.found == 0 {
                         continue;
                     }

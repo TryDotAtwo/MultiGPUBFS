@@ -14,8 +14,8 @@ from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
 from .launch import (
-    _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST,
-    _compact_path_capability, _require_memory_backend, _segmented_nearest_capability, run_graph,
+    _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _PATH_SEGMENTED_WINDOW,
+    _compact_path_capability, _require_memory_backend, _require_segmented_path_capabilities, run_graph,
 )
 from .memory_admission import resolve_traversal_memory
 from .native_distribution import native_runtime
@@ -256,34 +256,42 @@ class BfsSession:
     def _native_nearest(self, devices, direction="forward", *, window=False, maxmemory=False):
         distributed_enabled = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST") != "0"
         compact = os.environ.get(_PATH_COMPACT) == "1"
-        eligible = direction in ("forward", "bidirectional") and not window and (devices is None or len(devices) > 1)
-        segmented_nearest = eligible and os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
-        if compact and not segmented_nearest:
+        eligible = direction in ("forward", "bidirectional") and (devices is None or len(devices) > 1)
+        segmented_window = window and os.environ.get(_PATH_SEGMENTED_WINDOW) == "1"
+        segmented_nearest = not window and eligible and os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
+        segmented = segmented_window or segmented_nearest
+        if segmented_window:
             _validate_compact_path_request(None if devices is None else len(devices), distributed_enabled)
-        elif not segmented_nearest and not distributed_enabled and (
+        elif compact and not segmented:
+            _validate_compact_path_request(None if devices is None else len(devices), distributed_enabled)
+        elif not segmented and not distributed_enabled and (
             direction == "bidirectional" or window or maxmemory or devices is not None and len(devices) != 1
         ):
             return None
         try:
             native, env = native_runtime(self._executable)
             env = dict(env)
-            segmented_nearest = env.pop(_PATH_SEGMENTED_NEAREST, None) == "1" and eligible
+            env.pop(_PATH_SEGMENTED_NEAREST, None)
+            env.pop(_PATH_SEGMENTED_WINDOW, None)
             compact = env.get(_PATH_COMPACT) == "1"
             capabilities = _require_memory_backend(native, env, "segmented24")
-            if not (compact or segmented_nearest) and capabilities.get("graph_path_nearest_v1") is not True:
+            if not (compact or segmented) and capabilities.get("graph_path_nearest_v1") is not True:
                 return None
             devices = self._native_devices(native, env)
         except (OSError, RuntimeError):
-            if compact or segmented_nearest:
+            if compact or segmented:
                 raise
             return None
-        if segmented_nearest and len(devices) > 1:
+        if segmented_window:
+            _validate_compact_path_request(len(devices), distributed_enabled)
+        if segmented and len(devices) > 1:
             if not distributed_enabled:
                 raise ValueError("NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED")
-            if capabilities.get(_segmented_nearest_capability(direction == "bidirectional")) is not True:
-                raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE: rebuild the native executable and CUDA library")
+            _require_segmented_path_capabilities(capabilities, direction == "bidirectional", window=segmented_window)
             env.pop(_PATH_COMPACT, None)
             env[_PATH_SEGMENTED_NEAREST] = "1"
+            if segmented_window:
+                env[_PATH_SEGMENTED_WINDOW] = "1"
             if _PACKET_ADDR not in env:
                 env[_PACKET_ADDR] = self._local_packet_address()
             return native, env, tuple(devices), True
@@ -343,9 +351,10 @@ class BfsSession:
             self._release_path_memory()
             self._pool.release_nearest_memory()
             native, env = native_runtime(self._executable)
-            if _PATH_SEGMENTED_NEAREST in env:
+            if _PATH_SEGMENTED_NEAREST in env or _PATH_SEGMENTED_WINDOW in env:
                 env = dict(env)
-                env.pop(_PATH_SEGMENTED_NEAREST)
+                env.pop(_PATH_SEGMENTED_NEAREST, None)
+                env.pop(_PATH_SEGMENTED_WINDOW, None)
             devices = self._native_devices(native, env)
             memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual)
             backend = memory.backend
@@ -411,6 +420,7 @@ class BfsSession:
             segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
                                  and direction in ("forward", "bidirectional") and goal_mode == "nearest"
                                  and devices is not None and len(devices) > 1)
+            segmented_window = goal_mode == "window" and os.environ.get(_PATH_SEGMENTED_WINDOW) == "1"
             if (direction in ("forward", "bidirectional") and native_mode
                     and graph.generator_count < 0x7fff_ffff):
                 native = self._native_nearest(devices, direction, window=goal_mode == "window",
@@ -418,6 +428,8 @@ class BfsSession:
                 if native is not None:
                     options["native"] = native
             if native is None:
+                if segmented_window:
+                    raise RuntimeError("NATIVE_PATH_SEGMENTED_WINDOW_UNAVAILABLE_FOR_QUERY")
                 if segmented_nearest:
                     raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE_FOR_QUERY")
                 if compact and direction in ("forward", "bidirectional") and native_mode:

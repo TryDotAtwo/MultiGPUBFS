@@ -119,6 +119,19 @@ pub fn segmented_bidirectional_nearest_abi_ready() -> bool {
     false
 }
 
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub fn segmented_window_abi_ready(bidirectional: bool) -> bool {
+    batch_abi_ready()
+        && hash_series_abi_ready()
+        && packet_transport_abi_ready()
+        && crate::segmented_distributed_native::SegmentedDistributedBfs::segmented_window_available(bidirectional)
+}
+
+#[cfg(not(all(feature = "cuda", target_os = "linux")))]
+pub fn segmented_window_abi_ready(_: bool) -> bool {
+    false
+}
+
 /// The hash warp path must never silently run a library with reusable
 /// pending slots; atomic and batch remain compatible with earlier bundles.
 #[cfg(all(feature="cuda",target_os="linux"))]
