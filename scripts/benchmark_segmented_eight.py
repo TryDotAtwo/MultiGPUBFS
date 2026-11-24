@@ -2,6 +2,7 @@
 import argparse,hashlib,json,math,os,subprocess,threading,time,traceback
 from pathlib import Path
 from multigpubfs import GraphDefinition
+from multigpubfs.artifact_paths import new_benchmark_directory
 from multigpubfs.launch import run_graph
 from multigpubfs.generic_session import persistent_graph_workers
 
@@ -14,13 +15,13 @@ ap.add_argument("--batch",type=int,default=8192,help="requested batch; admission
 ap.add_argument("--autotune",action="store_true",help="test the production automatic selector instead of --batch")
 ap.add_argument("--preset",choices=["balanced","max_capacity"],default="balanced")
 ap.add_argument("--max-depth",type=int)
-ap.add_argument("--base",default="/workspace/bench-segmented-snapshot")
+ap.add_argument("--base",type=Path,help="artifact directory for this run")
 a=ap.parse_args()
 if a.batch <= 0:
  ap.error("--batch must be positive")
 n=a.n
-base=Path(a.base)
-base.mkdir(exist_ok=True)
+base=a.base if a.base is not None else new_benchmark_directory()
+base.mkdir(parents=True,exist_ok=True)
 out=base/("S%d-%s-%s-%d"%(n,a.backend,a.strategy,a.repeat))
 out.mkdir(exist_ok=False)
 os.environ["MGBFS_SEGMENT_ROWS"]="1048576"

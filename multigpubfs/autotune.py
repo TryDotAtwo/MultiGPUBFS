@@ -119,7 +119,7 @@ def _transport_variants(graph,env,hardware_shards=None):
 
 def _configuration_digest(env):
  # Values are hashed, never copied into a public receipt (tokens may coexist).
- ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID','MGBFS_TUNING_EVIDENCE_ROOT','MGBFS_JOB_PHASE_PATH','MGBFS_JOB_SEQUENCE','MGBFS_JOB_CANCEL_PATH'}
+ ignored={'MGBFS_PROFILE_CACHE','MGBFS_CONTROL_TOKEN','MGBFS_RUN_ID','MGBFS_TUNING_EVIDENCE_ROOT','MGBFS_ARTIFACT_ROOT','MGBFS_JOB_PHASE_PATH','MGBFS_JOB_SEQUENCE','MGBFS_JOB_CANCEL_PATH'}
  values={k:v for k,v in env.items() if (k.startswith(('NCCL_','MGBFS_')) or k in ('CUDA_VISIBLE_DEVICES','CUDA_MODULE_LOADING','_MGBFS_PRESET_IMPLICIT_LANES','_MGBFS_PRESET_IMPLICIT_QUEUE')) and k not in ignored}
  return hashlib.sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 
@@ -898,9 +898,16 @@ def _evidence_directory(env,prefix):
   yield temporary.name
  except BaseException as error:
   root=artifact_path('tuning-evidence',env=env,override='MGBFS_TUNING_EVIDENCE_ROOT')
-  root.mkdir(parents=True,exist_ok=True)
-  destination=Path(tempfile.mkdtemp(prefix=prefix,dir=root))
-  shutil.copytree(temporary.name,destination,dirs_exist_ok=True)
+  try:
+   root.mkdir(parents=True,exist_ok=True)
+   destination=Path(tempfile.mkdtemp(prefix=prefix,dir=root))
+  except OSError as save_error:
+   if any(env.get(key,os.environ.get(key)) for key in ('MGBFS_TUNING_EVIDENCE_ROOT','MGBFS_ARTIFACT_ROOT')):
+    raise error from save_error
+   try:destination=Path(tempfile.mkdtemp(prefix=prefix))
+   except OSError as fallback_error:raise error from fallback_error
+  try:shutil.copytree(temporary.name,destination,dirs_exist_ok=True)
+  except OSError as save_error:raise error from save_error
   original_error=str(error)
   old=str(Path(temporary.name));new=str(destination.resolve())
   error.args=tuple(arg.replace(old,new) if isinstance(arg,str) else arg for arg in error.args)
