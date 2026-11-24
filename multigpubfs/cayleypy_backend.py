@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import threading
 
+from .artifact_paths import artifact_path
 from .graph_definition import from_cayleypy, GraphDefinition, _flatten
 from .launch import run_graph, _normalize_segment_strategy
 
@@ -117,7 +118,7 @@ def _search(original, graph, backend, options, output, kwargs):
         value["start"] = start
         definition = GraphDefinition.from_dict(value)
     if output is None:
-        root = Path(options.output_root or Path.cwd() / "bfs-results")
+        root = Path(options.output_root or artifact_path("bfs-results"))
         root.mkdir(parents=True, exist_ok=True)
         # The parent persists for the receipt; run_graph creates its child.
         output = Path(tempfile.mkdtemp(prefix="run-", dir=root)) / "result"

@@ -1,6 +1,7 @@
 """Bounded same-graph GPU prefix tuning; no CPU successor or dedup in production."""
 import hashlib,json,os,subprocess,tempfile,time
 from pathlib import Path
+from .artifact_paths import artifact_path
 from .process_control import query as native_query
 from .profile_cache import read_mapping as _read_profile_cache, write_mapping as _write_profile_cache
 
@@ -896,7 +897,7 @@ def _evidence_directory(env,prefix):
  try:
   yield temporary.name
  except BaseException as error:
-  root=Path(env.get('MGBFS_TUNING_EVIDENCE_ROOT',str(Path.cwd()/'mgbfs-tuning-failures')))
+  root=artifact_path('tuning-evidence',env=env,override='MGBFS_TUNING_EVIDENCE_ROOT')
   root.mkdir(parents=True,exist_ok=True)
   destination=Path(tempfile.mkdtemp(prefix=prefix,dir=root))
   shutil.copytree(temporary.name,destination,dirs_exist_ok=True)

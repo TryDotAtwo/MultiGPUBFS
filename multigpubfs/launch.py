@@ -279,7 +279,6 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    from .autotune import choose_size_profile,choose_profile
    # Reserve most of the caller's deadline for BFS, not cold tuning.
    tuning_budget=60 if max_seconds is None else min(60,max(1,max_seconds//3))
-   native_env=dict(native_env,MGBFS_TUNING_EVIDENCE_ROOT=str(Path(output).parent/(Path(output).name+'-tuning-evidence')))
    profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False,fixed_shards=shards if fixed_segmented_tuning else None) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
    if segmented:shard_geometry=profile.get('shard_geometry')

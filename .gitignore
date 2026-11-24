@@ -16,6 +16,7 @@ target/
 /.codex/
 /runs/
 /artifacts/
+/mgbfs-tuning-failures/
 *.nsys-rep
 *.ncu-rep
 
