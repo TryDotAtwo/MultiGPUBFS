@@ -8,6 +8,7 @@ Exact breadth-first traversal on NVIDIA GPUs for implicit Cayley graphs and supp
 - [Reuse a session for traversal and exact route searches](docs/bfs-session.md)
 - [Launch a graph locally or with allocated ranks](docs/unified-launch.md)
 - [Use the CayleyPy adapter](docs/cayleypy-native-integration.md)
+- [Reuse verified profiles and publish committed results to BFS Atlas](docs/bfs-session.md#profile-registry-and-atlas)
 - [Read the segmented backend setup and reproducible examples](docs/experimental-segmented.md)
 
 ## Code

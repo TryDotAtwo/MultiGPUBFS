@@ -22,6 +22,8 @@ for path in paths.iter_paths():
     print(path["target_index"], path["generator_ids"])
 ```
 
+Call `paths.verify_paths(cayley_graph)` to replay each saved word with the original CayleyPy graph and compare the endpoint with the reported target. Verification consumes Parquet in batches and returns the number of saved paths checked.
+
 Omit `gpus` to use all visible devices, or pass `devices=[0, 3]` for explicit local CUDA ordinals. Traversals write exact counts for completed distance layers and bounded samples of terminal states. `layers` contains the retained layers with the full expected row count. `layer_samples` also contains partial samples. `solve()` writes `graph.json`, a receipt and, when paths were committed, `paths.parquet`. Output paths are unique unless supplied explicitly. `session.bfs()` is an alias for `session.traverse()`. Defaults go to the user state directory outside the source checkout. Pass `output_root`, set `MGBFS_ARTIFACT_ROOT`, or give a query an explicit `output` path.
 
 `nearest` returns one shortest path to the closest reachable target. `window` emits each distinct sequence of original generator IDs through length `d_min + extra_steps` whose final state is a target. Duplicate generators remain distinct labels. Walks may revisit states and continue through a target. The empty sequence is included when the start is a target. Target indexes refer to the deduplicated target list in the receipt. `INCOMPLETE` means the configured time, output, or memory limit stopped the job. Use `completed_through_length` to identify which lengths are exhaustive. An `UNREACHABLE` result certifies that no target was reached. Bidirectional search needs exact inverse edges. Directed permutation generators provide those edges through inverse permutations. Matrix actions need a supported common domain and invertible generators for the backward search. Forward search also accepts non-invertible actions.
@@ -35,6 +37,8 @@ python -m multigpubfs run graph.json results/paths --gpus 8 \
 ## Memory, tuning and repeated work
 
 Traversal uses native segmented storage and live GPU admission. `balanced` uses bounded same-graph pilots when a compatible cached profile is unavailable. `maxmemory` considers compact layouts and may select a lossless permutation bitmap when its domain fits the budget. The selector records its same-backend 4× pilot result in `autotune.capacity_slowdown` and exposes it as `same_backend_pilot_slowdown_status`. A measured speed ratio applies to the configurations and graph range in its receipt. The independently selected presets can use different backends, so a same-backend pilot leaves their comparison unverified. `tune="off"` skips performance pilots. `tune="full"` allows the larger existing startup search.
+
+The local `tune="auto"` selector shares five seconds across optional catalog lookup, profile admission and up to three pilots. Required native startup and worker teardown have their own deadlines. The cluster coordinator can select and broadcast a catalog profile before native launch. A cluster catalog miss uses live admission and the default geometry for the segmented runtime.
 
 Native ranks stay open across calls and reuse communicators and compatible allocations. Changing the graph invalidates input-specific data and changing layouts may require new allocations. Switching engines releases idle allocations when necessary. A controlled resource or time stop can preserve the completed prefix and allow a subsequent request. Losing a rank closes the generation.
 
@@ -55,6 +59,25 @@ result = bfs.traverse("graph.json", preset="maxmemory", native_options={
 Build the CUDA library with `-DMGBFS_EXPERIMENTAL_PACK4=ON` for Pack4. It supports atomic permutation bitmap with up to 16 positions at four bits per position. With the adaptive ABI, a smaller alphabet allows up to 64 positions for two symbols, 32 for up to four, or 21 for up to eight. When the binary advertises `graph_path_nearest_resident_v1`, the session keeps a dedicated local worker for forward `nearest` and reuses compatible device allocations. It releases the idle arena when switching to another engine.
 
 The executable advertises separate capabilities for forward and bidirectional `nearest` and `window` through `key-info`. For a supported multi-GPU build, the segmented route engine uses compact packet exchange and exact owner indexes. Explicit `MGBFS_SEGMENT_NEAREST_V1=1` and `MGBFS_SEGMENT_WINDOW_V1=1` require those paths. Set `MGBFS_NATIVE_DISTRIBUTED_NEAREST=0` to use the Torch implementation for distributed nearest, bidirectional queries, and window queries. Both presets use the same exact route engine. The `maxmemory` route preset caps the native batch at 8,192 source rows. The capacity and slowdown comparison for paths is `UNVERIFIED`.
+
+## Profile Registry and Atlas
+
+Pass `profile_registry` and `profile_registry_sha256` to `open_session()`, or use `--profile-registry` and `--profile-registry-sha256` with `multigpubfs run`. A GitHub commit URL or release asset requires a SHA-256 pin. The same pin reuses the verified cached bytes in offline mode. Set `MGBFS_PROFILE_REGISTRY_OFFLINE=1` to disable downloads. For a private release, download the asset with authenticated `gh` and pass its local path and pin. Explicit native options take precedence.
+
+Catalog recipes match an exact graph, the ordered devices and topology, driver versions, and the native executable and CUDA library hashes. Live admission can reject a saved recipe when the available memory or planned geometry changes. The receipt records the selected profile, its historical evidence and whether the runtime used the same effective geometry. The packaged exporter covers single-host runs. Multi-node export remains open.
+
+Use `multigpubfs profiles export --help` to add an independently verified pair of full runs to a catalog. For runs whose normal state samples truncate a terminal layer, set `MGBFS_PROFILE_TERMINAL_EVIDENCE_DEPTH` to the expected final depth for both arms. A matching native build captures up to 768 KiB of complete terminal evidence, bound to the report by SHA-256. For audited publication, run `multigpubfs profiles publish-github --help`. It checks the evidence and uploads a content-addressed catalog to an existing release, then returns its URL and verified pin.
+
+From the source checkout, add `--registry-evidence` to the existing preset benchmark to generate a catalog from the same two runs.
+
+```bash
+python -m scripts.benchmark_segmented_presets --n 13 --devices 0,1 \
+  --registry-evidence --output /path/outside/checkout/s13
+```
+
+`pair-1/profile/registry.json` and its `evidence/` directory are written after complete terminal verification, physical VRAM sampling on every rank and a slowdown at or below 4×. The exporter checks that the reduction in sampled peak exceeds the measured baseline drift. Read `pair-1/comparison.json` for the export status and SHA-256 pin. Use `--pressure-mib` for a held allocation. Profiles measured under that pressure are eligible only under the corresponding `MGBFS_PROFILE_PRESSURE_NAMESPACE=cuda_warmed_allocation:<bytes>`.
+
+Install `multigpubfs[atlas]` and call `publish(result, token=token, author="Ivan")` from `multigpubfs`. The returned receipt names the immutable Atlas revision. Set `include_incomplete=True` to publish a partial result. A subsequent upload can advance the proven coverage and preserves the earlier finalized lengths.
 
 ## Native request path
 
