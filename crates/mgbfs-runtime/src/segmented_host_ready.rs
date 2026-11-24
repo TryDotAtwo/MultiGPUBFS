@@ -5,7 +5,7 @@ use mgbfs_core::Result;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 
-pub(crate) struct HostAgreement{root:PathBuf,rank:u32,world:u32,timeout:Duration}
+pub(crate) struct HostAgreement{root:PathBuf,rank:u32,world:u32,timeout:Duration,prefix:&'static str}
 impl HostAgreement{
  pub fn new(bootstrap:&Path,rank:u32,world:u32)->Result<Self>{
   if world==0||world>128||rank>=world{return Err("SEGMENTED_HOST_GEOMETRY".into())}
@@ -21,10 +21,14 @@ impl HostAgreement{
    std::env::var("MGBFS_SEGMENT_TEST_HOST_TIMEOUT_MS").ok().and_then(|v|v.parse::<u64>().ok()).unwrap_or(seconds*1000)
   }else{seconds*1000};
   if !(100..=1800000).contains(&ms){return Err("SEGMENTED_HOST_TIMEOUT_RANGE".into())}
-  Ok(Self{root,rank,world,timeout:Duration::from_millis(ms)})
+  Ok(Self{root,rank,world,timeout:Duration::from_millis(ms),prefix:""})
+ }
+ pub fn reverse(&self)->Self{
+  Self{root:self.root.clone(),rank:self.rank,world:self.world,timeout:self.timeout,prefix:"reverse-"}
  }
  pub fn agree<T>(&self,phase:&str,local:&Result<T>,descriptor:Option<&Value>)->Result<()>{
-  let result=self.agree_inner(phase,local,descriptor);
+  let phase=format!("{}{phase}",self.prefix);
+  let result=self.agree_inner(&phase,local,descriptor);
   if let Err(error)=&result{crate::native_fault::fatal_host("host-agreement",error);}
   result
  }
@@ -102,7 +106,7 @@ pub(crate) fn injected(phase:&str)->Result<()>{
   std::fs::create_dir_all(&root).unwrap();
   let workers:Vec<_>=[desc0,desc1].into_iter().enumerate().map(|(rank,desc)|{
    let root=root.clone();std::thread::spawn(move||{
-    let a=HostAgreement{root,rank:rank as u32,world:2,timeout:Duration::from_secs(2)};
+    let a=HostAgreement{root,rank:rank as u32,world:2,timeout:Duration::from_secs(2),prefix:""};
     let local:Result<()>=if rank==1&&fail{Err("UNIT_EXPECTED_FAILURE".into())}else{Ok(())};
     a.agree("cpu-test",&local,Some(&desc)).err().unwrap_or_else(||"OK".to_owned())
    })
@@ -118,7 +122,7 @@ pub(crate) fn injected(phase:&str)->Result<()>{
  #[test]fn missing_rank_times_out_and_stale_phase_rejected(){
   let root=std::env::temp_dir().join(format!("mgbfs-host-timeout-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
   std::fs::create_dir_all(&root).unwrap();
-  let a=HostAgreement{root:root.clone(),rank:0,world:2,timeout:Duration::from_millis(120)};
+  let a=HostAgreement{root:root.clone(),rank:0,world:2,timeout:Duration::from_millis(120),prefix:""};
   assert!(a.agree("lost",&Ok(()),None).unwrap_err().contains("missing_rank=1"));
   assert!(a.agree("lost",&Ok(()),None).unwrap_err().contains("SEGMENTED_HOST_DUPLICATE"));
   std::fs::remove_dir_all(root).unwrap();

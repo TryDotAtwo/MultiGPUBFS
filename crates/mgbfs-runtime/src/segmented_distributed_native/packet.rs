@@ -488,6 +488,7 @@ struct TransmitCarousel {
 pub(super) struct PacketRuntime {
     config: PacketConfig,
     identity: [u8; 128],
+    epoch: u64,
     pub(super) client: Option<PacketClient>,
     // Stream::drop drains outstanding copies before any packet buffer can
     // be returned to the session cache or freed.
@@ -642,6 +643,7 @@ impl PacketRuntime {
         Ok(Self {
             config,
             identity: *id,
+            epoch: 0,
             client: None,
             carousel,
             tx,
@@ -1268,7 +1270,7 @@ impl SegmentedDistributedBfs {
         stats: &mut PacketLayerStats,
         stop: &impl Fn() -> u32,
     ) -> PacketResult<()> {
-        let ctx = self.packet_wire_context();
+        let ctx = self.packet_wire_context(transport.epoch);
         let source = packet.source == ctx.rank;
         transport.submit_wire(ctx, packet, outgoing, 0)?;
         if source && transport.carousel.is_some() {
@@ -1583,7 +1585,7 @@ impl SegmentedDistributedBfs {
                         let (used, rows) = packet_window(peer, p.shards, p.queue_capacity, runs);
                         peer = &peer[used..];
                         let outgoing = Packet {
-                            depth: self.depth,
+                            depth: transport.epoch,
                             sequence,
                             source: self.rank,
                             destination,
@@ -1683,7 +1685,8 @@ impl SegmentedDistributedBfs {
             }
         }
         self.wait_for_transmit_room(transport, 1, future, &mut stats, stop)?;
-        transport.client()?.send(PacketFrame::Seal(self.depth))?;
+        let epoch = transport.epoch;
+        transport.client()?.send(PacketFrame::Seal(epoch))?;
         if transport.receive.is_some() {
             return self.finish_receive_carousel(transport, future, stats);
         }
@@ -1692,7 +1695,7 @@ impl SegmentedDistributedBfs {
                 PacketFrame::Grant(packet) => {
                     self.transfer_packet(transport, packet, None, &[], future, &mut stats, &|| 0)?
                 }
-                PacketFrame::Commit(depth) if depth == self.depth => {
+                PacketFrame::Commit(depth) if depth == transport.epoch => {
                     self.note_sync(|counts| counts.packet_hub_layer_commits += 1);
                     return Ok(stats);
                 }
@@ -1723,6 +1726,9 @@ impl SegmentedDistributedBfs {
         );
         transport.source_scratch = scratch;
         self.remote_records_sent = transport.sent_rows;
+        if execution.is_ok() {
+            transport.epoch += 1;
+        }
         let mut terminal = transport
             .client
             .as_ref()

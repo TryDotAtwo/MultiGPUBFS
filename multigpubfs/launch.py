@@ -124,13 +124,17 @@ def _compact_path_capability(bidirectional):
  return 'graph_path_compact_bidirectional_v1' if bidirectional else 'graph_path_compact_forward_v1'
 
 
+def _segmented_nearest_capability(bidirectional):
+ return 'graph_path_segmented_nearest_bidirectional_v1' if bidirectional else _SEGMENTED_NEAREST_CAPABILITY
+
+
 def _compact_path_env(native,env,world,bidirectional,*,external):
  if world<2:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS')
  address=env.get(_PACKET_ADDR)
  if external and not address:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR')
  if address=='':raise ValueError('NATIVE_PATH_COMPACT_PACKET_ADDR')
  segmented_nearest=env.get(_PATH_SEGMENTED_NEAREST)=='1'
- capability=_SEGMENTED_NEAREST_CAPABILITY if segmented_nearest else _compact_path_capability(bidirectional)
+ capability=_segmented_nearest_capability(bidirectional) if segmented_nearest else _compact_path_capability(bidirectional)
  if _native_key_info(native,env).get(capability) is not True:
   mode='SEGMENTED_NEAREST' if segmented_nearest else 'COMPACT'
   raise RuntimeError(f'NATIVE_PATH_{mode}_UNAVAILABLE: rebuild the native executable and CUDA library')
@@ -250,7 +254,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  strategy_source=_native_env if _native_env is not None else os.environ
  native_selection=None
  segmented_nearest=False
- if (_path_targets is not None and not _path_bidirectional and _path_window is None
+ if (_path_targets is not None and _path_window is None
      and strategy_source.get(_PATH_SEGMENTED_NEAREST)=='1'):
   if external:
    world=int(os.environ['WORLD_SIZE'])

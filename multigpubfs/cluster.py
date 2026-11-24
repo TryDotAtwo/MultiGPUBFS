@@ -262,7 +262,7 @@ class Cluster:
     def _run_external_nearest(self, job, graph, output):
         from math import ceil
         from time import perf_counter
-        from .launch import _SEGMENTED_NEAREST_CAPABILITY, _require_memory_backend, run_graph
+        from .launch import _require_memory_backend, _segmented_nearest_capability, run_graph
         from .path_search import (
             _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
         )
@@ -275,7 +275,7 @@ class Cluster:
         direction = options.get("direction", "forward")
         bidirectional = direction == "bidirectional"
         if job.get("segmented_nearest"):
-            capability = _SEGMENTED_NEAREST_CAPABILITY
+            capability = _segmented_nearest_capability(bidirectional)
         elif bidirectional:
             capability = "graph_path_nearest_bidirectional_v1"
         else:
@@ -415,7 +415,7 @@ class Cluster:
     def solve(self, session, graph, output, options):
         from .api import _require_compact_path_capabilities, _validate_compact_path_request
         from .launch import (_PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST,
-                             _SEGMENTED_NEAREST_CAPABILITY, _require_memory_backend)
+                             _require_memory_backend, _segmented_nearest_capability)
         from .native_distribution import native_runtime
         from .path_search import (
             _deadline, _empty_output_dir, _graph_and_targets, _path_options, _reserve_output, inverse_action,
@@ -436,7 +436,7 @@ class Cluster:
         })
         setting = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST")
         segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
-                             and mode == "nearest" and direction == "forward"
+                             and mode == "nearest" and direction in ("forward", "bidirectional")
                              and self.placement.world > 1)
         compact = not segmented_nearest and os.environ.get(_PATH_COMPACT) == "1"
         if segmented_nearest and setting == "0":
@@ -457,7 +457,7 @@ class Cluster:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
             capabilities = _require_memory_backend(native, env, "segmented24")
             if segmented_nearest:
-                if (capabilities.get(_SEGMENTED_NEAREST_CAPABILITY) is not True
+                if (capabilities.get(_segmented_nearest_capability(direction == "bidirectional")) is not True
                         or capabilities.get("segmented_network_agreement_v1") is not True):
                     raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE: rebuild the native executable and CUDA library")
             else:

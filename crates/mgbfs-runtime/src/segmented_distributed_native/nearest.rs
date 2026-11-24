@@ -14,6 +14,8 @@ use std::mem::{size_of, size_of_val};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+mod bidirectional;
+pub(super) use bidirectional::available as bidirectional_abi_ready;
 mod roots;
 pub(crate) use roots::RootSpec;
 
@@ -169,13 +171,13 @@ impl NearestState {
         fns: NearestFns,
         owner_map: Vec<u32>,
         cuts: Option<Vec<u64>>,
-        workspace: Workspace,
+        workspace: Option<Workspace>,
     ) -> Self {
         Self {
             fns,
             owner_map,
             cuts,
-            workspace: Some(workspace),
+            workspace,
             extents: Vec::new(),
             index_by_segment: HashMap::new(),
             root_targets: Vec::new(),
@@ -372,6 +374,7 @@ impl SegmentedDistributedBfs {
         output["search_confirmed_through_depth"] = json!(checked);
         output["native_exchange"] = json!("COMPACT_PACKET");
         output["native_storage"] = json!("SEGMENTED_BATCH_HASH");
+        output["native_state_bytes"] = json!(self.plan.state_bytes);
         self.nearest.as_mut().unwrap().workspace = Some(workspace);
         Ok(output)
     }
@@ -627,13 +630,34 @@ impl SegmentedDistributedBfs {
 
     fn trace_nearest(
         &mut self,
-        mut owner: usize,
-        mut row: u64,
+        owner: usize,
+        row: u64,
         target: u32,
         root: usize,
         stop: &impl Fn() -> u32,
         workspace: &mut Workspace,
     ) -> Result<Receipt> {
+        match self.trace_parent_chain(owner, row, stop, workspace)? {
+            Chain::Stopped(reason) => Ok(Receipt::incomplete(reason, Some(self.depth))),
+            Chain::Root {
+                owner,
+                row: 0,
+                mut labels,
+            } if owner == root => {
+                labels.reverse();
+                Ok(Receipt::complete(self.depth, target, labels))
+            }
+            Chain::Root { .. } => Err("SEGMENTED_NEAREST_WITNESS_ROOT".into()),
+        }
+    }
+
+    fn trace_parent_chain(
+        &mut self,
+        mut owner: usize,
+        mut row: u64,
+        stop: &impl Fn() -> u32,
+        workspace: &mut Workspace,
+    ) -> Result<Chain> {
         let mut labels = Vec::new();
         for depth in (1..=self.depth).rev() {
             let local_stop = stop();
@@ -673,7 +697,7 @@ impl SegmentedDistributedBfs {
                     .unwrap_or_else(|| "SEGMENTED_NEAREST_PEER_PARENT".into()));
             }
             if let Some(reason) = stopped(code) {
-                return Ok(Receipt::incomplete(reason, Some(self.depth)));
+                return Ok(Chain::Stopped(reason));
             }
             let [_, parent, source, label] = workspace.replies[owner];
             if source >= u64::from(self.plan.world) || label >= u64::from(self.base.generators) {
@@ -683,12 +707,17 @@ impl SegmentedDistributedBfs {
             owner = source as usize;
             labels.push(label as u32);
         }
-        if owner != root || row != 0 {
-            return Err("SEGMENTED_NEAREST_WITNESS_ROOT".into());
-        }
-        labels.reverse();
-        Ok(Receipt::complete(self.depth, target, labels))
+        Ok(Chain::Root { owner, row, labels })
     }
+}
+
+enum Chain {
+    Root {
+        owner: usize,
+        row: u64,
+        labels: Vec<u32>,
+    },
+    Stopped(&'static str),
 }
 
 enum LocalTarget {

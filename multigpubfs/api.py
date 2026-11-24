@@ -14,8 +14,8 @@ from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
 from .launch import (
-    _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST, _SEGMENTED_NEAREST_CAPABILITY,
-    _compact_path_capability, _require_memory_backend, run_graph,
+    _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST,
+    _compact_path_capability, _require_memory_backend, _segmented_nearest_capability, run_graph,
 )
 from .memory_admission import resolve_traversal_memory
 from .native_distribution import native_runtime
@@ -256,7 +256,7 @@ class BfsSession:
     def _native_nearest(self, devices, direction="forward", *, window=False, maxmemory=False):
         distributed_enabled = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST") != "0"
         compact = os.environ.get(_PATH_COMPACT) == "1"
-        eligible = direction == "forward" and not window and (devices is None or len(devices) > 1)
+        eligible = direction in ("forward", "bidirectional") and not window and (devices is None or len(devices) > 1)
         segmented_nearest = eligible and os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
         if compact and not segmented_nearest:
             _validate_compact_path_request(None if devices is None else len(devices), distributed_enabled)
@@ -280,7 +280,7 @@ class BfsSession:
         if segmented_nearest and len(devices) > 1:
             if not distributed_enabled:
                 raise ValueError("NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED")
-            if capabilities.get(_SEGMENTED_NEAREST_CAPABILITY) is not True:
+            if capabilities.get(_segmented_nearest_capability(direction == "bidirectional")) is not True:
                 raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE: rebuild the native executable and CUDA library")
             env.pop(_PATH_COMPACT, None)
             env[_PATH_SEGMENTED_NEAREST] = "1"
@@ -409,7 +409,7 @@ class BfsSession:
             native_mode = goal_mode in ("nearest", "window")
             compact = os.environ.get(_PATH_COMPACT) == "1"
             segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
-                                 and direction == "forward" and goal_mode == "nearest"
+                                 and direction in ("forward", "bidirectional") and goal_mode == "nearest"
                                  and devices is not None and len(devices) > 1)
             if (direction in ("forward", "bidirectional") and native_mode
                     and graph.generator_count < 0x7fff_ffff):

@@ -14,8 +14,11 @@ fn segmented_nearest_requested() -> bool {
 }
 
 fn validate_segmented_nearest_options(world: usize, bidirectional: bool, window: bool) -> Result<()> {
-    if world < 2 || bidirectional || window {
-        return Err("SEGMENTED_NEAREST_REQUIRES_MULTIRANK_FORWARD".into());
+    if world < 2 || window {
+        return Err("SEGMENTED_NEAREST_REQUIRES_MULTIRANK".into());
+    }
+    if bidirectional && !crate::segmented_strategy::segmented_bidirectional_nearest_abi_ready() {
+        return Err("SEGMENTED_MEET_CUDA_ABI_UNAVAILABLE".into());
     }
     if std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref() != Ok("1")
         || std::env::var("MGBFS_SEGMENT_STRATEGY").as_deref() != Ok("batch")
@@ -335,6 +338,7 @@ pub fn run(args:&[String])->Result<()>{
    if let Some(digest) = target_digest {
     descriptor["segmented_nearest"] = serde_json::json!({
      "version": 1, "target_sha256": digest, "max_depth": launch.path_max_depth,
+     "bidirectional": launch.path_bidirectional,
      "max_seconds": seconds, "rank_plans": plans
     });
    }
@@ -479,12 +483,28 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  ready.agree("entry",&entry,descriptor)?;
  let(backend,pool_idle_before,pool_idle_after,hash_bits,_)=entry?;
  let _signals=Signals::new();let setup=Instant::now();
- let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(encoded_graph.as_ref().unwrap_or(g),launch.devices[rank as usize],rank,rank_plan.clone(),id,packet_job_token,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready,nearest)?;
+ use crate::segmented_distributed_native::SegmentedDistributedBfs;
+ let device=launch.devices[rank as usize];
+ let (mut bfs,mut reverse)=if launch.path_bidirectional {
+  let targets=launch.path_targets.as_deref().ok_or("SEGMENTED_NEAREST_TARGETS")?;
+  let inverse=g.reversed_for_paths(targets);
+  ready.agree("reverse-action",&inverse,None)?;
+  let (forward,reverse)=SegmentedDistributedBfs::new_paired(
+   g,&inverse?,targets,device,rank,rank_plan.clone(),id,packet_job_token,
+   0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready)?;
+  (forward,Some(reverse))
+ }else{
+  let bfs=SegmentedDistributedBfs::new(encoded_graph.as_ref().unwrap_or(g),device,rank,
+   rank_plan.clone(),id,packet_job_token,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready,nearest)?;
+  (bfs,None)
+ };
  let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
  if nearest {
   let targets=launch.path_targets.as_deref().ok_or("SEGMENTED_NEAREST_TARGETS")?;
-  let receipt=bfs.solve_nearest(g, targets, launch.path_max_depth, seconds)?;
-  publish_segmented_nearest(&mut bfs, receipt, output, ready, rank)?;
+  let receipt=if let Some(reverse)=reverse.as_mut(){
+   SegmentedDistributedBfs::solve_nearest_bidirectional(&mut bfs,reverse,launch.path_max_depth,seconds)?
+  }else{bfs.solve_nearest(g,targets,launch.path_max_depth,seconds)?};
+  publish_segmented_nearest(&mut bfs, reverse.as_ref(), receipt, output, ready, rank)?;
   return Ok(());
  }
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let mut committed=vec![0.0];
@@ -563,6 +583,7 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
 
 fn publish_segmented_nearest(
     bfs: &mut crate::segmented_distributed_native::SegmentedDistributedBfs,
+    reverse: Option<&crate::segmented_distributed_native::SegmentedDistributedBfs>,
     receipt: serde_json::Value,
     output: &Path,
     ready: &crate::segmented_host_ready::HostAgreement,
@@ -575,6 +596,9 @@ fn publish_segmented_nearest(
         crate::segmented_host_ready::injected("finish-prepare")?;
         crate::segmented_host_ready::injected("finish-write")?;
         bfs.quiesce()?;
+        if let Some(reverse) = reverse {
+            reverse.quiesce()?;
+        }
         let bytes = serde_json::to_vec_pretty(&receipt).map_err(|e| e.to_string())?;
         std::fs::write(&temporary, bytes).map_err(|e| format!("SEGMENTED_FINISH_PATH rank={rank} {e}"))?;
         Ok(serde_json::json!({
@@ -584,6 +608,7 @@ fn publish_segmented_nearest(
             "target_index": receipt["target_index"],
             "generator_ids": receipt["generator_ids"],
             "search_confirmed_through_depth": receipt["search_confirmed_through_depth"],
+            "native_search_depths": receipt["native_search_depths"],
         }))
     })();
     if let Err(error) = ready.agree("finish-prepared", &prepared, prepared.as_ref().ok()) {

@@ -406,8 +406,9 @@ def _record_native_nearest(result, graph, targets, check, add, report):
         report["native_workspace"] = workspace
     if result.get("native_storage") == "SEGMENTED_BATCH_HASH":
         report.update(native_storage=result["native_storage"], lineage_storage="native_segmented_parents")
-        if "native_exchange" in result:
-            report["native_exchange"] = result["native_exchange"]
+        for field in ("native_exchange", "native_state_bytes", "native_search_depths"):
+            if field in result:
+                report[field] = result[field]
     if status == "COMPLETE":
         # Validate the single native witness against the exact submitted graph
         # before adding its row to the artifact.

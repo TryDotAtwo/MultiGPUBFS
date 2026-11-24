@@ -561,10 +561,10 @@ fn stream_pending(stream: *mut c_void) -> bool {
 }
 
 impl SegmentedDistributedBfs {
-    pub(super) fn packet_wire_context(&self) -> WireContext {
+    pub(super) fn packet_wire_context(&self, epoch: u64) -> WireContext {
         WireContext {
             rank: self.rank,
-            depth: self.depth,
+            depth: epoch,
             world: self.plan.world,
             shards: self.plan.shards,
             queue_capacity: self.plan.queue_capacity,
@@ -582,7 +582,7 @@ impl SegmentedDistributedBfs {
         stop: &impl Fn() -> u32,
         sealed: bool,
     ) -> PacketResult<bool> {
-        let ctx = self.packet_wire_context();
+        let ctx = self.packet_wire_context(transport.epoch);
         let progress = transport.progress_carousel(ctx, stats, stop, &[], sealed)?;
         let wave = transport.owner_wave(self.lanes.len())?;
         if wave.is_empty() {

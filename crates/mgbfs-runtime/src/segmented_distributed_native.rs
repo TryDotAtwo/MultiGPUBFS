@@ -1,6 +1,6 @@
 //! Experimental independently segmented distributed exact BFS.
 //! Not selected by the public runtime until multi-process and failure gates pass.
-use std::{ffi::c_void,mem::{size_of,size_of_val},ptr};
+use std::{cell::Cell,ffi::c_void,mem::{size_of,size_of_val},ptr,rc::Rc};
 use mgbfs_core::{graph_definition::GraphDefinitionV2,Result};
 use mgbfs_cuda::{ffi::*,generic_graph::*};
 use crate::{segmented_strategy::{SegmentStrategy,OwnerDecision,owner_decision,RawTileCursor},generic_distributed_memory::GenericDistributedMemoryPlan as Plan,
@@ -351,6 +351,9 @@ pub(crate) fn pack4_capability()->bool{unsafe{Pack4Fns::load().is_some()}}
 pub(crate) fn nearest_abi_ready() -> bool {
     NearestFns::load().is_some()
 }
+pub(crate) fn bidirectional_nearest_abi_ready() -> bool {
+    nearest::bidirectional_abi_ready()
+}
 fn decode_pack4(d:BitmapPack4Dictionary,word:u64)->Result<Vec<i64>>{
  let width=BitmapPack4Dictionary::width(d.elements,d.distinct);
  if d.elements==0||d.elements>64||d.distinct==0||d.distinct>16||d.distinct>d.elements||d.elements*width>64{return Err("BITMAP_PACK4_DICTIONARY".into())}
@@ -423,11 +426,11 @@ impl OverlapProbe{
  }
 }
 impl Drop for OverlapProbe{fn drop(&mut self){unsafe{mgbfs_cuda::native_owner::cudaSetDevice(self.device);for e in self.events{if !e.is_null(){cudaEventDestroy(e);}}}}}
-struct Comm{ptr:*mut c_void,healthy:bool,aborted:bool}
+struct Comm{ptr:*mut c_void,healthy:Cell<bool>,aborted:Cell<bool>}
 impl Comm{
- fn abort_once(&mut self){if !self.aborted&&!self.ptr.is_null(){crate::session_cache::permit_comm(false);let status=unsafe{mgbfs_nccl_abort(self.ptr)};self.aborted=true;if status!=0{eprintln!("SEGMENTED_COMM_ABORT_ERROR code={status}");}}}
+ fn abort_once(&self){if !self.aborted.get()&&!self.ptr.is_null(){crate::session_cache::permit_comm(false);let status=unsafe{mgbfs_nccl_abort(self.ptr)};self.aborted.set(true);if status!=0{eprintln!("SEGMENTED_COMM_ABORT_ERROR code={status}");}}}
 }
-impl Drop for Comm{fn drop(&mut self){unsafe{if !self.ptr.is_null(){if !self.healthy||crate::native_fault::failed(){self.abort_once();}if self.aborted||!crate::session_cache::comm_put(self.ptr){mgbfs_nccl_destroy(self.ptr);}}}}}
+impl Drop for Comm{fn drop(&mut self){unsafe{if !self.ptr.is_null(){if !self.healthy.get()||crate::native_fault::failed(){self.abort_once();}if self.aborted.get()||!crate::session_cache::comm_put(self.ptr){mgbfs_nccl_destroy(self.ptr);}}}}}
 #[derive(Clone,Copy)]struct Range{shard:usize,segment:usize,bank:u32,begin:u64,end:u64,logical_start:u64}
 fn mix(mut x:u64)->u64{x^=x>>30;x=x.wrapping_mul(0xbf58476d1ce4e5b9);x^=x>>27;x=x.wrapping_mul(0x94d049bb133111eb);x^(x>>31)}
 
@@ -455,13 +458,36 @@ pub struct SegmentedDistributedBfs{
  remote_payload_transfers:u64,
  hash_reclaimed_segments:u64,
  hash_reclaimed_device_bytes:u64,
- send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_lookup_limit:Option<u32>,hash_eager_tail:Option<u32>,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_lookup_directory_runs:HashLookupDirectorySeries,hash_snapshot_timed_lookups:u64,hash_snapshot_installations:u64,hash_snapshot_mapped_host_installations:u64,hash_snapshot_rebuild_peak_bytes:u64,hash_snapshot_storage_evictions:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Comm,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,test_count_payload:bool,
+ send:[Queue;2],recv:Queue,route_stream:Stream,route_scratch:Option<RawBuffer>,batch_offsets:Option<Buffer>,batch_offsets_host:Vec<u32>,batch_dense_origins:Option<crate::segmented_strategy::DenseOriginsFn>,batch_tile:u32,batch_merge_rows:u32,batch_merge_enabled:bool,hash_lookup_limit:Option<u32>,hash_eager_tail:Option<u32>,hash_timing_bounds:Option<(u64,u64)>,hash_owner_ms:f64,hash_lookup_ms:f64,hash_merge_ms:f64,hash_lookup_directory_runs:HashLookupDirectorySeries,hash_snapshot_timed_lookups:u64,hash_snapshot_installations:u64,hash_snapshot_mapped_host_installations:u64,hash_snapshot_rebuild_peak_bytes:u64,hash_snapshot_storage_evictions:u64,input_stats_bounds:Option<(u64,u64)>,input_valid:u64,input_raw_elements:u64,input_raw_tiles:u64,input_spill_elements:u64,input_spill_tiles:u64,input_empty_self:u64,input_empty_peer:u64,route_errors:[Buffer;2],control:Buffer,map:Buffer,cuts:Option<Buffer>,lanes:Vec<Lane>,comm:Rc<Comm>,test_oom_done:bool,bounds_trace:bool,overlap_bounds:Option<(u64,u64)>,exact_exchange:bool,transport_trace:bool,remote_records_sent:u64,remote_padded_records:u64,test_count_payload:bool,
 }
 impl SegmentedDistributedBfs{
  pub fn new(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seed:u64,bits:u32,cuts:Option<&[u64]>,ready:&crate::segmented_host_ready::HostAgreement,path:bool)->Result<Self>{
   Self::new_with_roots(g,device,rank,p,id,packet_job_token,seed,bits,cuts,ready,path,RootSpec::Single)
  }
- pub(crate) fn new_with_roots(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seed:u64,bits:u32,cuts:Option<&[u64]>,ready:&crate::segmented_host_ready::HostAgreement,path:bool,roots:RootSpec<'_>)->Result<Self>{
+ fn new_with_roots(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seed:u64,bits:u32,cuts:Option<&[u64]>,ready:&crate::segmented_host_ready::HostAgreement,path:bool,roots:RootSpec<'_>)->Result<Self>{
+  Self::new_arena(g,device,rank,p,id,packet_job_token,seed,bits,cuts,ready,path,roots,false,None)
+ }
+ pub(crate) fn new_paired(
+  graph:&GraphDefinitionV2,inverse:&GraphDefinitionV2,targets:&[Vec<i64>],
+  device:u32,rank:u32,plan:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,
+  seed:u64,bits:u32,cuts:Option<&[u64]>,ready:&crate::segmented_host_ready::HostAgreement,
+ )->Result<(Self,Self)>{
+  let uniform;
+  let cuts=match cuts {
+   Some(cuts)=>cuts,
+   None=>{
+    uniform=crate::segmented_history::weighted_owner_cuts(&vec![1;plan.world as usize]).map_err(str::to_owned)?;
+    &uniform
+   }
+  };
+  let forward=Self::new_arena(graph,device,rank,plan.clone(),id,packet_job_token,seed,bits,
+   Some(cuts),ready,true,RootSpec::Single,true,None)?;
+  let cuts=forward.admitted_owner_cuts.as_deref().unwrap_or(cuts);
+  let reverse=Self::new_arena(inverse,device,rank,plan,id,packet_job_token,seed,bits,
+   Some(cuts),&ready.reverse(),true,RootSpec::Targets(targets),true,Some(&forward))?;
+  Ok((forward,reverse))
+ }
+ fn new_arena(g:&GraphDefinitionV2,device:u32,rank:u32,p:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seed:u64,bits:u32,cuts:Option<&[u64]>,ready:&crate::segmented_host_ready::HostAgreement,path:bool,roots:RootSpec<'_>,paired:bool,primary:Option<&Self>)->Result<Self>{
   let target_roots=matches!(roots,RootSpec::Targets(_));
   let metadata_bytes=if path{PATH_PARENT_BYTES}else{0};
   let requested_path_cuts=if path{cuts.map(<[u64]>::to_vec)}else{None};
@@ -560,13 +586,21 @@ impl SegmentedDistributedBfs{
   let prepared:Result<_>=(||{crate::segmented_host_ready::injected("base")?;GenericNativeBfs::new_unseeded(g,device,tiny,seed,bits)})();
   ready.agree("base",&prepared,None)?;
   let base=prepared?;let d=base.device;let stream=base.stream.ptr;
-  let mut raw=crate::session_cache::comm_take().unwrap_or(ptr::null_mut());
-  if raw.is_null(){let mut error=[0i8;512];crate::generic_native::checked!(mgbfs_nccl_create,unsafe{mgbfs_nccl_create(rank,p.world,device,id.as_ptr().cast(),&mut raw,error.as_mut_ptr(),error.len())})?;}
-  let comm=Comm{ptr:raw,healthy:false,aborted:false};
+  let comm=if let Some(primary)=primary{
+   Rc::clone(&primary.comm)
+  }else{
+   let mut raw=crate::session_cache::comm_take().unwrap_or(ptr::null_mut());
+   if raw.is_null(){let mut error=[0i8;512];crate::generic_native::checked!(mgbfs_nccl_create,unsafe{mgbfs_nccl_create(rank,p.world,device,id.as_ptr().cast(),&mut raw,error.as_mut_ptr(),error.len())})?;}
+   Rc::new(Comm{ptr:raw,healthy:Cell::new(false),aborted:Cell::new(false)})
+  };
+  let using_packet=packet_config.is_some();
   let prepared:Result<_>=(||{
    crate::segmented_host_ready::injected("queue")?;
-    let packet=packet_config.map(|config|PacketRuntime::new(config,id,&p,d,base.generators)).transpose()?;
-    let (send,recv)=if let Some(transport)=&packet{
+    let packet=if primary.is_some(){None}else{
+     packet_config.map(|config|PacketRuntime::new(config,id,&p,d,base.generators)).transpose()?
+    };
+    let transport=packet.as_ref().or_else(||primary.and_then(|side|side.packet.as_ref()));
+    let (send,recv)=if let Some(transport)=transport{
      let alternate=if transport.route_lookahead{Queue::compact(&p,transport.producer_rows,d)?}else{Queue::control_only(0,d)?};
      ([Queue::compact(&p,transport.producer_rows,d)?,alternate],Queue::control_only(p.world as usize*4,d)?)
     }else{
@@ -575,10 +609,11 @@ impl SegmentedDistributedBfs{
     };
    let route_stream=Stream::new(d)?;let route_errors=[Buffer::new(12,d)?,Buffer::new(12,d)?];
    let control=Buffer::new(128+p.world as usize*16,d)?;
-    Ok((send,recv,route_stream,route_errors,control,packet))
+    let producer_rows=transport.map(|transport|transport.producer_rows);
+    Ok((send,recv,route_stream,route_errors,control,packet,producer_rows))
   })();
   ready.agree("queues",&prepared,None)?;
-   let(send,recv,route_stream,route_errors,control,packet)=prepared?;
+   let(send,recv,route_stream,route_errors,control,packet,producer_rows)=prepared?;
   // Agree before seed materialization or the first graph-data exchange.
   let copied:Result<_>=(||{crate::segmented_host_ready::injected("strategy-copy")?;
    crate::generic_native::checked!(cudaMemcpyAsync,unsafe{cudaMemcpyAsync(control.at::<c_void>(32),(&strategy_advertisement as *const u64).cast(),8,1,stream)})?;
@@ -645,12 +680,12 @@ impl SegmentedDistributedBfs{
   }else{None};
   // Allocate compact source offsets before measuring segment capacity. The
   // host table is reused across waves and is copied only after count exchange.
-   let dense_input=packet.is_none()&&strategy==SegmentStrategy::Batch&&std::env::var("MGBFS_SEGMENT_TEST_RECTANGULAR").as_deref()!=Ok("1");
+   let dense_input=!using_packet&&strategy==SegmentStrategy::Batch&&std::env::var("MGBFS_SEGMENT_TEST_RECTANGULAR").as_deref()!=Ok("1");
   let offset_count=(p.shards as usize).checked_mul(p.world as usize+1).ok_or("SEGMENTED_OFFSET_SIZE")?;
   let batch_offsets_host=if dense_input{vec![0u32;offset_count]}else{Vec::new()};
   let batch_offsets=if dense_input{Some(Buffer::new(offset_count.checked_mul(4).ok_or("SEGMENTED_OFFSET_SIZE")?,d)?)}else{None};
   let batch_dense_origins=if dense_input{Some(crate::segmented_strategy::dense_origins().ok_or("SEGMENT_STRATEGY_BATCH_NATIVE_ABI_MISSING")?)}else{None};
-   let spill_sources=if packet.is_some(){1}else{p.world};
+   let spill_sources=if using_packet{1}else{p.world};
    let bound=usize::try_from(u64::from(spill_sources)*u64::from(p.queue_capacity)).map_err(|_|"SEGMENTED_SPILL_SIZE")?;
   if bound>=0x80000000usize{return Err("SEGMENTED_SPILL_SIZE".into())}
   let mut h=state_hash(&g.start,seed,bits);
@@ -682,7 +717,8 @@ impl SegmentedDistributedBfs{
   // Exercise actual peer communication before measuring free memory. NCCL
   // can lazily allocate transport state on its first collective/exchange.
   // Compact traffic needs one warmup word per peer, independent of shards.
-  let warmup_peer_bytes=if packet.is_some(){4}else{u64::from(p.shards)*4};
+  if primary.is_none(){
+  let warmup_peer_bytes=if using_packet{4}else{u64::from(p.shards)*4};
   let cleared:Result<_>=(||{crate::segmented_host_ready::injected("warmup-clear")?;
    crate::generic_native::checked!(cudaMemsetAsync,unsafe{cudaMemsetAsync(send[0].counts.ptr,0,p.world as usize*warmup_peer_bytes as usize,stream)})?;
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;Ok(())})();
@@ -690,6 +726,7 @@ impl SegmentedDistributedBfs{
   if p.world>1{
    crate::generic_native::checked!(mgbfs_nccl_exchange_triplets,unsafe{mgbfs_nccl_exchange_triplets(comm.ptr,rank,p.world,send[0].counts.ptr,warmup_peer_bytes,ptr::null(),0,ptr::null(),0,recv.counts.ptr,ptr::null_mut(),ptr::null_mut(),stream)})?;
    crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(stream)})?;
+  }
   }
   let prepared:Result<_>=(||{
   let reserve=crate::generic_memory::admission_reserve_bytes()?;
@@ -755,9 +792,9 @@ impl SegmentedDistributedBfs{
   } else {None};
   // One serial route workspace is separate from owner scratch, allowing the
   // next send slot to route while the previous slot is accepted.
-  let mut admitted_batch=packet.as_ref().map_or(p.batch,|transport|transport.producer_rows/base.generators);
+  let mut admitted_batch=producer_rows.map_or(p.batch,|rows|rows/base.generators);
   let mut route_scratch=None;
-  if strategy==SegmentStrategy::Batch||packet.is_some(){
+  if strategy==SegmentStrategy::Batch||using_packet{
    admitted_batch=admitted_batch.min((0x7fff_fffeu32)/base.generators).max(1);
    loop{
     let children=admitted_batch.checked_mul(base.generators).ok_or("SEGMENTED_BATCH_ROUTE_RANGE")?;
@@ -834,7 +871,7 @@ impl SegmentedDistributedBfs{
   ready.agree("memory",&prepared,None)?;
   let(reserve,storage_banks,bitmap,previous_snapshot,mut admitted_batch,route_scratch,batch_tile,batch_merge_rows,batch_merge_enabled,hash_timing_bounds,input_stats_bounds,overlap_bounds,lanes)=prepared?;
   let fit_layout=|rows,budget|if sorted_hash{fit_sorted_segment_layout_with_row_metadata(p.elements,p.state_bytes,storage_banks,rows,budget,metadata_bytes)}else if pack4.is_some(){fit_packed_bitmap_segment_layout(p.elements,storage_banks,rows,budget)}else{fit_segment_layout_compact(bitmap_mode,p.elements,p.state_bytes,storage_banks,rows,budget,compact_positions)};
-  if strategy==SegmentStrategy::Batch&&packet.is_none(){
+  if strategy==SegmentStrategy::Batch&&!using_packet{
    // Only the legacy transport requires lockstep source rounds.
    // Compact receivers grant bytes independently of the sender's route tile.
    let proposed=u64::from(admitted_batch);
@@ -850,7 +887,9 @@ impl SegmentedDistributedBfs{
    if admitted_batch==0{return Err("SEGMENTED_BATCH_AGREEMENT".into())}
   }
   let prepared:Result<_>=(||{
-  let path_workspace=nearest_fns.map(|_|nearest::Workspace::new(p.elements,p.world,d)).transpose()?;
+  let path_workspace=if primary.is_none(){
+   nearest_fns.map(|_|nearest::Workspace::new(p.elements,p.world,d)).transpose()?
+  }else{None};
   let(free,_)=segment_sizing_memory_info()?;
   let mut remaining_bytes=(free as u64).saturating_sub(reserve);
   let capacity_limit=std::env::var("MGBFS_SEGMENT_MAX_RANK_STATES").ok().map(|v|v.parse::<u64>().map_err(|_|"SEGMENTED_CAPACITY_LIMIT".to_owned())).transpose()?;
@@ -862,7 +901,10 @@ impl SegmentedDistributedBfs{
    let shards=u64::from(p.shards);
    let capacity_rows=capacity_limit.map_or(LOCAL_ROWS,|limit|limit.div_ceil(shards));
    let upper=configured_rows.min(estimated).min(capacity_rows);
+   // Paired histories grow from smaller extents. Both already consult live
+   // device headroom at every allocation, so unused space can serve either side.
    let per_shard=remaining_bytes/u64::from(p.shards);
+   let per_shard=if paired{per_shard.min(64<<20)}else{per_shard};
    match fit_layout(upper,per_shard).map_err(str::to_owned)?{
     Some(v)=>v,
     None=>fit_layout(upper,remaining_bytes).map_err(str::to_owned)?.ok_or("SEGMENTED_NO_CAPACITY")?,
@@ -886,7 +928,7 @@ impl SegmentedDistributedBfs{
    let bytes_per_row=layout.device_bytes.div_ceil(layout.rows_per_bank);
    Some(((8<<20)/bytes_per_row).max(1))
   }else{None};
-  let admitted_owner_cuts=if std::env::var("MGBFS_SEGMENT_EXTERNAL_LINK").as_deref()==Ok("1")&&!bitmap_mode{
+  let admitted_owner_cuts=if primary.is_none()&&std::env::var("MGBFS_SEGMENT_EXTERNAL_LINK").as_deref()==Ok("1")&&!bitmap_mode{
    let copied:Result<_>=(||{
     let rows=(remaining_bytes/layout.device_bytes).saturating_mul(layout.rows_per_bank).min(capacity_limit.unwrap_or(u64::MAX));
     if rows==0||cuts.is_none(){return Err("SEGMENTED_OWNER_ADMISSION_ROWS".into())}
@@ -908,7 +950,7 @@ impl SegmentedDistributedBfs{
    ready.agree("owner-weights",&ownership,descriptor.as_ref())?;
    let(selected,owner)=ownership?;root=owner;Some(selected)
   }else{None};
-  let nearest=nearest_fns.zip(path_workspace).map(|(fns,workspace)|NearestState::new(fns,owner_map,admitted_owner_cuts.clone().or(requested_path_cuts),workspace));
+  let nearest=nearest_fns.map(|fns|NearestState::new(fns,owner_map,admitted_owner_cuts.clone().or(requested_path_cuts),path_workspace));
   let mut result=Self{nearest,packet,global_sync:Default::default(),last_layer_sync:Default::default(),remote_payload_transfers:0,hash_reclaimed_segments:0,hash_reclaimed_device_bytes:0,admitted_owner_cuts,initial_hash_extent_rows,strategy,compact_positions,pack4,previous_snapshot,previous_snapshot_rows:0,previous_snapshot_valid:false,previous_global:0,base,plan:p.clone(),rank,seed,bits,layout,bitmap,segments:(0..p.shards).map(|_|Vec::new()).collect(),reuse_hash_segments:std::env::var("MGBFS_SEGMENT_HASH_REUSE").as_deref()!=Ok("0"),spare_hash_segment:None,hash_segment_reuses:0,descriptor_cache:(0..p.shards).map(|_|None).collect(),hash_shards:(0..p.shards).map(|_|None).collect(),remaining_bytes,storage_budget:remaining_bytes,storage_peak_requested:0,reserve_bytes:reserve,configured_rows,bank_totals:[0;3],peak_live_rows:0,last_resource:None,capacity_limit,current:vec![],previous:vec![],counts:(0..p.world).map(|r|u64::from(r==root)).collect(),depth:0,source_retries:0,active_batch:admitted_batch,queue_batch_ceiling:admitted_batch,admitted_batch,batch_recovery,batch_recovery_policy:Default::default(),batch_recoveries:0,layer_stats,layer_stats_low,layer_stats_high,profile_spill:0,profile_owner_passes:0,peak_owner_lanes:0,prefetched_chunks:0,overlap_samples:0,send,recv,route_stream,route_scratch,batch_offsets,batch_offsets_host,batch_dense_origins,batch_tile,batch_merge_rows,batch_merge_enabled,hash_lookup_limit,hash_eager_tail,hash_timing_bounds,hash_owner_ms:0.,hash_lookup_ms:0.,hash_merge_ms:0.,hash_lookup_directory_runs:Default::default(),hash_snapshot_timed_lookups:0,hash_snapshot_installations:0,hash_snapshot_mapped_host_installations:0,hash_snapshot_rebuild_peak_bytes:0,hash_snapshot_storage_evictions:0,input_stats_bounds,input_valid:0,input_raw_elements:0,input_raw_tiles:0,input_spill_elements:0,input_spill_tiles:0,input_empty_self:0,input_empty_peer:0,route_errors,control,map,cuts,lanes,comm,test_oom_done:false,bounds_trace:std::env::var("MGBFS_SEGMENT_TEST_BOUNDS_TRACE").as_deref()==Ok("1"),overlap_bounds,exact_exchange:std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref()==Ok("1"),transport_trace:std::env::var("MGBFS_SEGMENT_TRANSPORT_TRACE").as_deref()==Ok("1"),remote_records_sent:0,remote_padded_records:0,test_count_payload:std::env::var("MGBFS_SEGMENT_TEST_BATCH").as_deref()==Ok("1") && std::env::var("MGBFS_SEGMENT_TEST_HOST_FAIL").as_deref()==Ok("count-payload")};
   let seed_result:Result<u32>=(||{
   if let RootSpec::Targets(targets)=roots{
@@ -1377,8 +1419,8 @@ impl SegmentedDistributedBfs{
   for lane in &self.lanes{crate::generic_native::checked!(cudaStreamSynchronize,unsafe{cudaStreamSynchronize(lane.stream.ptr)})?;}Ok(())
  }
  pub fn permit_healthy_communicator_reuse(&mut self){
-  if !self.comm.aborted {
-   self.comm.healthy=true;
+  if !self.comm.aborted.get() {
+   self.comm.healthy.set(true);
    crate::session_cache::certify_segmented_comm();
    crate::session_cache::permit_comm(true);
   }
@@ -1387,15 +1429,15 @@ impl SegmentedDistributedBfs{
 // Abort before GenericNativeBfs and its stream fields are dropped. Ordinary
 // Rust errors must not put a potentially poisoned communicator in the cache.
 impl Drop for SegmentedDistributedBfs{fn drop(&mut self){
-  if !self.comm.aborted&&(!self.comm.healthy||crate::native_fault::failed()){
+  if !self.comm.healthy.get()||crate::native_fault::failed(){
    if let Some(client)=self.packet.as_mut().and_then(|transport|transport.client.as_mut()){
     if client.terminal_code()==0{let _=client.send(PacketFrame::Fail(REMOTE_FAILURE));}
    }
   }
   // Abort failed communicators before any blocking stream drain. An
   // outstanding transfer can depend on a rank that already exited.
-  if !self.comm.healthy||crate::native_fault::failed(){self.comm.abort_once();}
-  if self.comm.aborted {
+  if !self.comm.healthy.get()||crate::native_fault::failed(){self.comm.abort_once();}
+  if self.comm.aborted.get() {
    if let Some(transport)=&self.packet {
     // Packet staging also reads the producer tile owned by this BFS.
     // Drain before field destruction, after aborting any outstanding P2P.
@@ -1404,7 +1446,7 @@ impl Drop for SegmentedDistributedBfs{fn drop(&mut self){
   }
   // Drain prefetched routing before its frontier and queues are dropped.
   unsafe{cudaStreamSynchronize(self.route_stream.ptr);}
-  if self.packet.as_ref().is_some_and(|transport|transport.client.is_some())&&!self.comm.aborted{
+  if self.packet.as_ref().is_some_and(|transport|transport.client.is_some())&&!self.comm.aborted.get(){
    // Clear the borrowed cancellation pointer before caching or dropping Comm.
    unsafe{mgbfs_nccl_bind_cancel(self.comm.ptr,None,ptr::null_mut());}
   }
