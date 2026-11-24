@@ -40,6 +40,21 @@ class PathSearchResult:
             for batch in reader.iter_batches(batch_size=1024):
                 yield from batch.to_pylist()
 
+    def verify_paths(self, cayley_graph):
+        """Replay saved words with CayleyPy and return the number checked."""
+        if not callable(getattr(cayley_graph, "apply_path", None)):
+            raise TypeError("PATH_VERIFICATION_REQUIRES_CAYLEYPY_GRAPH")
+        if _normalize_graph(cayley_graph, self.graph.start).digest() != self.graph.digest():
+            raise ValueError("PATH_VERIFICATION_GRAPH_MISMATCH")
+        targets = self.report["targets"]
+        count = 0
+        for path in self.iter_paths():
+            actual = _flatten(cayley_graph.apply_path(self.graph.start, path["generator_ids"]))
+            if actual != list(targets[path["target_index"]]):
+                raise RuntimeError(f"PATH_VERIFICATION_TARGET_MISMATCH at saved row {count}")
+            count += 1
+        return count
+
 
 def _cuda_devices(torch, devices):
     if not torch.version.cuda or getattr(torch.version, "hip", None) or not torch.cuda.is_available():

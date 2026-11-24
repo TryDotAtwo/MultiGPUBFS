@@ -93,6 +93,15 @@ def test_nearest_uses_original_directed_generator_and_actual_start(local_torch_r
     assert result.graph.start == start
 
 
+def test_saved_word_can_be_replayed_with_cayleypy(local_torch_ranks, tmp_path):
+    cayleypy = pytest.importorskip("cayleypy")
+    definition = cayleypy.CayleyGraphDef.create([[1, 2, 0]])
+    cayley_graph = cayleypy.CayleyGraph(definition, device="cpu")
+    result = path_search.solve(cayley_graph, start=[1, 2, 0], targets=[[0, 1, 2]],
+                               output=tmp_path, devices=(0,), direction="bidirectional")
+    assert result.verify_paths(cayley_graph) == 1
+
+
 @pytest.mark.parametrize("direction", ["forward", "bidirectional"])
 def test_unreachable_window_has_an_empty_artifact(local_torch_ranks, tmp_path, direction):
     result = path_search.solve(
