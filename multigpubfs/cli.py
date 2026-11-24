@@ -26,7 +26,7 @@ def main(argv=None):
  parser.add_argument('--seconds',type=int,default=None,help='Optional work budget in seconds; omitted or 0 runs until complete or resource stop')
  parser.add_argument('--capacity',type=int,help='Optional per-rank capacity, checked against actual free VRAM')
  parser.add_argument('--backend',choices=['auto','generic','shard_ab_hash','shard_ab_sort_merge'],default='auto')
- parser.add_argument('--memory-backend',choices=['legacy','segmented','segmented32','segmented24','permutation_bitmap'],default='legacy',help='Select BFS state storage; segmented and permutation_bitmap are experimental')
+ parser.add_argument('--memory-backend',choices=['legacy','segmented','segmented32','segmented24','permutation_bitmap'],help='Select BFS state storage. Large explicit capacities use segmented storage by default.')
  parser.add_argument('--segment-rows',type=int,default=1<<32,help='Maximum states per segment bank (1..4294967296; default 4294967296)')
  parser.add_argument('--memory-preset',choices=['balanced','max_capacity'],default='balanced',help='Choose measured speed or a memory-capacity-oriented segmented/bitmap profile')
  parser.add_argument('--peer-transport',choices=['auto','host','lsa'],default='auto')

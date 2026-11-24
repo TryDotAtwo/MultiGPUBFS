@@ -24,6 +24,7 @@ Allowed families are `PermutationGroups`, `MatrixGroups` and `Puzzles`; private 
 The default uses all CUDA-visible devices on one host. `device=1` selects one
 card; `devices=[1,0]` sets explicit placement. `max_seconds` limits work, and
 `capacity` overrides rows per card subject to VRAM admission: per-layer rows for proved inverse-closed graphs, cumulative retained rows for directed graphs.
+When storage is omitted, an explicit capacity beyond the legacy row limit selects segmented storage for generic traversal. An explicit `memory_backend="legacy"` retains the legacy limits.
 `shards=4` selects independent owner streams. When `shards` is omitted, substantial
 workloads measure admitted same-graph GPU profiles:1/4/16 owner shards, quarter-size routing batches, optional parent-origin transport and radix origin ordering. Eligible LRX actions additionally compare SHARD_AB HASH/SORT_MERGE and verified peer transports. Comparable completed depths
 and identical layer counts are required; first-collective warmup is excluded.

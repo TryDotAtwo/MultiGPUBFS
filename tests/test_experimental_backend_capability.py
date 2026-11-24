@@ -68,6 +68,40 @@ def test_normalize_other_memory_backends():
         launch._normalize_memory_backend('unknown')
 
 
+@pytest.mark.parametrize("generator,capacity,segmented", [
+    ([1, 0, 2], (2**32 - 4) // 3, False),
+    ([1, 0, 2], (2**32 - 4) // 3 + 1, True),
+    ([1, 2, 0], 2**31 - 2, False),
+    ([1, 2, 0], 2**31 - 1, True),
+])
+def test_capacity_selects_segmented_before_legacy_limits(
+    tmp_path, monkeypatch, generator, capacity, segmented
+):
+    from multigpubfs import GraphDefinition
+
+    graph = GraphDefinition.permutation([generator], [0, 1, 2])
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.setattr(launch, "native_runtime", lambda *_: ("mgbfs", {}))
+    monkeypatch.setattr(launch, "_require_memory_backend", lambda *_: {})
+    monkeypatch.setattr("multigpubfs.host_memory.admit", lambda *_, **__: {})
+
+    class ReachedPreflight(Exception):
+        pass
+
+    def prepare(_native, _devices, env, _output, _graph):
+        assert (env.get("MGBFS_EXPERIMENTAL_SEGMENTED24") == "1") is segmented
+        assert "MGBFS_SEGMENT_MAX_RANK_STATES" not in env
+        raise ReachedPreflight
+
+    monkeypatch.setattr("multigpubfs.nccl_preflight.prepare", prepare)
+    options = {"devices": [0], "capacity": capacity, "autotune": False, "_native_env": {}}
+    with pytest.raises(ReachedPreflight):
+        launch.run_graph(graph, tmp_path / "auto", **options)
+    if capacity > 2**31 - 2:
+        with pytest.raises(ValueError, match="INVALID_CAPACITY"):
+            launch.run_graph(graph, tmp_path / "legacy", memory_backend="legacy", **options)
+
+
 def test_capability_cache_retains_exact_exchange_feature(tmp_path, monkeypatch):
     binary=tmp_path/'mgbfs';binary.write_bytes(b'exact')
     monkeypatch.setattr('multigpubfs.autotune._dependency_identity', lambda *a,**kw: {

@@ -5,6 +5,9 @@ from .process_control import query as native_query, run as native_run
 from .graph_definition import GraphDefinition,from_cayleypy
 from .native_distribution import native_runtime
 
+_LEGACY_ARENA_CAPACITY = 0x7fff_fffe
+_LEGACY_ROLLING_CAPACITY = (0xffff_ffff - 3) // 3
+
 def _normalize_memory_backend(name):
  # Keep the previous spelling as an alias for existing clients and receipts;
  # it is no longer the width of the local index.
@@ -148,13 +151,15 @@ def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend='legacy',segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
  GPU prefix measurements select a cached profile for substantial workloads.
  With WORLD_SIZE/RANK/LOCAL_RANK and MASTER_ADDR/MASTER_PORT it uses
  the external-rank network launcher; one process owns one local GPU.
+ With storage unspecified, a requested capacity beyond the legacy index
+ range selects segmented storage for generic traversal.
  """
  if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
  if device is not None and devices is not None:raise ValueError('DEVICE_SELECTION_CONFLICT')
@@ -168,6 +173,12 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if bitmap_owner_page is not None and (type(bitmap_owner_page) is not int or bitmap_owner_page<0 or bitmap_owner_page>1<<20 or (bitmap_owner_page and bitmap_owner_page&(bitmap_owner_page-1))):raise ValueError('INVALID_BITMAP_OWNER_PAGE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
+ if memory_backend is None:
+  memory_backend='legacy'
+  if (backend in ('auto','generic') and type(capacity) is int
+      and capacity>_LEGACY_ROLLING_CAPACITY
+      and (capacity>_LEGACY_ARENA_CAPACITY or graph.inverse_closed())):
+   memory_backend='segmented24'
  memory_backend=_normalize_memory_backend(memory_backend)
  if bitmap_owner_page and memory_backend!='permutation_bitmap':raise ValueError('BITMAP_OWNER_PAGE_REQUIRES_BITMAP')
  strategy_source=_native_env if _native_env is not None else os.environ
@@ -182,7 +193,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if peer_transport=='lsa' and not backend.startswith('shard_ab_'):raise ValueError('LSA_REQUIRES_SPECIALIZED_BACKEND')
  if transport not in ('auto','full','parent'):raise ValueError('INVALID_TRANSPORT')
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
- if capacity is not None and (type(capacity) is not int or not 1<=capacity<=(0xffffffffffffffff if memory_backend in ('segmented24','permutation_bitmap') else 0x7ffffffe)):raise ValueError('INVALID_CAPACITY')
+ if capacity is not None and (type(capacity) is not int or not 1<=capacity<=(0xffffffffffffffff if memory_backend in ('segmented24','permutation_bitmap') else _LEGACY_ARENA_CAPACITY)):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
  host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
  native,native_env=native_runtime(executable)
