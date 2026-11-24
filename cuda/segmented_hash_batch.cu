@@ -19,6 +19,12 @@ namespace {
 constexpr size_t kAlign=256;
 struct Grant {uint64_t base;uint32_t total,granted,run_index;};
 struct Workspace {size_t hashes,origins,sorted,flags,prefix,grant,temp,temp_bytes,total;};
+struct NoPathOutput {static constexpr bool enabled=false;};
+struct PathOutput {
+ static constexpr bool enabled=true;
+ MgbfsHashPathParentV1* parents;
+ uint32_t source_world,generators;
+};
 bool region(size_t& c,size_t n,size_t* off){
  if(c>std::numeric_limits<size_t>::max()-(kAlign-1))return false;
  c=(c+kAlign-1)&~(kAlign-1);*off=c;
@@ -33,6 +39,7 @@ template<class State,bool Packed> struct SelectedAction {
  __device__ bool valid(uint32_t c,uint32_t* e)const{return in.valid(c,e);}
  __device__ int64_t value(uint32_t c,uint32_t e)const{return in.value(c,e);}
  __device__ uint64_t hash(uint32_t c,uint64_t seed,uint32_t bits)const{return in.hash(c,seed,bits);}
+ __device__ const GenericRouteRecord& route(uint32_t c)const{return in.route(c);}
 };
 template<class Action> cudaError_t layout(uint32_t n,Workspace* w){
  if(!w||n>=0x7fffffffU)return cudaErrorInvalidValue;*w={};if(!n)return cudaSuccess;
@@ -50,10 +57,17 @@ template<class Action> cudaError_t layout(uint32_t n,Workspace* w){
  w->temp_bytes=temp;w->total=c;return cudaSuccess;
 }
 __device__ inline bool fatal(uint32_t x){return (x&~uint32_t(MGBFS_SEGMENTED_CAP_RETRY|MGBFS_SEGMENTED_RUN_GROW))!=0;}
-template<class Action>
-__global__ void prepare(Action action,uint32_t n,uint64_t* hashes,uint32_t* origins,uint32_t* error){
+template<class Action,class Lineage>
+__global__ void prepare(Action action,uint32_t n,uint64_t* hashes,uint32_t* origins,uint32_t* error,Lineage lineage){
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x){
   uint32_t child=action.child(i);bool valid=action.valid(child,error);
+  if constexpr(Lineage::enabled){
+   if(valid){
+    const auto& record=action.route(child);
+    valid=record.source<lineage.source_world&&record.generator<lineage.generators;
+    if(!valid)atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+   }
+  }
   origins[i]=valid?i:UINT32_MAX;hashes[i]=valid?action.hash(child,0,64):0;
  }
 }
@@ -127,34 +141,36 @@ template<class Action> struct SeriesCandidate {
  __device__ int64_t value(uint32_t element) const { return action.value(child,element); }
 };
 
-template<class T,class Action>
+template<class T,bool ReturnHit=false,class Action>
 __device__ bool probe_snapshot(const MgbfsHashSeriesView& snapshot,Action action,uint32_t origin,
- uint64_t hash,const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t* error){
+ uint64_t hash,const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t* error,
+ MgbfsHashPathHitV1* hit=nullptr){
  if(!snapshot.length)return false;
  const SeriesCandidate<Action> query{action,action.child(origin)};
  const auto result=snapshot.reference_bytes==4
-  ?mgbfs_hash_series_probe<T>(snapshot.keys,static_cast<const uint32_t*>(snapshot.references),
-    snapshot.prefix_offsets,snapshot.length,segments,segment_count,snapshot.layout,hash,query,action.elements)
-  :mgbfs_hash_series_probe<T>(snapshot.keys,static_cast<const MgbfsHashRowRef*>(snapshot.references),
-    snapshot.prefix_offsets,snapshot.length,segments,segment_count,snapshot.layout,hash,query,action.elements);
+  ?mgbfs_hash_series_probe<T,ReturnHit>(snapshot.keys,static_cast<const uint32_t*>(snapshot.references),
+    snapshot.prefix_offsets,snapshot.length,segments,segment_count,snapshot.layout,hash,query,action.elements,hit)
+  :mgbfs_hash_series_probe<T,ReturnHit>(snapshot.keys,static_cast<const MgbfsHashRowRef*>(snapshot.references),
+    snapshot.prefix_offsets,snapshot.length,segments,segment_count,snapshot.layout,hash,query,action.elements,hit);
  if(result==MgbfsHashSeriesMatch::bad_reference)atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
  return result==MgbfsHashSeriesMatch::present;
 }
 
-template<class T,class Action>
+template<class T,bool ReturnHit=false,class Action>
 __device__ bool probe_snapshots(const MgbfsHashSeriesDirectory& directory,Action action,uint32_t origin,
- uint64_t hash,const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t* error,uint32_t& searched){
+ uint64_t hash,const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t* error,uint32_t& searched,
+ MgbfsHashPathHitV1* hit=nullptr){
  for(uint32_t i=0;i<directory.count;i++){
   ++searched;
-  if(probe_snapshot<T>(directory.series[i],action,origin,hash,segments,segment_count,error))return true;
+  if(probe_snapshot<T,ReturnHit>(directory.series[i],action,origin,hash,segments,segment_count,error,hit))return true;
  }
  return false;
 }
 
-template<class T,class Action>
+template<class T,bool ReturnHit=false,class Action>
 __device__ bool contains(Action action,uint32_t origin,uint64_t hash,
  const MgbfsBatchHashSegment* segments,uint32_t segment_count,const MgbfsBatchHashRun* runs,
- uint32_t run_count,uint32_t* error,uint32_t& searched,uint32_t first_run=0){
+ uint32_t run_count,uint32_t* error,uint32_t& searched,uint32_t first_run=0,MgbfsHashPathHitV1* hit=nullptr){
  for(uint32_t j=first_run;j<run_count;j++){
   MgbfsBatchHashRun run=runs[j];
   if(run.segment>=segment_count){atomicOr(error,uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));return false;}
@@ -172,7 +188,10 @@ __device__ bool contains(Action action,uint32_t origin,uint64_t hash,
   const uint64_t past=hi;
   while(lo<hi){uint64_t mid=lo+(hi-lo)/2;int cmp=compare_candidate<T>(action,origin,hash,s,run,mid,error);
    if(cmp>0)lo=mid+1;else hi=mid;}
-  if(lo<past&&compare_candidate<T>(action,origin,hash,s,run,lo,error)==0)return true;
+  if(lo<past&&compare_candidate<T>(action,origin,hash,s,run,lo,error)==0){
+   if constexpr(ReturnHit)*hit={run.segment,run.bank,s.rows[uint64_t(run.bank)*s.capacity+run.begin+lo],1};
+   return true;
+  }
  }
  return false;
 }
@@ -207,18 +226,51 @@ __device__ void record_miss(unsigned long long* histogram,uint64_t index,uint32_
 #endif
 }
 
+__device__ uint32_t lookup_catalog_error(uint32_t runs,uint32_t capacity,
+ const MgbfsHashSeriesDirectory& directory,uint32_t max_series){
+ if(runs>capacity||directory.replaced_runs>runs)return MGBFS_SEGMENTED_BAD_REFERENCE;
+ if(max_series&&uint64_t(runs-directory.replaced_runs)+directory.count>max_series)
+  return MGBFS_SEGMENTED_LOOKUP_LIMIT;
+ return 0;
+}
+
 __device__ bool valid_lookup_catalog(uint32_t runs,uint32_t capacity,MgbfsHashSeriesDirectory directory,
  uint32_t max_series,uint32_t* flags,uint32_t n,uint32_t* error){
- uint32_t code=0;
- if(runs>capacity||directory.replaced_runs>runs)code=MGBFS_SEGMENTED_BAD_REFERENCE;
- else if(max_series&&uint64_t(runs-directory.replaced_runs)+directory.count>max_series)
-  code=MGBFS_SEGMENTED_LOOKUP_LIMIT;
+ const uint32_t code=lookup_catalog_error(runs,capacity,directory,max_series);
  if(!code)return true;
  if(!blockIdx.x&&!threadIdx.x)atomicOr(error,code);
  // The scan still runs before the error-aware reserve kernel.
  for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=uint64_t(blockDim.x)*gridDim.x)
   flags[i]=0;
  return false;
+}
+
+struct PathTarget {
+ uint32_t elements;
+ const int64_t* coordinates;
+ __device__ uint32_t child(uint32_t)const{return 0;}
+ __device__ int64_t value(uint32_t,uint32_t e)const{return coordinates[e];}
+};
+
+template<class T>
+__global__ void find_path_targets(uint32_t elements,const int64_t* targets,const uint64_t* target_hashes,
+ uint32_t target_count,const MgbfsBatchHashSegment* segments,uint32_t segment_count,
+ const MgbfsBatchHashRun* runs,const uint32_t* run_count,uint32_t run_capacity,
+ MgbfsHashPathHitV1* hits,uint32_t* error,MgbfsHashSeriesDirectory directory,uint32_t max_series){
+ const uint32_t nr=*run_count;
+ const uint32_t invalid=lookup_catalog_error(nr,run_capacity,directory,max_series);
+ if(invalid&&!blockIdx.x&&!threadIdx.x)atomicOr(error,invalid);
+ for(uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<target_count;i+=uint64_t(blockDim.x)*gridDim.x){
+  MgbfsHashPathHitV1 hit{};
+  if(!invalid){
+   const PathTarget query{elements,targets+i*elements};
+   const uint64_t hash=target_hashes[i];
+   uint32_t searched=0;
+   if(!probe_snapshots<T,true>(directory,query,0,hash,segments,segment_count,error,searched,&hit))
+    contains<T,true>(query,0,hash,segments,segment_count,runs,nr,error,searched,directory.replaced_runs,&hit);
+  }
+  hits[i]=hit;
+ }
 }
 
 template<class T,class Action>
@@ -330,10 +382,10 @@ __global__ void reserve(const uint32_t* flags,const uint32_t* prefix,uint32_t n,
  }
  *grant={base,total,got,index};*spill_count=total-got;
 }
-template<class T,class Action>
+template<class T,class Action,class Lineage>
 __global__ void materialize(Action action,const uint64_t* hashes,const uint32_t* sorted,const uint32_t* flags,
  const uint32_t* prefix,uint32_t n,const Grant* grant,const MgbfsBatchHashSegment* segments,uint32_t active,
- uint32_t bank,uint32_t* spill,const uint32_t* error){
+ uint32_t bank,uint32_t* spill,const uint32_t* error,Lineage lineage){
  if(fatal(*error))return;
  MgbfsBatchHashSegment seg=segments[active];
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x)if(flags[i]){
@@ -343,6 +395,12 @@ __global__ void materialize(Action action,const uint64_t* hashes,const uint32_t*
   T* states=static_cast<T*>(seg.states);
   for(uint32_t e=0;e<action.elements;e++)states[uint64_t(e)*stride+at]=T(action.value(child,e));
   seg.keys[at]=hashes[origin];seg.rows[at]=uint32_t(row);
+  if constexpr(Lineage::enabled){
+   // A spill stores the raw child index, so replay selects the same route
+   // record even after the active extent or the tile order has changed.
+   const auto& record=action.route(child);
+   lineage.parents[at]={record.parent,record.source,record.generator};
+  }
  }
 }
 __global__ void publish(const MgbfsBatchHashSegment* segments,uint32_t active,uint32_t bank,
@@ -357,12 +415,12 @@ __global__ void publish(const MgbfsBatchHashSegment* segments,uint32_t active,ui
  }
  *accepted=g->base+g->granted;
 }
-template<class T,bool Packed>
+template<class T,bool Packed,class Lineage>
 int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRecord* lm,const GenericRouteRecord* rm,
  const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,
  const uint32_t* selection,uint32_t selected,uint32_t raw_begin,const MgbfsBatchHashSegment* segments,uint32_t segment_count,
  uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,
- uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* scratch,const Workspace& w,cudaEvent_t lookup_start,cudaEvent_t lookup_end,unsigned long long* misses,cudaStream_t st,MgbfsHashSeriesDirectory directory,uint32_t max_series,bool exact_misses){
+ uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* scratch,const Workspace& w,cudaEvent_t lookup_start,cudaEvent_t lookup_end,unsigned long long* misses,cudaStream_t st,MgbfsHashSeriesDirectory directory,uint32_t max_series,bool exact_misses,Lineage lineage){
  if(!selected)return int(cudaSuccess);
  char* base=static_cast<char*>(scratch);auto* hashes=reinterpret_cast<uint64_t*>(base+w.hashes);
  auto* origins=reinterpret_cast<uint32_t*>(base+w.origins);auto* sorted=reinterpret_cast<uint32_t*>(base+w.sorted);
@@ -371,7 +429,7 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  MgbfsBoundedIncomingAction<T,Packed> in{{elements,world*q,q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,nullptr},visible};
  SelectedAction<T,Packed> action{elements,in,selection,raw_begin};
  uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;
- prepare<<<blocks,256,0,st>>>(action,selected,hashes,origins,error);
+ prepare<<<blocks,256,0,st>>>(action,selected,hashes,origins,error,lineage);
  cudaError_t status=cudaGetLastError();if(status!=cudaSuccess)return int(status);
  GenericSortedOriginLess<SelectedAction<T,Packed>> cmp{action,hashes};size_t tmp=w.temp_bytes;
  status=cub::DeviceMergeSort::SortKeysCopy(base+w.temp,tmp,origins,sorted,int(selected),cmp,st);
@@ -388,7 +446,7 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  if(status!=cudaSuccess)return int(status);
  reserve<<<1,1,0,st>>>(flags,prefix,selected,segments,active,bank,segment_count,accepted,run_count,run_capacity,global_count,limit,grant,spill_count,error);
  if((status=cudaGetLastError())!=cudaSuccess)return int(status);
- materialize<T><<<blocks,256,0,st>>>(action,hashes,sorted,flags,prefix,selected,grant,segments,active,bank,spill,error);
+ materialize<T><<<blocks,256,0,st>>>(action,hashes,sorted,flags,prefix,selected,grant,segments,active,bank,spill,error,lineage);
  if((status=cudaGetLastError())!=cudaSuccess)return int(status);
  publish<<<1,1,0,st>>>(segments,active,bank,runs,run_count,accepted,grant,error);
  return int(cudaGetLastError());
@@ -399,24 +457,54 @@ extern "C" int mgbfs_hash_batch_scratch_bytes(uint32_t n,uint32_t state_bytes,ui
  Workspace w{};cudaError_t status=state_bytes==1?(packed?layout<SelectedAction<uint8_t,true>>(n,&w):layout<SelectedAction<uint8_t,false>>(n,&w)):layout<SelectedAction<int64_t,false>>(n,&w);
  if(status==cudaSuccess)*bytes=w.total;return int(status);
 }
-static int accept_profiled(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
- const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
- uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,
- const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,
- uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,
- uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* lookup_start,void* lookup_end,unsigned long long* misses,void* stream,const MgbfsHashSeriesDirectory* view,uint32_t max_series,bool exact_misses){
- if(exact_misses&&(!misses||!max_series||max_series>exact_miss_limit))return int(cudaErrorInvalidValue);
- const MgbfsHashSeriesDirectory directory=view?*view:MgbfsHashSeriesDirectory{};
- if(directory.count>3)return int(cudaErrorInvalidValue);
+
+static bool valid_directory(const MgbfsHashSeriesDirectory& directory){
+ if(directory.count>3)return false;
  uint64_t covered=0;
  for(uint32_t i=0;i<directory.count;i++){
   const auto& snapshot=directory.series[i];
   if(!snapshot.length||!snapshot.keys||!snapshot.references||!snapshot.prefix_offsets||
      !snapshot.replaced_runs||(snapshot.reference_bytes!=4&&snapshot.reference_bytes!=8)||
-     snapshot.layout.row_bits>32)return int(cudaErrorInvalidValue);
+     snapshot.layout.row_bits>32)return false;
   covered+=snapshot.replaced_runs;
  }
- if(covered!=directory.replaced_runs)return int(cudaErrorInvalidValue);
+ return covered==directory.replaced_runs;
+}
+
+extern "C" int mgbfs_hash_batch_find_targets_v1(uint32_t state_bytes,uint32_t elements,
+ const int64_t* targets,const uint64_t* target_hashes,uint32_t target_count,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,const MgbfsBatchHashRun* runs,
+ const uint32_t* run_count,uint32_t run_capacity,MgbfsHashPathHitV1* hits,uint32_t* error,void* stream,
+ const MgbfsHashSeriesDirectory* view,uint32_t max_series){
+ if((state_bytes!=1&&state_bytes!=8)||!elements||!max_series||
+    target_count>std::numeric_limits<size_t>::max()/sizeof(int64_t)/elements)
+  return int(cudaErrorInvalidValue);
+ if(!target_count)return int(cudaSuccess);
+ const MgbfsHashSeriesDirectory directory=view?*view:MgbfsHashSeriesDirectory{};
+ if(!targets||!target_hashes||!segments||!segment_count||!runs||!run_count||!run_capacity||
+    !hits||!error||!valid_directory(directory))return int(cudaErrorInvalidValue);
+ const cudaStream_t st=static_cast<cudaStream_t>(stream);
+ const uint32_t requested=(uint64_t(target_count)+255)/256;
+ const uint32_t blocks=requested<65535?requested:65535;
+ if(state_bytes==1)
+  find_path_targets<uint8_t><<<blocks,256,0,st>>>(elements,targets,target_hashes,target_count,
+   segments,segment_count,runs,run_count,run_capacity,hits,error,directory,max_series);
+ else
+  find_path_targets<int64_t><<<blocks,256,0,st>>>(elements,targets,target_hashes,target_count,
+   segments,segment_count,runs,run_count,run_capacity,hits,error,directory,max_series);
+ return int(cudaGetLastError());
+}
+
+template<class Lineage=NoPathOutput>
+static int accept_profiled(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
+ const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,
+ uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,
+ uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* lookup_start,void* lookup_end,unsigned long long* misses,void* stream,const MgbfsHashSeriesDirectory* view,uint32_t max_series,bool exact_misses,Lineage lineage={}){
+ if(exact_misses&&(!misses||!max_series||max_series>exact_miss_limit))return int(cudaErrorInvalidValue);
+ const MgbfsHashSeriesDirectory directory=view?*view:MgbfsHashSeriesDirectory{};
+ if(!valid_directory(directory))return int(cudaErrorInvalidValue);
  uint64_t bound=uint64_t(world)*q;
  if((state_bytes!=1&&state_bytes!=8)||packed>1||(packed&&(state_bytes!=1||elements>24))||!elements||
   !world||world>128||rank>=world||!shards||shard>=shards||!q||bound>=0x7fffffffULL||visible>q||selected>bound||
@@ -428,9 +516,11 @@ static int accept_profiled(uint32_t state_bytes,uint32_t packed,uint32_t element
  if(status!=cudaSuccess)return int(status);
  if(selected&&(!scratch||uintptr_t(scratch)%kAlign||scratch_bytes<w.total))return int(cudaErrorInvalidValue);
  cudaStream_t st=static_cast<cudaStream_t>(stream);
- if(state_bytes==1&&packed)return launch<uint8_t,true>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses);
- if(state_bytes==1)return launch<uint8_t,false>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses);
- return launch<int64_t,false>(elements,static_cast<const int64_t*>(local),static_cast<const int64_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses);
+ if constexpr(!Lineage::enabled){
+  if(state_bytes==1&&packed)return launch<uint8_t,true>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses,lineage);
+ }
+ if(state_bytes==1)return launch<uint8_t,false>(elements,static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses,lineage);
+ return launch<int64_t,false>(elements,static_cast<const int64_t*>(local),static_cast<const int64_t*>(remote),lm,rm,lc,rc,rank,world,shard,shards,q,visible,selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,global_count,limit,scratch,w,static_cast<cudaEvent_t>(lookup_start),static_cast<cudaEvent_t>(lookup_end),misses,st,directory,max_series,exact_misses,lineage);
 }
 
 extern "C" int mgbfs_hash_batch_accept_profiled_v6(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
@@ -442,6 +532,23 @@ extern "C" int mgbfs_hash_batch_accept_profiled_v6(uint32_t state_bytes,uint32_t
  return accept_profiled(state_bytes,packed,elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,
   selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,
   global_count,limit,scratch,scratch_bytes,lookup_start,lookup_end,misses,stream,view,max_series,false);
+}
+
+// Path V1 receives one immutable RAW SoA shard run. The flat queue's
+// synthetic rank is zero; the route record contains the actual source.
+extern "C" int mgbfs_hash_batch_accept_path_v1(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
+ const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,
+ const MgbfsBatchHashSegment* segments,uint32_t segment_count,uint32_t active,uint32_t bank,MgbfsBatchHashRun* runs,
+ uint32_t* run_count,uint32_t run_capacity,uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,
+ uint64_t* global_count,uint64_t limit,void* scratch,size_t scratch_bytes,void* lookup_start,void* lookup_end,unsigned long long* misses,void* stream,const MgbfsHashSeriesDirectory* view,uint32_t max_series,
+ MgbfsHashPathParentV1* parents,uint32_t source_world,uint32_t generators){
+ if(packed||rank||world!=1||shard||shards!=1||!max_series||!parents||!source_world||source_world>128||!generators)
+  return int(cudaErrorInvalidValue);
+ return accept_profiled(state_bytes,packed,elements,local,remote,lm,rm,lc,rc,rank,world,shard,shards,q,visible,
+  selection,selected,raw_begin,segments,segment_count,active,bank,runs,run_count,run_capacity,accepted,spill,spill_count,error,
+  global_count,limit,scratch,scratch_bytes,lookup_start,lookup_end,misses,stream,view,max_series,false,
+  PathOutput{parents,source_world,generators});
 }
 
 // bins 0..64 are exact; bin 65 catches any violation of the supported cap.

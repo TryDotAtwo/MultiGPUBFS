@@ -168,12 +168,17 @@ impl SegmentLayout {
     /// One full state plus flat u64 key and u32 local row indexes per live
     /// row. Runs describe disjoint extents; states are never duplicated.
     pub fn sorted(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32)->Result<Self,&'static str>{
+        Self::sorted_with_row_metadata(elements,state_bytes,rows_per_bank,banks,0)
+    }
+    pub(crate) fn sorted_with_row_metadata(elements:u32,state_bytes:u32,rows_per_bank:u64,banks:u32,metadata_bytes:u64)->Result<Self,&'static str>{
         if elements==0||!matches!(state_bytes,1|8)||!matches!(banks,1|3)||rows_per_bank==0||rows_per_bank>LOCAL_ROWS{return Err("SEGMENTED_SORTED_LAYOUT_RANGE")}
         let rows=rows_per_bank.checked_mul(u64::from(banks)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let states=rows.checked_mul(u64::from(elements)).and_then(|v|v.checked_mul(u64::from(state_bytes))).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let keys=rows.checked_mul(8).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         let positions=rows.checked_mul(4).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
-        let bytes=states.checked_add(keys).and_then(|v|v.checked_add(positions)).and_then(|v|v.checked_add(24)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
+        let bytes=states.checked_add(keys).and_then(|v|v.checked_add(positions))
+            .and_then(|v|v.checked_add(rows.checked_mul(metadata_bytes)?))
+            .and_then(|v|v.checked_add(24)).ok_or("SEGMENTED_LAYOUT_OVERFLOW")?;
         Ok(Self{rows_per_bank,banks,slots:rows,state_bytes:states,position_bytes:positions,position_item_bytes:4,device_bytes:bytes})
     }
     /// State-only storage for a bitmap backend; visited bits are allocated
@@ -264,8 +269,12 @@ pub fn fit_packed_bitmap_segment_layout(elements:u32,banks:u32,max_rows:u64,budg
 
 /// Largest sorted-index segment that fits a checked byte budget.
 pub fn fit_sorted_segment_layout(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64)->Result<Option<SegmentLayout>,&'static str>{
+    fit_sorted_segment_layout_with_row_metadata(elements,state_bytes,banks,max_rows,budget,0)
+}
+
+pub(crate) fn fit_sorted_segment_layout_with_row_metadata(elements:u32,state_bytes:u32,banks:u32,max_rows:u64,budget:u64,metadata_bytes:u64)->Result<Option<SegmentLayout>,&'static str>{
     if max_rows==0||max_rows>LOCAL_ROWS{return Err("SEGMENTED_SORTED_LAYOUT_RANGE")}
-    fit_linear_segment(max_rows, budget, |rows| SegmentLayout::sorted(elements, state_bytes, rows, banks))
+    fit_linear_segment(max_rows, budget, |rows| SegmentLayout::sorted_with_row_metadata(elements,state_bytes,rows,banks,metadata_bytes))
 }
 /// Classify source queue skew separately from regeneration validation errors.
 /// Values above one dominate a retry in a max-reduction across ranks.

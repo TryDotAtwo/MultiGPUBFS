@@ -9,6 +9,8 @@ from .native_distribution import native_runtime
 _LEGACY_ARENA_CAPACITY = 0x7fff_fffe
 _LEGACY_ROLLING_CAPACITY = (0xffff_ffff - 3) // 3
 _PATH_COMPACT = 'MGBFS_GENERIC_PATH_COMPACT'
+_PATH_SEGMENTED_NEAREST = 'MGBFS_SEGMENT_NEAREST_V1'
+_SEGMENTED_NEAREST_CAPABILITY = 'graph_path_segmented_nearest_v1'
 _PACKET_ADDR = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
 _PACKET_BIND = 'MGBFS_SEGMENT_PACKET_BIND_ADDR'
 _PACKET_RING = 'MGBFS_SEGMENT_PACKET_RING_SLOTS'
@@ -16,7 +18,7 @@ _PACKET_RX = 'MGBFS_SEGMENT_PACKET_RX_SLOTS'
 _PATH_PACKET_ENV = (_PACKET_ADDR,_PACKET_BIND,_PACKET_RING,_PACKET_RX)
 
 def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_targets=None,
-                        path_bidirectional=False, path_window=None):
+                        path_bidirectional=False, path_window=None, path_max_depth=None):
  if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
  config=dict(admission)
  if bitmap:
@@ -26,11 +28,13 @@ def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_tar
  if depth is not None:config['profile_max_layers']=depth
  if path_targets is not None:config.update(path_targets=path_targets,path_bidirectional=path_bidirectional)
  if path_window is not None:config['path_window']=path_window
+ if path_max_depth is not None:config['path_max_depth']=path_max_depth
  return config
 
 def _with_packet_job_token(config,env):
  plan=config['plan']
- if config.get('path_targets') is not None and env.get(_PATH_COMPACT)=='1':
+ if config.get('path_targets') is not None and any(
+     env.get(key)=='1' for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST)):
   if (plan.get('compact_transport') is not True or plan.get('compact_packet_slots')!=3
       or plan.get('compact_receive_slots')!=3 or plan['world']<2 or not env.get(_PACKET_ADDR)):
    raise RuntimeError('NATIVE_PATH_COMPACT_PLAN_MISMATCH')
@@ -125,8 +129,11 @@ def _compact_path_env(native,env,world,bidirectional,*,external):
  address=env.get(_PACKET_ADDR)
  if external and not address:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR')
  if address=='':raise ValueError('NATIVE_PATH_COMPACT_PACKET_ADDR')
- if _native_key_info(native,env).get(_compact_path_capability(bidirectional)) is not True:
-  raise RuntimeError('NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library')
+ segmented_nearest=env.get(_PATH_SEGMENTED_NEAREST)=='1'
+ capability=_SEGMENTED_NEAREST_CAPABILITY if segmented_nearest else _compact_path_capability(bidirectional)
+ if _native_key_info(native,env).get(capability) is not True:
+  mode='SEGMENTED_NEAREST' if segmented_nearest else 'COMPACT'
+  raise RuntimeError(f'NATIVE_PATH_{mode}_UNAVAILABLE: rebuild the native executable and CUDA library')
  if address is None:
   with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as probe:
    probe.bind(('127.0.0.1',0))
@@ -212,7 +219,7 @@ def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,bitmap_pack4=None,resident_alphabet8=None,queue_capacity=None,owner_lanes=None,_batch=None,_profile_layers=None,_native_env=None,_profile_options=None,_profile_deadline=None,_path_targets=None,_path_bidirectional=False,_path_window=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,bitmap_pack4=None,resident_alphabet8=None,queue_capacity=None,owner_lanes=None,_batch=None,_profile_layers=None,_native_env=None,_profile_options=None,_profile_deadline=None,_path_targets=None,_path_bidirectional=False,_path_window=None,_path_max_depth=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -239,6 +246,36 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if bitmap_owner_page is not None and (type(bitmap_owner_page) is not int or bitmap_owner_page<0 or bitmap_owner_page>1<<20 or (bitmap_owner_page and bitmap_owner_page&(bitmap_owner_page-1))):raise ValueError('INVALID_BITMAP_OWNER_PAGE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
+ external=os.environ.get('WORLD_SIZE','1')!='1'
+ strategy_source=_native_env if _native_env is not None else os.environ
+ native_selection=None
+ segmented_nearest=False
+ if (_path_targets is not None and not _path_bidirectional and _path_window is None
+     and strategy_source.get(_PATH_SEGMENTED_NEAREST)=='1'):
+  if external:
+   world=int(os.environ['WORLD_SIZE'])
+  else:
+   if devices is None:
+    native_selection=native_runtime(executable)
+    native,env=native_selection
+    discovery_env=dict(_native_env if _native_env is not None else env)
+    discovery_env.pop(_PATH_SEGMENTED_NEAREST,None)
+    count=native_query([native,'graph-count'],env=discovery_env,capture_output=True,text=True)
+    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
+    devices=list(range(int(count.stdout.strip())))
+   world=len(devices)
+  segmented_nearest=world>1
+ if segmented_nearest:
+  if (memory_backend is not None and _normalize_memory_backend(memory_backend)!='segmented24'
+      or segment_strategy not in (None,'batch') or bitmap_pack4 or resident_alphabet8
+      or graph.generator_count>=0x7fff_ffff):
+   raise ValueError('INVALID_NATIVE_SEGMENTED_NEAREST_LAUNCH')
+  if strategy_source.get('MGBFS_NATIVE_DISTRIBUTED_NEAREST')=='0':
+   raise ValueError('NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED')
+  memory_backend,segment_strategy,bitmap_pack4,resident_alphabet8='segmented24','batch',False,False
+ if _path_max_depth is not None and (
+     not segmented_nearest or type(_path_max_depth) is not int or not 0<=_path_max_depth<=0xffff_ffff):
+  raise ValueError('INVALID_NATIVE_PATH_MAX_DEPTH')
  if memory_backend is None:
   memory_backend='legacy'
   if (_path_targets is None and backend in ('auto','generic') and type(capacity) is int
@@ -259,7 +296,6 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if memory_backend=='legacy' and (queue_capacity is not None or owner_lanes is not None):
   raise ValueError('QUEUE_AND_OWNER_GEOMETRY_REQUIRES_SEGMENTED_BACKEND')
  if bitmap_owner_page and memory_backend!='permutation_bitmap':raise ValueError('BITMAP_OWNER_PAGE_REQUIRES_BITMAP')
- strategy_source=_native_env if _native_env is not None else os.environ
  implicit_strategy=segment_strategy is None and 'MGBFS_SEGMENT_STRATEGY' not in strategy_source
  if segment_strategy is None:segment_strategy=strategy_source.get('MGBFS_SEGMENT_STRATEGY','atomic')
  segment_strategy=_normalize_segment_strategy(segment_strategy)
@@ -282,10 +318,16 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=(0xffffffffffffffff if memory_backend in ('segmented24','permutation_bitmap') else _LEGACY_ARENA_CAPACITY)):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
- external=os.environ.get('WORLD_SIZE','1')!='1'
  host_memory=admit(graph,output=output) if not external else None
- native,native_env=native_runtime(executable)
+ native,native_env=native_selection or native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
+ if _PATH_SEGMENTED_NEAREST in native_env:
+  native_env=dict(native_env)
+  native_env.pop(_PATH_SEGMENTED_NEAREST,None)
+ if segmented_nearest:
+  native_env=dict(native_env,**{_PATH_SEGMENTED_NEAREST:'1'},
+                  MGBFS_SEGMENT_HASH_SERIES='1',MGBFS_SEGMENT_EXACT_EXCHANGE='0')
+  native_env.pop(_PATH_COMPACT,None)
  for value,key,marker in (
   (queue_capacity,'MGBFS_SEGMENT_QUEUE_CAP','_MGBFS_PRESET_IMPLICIT_QUEUE'),
   (owner_lanes,'MGBFS_SEGMENT_OWNER_LANES','_MGBFS_PRESET_IMPLICIT_LANES'),
@@ -303,7 +345,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   native_env['MGBFS_GENERIC_PATH_BYTE_TARGETS']='1' if (
    _path_bidirectional and all(0 <= value <= 255 for goal in _path_targets for value in goal)
   ) else '0'
-  if memory_backend!='legacy' or backend!='generic' or autotune or _profile_layers is not None:raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
+  if (memory_backend!=('segmented24' if segmented_nearest else 'legacy') or backend!='generic'
+      or autotune or _profile_layers is not None):raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
   native_env.update(MGBFS_GENERIC_PATH_APPEND_ONLY='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
  else:native_env.pop(_PATH_COMPACT,None)
  if bitmap_pack4 is not None:native_env['MGBFS_SEGMENT_PACK4']=packed
@@ -367,7 +410,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    count=native_query([native,'graph-count'],env=native_env,capture_output=True,text=True)
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
-  path_compact=_path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
+  path_compact=_path_targets is not None and (segmented_nearest or native_env.get(_PATH_COMPACT)=='1')
   if path_compact:
    native_env=_compact_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
    devices=selected
@@ -386,7 +429,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     search_limits[key]=preflight_env.pop(key)
   if _path_targets is not None:
    for key in tuple(preflight_env):
-    if key.startswith('MGBFS_GENERIC_PATH_') or (path_compact and key in _PATH_PACKET_ENV):
+    if (key.startswith('MGBFS_GENERIC_PATH_') or key==_PATH_SEGMENTED_NEAREST
+        or (path_compact and key in _PATH_PACKET_ENV)):
      search_limits[key]=preflight_env.pop(key)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)
   native_env.update(search_limits)
@@ -433,7 +477,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if backend not in ('auto','generic') or peer_transport=='lsa':raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
   from .distributed_launch import run_external
   if _path_targets is not None:
-   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window)
+   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window,path_max_depth=_path_max_depth)
   return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
@@ -489,7 +533,8 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   check_graph_admission(probe)
   admission=_rank_launch_config(
    json.loads(probe.stdout),digest,bitmap=memory_backend=='permutation_bitmap',depth=_profile_layers,
-   path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window)
+   path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window,
+   path_max_depth=_path_max_depth)
   devices=admission['devices']
   if segmented:
    # Scale a known maximum frontier per bank to the admitted GPU and shard

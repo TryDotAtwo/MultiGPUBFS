@@ -48,12 +48,16 @@ impl SegmentedDistributedBfs {
                         bank,
                         begin,
                         end,
+                        logical_start: 0,
                     });
                     local = local
                         .checked_add(end - begin)
                         .ok_or("SEGMENTED_LOCAL_COUNT_OVERFLOW")?;
                 }
             }
+        }
+        if let Some(nearest) = &self.nearest {
+            nearest.check_layer_size(local)?;
         }
 
         let counts = if self.plan.world == 1 {
@@ -138,8 +142,11 @@ impl SegmentedDistributedBfs {
         Ok(counts)
     }
 
-    pub(super) fn publish_layer(&mut self, layer: CompletedLayer) -> Result<DistributedAdvance> {
+    pub(super) fn publish_layer(&mut self, mut layer: CompletedLayer) -> Result<DistributedAdvance> {
         self.previous_global = total(&self.counts)?;
+        if let Some(nearest) = &mut self.nearest {
+            nearest.publish(&mut layer.current, &self.segments, self.depth + 1);
+        }
         self.current = layer.current;
         self.previous_snapshot_valid = false;
         self.counts = layer.counts;

@@ -4,7 +4,7 @@ use mgbfs_core::Result;
 use serde::Serialize;
 
 #[derive(Serialize)]
-pub(super) struct Receipt {
+pub(crate) struct Receipt {
     status: &'static str,
     stop_reason: Option<&'static str>,
     pub(super) d_min: Option<u64>,
@@ -13,7 +13,7 @@ pub(super) struct Receipt {
 }
 
 impl Receipt {
-    pub(super) fn complete(distance: u64, target: u32, labels: Vec<u32>) -> Self {
+    pub(crate) fn complete(distance: u64, target: u32, labels: Vec<u32>) -> Self {
         Self {
             status: "COMPLETE",
             stop_reason: None,
@@ -23,7 +23,7 @@ impl Receipt {
         }
     }
 
-    pub(super) fn unreachable() -> Self {
+    pub(crate) fn unreachable() -> Self {
         Self {
             status: "UNREACHABLE",
             stop_reason: None,
@@ -33,7 +33,7 @@ impl Receipt {
         }
     }
 
-    pub(super) fn incomplete(reason: &'static str, d_min: Option<u64>) -> Self {
+    pub(crate) fn incomplete(reason: &'static str, d_min: Option<u64>) -> Self {
         Self {
             status: "INCOMPLETE",
             stop_reason: Some(reason),

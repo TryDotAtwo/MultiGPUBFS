@@ -56,9 +56,10 @@ def _native_artifact_hashes(native,env):
  dependency=_dependency_identity(native,env)
  return {'native':_file_digest(native),'cuda':dependency['cuda_library_sha256'] if dependency else None}
 
-def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None):
+def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None,path_max_depth=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
-                      _compact_path_env,_rank_launch_config,_receipt,_with_packet_job_token)
+                      _PATH_SEGMENTED_NEAREST,_compact_path_env,_rank_launch_config,
+                      _receipt,_with_packet_job_token)
  from .cluster import current_cluster
  cluster=current_cluster()
  segmented=native_env.get('MGBFS_SEGMENT_EXTERNAL_LINK')=='1'
@@ -74,7 +75,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  session=os.environ.get('MGBFS_RUN_ID','mgbfs-'+os.environ['MASTER_PORT']+'-'+str(world));store=ControlStore(host,port,rank,session,600 if max_seconds is None else max_seconds+180,os.environ.get('MGBFS_CONTROL_TOKEN',''))
  started=time.monotonic();profile=None
  try:
-  path_compact=path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
+  segmented_nearest=path_targets is not None and native_env.get(_PATH_SEGMENTED_NEAREST)=='1'
+  path_compact=path_targets is not None and (segmented_nearest or native_env.get(_PATH_COMPACT)=='1')
   if path_compact:
    native_env=_compact_path_env(native,native_env,world,path_bidirectional,external=True)
   from .host_memory import admit as admit_host
@@ -94,6 +96,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if path_compact:
      # Listen address can differ on rank 0 behind port forwarding.
      identity['path_compact']={key:native_env[key] for key in (_PACKET_ADDR,_PACKET_RING,_PACKET_RX)}
+    if segmented_nearest:
+     identity['path_segmented_nearest']={'max_depth':path_max_depth}
    if segmented:
     identity['segmented']={k:v for k,v in native_env.items() if (k.startswith(('MGBFS_SEGMENT_', 'MGBFS_BITMAP_')) or k in ('MGBFS_MEMORY_PRESET','MGBFS_EXPERIMENTAL_BITMAP')) and k!='MGBFS_SEGMENT_PACKET_BIND_ADDR'}
    store.put(f'identity/{rank}',identity)
@@ -105,7 +109,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    store.get('identity-ready')
    def inventories(label):
     if resident_admission:
-     inventory=cluster.inventory(native,native_env,device)
+     inventory_env=native_env
+     if segmented_nearest:
+      inventory_env=dict(inventory_env)
+      inventory_env.pop(_PATH_SEGMENTED_NEAREST,None)
+     inventory=cluster.inventory(native,inventory_env,device)
      store.put(label+f'/inventory/{rank}',inventory)
      if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
      return None
@@ -113,7 +121,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if path_compact:
      # This legacy one-GPU probe contributes hardware only. Rank 0 admits
      # the actual compact plan from the inventory of the entire world.
-     for key in (_PATH_COMPACT,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
+     for key in (_PATH_COMPACT,_PATH_SEGMENTED_NEAREST,*_PATH_PACKET_ENV):inventory_env.pop(key,None)
     probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=inventory_env,capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
@@ -156,7 +164,8 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     if rank==0:
      config=_rank_launch_config(
       config,digest,bitmap=segmented and native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',depth=depth,
-      path_targets=path_targets,path_bidirectional=path_bidirectional,path_window=path_window)
+      path_targets=path_targets,path_bidirectional=path_bidirectional,path_window=path_window,
+      path_max_depth=path_max_depth)
      config['max_seconds']=seconds
      if depth is None and profile and config.get('size_profile_capability')==1:
       config['online_size_tuning']=True

@@ -20,7 +20,7 @@ use crate::generic_native::{checked, Buffer, GenericAdvance, GenericNativeBfs};
 use crate::generic_run::{Signals, CANCELLED};
 use crate::path_meeting::{decode_flat_meeting, LayerRange, Meeting};
 
-mod nearest_witness;
+pub(crate) mod nearest_witness;
 use nearest_witness::{walk_parents, OwnerRow, Receipt, Trace};
 
 #[repr(C)]

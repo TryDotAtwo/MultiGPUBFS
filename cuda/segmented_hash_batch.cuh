@@ -19,6 +19,17 @@ struct MgbfsBatchHashRun {
 };
 static_assert(sizeof(MgbfsBatchHashRun)==96,"batch hash run ABI v2");
 
+struct MgbfsHashPathParentV1 {
+ uint64_t parent;
+ uint32_t source,generator;
+};
+static_assert(sizeof(MgbfsHashPathParentV1)==16,"batch hash path parent ABI v1");
+
+struct MgbfsHashPathHitV1 {
+ uint32_t segment,bank,row,found;
+};
+static_assert(sizeof(MgbfsHashPathHitV1)==16,"batch hash path hit ABI v1");
+
 // Logical references for an index spanning physical extents. The descriptor
 // ID resolves both segment and bank. A directory must retain that ID until
 // all its series and in-flight readers have dropped the reference.
@@ -156,11 +167,11 @@ MGBFS_HASH_REF_HD constexpr uint32_t mgbfs_hash_series_prefix_begin(
 
 enum class MgbfsHashSeriesMatch { absent,present,bad_reference };
 
-template<class State,class Ref,class Query>
+template<class State,bool ReturnHit=false,class Ref,class Query>
 MGBFS_HASH_REF_HD MgbfsHashSeriesMatch mgbfs_hash_series_probe(
  const uint64_t* keys,const Ref* references,const uint32_t* prefix_offsets,uint32_t length,
  const MgbfsBatchHashSegment* segments,uint32_t segment_count,MgbfsHashCompactRefLayout layout,
- uint64_t hash,Query query,uint32_t elements){
+ uint64_t hash,Query query,uint32_t elements,MgbfsHashPathHitV1* hit=nullptr){
  if constexpr (sizeof(Ref)==sizeof(uint32_t)){
   if(layout.row_bits>32)return MgbfsHashSeriesMatch::bad_reference;
  }
@@ -194,7 +205,10 @@ MGBFS_HASH_REF_HD MgbfsHashSeriesMatch mgbfs_hash_series_probe(
     if(candidate<int64_t(stored)){cmp=-1;break;}
     if(candidate>int64_t(stored)){cmp=1;break;}
    }
-   if(cmp==0)return MgbfsHashSeriesMatch::present;
+    if(cmp==0){
+     if constexpr(ReturnHit)*hit={segment,bank,row,1};
+     return MgbfsHashSeriesMatch::present;
+    }
   }
   if(cmp>0)lo=mid+1;
   else hi=mid;

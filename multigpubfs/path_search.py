@@ -395,7 +395,7 @@ def _record_native_nearest(result, graph, targets, check, add, report):
             raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
     elif (target is not None or labels
           or status == "UNREACHABLE" and (distance is not None or reason is not None)
-          or status == "INCOMPLETE" and reason not in ("TIME_LIMIT", "CANCELLED", "CUDA_MEMORY", "LINEAGE_DISK_FULL")
+          or status == "INCOMPLETE" and reason not in ("TIME_LIMIT", "CANCELLED", "CUDA_MEMORY", "LINEAGE_DISK_FULL", "DEPTH_LIMIT")
           or status not in ("UNREACHABLE", "INCOMPLETE")):
         raise RuntimeError("NATIVE_PATH_RESULT_INVALID")
     report.update(status=status, stop_reason=reason, d_min=distance, max_length=distance)
@@ -404,6 +404,10 @@ def _record_native_nearest(result, graph, targets, check, add, report):
     workspace = result.get("native_workspace", result.get("workspace"))
     if workspace is not None:
         report["native_workspace"] = workspace
+    if result.get("native_storage") == "SEGMENTED_BATCH_HASH":
+        report.update(native_storage=result["native_storage"], lineage_storage="native_segmented_parents")
+        if "native_exchange" in result:
+            report["native_exchange"] = result["native_exchange"]
     if status == "COMPLETE":
         # Validate the single native witness against the exact submitted graph
         # before adding its row to the artifact.

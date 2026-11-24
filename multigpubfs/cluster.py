@@ -23,16 +23,18 @@ def current_cluster():
 
 
 def _path_native_runtime(job):
-    from .launch import _PACKET_ADDR, _PATH_COMPACT
+    from .launch import _PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST
     from .native_distribution import native_runtime
 
     native, env = native_runtime(job["executable"])
     address = job.get("compact_path_packet_address")
-    if address is not None or _PATH_COMPACT in env:
+    if address is not None or _PATH_COMPACT in env or _PATH_SEGMENTED_NEAREST in env:
         env = dict(env)
         env.pop(_PATH_COMPACT, None)
+        env.pop(_PATH_SEGMENTED_NEAREST, None)
         if address is not None:
-            env.update({_PATH_COMPACT: "1", _PACKET_ADDR: address})
+            mode = _PATH_SEGMENTED_NEAREST if job.get("segmented_nearest") else _PATH_COMPACT
+            env.update({mode: "1", _PACKET_ADDR: address})
     return native, env
 
 
@@ -160,11 +162,14 @@ class Cluster:
         self.close_path()
         from .api import _traversal_exchange_env
         from .distributed_launch import _native_artifact_hashes
-        from .launch import _require_memory_backend, run_graph
+        from .launch import _PATH_SEGMENTED_NEAREST, _require_memory_backend, run_graph
         from .memory_admission import resolve_traversal_memory
         from .native_distribution import native_runtime
 
         native, env = native_runtime(job["executable"])
+        if _PATH_SEGMENTED_NEAREST in env:
+            env = dict(env)
+            env.pop(_PATH_SEGMENTED_NEAREST)
         try:
             capabilities = _require_memory_backend(native, env, "segmented24")
         except RuntimeError as error:
@@ -257,7 +262,7 @@ class Cluster:
     def _run_external_nearest(self, job, graph, output):
         from math import ceil
         from time import perf_counter
-        from .launch import _require_memory_backend, run_graph
+        from .launch import _SEGMENTED_NEAREST_CAPABILITY, _require_memory_backend, run_graph
         from .path_search import (
             _active_path_targets, _deadline, _empty_native_path_receipt, _graph_and_targets, solve,
         )
@@ -269,8 +274,12 @@ class Cluster:
         options = job["options"]
         direction = options.get("direction", "forward")
         bidirectional = direction == "bidirectional"
-        capability = ("graph_path_nearest_bidirectional_v1" if bidirectional
-                      else "graph_path_nearest_distributed_v1")
+        if job.get("segmented_nearest"):
+            capability = _SEGMENTED_NEAREST_CAPABILITY
+        elif bidirectional:
+            capability = "graph_path_nearest_bidirectional_v1"
+        else:
+            capability = "graph_path_nearest_distributed_v1"
         if capabilities.get(capability) is not True:
             raise RuntimeError("CLUSTER_NATIVE_DISTRIBUTED_NEAREST_UNAVAILABLE")
         graph, targets = _graph_and_targets(graph, None, options["targets"])
@@ -405,7 +414,8 @@ class Cluster:
 
     def solve(self, session, graph, output, options):
         from .api import _require_compact_path_capabilities, _validate_compact_path_request
-        from .launch import _PACKET_ADDR, _PATH_COMPACT, _require_memory_backend
+        from .launch import (_PACKET_ADDR, _PATH_COMPACT, _PATH_SEGMENTED_NEAREST,
+                             _SEGMENTED_NEAREST_CAPABILITY, _require_memory_backend)
         from .native_distribution import native_runtime
         from .path_search import (
             _deadline, _empty_output_dir, _graph_and_targets, _path_options, _reserve_output, inverse_action,
@@ -425,23 +435,33 @@ class Cluster:
             ) if name in options
         })
         setting = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST")
-        compact = os.environ.get(_PATH_COMPACT) == "1"
+        segmented_nearest = (os.environ.get(_PATH_SEGMENTED_NEAREST) == "1"
+                             and mode == "nearest" and direction == "forward"
+                             and self.placement.world > 1)
+        compact = not segmented_nearest and os.environ.get(_PATH_COMPACT) == "1"
+        if segmented_nearest and setting == "0":
+            raise ValueError("NATIVE_PATH_SEGMENTED_NEAREST_DISTRIBUTED_DISABLED")
         if compact:
             _validate_compact_path_request(self.placement.world, setting != "0")
         if direction == "bidirectional" and graph.action["kind"] == "matrix":
             inverse_action(graph)
         use_native = False
         compact_address = None
-        if compact:
+        if compact or segmented_nearest:
             if graph.generator_count >= 0x7fff_ffff:
-                raise RuntimeError("NATIVE_PATH_COMPACT_UNAVAILABLE_FOR_QUERY")
+                mode_name = "SEGMENTED_NEAREST" if segmented_nearest else "COMPACT"
+                raise RuntimeError(f"NATIVE_PATH_{mode_name}_UNAVAILABLE_FOR_QUERY")
             native, env = native_runtime(executable)
             compact_address = env.get(_PACKET_ADDR)
             if not compact_address:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
-            _require_compact_path_capabilities(
-                _require_memory_backend(native, env, "segmented24"), direction=direction, window=mode == "window",
-            )
+            capabilities = _require_memory_backend(native, env, "segmented24")
+            if segmented_nearest:
+                if (capabilities.get(_SEGMENTED_NEAREST_CAPABILITY) is not True
+                        or capabilities.get("segmented_network_agreement_v1") is not True):
+                    raise RuntimeError("NATIVE_PATH_SEGMENTED_NEAREST_UNAVAILABLE: rebuild the native executable and CUDA library")
+            else:
+                _require_compact_path_capabilities(capabilities, direction=direction, window=mode == "window")
             use_native = True
         elif (setting != "0" and mode in ("nearest", "window")
                 and direction in ("forward", "bidirectional") and graph.generator_count < 0x7fff_ffff):
@@ -479,6 +499,8 @@ class Cluster:
                "window_output_reserved": use_window, "executable": executable}
         if compact_address is not None:
             job["compact_path_packet_address"] = compact_address
+        if segmented_nearest:
+            job["segmented_nearest"] = True
         return self._dispatch(job, output)
 
     def _check_generation(self):

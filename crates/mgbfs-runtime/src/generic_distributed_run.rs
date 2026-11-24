@@ -9,6 +9,69 @@ fn graph(path:&str)->Result<GraphDefinitionV2>{let g:GraphDefinitionV2=serde_jso
 fn digest(g:&GraphDefinitionV2)->Result<String>{Ok(g.semantic_digest()?.iter().map(|v|format!("{v:02x}")).collect())}
 fn graph_bytes(g:&GraphDefinitionV2)->u64{match &g.action{GraphAction::Permutation{generators,..}=>generators.iter().map(|v|v.len() as u64*4).sum(),GraphAction::Matrix{generators,..}=>generators.iter().map(|v|v.matrix.len() as u64*8+4).sum()}}
 
+fn segmented_nearest_requested() -> bool {
+    std::env::var("MGBFS_SEGMENT_NEAREST_V1").as_deref() == Ok("1")
+}
+
+fn validate_segmented_nearest_options(world: usize, bidirectional: bool, window: bool) -> Result<()> {
+    if world < 2 || bidirectional || window {
+        return Err("SEGMENTED_NEAREST_REQUIRES_MULTIRANK_FORWARD".into());
+    }
+    if std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref() != Ok("1")
+        || std::env::var("MGBFS_SEGMENT_STRATEGY").as_deref() != Ok("batch")
+        || std::env::var("MGBFS_SEGMENT_HASH_SERIES").as_deref() == Ok("0")
+        || std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref() == Ok("1")
+        || std::env::var("MGBFS_SEGMENT_RESIDENT_ALPHABET8").as_deref() == Ok("1")
+        || std::env::var("MGBFS_SEGMENT_EXACT_EXCHANGE").as_deref() == Ok("1")
+        || std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_none()
+        || crate::generic_distributed_memory::compact_path_requested()
+    {
+        return Err("SEGMENTED_NEAREST_REQUIRES_COMPACT_BOUNDED_RAW_HASH".into());
+    }
+    Ok(())
+}
+
+fn validate_segmented_nearest_plan(graph: &GraphDefinitionV2, plan: &Plan) -> Result<()> {
+    let raw_width = plan.state_bytes == 8
+        || plan.state_bytes == 1
+            && !plan.packed_candidates()
+            && crate::generic_memory::preferred_state_bytes(graph) == 1;
+    if !raw_width
+        || u32::try_from(graph.start.len()).ok() != Some(plan.elements)
+        || plan.history_algorithm != "HASH"
+        || plan.history_layers != 1
+        || plan.generator_backend != "cuda"
+        || plan.parent_transport
+        || plan.sort_candidates
+        || !plan.compact_transport
+        || plan.compact_packet_slots != 3
+        || plan.compact_receive_slots != 3
+    {
+        return Err("SEGMENTED_NEAREST_PLAN_LAYOUT".into());
+    }
+    Ok(())
+}
+
+fn segmented_nearest_targets_digest(graph: &GraphDefinitionV2, targets: &[Vec<i64>]) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let count = u32::try_from(targets.len()).map_err(|_| "SEGMENTED_NEAREST_TARGET_COUNT")?;
+    if count == 0 {
+        return Err("SEGMENTED_NEAREST_TARGET_COUNT".into());
+    }
+    let mut digest = Sha256::new();
+    digest.update(count.to_le_bytes());
+    digest.update((graph.start.len() as u64).to_le_bytes());
+    for target in targets {
+        if target.len() != graph.start.len() {
+            return Err("SEGMENTED_NEAREST_TARGET_SHAPE".into());
+        }
+        for value in target {
+            digest.update(value.to_le_bytes());
+        }
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 fn segmented_byte_dictionary(graph: &GraphDefinitionV2) -> Option<Vec<i64>> {
  if std::env::var("MGBFS_SEGMENT_RESIDENT_ALPHABET8").as_deref() != Ok("1")
   || std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref() != Ok("1")
@@ -53,11 +116,17 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  if inventory.iter().any(|v|v.get("additional_reserve_bytes").and_then(|v|v.as_u64()).map_or(false,|bytes|bytes!=reserve)){return Err("GRAPH_GLOBAL_RESERVE_CONSENSUS".into());}
  for v in &inventory{let free=v["free_bytes"].as_u64().ok_or("GRAPH_GLOBAL_FREE_BYTES")?;let total=v["total_bytes"].as_u64().ok_or("GRAPH_GLOBAL_TOTAL_BYTES")?;if free==0||free>total{return Err("GRAPH_GLOBAL_MEMORY_RANGE".into());}minimum=minimum.min(free);}
  let window=std::env::var("MGBFS_GENERIC_PATH_WINDOW").as_deref()==Ok("1");
- let path_mode=std::env::var("MGBFS_GENERIC_PATH_APPEND_ONLY").as_deref()==Ok("1");
- let extra_row_bytes=if path_mode&&!window{crate::generic_path_native::PARENT_BYTES as u64}else{0};
+ let bidirectional=std::env::var("MGBFS_GENERIC_PATH_BIDIRECTIONAL").as_deref()==Ok("1");
+ let segmented_nearest=segmented_nearest_requested();
+ if segmented_nearest {
+  validate_segmented_nearest_options(devices.len(), bidirectional, window)?;
+ }
+ let path_mode=segmented_nearest||std::env::var("MGBFS_GENERIC_PATH_APPEND_ONLY").as_deref()==Ok("1");
+ let extra_row_bytes=if segmented_nearest{
+  crate::segmented_distributed_native::PATH_PARENT_BYTES
+ }else if path_mode&&!window{crate::generic_path_native::PARENT_BYTES as u64}else{0};
  let full_segment_history=std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1")&&std::env::var("MGBFS_SEGMENT_FULL_HISTORY").as_deref()==Ok("1");
  let history_layers=if !path_mode&&!full_segment_history&&g.inverse_closed()?{3}else{1};
- let bidirectional=std::env::var("MGBFS_GENERIC_PATH_BIDIRECTIONAL").as_deref()==Ok("1");
  // Byte states with more than 24 elements already use separate full
  // route metadata. Forward targets are compared as signed int64 and never
  // inserted in the byte arena. Recheck reverse roots at worker launch.
@@ -121,6 +190,11 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
  if let Some(batch)=batch.filter(|_|!sorted){
   for(p,item)in rank_plans.iter_mut().zip(&inventory){let candidate=Plan::with_storage_history(p.elements,p.world,p.shards,p.capacity,batch,g.generator_count() as u32,p.generator_bytes,state_bytes,history_layers)?;let free=item["free_bytes"].as_u64().unwrap();let budget=available_for_history(free)?.checked_sub(reserve).ok_or("GENERIC_DISTRIBUTED_HEADROOM")?;if history_memory.required_bytes(&candidate)?>budget{return Err("REQUESTED_BATCH_EXCEEDS_ADMISSION".into());}*p=candidate;}
  }
+ if segmented_nearest {
+  for plan in &rank_plans {
+   validate_segmented_nearest_plan(g, plan)?;
+  }
+ }
  let plan=rank_plans.iter().min_by_key(|p|p.capacity).unwrap().clone();
  let shared_path_queue_bytes=bidirectional.then(||plan.shared_path_queue_bytes()).transpose()?;
  Ok(serde_json::json!({"size_profile_capability":1,"graph_digest":digest(g)?,"devices":devices,"inventory":inventory,"plan":plan,"rank_plans":rank_plans,"path_arena_copies":arenas,"path_workspace_bytes":path_workspace,"shared_path_queue_bytes":shared_path_queue_bytes,"owner_cuts":owner_cuts,"additional_reserve_bytes":crate::generic_memory::admission_reserve_bytes()?,"reserve_policy":"ABSOLUTE_BYTES_COLD_2GIB_WARM_256MIB","profile_status":"MEMORY_ADMITTED_NOT_THROUGHPUT_TUNED"}))
@@ -152,7 +226,7 @@ pub fn global_plan(args:&[String])->Result<serde_json::Value>{
 #[derive(serde::Deserialize)]struct SizeProfile{minimum_frontier:u64,batch:u32,#[serde(default)]status:String,#[serde(default)]maximum_measured_frontier:u64,#[serde(default)]frontier_max_rank_bucket:Option<u32>,generator_backend:String}
 #[derive(serde::Deserialize)]
 struct WindowRequest { #[serde(default)]min_length:u32, max_length:u32, disk_budget:u64 }
-#[derive(serde::Deserialize)]struct Launch{#[serde(default)]online_size_tuning:bool,#[serde(default)]size_profiles:Vec<SizeProfile>,graph_digest:String,devices:Vec<u32>,plan:Plan,#[serde(default)]rank_plans:Vec<Plan>,#[serde(default)]owner_cuts:Option<Vec<u64>>,#[serde(default)]profile_max_layers:Option<u32>,#[serde(default)]packet_job_token:Option<String>,#[serde(default)]path_targets:Option<Vec<Vec<i64>>>,#[serde(default)]path_bidirectional:bool,#[serde(default)]path_window:Option<WindowRequest>}
+#[derive(serde::Deserialize)]struct Launch{#[serde(default)]online_size_tuning:bool,#[serde(default)]size_profiles:Vec<SizeProfile>,graph_digest:String,devices:Vec<u32>,plan:Plan,#[serde(default)]rank_plans:Vec<Plan>,#[serde(default)]owner_cuts:Option<Vec<u64>>,#[serde(default)]profile_max_layers:Option<u32>,#[serde(default)]packet_job_token:Option<String>,#[serde(default)]path_targets:Option<Vec<Vec<i64>>>,#[serde(default)]path_bidirectional:bool,#[serde(default)]path_window:Option<WindowRequest>,#[serde(default)]path_max_depth:Option<u32>}
 fn valid_frontier_bucket(bucket:u32, segmented:bool)->bool{bucket<=if segmented{63}else{31}}
 
 #[cfg(test)] mod bucket_width_tests{
@@ -164,6 +238,7 @@ fn valid_frontier_bucket(bucket:u32, segmented:bool)->bool{bucket<=if segmented{
 
 pub fn run(args:&[String])->Result<()>{
  let segmented=std::env::var("MGBFS_EXPERIMENTAL_SEGMENTED24").as_deref()==Ok("1");
+ let segmented_nearest=segmented_nearest_requested();
  if !segmented{
   let value=match std::env::var("MGBFS_SEGMENT_STRATEGY"){
    Ok(v)=>Some(v),Err(std::env::VarError::NotPresent)=>None,
@@ -184,6 +259,20 @@ pub fn run(args:&[String])->Result<()>{
  let validated:Result<_>=(||{
  let g=graph(&args[0])?;
  if launch.graph_digest!=digest(&g)?||launch.devices.len()!=launch.plan.world as usize||rank>=launch.plan.world||launch.plan.generator_bytes<graph_bytes(&g){return Err("GRAPH_LAUNCH_IDENTITY_OR_GEOMETRY".into());}
+ let target_digest = if segmented_nearest {
+  validate_segmented_nearest_options(launch.devices.len(), launch.path_bidirectional, launch.path_window.is_some())?;
+  validate_segmented_nearest_plan(&g, &launch.plan)?;
+  if launch.profile_max_layers.is_some() || launch.online_size_tuning || !launch.size_profiles.is_empty() {
+   return Err("SEGMENTED_NEAREST_UNSUPPORTED_PROFILE".into());
+  }
+  let targets = launch.path_targets.as_deref().ok_or("SEGMENTED_NEAREST_TARGETS")?;
+  Some(segmented_nearest_targets_digest(&g, targets)?)
+ } else {
+  if launch.path_max_depth.is_some() {
+   return Err("PATH_MAX_DEPTH_REQUIRES_SEGMENTED_NEAREST".into());
+  }
+  None
+ };
  if launch.path_window.as_ref().is_some_and(|window| window.min_length>window.max_length
   ||launch.path_targets.is_none()){
   return Err("NATIVE_WINDOW_OWNER_LAYOUT".into());
@@ -214,7 +303,7 @@ pub fn run(args:&[String])->Result<()>{
  {
   return Err("SEGMENTED_RESIDENT_ALPHABET_MISMATCH".into());
  }
- if launch.path_targets.is_some()&&(segmented||launch.plan.history_layers!=1||launch.plan.history_algorithm!="HASH"||launch.profile_max_layers.is_some()){
+ if launch.path_targets.is_some()&&((segmented&&!segmented_nearest)||launch.plan.history_layers!=1||launch.plan.history_algorithm!="HASH"||launch.profile_max_layers.is_some()){
   return Err("NATIVE_DISTRIBUTED_PATH_REQUIRES_APPEND_ONLY_HASH".into());
  }
  let packet_job_token=if launch.plan.compact_transport&&launch.plan.world>1&&std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_some(){
@@ -223,6 +312,11 @@ pub fn run(args:&[String])->Result<()>{
  let plans=if launch.rank_plans.is_empty(){vec![launch.plan.clone();launch.devices.len()]}else{launch.rank_plans.clone()};
  if plans.len()!=launch.devices.len(){return Err("GRAPH_RANK_PLANS".into());}
  for p in &plans{p.validate(g.generator_count() as u32)?;if p.history_algorithm!=launch.plan.history_algorithm||p.history_layers!=launch.plan.history_layers||p.world!=launch.plan.world||p.shards!=launch.plan.shards||p.elements!=launch.plan.elements||p.state_bytes!=launch.plan.state_bytes||p.batch!=launch.plan.batch||p.queue_capacity!=launch.plan.queue_capacity||p.compact_transport!=launch.plan.compact_transport||p.compact_packet_slots!=launch.plan.compact_packet_slots||p.compact_receive_slots!=launch.plan.compact_receive_slots||p.generator_bytes<graph_bytes(&g){return Err("GRAPH_TRANSPORT_GEOMETRY".into());}}
+ if segmented_nearest {
+  for plan in &plans {
+   validate_segmented_nearest_plan(&g, plan)?;
+  }
+ }
  let mut previous_base=None;let mut buckets=std::collections::BTreeSet::new();
  for p in &launch.size_profiles{
   if p.batch==0||p.batch>launch.plan.batch||!matches!(p.generator_backend.as_str(),"cuda"|"gemm")||(p.generator_backend=="gemm"&&launch.plan.generator_backend!="gemm"){return Err("SIZE_PROFILE_LAUNCH_INVALID".into());}
@@ -233,13 +327,22 @@ pub fn run(args:&[String])->Result<()>{
  let seconds:u64=args[5].parse().map_err(|_|"CLI_GRAPH_SECONDS")?;
  if output.exists(){return Err("CLI_GRAPH_OUTPUT_EXISTS".into());}
  std::fs::create_dir_all(output).map_err(|e|e.to_string())?;
- Ok((g,plans,seconds,packet_job_token))
+ Ok((g,plans,seconds,packet_job_token,target_digest))
  })();
  if let Some(agreement)=&ready{
-  let descriptor=validated.as_ref().ok().map(|(_,_,_,packet_job_token)|serde_json::json!({"schema":1,"graph_digest":launch.graph_digest,"devices":launch.devices,"plan":launch.plan,"owner_cuts":launch.owner_cuts,"packet_job_token":packet_job_token}));
+  let descriptor=validated.as_ref().ok().map(|(_,plans,seconds,packet_job_token,target_digest)| {
+   let mut descriptor = serde_json::json!({"schema":1,"graph_digest":launch.graph_digest,"devices":launch.devices,"plan":launch.plan,"owner_cuts":launch.owner_cuts,"packet_job_token":packet_job_token});
+   if let Some(digest) = target_digest {
+    descriptor["segmented_nearest"] = serde_json::json!({
+     "version": 1, "target_sha256": digest, "max_depth": launch.path_max_depth,
+     "max_seconds": seconds, "rank_plans": plans
+    });
+   }
+   descriptor
+  });
   agreement.agree("arguments",&validated,descriptor.as_ref())?;
  }
- let(g,plans,seconds,packet_job_token)=validated?;
+ let(g,plans,seconds,packet_job_token,_)=validated?;
  crate::native_fault::reset(Some(rank),Some(launch.devices[rank as usize]));
  let rank_plan=plans[rank as usize].clone();
  if let Some(agreement)=&ready {
@@ -264,7 +367,7 @@ pub fn run(args:&[String])->Result<()>{
   eprintln!("SEGMENTED_COMM_AGREEMENT rank={rank} {}",mode.as_ref().map_err(Clone::clone)?["communicator"]);
  }
  let mut id=[0u8;128];if rank==0{if bootstrap.exists(){return Err("GRAPH_BOOTSTRAP_ALREADY_EXISTS".into());}id=crate::session_cache::bootstrap_id(||{let mut fresh=[0u8;128];crate::generic_native::checked!(mgbfs_nccl_unique_id, unsafe{mgbfs_nccl_unique_id(fresh.as_mut_ptr().cast())})?;Ok(fresh)})?;let temporary=bootstrap.with_extension("tmp");std::fs::write(&temporary,id).map_err(|e|e.to_string())?;std::fs::rename(temporary,bootstrap).map_err(|e|e.to_string())?;}else{let waiter=crate::session_wait::FileWaiter::new(bootstrap.parent().ok_or("GRAPH_BOOTSTRAP_PARENT")?);if !waiter.wait(bootstrap,None,Some(Duration::from_secs(60)))?{return Err("GRAPH_BOOTSTRAP_TIMEOUT".into());}let raw=std::fs::read(bootstrap).map_err(|e|e.to_string())?;if raw.len()!=128{return Err("GRAPH_BOOTSTRAP_SIZE".into());}id.copy_from_slice(&raw);let cached=crate::session_cache::bootstrap_id(||Ok(id))?;if cached!=id{return Err("GENERIC_SESSION_COMM_ID_MISMATCH".into());}}
- if segmented{return run_segmented(&g,&launch,rank,rank_plan,&id,packet_job_token,seconds,output,ready.as_ref().ok_or("SEGMENTED_HOST_AGREEMENT_MISSING")?)}
+ if segmented{return run_segmented(&g,&launch,rank,rank_plan,&id,packet_job_token,seconds,output,ready.as_ref().ok_or("SEGMENTED_HOST_AGREEMENT_MISSING")?,segmented_nearest)}
  let reverse_graph=if launch.path_bidirectional{
   let goals=launch.path_targets.as_deref().ok_or("NATIVE_PATH_TARGETS")?;
   Some(g.reversed_for_paths(goals)?)
@@ -345,8 +448,8 @@ pub fn run(args:&[String])->Result<()>{
 }
 
 // Private opt-in used solely for integration tests; no public API promises yet.
-fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seconds:u64,output:&Path,ready:&crate::segmented_host_ready::HostAgreement)->Result<()>{
- let alphabet = (rank_plan.state_bytes == 1).then(|| segmented_byte_dictionary(g)).flatten();
+fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:&[u8;128],packet_job_token:Option<PacketJobToken>,seconds:u64,output:&Path,ready:&crate::segmented_host_ready::HostAgreement,nearest:bool)->Result<()>{
+ let alphabet = (!nearest && rank_plan.state_bytes == 1).then(|| segmented_byte_dictionary(g)).flatten();
  let encoded_graph = alphabet.as_ref().map(|symbols| {
   let mut graph = g.clone();
   for value in &mut graph.start {
@@ -357,7 +460,7 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  let entry:Result<_>=(||{
   crate::segmented_host_ready::injected("entry")?;
   if launch.online_size_tuning||launch.size_profiles.iter().any(|p|p.generator_backend!="cuda"){return Err("SEGMENTED_EXPERIMENT_PROFILE_NOT_SUPPORTED".into())}
-  let backend=if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
+  let backend=if nearest{"EXPERIMENTAL_SEGMENTED_NEAREST_V1"}else if std::env::var("MGBFS_EXPERIMENTAL_BITMAP").as_deref()==Ok("1"){"EXPERIMENTAL_PERMUTATION_BITMAP"}else{"EXPERIMENTAL_SEGMENTED24"};
   let identity=crate::segmented_host_ready::runtime_identity()?;
   let descriptor=serde_json::json!({"schema":1,"runtime":identity,"graph_digest":digest(g)?,"devices":launch.devices,"world":launch.plan.world,"shards":launch.plan.shards,"elements":launch.plan.elements,"state_bytes":launch.plan.state_bytes,"batch":launch.plan.batch,"queue_capacity":launch.plan.queue_capacity,"history_algorithm":launch.plan.history_algorithm,"history_layers":launch.plan.history_layers,"owner_cuts":launch.owner_cuts,"backend":backend,"external_reserve_bytes":if std::env::var("MGBFS_SEGMENT_EXTERNAL_LINK").as_deref()==Ok("1"){Some(crate::generic_memory::admission_reserve_bytes()?)}else{None}});
   crate::session_cache::begin(format!("{}:{}",backend,serde_json::to_string(&rank_plan).map_err(|e|e.to_string())?));
@@ -376,8 +479,14 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  ready.agree("entry",&entry,descriptor)?;
  let(backend,pool_idle_before,pool_idle_after,hash_bits,_)=entry?;
  let _signals=Signals::new();let setup=Instant::now();
- let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(encoded_graph.as_ref().unwrap_or(g),launch.devices[rank as usize],rank,rank_plan.clone(),id,packet_job_token,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready)?;
+ let mut bfs=crate::segmented_distributed_native::SegmentedDistributedBfs::new(encoded_graph.as_ref().unwrap_or(g),launch.devices[rank as usize],rank,rank_plan.clone(),id,packet_job_token,0x19f856a2,hash_bits,launch.owner_cuts.as_deref(),ready,nearest)?;
  let setup_seconds=setup.elapsed().as_secs_f64();eprintln!("MGBFS_GRAPH_READY rank={rank} device={} backend={backend}",launch.devices[rank as usize]);crate::job_phase::set("bfs")?;
+ if nearest {
+  let targets=launch.path_targets.as_deref().ok_or("SEGMENTED_NEAREST_TARGETS")?;
+  let receipt=bfs.solve_nearest(g, targets, launch.path_max_depth, seconds)?;
+  publish_segmented_nearest(&mut bfs, receipt, output, ready, rank)?;
+  return Ok(());
+ }
  let start=Instant::now();let mut sizes=vec![1u64];let mut times=vec![];let mut committed=vec![0.0];
  let packet = bfs.uses_packet_transport();
  let mut next_stop = 0;
@@ -450,4 +559,52 @@ fn run_segmented(g:&GraphDefinitionV2,launch:&Launch,rank:u32,rank_plan:Plan,id:
  if vote.is_err()||published.is_err(){let _=std::fs::remove_file(output.join("report.json"));let _=std::fs::remove_file(output.join("states.json"));}
  vote?;published?;
  bfs.permit_healthy_communicator_reuse();Ok(())
+}
+
+fn publish_segmented_nearest(
+    bfs: &mut crate::segmented_distributed_native::SegmentedDistributedBfs,
+    receipt: serde_json::Value,
+    output: &Path,
+    ready: &crate::segmented_host_ready::HostAgreement,
+    rank: u32,
+) -> Result<()> {
+    let temporary = output.join("path.json.tmp");
+    let final_path = output.join("path.json");
+    let prepared = (|| {
+        crate::job_phase::set("retiring")?;
+        crate::segmented_host_ready::injected("finish-prepare")?;
+        crate::segmented_host_ready::injected("finish-write")?;
+        bfs.quiesce()?;
+        let bytes = serde_json::to_vec_pretty(&receipt).map_err(|e| e.to_string())?;
+        std::fs::write(&temporary, bytes).map_err(|e| format!("SEGMENTED_FINISH_PATH rank={rank} {e}"))?;
+        Ok(serde_json::json!({
+            "status": receipt["status"],
+            "stop_reason": receipt["stop_reason"],
+            "d_min": receipt["d_min"],
+            "target_index": receipt["target_index"],
+            "generator_ids": receipt["generator_ids"],
+            "search_confirmed_through_depth": receipt["search_confirmed_through_depth"],
+        }))
+    })();
+    if let Err(error) = ready.agree("finish-prepared", &prepared, prepared.as_ref().ok()) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    let identity = prepared?;
+    let published = (|| {
+        crate::segmented_host_ready::injected("finish-publish")?;
+        std::fs::rename(&temporary, &final_path)
+            .map_err(|e| format!("SEGMENTED_PUBLISH_PATH rank={rank} {e}"))
+    })();
+    let agreement = ready.agree("finish-published", &published, Some(&identity));
+    if agreement.is_err() || published.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        if published.is_ok() {
+            let _ = std::fs::remove_file(&final_path);
+        }
+    }
+    agreement?;
+    published?;
+    bfs.permit_healthy_communicator_reuse();
+    Ok(())
 }

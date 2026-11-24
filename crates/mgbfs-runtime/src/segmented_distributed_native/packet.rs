@@ -1051,6 +1051,10 @@ impl SegmentedDistributedBfs {
         let parent = unsafe { segment.desc.states.cast::<u8>().add(offset) };
         let count = u32::try_from(u64::from(batch).min(range.end - cursor))
             .map_err(|_| "SEGMENT_PACKET_PARENT_RANGE")?;
+        let parent_base = if self.nearest.is_some() {
+            range.logical_start.checked_add(cursor - range.begin)
+                .ok_or("SEGMENTED_PATH_ROW_OVERFLOW")?
+        } else { 0 };
         let scratch = self
             .route_scratch
             .as_ref()
@@ -1133,7 +1137,7 @@ impl SegmentedDistributedBfs {
                         self.rank,
                         p.shards,
                         p.queue_capacity,
-                        0,
+                        parent_base,
                         self.map.ptr.cast(),
                         self.cuts.as_ref().map_or(ptr::null(), |v| v.ptr.cast()),
                         output.records.ptr.cast(),
@@ -1176,7 +1180,7 @@ impl SegmentedDistributedBfs {
                         self.rank,
                         p.shards,
                         p.queue_capacity,
-                        0,
+                        parent_base,
                         self.map.ptr.cast(),
                         self.cuts.as_ref().map_or(ptr::null(), |v| v.ptr.cast()),
                         output.records.ptr.cast(),
