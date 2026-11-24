@@ -15,7 +15,7 @@ def mahonian(n):
     return sizes
 
 
-def verify_output(n, report, states_path):
+def verify_output(n, report, states_path, *, terminal=None):
     expected = mahonian(n)
     sizes = report["layer_sizes"]
     if not sizes or sizes != expected[:len(sizes)]:
@@ -30,10 +30,19 @@ def verify_output(n, report, states_path):
             last[:i] + (last[i + 1], last[i]) + last[i + 2:]
             for i in range(n - 1)
         }
-        current = [tuple(row) for row in states["current"]]
-        retained_previous = [tuple(row) for row in states["previous_small"]]
+        witness = states if terminal is None else terminal
+        current = [tuple(row) for row in witness["current"]]
+        retained_previous = [tuple(row) for row in witness["previous_small"]]
         if current != [last] or len(retained_previous) != len(previous) or set(retained_previous) != previous:
             raise ValueError("Terminal layer sets or multiplicities do not match")
+        if terminal is not None:
+            for field, expected, count in (
+                ("current", {last}, min(sizes[-1], 1000)),
+                ("previous_small", previous, sizes[-2] if sizes[-2] < 1000 else 0),
+            ):
+                samples = {tuple(row) for row in states[field]}
+                if len(states[field]) != count or len(samples) != count or not samples <= expected:
+                    raise ValueError(f"Invalid retained terminal sample in {field}")
     else:
         depth = len(sizes) - 1
         previous_count = sizes[-2] if depth and sizes[-2] < 1000 else 0

@@ -1,6 +1,8 @@
 """Compare BFS presets or transport variants on the same single-host workload."""
 
 import argparse
+from contextlib import nullcontext
+import hashlib
 import json
 import math
 import os
@@ -366,14 +368,16 @@ def _write(path, value):
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 
-def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *, transport_mode="exact"):
+def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *,
+             transport_mode="exact", registry_evidence=False):
     from multigpubfs.generic_session import persistent_graph_workers
     from multigpubfs.launch import run_graph
 
     before = gpus.snapshot()
     started_unix_ns = time.time_ns()
     started = time.monotonic()
-    with persistent_graph_workers():
+    sampler = gpus.sample_memory(before) if registry_evidence else nullcontext()
+    with sampler as memory, persistent_graph_workers():
         report = run_graph(
             graph, output, executable=native, backend="generic", autotune=False,
             devices=request["devices"], shards=request["shards"], max_seconds=request["max_seconds"],
@@ -411,7 +415,14 @@ def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *, tra
         expected_banks = 1 if history == "append" else 3
         if any(rank.get("banks") != expected_banks for rank in ranks):
             raise ValueError(f"hash-series comparison requires {expected_banks} history banks in both legs")
-    checks = verify_output(n, report, output / "states.json")
+    terminal = None
+    if registry_evidence and report["status"] == "COMPLETE":
+        from multigpubfs.traversal_receipt import read_terminal_evidence
+
+        terminal = read_terminal_evidence(output, report)
+        if terminal is None:
+            raise ValueError(f"native terminal evidence missing: {report.get('terminal_evidence_status')}")
+    checks = verify_output(n, report, output / "states.json", terminal=terminal)
     preflight = report.get("communication_preflight", {})
     return {
         "runtime_identity": report["runtime_identity"], "graph_digest": report["graph_digest"],
@@ -442,6 +453,73 @@ def _run_leg(graph, output, gpus, native, env, recipe, request, pressure, *, tra
         "transport_high_water_observed_by_rank": (
             transport_observations(output, request["devices"]) if request["transport_high_water"] else None
         ),
+        **({"profile_vram_sampling": memory} if registry_evidence else {}),
+    }
+
+
+def _export_registry_pair(graph, pair_path, legs, comparison):
+    from multigpubfs.profile_registry import export_profiles
+
+    full = comparison["full"]
+    if full["status"] != WITHIN_BOUND:
+        return {"status": full["status"], "reason": full["reason"] or "paired full traversal exceeded 4×"}
+    receipts = {}
+    inventory = None
+    pressure = legs["balanced"]["pressure"]
+    held = pressure["warmed_allocation_bytes_per_gpu"]
+    namespace = f"cuda_warmed_allocation:{held}" if held else "ambient"
+    for label, leg in legs.items():
+        memory = leg["profile_vram_sampling"]
+        baseline, peak = memory["baseline_bytes_by_rank"], memory["peak_bytes_by_rank"]
+        if (memory.get("error") or memory["samples"] == 0 or len(peak) != len(leg["before"]["devices"])
+                or len(baseline) != len(peak) or any(a <= b for a, b in zip(peak, baseline))):
+            return {"status": UNVERIFIED, "reason": f"{label}: NVML did not observe live allocation on every rank"}
+        output = pair_path / label
+        launch = json.loads((output / "launch.json").read_text(encoding="utf-8"))
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        devices = leg["before"]["devices"]
+        if (launch["graph_digest"] != report["graph_digest"] or
+                launch["devices"] != report["devices"] or
+                [rank["device"] for rank in launch["inventory"]] != [gpu["ordinal"] for gpu in devices]):
+            raise ValueError(f"{label}: startup inventory does not match the native rank reports")
+        fields = ("device", "compute_major", "compute_minor", "sm_count", "total_bytes")
+        identity = {
+            "devices": report["devices"],
+            "driver_versions": [gpu["driver"] for gpu in devices],
+            "inventory": [{key: rank[key] for key in fields} for rank in launch["inventory"]],
+        }
+        if inventory is not None and inventory != identity:
+            raise ValueError("owning-rank admission hardware differs across preset runs")
+        inventory = identity
+        report.update(
+            profile_pressure_namespace=namespace,
+            profile_peak_vram_bytes_by_rank=peak,
+            profile_admission_by_rank=[
+                {"free_bytes_at_admission": rank.get("free_bytes"),
+                 "additional_reserve_bytes": rank.get("additional_reserve_bytes", launch.get("additional_reserve_bytes"))}
+                for rank in launch["inventory"]
+            ],
+        )
+        receipts[label] = report
+    for label, report in receipts.items():
+        target = pair_path / label / "report.json"
+        temporary = target.with_suffix(".json.tmp")
+        _write(temporary, report)
+        temporary.replace(target)
+    destination = pair_path / "profile"
+    destination.mkdir()
+    topology = legs["balanced"]["before"]["topology"]
+    _write(destination / "graph.json", graph.to_dict())
+    _write(destination / "inventory.json", inventory)
+    (destination / "topology.txt").write_text(topology + "\n", encoding="utf-8")
+    catalog = destination / "registry.json"
+    entry = export_profiles(graph.to_dict(), inventory, topology, pair_path / "balanced",
+                            pair_path / "maxmemory", catalog, destination / "evidence")
+    return {
+        "status": "EXPORTED", "capacity_verification": entry["capacity_verification"],
+        "pressure_namespace": namespace, "catalog": "profile/registry.json",
+        "catalog_sha256": hashlib.sha256(catalog.read_bytes()).hexdigest(),
+        "evidence": f"profile/evidence/{entry['evidence_sha256']}.json",
     }
 
 
@@ -468,6 +546,8 @@ def main():
     parser.add_argument("--repeat", type=_positive, default=1, help="paired repeats, alternating which preset runs first")
     parser.add_argument("--max-depth", type=_positive)
     parser.add_argument("--max-seconds", type=_positive)
+    parser.add_argument("--registry-evidence", action="store_true",
+                        help="sample NVML peaks and export a verified full paired preset to pair-N/profile")
     parser.add_argument("--batch", type=_positive, default=8192)
     parser.add_argument("--shards", type=_positive, help="defaults to the number of GPUs")
     parser.add_argument("--segment-rows", type=_positive, help="same maximum rows for both modes, otherwise automatic")
@@ -517,6 +597,11 @@ def main():
         parser.error("--compare-hash-eager-tail must be 0 or between 2 and 64")
     hash_comparison = (args.compare_hash_series or args.compare_hash_reuse
                        or args.compare_hash_strategies or compare_eager_tail)
+    if args.registry_evidence and (args.max_depth or hash_comparison or args.packet_control_addr
+                                   or args.segment_budget_bytes or args.hash_timing
+                                   or args.transport_high_water):
+        parser.error("--registry-evidence requires full presets without test-only caps or tracing; "
+                     "use --pressure-mib for physical pressure")
     if hash_comparison and args.balanced_backend != "segmented24":
         parser.error("hash comparison requires a segmented24 balanced backend")
     if not hash_comparison:
@@ -540,7 +625,15 @@ def main():
     gpus = BenchmarkGpus(selected)
     native, inherited = native_runtime(args.executable)
     env = {k: v for k, v in inherited.items() if not k.startswith(("MGBFS_SEGMENT_", "MGBFS_BITMAP_"))}
-    env.update(MGBFS_SEGMENT_EXACT_EXCHANGE="1", MGBFS_SEGMENT_TRANSPORT_TRACE="1")
+    env.update(MGBFS_SEGMENT_EXACT_EXCHANGE="1")
+    if args.registry_evidence:
+        from multigpubfs.launch import _native_key_info
+
+        if _native_key_info(native, env).get("graph_profile_terminal_evidence_v1") is not True:
+            parser.error("native executable does not support full terminal evidence capture")
+        env["MGBFS_PROFILE_TERMINAL_EVIDENCE_DEPTH"] = str(n * (n - 1) // 2)
+    else:
+        env["MGBFS_SEGMENT_TRANSPORT_TRACE"] = "1"
     if args.transport_high_water:
         env["MGBFS_SEGMENT_LAYER_STATS"] = "1"
     if args.compare_hash_series and args.hash_series_history == "append":
@@ -605,6 +698,7 @@ def main():
         "preset_packet_control_addr": args.preset_packet_control_addr,
         "maxmemory_packet_control_addr": args.maxmemory_packet_control_addr,
         "transport_recipe": args.transport_recipe if args.packet_control_addr else None,
+        **({"registry_evidence": True} if args.registry_evidence else {}),
     })
     observed = {label: [] for label in labels}
     limited = {label: [] for label in labels}
@@ -644,13 +738,20 @@ def main():
                         if use_packets:
                             leg_env["MGBFS_SEGMENT_PACKET_CONTROL_ADDR"] = packet_addr
                         leg = _run_leg(graph, output, gpus, native, leg_env, recipes[label], request, pressure,
-                                       transport_mode="compact" if use_packets else "exact")
+                                       transport_mode="compact" if use_packets else "exact",
+                                       registry_evidence=args.registry_evidence)
                     except (OSError, ValueError, RuntimeError) as exc:
                         leg = {"error": str(exc)}
                     legs[label] = leg
                     _write(pair_path / f"{label}.summary.json", leg)
                 comparison = compare_pair(*(legs[label] for label in labels), n,
                                           pressure["observed_free_tolerance_bytes"], labels=labels)
+                if args.registry_evidence:
+                    try:
+                        comparison["registry_evidence"] = _export_registry_pair(graph, pair_path, legs, comparison)
+                    except (KeyError, OSError, ValueError, RuntimeError) as error:
+                        comparison["registry_evidence"] = {"status": UNVERIFIED, "reason": str(error)}
+                    print("REGISTRY_EVIDENCE", json.dumps(comparison["registry_evidence"]))
                 if args.compare_hash_series:
                     snapshots = legs["snapshot"].get("hash_snapshot_installations_by_rank", [])
                     comparison["snapshot_observed"] = any(count for count in snapshots if count is not None)

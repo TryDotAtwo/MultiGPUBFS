@@ -4,9 +4,14 @@ import csv
 import ctypes as ct
 from contextlib import ExitStack, contextmanager
 import subprocess
+import threading
 
 
 MIB = 1 << 20
+
+
+class _NvmlMemory(ct.Structure):
+    _fields_ = [("total", ct.c_ulonglong), ("free", ct.c_ulonglong), ("used", ct.c_ulonglong)]
 
 
 def _nvidia_smi(*args):
@@ -94,3 +99,63 @@ class BenchmarkGpus:
             ],
             "topology": topology,
         }
+
+    @contextmanager
+    def sample_memory(self, snapshot, *, interval=0.05):
+        """Sample physical device-wide VRAM in the admitted CUDA ordinal order."""
+        nvml = ct.CDLL("libnvidia-ml.so.1")
+
+        def call(name, *args):
+            code = getattr(nvml, name)(*args)
+            if code:
+                raise RuntimeError(f"{name} failed with NVML status {code}")
+
+        def read():
+            used = []
+            for handle in handles:
+                info = _NvmlMemory()
+                call("nvmlDeviceGetMemoryInfo", handle, ct.byref(info))
+                used.append(info.used)
+            return used
+
+        call("nvmlInit_v2")
+        worker = None
+        stop = threading.Event()
+        try:
+            handles = [ct.c_void_p() for _ in snapshot["devices"]]
+            for gpu, handle in zip(snapshot["devices"], handles):
+                call("nvmlDeviceGetHandleByUUID", gpu["uuid"].encode("ascii"), ct.byref(handle))
+            baseline = read()
+            result = {
+                "scope": "device-wide NVML used bytes, including the pressure holder and CUDA contexts",
+                "sample_interval_seconds": interval,
+                "samples": 0,
+                "baseline_bytes_by_rank": baseline,
+                "peak_bytes_by_rank": [0] * len(baseline),
+                "peak_sum_bytes_in_one_poll": 0,
+            }
+
+            def sample():
+                while not stop.wait(interval):
+                    try:
+                        used = read()
+                    except RuntimeError as error:
+                        result["error"] = str(error)
+                        return
+                    if stop.is_set():
+                        return
+                    result["samples"] += 1
+                    result["peak_bytes_by_rank"] = [max(a, b) for a, b in zip(result["peak_bytes_by_rank"], used)]
+                    result["peak_sum_bytes_in_one_poll"] = max(result["peak_sum_bytes_in_one_poll"], sum(used))
+
+            worker = threading.Thread(target=sample, name="mgbfs-memory-sampling", daemon=True)
+            worker.start()
+            yield result
+        finally:
+            stop.set()
+            if worker is not None:
+                worker.join(timeout=2)
+            if worker is not None and worker.is_alive():
+                result["error"] = "NVML memory sampler did not stop"
+            else:
+                call("nvmlShutdown")

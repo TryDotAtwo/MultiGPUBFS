@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from copy import deepcopy
 import ctypes as ct
+import hashlib
 import json
 import sys
 
@@ -214,8 +215,12 @@ def test_native_metrics_are_scoped_and_do_not_invent_missing_values():
     assert bench.metrics(3, report, [part])["remote_candidate_records"] is None
 
 
-@pytest.mark.parametrize("compare_transport, compact_presets", [(None, False), ("balanced", False), ("maxmemory", False), (None, True)])
-def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, compare_transport, compact_presets):
+@pytest.mark.parametrize("compare_transport, compact_presets, registry_export", [
+    (None, False, False), ("balanced", False, False), ("maxmemory", False, False),
+    (None, True, False), (None, False, True),
+])
+def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, compare_transport, compact_presets,
+                                                     registry_export):
     from multigpubfs import launch, native_distribution
 
     calls, allocations = [], []
@@ -226,13 +231,19 @@ def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, co
 
         def snapshot(self):
             return {"devices": [
-                {"ordinal": ordinal, "uuid": f"GPU-{ordinal}", "free_bytes": 1000} for ordinal in (2, 0)
+                {"ordinal": ordinal, "uuid": f"GPU-{ordinal}", "free_bytes": 1000, "driver": "535.14"}
+                for ordinal in (2, 0)
             ], "topology": "NVLink"}
 
         @contextmanager
         def pressure(self, held):
             allocations.append(held)
             yield
+
+        @contextmanager
+        def sample_memory(self, snapshot):
+            yield {"baseline_bytes_by_rank": [10, 10], "samples": 10,
+                   "peak_bytes_by_rank": [31, 24] if len(calls) == 0 else [20, 19]}
 
     def fake_run(graph, output, **options):
         calls.append(options)
@@ -260,18 +271,67 @@ def test_paired_cli_reaches_explicit_run_graph_configs(monkeypatch, tmp_path, co
                                                   "submitted_payload_bytes": 112}
                 ranks[-1].update(remote_candidate_payload_bytes=112, remote_submitted_nccl_bytes=128,
                                  remote_submitted_nccl_metadata_bytes=16, remote_nccl_send_calls=2)
-        return dict(
+        result = dict(
             devices=options["devices"], graph_digest=graph.digest(), rank_receipts=paths,
             segment_memory_by_rank=ranks, layer_sizes=[1, 2, 2, 1], status="COMPLETE",
             reason="FRONTIER_EXHAUSTED", bfs_seconds=3, setup_seconds=0.5,
             runtime_identity={key: key for key in bench.BUILD_KEYS},
         )
+        if registry_export:
+            current = json.loads((output / "states.json").read_bytes())
+            witness = json.dumps(dict(current, schema=1, graph_digest=graph.digest(), depth=3)).encode()
+            (output / "terminal_states.json").write_bytes(witness)
+            plan = {"shards": options["shards"], "capacity": 8192, "queue_capacity": 512,
+                    "batch": 128, "state_bytes": 1}
+            for rank, values in enumerate(ranks):
+                values.update(rank=rank, owner_lanes=1, actual_queue_capacity=512,
+                              banks=2 if options["bitmap_pack4"] else 1,
+                              compact_positions=False, configured_segment_rows=1024, batch_hash_prefix_probe=False,
+                              admitted_batch=128, rows_per_bank=1024, peak_live_rows=2)
+            result.update(
+                backend="EXPERIMENTAL_PERMUTATION_BITMAP" if options["bitmap_pack4"] else "EXPERIMENTAL_SEGMENTED24",
+                states_sha256=hashlib.sha256((output / "states.json").read_bytes()).hexdigest(),
+                terminal_states_sha256=hashlib.sha256(witness).hexdigest(), size_profile_count=0,
+                runtime_identity={key: "a" * 64 for key in bench.BUILD_KEYS}, plan=plan, rank_plans=[plan, plan],
+            )
+            (output / "report.json").write_text(json.dumps(result))
+            (output / "launch.json").write_text(json.dumps({
+                "devices": options["devices"], "graph_digest": graph.digest(), "additional_reserve_bytes": 678,
+                "inventory": [{"device": device, "compute_major": 8, "compute_minor": 6, "sm_count": 28,
+                               "total_bytes": 12 << 30, "free_bytes": 123 + device} for device in options["devices"]],
+            }))
+        return result
 
     monkeypatch.setattr(bench, "BenchmarkGpus", FakeGpuProbe)
     monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("native", {
         "MGBFS_SEGMENT_TEST_HASH_BITS": "1",
     }))
     monkeypatch.setattr(launch, "run_graph", fake_run)
+    if registry_export:
+        from multigpubfs.profile_registry import read_profile_registry, verify_publication
+
+        monkeypatch.setattr(launch, "_native_key_info", lambda *args: {"graph_profile_terminal_evidence_v1": True})
+        monkeypatch.setattr(sys, "argv", [
+            "benchmark", "--output", str(tmp_path / "run"), "--n", "3", "--devices", "2,0",
+            "--registry-evidence",
+        ])
+        bench.main()
+        assert len(calls) == 2 and allocations == [0]
+        assert all(call["_native_env"]["MGBFS_PROFILE_TERMINAL_EVIDENCE_DEPTH"] == "3" for call in calls)
+        pair = tmp_path / "run" / "pair-1"
+        summary = json.loads((pair / "comparison.json").read_text())
+        exported = summary["registry_evidence"]
+        assert exported["status"] == "EXPORTED"
+        catalog = pair / exported["catalog"]
+        verify_publication(catalog, pair / "profile" / "evidence")
+        entry = read_profile_registry(catalog, sha256=exported["catalog_sha256"])["entries"][0]
+        assert entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+        assert entry["hardware"]["driver_versions"] == ["535.14", "535.14"]
+        balanced = entry["profiles"]["balanced"]
+        assert balanced["peak_vram_bytes_by_rank"] == [31, 24]
+        assert balanced["rank_geometry"][0]["free_bytes_at_admission"] == 125
+        assert balanced["rank_geometry"][1]["additional_reserve_bytes"] == 678
+        return
     extra = []
     if compare_transport:
         extra = ["--packet-control-addr", "127.0.0.1:29761", "--transport-recipe", compare_transport]
