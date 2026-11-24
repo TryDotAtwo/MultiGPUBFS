@@ -147,6 +147,16 @@ struct MgbfsHashSeriesDirectory {
 static_assert(sizeof(MgbfsHashSeriesView)==40,"hash snapshot view ABI");
 static_assert(sizeof(MgbfsHashSeriesDirectory)==128,"hash snapshot directory ABI");
 
+// Join one left SoA interval with the exact right layer on the same owner.
+// Each left row i produces hits[i-begin]; a miss has found=0. The caller
+// clears the device error before launching. Any nonzero error invalidates the tile.
+extern "C" int mgbfs_hash_batch_join_window_v1(uint32_t state_bytes, uint32_t elements,
+ const void* left_states, uint64_t left_stride, uint64_t begin, uint64_t end, uint64_t seed,
+ uint32_t hash_bits, uint32_t expected_bank, const MgbfsBatchHashSegment* segments,
+ uint32_t segment_count, const MgbfsBatchHashRun* runs, const uint32_t* run_count,
+ uint32_t run_capacity, MgbfsHashPathHitV1* hits, uint32_t hit_capacity, uint32_t* error,
+ void* stream, const MgbfsHashSeriesDirectory* view, uint32_t max_series);
+
 // Resolve a tile of the original raw SoA shard span after all of its accept
 // and spill passes. Each original record gives one result in input order.
 // Keep the span and the committed one-layer catalog alive until the stream

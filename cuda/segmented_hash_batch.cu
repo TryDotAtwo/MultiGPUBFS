@@ -297,6 +297,16 @@ template<class T> struct PathFrontierRow {
 };
 
 template<class T>
+__device__ MgbfsHashPathHitV1 find_frontier_row(uint32_t elements, const T* row,
+ uint64_t stride, uint64_t seed, uint32_t hash_bits, const MgbfsBatchHashSegment* segments,
+ uint32_t segment_count, const MgbfsBatchHashRun* runs, uint32_t run_count, uint32_t* error,
+ const MgbfsHashSeriesDirectory& directory) {
+ const PathFrontierRow<T> query{elements, row, stride};
+ return find_path_state<T>(query, query.hash(seed, hash_bits), segments, segment_count,
+  runs, run_count, error, directory);
+}
+
+template<class T>
 __global__ void meet_path_frontier(uint32_t elements, const T* source_states, uint64_t source_stride,
  uint64_t begin, uint64_t end, uint32_t source_range, uint64_t seed, uint32_t hash_bits,
  const MgbfsBatchHashSegment* segments, uint32_t segment_count, const MgbfsBatchHashRun* runs,
@@ -311,9 +321,8 @@ __global__ void meet_path_frontier(uint32_t elements, const T* source_states, ui
  const uint64_t step = uint64_t(blockDim.x) * gridDim.x;
  for (uint64_t i = begin + uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; i < end; i += step) {
   if (found.load(cuda::memory_order_relaxed)) return;
-  const PathFrontierRow<T> query{elements, source_states + i, source_stride};
-  const auto opposite = find_path_state<T>(query, query.hash(seed, hash_bits), segments, segment_count,
-   runs, nr, error, directory);
+  const auto opposite = find_frontier_row(elements, source_states + i, source_stride, seed,
+   hash_bits, segments, segment_count, runs, nr, error, directory);
   if (opposite.found) {
    uint32_t unclaimed = 0;
    if (found.compare_exchange_strong(unclaimed, 1, cuda::memory_order_relaxed)) {
@@ -326,6 +335,30 @@ __global__ void meet_path_frontier(uint32_t elements, const T* source_states, ui
    }
    return;
   }
+ }
+}
+
+template<class T>
+__global__ void join_window_frontier(uint32_t elements, const T* left_states, uint64_t left_stride,
+ uint64_t begin, uint64_t end, uint64_t seed, uint32_t hash_bits, uint32_t expected_bank,
+ const MgbfsBatchHashSegment* segments, uint32_t segment_count, const MgbfsBatchHashRun* runs,
+ const uint32_t* run_count, uint32_t run_capacity, MgbfsHashPathHitV1* hits, uint32_t* error,
+ MgbfsHashSeriesDirectory directory, uint32_t max_series) {
+ const uint32_t nr = *run_count;
+ const uint32_t invalid = lookup_catalog_error(nr, run_capacity, directory, max_series);
+ if (invalid && !blockIdx.x && !threadIdx.x) atomicOr(error, invalid);
+ const uint64_t step = uint64_t(blockDim.x) * gridDim.x;
+ for (uint64_t i = begin + uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; i < end; i += step) {
+  MgbfsHashPathHitV1 hit{};
+  if (!invalid) {
+   hit = find_frontier_row(elements, left_states + i, left_stride, seed, hash_bits,
+    segments, segment_count, runs, nr, error, directory);
+   if (hit.found && hit.bank != expected_bank) {
+    atomicOr(error, uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+    hit = {};
+   }
+  }
+  hits[i - begin] = hit;
  }
 }
 
@@ -582,6 +615,16 @@ extern "C" int mgbfs_hash_batch_find_targets_v1(uint32_t state_bytes,uint32_t el
  return int(cudaGetLastError());
 }
 
+static bool valid_path_frontier_span(uint32_t state_bytes, uint32_t elements, uint32_t hash_bits,
+ uint64_t stride, uint64_t begin, uint64_t end) {
+ constexpr uint64_t physical_rows = uint64_t{1} << 32;
+ if ((state_bytes != 1 && state_bytes != 8) || !elements || hash_bits > 64 ||
+     begin > end || end > stride || end > physical_rows) return false;
+ if (begin == end) return true;
+ const uint64_t max_items = std::numeric_limits<size_t>::max() / state_bytes;
+ return end <= max_items && uint64_t(elements - 1) <= (max_items - end) / stride;
+}
+
 // One cleared hit may be shared by ordered intervals, each with a caller's range tag.
 extern "C" int mgbfs_hash_batch_meet_frontier_v1(uint32_t state_bytes, uint32_t elements,
  const void* source_states, uint64_t source_stride, uint64_t begin, uint64_t end, uint32_t source_range,
@@ -589,13 +632,9 @@ extern "C" int mgbfs_hash_batch_meet_frontier_v1(uint32_t state_bytes, uint32_t 
  const MgbfsBatchHashRun* runs, const uint32_t* run_count, uint32_t run_capacity,
  MgbfsHashPathMeetingV1* hit, uint32_t* error, void* stream, const MgbfsHashSeriesDirectory* view,
  uint32_t max_series) {
- constexpr uint64_t physical_rows = uint64_t{1} << 32;
- if ((state_bytes != 1 && state_bytes != 8) || !elements || hash_bits > 64 || !max_series ||
-     begin > end || end > source_stride || end > physical_rows) return int(cudaErrorInvalidValue);
+ if (!max_series || !valid_path_frontier_span(state_bytes, elements, hash_bits, source_stride,
+     begin, end)) return int(cudaErrorInvalidValue);
  if (begin == end) return int(cudaSuccess);
- const uint64_t max_items = std::numeric_limits<size_t>::max() / state_bytes;
- if (end > max_items || uint64_t(elements - 1) > (max_items - end) / source_stride)
-  return int(cudaErrorInvalidValue);
  const MgbfsHashSeriesDirectory directory = view ? *view : MgbfsHashSeriesDirectory{};
  if (!source_states || !segments || !segment_count || !runs || !run_count || !run_capacity ||
      !hit || !error || !valid_directory(directory)) return int(cudaErrorInvalidValue);
@@ -610,6 +649,33 @@ extern "C" int mgbfs_hash_batch_meet_frontier_v1(uint32_t state_bytes, uint32_t 
   meet_path_frontier<<<blocks, 256, 0, st>>>(elements, static_cast<const int64_t*>(source_states),
    source_stride, begin, end, source_range, seed, hash_bits, segments, segment_count, runs, run_count,
    run_capacity, hit, error, directory, max_series);
+ return int(cudaGetLastError());
+}
+
+extern "C" int mgbfs_hash_batch_join_window_v1(uint32_t state_bytes, uint32_t elements,
+ const void* left_states, uint64_t left_stride, uint64_t begin, uint64_t end, uint64_t seed,
+ uint32_t hash_bits, uint32_t expected_bank, const MgbfsBatchHashSegment* segments,
+ uint32_t segment_count, const MgbfsBatchHashRun* runs, const uint32_t* run_count,
+ uint32_t run_capacity, MgbfsHashPathHitV1* hits, uint32_t hit_capacity, uint32_t* error,
+ void* stream, const MgbfsHashSeriesDirectory* view, uint32_t max_series) {
+ if (!max_series || expected_bank >= 3 ||
+     !valid_path_frontier_span(state_bytes, elements, hash_bits, left_stride, begin, end) ||
+     end - begin > hit_capacity) return int(cudaErrorInvalidValue);
+ if (begin == end) return int(cudaSuccess);
+ const MgbfsHashSeriesDirectory directory = view ? *view : MgbfsHashSeriesDirectory{};
+ if (!left_states || !segments || !segment_count || !runs || !run_count || !run_capacity ||
+     !hits || !error || !valid_directory(directory)) return int(cudaErrorInvalidValue);
+ const auto st = static_cast<cudaStream_t>(stream);
+ const uint32_t requested = (end - begin + 255) / 256;
+ const uint32_t blocks = requested < 65535 ? requested : 65535;
+ if (state_bytes == 1)
+  join_window_frontier<<<blocks, 256, 0, st>>>(elements, static_cast<const uint8_t*>(left_states),
+   left_stride, begin, end, seed, hash_bits, expected_bank, segments, segment_count, runs,
+   run_count, run_capacity, hits, error, directory, max_series);
+ else
+  join_window_frontier<<<blocks, 256, 0, st>>>(elements, static_cast<const int64_t*>(left_states),
+   left_stride, begin, end, seed, hash_bits, expected_bank, segments, segment_count, runs,
+   run_count, run_capacity, hits, error, directory, max_series);
  return int(cudaGetLastError());
 }
 
