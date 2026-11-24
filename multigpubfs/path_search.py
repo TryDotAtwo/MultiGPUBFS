@@ -405,7 +405,9 @@ def _record_native_nearest(result, graph, targets, check, add, report):
     if workspace is not None:
         report["native_workspace"] = workspace
     if result.get("native_storage") == "SEGMENTED_BATCH_HASH":
-        report.update(native_storage=result["native_storage"], lineage_storage="native_segmented_parents")
+        report["native_storage"] = result["native_storage"]
+        if report["goal_mode"] == "nearest":
+            report["lineage_storage"] = "native_segmented_parents"
         for field in ("native_exchange", "native_state_bytes", "native_search_depths"):
             if field in result:
                 report[field] = result[field]
