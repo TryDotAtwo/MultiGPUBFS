@@ -25,11 +25,6 @@ struct PathOutput {
  MgbfsHashPathParentV1* parents;
  uint32_t source_world,generators;
 };
-struct MgbfsHashPathMeetingV1 {
- uint32_t source_range, source_row, opposite_segment, opposite_bank, opposite_row, found;
-};
-static_assert(sizeof(MgbfsHashPathMeetingV1) == 24 && alignof(MgbfsHashPathMeetingV1) == 4,
- "batch hash frontier meeting ABI v1");
 bool region(size_t& c,size_t n,size_t* off){
  if(c>std::numeric_limits<size_t>::max()-(kAlign-1))return false;
  c=(c+kAlign-1)&~(kAlign-1);*off=c;

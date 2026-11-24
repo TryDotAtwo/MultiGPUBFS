@@ -30,6 +30,12 @@ struct MgbfsHashPathHitV1 {
 };
 static_assert(sizeof(MgbfsHashPathHitV1)==16,"batch hash path hit ABI v1");
 
+struct MgbfsHashPathMeetingV1 {
+ uint32_t source_range, source_row, opposite_segment, opposite_bank, opposite_row, found;
+};
+static_assert(sizeof(MgbfsHashPathMeetingV1) == 24 && alignof(MgbfsHashPathMeetingV1) == 4,
+ "batch hash frontier meeting ABI v1");
+
 // Logical references for an index spanning physical extents. The descriptor
 // ID resolves both segment and bank. A directory must retain that ID until
 // all its series and in-flight readers have dropped the reference.
