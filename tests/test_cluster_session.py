@@ -41,6 +41,34 @@ def test_cluster_session_does_not_allocate_a_second_local_pool(monkeypatch):
         assert generic_session._active is None
 
 
+@pytest.mark.parametrize("override,expected", [
+    ({}, "127.0.0.1:29504"),
+    ({"MGBFS_SEGMENT_PACKET_CONTROL_ADDR": "192.0.2.1:41000"}, "192.0.2.1:41000"),
+])
+def test_cluster_segmented_window_uses_its_assigned_packet_port(tmp_path, monkeypatch, override, expected):
+    from multigpubfs import launch, native_distribution
+
+    monkeypatch.setenv("MGBFS_SEGMENT_WINDOW_V1", "1")
+    monkeypatch.setenv("MGBFS_NATIVE_DISTRIBUTED_NEAREST", "1")
+    monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("mgbfs", override))
+    monkeypatch.setattr(launch, "_require_memory_backend", lambda *_: {
+        "graph_path_segmented_nearest_v1": True,
+        "graph_path_segmented_window_v1": True,
+        "segmented_network_agreement_v1": True,
+    })
+    monkeypatch.setattr(Cluster, "_dispatch", lambda self, job, output: job)
+    placement = Placement.from_environment({
+        "RANK": "0", "LOCAL_RANK": "0", "WORLD_SIZE": "2",
+        "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "29500",
+    })
+    cluster = Cluster(placement, None, tmp_path)
+    graph = GraphDefinition.permutation([[1, 0]], [0, 1])
+    job = cluster.solve(open_session(gpus=2), graph, tmp_path / "routes", {
+        "goal_mode": "window", "targets": [[1, 0]],
+    })
+    assert job["compact_path_packet_address"] == expected
+
+
 def test_external_planner_uses_live_communicator_reserve():
     from multigpubfs.distributed_launch import _match_resident_reserve
 

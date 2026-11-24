@@ -140,6 +140,9 @@ class Cluster:
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         return 0 if visible is not None and len(visible.split(",")) == 1 else self.placement.local_rank
 
+    def _packet_address(self):
+        return f"{socket.gethostbyname(self.placement.host)}:{self.placement.packet_port}"
+
     def _run(self, job, output):
         from .graph_definition import GraphDefinition
         graph = GraphDefinition.from_dict(job["graph"])
@@ -247,12 +250,9 @@ class Cluster:
             default_backend="segmented24" if network else "legacy",
         )
         if network:
-            def packet_address():
-                return f"{socket.gethostbyname(self.placement.host)}:{self.placement.packet_port}"
-
             env = _traversal_exchange_env(
                 env, capabilities, world, transport, preset, autotune,
-                packet_address if self.placement.packet_port is not None else None, external=True,
+                self._packet_address if self.placement.packet_port is not None else None, external=True,
             )
         report = run_graph(graph, output, device=self._local_device(),
                            executable=native, backend="generic", memory_backend=memory.backend,
@@ -461,6 +461,8 @@ class Cluster:
                 raise RuntimeError(f"NATIVE_PATH_{mode_name}_UNAVAILABLE_FOR_QUERY")
             native, env = native_runtime(executable)
             compact_address = env.get(_PACKET_ADDR)
+            if compact_address is None and self.placement.packet_port is not None:
+                compact_address = self._packet_address()
             if not compact_address:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
             capabilities = _require_memory_backend(native, env, "segmented24")
