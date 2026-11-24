@@ -22,8 +22,12 @@ class NativePlanningRejections(unittest.TestCase):
   self.assertEqual(json.dumps(job.response,sort_keys=True),original);self.assertEqual(job.returncode,1)
   self.assertEqual(json.loads((self.root/'job-00000001.json').read_text())['command'],'inventory')
  def test_identical_error_from_bfs_job_remains_fatal(self):
-  w=self.worker(failed_job(command='graph-rank'))
-  with self.assertRaisesRegex(RuntimeError,'GENERIC_SESSION_FAILED_NO_RESTART'):w.submit('inventory',[],{})
+  for error in (RESOURCE,'GENERIC_DISTRIBUTED_HEADROOM'):
+   w=self.worker(failed_job(command='graph-rank',error=error))
+   with self.assertRaisesRegex(RuntimeError,'GENERIC_SESSION_FAILED_NO_RESTART'):w.submit('inventory',[],{})
+ def test_headroom_refusal_accepts_the_next_request(self):
+  w=self.worker(failed_job(command='graph-plan',error='GENERIC_DISTRIBUTED_HEADROOM'))
+  self.assertEqual(w.submit('inventory',[],{}).pid,1001)
  def test_unknown_or_invalid_plan_response_is_not_benign(self):
   for job in [failed_job(error='GENERIC_CUDA_700'),failed_job(sequence=99),failed_job(schema=2),failed_job(command=None)]:
    with self.subTest(response=job.response,command=job.command),self.assertRaisesRegex(RuntimeError,'GENERIC_SESSION_FAILED_NO_RESTART'):self.worker(job).submit('inventory',[],{})

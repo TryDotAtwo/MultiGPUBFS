@@ -11,7 +11,12 @@ def _expected_plan_rejection(job):
          and type(response.get('schema')) is int and response['schema']==1
          and type(response.get('sequence')) is int and response['sequence']==sequence
          and response.get('ok') is False
-         and response.get('error') in ('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION','REQUESTED_CAPACITY_EXCEEDS_ADMISSION','GEMM_BATCH_EXCEEDS_ADMISSION'))
+         and response.get('error') in ('REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION',
+                                      'REQUESTED_CAPACITY_EXCEEDS_ADMISSION',
+                                      'GEMM_BATCH_EXCEEDS_ADMISSION',
+                                      'GENERIC_DISTRIBUTED_HEADROOM',
+                                      'GENERIC_DISTRIBUTED_NO_CAPACITY',
+                                      'NATIVE_PATH_WORKSPACE_HEADROOM'))
 
 def _job_failed(job):
  if job is None or job.returncode in (None,0):return False

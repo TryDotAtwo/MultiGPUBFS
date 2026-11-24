@@ -29,7 +29,9 @@ pub fn expected_plan_rejection(command: Option<&str>, error: &str, native_failed
     !native_failed
         && matches!(command, Some("graph-plan") | Some("graph-local-plan"))
         && matches!(error, "REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION"
-            | "REQUESTED_CAPACITY_EXCEEDS_ADMISSION" | "GEMM_BATCH_EXCEEDS_ADMISSION")
+            | "REQUESTED_CAPACITY_EXCEEDS_ADMISSION" | "GEMM_BATCH_EXCEEDS_ADMISSION"
+            | "GENERIC_DISTRIBUTED_HEADROOM" | "GENERIC_DISTRIBUTED_NO_CAPACITY"
+            | "NATIVE_PATH_WORKSPACE_HEADROOM")
 }
 
 #[cfg(test)]
@@ -46,7 +48,7 @@ mod tests {
     #[test]
     fn expected_resource_plan_refusals_keep_a_healthy_session() {
         for command in ["graph-plan", "graph-local-plan"] {
-            for error in ["REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION", "REQUESTED_CAPACITY_EXCEEDS_ADMISSION", "GEMM_BATCH_EXCEEDS_ADMISSION"] {
+            for error in ["REQUESTED_CAPACITY_EXCEEDS_SORTED_ADMISSION", "REQUESTED_CAPACITY_EXCEEDS_ADMISSION", "GEMM_BATCH_EXCEEDS_ADMISSION", "GENERIC_DISTRIBUTED_HEADROOM", "GENERIC_DISTRIBUTED_NO_CAPACITY", "NATIVE_PATH_WORKSPACE_HEADROOM"] {
                 assert!(expected_plan_rejection(Some(command), error, false), "{command}: {error}");
             }
         }
