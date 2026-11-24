@@ -36,6 +36,12 @@ struct MgbfsHashPathMeetingV1 {
 static_assert(sizeof(MgbfsHashPathMeetingV1) == 24 && alignof(MgbfsHashPathMeetingV1) == 4,
  "batch hash frontier meeting ABI v1");
 
+struct MgbfsHashWindowEdgeV1 {
+ uint64_t parent;
+ uint32_t segment,bank,row,source,generator,found;
+};
+static_assert(sizeof(MgbfsHashWindowEdgeV1)==32,"batch hash window edge ABI v1");
+
 // Logical references for an index spanning physical extents. The descriptor
 // ID resolves both segment and bank. A directory must retain that ID until
 // all its series and in-flight readers have dropped the reference.
@@ -140,6 +146,19 @@ struct MgbfsHashSeriesDirectory {
 
 static_assert(sizeof(MgbfsHashSeriesView)==40,"hash snapshot view ABI");
 static_assert(sizeof(MgbfsHashSeriesDirectory)==128,"hash snapshot directory ABI");
+
+// Resolve a tile of the original raw SoA shard span after all of its accept
+// and spill passes. Each original record gives one result in input order.
+// Keep the span and the committed one-layer catalog alive until the stream
+// drains. A nonzero device error invalidates the entire output tile.
+struct GenericRouteRecord;
+extern "C" int mgbfs_hash_batch_resolve_window_v1(uint32_t state_bytes, uint32_t elements,
+ const void* states, const GenericRouteRecord* records, uint32_t rows, uint32_t begin,
+ uint32_t count, uint32_t source, uint32_t shard, uint32_t generators, uint32_t expected_bank,
+ const MgbfsBatchHashSegment* segments, uint32_t segment_count, const MgbfsBatchHashRun* runs,
+ const uint32_t* run_count, uint32_t run_capacity, MgbfsHashWindowEdgeV1* edges,
+ uint32_t output_capacity, uint32_t* error, void* stream, const MgbfsHashSeriesDirectory* view,
+ uint32_t max_series);
 
 // Each series uses the same high-bit prefix directory. The terminal entry
 // is the row count, avoiding overflow for the highest hash prefix.

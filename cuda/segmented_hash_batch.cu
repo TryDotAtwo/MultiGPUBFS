@@ -329,6 +329,37 @@ __global__ void meet_path_frontier(uint32_t elements, const T* source_states, ui
  }
 }
 
+template<class T>
+__global__ void resolve_window_edges(uint32_t elements, const T* states,
+ const GenericRouteRecord* records, uint32_t rows, uint32_t begin, uint32_t count,
+ uint32_t source, uint32_t shard, uint32_t generators, uint32_t expected_bank,
+ const MgbfsBatchHashSegment* segments, uint32_t segment_count, const MgbfsBatchHashRun* runs,
+ const uint32_t* run_count, uint32_t run_capacity, MgbfsHashWindowEdgeV1* edges, uint32_t* error,
+ MgbfsHashSeriesDirectory directory, uint32_t max_series) {
+ const uint32_t runs_live = *run_count;
+ const uint32_t invalid = lookup_catalog_error(runs_live, run_capacity, directory, max_series);
+ if (invalid && !blockIdx.x && !threadIdx.x) atomicOr(error, invalid);
+ const uint64_t step = uint64_t(blockDim.x) * gridDim.x;
+ for (uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; i < count; i += step) {
+  edges[i] = {};
+  if (invalid) continue;
+  const uint64_t row = uint64_t(begin) + i;
+  const auto record = records[row];
+  if (record.source != source || record.shard != shard || record.generator >= generators) {
+   atomicOr(error, uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+   continue;
+  }
+  const PathFrontierRow<T> query{elements, states + row, rows};
+  const auto child = find_path_state<T>(query, record.hash, segments, segment_count, runs,
+   runs_live, error, directory);
+  if (!child.found || child.bank != expected_bank) {
+   atomicOr(error, uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+   continue;
+  }
+  edges[i] = {record.parent, child.segment, child.bank, child.row, record.source, record.generator, 1};
+ }
+}
+
 template<class T,class Action>
 __global__ void unique_and_probe_prefix(GenericSortedOriginLess<Action> order,const uint32_t* sorted,uint32_t n,
  const MgbfsBatchHashSegment* segments,uint32_t segment_count,const MgbfsBatchHashRun* runs,
@@ -579,6 +610,35 @@ extern "C" int mgbfs_hash_batch_meet_frontier_v1(uint32_t state_bytes, uint32_t 
   meet_path_frontier<<<blocks, 256, 0, st>>>(elements, static_cast<const int64_t*>(source_states),
    source_stride, begin, end, source_range, seed, hash_bits, segments, segment_count, runs, run_count,
    run_capacity, hit, error, directory, max_series);
+ return int(cudaGetLastError());
+}
+
+extern "C" int mgbfs_hash_batch_resolve_window_v1(uint32_t state_bytes, uint32_t elements,
+ const void* states, const GenericRouteRecord* records, uint32_t rows, uint32_t begin,
+ uint32_t count, uint32_t source, uint32_t shard, uint32_t generators, uint32_t expected_bank,
+ const MgbfsBatchHashSegment* segments, uint32_t segment_count, const MgbfsBatchHashRun* runs,
+ const uint32_t* run_count, uint32_t run_capacity, MgbfsHashWindowEdgeV1* edges,
+ uint32_t output_capacity, uint32_t* error, void* stream, const MgbfsHashSeriesDirectory* view,
+ uint32_t max_series) {
+ if ((state_bytes != 1 && state_bytes != 8) || !elements || !generators || source >= 128 ||
+     shard >= 4096 || expected_bank >= 3 || !count || count > output_capacity ||
+     begin > rows || count > rows - begin ||
+     uint64_t(rows) > std::numeric_limits<size_t>::max() / state_bytes / elements ||
+     !states || !records || !segments || !segment_count || !runs || !run_count || !run_capacity ||
+     !edges || !error || !max_series) return int(cudaErrorInvalidValue);
+ const MgbfsHashSeriesDirectory directory = view ? *view : MgbfsHashSeriesDirectory{};
+ if (!valid_directory(directory)) return int(cudaErrorInvalidValue);
+ const auto st = static_cast<cudaStream_t>(stream);
+ const uint32_t requested = (uint64_t(count) + 255) / 256;
+ const uint32_t blocks = requested < 65535 ? requested : 65535;
+ if (state_bytes == 1)
+  resolve_window_edges<<<blocks, 256, 0, st>>>(elements, static_cast<const uint8_t*>(states),
+   records, rows, begin, count, source, shard, generators, expected_bank, segments, segment_count,
+   runs, run_count, run_capacity, edges, error, directory, max_series);
+ else
+  resolve_window_edges<<<blocks, 256, 0, st>>>(elements, static_cast<const int64_t*>(states),
+   records, rows, begin, count, source, shard, generators, expected_bank, segments, segment_count,
+   runs, run_count, run_capacity, edges, error, directory, max_series);
  return int(cudaGetLastError());
 }
 
