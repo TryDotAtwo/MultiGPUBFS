@@ -1,7 +1,7 @@
 """Single-host native launch. CPU control never generates or deduplicates states."""
 import hashlib,json,os,secrets,shutil,socket,subprocess,tempfile,time,signal
 from pathlib import Path
-from .process_control import query as native_query, run as native_run
+from .process_control import check_graph_admission, query as native_query, run as native_run
 from .graph_definition import _normalize_graph
 from .memory_admission import bitmap_pack4_bits, bounded_hash_available
 from .native_distribution import native_runtime
@@ -477,7 +477,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   if capacity is not None:command.append(str(capacity))
   if _batch is None and profile and profile.get('batch_fraction',1.0)!=1.0:
    initial=native_query(command,capture_output=True,text=True,env=native_env)
-   if initial.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+initial.stderr[-4000:])
+   check_graph_admission(initial)
    _batch=max(1,int(json.loads(initial.stdout)['plan']['batch']*profile['batch_fraction']))
   if _batch is not None:
    if capacity is None:command.append('auto')
@@ -486,7 +486,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   accepted=take_launch_admission(graph,native,native_env,devices,capacity,shards,_batch) if profile is not None and _profile_layers is None else None
   probe=subprocess.CompletedProcess(command,0,json.dumps(accepted),'') if accepted is not None else native_query(command,capture_output=True,text=True,env=native_env)
   if profile is not None:profile['launch_admission_reused']=accepted is not None
-  if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
+  check_graph_admission(probe)
   admission=_rank_launch_config(
    json.loads(probe.stdout),digest,bitmap=memory_backend=='permutation_bitmap',depth=_profile_layers,
    path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window)
@@ -610,7 +610,7 @@ def _run_specialized_admitted(graph,output,native,env,devices,capacity,max_secon
  with tempfile.TemporaryDirectory(prefix='mgbfs-specialized-admit-',dir=output.parent) as temporary:
   definition=Path(temporary)/'definition.json';definition.write_text(graph.to_json());selection='auto' if devices is None else ','.join(map(str,devices))
   probe=native_query([native,'graph-info',str(definition),selection,'1'],capture_output=True,text=True,env=env)
-  if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
+  check_graph_admission(probe)
   inventory=json.loads(probe.stdout)
   if inventory['graph_digest']!=graph.digest():raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
   selected=inventory['devices'];mode='HASH' if backend=='shard_ab_hash' else 'SORT_MERGE'

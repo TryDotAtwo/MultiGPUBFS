@@ -1,6 +1,7 @@
 """Resident generic ranks. CPU handles only job boundaries, never BFS states."""
 import contextlib,json,os,subprocess,tempfile,time
 from pathlib import Path
+from .process_control import NativeGraphAdmissionError
 _active=None
 _NEAREST_CANCEL_GRACE_SECONDS=5
 
@@ -260,12 +261,17 @@ def query(command,env,seconds,kwargs):
      local=job.response['result'];inventory[i]['free_bytes']=local['free_bytes'];inventory[i]['local_sorted_plan']=local['plan']
    # A recognized validation refusal does not poison live ranks. Finish every
    # submitted plan under the existing deadline before its caller continues.
-   if plan_rejections:raise RuntimeError('GENERIC_SESSION_LOCAL_PLAN_FAILED '+repr(plan_rejections[0]))
+   if plan_rejections:
+    refusal=plan_rejections[0]
+    raise NativeGraphAdmissionError('GENERIC_SESSION_LOCAL_PLAN_FAILED '+repr(refusal),refusal['error'])
    target=str(min(x['local_sorted_plan']['batch'] for x in inventory))
  with tempfile.TemporaryDirectory(prefix='mgbfs-live-inventory-') as d:
   path=Path(d)/'inventory.json';path.write_text(json.dumps(inventory))
   job=_active.workers[0].submit('graph-plan',[command[2],str(path),*command[4:]],env)
-  if job.wait(max(.001,seconds-(time.monotonic()-started))):raise RuntimeError('GENERIC_SESSION_PLAN_FAILED '+repr(job.response))
+  if job.wait(max(.001,seconds-(time.monotonic()-started))):
+   detail='GENERIC_SESSION_PLAN_FAILED '+repr(job.response)
+   if _expected_plan_rejection(job):raise NativeGraphAdmissionError(detail,job.response['error'])
+   raise RuntimeError(detail)
   return subprocess.CompletedProcess(command,0,json.dumps(job.response['result']), '')
 
 def launch_group_selection(native,devices,env):

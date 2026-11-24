@@ -1,5 +1,24 @@
 """Bounded cold native queries; never a BFS completion or restart signal."""
-import math,os,subprocess
+import json,math,os,subprocess
+
+class NativeGraphAdmissionError(RuntimeError):
+ def __init__(self, message, native_code=None):
+  super().__init__(message)
+  self.native_code=native_code
+
+def check_graph_admission(process):
+ if not process.returncode:return
+ # The standalone CLI writes the terminal record to stderr. Accept the
+ # equivalent structured response from wrappers that capture it in stdout.
+ stderr=(process.stderr or '')[-4000:]
+ stdout=(process.stdout or '')[-4000:]
+ for line in reversed((stdout+'\n'+stderr).splitlines()):
+  if not line.startswith('{'):continue
+  try:record=json.loads(line)
+  except ValueError:continue
+  if isinstance(record,dict) and record.get('status')=='ERROR' and isinstance(record.get('error'),str):
+   raise NativeGraphAdmissionError('NATIVE_GRAPH_ADMISSION_FAILED: '+record['error'],record['error'])
+ raise NativeGraphAdmissionError('NATIVE_GRAPH_ADMISSION_FAILED: '+(stderr or stdout))
 
 def startup_timeout(env=None):
  try:seconds=float((env if env is not None else os.environ).get('MGBFS_NATIVE_QUERY_SECONDS','60'))

@@ -13,8 +13,13 @@ import subprocess
 import sys
 import time
 
+from .process_control import NativeGraphAdmissionError
+from .metadata_io import read_json
+
 MiB = 1 << 20
 _MAX_PREFIX_RECEIPTS = 32
+_COLD_RESERVE_FLOOR = 2 << 30
+_PREFIX_HEADROOM = 'GENERIC_DISTRIBUTED_HEADROOM'
 POLICY_KEYS = ('NCCL_NET_GDR_LEVEL', 'NCCL_IB_DISABLE', 'NCCL_P2P_DISABLE',
                'NCCL_SHM_DISABLE', 'NCCL_NET', 'NCCL_SOCKET_IFNAME')
 
@@ -35,7 +40,7 @@ def reserve_bytes(ranks, explicit=None):
     measured = max(measurements)
     if measured < 0:
         raise ValueError('NCCL_PREFLIGHT_MEMORY_RANGE')
-    result = max(2 << 30, measured + (512 << 20))
+    result = max(_COLD_RESERVE_FLOOR, measured + (512 << 20))
     if explicit is not None:
         if int(explicit) < 0:
             raise ValueError('GENERIC_VRAM_RESERVE_BYTES')
@@ -132,9 +137,36 @@ def _run_graph_prefix(root):
     backend = request['memory_backend']
     if backend not in ('legacy', 'segmented24', 'permutation_bitmap'):
         raise ValueError('PREFLIGHT_MEMORY_BACKEND')
-    return run_graph(graph, root / 'prefix', devices=request['devices'], capacity=20000,
-                     max_seconds=20, shards=1, autotune=False, backend='generic',
-                     memory_backend=backend, _profile_layers=4)
+    try:
+        return run_graph(graph, root / 'prefix', devices=request['devices'], capacity=20000,
+                         max_seconds=20, shards=1, autotune=False, backend='generic',
+                         memory_backend=backend, _profile_layers=4)
+    except NativeGraphAdmissionError as error:
+        if error.native_code == _PREFIX_HEADROOM:
+            _write(root / 'prefix-admission.json', {'native_code': error.native_code})
+        raise
+
+
+def _check_prefix_exit(attempt, code):
+    if not code:
+        return
+    rejection = read_json(attempt / 'prefix-admission.json')
+    if isinstance(rejection, dict) and rejection.get('native_code') == _PREFIX_HEADROOM:
+        raise NativeGraphAdmissionError('NCCL_PREFLIGHT_BFS_PREFIX_FAILED', _PREFIX_HEADROOM)
+    raise RuntimeError('NCCL_PREFLIGHT_BFS_PREFIX_FAILED')
+
+
+def _stop_at_mandatory_reserve(root, env, reserve, failure, reports):
+    floor = max(_COLD_RESERVE_FLOOR, int(env.get('MGBFS_GENERIC_VRAM_RESERVE_BYTES', '0')))
+    if reserve != floor:
+        return
+    # Each alternative would still have to leave this much free memory.
+    detail = dict(failure, stage='BFS_PREFIX_ADMISSION', transport_status='VERIFIED',
+                  reserve_bytes=reserve, native_code=_PREFIX_HEADROOM)
+    _write(root / 'report.json', {'status':'FAILED', 'failure':detail, 'attempts':reports})
+    raise NativeGraphAdmissionError(
+        f'NCCL_PREFLIGHT_BFS_PREFIX_HEADROOM: reserve_bytes={reserve}; evidence={root}',
+        _PREFIX_HEADROOM)
 
 def _cached_prefix(root, native, devices, env, patch, report, graph, memory_backend):
     # Reuse the already measured all-rank transport and NCCL reserve, but
@@ -169,6 +201,10 @@ def _cached_prefix(root, native, devices, env, patch, report, graph, memory_back
             _write(attempt / 'prefix-execution.json', {'mode': 'resident', 'status': 'VERIFIED'})
             return {k: rehearsal.get(k) for k in ('status', 'reason', 'layer_sizes')}
         except BaseException as error:
+            if isinstance(error, NativeGraphAdmissionError) and error.native_code == _PREFIX_HEADROOM:
+                _write(attempt / 'prefix-execution.json', {'mode':'resident', 'status':'REJECTED',
+                                                          'native_code':error.native_code})
+                raise
             # Only a bounded diagnostic prefix has run at this point. A bad
             # resident job may poison its CUDA context: discard the entire
             # pool before the ordinary fallback tries a transport candidate.
@@ -195,8 +231,7 @@ def _cached_prefix(root, native, devices, env, patch, report, graph, memory_back
                 code = process.wait(timeout=120)
             except subprocess.TimeoutExpired as error:
                 raise TimeoutError('NCCL_PREFLIGHT_PREFIX_STARTUP_TIMEOUT') from error
-        if code:
-            raise RuntimeError('NCCL_PREFLIGHT_BFS_PREFIX_FAILED')
+        _check_prefix_exit(attempt, code)
         rehearsal = json.loads((attempt / 'prefix' / 'report.json').read_text())
         if rehearsal['status'] != 'COMPLETE' and len(rehearsal.get('layer_sizes', [])) < 4:
             raise RuntimeError('NCCL_PREFLIGHT_INSUFFICIENT_BFS_PREFIX')
@@ -267,6 +302,8 @@ def prepare(native, devices, env, output, graph=None):
             reports.append({'mode':'cached-transport-prefix','status':'FAILED',
                             'error':str(error),'seconds':time.monotonic()-started})
             _write(root / 'cached-transport-failure.json', reports[-1])
+            if isinstance(error, NativeGraphAdmissionError) and error.native_code == _PREFIX_HEADROOM:
+                _stop_at_mandatory_reserve(root, env, old_report.get('reserve_bytes'), reports[-1], reports)
     for name, policy in alternatives(env):
         attempt = root / name
         attempt.mkdir()
@@ -280,6 +317,7 @@ def prepare(native, devices, env, output, graph=None):
         processes, logs = [], []
         own_groups = candidate.get("MGBFS_DIAGNOSTIC_SUPERVISED") != "1"
         started = time.monotonic()
+        reserve = None
         try:
             for rank in range(len(devices)):
                 log = (attempt / f'rank-{rank}.log').open('w')
@@ -322,8 +360,7 @@ def prepare(native, devices, env, output, graph=None):
                     code = process.wait(timeout=120)
                 except subprocess.TimeoutExpired as error:
                     raise TimeoutError('NCCL_PREFLIGHT_PREFIX_STARTUP_TIMEOUT') from error
-                if code:
-                    raise RuntimeError('NCCL_PREFLIGHT_BFS_PREFIX_FAILED')
+                _check_prefix_exit(attempt, code)
                 rehearsal = json.loads((attempt / 'prefix' / 'report.json').read_text())
                 if rehearsal['status'] != 'COMPLETE' and len(rehearsal.get('layer_sizes', [])) < 4:
                     raise RuntimeError('NCCL_PREFLIGHT_INSUFFICIENT_BFS_PREFIX')
@@ -348,6 +385,8 @@ def prepare(native, devices, env, output, graph=None):
                       'seconds': time.monotonic() - started}
             reports.append(report)
             _write(attempt / 'failure.json', report)
+            if isinstance(error, NativeGraphAdmissionError) and error.native_code == _PREFIX_HEADROOM:
+                _stop_at_mandatory_reserve(root, env, reserve, report, reports)
         finally:
             for process in processes:
                 if process.poll() is None:

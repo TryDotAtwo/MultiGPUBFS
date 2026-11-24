@@ -14,6 +14,39 @@ class ReserveTests(unittest.TestCase):
 
 
 class CoordinatorTests(unittest.TestCase):
+ def test_verified_transport_is_not_retried_after_cold_headroom_refusal(self):
+  import json, subprocess, tempfile
+  from pathlib import Path
+  from unittest.mock import patch
+  from multigpubfs import GraphDefinition
+  from multigpubfs.nccl_preflight import prepare, _run_graph_prefix
+  from multigpubfs.process_control import check_graph_admission
+
+  graph=GraphDefinition.permutation([[1,0]],[0,1])
+  error_record=json.dumps({'status':'ERROR','error':'GENERIC_DISTRIBUTED_HEADROOM'})
+  def failed_launch(*args,**kwargs):
+   check_graph_admission(subprocess.CompletedProcess(['mgbfs','graph-info'],1,error_record,''))
+  class Process:
+   def __init__(self,code):self.returncode=code
+   def poll(self):return self.returncode
+   def wait(self,timeout=None):return self.returncode
+  def start(args,**kwargs):
+   root=Path(args[-2]);self.assertEqual(root.name,'inherited')
+   if args[-1]=='--prefix':
+    with self.assertRaisesRegex(RuntimeError,'GENERIC_DISTRIBUTED_HEADROOM'):
+     _run_graph_prefix(root)
+    return Process(1)
+   rank=int(args[-1]);(root/f'rank-{rank}.json').write_text(json.dumps(
+    dict(verified=True,rank=rank,device=rank,nccl_device_bytes=100<<20)))
+   return Process(0)
+  with tempfile.TemporaryDirectory() as d, patch('multigpubfs.nccl_preflight._identity',return_value='test'), patch('multigpubfs.nccl_preflight.subprocess.Popen',side_effect=start), patch('multigpubfs.launch.run_graph',side_effect=failed_launch):
+   with self.assertRaisesRegex(RuntimeError,'NCCL_PREFLIGHT_BFS_PREFIX_HEADROOM'):
+    prepare('fake',[0,1],{},Path(d)/'run',graph)
+   report=json.loads((Path(d)/'run-communication-evidence/report.json').read_text())
+   self.assertEqual(len(report['attempts']),1)
+   self.assertEqual(report['failure']['transport_status'],'VERIFIED')
+   self.assertEqual(report['failure']['reserve_bytes'],2<<30)
+
  def test_failed_transport_is_not_accepted(self):
   import tempfile, json
   from pathlib import Path
