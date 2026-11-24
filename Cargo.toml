@@ -3,20 +3,6 @@ members = ["crates/mgbfs-core", "crates/mgbfs-runtime", "crates/mgbfs-cuda", "cr
 default-members = ["crates/mgbfs-core", "crates/mgbfs-runtime", "crates/mgbfs-cli"]
 resolver = "2"
 
-[package]
-name = "multigpubfs-gpu"
-version = "0.1.0"
-edition = "2021"
-build = "rust/build.rs"
-
-[[bin]]
-name = "multigpubfs-gpu"
-path = "rust/src/main.rs"
-
-[lib]
-name = "multigpubfs_gpu"
-path = "rust/src/lib.rs"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1
