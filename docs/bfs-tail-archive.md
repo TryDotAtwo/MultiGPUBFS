@@ -221,7 +221,7 @@ while the original handle is still active.
 
 Storage stress: `python scripts/stress_tail_archive.py <fresh-directory>`;
 requires at least 18 decimal GB free. Recorded physical validation is in
-`docs/validation/2026-10-02-physical-tail-stress.json`. Payloads are explicitly
+[physical validation](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/validation/2026-10-02-physical-tail-stress.json). Payloads are explicitly
 synthetic, not claimed as reachable graph layers or search-completion proof.
 
 For an existing Windows DPAPI-encrypted token, the saved-run publisher accepts

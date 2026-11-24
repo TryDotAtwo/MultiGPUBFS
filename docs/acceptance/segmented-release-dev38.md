@@ -9,7 +9,7 @@ sizing order left that buffer parked and failed; the new sizing function
 released it and recovered GPU memory. An exact two-rank GPU BFS tested both
 memory backends with automatic and manual shard settings, and a CayleyPy
 persistent API test exercised segment maxima of 64 and 2^32 on both backends.
-See `docs/acceptance/segmented32-20261120/cachetrim-2gpu.json` for evidence.
+See [two-rank measurements](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented32-20261120/cachetrim-2gpu.json) for evidence.
 
 The CUDA components are reused from dev37 after exact CUDA-source identity
 verification; the Rust executable is rebuilt from this release source. This is
