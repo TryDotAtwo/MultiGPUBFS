@@ -15,10 +15,12 @@ graph=GraphDefinition.permutation([[1,0,2,3,4],[0,2,1,3,4],[0,1,3,2,4],[0,1,2,4,
 layers=graph.exact_layers(1000)
 records=[]
 with persistent_graph_workers() as pool:
- for name,bits,merge_limit in [("normal",64,100000),("all-hashes-equal-deferred",0,0),("restored",64,100000)]:
+ for name,bits,merge_limit,prefix in [("normal",64,100000,0),("all-hashes-equal-deferred",0,0,0),
+                                      ("prefix-all-hashes-equal",0,0,1),("restored",64,100000,1)]:
   out=root/name
-  env=dict(os.environ,MGBFS_SEGMENT_TEST_HASH_BITS=str(bits),MGBFS_SEGMENT_TEST_MERGE_ROWS=str(merge_limit))
-  if bits==0:
+  env=dict(os.environ,MGBFS_SEGMENT_TEST_HASH_BITS=str(bits),MGBFS_SEGMENT_TEST_MERGE_ROWS=str(merge_limit),
+           MGBFS_SEGMENT_HASH_PREFIX_PROBE=str(prefix))
+  if bits==0 or prefix:
    for depth,expected in enumerate(layers):
     partial=root/f"{name}-depth-{depth}"
     part=run_graph(graph,partial,devices=[0,1],autotune=False,shards=1,_batch=4,
@@ -37,8 +39,8 @@ with persistent_graph_workers() as pool:
   stats=[x for rank in r["segment_memory_by_rank"] for x in rank["batch_hash_runs_by_shard"] if x]
   merged=sum(x["merged"] for x in stats);deferred=sum(x["deferred"] for x in stats)
   if name in ("normal","restored"):assert merged>0,(name,stats)
-  if name=="all-hashes-equal-deferred":assert deferred>0 and max(x["max_observed"] for x in stats)>1,(name,stats)
-  item={"case":name,"hash_bits":bits,"layer_sizes":r["layer_sizes"],"merged":merged,"deferred":deferred,
+  if bits==0:assert deferred>0 and max(x["max_observed"] for x in stats)>1,(name,stats)
+  item={"case":name,"hash_bits":bits,"hash_prefix_probe":bool(prefix),"layer_sizes":r["layer_sizes"],"merged":merged,"deferred":deferred,
         "runs":stats,"workers":[w.process.pid for w in pool.workers]}
   if records:assert item["workers"]==records[0]["workers"]
   records.append(item);print("PASS",json.dumps(item),flush=True)

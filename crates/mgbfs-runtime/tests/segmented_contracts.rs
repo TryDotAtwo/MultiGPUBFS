@@ -1,6 +1,14 @@
 use mgbfs_runtime::segmented_history::{ChunkRanges, SegmentGeometry, StateAddress, sum_rank_counts, LOCAL_ROWS};
 
 #[test]
+fn owner_cuts_follow_actual_admitted_rows_and_keep_every_rank_addressable() {
+    use mgbfs_runtime::segmented_history::weighted_owner_cuts;
+    assert_eq!(weighted_owner_cuts(&[3, 1]).unwrap(), [0, 3 * LOCAL_ROWS / 4, LOCAL_ROWS]);
+    assert_eq!(weighted_owner_cuts(&[1, u64::MAX, 1]).unwrap(), [0, 1, LOCAL_ROWS - 1, LOCAL_ROWS]);
+    assert!(weighted_owner_cuts(&[1, 0]).is_err());
+}
+
+#[test]
 fn local_reference_has_32_bit_rows_and_a_separate_segment_number() {
     for segment in [0, 1, 256, u32::MAX] {
         for bank in 0..3 {
@@ -94,6 +102,10 @@ fn collective_vote_prioritizes_fatal_over_resource_and_retry() {
     let resource=route_owner_vote(0,10);let fatal=route_owner_vote(source_fatal,0);let retry=route_owner_vote(1,0);
     assert_eq!(decode_route_owner_vote(resource.max(fatal)),SegmentVote::SourceFatal(source_fatal));
     assert_eq!(decode_route_owner_vote(retry.max(resource)),SegmentVote::Resource);
+    let deadline=mgbfs_runtime::segmented_history::route_owner_stop_vote(2);
+    assert_eq!(decode_route_owner_vote(retry.max(deadline)),SegmentVote::Stop(2));
+    assert_eq!(decode_route_owner_vote(resource.max(deadline)),SegmentVote::Resource);
+    assert_eq!(decode_route_owner_vote(fatal.max(deadline)),SegmentVote::SourceFatal(source_fatal));
     assert_eq!(decode_route_owner_vote(route_owner_vote(0,107).max(resource)),SegmentVote::OwnerFatal(107));
 }
 

@@ -6,6 +6,8 @@ extern "C" {fn cudaDeviceSynchronize()->i32;fn mgbfs_generic_hardware_info(devic
 pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
  crate::session_cache::enable();crate::generic_pool::activate(device as i32)?;
  let waiter=crate::session_wait::FileWaiter::new(root);let shutdown=root.join("shutdown");
+ let path_worker=std::env::var("MGBFS_SESSION_KIND").as_deref()==Ok("path-nearest");
+ let mut nearest=crate::generic_path_native::ResidentNearest::default();
  let mut previous=BTreeMap::<String,Option<String>>::new();
  for sequence in 0u64.. {
   let path=root.join(format!("job-{sequence:08}.json"));
@@ -25,7 +27,19 @@ pub fn run(root:&Path,rank:u32,device:u32)->Result<()> {
    crate::job_phase::set("control-thread-ready")?;
    command=v["command"].as_str().map(str::to_owned);
    match command.as_deref(){
-    Some("release-memory")=>{crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;crate::generic_native::checked!(cudaDeviceSynchronize, unsafe{cudaDeviceSynchronize()})?;crate::session_cache::release_idle_storage();crate::generic_pool::trim_idle()?;Ok(serde_json::json!({"released":true}))},
+    Some("release-memory")=>{
+     crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(device as i32)})?;
+     crate::generic_native::checked!(cudaDeviceSynchronize, unsafe{cudaDeviceSynchronize()})?;
+     nearest.clear();
+     crate::session_cache::release_idle_storage();
+     crate::generic_pool::trim_idle()?;
+     Ok(serde_json::json!({"released":true}))
+    },
+    Some("graph-path-nearest") if path_worker&&rank==0=>{
+     let args:Vec<String>=serde_json::from_value(v["args"].clone()).map_err(|e|e.to_string())?;
+     crate::generic_path_native::run_resident(&args,device,&mut nearest)
+    },
+    _ if path_worker=>Err("GENERIC_SESSION_PATH_COMMAND".into()),
     Some("bench")=>{
      // Generic and host-NCCL reference jobs share the same healthy rank.
      std::env::set_var("WORLD_SIZE",std::env::var("MGBFS_BENCH_WORLD_SIZE").map_err(|_|"ENV_WORLD_SIZE")?);

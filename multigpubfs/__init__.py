@@ -5,5 +5,7 @@ from .catalog import from_catalog
 from .prefetch import prefetch_native
 from .generic_session import persistent_graph_workers
 from .cayleypy_backend import NativeOptions, NativeBfsResult, bfs, enable_native, disable_native
+from .api import BfsSession, TraversalResult, open_session
 __all__=["GraphDefinition","from_cayleypy","from_catalog","run_graph",
-         "NativeOptions","NativeBfsResult","bfs","enable_native","disable_native","prefetch_native","persistent_graph_workers"]
+         "NativeOptions","NativeBfsResult","bfs","enable_native","disable_native","prefetch_native","persistent_graph_workers",
+         "BfsSession","TraversalResult","open_session"]

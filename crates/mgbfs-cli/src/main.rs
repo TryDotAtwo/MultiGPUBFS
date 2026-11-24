@@ -17,6 +17,27 @@ fn segmented_warp_abi_ready() -> bool {
     { false }
 }
 
+fn native_nearest_ready() -> bool {
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    { mgbfs_runtime::generic_path_native::available() }
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    { false }
+}
+
+fn native_bidirectional_ready() -> bool {
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    { mgbfs_runtime::generic_path_native::bidirectional_available() }
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    { false }
+}
+
+fn native_window_bidirectional_ready() -> bool {
+    #[cfg(all(feature = "cuda", target_os = "linux"))]
+    { mgbfs_runtime::generic_path_native::window_bidirectional_available() }
+    #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+    { false }
+}
+
 fn execute() -> Result<(), (i32, String)> {
     #[cfg(all(feature="cuda",target_os="linux"))]
     mgbfs_runtime::generic_distributed_run::startup_trace("cli-main-enter").map_err(|e|(1,e))?;
@@ -24,7 +45,7 @@ fn execute() -> Result<(), (i32, String)> {
     #[cfg(all(feature = "cuda", target_os = "linux"))]
     if matches!(
         args.first().and_then(|x| x.to_str()),
-        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-local-plan") | Some("graph-rank") | Some("graph-session") | Some("graph-count")
+        Some("run") | Some("bench") | Some("session") | Some("graph") | Some("graph-info") | Some("graph-plan") | Some("graph-local-plan") | Some("graph-rank") | Some("graph-session") | Some("graph-count") | Some("graph-path-nearest")
     ) {
         match mgbfs_runtime::cuda_loading::configure_cli_before_cuda() {
             Ok(true) => {
@@ -66,7 +87,17 @@ fn execute() -> Result<(), (i32, String)> {
             #[cfg(not(all(feature="cuda",target_os="linux")))]
             return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
         }
-        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"resident_plan_rejection_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented24_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented32_v2":segmented_abi_ready(),"segmented_memory_presets_v1":segmented_abi_ready(),"segmented_exact_exchange_v1":segmented_abi_ready(),"segmented_strategies_v1":{"atomic":segmented_abi_ready(),"warp":segmented_warp_abi_ready(),"batch":mgbfs_runtime::segmented_strategy::batch_abi_ready()},"segmented_warp_hash_safe_v1":mgbfs_runtime::segmented_strategy::warp_safe_abi_ready(),"bitmap_owner_immutable_v1":mgbfs_runtime::segmented_strategy::bitmap_immutable_abi_ready(),"permutation_bitmap_v1":cfg!(all(feature="cuda",target_os="linux")),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
+        Some("key-info") if args.len()==1 => {println!("{}",serde_json::json!({"schema":1,"graph_path_nearest_v1":native_nearest_ready(),"graph_path_nearest_distributed_v1":native_nearest_ready(),"graph_path_nearest_bidirectional_v1":native_bidirectional_ready(),"graph_path_window_forward_v1":native_nearest_ready(),"graph_path_window_bidirectional_v1":native_window_bidirectional_ready(),"graph_path_nearest_resident_v1":native_nearest_ready(),"lossless_bitpack128_feistel_v1":cfg!(all(feature="cuda",target_os="linux")),"resident_plan_rejection_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented24_v1":cfg!(all(feature="cuda",target_os="linux")),"segmented32_v2":segmented_abi_ready(),"segmented_memory_presets_v1":segmented_abi_ready(),"segmented_resident_alphabet8_v1":segmented_abi_ready(),"segmented_exact_exchange_v1":segmented_abi_ready(),"segmented_network_agreement_v1":segmented_abi_ready(),"segmented_hash_series_v1":mgbfs_runtime::segmented_strategy::hash_series_abi_ready(),"segmented_packet_transport_v1":mgbfs_runtime::segmented_strategy::packet_transport_abi_ready(),"segmented_strategies_v1":{"atomic":segmented_abi_ready(),"warp":segmented_warp_abi_ready(),"batch":mgbfs_runtime::segmented_strategy::batch_abi_ready()},"segmented_warp_hash_safe_v1":mgbfs_runtime::segmented_strategy::warp_safe_abi_ready(),"bitmap_pack4_experimental_v1":mgbfs_runtime::segmented_strategy::bitmap_pack4_abi_ready(),"bitmap_pack4_adaptive_v2":mgbfs_runtime::segmented_strategy::bitmap_pack4_abi_ready(),"bitmap_owner_immutable_v1":mgbfs_runtime::segmented_strategy::bitmap_immutable_abi_ready(),"permutation_bitmap_v1":cfg!(all(feature="cuda",target_os="linux")),"permutation_bitmap_position_orbits_v1":mgbfs_runtime::segmented_strategy::bitmap_orbit_abi_ready(),"scope":"compiled implementation; graph domain and GPU correctness checked separately"}));}
+
+        Some("graph-path-nearest") if args.len()==2 => {
+            #[cfg(all(feature="cuda",target_os="linux"))]
+            {
+                let query = args[1].clone().into_string().map_err(|_| (2,"CLI_GRAPH_ARGUMENT_ENCODING".into()))?;
+                mgbfs_runtime::generic_path_native::run(&[query]).map_err(|e| (1,e))?;
+            }
+            #[cfg(not(all(feature="cuda",target_os="linux")))]
+            return Err((2,"CLI_GRAPH_REQUIRES_LINUX_CUDA".into()));
+        }
 
         Some(command @ ("graph-info" | "graph-plan" | "graph-local-plan" | "graph-rank")) => {
             #[cfg(all(feature="cuda",target_os="linux"))]

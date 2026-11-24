@@ -84,7 +84,7 @@ impl GenericNativeBfs {
   let stream=Stream::new(device)?;
   let arena_stride=if rolling{plan.capacity.checked_mul(3).ok_or("GENERIC_ROLLING_STRIDE")?}else{plan.capacity};
   let table_slots=if !hashed{0}else if rolling{u64::from(plan.capacity).checked_mul(6).and_then(u64::checked_next_power_of_two).ok_or("GENERIC_ROLLING_TABLE")?}else{plan.table_slots};
-  let visited=Buffer::new(width*arena_stride as usize*state_bytes,device)?;let readout_capacity=if rolling{plan.capacity.min(1000)}else{plan.capacity};let parents=Buffer::new(width*readout_capacity as usize*state_bytes,device)?;
+  let visited=Buffer::new(width*arena_stride as usize*state_bytes,device)?;let readout_capacity=if rolling{plan.capacity.min(1000)}else if !seed_table&&hashed&&crate::generic_memory::nearest_direct_rows(){1}else{plan.capacity};let parents=Buffer::new(width*readout_capacity as usize*state_bytes,device)?;
   let front=Buffer::new(cap*4,device)?;let future=Buffer::new(cap*4,device)?;let slots=Buffer::new(table_slots as usize*8,device)?;let control=Buffer::new(24,device)?;
   let perms=Buffer::new(ps.len()*4,device)?;perms.upload(&ps)?;let matrices=Buffer::new(ms.len()*8,device)?;matrices.upload(&ms)?;let moduli=Buffer::new(mods.len()*4,device)?;moduli.upload(&mods)?;
   front.upload(&[0u32])?;control.upload(&[1u32,0,0,0,0,0])?;
@@ -104,22 +104,63 @@ impl GenericNativeBfs {
  pub fn stop(&mut self){self.terminal=true;}
  pub fn frontier_len(&self)->u32{self.count}
  pub fn advance(&mut self)->Result<GenericAdvance>{
-  if self.terminal{return Err("GENERIC_TERMINAL_ARENA".into());}crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(self.device)})?;let s=self.stream.ptr;self.terminal=true;
-  crate::generic_native::checked!(mgbfs_generic_gather_storage, unsafe{mgbfs_generic_gather_storage(self.plan.state_bytes,self.plan.elements,self.visited.ptr.cast(),self.arena_stride,self.front.ptr.cast(),self.count,self.parents.ptr.cast(),self.plan.capacity,s)})?;
+  self.advance_inner(None)
+ }
+ pub(crate) fn advance_with_checkpoint(&mut self,checkpoint:&dyn Fn()->Result<()>)->Result<GenericAdvance>{
+  self.advance_inner(Some(checkpoint))
+ }
+ fn gather_parents(&self,begin:u32,count:u32)->Result<()>{
+  crate::generic_native::checked!(mgbfs_generic_gather_storage, unsafe{
+   mgbfs_generic_gather_storage(self.plan.state_bytes,self.plan.elements,self.visited.ptr.cast(),self.arena_stride,
+    self.front.at(begin as usize*4),count,self.parents.at(begin as usize*self.plan.state_bytes as usize),
+    self.plan.capacity,self.stream.ptr)
+  })
+ }
+ fn advance_state(&self)->Result<[u32;3]>{
+  let s=self.stream.ptr;
+  let mut state=[0u32;3];
+  let copied=crate::generic_native::checked!(cudaMemcpyAsync, unsafe{
+   cudaMemcpyAsync(state.as_mut_ptr().cast(),self.control.ptr,std::mem::size_of_val(&state),2,s)
+  });
+  let drained=crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(s)});
+  copied.and(drained)?;
+  Ok(state)
+ }
+ fn advance_inner(&mut self,checkpoint:Option<&dyn Fn()->Result<()>>)->Result<GenericAdvance>{
+  if self.terminal{return Err("GENERIC_TERMINAL_ARENA".into());}
+  if let Some(checkpoint)=checkpoint{checkpoint()?;}
+  crate::generic_native::checked!(cudaSetDevice, unsafe{cudaSetDevice(self.device)})?;
+  let s=self.stream.ptr;
+  self.terminal=true;
+  let mut batch=self.plan.batch.min(0x7fff_fffe/self.generators);
+  if batch==0{return Err("GENERIC_BATCH_CAPACITY".into());}
+  if checkpoint.is_some(){
+   // Limit every cancellable wave independently of the layer size. A single
+   // parent is the smallest work unit supported by the expansion ABI.
+   batch=batch.min(((1<<16)/self.generators).max(1));
+  }else{
+   self.gather_parents(0,self.count)?;
+  }
   crate::generic_native::checked!(cudaMemsetAsync, unsafe{cudaMemsetAsync(self.control.at::<c_void>(4),0,4,s)})?;
-  let batch=self.plan.batch.min(0x7fff_fffe/self.generators);if batch==0{return Err("GENERIC_BATCH_CAPACITY".into());}
+  let mut state=[0u32;3];
   let mut begin=0;
   while begin<self.count {
    let count=batch.min(self.count-begin);
+   if checkpoint.is_some(){self.gather_parents(begin,count)?;}
    crate::generic_native::checked!(mgbfs_generic_expand_storage, unsafe{mgbfs_generic_expand_storage(self.plan.state_bytes,self.kind,self.plan.elements,self.rows,self.cols,self.generators,
     self.parents.at::<i64>(begin as usize*self.plan.state_bytes as usize),count,self.plan.capacity,self.perms.ptr.cast(),self.matrices.ptr.cast(),self.moduli.ptr.cast(),
     self.slots.ptr.cast(),self.plan.table_slots,self.visited.ptr.cast(),self.arena_stride,self.control.at(0),self.future.ptr.cast(),self.plan.capacity,self.control.at(4),self.seed,self.hash_bits,self.control.at(8),s)})?;
    begin+=count;
+   if let Some(checkpoint)=checkpoint{
+    state=self.advance_state()?;
+    if state[2]&!7==0{checkpoint()?;}
+    if state[2]!=0{break;}
+   }
   }
-  // One scalar layer-boundary readback, independent of the number of batches.
-  let mut state=[0u32;3];crate::generic_native::checked!(cudaMemcpyAsync, unsafe{cudaMemcpyAsync(state.as_mut_ptr().cast(),self.control.ptr,12,2,s)})?;crate::generic_native::checked!(cudaStreamSynchronize, unsafe{cudaStreamSynchronize(s)})?;
-  if state[2]!=0 {self.terminal=true;return Ok(GenericAdvance::Resource{fatal:state[2]});}
-  if state[1]==0 {self.terminal=true;return Ok(GenericAdvance::Complete);}
+  // Ordinary traversal keeps its single readback at the layer boundary.
+  if checkpoint.is_none(){state=self.advance_state()?;}
+  if state[2]!=0{return Ok(GenericAdvance::Resource{fatal:state[2]});}
+  if state[1]==0{return Ok(GenericAdvance::Complete);}
   if state[1]>self.plan.capacity{return Err("GENERIC_COUNT_BOUNDS".into());}
   self.previous=Some((self.current_start,self.count));self.current_start=self.visited_used;self.visited_used=state[0];
   std::mem::swap(&mut self.front,&mut self.future);self.count=state[1];self.terminal=false;Ok(GenericAdvance::Layer{count:self.count})

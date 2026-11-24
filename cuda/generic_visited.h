@@ -62,3 +62,41 @@ int mgbfs_generic_accept_all_u8_wide(uint32_t elements,const uint8_t* local,cons
  uint64_t* slots,uint64_t slot_capacity,uint8_t* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,
  uint32_t* future_count,uint32_t* error,void* stream);
 }
+
+struct GenericRouteRecord;
+extern "C" int mgbfs_generic_resolve_incoming_edges_v1(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, uint32_t* children, uint32_t output_capacity,
+    uint32_t* error, void* raw_stream);
+extern "C" int mgbfs_generic_resolve_incoming_edges_v2(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, uint32_t* children, uint32_t output_capacity,
+    uint32_t begin, uint32_t length, uint32_t* error, void* raw_stream);
+
+extern "C" int mgbfs_generic_seed_shared_u8_wide(
+    uint32_t elements, const uint8_t* states, uint32_t stride, uint32_t count,
+    uint64_t* slots, uint64_t capacity, uint64_t seed, uint32_t bits, uint32_t* error, void* stream);
+
+
+// First-admission lineage for unpacked distributed candidates. Indexed by
+// visited row. Roots are initialized by the caller.
+struct GenericPathParent {
+ uint32_t parent,source_label;
+};
+static_assert(sizeof(GenericPathParent)==8,"path parent ABI v2");
+extern "C" int mgbfs_generic_accept_path_parents_v2(
+ uint32_t state_bytes,uint32_t elements,uint32_t generators,const void* local,const void* remote,
+ const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint64_t slot_capacity,void* visited,uint32_t visited_capacity,
+ uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,
+ GenericPathParent* lineage,uint32_t* error,void* stream);

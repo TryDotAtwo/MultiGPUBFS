@@ -29,14 +29,22 @@ def _paths():
   if '=>' not in line:continue
   name,location=line.split('=>',1);location=location.strip().rsplit(' (',1)[0]
   if Path(location).is_file():libs[name.strip()]=str(Path(location).resolve())
- for name in ('libmgbfs_cuda.so','libcudart.so.12','libnccl.so.2'):
+ for name in ('libmgbfs_cuda.so','libnccl.so.2'):
   if name not in libs:raise RuntimeError('DEPENDENCY_RESOLUTION_FAILED: '+name+'; loader output: '+(query.stdout+query.stderr)[-6000:])
+ _cudart_path(libs)
  return native,env,libs
+
+def _cudart_path(libraries):
+ runtimes = [path for name, path in libraries.items()
+             if name.startswith('libcudart.so.') and name.removeprefix('libcudart.so.').isdigit()]
+ if len(runtimes) != 1:
+  raise RuntimeError(f'DEPENDENCY_RESOLUTION_FAILED: expected one CUDA runtime SONAME, found {len(runtimes)}')
+ return runtimes[0]
 
 
 def _cuda(device=None,engine=False):
  _phase('resolve and load CUDA runtime')
- native,env,paths=_paths();cuda=C.CDLL(paths['libcudart.so.12'],mode=C.RTLD_GLOBAL)
+ native,env,paths=_paths();cuda=C.CDLL(_cudart_path(paths),mode=C.RTLD_GLOBAL)
  cuda.cudaGetErrorString.argtypes=[C.c_int];cuda.cudaGetErrorString.restype=C.c_char_p
  cuda.cudaSetDevice.argtypes=[C.c_int];cuda.cudaFree.argtypes=[C.c_void_p]
  cuda.cudaMalloc.argtypes=[C.POINTER(C.c_void_p),C.c_size_t]

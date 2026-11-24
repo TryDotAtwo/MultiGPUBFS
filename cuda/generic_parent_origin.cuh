@@ -30,7 +30,7 @@ template<class State> int accept_parent_origin(uint32_t kind,uint32_t elements,u
  ActionT<State> graph{kind,elements,n,m,generators,parent_stride,parent_stride,nullptr,permutations,matrices,moduli};
  ParentOriginAction<State> action{incoming,graph,parents,cursors,frontiers,parent_stride,chunk,begin};
  if(rolling)accept_rolling<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,base,capacity,accepted,future,positions,error);
- else accept_candidates<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,visited_count,future,capacity,accepted,0,64,error);
+ else accept_candidates<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,visited_count,future,capacity,accepted,0,64,error,nullptr,0);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_accept_parent_origin_wide(uint32_t bytes,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,const uint32_t* permutations,const int64_t* matrices,const uint32_t* moduli,

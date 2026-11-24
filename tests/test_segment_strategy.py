@@ -48,6 +48,24 @@ class SegmentStrategyContract(unittest.TestCase):
                 with self.subTest(value=value), self.assertRaisesRegex(RuntimeError,error):
                     run_graph(GRAPH,'/tmp/mgbfs-strategy-unused',memory_backend='segmented24',segment_strategy=value)
 
+    def test_implicit_segmented_run_passes_bounded_strategy_to_preflight(self):
+        capabilities = {
+            'segmented32_v2': True,
+            'segmented_strategies_v1': {'batch': True, 'warp': True},
+            'segmented_hash_series_v1': True,
+            'segmented_warp_hash_safe_v1': True,
+        }
+        with tempfile.TemporaryDirectory() as temp, patch(
+            'multigpubfs.host_memory.admit', return_value=None,
+        ), patch('multigpubfs.launch.native_runtime', return_value=('/fake/mgbfs', {})), patch(
+            'multigpubfs.launch._require_memory_backend', return_value=capabilities,
+        ), patch('multigpubfs.nccl_preflight.prepare', side_effect=RuntimeError('STOP_AT_PREFLIGHT')) as preflight:
+            for scoped_env, expected in (({}, 'batch'), ({'MGBFS_SEGMENT_STRATEGY': 'warp'}, 'warp')):
+                with self.subTest(scoped_env=scoped_env), self.assertRaisesRegex(RuntimeError, 'STOP_AT_PREFLIGHT'):
+                    run_graph(GRAPH, os.path.join(temp, 'result'), devices=[0], memory_backend='segmented24',
+                              _native_env=scoped_env)
+                self.assertEqual(preflight.call_args.args[2]['MGBFS_SEGMENT_STRATEGY'], expected)
+
     def test_hash_warp_requires_safe_abi_even_when_strategy_is_advertised(self):
         capabilities={'segmented32_v2':True,'segmented_strategies_v1':{'warp':True},'segmented_warp_hash_safe_v1':False}
         with patch('multigpubfs.host_memory.admit',return_value=None), patch('multigpubfs.launch.native_runtime',return_value=('/fake/mgbfs',{})), patch('multigpubfs.launch._require_memory_backend',return_value=capabilities):

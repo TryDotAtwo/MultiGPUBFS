@@ -15,7 +15,7 @@ extern "C" int mgbfs_bitmap_accept_batch(uint32_t,uint32_t,uint32_t,const void*,
  uint32_t,uint64_t,uint64_t,uint64_t*,uint32_t,uint32_t,uint32_t,uint32_t,const uint32_t*,uint32_t,uint32_t,
  MgbfsSegment,uint32_t,uint64_t*,uint32_t*,uint32_t*,uint32_t*,uint64_t*,uint64_t,void*,size_t,void*);
 extern "C" int mgbfs_hash_batch_scratch_bytes(uint32_t,uint32_t,uint32_t,size_t*);
-extern "C" int mgbfs_hash_batch_accept(uint32_t,uint32_t,uint32_t,const void*,const void*,
+extern "C" int mgbfs_hash_batch_accept_v2(uint32_t,uint32_t,uint32_t,const void*,const void*,
  const GenericRouteRecord*,const GenericRouteRecord*,const uint32_t*,const uint32_t*,
  uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,const uint32_t*,uint32_t,uint32_t,
  const MgbfsBatchHashSegment*,uint32_t,uint32_t,uint32_t,MgbfsBatchHashRun*,uint32_t*,uint32_t,
@@ -63,7 +63,7 @@ static void run(int gpu){
  rec.hash=0;rec.parent=42;C(cudaMemcpy(meta,&rec,sizeof(rec),cudaMemcpyHostToDevice));
  put(accepted,cap-1);put(spills,uint32_t(0));put(error,uint32_t(0));size_t hsbytes=0;
  C(cudaError_t(mgbfs_hash_batch_scratch_bytes(1,1,1,&hsbytes)));C(cudaMalloc(&scratch,hsbytes));
- auto hash_accept=[&](){return cudaError_t(mgbfs_hash_batch_accept(1,1,1,nullptr,nullptr,meta,meta,counts,counts,
+ auto hash_accept=[&](){return cudaError_t(mgbfs_hash_batch_accept_v2(1,1,1,nullptr,nullptr,meta,meta,counts,counts,
   0,1,0,1,1,1,nullptr,1,0,desc,1,0,0,runs,nruns,2,accepted,spill,spills,error,nullptr,0,scratch,hsbytes,nullptr));};
  C(hash_accept());C(cudaDeviceSynchronize());CHECK(get(accepted)==cap&&get(nruns)==1&&get(error)==0);
  uint32_t last=0;C(cudaMemcpy(&last,(void*)(rows.addr+(cap-1)*4),4,cudaMemcpyDeviceToHost));CHECK(last==UINT32_MAX);

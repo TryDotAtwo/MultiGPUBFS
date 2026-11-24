@@ -2,6 +2,7 @@
 #include <cuda/atomic>
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <type_traits>
 #include "generic_action.cuh"
 #include "segmented_incoming.cuh"
 
@@ -39,12 +40,44 @@ template<class T> struct FlatInput {
     __device__ int64_t value(uint32_t i,uint32_t e)const{return int64_t(input[uint64_t(e)*count+i]);}
     __device__ uint64_t hash(uint32_t i,uint64_t,uint32_t)const{return hashes[i];}
 };
+// Wire rows are two aligned u64 words. The packet stays leased through
+// collision checks and every spill replay in the owning shard.
+struct BytePacketRow {
+    uint64_t hash;
+    uint64_t state;
+};
+static_assert(sizeof(BytePacketRow) == 16);
+
+template<uint32_t Bits>
+struct BytePacketInput {
+    uint32_t elements, count;
+    const BytePacketRow* rows;
+    __device__ uint32_t child(uint32_t i) const { return i; }
+    __device__ uint32_t origin_limit() const { return count; }
+    __device__ bool valid(uint32_t i, uint32_t* error) const {
+        if (i < count) return true;
+        atomicOr(error, uint32_t(MGBFS_SEGMENTED_BAD_REFERENCE));
+        return false;
+    }
+    __device__ int64_t value(uint32_t i, uint32_t e) const {
+        return (rows[i].state >> (Bits * e)) & ((1u << Bits) - 1);
+    }
+    __device__ uint64_t hash(uint32_t i, uint64_t, uint32_t) const { return rows[i].hash; }
+};
+
 template<class Input>
 __device__ bool equal_input(const Input& input, uint32_t a, uint32_t b) {
     for (uint32_t e = 0; e < input.elements; ++e)
         if (input.value(a,e) != input.value(b,e)) return false;
     return true;
 }
+template<uint32_t Bits>
+__device__ bool equal_input(const BytePacketInput<Bits>& input, uint32_t a, uint32_t b) {
+    // The encoder starts from zero, so unused high bits are canonical.
+    // Equal words represent equal states even if every hash collides.
+    return input.rows[a].state == input.rows[b].state;
+}
+
 template<class T,class Input>
 __device__ bool equal_row(const Input& input, uint32_t child,
                           const MgbfsSegment& seg, uint64_t payload, uint32_t* error) {
@@ -414,7 +447,53 @@ int launch_routes(uint32_t elements,const T* local,const T* remote,const Generic
     }else accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(source,sealed,sealed_count,active,bank,accepted,future,error,selection,selected_count,spill,spill_count,global_count,global_limit);
     return int(cudaGetLastError());
 }
+template<bool Grouped, class T, class Input>
+int launch_byte_packet_owner(Input source, const uint32_t* selection, uint32_t selected,
+    const MgbfsSegment* sealed, uint32_t sealed_count, MgbfsSegment active, uint32_t bank,
+    uint64_t* accepted, uint32_t* spill, uint32_t* spill_count, uint32_t* error,
+    uint64_t* global_count, uint64_t global_limit, cudaStream_t stream) {
+    const uint32_t blocks = min((selected + 255u) / 256u, 65535u);
+    if constexpr (Grouped) {
+        accept_grouped<T><<<blocks,256,0,stream>>>(source,sealed,sealed_count,active,bank,
+            accepted,nullptr,error,selection,selected,spill,spill_count,global_count,global_limit);
+        const auto status = cudaGetLastError();
+        if (status != cudaSuccess) return int(status);
+        retire_deferred<<<blocks,256,0,stream>>>(source,active,spill,spill_count,selected,error);
+    } else {
+        accept<T><<<blocks,256,0,stream>>>(source,sealed,sealed_count,active,bank,
+            accepted,nullptr,error,selection,selected,spill,spill_count,global_count,global_limit);
+    }
+    return int(cudaGetLastError());
+}
 } // namespace
+
+extern "C" int mgbfs_hash_accept_byte_packet_v1(uint32_t bits, uint32_t elements, uint32_t grouped,
+    const void* packet, uint32_t count, const uint32_t* selection, uint32_t selected,
+    const MgbfsSegment* sealed, uint32_t sealed_count, MgbfsSegment active, uint32_t bank,
+    uint64_t* accepted, uint32_t* spill, uint32_t* spill_count, uint32_t* error,
+    uint64_t* global_count, uint64_t global_limit, void* stream) {
+    if ((bits != 1 && bits != 2) || !elements || elements > 64 / bits || grouped > 1 ||
+        !packet || !count || count >= 0x80000000u || selected > count ||
+        (sealed_count && !sealed) || !valid_position_width(active) || !active.slots ||
+        !active.states || (active.banks == 3 && !active.positions) || !active.slots_count ||
+        (active.slots_count & (active.slots_count - 1)) || !active.capacity ||
+        active.capacity > LOCAL_ROWS || !(active.banks == 1 || active.banks == 3) ||
+        bank >= active.banks || !accepted || !spill || !spill_count || !error)
+        return int(cudaErrorInvalidValue);
+    if (!selected) return int(cudaSuccess);
+
+    const auto* rows = static_cast<const BytePacketRow*>(packet);
+    const auto launch = [&](auto input) {
+        const auto dispatch = [&](auto use_grouping) {
+            return launch_byte_packet_owner<decltype(use_grouping)::value, uint8_t>(
+                input,selection,selected,sealed,sealed_count,active,bank,accepted,spill,spill_count,
+                error,global_count,global_limit,static_cast<cudaStream_t>(stream));
+        };
+        return grouped ? dispatch(std::true_type{}) : dispatch(std::false_type{});
+    };
+    if (bits == 1) return launch(BytePacketInput<1>{elements,count,rows});
+    return launch(BytePacketInput<2>{elements,count,rows});
+}
 extern "C" int mgbfs_segmented_accept_u8(const uint8_t* input,const uint64_t* hashes,uint32_t n,uint32_t elements,
     const MgbfsSegment* sealed,uint32_t sealed_count,MgbfsSegment active,uint32_t bank,uint64_t* accepted,
     uint64_t* future,uint32_t* error,void* stream) {

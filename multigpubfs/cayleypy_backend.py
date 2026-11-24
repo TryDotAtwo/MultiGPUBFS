@@ -8,7 +8,7 @@ import tempfile
 import threading
 
 from .artifact_paths import artifact_path
-from .graph_definition import from_cayleypy, GraphDefinition, _flatten
+from .graph_definition import _flatten, _normalize_graph
 from .launch import run_graph, _normalize_segment_strategy
 
 
@@ -26,7 +26,7 @@ class NativeOptions:
 
     def __post_init__(self):
         _normalize_segment_strategy(self.segment_strategy)
-        if self.memory_preset not in ("balanced", "max_capacity"):
+        if self.memory_preset not in ("balanced", "max_capacity", "maxmemory"):
             raise ValueError("INVALID_MEMORY_PRESET")
         if type(self.segment_rows) is not int or not 1 <= self.segment_rows <= 1 << 32:
             raise ValueError("INVALID_SEGMENT_ROWS")
@@ -107,16 +107,14 @@ def _search(original, graph, backend, options, output, kwargs):
         raise NotImplementedError(f"Native BFS does not support {unsupported}; use backend='torch'")
     from .recovery_registry import bind_options
     options = bind_options(options)
-    definition = from_cayleypy(graph)
+    definition = _normalize_graph(graph)
     if kwargs.get("start_states") is not None:
         start = _flatten(kwargs["start_states"])
         if len(start) != len(definition.start):
             if backend == "auto" and output is None:
                 return original(graph, **kwargs)
             raise NotImplementedError("Native BFS supports a single decoded start state")
-        value = json.loads(definition.to_json())
-        value["start"] = start
-        definition = GraphDefinition.from_dict(value)
+        definition = _normalize_graph(definition, start)
     if output is None:
         root = Path(options.output_root or artifact_path("bfs-results"))
         root.mkdir(parents=True, exist_ok=True)

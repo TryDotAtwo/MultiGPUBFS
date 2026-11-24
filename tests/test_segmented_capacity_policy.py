@@ -10,7 +10,8 @@ from multigpubfs.launch import _apply_memory_preset
 
 
 def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
-            capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False, cached_bytes=0, pool_bytes=0, total_bytes=200000, reserve_bytes=1000):
+            capacity_loss=False, bitmap=False, slow_baseline=False, use_cache=False, free_bytes=100000, very_short=False, include_inventory=True, invalid_queue_receipt=False, cached_bytes=0, pool_bytes=0, total_bytes=200000, reserve_bytes=1000,
+            bounded=False, timeout_first=False, trace=None):
     native = tmp_path / 'native'
     native.write_bytes(b'native test executable')
     graph = GraphDefinition.permutation([[1, 0, 2], [0, 2, 1]], [0, 1, 2])
@@ -24,20 +25,27 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
     if explicit_queue is not None:
         env['MGBFS_SEGMENT_QUEUE_CAP'] = str(explicit_queue)
     env = _apply_memory_preset(env, backend, 'max_capacity')
+    inventory = [
+        {'device': d, 'free_bytes': free_bytes, 'total_bytes': total_bytes,
+         'cached_reusable_bytes': cached_bytes, 'pool_reusable_bytes': pool_bytes,
+         'compute_major': 8, 'compute_minor': 6, 'sm_count': 28,
+         'additional_reserve_bytes': reserve_bytes} for d in [0, 1]] if include_inventory else []
 
     def admit(graph, devices, capacity, shards, native, env, directory, **kwargs):
-        return {'devices': [0, 1], 'inventory': [
-            {'device': d, 'free_bytes': free_bytes, 'total_bytes': total_bytes,
-             'cached_reusable_bytes': cached_bytes, 'pool_reusable_bytes': pool_bytes,
-             'additional_reserve_bytes': reserve_bytes} for d in [0, 1]] if include_inventory else [], 'plan': {
+        return {'devices': [0, 1], 'inventory': inventory, 'plan': {
             'capacity': 100000, 'batch': 131072, 'queue_capacity': 16384,
-            'history_algorithm': 'HASH', 'owner_lanes': 0}}
+            'history_algorithm': 'HASH', 'history_layers': 3, 'owner_lanes': 0}}
 
     def pilot(graph, target, **kw):
         actual = kw['_native_env']
         lane = int(actual['MGBFS_SEGMENT_OWNER_LANES'])
         queue = int(actual['MGBFS_SEGMENT_QUEUE_CAP'])
         calls.append((lane, queue))
+        if trace is not None:
+            trace.append((kw['memory_preset'], actual.get('MGBFS_SEGMENT_COMPACT_POS'),
+                          actual.get('MGBFS_BITMAP_BANKS'), kw.get('_profile_deadline'), kw['max_seconds']))
+        if timeout_first and len(calls)==1:
+            raise RuntimeError('AUTOTUNE_PILOT_WALL_DEADLINE; evidence=test')
         budget = (10500 if queue == 2048 else 10000) if capacity_loss == 'partial' else (9000 if capacity_loss and queue > 2048 else 10000)
         speed = 0.1 if (lane, queue) == (4, 16384) else 1.0
         receipts = [{'owner_lanes': lane, 'exact_exchange': False,
@@ -67,9 +75,10 @@ def measure(tmp_path, *, explicit_lane=None, explicit_queue=None,
         patch('multigpubfs.hardware_profiles.small_permutation_workload', return_value=False),
         patch('multigpubfs.launch.run_graph', side_effect=pilot),
     ):
+        bounded_options = {'capacity_slowdown_limit': 4.0, 'pilot_limit': 3, 'pilot_wall_seconds': 5} if bounded else {}
         result = autotune.choose_profile(
             graph, [0, 1], None, 90, str(native), env,
-            allow_specialized=False, fixed_shards=4)
+            allow_specialized=False, fixed_shards=4, **bounded_options)
     return result, calls, env
 
 
@@ -188,3 +197,78 @@ def test_capacity_cache_rechecks_actual_inventory_dimensions(tmp_path, change):
     changed, changed_calls, _ = measure(tmp_path, use_cache=True, **change)
     assert not first['cache_hit']
     assert changed_calls and not changed['cache_hit']
+
+
+@pytest.mark.parametrize('bitmap', [False, True])
+def test_capacity_bound_times_a_real_balanced_anchor_and_rejects_slow_capacity(tmp_path, bitmap):
+    trace = []
+    result, calls, initial_env = measure(tmp_path, bitmap=bitmap, capacity_loss=True, bounded=True, trace=trace)
+    assert calls == [(4, 16384), (4, 16384), (1, 2048)]
+    assert len(trace) == 3 and all(isinstance(probe[3], float) and probe[4] <= 4 for probe in trace)
+    assert trace[0][:3] == ('balanced', None, None)
+    assert trace[1][:3] == (('max_capacity', None, '2') if bitmap else ('max_capacity', '1', None))
+    bound = result['capacity_slowdown']
+    assert bound['status'] == 'MEASURED_MATCHED_PREFIX_BOUND'
+    assert bound['timing_scope'] == 'COMPLETED_LAYER_PREFIX'
+    assert bound['rejected_over_limit'] == ['pilot-2']
+    assert bound['observed_ratio'] == 1.0
+    assert result['segment_runtime_preset'] == 'balanced'
+    final_env = autotune._profile_environment(initial_env, result)
+    assert final_env['MGBFS_MEMORY_PRESET'] == 'balanced'
+    assert 'MGBFS_SEGMENT_COMPACT_POS' not in final_env
+    assert 'MGBFS_BITMAP_BANKS' not in final_env
+
+
+def test_lost_balanced_pilot_does_not_certify_slowdown(tmp_path):
+    result, calls, initial_env = measure(tmp_path, bounded=True, timeout_first=True, capacity_loss=True)
+    assert len(calls) == 3
+    assert result['timed_out_trials'] == ['pilot-0']
+    assert result['capacity_slowdown']['status'] == 'UNVERIFIED'
+    assert not result['measured']
+    assert result['apply_profile_batch'] is True and result['capacity_planning_candidate'] == 'pilot-2'
+    final_env = autotune._profile_environment(initial_env, result)
+    assert final_env['MGBFS_MEMORY_PRESET'] == 'max_capacity'
+    assert final_env['MGBFS_SEGMENT_QUEUE_CAP'] == '2048'
+
+
+@pytest.mark.parametrize('has_partial', [False, True])
+def test_complete_bfs_bound_uses_actual_total_time_not_completed_layer_sum(has_partial):
+    common = {'status': 'COMPLETE', 'layer_seconds': [1.0]*5}
+    anchor = dict(common, candidate='baseline', segment_runtime_preset='balanced',
+                  capacity_score_rows=1000, bfs_seconds=10.)
+    candidate = dict(common, candidate='capacity', segment_runtime_preset='max_capacity',
+                     capacity_score_rows=2000, bfs_seconds=41.)
+    pilots = [anchor, candidate]
+    if has_partial:
+        pilots.append({'candidate': 'prefix', 'status': 'INCOMPLETE', 'layer_seconds': [1.0]*4,
+                       'segment_runtime_preset': 'max_capacity', 'capacity_score_rows': 500})
+    _, _, winner, _, evidence = autotune._bounded_segmented_profile(pilots, 4.)
+    assert winner == 0
+    assert evidence['status'] == 'MEASURED_FULL_BFS_BOUND'
+    assert evidence['timing_scope'] == 'FULL_BFS'
+    assert evidence['baseline_seconds'] == 10.
+    assert evidence['rejected_over_limit'] == ['capacity']
+
+
+def test_partial_pilot_does_not_replace_faster_full_balanced_anchor():
+    complete = {'status': 'COMPLETE', 'layer_seconds': [2.0] * 5}
+    full_anchor = dict(complete, candidate='full-anchor', segment_runtime_preset='balanced',
+                       capacity_score_rows=1000, bfs_seconds=10.0)
+    partial_anchor = dict(candidate='prefix-anchor', segment_runtime_preset='balanced',
+                          capacity_score_rows=1000, status='INCOMPLETE', layer_seconds=[1.0] * 4)
+    capacity = dict(complete, candidate='capacity', segment_runtime_preset='max_capacity',
+                    capacity_score_rows=2000, bfs_seconds=41.0)
+    _, _, _, _, evidence = autotune._bounded_segmented_profile([full_anchor, partial_anchor, capacity], 4.0)
+    assert evidence['rejected_over_limit'] == ['capacity']
+
+
+def test_balanced_anchor_and_fallback_drop_only_implicit_packet_transport():
+    address = 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR'
+    explicit = {address: '127.0.0.1:12345', 'MGBFS_SEGMENT_EXACT_EXCHANGE': '1'}
+    implicit = dict(explicit, _MGBFS_PRESET_IMPLICIT_PACKET='1')
+    fallback = {'segment_runtime_preset': 'balanced', 'segment_exact_exchange': True}
+    capacity = dict(fallback, segment_runtime_preset='max_capacity')
+    assert address not in autotune._balanced_segment_environment(implicit)
+    assert address not in autotune._profile_environment(implicit, fallback)
+    assert autotune._profile_environment(explicit, fallback)[address] == explicit[address]
+    assert autotune._profile_environment(implicit, capacity)[address] == explicit[address]

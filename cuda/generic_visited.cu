@@ -15,9 +15,9 @@ template<class State,bool Shared=false> __global__ void seed_table(uint32_t elem
   if(!done)atomicOr(error,1u);
  }
 }
-template<class Candidate,class State>
+template<class Candidate,class State,bool StoreParent=false>
 __global__ void accept_candidates(Candidate action,uint64_t* slots,uint64_t slot_capacity,State* visited,uint32_t visited_capacity,
- uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint64_t seed,uint32_t bits,uint32_t* error){
+ uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint64_t seed,uint32_t bits,uint32_t* error,GenericPathParent* lineage,uint32_t path_generators){
  const uint32_t children=action.count*action.generators;
  for(uint32_t iteration=blockIdx.x*blockDim.x+threadIdx.x;iteration<children;iteration+=blockDim.x*gridDim.x){
   const uint32_t child=action.child(iteration);
@@ -36,6 +36,13 @@ __global__ void accept_candidates(Candidate action,uint64_t* slots,uint64_t slot
     const uint32_t row=atomicAdd(visited_count,1u);
     if(row>=visited_capacity){atomicOr(error,2u);done=true;break;}
     for(uint32_t e=0;e<action.elements;e++)visited[uint64_t(e)*visited_capacity+row]=action.value(child,e);
+    if constexpr(StoreParent){
+     const auto& route=action.route(child);
+     if(route.parent>=UINT32_MAX||route.source!=action.source(child)||route.generator>=path_generators){
+      atomicOr(error,128u);return;
+     }
+     lineage[row]={uint32_t(route.parent),route.source*path_generators+route.generator};
+    }
     // Release/acquire publishes the full canonical payload, including on GPUs
     // whose state loads use L1. No reader spins on an unpublished payload.
     published.store(prefix|row,cuda::memory_order_release);
@@ -78,7 +85,7 @@ extern "C" int mgbfs_generic_expand_i64_wide(uint32_t kind,uint32_t elements,uin
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!count)return 0;
  Action action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
- accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error);
+ accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error,nullptr,0);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_gather_i64(uint32_t elements,const int64_t* source,uint32_t stride,const uint32_t* indices,
@@ -107,7 +114,7 @@ extern "C" int mgbfs_generic_accept_i64_wide(uint32_t elements,const int64_t* in
   !visited_capacity||visited_capacity>=0x80000000U||!future_capacity||!incoming||!metadata||!received||
   !slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
  IncomingActionT<int64_t> action{elements,bound,stride,1,incoming,metadata,received};
- accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
+ accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error,nullptr,0);
  return int(cudaGetLastError());
 }
 
@@ -127,7 +134,7 @@ extern "C" int mgbfs_generic_expand_u8_wide(uint32_t kind,uint32_t elements,uint
   (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
  if(!count)return 0;
  ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli};
- accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error);
+ accept_candidates<<<grid(uint64_t(count)*generators),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,seed,bits,error,nullptr,0);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_gather_u8(uint32_t elements,const uint8_t* source,uint32_t stride,const uint32_t* indices,
@@ -143,7 +150,7 @@ extern "C" int mgbfs_generic_accept_u8_wide(uint32_t elements,const uint8_t* inc
   !visited_capacity||visited_capacity>=0x80000000U||!future_capacity||!incoming||!metadata||!received||
   !slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
  IncomingActionT<uint8_t> action{elements,bound,stride,1,incoming,metadata,received};
- accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);
+ accept_candidates<<<grid(bound),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error,nullptr,0);
  return int(cudaGetLastError());
 }
 
@@ -152,15 +159,36 @@ extern "C" int mgbfs_generic_accept_u8_wide(uint32_t elements,const uint8_t* inc
 // independent of thread scheduling and full hash collisions.
 #include "generic_incoming_action.cuh"
 
-template<class State,bool Packed=false,bool Shared=false> int accept_all(uint32_t elements,const State* local,const State* remote,
+template<class State,bool Packed=false,bool Shared=false,bool StoreParent=false> int accept_all(uint32_t elements,const State* local,const State* remote,
  const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,const uint32_t* local_counts,const uint32_t* remote_counts,
  uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,uint64_t* slots,uint64_t slot_capacity,
- State* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream){
+ State* visited,uint32_t visited_capacity,uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,uint32_t* error,void* stream,GenericPathParent* lineage=nullptr,uint32_t path_generators=0){
  if((Shared&&uint64_t(world)*shards*stride>=0x7fffffffULL)||(Packed&&elements>24)||!elements||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!stride||uint64_t(world)*stride>=0x7fffffffULL||
   !slot_capacity||(slot_capacity&(slot_capacity-1))||!visited_capacity||visited_capacity>=0x80000000U||!future_capacity||
   !local||!remote||!local_meta||!remote_meta||!local_counts||!remote_counts||!slots||!visited||!visited_count||!future||!future_count||!error)return int(cudaErrorInvalidValue);
  IncomingAllAction<State,Packed,Shared> action{elements,world*stride,stride,1,rank,world,shard,shards,local,remote,local_meta,remote_meta,local_counts,remote_counts};
- accept_candidates<<<grid(uint64_t(world)*stride),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error);return int(cudaGetLastError());
+ accept_candidates<decltype(action),State,StoreParent><<<grid(uint64_t(world)*stride),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,0,64,error,lineage,path_generators);return int(cudaGetLastError());
+}
+extern "C" int mgbfs_generic_accept_path_parents_v2(
+ uint32_t state_bytes,uint32_t elements,uint32_t generators,const void* local,const void* remote,
+ const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
+ const uint32_t* local_counts,const uint32_t* remote_counts,
+ uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
+ uint64_t* slots,uint64_t slot_capacity,void* visited,uint32_t visited_capacity,
+ uint32_t* visited_count,uint32_t* future,uint32_t future_capacity,uint32_t* future_count,
+ GenericPathParent* lineage,uint32_t* error,void* stream){
+ if(!lineage||!generators||uint64_t(world)*generators>UINT32_MAX)return int(cudaErrorInvalidValue);
+ if(state_bytes==1)return accept_all<uint8_t,false,true,true>(elements,
+  static_cast<const uint8_t*>(local),static_cast<const uint8_t*>(remote),
+  local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,
+  slots,slot_capacity,static_cast<uint8_t*>(visited),visited_capacity,visited_count,
+  future,future_capacity,future_count,error,stream,lineage,generators);
+ if(state_bytes==8)return accept_all<int64_t,false,true,true>(elements,
+  static_cast<const int64_t*>(local),static_cast<const int64_t*>(remote),
+  local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,
+  slots,slot_capacity,static_cast<int64_t*>(visited),visited_capacity,visited_count,
+  future,future_capacity,future_count,error,stream,lineage,generators);
+ return int(cudaErrorInvalidValue);
 }
 extern "C" int mgbfs_generic_accept_all_i64_wide(uint32_t elements,const int64_t* local,const int64_t* remote,const GenericRouteRecord* local_meta,const GenericRouteRecord* remote_meta,
  const uint32_t* local_counts,const uint32_t* remote_counts,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t stride,
@@ -206,3 +234,146 @@ extern "C" int mgbfs_generic_seed_shared_u8_wide(uint32_t elements,const uint8_t
 #include "generic_parent_origin.cuh"
 
 #include "generic_sort_origin.cuh"
+
+// Window replay runs after the owner kernels for this immutable queue tile
+// complete. A duplicate can then use the published row of its representative.
+struct WindowEdge {
+    uint64_t parent;
+    uint32_t child, generator;
+};
+static_assert(sizeof(WindowEdge)==16,"window edge ABI");
+
+__device__ void window_edge(uint32_t& output, uint32_t child, const GenericRouteRecord&) {
+    output = child;
+}
+__device__ void window_edge(WindowEdge& output, uint32_t child, const GenericRouteRecord& route) {
+    output = {route.parent, child, route.generator};
+}
+
+template<class State, class Edge>
+__global__ void resolve_incoming_edges(
+    IncomingAllAction<State, false, true> action, const uint64_t* slots,
+    uint64_t slot_count, const State* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, uint32_t begin, uint32_t length,
+    Edge* children, uint32_t* error) {
+    constexpr uint64_t prefix_mask = 0x7fffffff00000000ULL;
+    for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+         i < length; i += blockDim.x * gridDim.x) {
+        window_edge(children[i], UINT32_MAX, {});
+        const uint32_t origin = action.child(begin + i);
+        if (!action.valid(origin, error)) continue;
+        const auto& route = action.route(origin);
+        if (route.source != action.source(origin)) {
+            atomicOr(error, 256u);
+            continue;
+        }
+        const uint64_t hash = route.hash;
+        const uint64_t mask = slot_count - 1;
+        uint64_t slot = action.bucket(hash, slot_count);
+        uint32_t resolved = UINT32_MAX;
+        for (uint64_t probe = 0; probe < slot_count; ++probe, slot = (slot + 1) & mask) {
+            const uint64_t token = slots[slot];
+            if (token == EMPTY) break;
+            const uint32_t child = uint32_t(token);
+            if ((token >> 63) || child < first_child || child >= child_limit
+                || ((token ^ hash) & prefix_mask)) continue;
+            bool equal = true;
+            for (uint32_t coordinate = 0; coordinate < action.elements; ++coordinate) {
+                if (arena[uint64_t(coordinate) * stride + child] != action.value(origin, coordinate)) {
+                    equal = false;
+                    break;
+                }
+            }
+            if (equal) {
+                resolved = child - first_child;
+                break;
+            }
+        }
+        // A valid candidate must have a representative in this exact depth.
+        if (resolved == UINT32_MAX) atomicOr(error, 256u);
+        else window_edge(children[i], resolved, route);
+    }
+}
+
+template<class Edge>
+static int resolve_window_edges(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, Edge* children, uint32_t output_capacity,
+    uint32_t begin, uint32_t length, uint32_t* error, void* raw_stream) {
+    if ((state_bytes != 1 && state_bytes != 8) || !elements || !world || world > 128
+        || rank >= world || !shards || shards > 4096 || shard >= shards || !queue_capacity
+        || length > output_capacity || !length
+        || uint64_t(begin) + length > uint64_t(world) * queue_capacity
+        || uint64_t(world) * shards * queue_capacity >= 0x7fffffffULL
+        || !slot_count || (slot_count & (slot_count - 1)) || child_limit > stride
+        || first_child > child_limit || !local || !remote || !local_meta || !remote_meta
+        || !local_counts || !remote_counts || !slots || !arena || !children || !error) {
+        return cudaErrorInvalidValue;
+    }
+    const auto stream = static_cast<cudaStream_t>(raw_stream);
+    const uint32_t count = world * queue_capacity;
+    if (state_bytes == 1) {
+        const IncomingAllAction<uint8_t, false, true> action{
+            elements, count, queue_capacity, 1, rank, world, shard, shards,
+            static_cast<const uint8_t*>(local), static_cast<const uint8_t*>(remote),
+            local_meta, remote_meta, local_counts, remote_counts};
+        resolve_incoming_edges<<<grid(length), 256, 0, stream>>>(
+            action, slots, slot_count, static_cast<const uint8_t*>(arena), stride,
+            first_child, child_limit, begin, length, children, error);
+    } else {
+        const IncomingAllAction<int64_t, false, true> action{
+            elements, count, queue_capacity, 1, rank, world, shard, shards,
+            static_cast<const int64_t*>(local), static_cast<const int64_t*>(remote),
+            local_meta, remote_meta, local_counts, remote_counts};
+        resolve_incoming_edges<<<grid(length), 256, 0, stream>>>(
+            action, slots, slot_count, static_cast<const int64_t*>(arena), stride,
+            first_child, child_limit, begin, length, children, error);
+    }
+    return cudaGetLastError();
+}
+
+extern "C" int mgbfs_generic_resolve_incoming_edges_v2(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, uint32_t* children, uint32_t output_capacity,
+    uint32_t begin, uint32_t length, uint32_t* error, void* raw_stream) {
+    return resolve_window_edges(state_bytes, elements, local, remote, local_meta, remote_meta, local_counts, remote_counts,
+        rank, world, shard, shards, queue_capacity, slots, slot_count, arena, stride,
+        first_child, child_limit, children, output_capacity, begin, length, error, raw_stream);
+}
+
+extern "C" int mgbfs_generic_resolve_incoming_edges_v3(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, WindowEdge* children, uint32_t output_capacity,
+    uint32_t begin, uint32_t length, uint32_t* error, void* raw_stream) {
+    return resolve_window_edges(state_bytes, elements, local, remote, local_meta, remote_meta, local_counts, remote_counts,
+        rank, world, shard, shards, queue_capacity, slots, slot_count, arena, stride,
+        first_child, child_limit, children, output_capacity, begin, length, error, raw_stream);
+}
+
+extern "C" int mgbfs_generic_resolve_incoming_edges_v1(
+    uint32_t state_bytes, uint32_t elements, const void* local, const void* remote,
+    const GenericRouteRecord* local_meta, const GenericRouteRecord* remote_meta,
+    const uint32_t* local_counts, const uint32_t* remote_counts, uint32_t rank,
+    uint32_t world, uint32_t shard, uint32_t shards, uint32_t queue_capacity,
+    const uint64_t* slots, uint64_t slot_count, const void* arena, uint32_t stride,
+    uint32_t first_child, uint32_t child_limit, uint32_t* children, uint32_t output_capacity,
+    uint32_t* error, void* raw_stream) {
+    const uint64_t length = uint64_t(world) * queue_capacity;
+    if (length > UINT32_MAX) return cudaErrorInvalidValue;
+    return mgbfs_generic_resolve_incoming_edges_v2(
+        state_bytes, elements, local, remote, local_meta, remote_meta, local_counts, remote_counts,
+        rank, world, shard, shards, queue_capacity, slots, slot_count, arena, stride,
+        first_child, child_limit, children, output_capacity, 0, uint32_t(length), error, raw_stream);
+}

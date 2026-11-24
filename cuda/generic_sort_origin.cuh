@@ -20,7 +20,7 @@ template<class State,bool Packed> int accept_sorted(uint32_t elements,const Stat
  if(!elements||(Packed&&elements>24)||!local||!remote||!lm||!rm||!lc||!rc||!world||world>128||rank>=world||!shards||shards>4096||shard>=shards||!q||uint64_t(world)*shards*q>=0x7fffffffULL||!slots||!sc||(sc&(sc-1))||!arena||!stride||base>stride||!capacity||capacity>stride-base||!vc||!future||!accepted||!error||!ordered||rolling>1||(rolling&&!positions))return int(cudaErrorInvalidValue);
  IncomingAllAction<State,Packed,true> action{elements,world*q,q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,ordered};
  if(rolling)accept_rolling<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,base,capacity,accepted,future,positions,error);
- else accept_candidates<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,vc,future,capacity,accepted,0,64,error);
+ else accept_candidates<<<grid(uint64_t(world)*q),256,0,static_cast<cudaStream_t>(stream)>>>(action,slots,sc,arena,stride,vc,future,capacity,accepted,0,64,error,nullptr,0);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_accept_sorted_wide(uint32_t bytes,uint32_t elements,const void* local,const void* remote,const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t shard,uint32_t shards,uint32_t q,uint64_t* slots,uint64_t sc,void* arena,uint32_t stride,uint32_t base,uint32_t capacity,uint32_t* vc,uint32_t* future,uint32_t* accepted,uint64_t* positions,uint32_t* error,uint32_t rolling,const uint32_t* ordered,void* stream){

@@ -120,6 +120,34 @@ impl PositionOrbitDomain {
   }
   if remaining!=0{return Err("BITMAP_ORBIT_RANK")}Ok(state)
  }
+ /// Returns exact generator masks when the variable components are pairs.
+ /// The least significant bit belongs to the last nonconstant component.
+ pub(crate) fn xor_generator_masks(&self, generators: &[Vec<u32>]) -> Option<Vec<u64>> {
+  if !self.components.iter().all(|(positions, domain)|
+   positions.len() == 1 || (positions.len() == 2 && domain.size() == 2))
+  {
+   return None;
+  }
+  generators.iter().map(|generator| {
+   if generator.len() != self.elements { return None; }
+   let mut mask = 0;
+   for (positions, _) in &self.components {
+    let first = positions[0];
+    if positions.len() == 1 {
+     if generator[first as usize] != first { return None; }
+     continue;
+    }
+    let second = positions[1];
+    let swapped = match (generator[first as usize], generator[second as usize]) {
+     pair if pair == (first, second) => false,
+     pair if pair == (second, first) => true,
+     _ => return None,
+    };
+    mask = (mask << 1) | u64::from(swapped);
+   }
+   Some(mask)
+  }).collect()
+ }
  /// Layout consumed by a capability-checked CUDA bitmap rank implementation.
  /// The single-component layout is exactly the historical ABI. For multiple
  /// components, the high bit denotes descriptors of seven u32 words each:
@@ -269,6 +297,25 @@ mod position_orbit_tests {
    let d=PositionOrbitDomain::new(&start,&gens).unwrap();
    for rank in 0..d.size(){let state=d.unrank(rank).unwrap();assert_eq!(metadata_rank(&d,&state),rank);}
   }
+ }
+ #[test]
+ fn pair_orbit_masks_match_original_generator_ids_and_exact_ranks() {
+  let start = [7, 99, -3, -15, 2];
+  let generators = vec![vec![2, 1, 0, 4, 3], vec![0, 1, 2, 4, 3], vec![0, 1, 2, 3, 4]];
+  let domain = PositionOrbitDomain::new(&start, &generators).unwrap();
+  let masks = domain.xor_generator_masks(&generators).unwrap();
+  assert_eq!(masks, [3, 1, 0]);
+  for rank in 0..domain.size() {
+   let state = domain.unrank(rank).unwrap();
+   for (generator, mask) in generators.iter().zip(&masks) {
+    let child: Vec<_> = generator.iter().map(|&position| state[position as usize]).collect();
+    assert_eq!(domain.rank(&child).unwrap(), rank ^ mask);
+   }
+  }
+  assert!(domain.xor_generator_masks(&[vec![1, 0, 2, 3, 4]]).is_none());
+  let cycle = vec![vec![1, 2, 0]];
+  let ternary = PositionOrbitDomain::new(&[0, 1, 2], &cycle).unwrap();
+  assert!(ternary.xor_generator_masks(&cycle).is_none());
  }
  #[test] fn component_product_is_closed_even_when_generators_are_coupled(){
   check_closed(vec![-7,8,10,12,90,91],vec![vec![1,0,3,2,4,5]],4);

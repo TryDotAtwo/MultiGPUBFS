@@ -1,5 +1,6 @@
 """Lossless CayleyPy graph contract. CPU successors are verification oracles only."""
-import copy,hashlib,json
+import copy,hashlib,json,os
+from pathlib import Path
 
 I64_MIN=-(1<<63);I64_MAX=(1<<63)-1
 
@@ -148,3 +149,21 @@ def from_cayleypy(definition):
   if len(start)%n:raise ValueError('GRAPH_MATRIX_SHAPE')
   return GraphDefinition.matrix(n,len(start)//n,[(_flatten(g.matrix),int(g.modulo)) for g in generators],start,**options)
  raise ValueError('GRAPH_ACTION_KIND')
+
+
+def _normalize_graph(graph, start=None):
+    if isinstance(graph, (str, os.PathLike)):
+        source = os.fsdecode(graph)
+        graph = json.loads(source if source.lstrip().startswith("{") else Path(source).read_text(encoding="utf-8"))
+    if isinstance(graph, dict):
+        if "catalog" in graph:
+            from .catalog import from_catalog
+
+            graph = from_catalog(graph["catalog"], args=graph.get("args"), kwargs=graph.get("kwargs"))
+        else:
+            graph = GraphDefinition.from_dict(graph)
+    if not isinstance(graph, GraphDefinition):
+        graph = from_cayleypy(graph)
+    if start is not None:
+        graph = GraphDefinition.from_dict(dict(graph.to_dict(), start=_flatten(start)))
+    return graph

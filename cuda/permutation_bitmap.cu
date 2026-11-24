@@ -9,6 +9,7 @@
 #include "bitmap_owner_page.cuh"
 #include "segmented_history.cuh"
 #include "segmented_warp_route.cuh"
+#include "segmented_packet_owner.cuh"
 
 extern "C" uint32_t mgbfs_bitmap_orbit_domain_abi_version(){return 1;}
 
@@ -207,17 +208,36 @@ template<class T,bool Packed,bool Grouped=false>
 int launch_accept(uint32_t elements,const T* local,const T* remote,const GenericRouteRecord* lm,const GenericRouteRecord* rm,
  const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t owner,uint64_t total,uint64_t owner_len,uint64_t* bits,
  uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,MgbfsSegment active,uint32_t bank,
- uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream){
+ uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream,
+ uint32_t logical_world=0){
+ if(!logical_world)logical_world=world;
  uint64_t bound=uint64_t(world)*q;
- if(!elements||(Packed&&elements>packed_route_max_elements)||!world||world>128||rank>=world||owner>=world||!total||!bits||!shards||shard>=shards||!q||
+ if(!elements||(Packed&&elements>packed_route_max_elements)||!world||world>128||rank>=world||logical_world>128||owner>=logical_world||!total||!bits||!shards||shard>=shards||!q||
   bound>=0x80000000ULL||visible>q||selected>bound||(!selection&&selected!=uint64_t(world)*visible)||!lm||!rm||!lc||!rc||(!Packed&&(!local||!remote))||
   !active.states||!(active.banks==2||active.banks==3)||!active.capacity||active.capacity>(uint64_t(1)<<32)||bank>=active.banks||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
  if(!selected)return 0;
  MgbfsBoundedIncomingAction<T,Packed> in{{elements,uint32_t(bound),q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,nullptr},visible};
  uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;
- if constexpr(Grouped)bitmap_accept_grouped<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(in,world,owner,total,owner_len,bits,active,bank,accepted,selection,selected,spill,spill_count,error,global_count,limit);
- else bitmap_accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(in,world,owner,total,owner_len,bits,active,bank,accepted,selection,selected,spill,spill_count,error,global_count,limit);
+ if constexpr(Grouped)bitmap_accept_grouped<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(in,logical_world,owner,total,owner_len,bits,active,bank,accepted,selection,selected,spill,spill_count,error,global_count,limit);
+ else bitmap_accept<T><<<blocks,256,0,static_cast<cudaStream_t>(stream)>>>(in,logical_world,owner,total,owner_len,bits,active,bank,accepted,selection,selected,spill,spill_count,error,global_count,limit);
  return int(cudaGetLastError());
+}
+
+template<class T,bool Packed,bool Grouped>
+int launch_packet_owner(const MgbfsBitmapPacketOwnerArgs& a,void* stream){
+ const auto* states=static_cast<const T*>(a.states);
+ return launch_accept<T,Packed,Grouped>(a.elements,states,states,a.records,a.records,a.counts,a.counts,
+  0,1,a.owner,a.total,a.owner_len,a.bits,0,1,a.capacity,a.visible,a.selection,a.selected,a.active,
+  a.bank,a.accepted,a.spill,a.spill_count,a.error,a.global_count,a.limit,stream,a.world);
+}
+extern "C" int mgbfs_bitmap_accept_packet_v1(const MgbfsBitmapPacketOwnerArgs* args,uint32_t grouped,void* stream){
+ if(!args||grouped>1)return int(cudaErrorInvalidValue);
+ const auto& a=*args;
+ if(!a.world||!a.shards||a.shard>=a.shards||a.raw_begin||a.packed>1)return int(cudaErrorInvalidValue);
+ if(a.state_bytes==1&&a.packed)return grouped?launch_packet_owner<uint8_t,true,true>(a,stream):launch_packet_owner<uint8_t,true,false>(a,stream);
+ if(a.state_bytes==1)return grouped?launch_packet_owner<uint8_t,false,true>(a,stream):launch_packet_owner<uint8_t,false,false>(a,stream);
+ if(a.state_bytes==8&&!a.packed)return grouped?launch_packet_owner<int64_t,false,true>(a,stream):launch_packet_owner<int64_t,false,false>(a,stream);
+ return int(cudaErrorInvalidValue);
 }
 extern "C" int mgbfs_bitmap_accept(uint32_t state_bytes,uint32_t packed,uint32_t elements,const void* local,const void* remote,
  const GenericRouteRecord* lm,const GenericRouteRecord* rm,const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,

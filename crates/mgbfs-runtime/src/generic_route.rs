@@ -19,3 +19,76 @@ impl GenericRouteGeometry {
   (self.owner_to_rank[at],shard)
  }
 }
+
+#[cfg(any(feature = "cuda", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RoundVote {
+    Continue,
+    Retry,
+    Capacity(u32),
+    Stop,
+    Fatal(u32),
+}
+
+#[cfg(any(feature = "cuda", test))]
+impl RoundVote {
+    // Keep tags in sync with classify_route_retry_v3 in cuda/generic_route.cu.
+    // The owner payload includes bit 8, used by the window edge resolver.
+    pub(crate) fn current(value: u32) -> Result<Self> {
+        let flags = value & 0x0fff_ffff;
+        match value {
+            0 => Ok(Self::Continue),
+            1 => Ok(Self::Retry),
+            0x2000_0000 => Ok(Self::Stop),
+            _ => match value >> 28 {
+                1 if (1..=7).contains(&flags) => Ok(Self::Capacity(flags)),
+                3 if flags & !7 != 0 => Ok(Self::Fatal(flags)),
+                4 if flags != 0 => Ok(Self::Fatal(0x1_0000 | flags)),
+                _ => Err("GENERIC_DISTRIBUTED_ROUTE_VOTE".into()),
+            },
+        }
+    }
+
+    pub(crate) fn owner(flags: u32) -> Self {
+        match flags {
+            0 => Self::Continue,
+            1..=7 => Self::Capacity(flags),
+            _ => Self::Fatal(flags),
+        }
+    }
+
+    // The legacy first vote enters this path only after observing a stop
+    // or error. Its owner marker overlaps a raw error flag. The source-only
+    // legacy vote and the separate raw owner max are lossless in this case.
+    pub(crate) fn legacy_error(source: u32, owner: u32, stop: bool) -> Self {
+        if source > 1 {
+            return Self::Fatal(source);
+        }
+        let owner = Self::owner(owner);
+        match owner {
+            Self::Fatal(_) => owner,
+            _ if stop => Self::Stop,
+            Self::Continue if source == 1 => Self::Retry,
+            _ => owner,
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn distributed_round_vote_distinguishes_capacity_from_fatal_and_keeps_collective_order() {
+    assert_eq!(RoundVote::current(0x1000_0002).unwrap(), RoundVote::owner(2));
+    assert_eq!(RoundVote::current(0x3000_0102).unwrap(), RoundVote::owner(258));
+    assert_eq!(
+        RoundVote::current([1, 0x1000_0002, 0x2000_0000].into_iter().max().unwrap()).unwrap(),
+        RoundVote::Stop
+    );
+    assert_eq!(
+        RoundVote::current([0x1000_0002, 0x2000_0000, 0x3000_0100].into_iter().max().unwrap()).unwrap(),
+        RoundVote::Fatal(256)
+    );
+    assert_eq!(RoundVote::legacy_error(1, 2, false), RoundVote::Capacity(2));
+    assert_eq!(RoundVote::legacy_error(0, 258, true), RoundVote::Fatal(258));
+    assert_eq!(RoundVote::legacy_error(0x1_0003, 2, true), RoundVote::Fatal(0x1_0003));
+    assert_eq!(RoundVote::legacy_error(0, 2, true), RoundVote::Stop);
+}

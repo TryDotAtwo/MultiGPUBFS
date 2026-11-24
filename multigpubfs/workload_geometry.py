@@ -18,6 +18,25 @@ def coxeter_frontier_bound(graph):
   sizes=out
  return {'kind':'CERTIFIED_COXETER_GLOBAL_FRONTIER','maximum_frontier':max(sizes),'maximum_live_states':max(sum(sizes[max(0,j-2):j+1]) for j in range(len(sizes))),'order':sum(sizes),'depth':len(sizes)-1,'scope':'global peak is a safe per-rank upper bound, independent of hash balance'}
 
+def independent_swap_frontier_bound(graph):
+ from math import comb
+
+ if graph.action["kind"] != "permutation":
+  return None
+ used = set()
+ for generator in graph.action["generators"]:
+  moved = [index for index, source in enumerate(generator) if index != source]
+  if len(moved) != 2:
+   return None
+  left, right = moved
+  if left in used or right in used or graph.start[left] == graph.start[right]:
+   return None
+  used.update(moved)
+ dimensions = len(used) // 2
+ return {"kind": "CERTIFIED_INDEPENDENT_SWAPS", "order": 1 << dimensions,
+         "maximum_frontier": comb(dimensions, dimensions // 2)}
+
+
 def certified_frontier_bound(graph):
  bound=coxeter_frontier_bound(graph)
  if bound is not None:return bound

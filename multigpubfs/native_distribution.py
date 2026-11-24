@@ -10,23 +10,25 @@ def _stream_digest(path):
 
 def _file_digest(path):
  from .generic_session import _active
- if _active is None:return _stream_digest(path)
+ from .cluster import current_cluster
+ owner=_active if _active is not None else current_cluster()
+ if owner is None:return _stream_digest(path)
  from .autotune import _stat_identity
  key=(str(Path(path).resolve()),_stat_identity(path))
- cache=getattr(_active,'file_digests',None)
- if cache is None:cache={};_active.file_digests=cache
+ cache=getattr(owner,'file_digests',None)
+ if cache is None:cache={};owner.file_digests=cache
  if key not in cache:
   if len(cache)>=64:cache.clear()
   cache[key]=_stream_digest(path)
  return cache[key]
 
-def native_root(*,prepare=False):
- """Resolve a full installed bundle or this package's verified user cache."""
 def _external_ranks():
  # The cluster launcher exports WORLD_SIZE for both torchrun and SLURM.
  world=os.environ.get('WORLD_SIZE','1')
  return world.isdecimal() and int(world)>1
 
+def native_root(*,prepare=False):
+ """Resolve a full installed bundle or this package's verified user cache."""
  root=Path(__file__).resolve().parent/'_native'
  if (root/'bin/mgbfs').is_file():return root
  index=Path(__file__).resolve().parent/'native_assets.json'

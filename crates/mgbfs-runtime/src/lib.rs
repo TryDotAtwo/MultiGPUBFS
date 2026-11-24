@@ -59,6 +59,7 @@ pub mod simulation;
 pub mod source_banks;
 pub mod topology;
 pub mod transport;
+mod segmented_packet_transport;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 pub mod cuda_loading;
@@ -71,6 +72,9 @@ pub mod generic_native;
 
 #[cfg(all(feature="cuda",target_os="linux"))]
 pub mod generic_run;
+
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub mod generic_path_native;
 
 pub mod generic_route;
 
@@ -109,3 +113,9 @@ pub mod segmented_strategy;
 mod segmented_distributed_native;
 
 pub mod permutation_bitmap;
+
+#[cfg(any(feature = "cuda", test))]
+mod path_meeting;
+
+#[cfg(any(all(feature = "cuda", target_os = "linux"), test))]
+mod path_csr;

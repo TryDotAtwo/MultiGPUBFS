@@ -1,5 +1,5 @@
 """External rank launch with network bootstrap and bounded collective tuning."""
-import os,json,time,tempfile,subprocess,hashlib,statistics,base64
+import os,json,time,tempfile,subprocess,hashlib,statistics,base64,socket
 from pathlib import Path
 from .process_control import query as native_query
 from .network_control import ControlStore
@@ -26,6 +26,12 @@ def _phase_environment(env,transport=None,order=None,history=None,lanes=None,gen
   if value is not None:result[key]=str(value)
  return result
 
+def _match_resident_reserve(env, inventory):
+ values=[item.get('additional_reserve_bytes') for item in inventory]
+ if not values or any(type(value) is not int or value<0 or value!=values[0] for value in values):
+  raise RuntimeError('EXTERNAL_RESIDENT_RESERVE_CONSENSUS')
+ return dict(env,MGBFS_GENERIC_VRAM_RESERVE_BYTES=str(values[0]))
+
 def _merge_local_sorted_plans(parts,digest,requested):
  if not parts or len(parts)>128:raise RuntimeError('EXTERNAL_LOCAL_PLAN_WORLD')
  plans=[v['plan'] for v in parts];first=plans[0]
@@ -45,8 +51,17 @@ def _merge_local_sorted_plans(parts,digest,requested):
 
 from .work_limits import wire, remaining as remaining_work, phase_expired
 
-def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune):
- from .launch import _receipt
+def _native_artifact_hashes(native,env):
+ from .native_distribution import _file_digest
+ dependency=_dependency_identity(native,env)
+ return {'native':_file_digest(native),'cuda':dependency['cuda_library_sha256'] if dependency else None}
+
+def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None):
+ from .launch import _rank_launch_config,_receipt,_with_packet_job_token
+ from .cluster import current_cluster
+ cluster=current_cluster()
+ segmented=native_env.get('MGBFS_SEGMENT_EXTERNAL_LINK')=='1'
+ resident_admission=cluster is not None and (segmented or path_targets is not None)
  rank=int(os.environ['RANK']);world=int(os.environ['WORLD_SIZE']);local=int(os.environ.get('LOCAL_RANK','0'))
  if not 1<world<=128 or not 0<=rank<world:raise ValueError('EXTERNAL_RANK_RANGE')
  device=local if devices is None else devices[0]
@@ -63,8 +78,17 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
   store.put(f'host-memory/{rank}',host_memory)
   with tempfile.TemporaryDirectory(prefix=f'mgbfs-rank-{rank}-',dir=output.parent) as directory:
    temporary=Path(directory);definition=temporary/'graph.json';definition.write_text(graph.to_json())
-   dependency=_dependency_identity(native,native_env)
-   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'gemm_variant':native_env.get('MGBFS_GEMM_VARIANT','auto'),'native':hashlib.sha256(Path(native).read_bytes()).hexdigest(),'cuda':dependency['cuda_library_sha256'] if dependency else None}
+   identity={'graph':digest,'world':world,'capacity':capacity,'seconds':max_seconds,'shards':shards,'autotune':autotune,'transport':native_env.get('MGBFS_GENERIC_TRANSPORT'),'candidate_order':native_env.get('MGBFS_GENERIC_SORT'),'history_algorithm':native_env.get('MGBFS_GENERIC_HISTORY','hash'),'owner_lanes':native_env.get('MGBFS_GENERIC_OWNER_LANES','1'),'generator_backend':native_env.get('MGBFS_GENERIC_GENERATOR','cuda'),'gemm_variant':native_env.get('MGBFS_GEMM_VARIANT','auto'),**_native_artifact_hashes(native,native_env)}
+   identity['batch']=batch
+   if path_targets is not None:
+    identity['path_bidirectional']=path_bidirectional
+    identity['path_window']=path_window
+    identity['path_maxmemory']=native_env.get('MGBFS_GENERIC_PATH_MAXMEMORY','0')
+    identity['path_fused_route']=native_env.get('MGBFS_GENERIC_PATH_FUSED_ROUTE','1')!='0'
+    identity['path_exact_exchange']=native_env.get('MGBFS_GENERIC_PATH_EXACT_EXCHANGE')=='1'
+    identity['path_targets_sha256']=hashlib.sha256(json.dumps(path_targets,separators=(',',':')).encode()).hexdigest()
+   if segmented:
+    identity['segmented']={k:v for k,v in native_env.items() if (k.startswith(('MGBFS_SEGMENT_', 'MGBFS_BITMAP_')) or k in ('MGBFS_MEMORY_PRESET','MGBFS_EXPERIMENTAL_BITMAP')) and k!='MGBFS_SEGMENT_PACKET_BIND_ADDR'}
    store.put(f'identity/{rank}',identity)
    if rank==0:
     peers=[store.get(f'identity/{i}') for i in range(world)]
@@ -73,6 +97,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     store.put('identity-ready',True)
    store.get('identity-ready')
    def inventories(label):
+    if resident_admission:
+     inventory=cluster.inventory(native,native_env,device)
+     store.put(label+f'/inventory/{rank}',inventory)
+     if rank==0:return [store.get(label+f'/inventory/{i}') for i in range(world)]
+     return None
     probe=native_query([str(native),'graph-info',str(definition),str(device),'1'],env=dict(native_env,MGBFS_GENERIC_HISTORY='hash'),capture_output=True,text=True)
     if probe.returncode:raise RuntimeError('EXTERNAL_LOCAL_ADMISSION_FAILED '+probe.stderr[-2000:])
     v=json.loads(probe.stdout);store.put(label+f'/inventory/{rank}',v['inventory'][0])
@@ -99,6 +128,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      if batch is not None and common!=batch:raise RuntimeError('REQUESTED_BATCH_EXCEEDS_SORTED_ADMISSION')
      parts=local_probe('matched',common);return _merge_local_sorted_plans(parts,digest,requested)
     if rank==0:
+     if resident_admission:admission_env=_match_resident_reserve(admission_env,inventory)
      path=temporary/(label.replace('/','-')+'-inventory.json');path.write_text(json.dumps(inventory));cmd=[str(native),'graph-plan',str(definition),str(path),str(count),str(requested) if requested is not None else 'auto']
      if batch is not None:cmd.append(str(batch))
      p=native_query(cmd,env=admission_env,capture_output=True,text=True)
@@ -109,33 +139,58 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    def phase(label,count,requested,batch_fraction,seconds,depth=None,transport=None,order=None,history=None,lanes=None,generator=None):
     phase_env=_phase_environment(native_env,transport,order,history,lanes,generator)
     inventory=inventories(label)
-    config=admit(label,inventory,count,requested,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
+    config=admit(label,inventory,count,requested,batch if label=='production' else None,transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if batch_fraction!=1.0:config=admit(label+'-batch',inventory,count,requested,max(1,int(config['plan']['batch']*batch_fraction)),transport=transport,order=order,history=history,lanes=lanes,generator=generator)
     if rank==0:
+     config=_rank_launch_config(
+      config,digest,bitmap=segmented and native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',depth=depth,
+      path_targets=path_targets,path_bidirectional=path_bidirectional,path_window=path_window)
      config['max_seconds']=seconds
      if depth is None and profile and config.get('size_profile_capability')==1:
       config['online_size_tuning']=True
       config['size_profiles']=[{'minimum_frontier':0,'batch':config['plan']['batch'],'generator_backend':profile.get('generator_backend','cuda')}]
-     if depth is not None:config['profile_max_layers']=depth
-     store.put(label+'/config',config)
+     store.put(label+'/config',_with_packet_job_token(config,phase_env))
     config=store.get(label+'/config');seconds=config['max_seconds'];folder=temporary/label if depth is not None else output;folder.mkdir();configuration=folder/'launch.json';configuration.write_text(json.dumps(config));bootstrap=folder/'nccl-id'
-    if rank!=0:bootstrap.write_bytes(base64.b64decode(store.get(label+'/nccl-id')))
+    if rank!=0 and not segmented:bootstrap.write_bytes(base64.b64decode(store.get(label+'/nccl-id')))
+    if segmented:
+     from .segmented_network import AgreementRelay
+     relay=AgreementRelay(store,label,bootstrap,rank,world)
     log=(folder/f'rank-{rank}.log').open('w');job=None
     try:
-     job=subprocess.Popen([str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(folder/f'rank-{rank}'),str(wire(seconds))],env=dict(phase_env,RANK=str(rank),WORLD_SIZE=str(world),LOCAL_RANK=str(device),MGBFS_JOB_PHASE_PATH=str(folder/f'rank-{rank}.phase.json')),stdout=log,stderr=subprocess.STDOUT)
-     if rank==0:
+     command=[str(native),'graph-rank',str(definition),str(configuration),str(rank),str(bootstrap),str(folder/f'rank-{rank}'),str(wire(seconds))]
+     job_env=dict(phase_env,RANK=str(rank),WORLD_SIZE=str(world),LOCAL_RANK=str(device),MGBFS_JOB_PHASE_PATH=str(folder/f'rank-{rank}.phase.json'))
+     if resident_admission:job_env['MGBFS_GENERIC_VRAM_RESERVE_BYTES']=str(config['additional_reserve_bytes'])
+     job=cluster.launch_rank(command,job_env,log) if cluster is not None else subprocess.Popen(command,env=job_env,stdout=log,stderr=subprocess.STDOUT)
+     if rank==0 and not segmented:
+      bootstrap_deadline=time.monotonic()+600
       while not bootstrap.exists():
        if job.poll() is not None:raise RuntimeError('EXTERNAL_BOOTSTRAP_WORKER_EXIT')
+       if time.monotonic()>=bootstrap_deadline:raise RuntimeError('EXTERNAL_BOOTSTRAP_TIMEOUT_NO_RESTART')
        store.check_error();time.sleep(.02)
       store.put(label+'/nccl-id',base64.b64encode(bootstrap.read_bytes()).decode())
      deadline=None if seconds is None else time.monotonic()+seconds+180
      observed_start=time.monotonic()
+     bootstrap_done=not segmented
+     next_error_poll=0.
      while job.poll() is None:
-      store.check_error()
       from .launch import _job_phase
       observed=_job_phase(job,folder,rank)
+      now=time.monotonic()
+      if now>=next_error_poll:
+       store.check_error();next_error_poll=now+.2
+      host_phase=(observed or {}).get('phase','')
+      if segmented and host_phase.startswith('segmented-host-'):
+       relay.step(host_phase.removeprefix('segmented-host-'))
+      if not bootstrap_done:
+       if rank==0 and bootstrap.is_file():
+        store.put(label+'/nccl-id',base64.b64encode(bootstrap.read_bytes()).decode());bootstrap_done=True
+       if rank!=0:
+        shared_id=store.try_get(label+'/nccl-id')
+        if shared_id is not None:
+         temporary_id=bootstrap.with_suffix('.relay-tmp');temporary_id.write_bytes(base64.b64decode(shared_id,validate=True));temporary_id.replace(bootstrap);bootstrap_done=True
+       if time.monotonic()-observed_start>600:raise RuntimeError('EXTERNAL_BOOTSTRAP_TIMEOUT_NO_RESTART')
       if (deadline is not None and time.monotonic()>deadline) or (observed is not None and phase_expired(observed,time.time(),seconds)) or (observed is None and time.monotonic()-observed_start>600):raise RuntimeError('EXTERNAL_WORKER_OBSERVATION_TIMEOUT_NO_RESTART')
-      time.sleep(.05)
+      time.sleep(.02 if segmented and (not bootstrap_done or host_phase.startswith('segmented-host-')) else .05)
      if job.returncode:raise RuntimeError('EXTERNAL_NATIVE_RANK_FAILED '+str(rank))
     finally:
      if job is not None and job.poll() is None:
@@ -143,14 +198,38 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
       try:job.wait(timeout=10)
       except subprocess.TimeoutExpired:job.kill();job.wait()
      log.close()
-    report=_receipt(folder/f'rank-{rank}',digest);states=json.loads((folder/f'rank-{rank}/states.json').read_text());store.put(label+f'/receipt/{rank}',{'report':report,'states':states})
+    if path_targets is not None:
+     local=json.loads((folder/f'rank-{rank}'/'path.json').read_text(encoding='utf-8'))
+     from .generic_session import path_workspace
+     workspace=path_workspace(job)
+     if workspace is not None:workspace['hostname']=socket.gethostname()
+     store.put(label+f'/receipt/{rank}',{'path':local,'workspace':workspace})
+     if rank==0:
+      replies=[store.get(label+f'/receipt/{i}') for i in range(world)]
+      workspaces={'ranks':[reply['workspace'] for reply in replies]}
+      if path_window is not None:
+       from .path_search import _agree_window_receipts
+       result=_agree_window_receipts([reply['path'] for reply in replies])
+      else:
+       if any(reply['path']!=local for reply in replies):raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')
+       result=local
+      store.put(label+'/result',dict(result,native_workspace=workspaces))
+     result=store.get(label+'/result')
+     store.put(label+f'/consumed/{rank}',True)
+     if rank==0:
+      for i in range(world):store.get(label+f'/consumed/{i}')
+      store.release_prefix(label+'/')
+     return result
+    report=_receipt(folder/f'rank-{rank}',digest);states=json.loads((folder/f'rank-{rank}/states.json').read_text());store.put(label+f'/receipt/{rank}',{'report':report,'states':states,'pid':job.pid,'hostname':socket.gethostname()})
     if rank==0:
      parts=[store.get(label+f'/receipt/{i}') for i in range(world)];reports=[v['report'] for v in parts]
      from .traversal_receipt import merge_rank_traversal
      result,states=merge_rank_traversal(reports,[part['states'] for part in parts],config,error_prefix='EXTERNAL',
-         segmented=False,bitmap=False)
+         segmented=segmented,bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',require_admitted_cuts=True)
      result.update(host_memory=[store.get(f'host-memory/{i}') for i in range(world)],
                    scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
+     result['rank_worker_pids']=[part['pid'] for part in parts]
+     result['rank_hostnames']=[part['hostname'] for part in parts]
      store.put(label+'/result',{'report':result,'states':states})
     result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2))
     store.put(label+f'/consumed/{rank}',True)
@@ -158,7 +237,22 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
      for i in range(world):store.get(label+f'/consumed/{i}')
      store.release_prefix(label+'/')
     return result['report']
-   if shards is None and autotune and (max_seconds is None or max_seconds>=10):
+   if segmented and shards is None:
+    inventory=inventories('segmented-geometry')
+    baseline=admit('segmented-baseline',inventory,1,capacity)
+    if rank==0:
+     from .shard_policy import choose_segmented_shards
+     bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1'
+     geometry=choose_segmented_shards(graph,baseline,bitmap=bitmap,target_rows=int(native_env['MGBFS_SEGMENT_MAX_ROWS']),env=native_env)
+     store.put('segmented-shards',geometry['target_shards'])
+    shards=store.get('segmented-shards')
+    while shards>1:
+     try:admit(f'segmented-admit-{shards}',inventory,shards,capacity)
+     except RuntimeError as error:
+      if not any(code in str(error) for code in ('GENERIC_DISTRIBUTED_HEADROOM','GENERIC_DISTRIBUTED_NO_CAPACITY','GENERIC_VRAM_CAPACITY')):raise
+      shards=max(1,shards//2)
+     else:break
+   if not segmented and shards is None and autotune and (max_seconds is None or max_seconds>=10):
     inventory=inventories('profile-admission')
     from .hardware_profiles import startup_policy
     baseline=admit('hardware-baseline',inventory,1,capacity)
@@ -194,12 +288,10 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
    store.put(f'finished/{rank}',True)
    if rank==0:
     for i in range(world):store.get(f'finished/{i}')
-   return _receipt(output,digest)
+   return result if path_targets is not None else _receipt(output,digest)
  except BaseException as error:
   try:
-   store.put('error',str(error));store.put(f'error-ack/{rank}',True)
-   if rank==0:
-    for i in range(world):store.get(f'error-ack/{i}',timeout=5)
+   store.report_error(error,world)
   except Exception:pass
   raise
  finally:store.close()

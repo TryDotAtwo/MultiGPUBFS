@@ -26,6 +26,28 @@ def test_bitmap_has_same_live_state_geometry():
     p=choose_segmented_shards(coxeter(14),admission(),bitmap=True)
     assert p['target_shards']==1,p
 
+def test_bitmap_geometry_uses_effective_domain_and_frontier_codec():
+    n = 60
+    graph = GraphDefinition.permutation(
+        [[p ^ 1 if p // 2 == i else p for p in range(n)] for i in range(n // 2)],
+        [-7 if p & 1 else 511 for p in range(n)],
+    )
+    hardware = admission(n=n, world=2, free=6 << 30)
+    hardware["plan"]["state_bytes"] = 8
+    unpacked = choose_segmented_shards(
+        graph, hardware, bitmap=True, target_rows=1 << 20,
+        env={"MGBFS_BITMAP_BANKS": "2", "_MGBFS_BITMAP_POSITION_ORBITS_CAPABLE": "1"},
+    )
+    packed = choose_segmented_shards(
+        graph, hardware, bitmap=True, target_rows=1 << 20,
+        env={"MGBFS_BITMAP_BANKS": "2", "MGBFS_SEGMENT_PACK4": "1",
+             "_MGBFS_BITMAP_POSITION_ORBITS_CAPABLE": "1"},
+    )
+    assert packed["bound_kind"] == "CERTIFIED_INDEPENDENT_SWAPS"
+    assert packed["global_live_bound"] == 2 * packed["global_peak_bank_bound"]
+    assert unpacked["memory_limited"] and not packed["memory_limited"]
+    assert packed["target_shards"] > unpacked["target_shards"]
+
 def test_small_graph_remains_one_shard():
     p=choose_segmented_shards(coxeter(4),admission(n=4,world=2))
     assert p['target_shards']==1,p

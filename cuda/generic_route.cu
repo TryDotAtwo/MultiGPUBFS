@@ -5,14 +5,26 @@
 #include "generic_gemm.cuh"
 #include "segmented_warp_route.cuh"
 static_assert(sizeof(GenericRouteRecord)==32,"route ABI");
-template<class State,bool Packed=false,bool Grouped=false> __global__ void route(ActionT<State> action,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,
+template<class State,bool Packed=false,bool Grouped=false,uint32_t MaxElements=0> __global__ void route(ActionT<State> action,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,
  uint32_t shards,uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,
- GenericRouteRecord* output,uint32_t* counts,uint32_t* error){
+ GenericRouteRecord* output,uint32_t* counts,uint32_t* error,State* states=nullptr){
  uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
   uint64_t hash;
   [[maybe_unused]] PackedRouteState packed;
-  if constexpr(Packed){
+  State values[MaxElements ? MaxElements : 1];
+  if constexpr(MaxElements!=0){
+   uint64_t h=seed;
+   #pragma unroll
+   for(uint32_t e=0;e<MaxElements;e++){
+    if(e<action.elements){
+     const auto value=action.value(child,e);
+     values[e]=State(value);
+     h=mix64(h^uint64_t(value)^uint64_t(e));
+    }
+   }
+   hash=finish_hash(h,bits);
+  }else if constexpr(Packed){
    uint64_t h=seed;
    for(uint32_t e=0;e<action.elements;e++){
     const uint64_t v=uint64_t(action.value(child,e));h=mix64(h^v^uint64_t(e));
@@ -33,8 +45,51 @@ template<class State,bool Packed=false,bool Grouped=false> __global__ void route
   if constexpr(Packed){
    output[uint64_t(queue)*capacity+row]=packed.record(hash);
   }else output[uint64_t(queue)*capacity+row]={hash,begin+child/action.generators,source,child%action.generators,shard,0};
+  if constexpr(MaxElements!=0){
+   #pragma unroll
+   for(uint32_t e=0;e<MaxElements;e++){
+    if(e<action.elements)states[(uint64_t(queue)*action.elements+e)*capacity+row]=values[e];
+   }
+  }
  }
 }
+template<class State>
+static void route_with_states(ActionT<State> action,uint32_t grid,cudaStream_t stream,
+ uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,
+ uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* records,
+ uint32_t* counts,uint32_t* error,State* states){
+ if(action.elements<=8)
+  route<State,false,false,8><<<grid,256,0,stream>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,records,counts,error,states);
+ else
+  route<State,false,false,16><<<grid,256,0,stream>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,records,counts,error,states);
+}
+
+extern "C" int mgbfs_generic_route_with_states_v1(uint32_t bytes,uint32_t kind,uint32_t elements,
+ uint32_t n,uint32_t m,uint32_t generators,const void* parents,uint32_t count,uint32_t stride,
+ const uint32_t* permutations,const int64_t* matrices,const uint32_t* moduli,uint64_t seed,
+ uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
+ const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* records,uint32_t* counts,
+ uint32_t* error,void* states,void* stream){
+ if((bytes!=1&&bytes!=8)||kind>1||(bytes==1&&kind!=0)||!elements||elements>16||!n||!m||
+  !generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||bits>64||
+  !world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
+  !parents||!records||!counts||!error||!states||
+  (kind==0&&(!permutations||elements!=n||m!=1))||(kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))
+  return int(cudaErrorInvalidValue);
+ if(!count)return int(cudaSuccess);
+ const uint64_t blocks=(uint64_t(count)*generators+255)/256;
+ const auto grid=uint32_t(blocks>65535?65535:blocks);
+ const auto st=static_cast<cudaStream_t>(stream);
+ if(bytes==1){
+  ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
+  route_with_states(a,grid,st,seed,bits,world,source,shards,capacity,begin,map,cuts,records,counts,error,static_cast<uint8_t*>(states));
+ }else{
+  Action a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
+  route_with_states(a,grid,st,seed,bits,world,source,shards,capacity,begin,map,cuts,records,counts,error,static_cast<int64_t*>(states));
+ }
+ return int(cudaGetLastError());
+}
+
 extern "C" int mgbfs_generic_route_i64(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
  const int64_t* parents,uint32_t count,uint32_t stride,const uint32_t* permutations,const int64_t* matrices,
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
@@ -175,11 +230,35 @@ extern "C" int mgbfs_generic_regenerate_routes_count_u8(uint32_t kind,uint32_t e
 
 // Distinguish retryable source skew from owner/metadata errors. Owners from
 // earlier successful rounds are never reset or confused with source overflow.
-__global__ void classify_route_retry(const uint32_t* source,const uint32_t* owner,uint32_t* vote){
- if(threadIdx.x==0&&blockIdx.x==0){const uint32_t s=*source,o=*owner;*vote=o?0x100u|o:((s==1u||s==5u)?1u:(s?0x10000u|s:0u));}
+__global__ void classify_route_retry(const uint32_t* source,const uint32_t* owner,uint32_t* vote,uint32_t stop){
+ if(threadIdx.x!=0||blockIdx.x!=0)return;
+ const uint32_t s=*source,o=*owner;
+ const uint32_t retry=o?0x100u|o:((s==1u||s==5u)?1u:(s?0x10000u|s:0u));
+ *vote=stop|retry;
 }
-extern "C" int mgbfs_generic_route_retry_vote(const uint32_t* source,const uint32_t* owner,uint32_t* vote,void* stream){
- if(!source||!owner||!vote)return 1;classify_route_retry<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(source,owner,vote);return cudaGetLastError()==cudaSuccess?0:2;
+extern "C" int mgbfs_generic_route_retry_vote_v2(const uint32_t* source,const uint32_t* owner,uint32_t* vote,uint32_t stop,void* stream){
+ if(!source||!owner||!vote)return 1;classify_route_retry<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(source,owner,vote,stop);return cudaGetLastError()==cudaSuccess?0:2;
+}
+
+// MAX across ranks orders retry, capacity, requested stop, then fatal.
+// Keep all ordinary owner flags separate from the status tag, including
+// bit 8, which the previous ABI also used as its owner marker.
+__global__ void classify_route_retry_v3(const uint32_t* source,const uint32_t* owner,uint32_t* vote,uint32_t stop){
+ const uint32_t s=*source,o=*owner;
+ constexpr uint32_t capacity=0x10000000u,stopped=0x20000000u;
+ constexpr uint32_t owner_fatal=0x30000000u,source_fatal=0x40000000u,mask=0x0fffffffu;
+ const bool retry=s==1u||s==5u;
+ if(s&&!retry)*vote=source_fatal|(s>mask?mask:s);
+ else if(o&~7u)*vote=owner_fatal|(o>mask?mask:o);
+ else if(stop)*vote=stopped;
+ else if(o)*vote=capacity|o;
+ else *vote=uint32_t(retry);
+}
+
+extern "C" int mgbfs_generic_route_retry_vote_v3(const uint32_t* source,const uint32_t* owner,uint32_t* vote,uint32_t stop,void* stream){
+ if(!source||!owner||!vote)return 1;
+ classify_route_retry_v3<<<1,1,0,static_cast<cudaStream_t>(stream)>>>(source,owner,vote,stop);
+ return cudaGetLastError()==cudaSuccess?0:2;
 }
 
 extern "C" int mgbfs_generic_route_packed_u8(uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,

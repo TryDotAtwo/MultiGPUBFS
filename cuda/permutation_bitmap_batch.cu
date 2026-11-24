@@ -4,6 +4,7 @@
 #include "generic_action.cuh"
 #include "segmented_incoming.cuh"
 #include "segmented_history.cuh"
+#include "segmented_packet_owner.cuh"
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
 #include <cuda/atomic>
@@ -131,8 +132,10 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  const uint32_t* lc,const uint32_t* rc,uint32_t rank,uint32_t world,uint32_t owner,uint64_t total,uint64_t owner_len,uint64_t* bits,
  uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,uint32_t raw_begin,MgbfsSegment active,uint32_t bank,
  uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,
- void* scratch,const Workspace& w,cudaStream_t st){
+ void* scratch,const Workspace& w,cudaStream_t st,
+ uint32_t logical_world=0,uint32_t logical_shard=0,uint32_t logical_shards=0){
  if(!selected)return int(cudaSuccess);
+ if(!logical_world){logical_world=world;logical_shard=shard;logical_shards=shards;}
  char* base=static_cast<char*>(scratch);
  auto* ki=reinterpret_cast<uint64_t*>(base+w.keys_in);auto* ko=reinterpret_cast<uint64_t*>(base+w.keys_out);
  auto* oi=reinterpret_cast<uint32_t*>(base+w.origins_in);auto* oo=reinterpret_cast<uint32_t*>(base+w.origins_out);
@@ -142,7 +145,7 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  auto* grant=reinterpret_cast<Grant*>(base+w.grant);uint32_t blocks=(selected+255)/256;if(blocks>65535)blocks=65535;
  cudaError_t rc0=cudaMemsetAsync(counts,0,size_t(selected)*4,st);if(rc0!=cudaSuccess)return int(rc0);
  MgbfsBoundedIncomingAction<T,Packed> in{{elements,world*q,q,1,rank,world,shard,shards,local,remote,lm,rm,lc,rc,nullptr},visible};
- prepare<<<blocks,256,0,st>>>(in,selection,raw_begin,selected,world,owner,total,owner_len,shard,shards,ki,oi,error);
+ prepare<<<blocks,256,0,st>>>(in,selection,raw_begin,selected,logical_world,owner,total,owner_len,logical_shard,logical_shards,ki,oi,error);
  if((rc0=cudaGetLastError())!=cudaSuccess)return int(rc0);
  size_t tmp=w.temp_bytes;
  rc0=cub::DeviceRadixSort::SortPairs(base+w.temp,tmp,ki,ko,oi,oo,int(selected),0,64,st);if(rc0!=cudaSuccess)return int(rc0);
@@ -158,6 +161,34 @@ int launch(uint32_t elements,const T* local,const T* remote,const GenericRouteRe
  publish<<<1,1,0,st>>>(accepted,grant,error);
  return int(cudaGetLastError());
 }
+}
+
+template<class T,bool Packed>
+int launch_packet_batch(const MgbfsBitmapPacketOwnerArgs& a,const Workspace& workspace,cudaStream_t stream){
+ const auto* states=static_cast<const T*>(a.states);
+ return launch<T,Packed>(a.elements,states,states,a.records,a.records,a.counts,a.counts,0,1,
+  a.owner,a.total,a.owner_len,a.bits,0,1,a.capacity,a.visible,a.selection,a.selected,a.raw_begin,
+  a.active,a.bank,a.accepted,a.spill,a.spill_count,a.error,a.global_count,a.limit,
+  a.scratch,workspace,stream,a.world,a.shard,a.shards);
+}
+
+extern "C" int mgbfs_bitmap_accept_batch_packet_v1(const MgbfsBitmapPacketOwnerArgs* args,void* stream){
+ if(!args)return int(cudaErrorInvalidValue);
+ const auto& a=*args;
+ if((a.state_bytes!=1&&a.state_bytes!=8)||a.packed>1||(a.packed&&(a.state_bytes!=1||a.elements>24))||
+  !a.elements||!a.world||a.world>128||a.owner>=a.world||!a.total||!a.bits||!a.shards||a.shard>=a.shards||
+  !a.capacity||a.capacity>=0x7fffffffULL||a.visible>a.capacity||a.selected>a.capacity||
+  (!a.selection&&uint64_t(a.raw_begin)+a.selected>a.visible)||(a.selection&&a.raw_begin)||
+  !a.records||!a.counts||(!a.packed&&!a.states)||!a.active.states||
+  !(a.active.banks==2||a.active.banks==3)||!a.active.capacity||a.active.capacity>(uint64_t(1)<<32)||
+  a.bank>=a.active.banks||!a.accepted||!a.spill||!a.spill_count||!a.error)return int(cudaErrorInvalidValue);
+ Workspace workspace{};
+ cudaError_t status=layout(a.selected,&workspace);if(status!=cudaSuccess)return int(status);
+ if(a.selected&&(!a.scratch||uintptr_t(a.scratch)%kAlign||a.scratch_bytes<workspace.total))return int(cudaErrorInvalidValue);
+ const auto st=static_cast<cudaStream_t>(stream);
+ if(a.state_bytes==1&&a.packed)return launch_packet_batch<uint8_t,true>(a,workspace,st);
+ if(a.state_bytes==1)return launch_packet_batch<uint8_t,false>(a,workspace,st);
+ return launch_packet_batch<int64_t,false>(a,workspace,st);
 }
 extern "C" int mgbfs_bitmap_accept_batch_scratch_bytes(uint32_t selected,size_t* bytes){
  if(!bytes)return int(cudaErrorInvalidValue);Workspace w{};cudaError_t rc=layout(selected,&w);

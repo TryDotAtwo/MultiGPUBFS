@@ -1,12 +1,33 @@
 """Single-host native launch. CPU control never generates or deduplicates states."""
-import hashlib,json,os,shutil,subprocess,tempfile,time,signal
+import hashlib,json,os,secrets,shutil,subprocess,tempfile,time,signal
 from pathlib import Path
 from .process_control import query as native_query, run as native_run
-from .graph_definition import GraphDefinition,from_cayleypy
+from .graph_definition import _normalize_graph
+from .memory_admission import bitmap_pack4_bits, bounded_hash_available
 from .native_distribution import native_runtime
 
 _LEGACY_ARENA_CAPACITY = 0x7fff_fffe
 _LEGACY_ROLLING_CAPACITY = (0xffff_ffff - 3) // 3
+
+def _rank_launch_config(admission, digest, *, bitmap=False, depth=None, path_targets=None,
+                        path_bidirectional=False, path_window=None):
+ if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
+ config=dict(admission)
+ if bitmap:
+  # The admission planner returns hash cut points. Bitmap uses the
+  # exact rank partition and cannot use those cuts.
+  config['owner_cuts']=None
+ if depth is not None:config['profile_max_layers']=depth
+ if path_targets is not None:config.update(path_targets=path_targets,path_bidirectional=path_bidirectional)
+ if path_window is not None:config['path_window']=path_window
+ return config
+
+def _with_packet_job_token(config,env):
+ if (env.get('MGBFS_EXPERIMENTAL_SEGMENTED24')=='1'
+     and 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR' in env and config['plan']['world']>1):
+  # The communicator may be parked and reused by a later launch.
+  return dict(config,packet_job_token=secrets.token_hex(16))
+ return config
 
 def _normalize_memory_backend(name):
  # Keep the previous spelling as an alias for existing clients and receipts;
@@ -29,13 +50,20 @@ def _apply_memory_preset(env,backend,preset):
   # Keep the conservative values without treating them as user constraints.
   # The scoped markers survive nested pilot launches, but do not modify
   # os.environ or change the user's explicit geometry.
+  # The larger window still uses one bounded producer tile and one TX/RX
+  # pair. Pack4 keeps their footprint small even on the heavy S13 layers.
+  pack4_packets = (backend=='permutation_bitmap'
+                   and env.get('MGBFS_SEGMENT_PACK4')=='1'
+                   and 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR' in env)
+  queue_default = '32768' if pack4_packets else '2048'
   for key,value,marker in (
    ('MGBFS_SEGMENT_OWNER_LANES','1','_MGBFS_PRESET_IMPLICIT_LANES'),
-   ('MGBFS_SEGMENT_QUEUE_CAP','2048','_MGBFS_PRESET_IMPLICIT_QUEUE')):
+   ('MGBFS_SEGMENT_QUEUE_CAP',queue_default,'_MGBFS_PRESET_IMPLICIT_QUEUE')):
    if key not in selected:
     selected[key]=value;selected[marker]='1'
-  if backend=='segmented24':selected.setdefault('MGBFS_SEGMENT_COMPACT_POS','1')
-  else:selected.setdefault('MGBFS_BITMAP_BANKS','2')
+  layout_key,layout_value=('MGBFS_SEGMENT_COMPACT_POS','1') if backend=='segmented24' else ('MGBFS_BITMAP_BANKS','2')
+  if layout_key not in selected:
+   selected[layout_key]=layout_value;selected['_MGBFS_PRESET_IMPLICIT_LAYOUT']='1'
  else:
   # Private settings supplied by the user remain explicit; defaults do not
   # contaminate a later balanced job in a persistent Python process.
@@ -151,7 +179,7 @@ def _stop_rank_jobs(jobs,grace=10.0,kill_grace=5.0):
 
 from .work_limits import normalize, wire, remaining as remaining_work, phase_expired
 
-def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,_batch=None,_profile_layers=None,_native_env=None):
+def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=None,executable=None,shards=None,autotune=True,backend='auto',memory_backend=None,segment_rows=None,memory_preset='balanced',segment_strategy=None,peer_transport='auto',transport='auto',candidate_order='auto',bitmap_owner_page=None,bitmap_pack4=None,resident_alphabet8=None,queue_capacity=None,owner_lanes=None,_batch=None,_profile_layers=None,_native_env=None,_profile_options=None,_profile_deadline=None,_path_targets=None,_path_bidirectional=False,_path_window=None):
  """Launch on all visible GPUs by default, or an explicit device/device list.
 
  Memory is admitted from actual free VRAM. With shards omitted, bounded
@@ -160,8 +188,12 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  the external-rank network launcher; one process owns one local GPU.
  With storage unspecified, a requested capacity beyond the legacy index
  range selects segmented storage for generic traversal.
+ bitmap_pack4 opts into the four-bit frontier for atomic permutation bitmap
+ with a 64-bit word per state. Wider small-alphabet graphs use 1–3 bits
+ per coordinate. None honors MGBFS_SEGMENT_PACK4.
+ resident_alphabet8 selects exact byte labels for wide segmented permutations.
  """
- if not isinstance(graph,GraphDefinition):graph=from_cayleypy(graph)
+ graph=_normalize_graph(graph)
  if device is not None and devices is not None:raise ValueError('DEVICE_SELECTION_CONFLICT')
  if device is not None:
   if type(device) is not int or device<0:raise ValueError('INVALID_DEVICE')
@@ -170,21 +202,43 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  max_seconds=normalize(max_seconds)
  if shards is not None and (type(shards) is not int or not 1<=shards<=4096):raise ValueError('INVALID_SHARDS')
  if type(autotune) is not bool:raise ValueError('INVALID_AUTOTUNE')
+ if bitmap_pack4 is not None and type(bitmap_pack4) is not bool:raise ValueError('BITMAP_PACK4_INVALID')
  if segment_rows is not None and (type(segment_rows) is not int or not 1<=segment_rows<=1<<32):raise ValueError('INVALID_SEGMENT_ROWS')
  if bitmap_owner_page is not None and (type(bitmap_owner_page) is not int or bitmap_owner_page<0 or bitmap_owner_page>1<<20 or (bitmap_owner_page and bitmap_owner_page&(bitmap_owner_page-1))):raise ValueError('INVALID_BITMAP_OWNER_PAGE')
  if backend not in ('auto','generic','shard_ab_hash','shard_ab_sort_merge'):raise ValueError('INVALID_BACKEND')
  if memory_backend is None:
   memory_backend='legacy'
-  if (backend in ('auto','generic') and type(capacity) is int
+  if (_path_targets is None and backend in ('auto','generic') and type(capacity) is int
       and capacity>_LEGACY_ROLLING_CAPACITY
       and (capacity>_LEGACY_ARENA_CAPACITY or graph.inverse_closed())):
    memory_backend='segmented24'
  memory_backend=_normalize_memory_backend(memory_backend)
+ if resident_alphabet8 is not None and type(resident_alphabet8) is not bool:
+  raise ValueError('INVALID_RESIDENT_ALPHABET8')
+ if resident_alphabet8 and (memory_backend!='segmented24' or graph.action['kind']!='permutation'
+                           or graph.state_elements<=24 or len(set(graph.start))>256):
+  raise ValueError('RESIDENT_ALPHABET8_REQUIRES_WIDE_SEGMENTED_PERMUTATION')
+ dictionary_requested = resident_alphabet8 and any(not 0<=value<=255 for value in graph.start)
+ if queue_capacity is not None and (type(queue_capacity) is not int or not 1<=queue_capacity<=0xffffffff):
+  raise ValueError('INVALID_SEGMENTED_QUEUE_CAPACITY')
+ if owner_lanes is not None and (type(owner_lanes) is not int or not 1<=owner_lanes<=64):
+  raise ValueError('INVALID_SEGMENTED_OWNER_LANES')
+ if memory_backend=='legacy' and (queue_capacity is not None or owner_lanes is not None):
+  raise ValueError('QUEUE_AND_OWNER_GEOMETRY_REQUIRES_SEGMENTED_BACKEND')
  if bitmap_owner_page and memory_backend!='permutation_bitmap':raise ValueError('BITMAP_OWNER_PAGE_REQUIRES_BITMAP')
  strategy_source=_native_env if _native_env is not None else os.environ
+ implicit_strategy=segment_strategy is None and 'MGBFS_SEGMENT_STRATEGY' not in strategy_source
  if segment_strategy is None:segment_strategy=strategy_source.get('MGBFS_SEGMENT_STRATEGY','atomic')
  segment_strategy=_normalize_segment_strategy(segment_strategy)
+ packed=strategy_source.get('MGBFS_SEGMENT_PACK4','0')
+ if bitmap_pack4 is not None:packed='1' if bitmap_pack4 else '0'
+ if packed not in ('0','1'):raise ValueError('BITMAP_PACK4_INVALID')
+ if packed=='1':
+  if memory_backend!='permutation_bitmap':raise ValueError('BITMAP_PACK4_REQUIRES_BITMAP')
+  if segment_strategy!='atomic':raise ValueError('BITMAP_PACK4_STRATEGY_UNSUPPORTED')
+  if bitmap_pack4_bits(graph) is None:raise ValueError('BITMAP_PACK4_UNSUPPORTED_DEGREE')
  if memory_backend=='legacy' and segment_strategy!='atomic':raise ValueError('SEGMENT_STRATEGY_REQUIRES_SEGMENTED_BACKEND')
+ if memory_preset=='maxmemory':memory_preset='max_capacity'
  if memory_preset not in ('balanced','max_capacity'):raise ValueError('INVALID_MEMORY_PRESET')
  if memory_backend=='permutation_bitmap':
   if graph.action['kind']!='permutation':raise ValueError('BITMAP_REQUIRES_PERMUTATION_ACTION')
@@ -195,33 +249,75 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  if candidate_order not in ('auto','none','radix'):raise ValueError('INVALID_CANDIDATE_ORDER')
  if capacity is not None and (type(capacity) is not int or not 1<=capacity<=(0xffffffffffffffff if memory_backend in ('segmented24','permutation_bitmap') else _LEGACY_ARENA_CAPACITY)):raise ValueError('INVALID_CAPACITY')
  from .host_memory import admit
- host_memory=admit(graph,output=output) if os.environ.get('WORLD_SIZE','1')=='1' else None
+ external=os.environ.get('WORLD_SIZE','1')!='1'
+ host_memory=admit(graph,output=output) if not external else None
  native,native_env=native_runtime(executable)
  if _native_env is not None:native_env=dict(_native_env)
- native_env=_apply_memory_preset(native_env,memory_backend,memory_preset)
+ for value,key,marker in (
+  (queue_capacity,'MGBFS_SEGMENT_QUEUE_CAP','_MGBFS_PRESET_IMPLICIT_QUEUE'),
+  (owner_lanes,'MGBFS_SEGMENT_OWNER_LANES','_MGBFS_PRESET_IMPLICIT_LANES'),
+ ):
+  if value is not None:
+   native_env[key]=str(value)
+   native_env.pop(marker,None)
+ native_env.pop('MGBFS_SEGMENT_EXTERNAL_LINK',None)
+ if _path_window is not None and _path_targets is None:raise ValueError('INVALID_NATIVE_WINDOW_LAUNCH')
+ if _path_bidirectional and _path_targets is None:raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
+ if _path_targets is not None:
+  native_env['MGBFS_GENERIC_PATH_MAXMEMORY']='1' if memory_preset=='max_capacity' else '0'
+  native_env['MGBFS_GENERIC_PATH_WINDOW']='1' if _path_window is not None else '0'
+  native_env['MGBFS_GENERIC_PATH_BIDIRECTIONAL']='1' if _path_bidirectional else '0'
+  native_env['MGBFS_GENERIC_PATH_BYTE_TARGETS']='1' if (
+   _path_bidirectional and all(0 <= value <= 255 for goal in _path_targets for value in goal)
+  ) else '0'
+  if memory_backend!='legacy' or backend!='generic' or autotune or _profile_layers is not None:raise ValueError('INVALID_NATIVE_PATH_LAUNCH')
+  native_env.update(MGBFS_GENERIC_PATH_APPEND_ONLY='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
+ if bitmap_pack4 is not None:native_env['MGBFS_SEGMENT_PACK4']=packed
+ native_env=_apply_memory_preset(native_env,memory_backend,'balanced' if _path_targets is not None else memory_preset)
+ if resident_alphabet8 is not None:native_env['MGBFS_SEGMENT_RESIDENT_ALPHABET8']='1' if resident_alphabet8 else '0'
  if bitmap_owner_page is not None:native_env['MGBFS_SEGMENT_BITMAP_OWNER_PAGE']=str(bitmap_owner_page)
  segmented=(memory_backend in ('segmented24','permutation_bitmap'))
  if not segmented:
   # An inherited private experiment flag must not override an explicit API choice.
   native_env.pop('MGBFS_EXPERIMENTAL_SEGMENTED24',None);native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None);native_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
  if segmented:
+  if external:
+   from .cluster import current_cluster
+   if current_cluster() is None:raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   if segment_rows is not None:native_env['MGBFS_SEGMENT_MAX_ROWS']=str(segment_rows)
   else:native_env.setdefault('MGBFS_SEGMENT_MAX_ROWS',str(1<<32))
   if backend not in ('auto','generic') or peer_transport=='lsa' or transport not in ('auto','full') or candidate_order not in ('auto','none'):raise ValueError('SEGMENTED_BACKEND_OPTION_CONFLICT')
-  if os.environ.get('WORLD_SIZE','1')!='1':raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
   capabilities=_require_memory_backend(native,native_env,memory_backend)
+  if implicit_strategy and memory_backend=='segmented24' and bounded_hash_available(capabilities,native_env):
+   segment_strategy='batch'
+  if dictionary_requested and capabilities.get('segmented_resident_alphabet8_v1') is not True:
+   raise RuntimeError('SEGMENTED_RESIDENT_ALPHABET8_NATIVE_UNAVAILABLE')
+  if 'MGBFS_SEGMENT_PACKET_CONTROL_ADDR' in native_env and capabilities.get('segmented_packet_transport_v1') is not True:
+   raise RuntimeError('SEGMENT_PACKET_CUDA_ABI_UNAVAILABLE: rebuild the native executable and CUDA library')
+  if packed=='1' and (capabilities.get('bitmap_pack4_experimental_v1') is not True or
+      (graph.state_elements>16 and capabilities.get('bitmap_pack4_adaptive_v2') is not True)):
+   raise RuntimeError('BITMAP_PACK4_NATIVE_ABI_MISSING: experimental executable and CUDA library must match')
+  if external:
+   if capabilities.get('segmented_network_agreement_v1') is not True:
+    raise ValueError('SEGMENTED_EXTERNAL_RANK_NOT_VERIFIED')
+   native_env['MGBFS_SEGMENT_EXTERNAL_LINK']='1'
   if memory_backend=='segmented24' and segment_strategy=='warp' and capabilities.get('segmented_warp_hash_safe_v1') is not True:raise RuntimeError('SEGMENT_WARP_SAFE_NATIVE_ABI_MISSING')
   if memory_backend=='permutation_bitmap' and native_env.get('MGBFS_SEGMENT_BITMAP_OWNER_PAGE','0') not in ('0','') and capabilities.get('bitmap_owner_immutable_v1') is not True:raise RuntimeError('BITMAP_OWNER_PAGE_NATIVE_ABI_MISSING')
   if segment_strategy!='atomic':
    supported=capabilities.get('segmented_strategies_v1')
    if not isinstance(supported,dict) or supported.get(segment_strategy) is not True:
     raise RuntimeError('NATIVE_SEGMENT_STRATEGY_UNAVAILABLE: '+segment_strategy+' requires a matching verified native executable and CUDA library')
+  if memory_backend=='segmented24' and segment_strategy=='batch' and native_env.get('MGBFS_SEGMENT_HASH_SERIES')!='0':
+   if capabilities.get('segmented_hash_series_v1') is not True:
+    raise RuntimeError('SEGMENT_HASH_SERIES_CUDA_ABI_UNAVAILABLE: rebuild the native executable and CUDA library')
   native_env['MGBFS_SEGMENT_STRATEGY']=segment_strategy
   exchange_capable=capabilities.get('segmented_exact_exchange_v1') is True
   if native_env.get('MGBFS_SEGMENT_EXACT_EXCHANGE')=='1' and not exchange_capable:raise RuntimeError('NATIVE_SEGMENTED_EXCHANGE_UNAVAILABLE: update the native runtime before requesting exact exchange')
   native_env['_MGBFS_SEGMENT_EXCHANGE_CAPABLE']='1' if exchange_capable else '0'
   native_env=dict(native_env,MGBFS_EXPERIMENTAL_SEGMENTED24='1',MGBFS_GENERIC_HISTORY='hash',MGBFS_GENERIC_GENERATOR='cuda',MGBFS_GENERIC_TRANSPORT='full',MGBFS_GENERIC_SORT='none')
-  if memory_backend=='permutation_bitmap':native_env['MGBFS_EXPERIMENTAL_BITMAP']='1'
+  if memory_backend=='permutation_bitmap':
+   native_env['MGBFS_EXPERIMENTAL_BITMAP']='1'
+   native_env['_MGBFS_BITMAP_POSITION_ORBITS_CAPABLE']='1' if capabilities.get('permutation_bitmap_position_orbits_v1') is True else '0'
   else:native_env.pop('MGBFS_EXPERIMENTAL_BITMAP',None)
   if capacity is not None:
    prior=int(native_env.get('MGBFS_SEGMENT_MAX_RANK_STATES',str(capacity)))
@@ -230,7 +326,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    # must not become an implicit rank-wide segment capacity.
    capacity=None
  communication=None
- if _profile_layers is None and os.environ.get('WORLD_SIZE','1')=='1' and not backend.startswith('shard_ab_'):
+ if _profile_layers is None and not external and not backend.startswith('shard_ab_'):
   if Path(output).exists():raise FileExistsError(output)
   selected=devices
   if selected is None:
@@ -238,16 +334,29 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if count.returncode:raise RuntimeError('NATIVE_GPU_DISCOVERY_FAILED: '+count.stderr[-4000:])
    selected=list(range(int(count.stdout.strip())))
   from .nccl_preflight import prepare
-  # The transport smoke graph must not inherit an explicit production-state
-  # cap: a tiny cap is a valid request for the real BFS, not an NCCL failure.
-  preflight_env=dict(native_env);segment_cap=preflight_env.pop('MGBFS_SEGMENT_MAX_RANK_STATES',None)
+  # The communication prefix uses its own admission. Request-local limits
+  # belong to the actual search, where a resource stop preserves its prefix.
+  preflight_env=dict(native_env)
+  search_limits={}
+  for key in (
+   'MGBFS_SEGMENT_MAX_RANK_STATES',
+   'MGBFS_SEGMENT_HASH_INDEX_VRAM_BYTES',
+   'MGBFS_SEGMENT_HASH_HOST_BYTES',
+   'MGBFS_SEGMENT_TEST_MAX_LOOKUP_SERIES',
+  ):
+   if key in preflight_env:
+    search_limits[key]=preflight_env.pop(key)
+  if _path_targets is not None:
+   for key in tuple(preflight_env):
+    if key.startswith('MGBFS_GENERIC_PATH_'):
+     search_limits[key]=preflight_env.pop(key)
   native_env,communication=prepare(native,selected,preflight_env,output,graph)
-  if segment_cap is not None:native_env['MGBFS_SEGMENT_MAX_RANK_STATES']=segment_cap
+  native_env.update(search_limits)
  geometry_bound=None;shard_geometry=None
- if capacity is None and _profile_layers is None and not segmented and not backend.startswith('shard_ab_'):
+ if _path_targets is None and capacity is None and _profile_layers is None and not segmented and not backend.startswith('shard_ab_'):
   from .workload_geometry import certified_frontier_bound
   geometry_bound=certified_frontier_bound(graph)
-  if geometry_bound is not None:
+  if geometry_bound is not None and not external:
    from .autotune import _admit
    with tempfile.TemporaryDirectory(prefix='mgbfs-bound-') as bound_dir:
     bound_admission=_admit(graph,devices,None,shards or 1,native,native_env,bound_dir)
@@ -256,6 +365,14 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
  native_env=dict(native_env,MGBFS_PEER_TRANSPORT=peer_transport)
  def finish(report):
   _check_memory_backend_receipt(report,memory_backend)
+  if dictionary_requested:
+   ranks=report.get('segment_memory_by_rank')
+   if not isinstance(ranks,list) or not ranks or any(not isinstance(rank,dict) or rank.get('resident_codec')!='alphabet8-v1' for rank in ranks):
+    raise RuntimeError('RESIDENT_ALPHABET8_RECEIPT_MISMATCH')
+  if packed=='1':
+   ranks=report.get('segment_memory_by_rank')
+   if not isinstance(ranks,list) or not ranks or any(not isinstance(rank,dict) or rank.get('resident_codec')!='pack4-v1' for rank in ranks):
+    raise RuntimeError('BITMAP_PACK4_RECEIPT_MISMATCH')
   if communication is not None:
    report['communication_preflight']=communication
    if communication.get('status')=='VERIFIED':
@@ -274,10 +391,12 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   return report
  if transport!='auto':native_env=dict(native_env,MGBFS_GENERIC_TRANSPORT=transport)
  if candidate_order!='auto':native_env=dict(native_env,MGBFS_GENERIC_SORT=candidate_order)
- if os.environ.get('WORLD_SIZE','1')!='1':
+ if external:
   if backend not in ('auto','generic') or peer_transport=='lsa':raise ValueError('SPECIALIZED_EXTERNAL_RANK_UNSUPPORTED')
   from .distributed_launch import run_external
-  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune))
+  if _path_targets is not None:
+   return run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch,path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window)
+  return finish(run_external(graph,output,devices=devices,capacity=capacity,max_seconds=max_seconds,native=native,native_env=native_env,shards=shards,autotune=autotune,batch=_batch))
  output=Path(output).absolute()
  if output.exists():raise FileExistsError(output)
  profile=None
@@ -290,7 +409,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    from .autotune import choose_size_profile,choose_profile
    # Reserve most of the caller's deadline for BFS, not cold tuning.
    tuning_budget=60 if max_seconds is None else min(60,max(1,max_seconds//3))
-   profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False,fixed_shards=shards if fixed_segmented_tuning else None) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
+   profile=(choose_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=False,fixed_shards=shards if fixed_segmented_tuning else None,**(_profile_options or {})) if segmented else choose_size_profile(graph,devices,capacity,tuning_budget,native,native_env,allow_specialized=backend=='auto'))
    shards=profile['shards']
    if segmented:shard_geometry=profile.get('shard_geometry')
    if profile.get('backend','generic')!='generic':
@@ -298,7 +417,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     return finish(_run_specialized_admitted(graph,output,native,native_env,devices,capacity,remaining,profile['backend'],_batch,_profile_layers,profile))
    from .autotune import _profile_environment
    native_env=_profile_environment(native_env,profile)
-   if (profile.get('measured') or profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE') and profile.get('backend','generic')=='generic':_batch=profile['batch']
+   if (profile.get('measured') or profile.get('apply_profile_batch') is True or profile.get('status')=='REUSED_COMPATIBLE_GPU_PROFILE') and profile.get('backend','generic')=='generic':_batch=profile['batch']
    max_seconds=remaining_work(max_seconds,profile['seconds'])
   elif segmented:
    from .autotune import _segmented_shard_plan
@@ -330,7 +449,10 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
   probe=subprocess.CompletedProcess(command,0,json.dumps(accepted),'') if accepted is not None else native_query(command,capture_output=True,text=True,env=native_env)
   if profile is not None:profile['launch_admission_reused']=accepted is not None
   if probe.returncode:raise RuntimeError('NATIVE_GRAPH_ADMISSION_FAILED: '+probe.stderr[-4000:])
-  admission=json.loads(probe.stdout);devices=admission['devices']
+  admission=_rank_launch_config(
+   json.loads(probe.stdout),digest,bitmap=memory_backend=='permutation_bitmap',depth=_profile_layers,
+   path_targets=_path_targets,path_bidirectional=_path_bidirectional,path_window=_path_window)
+  devices=admission['devices']
   if segmented:
    # Scale a known maximum frontier per bank to the admitted GPU and shard
    # count. Other graph families are sized natively from their orbit bound.
@@ -340,15 +462,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     divisor=4*len(devices)*shards
     expected=(frontier['maximum_frontier']*5+divisor-1)//divisor
     native_env['MGBFS_SEGMENT_EXPECTED_ROWS']=str(max(32,expected))
-  if memory_backend=='permutation_bitmap':
-   # graph-info derives hash cut points, while bitmap uses exact rank modulo
-   # world. Never send irrelevant hash cuts into the bitmap runtime.
-   admission['owner_cuts']=None
   if admission.get('owned_resource_admission'):native_env=dict(native_env,MGBFS_REQUIRE_OWNED_RAW='1')
   if profile and profile.get('size_profiles'):admission.update(size_profiles=profile['size_profiles'],online_size_tuning=profile.get('online_size_tuning',False))
-  if _profile_layers is not None:admission['profile_max_layers']=_profile_layers
-  if admission['graph_digest']!=digest:raise RuntimeError('GRAPH_ADMISSION_IDENTITY')
-  if not segmented and max_seconds is not None and admission['plan'].get('generator_backend','cuda')!='gemm' and admission['plan'].get('history_algorithm','HASH')=='HASH' and len(devices)==1 and shards==1 and _profile_layers is None and not (profile and profile.get('size_profiles')) and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False) and not admission['plan'].get('sort_candidates',False):
+  if _path_targets is None and not segmented and max_seconds is not None and admission['plan'].get('generator_backend','cuda')!='gemm' and admission['plan'].get('history_algorithm','HASH')=='HASH' and len(devices)==1 and shards==1 and _profile_layers is None and not (profile and profile.get('size_profiles')) and admission['plan'].get('history_layers',1)==1 and not admission['plan'].get('parent_transport',False) and not admission['plan'].get('sort_candidates',False):
    command=[str(native),'graph',str(definition),str(output),'--device',str(devices[0]),'--seconds',str(wire(max_seconds))]
    if capacity is not None:command+=['--capacity',str(capacity)]
    process=native_run(command,capture_output=True,text=True,env=native_env,timeout=None if max_seconds is None else max_seconds+180)
@@ -357,8 +473,9 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if profile:
     result['autotune']=profile;(output/'report.json').write_text(json.dumps(result,indent=2))
    return finish(result)
-  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(admission));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];failure=None;started=time.monotonic()
+  output.mkdir();configuration=output/'launch.json';configuration.write_text(json.dumps(_with_packet_job_token(admission,native_env)));bootstrap=Path(temporary)/'nccl-id';jobs=[];logs=[];failure=None;started=time.monotonic()
   try:
+   if _profile_deadline is not None and time.monotonic()>=_profile_deadline:raise RuntimeError('AUTOTUNE_PILOT_WALL_DEADLINE')
    from .generic_session import launch_group_selection
    selection=launch_group_selection(str(native),devices,native_env)
    for rank in range(len(devices)):
@@ -371,6 +488,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     failed=[(rank,p.returncode) for rank,p in enumerate(jobs) if p.poll() not in (None,0)]
     if failed:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr(failed))
     now=time.monotonic()
+    if _profile_deadline is not None and now>=_profile_deadline:raise RuntimeError('AUTOTUNE_PILOT_WALL_DEADLINE')
     if now>=next_phase_check:
      log_faults=_native_log_faults(jobs,output,log_cursors)
      if log_faults:raise RuntimeError('NATIVE_DISTRIBUTED_RANK_FAILED '+repr([(rank,1) for rank,_ in log_faults])+'; native_fault='+repr(log_faults))
@@ -391,7 +509,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    failure=error
    from .failure_evidence import preserve_native_failure
    preserve_native_failure(jobs,output,error,when='before_cleanup')
-   if isinstance(error,RuntimeError):error.args=(str(error)+'; evidence='+str(output/'failure-evidence'),)
+   if isinstance(error,RuntimeError) and str(error)!='AUTOTUNE_PILOT_WALL_DEADLINE':error.args=(str(error)+'; evidence='+str(output/'failure-evidence'),)
    raise
   finally:
    survivors=_stop_rank_jobs(jobs);cleanup_error=None
@@ -404,6 +522,24 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
     preserve_native_failure(jobs,output,failure,when='after_cleanup')
    for log in logs:log.close()
    if cleanup_error is not None:raise cleanup_error
+  if _path_targets is not None:
+   try:
+    replies=[json.loads((output/f'rank-{rank}'/'path.json').read_text()) for rank in range(len(devices))]
+   except (OSError, ValueError) as error:
+    raise RuntimeError('NATIVE_DISTRIBUTED_PATH_RECEIPT_INVALID') from error
+   if _path_window is not None:
+    from .path_search import _agree_window_receipts
+    result=_agree_window_receipts(replies)
+   else:
+    if not replies or any(reply!=replies[0] for reply in replies[1:]):
+     raise RuntimeError('NATIVE_DISTRIBUTED_PATH_CONSENSUS_MISMATCH')
+    result=replies[0]
+   if communication is not None and communication.get('status')=='VERIFIED':
+    from .generic_session import _active
+    from .nccl_preflight import bind_communication_group
+    bind_communication_group(_active)
+   from .generic_session import path_workspace
+   return dict(result, native_workspace={'ranks':[path_workspace(job) for job in jobs]})
   try:
    parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
    from .traversal_receipt import merge_rank_traversal

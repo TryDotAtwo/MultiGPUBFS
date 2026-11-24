@@ -15,3 +15,58 @@ fn matrix(g:Vec<(Vec<i64>,u32)>,start:Vec<i64>,n:u32,m:u32)->GraphDefinitionV2 {
  let g=matrix(vec![(vec![100],101)],vec![2],1,1);assert!(g.inverse_closed().unwrap());
  let g=matrix(vec![(vec![i64::MAX],0)],vec![2],1,1);assert!(g.inverse_closed().unwrap());
 }
+
+#[test]
+fn reverse_paths_preserve_original_generator_labels_and_modular_domain() {
+    let g = matrix(vec![(vec![2], 7), (vec![4], 7)], vec![3], 1, 1);
+    let reverse = g.reversed_for_paths(&[vec![6]]).unwrap();
+    assert_eq!(reverse.start, g.start);
+    for label in 0..g.generator_count() {
+        for x in 0..7 {
+            let next = g.successor(&[x], label).unwrap();
+            assert_eq!(reverse.successor(&next, label).unwrap(), [x]);
+        }
+    }
+    assert!(g.reversed_for_paths(&[vec![7]]).is_err());
+    let g = GraphDefinitionV2 {
+        action: GraphAction::Permutation { degree: 3, generators: vec![vec![1, 2, 0]] },
+        start: vec![-4, 2, 2], generator_names: vec!["rotate".into()], ..g
+    };
+    let next = g.successor(&g.start, 0).unwrap();
+    assert_eq!(g.reversed_for_paths(&[next.clone()]).unwrap().successor(&next, 0).unwrap(), g.start);
+}
+
+#[test]
+fn reverse_paths_invert_missing_generators_over_binary_rings() {
+    for modulus in [0, 8] {
+        let g = matrix(vec![(vec![2, 3, 1, 4], modulus)], vec![1, 6], 2, 1);
+        assert!(!g.inverse_closed().unwrap());
+        let reverse = g.reversed_for_paths(&[vec![2, 7]]).unwrap();
+        let states = if modulus == 0 {
+            vec![vec![i64::MIN, i64::MAX], vec![-3, -1], vec![1, 6]]
+        } else {
+            (0..8).flat_map(|i| (0..8).map(move |j| vec![i, j])).collect()
+        };
+        for state in states {
+            let next = g.successor(&state, 0).unwrap();
+            assert_eq!(reverse.successor(&next, 0).unwrap(), state);
+        }
+    }
+    let singular = matrix(vec![(vec![2], 8)], vec![1], 1, 1);
+    assert!(singular.reversed_for_paths(&[vec![2]]).is_err());
+}
+
+#[test]
+fn reverse_paths_invert_composite_modulus_without_a_unit_in_first_column() {
+    let g = matrix(vec![(vec![2, 3, 3, 4], 12)], vec![1, 6], 2, 1);
+    assert!(!g.inverse_closed().unwrap());
+    let reverse = g.reversed_for_paths(&[vec![3, 5]]).unwrap();
+    for i in 0..12 {
+        for j in 0..12 {
+            let next = g.successor(&[i, j], 0).unwrap();
+            assert_eq!(reverse.successor(&next, 0).unwrap(), [i, j]);
+        }
+    }
+    let singular = matrix(vec![(vec![2, 0, 0, 1], 12)], vec![1, 6], 2, 1);
+    assert!(singular.reversed_for_paths(&[vec![3, 5]]).is_err());
+}

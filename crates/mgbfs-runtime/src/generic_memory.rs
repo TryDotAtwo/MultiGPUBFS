@@ -1,5 +1,11 @@
 pub const MAX_ARENA_CAPACITY:u32=0x7fff_fffe;
 use mgbfs_core::Result;
+
+/// Distributed nearest expands immutable contiguous visited rows directly.
+pub(crate) fn nearest_direct_rows() -> bool {
+    std::env::var("MGBFS_GENERIC_PATH_APPEND_ONLY").as_deref() == Ok("1")
+        && std::env::var("MGBFS_GENERIC_PATH_WINDOW").as_deref() != Ok("1")
+}
 /// Additional unplanned allocation allowance, in bytes, never a VRAM percentage.
 /// CUDA context allocations are already excluded by cudaMemGetInfo. A parked
 /// healthy communicator has completed collective traffic; its NCCL allocations
@@ -77,6 +83,53 @@ fn cyclic_permutation_orbit_bound(generators:&[Vec<u32>],start:&[i64])->Option<u
  Some(bound)
 }
 
+/// The generators can flip several pairs together. The reachable orientations
+/// are exactly the span of their flip masks over GF(2).
+fn paired_permutation_orbit_size(generators: &[Vec<u32>], start: &[i64]) -> Option<u64> {
+    let mut partners = vec![None; start.len()];
+    let mut coordinates = vec![None; start.len()];
+    let mut next_coordinate = 0;
+    let mut basis = [0u64; 64];
+    let mut rank = 0;
+    for generator in generators {
+        if generator.len() != start.len() {
+            return None;
+        }
+        let mut mask = 0u64;
+        for (index, &mapped) in generator.iter().enumerate() {
+            let partner = mapped as usize;
+            if partner == index {
+                continue;
+            }
+            if generator.get(partner).copied() != Some(index as u32)
+                || partners[index].is_some_and(|known| known != partner)
+            {
+                return None;
+            }
+            partners[index] = Some(partner);
+            if index > partner || start[index] == start[partner] {
+                continue;
+            }
+            let coordinate = coordinates[index].get_or_insert_with(|| {
+                let coordinate = next_coordinate;
+                next_coordinate += 1;
+                coordinate
+            });
+            mask |= 1u64.checked_shl(*coordinate)?;
+        }
+        while mask != 0 {
+            let pivot = (63 - mask.leading_zeros()) as usize;
+            if basis[pivot] == 0 {
+                basis[pivot] = mask;
+                rank += 1;
+                break;
+            }
+            mask ^= basis[pivot];
+        }
+    }
+    Some(1u64.checked_shl(rank).unwrap_or(u64::MAX))
+}
+
 /// Mathematical state-space bound, saturated only at u64::MAX.
 /// Used for admission, not as evidence that the graph has been enumerated.
 pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)->Option<u64>{
@@ -84,6 +137,7 @@ pub fn state_space_bound(graph:&mgbfs_core::graph_definition::GraphDefinitionV2)
  let proven=match &graph.action{
   GraphAction::Permutation{generators,..}=>{
    if let Some(cyclic)=cyclic_permutation_orbit_bound(generators,&graph.start){return Some(graph.expected_max_unique_states.map_or(cyclic,|b|cyclic.min(b)))}
+   if let Some(paired)=paired_permutation_orbit_size(generators,&graph.start){return Some(graph.expected_max_unique_states.map_or(paired,|b|paired.min(b)))}
    // Generators cannot move a label between position components. Count
    // arrangements within each component; correlated components only make
    // this conservative upper bound smaller than the global multinomial.
@@ -113,6 +167,17 @@ pub fn preferred_state_bytes(graph:&mgbfs_core::graph_definition::GraphDefinitio
 }
 
 #[cfg(test)]mod capacity_budget_tests {
+ #[test]
+ fn paired_orbit_accounts_for_coupled_flips_and_equal_labels() {
+  let start = [-7, 3, 5, -2, 8, 9, 4, 4];
+  let a = vec![1, 0, 3, 2, 4, 5, 7, 6];
+  let b = vec![0, 1, 3, 2, 5, 4, 6, 7];
+  let dependent = vec![1, 0, 2, 3, 5, 4, 6, 7];
+  assert_eq!(super::paired_permutation_orbit_size(&[a.clone(), b, dependent], &start), Some(4));
+  let different_partner = vec![2, 1, 0, 3, 4, 5, 6, 7];
+  assert_eq!(super::paired_permutation_orbit_size(&[a, different_partner], &start), None);
+ }
+
  #[test]fn synthetic_large_cards_fill_the_absolute_budget(){
   for free in [12u64<<30,80u64<<30,288u64<<30] {
    let p=super::GenericMemoryPlan::automatic(24,free,None).unwrap();

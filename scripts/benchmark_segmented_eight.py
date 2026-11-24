@@ -1,10 +1,14 @@
 """Segmented S_n geometry comparison; raw layer states stay on this GPU host."""
-import argparse,hashlib,json,math,os,subprocess,threading,time,traceback
+import argparse,hashlib,json,os,subprocess,threading,time,traceback
 from pathlib import Path
 from multigpubfs import GraphDefinition
 from multigpubfs.artifact_paths import new_benchmark_directory
 from multigpubfs.launch import run_graph
 from multigpubfs.generic_session import persistent_graph_workers
+if __package__:
+ from .segmented_acceptance_oracle import verify_output
+else:
+ from segmented_acceptance_oracle import verify_output
 
 ap=argparse.ArgumentParser()
 ap.add_argument("--backend",choices=["segmented24","permutation_bitmap"],required=True)
@@ -52,14 +56,6 @@ def untracked_sources():
  root=Path(os.environ.get("MGBFS_BENCH_REPO","/workspace/mgbfs"))
  result=subprocess.run(["git","ls-files","--others","--exclude-standard","-z"],cwd=root,capture_output=True,check=True).stdout
  return {p:sha(root/p) for p in result.decode().split("\0") if p and (root/p).is_file()}
-def mahonian(n):
- sizes=[1]
- for k in range(2,n+1):
-  nxt=[0]*(len(sizes)+k-1)
-  for j,count in enumerate(sizes):
-   for delta in range(k):nxt[j+delta]+=count
-  sizes=nxt
- return sizes
 perms=[]
 for i in range(n-1):
  s=list(range(n));s[i],s[i+1]=s[i+1],s[i];perms.append(s)
@@ -92,22 +88,9 @@ try:
    segment_rows=2**32,segment_strategy=a.strategy,_batch=None if a.autotune else a.batch,_profile_layers=a.max_depth)
   run_finished=time.monotonic()
  context_finished=time.monotonic()
- expected=mahonian(n); sizes=r["layer_sizes"]; times=r["layer_seconds"]
- assert sizes==expected[:len(sizes)],"Mahonian layer mismatch"
+ sizes=r["layer_sizes"]; times=r["layer_seconds"]
  assert all(x["segment_strategy"]==a.strategy for x in r["segment_memory_by_rank"])
- checks={"all_completed_layer_counts_match_mahonian":True,"full_result":r["status"]=="COMPLETE"}
- if r["status"]=="COMPLETE":
-  assert len(sizes)==len(expected) and sum(sizes)==math.factorial(n)
-  states=json.loads((out/"result"/"states.json").read_text())
-  last=tuple(reversed(range(n)));previous=set()
-  for i in range(n-1):
-   x=list(last);x[i],x[i+1]=x[i+1],x[i];previous.add(tuple(x))
-  current=[tuple(x) for x in states["current"]]
-  prev=[tuple(x) for x in states["previous_small"]]
-  assert len(current)==len(set(current))==1 and set(current)=={last}
-  assert len(prev)==len(set(prev))==len(previous) and set(prev)==previous
-  checks["final_two_layers_full_exact_sets_no_duplicates"]=True
- else:checks["final_two_layers_full_exact_sets_no_duplicates"]=False
+ checks=verify_output(n,r,out/"result"/"states.json")
  lo,hi=({12:28,13:34}.get(n,max(1,n)),min({12:38,13:44}.get(n,len(sizes)-1),len(sizes)-1))
  window=None
  if hi>=lo:

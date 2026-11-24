@@ -222,7 +222,7 @@ extern "C" int mgbfs_nccl_cancel_words(void* raw,uint32_t** host,uint32_t** devi
 }
 extern "C" int mgbfs_nccl_bind_cancel(void* raw,int (*probe)(void*),void* context){
   auto* p=static_cast<Comm*>(raw);
-  if(!p||!p->value||!probe||!context)return 1;
+  if(!p||!p->value||bool(probe)!=bool(context))return 1;
   p->cancel_requested=probe;
   p->cancel_context=context;
   return 0;
@@ -285,6 +285,22 @@ extern "C" int mgbfs_nccl_send_recv(void* raw,const void* send,uint64_t send_byt
   const void* sends[]={send};void* receives[]={recv};
   return send_recv_lanes(raw,sends,&send_bytes,receives,&recv_bytes,1,peer,stream);
 }
+// Both endpoints are admitted before either calls this function. The exact
+// packet is one byte lane; ranks outside the granted pair submit nothing.
+extern "C" int mgbfs_nccl_segment_packet_v1(void* raw,void* payload,uint64_t bytes,
+    uint32_t peer,uint32_t source,void* raw_stream) {
+  auto* p=static_cast<Comm*>(raw);
+  if(!p||!p->value||p->terminal_started||!payload||!bytes||bytes>SIZE_MAX||
+     peer>=p->world||peer==p->rank||source>1)return 1;
+  if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  auto stream=static_cast<cudaStream_t>(raw_stream);
+  if(ncclGroupStart()!=ncclSuccess)return 2;
+  auto issued=source?ncclSend(payload,size_t(bytes),ncclUint8,int(peer),p->value,stream)
+                    :ncclRecv(payload,size_t(bytes),ncclUint8,int(peer),p->value,stream);
+  auto done=ncclGroupEnd();
+  const int settled=await_nccl(p,done);
+  return issued==ncclSuccess||issued==ncclInProgress?settled:3;
+}
 extern "C" int mgbfs_nccl_send_recv_pair(void* raw,const void* hashes,uint64_t hash_bytes,
     const void* states,uint64_t state_bytes,uint32_t peer,void* recv_hashes,
     uint64_t recv_hash_bytes,void* recv_states,uint64_t recv_state_bytes,void* stream) {
@@ -294,6 +310,7 @@ extern "C" int mgbfs_nccl_send_recv_pair(void* raw,const void* hashes,uint64_t h
 }
 extern "C" int mgbfs_nccl_all_gather_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint32,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" int mgbfs_nccl_all_gather_u64(void* raw,const uint64_t* send,uint64_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,1,ncclUint64,p->value,static_cast<cudaStream_t>(raw_stream)));}
+extern "C" int mgbfs_nccl_all_gather_pair_u64(void* raw,const uint64_t* send,uint64_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllGather(send,recv,2,ncclUint64,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" int mgbfs_nccl_all_reduce_max_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,1,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" int mgbfs_nccl_all_reduce_max_pair_u32(void* raw,const uint32_t* send,uint32_t* recv,void* raw_stream){auto*p=static_cast<Comm*>(raw);if(!p||!p->value||p->terminal_started||!send||!recv)return 1;if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;return await_nccl(p,ncclAllReduce(send,recv,2,ncclUint32,ncclMax,p->value,static_cast<cudaStream_t>(raw_stream)));}
 extern "C" void mgbfs_nccl_destroy(void* raw){delete static_cast<Comm*>(raw);}
@@ -685,7 +702,10 @@ extern "C" int mgbfs_nccl_exchange_bounded_triplets(void* raw,uint32_t rank,uint
  const uint64_t lanes_per_group=max_p2p_calls/(2u*(world-1u));
  const uint64_t elements=payload/state_bytes;
  const uint64_t shard_lanes=1+elements;
- const uint64_t lanes=used?1+uint64_t(shards)*shard_lanes:1;
+ // When the chunk bound fills the stride, all shards for a peer
+ // are contiguous in each slab. Keep the P2P cap even at 128 ranks.
+ const bool full_stride=used==capacity;
+ const uint64_t lanes=full_stride?(payload?3:2):(used?1+uint64_t(shards)*shard_lanes:1);
  auto stream=static_cast<cudaStream_t>(raw_stream);
  for(uint64_t first=0;first<lanes;first+=lanes_per_group){
   if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
@@ -702,6 +722,11 @@ extern "C" int mgbfs_nccl_exchange_bounded_triplets(void* raw,uint32_t rank,uint
   for(uint32_t peer=0;peer<world&&!status;peer++){if(peer==rank)continue;
    for(uint64_t lane=first;lane<last&&!status;lane++){
     if(lane==0){exchange(counts,recv_counts,uint64_t(peer)*shards*4,uint64_t(shards)*4,peer);continue;}
+    if(full_stride){
+     const uint64_t bytes=uint64_t(shards)*capacity*(lane==1?32:payload);
+     exchange(lane==1?records:states,lane==1?recv_records:recv_states,uint64_t(peer)*bytes,bytes,peer);
+     continue;
+    }
     const uint64_t shard=(lane-1)/shard_lanes;
     const uint64_t field=(lane-1)%shard_lanes;
     const uint64_t queue=uint64_t(peer)*shards+shard;
@@ -746,9 +771,21 @@ extern "C" int mgbfs_nccl_exchange_exact_payload(void* raw,uint32_t rank,uint32_
  auto stream=static_cast<cudaStream_t>(raw_stream);
  for(uint64_t first=0;first<lanes;first+=lanes_per_group){
   if(p->cancel_requested&&p->cancel_requested(p->cancel_context))return 7;
+  const uint64_t last=first+((lanes-first<lanes_per_group)?lanes-first:lanes_per_group);
+  const uint64_t first_shard=first/shard_lanes,last_shard=(last-1)/shard_lanes;
+  bool active=false;
+  for(uint32_t peer=0;peer<world&&!active;peer++){
+   if(peer==rank)continue;
+   for(uint64_t shard=first_shard;shard<=last_shard;shard++){
+    const uint64_t queue=uint64_t(peer)*shards+shard;
+    if(send_counts[queue]||recv_counts[queue]){active=true;break;}
+   }
+  }
+  // The count exchange makes this decision symmetric for every pair.
+  // A rank with no operations in this group has no matching calls to post.
+  if(!active)continue;
   if(ncclGroupStart()!=ncclSuccess)return 2;
   int status=0;
-  const uint64_t last=first+((lanes-first<lanes_per_group)?lanes-first:lanes_per_group);
   for(uint32_t peer=0;peer<world&&!status;peer++){if(peer==rank)continue;
    for(uint64_t lane=first;lane<last&&!status;lane++){
     const uint64_t shard=lane/shard_lanes,field=lane%shard_lanes;
@@ -756,8 +793,26 @@ extern "C" int mgbfs_nccl_exchange_exact_payload(void* raw,uint32_t rank,uint32_
     const uint64_t width=field?state_bytes:32;
     const uint64_t offset=field?queue*capacity*payload+(field-1)*capacity*state_bytes:queue*capacity*32;
     const void* src=field?states:records;void* dst=field?recv_states:recv_records;
-    const uint64_t send_bytes=uint64_t(send_counts[queue])*width;
-    const uint64_t recv_bytes=uint64_t(recv_counts[queue])*width;
+    // Full SoA columns are contiguous. Merge them within this shard and
+    // deterministic group only, so each peer posts the same message sizes.
+    const uint64_t first_column=lane-field+1;
+    const uint64_t first_in_group=first>first_column?first:first_column;
+    const uint64_t shard_end=lane-field+shard_lanes;
+    const uint64_t column_end=last<shard_end?last:shard_end;
+    const auto bytes_for=[&](const uint32_t* counts)->uint64_t{
+     const auto count=counts[queue];
+     if(count!=capacity)return uint64_t(count)*width;
+     if(field)return lane==first_in_group?(column_end-lane)*capacity*width:0;
+     if(payload)return uint64_t(count)*width;
+     // Packed records occupy the entire payload. Consecutive fully used
+     // shards in the same group can share one message in each direction.
+     if(lane>first&&counts[queue-1]==capacity)return 0;
+     uint64_t run=1;
+     while(lane+run<last&&counts[queue+run]==capacity)++run;
+     return run*capacity*width;
+    };
+    const uint64_t send_bytes=bytes_for(send_counts);
+    const uint64_t recv_bytes=bytes_for(recv_counts);
     if(send_bytes){
      const auto sent=ncclSend(static_cast<const unsigned char*>(src)+offset,size_t(send_bytes),ncclUint8,int(peer),p->value,stream);
      if(sent!=ncclSuccess&&sent!=ncclInProgress){status=3;break;}

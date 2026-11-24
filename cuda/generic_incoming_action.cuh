@@ -33,7 +33,9 @@ template<class State,bool Packed=false,bool Shared=false> struct IncomingAllActi
    return states[queue(child)*uint64_t(elements)*stride+uint64_t(e)*stride+child%stride];
   }
  }
- __device__ uint64_t hash(uint32_t child,uint64_t,uint32_t)const{
-  const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;return meta[queue(child)*stride+child%stride].hash;
+ __device__ const GenericRouteRecord& route(uint32_t child)const{
+  const GenericRouteRecord* meta=source(child)==rank?local_meta:remote_meta;
+  return meta[queue(child)*stride+child%stride];
  }
+ __device__ uint64_t hash(uint32_t child,uint64_t,uint32_t)const{return route(child).hash;}
 };

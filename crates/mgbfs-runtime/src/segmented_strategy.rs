@@ -73,6 +73,28 @@ pub fn agree_owner_page_geometry(advertisements:&[u64])->Result<(SegmentStrategy
  Ok((strategy,recovery,if code==0{0}else{1u32<<(code-1)}))
 }
 
+/// Experimental packed bitmap ABI availability is only a compatibility
+/// statement; it is not GPU acceptance or an automatic profile choice.
+#[cfg(all(feature="cuda",target_os="linux"))]
+pub fn bitmap_pack4_abi_ready()->bool{crate::segmented_distributed_native::pack4_capability()}
+#[cfg(not(all(feature="cuda",target_os="linux")))]
+pub fn bitmap_pack4_abi_ready()->bool{false}
+
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub fn packet_transport_abi_ready() -> bool {
+    let symbols: &[&[u8]] = &[
+        b"mgbfs_nccl_segment_packet_v1\0",
+        b"mgbfs_segmented_compact_route_v1\0",
+        b"mgbfs_bitmap_accept_packet_v1\0",
+        b"mgbfs_bitmap_accept_batch_packet_v1\0",
+    ];
+    symbols.iter().all(|symbol| unsafe {
+        !libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr().cast()).is_null()
+    })
+}
+#[cfg(not(all(feature = "cuda", target_os = "linux")))]
+pub fn packet_transport_abi_ready() -> bool { false }
+
 /// The hash warp path must never silently run a library with reusable
 /// pending slots; atomic and batch remain compatible with earlier bundles.
 #[cfg(all(feature="cuda",target_os="linux"))]
@@ -138,8 +160,8 @@ pub fn batch_abi_ready()->bool{
   let version:unsafe extern "C" fn()->u32=std::mem::transmute(marker);
   if version()!=1{return false}
   let names:[&[u8];5]=[b"mgbfs_segmented_batch_route\0",
-   b"mgbfs_bitmap_accept_batch\0",b"mgbfs_hash_batch_accept_timed\0",
-   b"mgbfs_hash_batch_compact_tail\0",b"mgbfs_segmented_dense_origins\0"];
+   b"mgbfs_bitmap_accept_batch\0",b"mgbfs_hash_batch_accept_profiled_v3\0",
+   b"mgbfs_hash_batch_compact_tail_v2\0",b"mgbfs_segmented_dense_origins\0"];
   names.iter().all(|name|!libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr().cast()).is_null())
  }
 }
@@ -329,3 +351,22 @@ mod safe_warp_abi_tests{
   assert_eq!(agree_owner_page_geometry(&[queue,queue]),Ok((SegmentStrategy::Atomic,false,0)));
  }
 }
+
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub fn hash_series_abi_ready() -> bool {
+    let symbols: &[&[u8]] = &[
+        b"mgbfs_hash_batch_accept_profiled_v6\0",
+        b"mgbfs_hash_extent_bank_summary_v1\0",
+        b"mgbfs_hash_extent_gather_v1\0",
+        b"mgbfs_hash_extent_sort_scratch_v1\0",
+        b"mgbfs_hash_extent_sort_v1\0",
+        b"mgbfs_hash_extent_prefixes_v1\0",
+        b"mgbfs_hash_extent_remap_v1\0",
+    ];
+    symbols.iter().all(|symbol| unsafe {
+        !libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr().cast()).is_null()
+    })
+}
+
+#[cfg(not(all(feature = "cuda", target_os = "linux")))]
+pub fn hash_series_abi_ready() -> bool { false }

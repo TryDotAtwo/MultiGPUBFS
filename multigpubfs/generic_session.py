@@ -2,6 +2,7 @@
 import contextlib,json,os,subprocess,tempfile,time
 from pathlib import Path
 _active=None
+_NEAREST_CANCEL_GRACE_SECONDS=5
 
 def _expected_plan_rejection(job):
  if job is None or getattr(job,'command',None) not in ('graph-plan','graph-local-plan'):return False
@@ -20,6 +21,18 @@ def _job_failed(job):
 
 
 from .metadata_io import read_json
+
+def path_workspace(job):
+    cache = (getattr(job, "response", None) or {}).get("cache")
+    if not isinstance(cache, dict):
+        return None
+    return {
+        "worker_pid": job.pid,
+        "buffer_hits": cache["buffer_hits"],
+        "comm_hits": cache["comm_hits"],
+        "owned_raw_complete": cache["owned_raw_complete"],
+    }
+
 
 class Job:
  def __init__(self,worker,sequence):self.worker=worker;self.sequence=sequence;self.pid=worker.process.pid;self.returncode=None;self.response=None;self.command=None;self.receipt_log=None;self.log_offset=0;self.logged=False
@@ -73,16 +86,58 @@ class Worker:
   except subprocess.TimeoutExpired:
    self.process.terminate()
    try:self.process.wait(timeout=10)
-   except subprocess.TimeoutExpired:self.process.kill();self.process.wait()
+   except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=5)
   self.log.close()
 
 class Pool:
- def __init__(self,kind='generic',owner=None):self.kind=kind;self.owner=owner;self.active_kind='generic';self.special=None;self.temporary=tempfile.TemporaryDirectory(prefix='mgbfs-generic-session-',dir=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT'));self.root=Path(self.temporary.name);self.visible_counts={};self.workers=[];self.identity=None;self.generation=0;self.poisoned=False
- def release_memory(self):
-  if not self.workers:return
-  jobs=[w.submit('release-memory',[],{}) for w in self.workers]
+ def __init__(self,kind='generic',owner=None):
+  self.kind=kind;self.owner=owner;self.active_kind='generic';self.special=None
+  self.temporary=tempfile.TemporaryDirectory(prefix='mgbfs-generic-session-',dir=os.environ.get('MGBFS_GENERIC_SESSION_LOG_ROOT'))
+  self.root=Path(self.temporary.name);self.visible_counts={};self.workers=[];self.identity=None;self.generation=0;self.poisoned=False
+  self.nearest=None;self.nearest_identity=None;self.nearest_active=False
+ def release_traversal_memory(self):
+  jobs=[worker.submit('release-memory',[],{}) for worker in self.workers]
   for job in jobs:
    if job.wait(30):raise RuntimeError('RESIDENT_MEMORY_HANDOFF_FAILED')
+ def release_nearest_memory(self):
+  if not self.nearest_active:return
+  if self.nearest.process.poll() is not None:
+   self.close_nearest()
+   return
+  try:
+   job=self.nearest.submit('release-memory',[],{})
+   if job.wait(30):raise RuntimeError('RESIDENT_PATH_MEMORY_HANDOFF_FAILED '+repr(job.response))
+  except BaseException:
+   self.close_nearest()
+   raise
+  self.nearest_active=False
+ def release_memory(self):
+  self.release_nearest_memory()
+  self.release_traversal_memory()
+ def select_nearest(self,native,env,device):
+  from .autotune import _dependency_identity,_stat_identity
+  dependency=_dependency_identity(str(native),env)
+  stamps=tuple((entry[0],entry[1],_stat_identity(entry[1])) for entry in (dependency or {}).get('resolved_dependencies',[]))
+  startup_keys=('LD_LIBRARY_PATH','LD_PRELOAD','LD_AUDIT','CUDA_VISIBLE_DEVICES','CUDA_DEVICE_ORDER',
+                'CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING','CUDA_DISABLE_PTX_JIT',
+                'MGBFS_CUDART_LIBRARY','MGBFS_CUDA_LIB_DIR')
+  identity=(_stat_identity(native),stamps,str(native),device,tuple((key,env.get(key)) for key in startup_keys))
+  if identity!=self.nearest_identity:self.close_nearest()
+  if not self.nearest_active:
+   # Keep traversal ranks and certified communicators parked after giving up
+   # their buffers. Their identity and all-rank certification are unchanged.
+   self.release_traversal_memory()
+   if self.special is not None:self.special.release_memory()
+   if self.nearest is None:
+    directory=Path(tempfile.mkdtemp(prefix='nearest-',dir=self.root))
+    self.nearest=Worker(native,env,0,device,directory/'0','path-nearest')
+    self.nearest_identity=identity
+   self.nearest_active=True
+  return self.nearest
+ def close_nearest(self):
+  worker=self.nearest
+  self.nearest=None;self.nearest_identity=None;self.nearest_active=False
+  if worker is not None:worker.close()
  def activate(self):
   root=self.owner or self
   if root.active_kind!=self.kind:
@@ -95,6 +150,7 @@ class Pool:
  def select(self,native,devices,env):
   if self.poisoned:raise RuntimeError('GENERIC_SESSION_FAILED_GROUP_NO_RESTART')
   self.activate()
+  self.release_nearest_memory()
   from .autotune import _dependency_identity,_stat_identity
   dependency=_dependency_identity(str(native),env)
   stamps=tuple((x[0],x[1],_stat_identity(x[1])) for x in (dependency or {}).get('resolved_dependencies',[]))
@@ -121,7 +177,7 @@ class Pool:
   self.workers=[];self.identity=None
  def close(self):
   if self.special is not None:self.special.close()
-  self.close_workers();self.temporary.cleanup()
+  self.close_nearest();self.close_workers();self.temporary.cleanup()
 
 def invalidate_launch_group(selection):
  """Discard a generation if receipt aggregation fails after all rank jobs."""
@@ -142,6 +198,37 @@ def persistent_graph_workers():
  pool=Pool();_active=pool
  try:yield pool
  finally:_active=None;pool.close()
+
+def resident_nearest(native,env,device,query,deadline):
+ """Run one native nearest job through the dedicated session rank."""
+ if _active is None:return None
+ worker=_active.select_nearest(native,env,device)
+ if deadline is not None and time.perf_counter()>=deadline:
+  return dict(status='INCOMPLETE',stop_reason='TIME_LIMIT',d_min=None,target_index=None,generator_ids=[])
+ timed_out=False
+ try:
+  job=worker.submit('graph-path-nearest',[str(query)],env)
+  try:
+   remaining=None if deadline is None else max(0.0,deadline-time.perf_counter())
+   status=job.wait(remaining)
+  except (subprocess.TimeoutExpired, KeyboardInterrupt) as stopped:
+   timed_out=isinstance(stopped,subprocess.TimeoutExpired)
+   job.request_cancel()
+   try:
+    status=job.wait(_NEAREST_CANCEL_GRACE_SECONDS)
+   except subprocess.TimeoutExpired:
+    job.kill()
+    _active.close_nearest()
+    return dict(status='INCOMPLETE',stop_reason='TIME_LIMIT' if timed_out else 'CANCELLED',
+                d_min=None,target_index=None,generator_ids=[])
+  if status:raise RuntimeError('RESIDENT_PATH_SEARCH_FAILED '+repr(job.response))
+  result=job.response['result']
+ except BaseException:
+  _active.close_nearest()
+  raise
+ if timed_out and result.get('status')=='INCOMPLETE' and result.get('stop_reason')=='CANCELLED':
+  result=dict(result,stop_reason='TIME_LIMIT')
+ return result
 
 def query(command,env,seconds,kwargs):
  if _active is None or len(command)<5 or command[1] not in ('graph-info','graph-plan'):return None

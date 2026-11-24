@@ -14,6 +14,7 @@ import sys
 import time
 
 MiB = 1 << 20
+_MAX_PREFIX_RECEIPTS = 32
 POLICY_KEYS = ('NCCL_NET_GDR_LEVEL', 'NCCL_IB_DISABLE', 'NCCL_P2P_DISABLE',
                'NCCL_SHM_DISABLE', 'NCCL_NET', 'NCCL_SOCKET_IFNAME')
 
@@ -92,6 +93,14 @@ def _bound_cache(pool):
     if token is None or token != getattr(pool, 'communication_bound_token', None):
         pool.communication_profiles = {}
     return getattr(pool, 'communication_profiles', {})
+
+
+def _remember_prefix(cache, key, evidence):
+    # Keep recent graph receipts without growing with every graph in a session.
+    cache.pop(key, None)
+    cache[key] = evidence
+    if len(cache) > _MAX_PREFIX_RECEIPTS:
+        del cache[next(iter(cache))]
 
 
 def _requested_memory_backend(env):
@@ -224,6 +233,7 @@ def prepare(native, devices, env, output, graph=None):
         cache.clear()
     if key in cache:
         patch, report = cache[key]
+        _remember_prefix(cache, key, (patch, report))
         # Retain the source cost separately: this invocation did no new
         # transport probe or graph-prefix rehearsal.
         return dict(env, **patch), dict(report, cache_hit=True,
@@ -250,7 +260,7 @@ def prepare(native, devices, env, output, graph=None):
                           bfs_prefix=prefix, seconds=time.monotonic()-started,
                           evidence=str(root))
             _write(root / 'report.json', report)
-            cache[key] = (patch, report)
+            _remember_prefix(cache, key, (patch, report))
             _active.communication_profiles = cache
             return dict(env, **patch), report
         except (RuntimeError, TimeoutError, ValueError, OSError, KeyError) as error:
@@ -330,7 +340,7 @@ def prepare(native, devices, env, output, graph=None):
                       'scope': 'all selected GPUs; transport and one-shard bounded BFS prefix only; production geometry, all future BFS kernels and node health are not verified'}
             _write(root / 'report.json', report)
             if _active is not None:
-                cache[key] = (patch, report)
+                _remember_prefix(cache, key, (patch, report))
                 _active.communication_profiles = cache
             return dict(env, **patch), report
         except (RuntimeError, TimeoutError) as error:
@@ -356,8 +366,34 @@ def prepare(native, devices, env, output, graph=None):
                     process.wait(timeout=3)
             for log in logs:
                 log.close()
+    # Rank logs may live in a provider's temporary directory. Include the
+    # originating failure in the exception so it survives collection.
+    for report in reports:
+        if report['mode'] == 'cached-transport-prefix':
+            continue
+        attempt = root / report['mode']
+        logs = [attempt / 'prefix.log', *sorted(attempt.glob('rank-*.log'))]
+        failures = []
+        for log in logs:
+            try:
+                with log.open('rb') as stream:
+                    stream.seek(max(0, log.stat().st_size - 4096))
+                    lines = stream.read().decode(errors='replace').splitlines()
+            except OSError:
+                continue
+            error = None
+            for line in lines:
+                if line.startswith('Traceback (most recent call last):'):
+                    error = ''
+                elif error == '' and line and not line[0].isspace():
+                    error = line
+            if error:
+                failures.append(f'{log.name}: {error[:360]}')
+        if failures:
+            report['child_error'] = failures[0]
     _write(root / 'report.json', {'status': 'FAILED', 'attempts': reports})
-    raise RuntimeError('NCCL_PREFLIGHT_NO_VERIFIED_TRANSPORT: evidence=' + str(root))
+    detail = '; '.join(f"{r['mode']}: {r.get('child_error', r['error'])}" for r in reports)
+    raise RuntimeError(f'NCCL_PREFLIGHT_NO_VERIFIED_TRANSPORT: evidence={root}; {detail}')
 
 
 def _rank(root, rank):

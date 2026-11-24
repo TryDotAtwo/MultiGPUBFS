@@ -163,7 +163,7 @@ pub unsafe fn mgbfs_generic_accept_all_storage(state_bytes:u32,elements:u32,loca
  local_counts:*const u32,remote_counts:*const u32,rank:u32,world:u32,shard:u32,shards:u32,stride:u32,slots:*mut u64,
  slot_capacity:u64,visited:*mut i64,visited_capacity:u32,visited_count:*mut u32,future:*mut u32,future_capacity:u32,future_count:*mut u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32{match state_bytes{1=>(if elements<=24 {mgbfs_generic_accept_all_shared_packed_u8_wide} else {mgbfs_generic_accept_all_shared_u8_wide})(elements,local.cast(),remote.cast(),local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited.cast(),visited_capacity,visited_count,future,future_capacity,future_count,error,stream),8=>mgbfs_generic_accept_all_shared_i64_wide(elements,local,remote,local_meta,remote_meta,local_counts,remote_counts,rank,world,shard,shards,stride,slots,slot_capacity,visited,visited_capacity,visited_count,future,future_capacity,future_count,error,stream),_=>1}}
 
-extern "C" {pub fn mgbfs_generic_route_retry_vote(source:*const u32,owner:*const u32,vote:*mut u32,stream:*mut std::ffi::c_void)->i32;}
+extern "C" {pub fn mgbfs_generic_route_retry_vote_v2(source:*const u32,owner:*const u32,vote:*mut u32,stop:u32,stream:*mut std::ffi::c_void)->i32;}
 
 #[cfg(feature="cuda")]
 pub unsafe fn mgbfs_generic_seed_shared_storage(state_bytes:u32,elements:u32,states:*const i64,state_stride:u32,state_count:u32,
@@ -196,4 +196,25 @@ extern "C" {
   parents:*const std::ffi::c_void,parent_count:u32,parent_stride:u32,permutations:*const u32,matrices:*const i64,moduli:*const u32,
   source:u32,parent_begin:u64,requests:*const GenericRouteRecord,request_capacity:u32,device_count:*const u32,
   output:*mut std::ffi::c_void,output_stride:u32,error:*mut u32,stream:*mut std::ffi::c_void)->i32;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GenericPathParent {
+    pub parent: u32,
+    pub source_label: u32,
+}
+
+#[cfg(feature = "cuda")]
+extern "C" {
+    pub fn mgbfs_generic_accept_path_parents_v2(
+        state_bytes: u32, elements: u32, generators: u32, local: *const std::ffi::c_void,
+        remote: *const std::ffi::c_void, local_meta: *const GenericRouteRecord,
+        remote_meta: *const GenericRouteRecord, local_counts: *const u32,
+        remote_counts: *const u32, rank: u32, world: u32, shard: u32, shards: u32, stride: u32,
+        slots: *mut u64, slot_capacity: u64, visited: *mut std::ffi::c_void,
+        visited_capacity: u32, visited_count: *mut u32, future: *mut u32,
+        future_capacity: u32, future_count: *mut u32, lineage: *mut GenericPathParent,
+        error: *mut u32, stream: *mut std::ffi::c_void,
+    ) -> i32;
 }

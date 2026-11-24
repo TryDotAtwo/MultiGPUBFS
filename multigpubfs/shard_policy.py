@@ -6,6 +6,8 @@ uses independently addressed segments when any logical shard grows further.
 from collections import Counter
 from math import comb, gcd
 
+from .memory_admission import bitmap_bytes_by_rank, bitmap_domain, bitmap_frontier_banks, bitmap_frontier_row_bytes
+
 LOCAL_SHARD_TARGET = 1 << 32
 MAX_LOGICAL_SHARDS = 4096
 
@@ -70,7 +72,8 @@ def _ceil_div(a,b):
     return (a+b-1)//b
 
 
-def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL_SHARD_TARGET, rank_limit=None, segment_rows=None):
+def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL_SHARD_TARGET,
+                            rank_limit=None, segment_rows=None, env=None):
     if type(target_rows) is not int or not 1<=target_rows<=LOCAL_SHARD_TARGET:
         raise ValueError('INVALID_SHARD_TARGET_ROWS')
     if rank_limit is not None and (type(rank_limit) is not int or rank_limit<1):
@@ -79,18 +82,24 @@ def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL
         raise ValueError('INVALID_SEGMENT_ROWS')
     plan=admission['plan']
     world=len(admission.get('devices') or admission.get('inventory') or [0])
-    banks=3 if bitmap else int(plan.get('history_layers',3))
-    if banks not in (1,3):
+    env = env or {}
+    if bitmap:
+        banks = bitmap_frontier_banks(env, maxmemory=env.get('MGBFS_MEMORY_PRESET') == 'max_capacity')
+    else:
+        banks = int(plan.get('history_layers',3))
+    if not bitmap and banks not in (1,3):
         raise ValueError('INVALID_SHARD_HISTORY_BANKS')
 
-    from .workload_geometry import coxeter_frontier_bound
-    certified=coxeter_frontier_bound(graph) if banks==3 else None
+    from .workload_geometry import coxeter_frontier_bound, independent_swap_frontier_bound
+    certified=coxeter_frontier_bound(graph) if banks in (2,3) else None
+    if bitmap and certified is None:
+        certified=independent_swap_frontier_bound(graph)
     orbit,kind=_orbit_upper(graph)
     if certified is not None:
         # Full simultaneously retained consecutive layers, not just the peak.
-        global_live=certified['maximum_live_states']
         global_peak=certified['maximum_frontier']
         orbit=certified['order']; kind=certified['kind']
+        global_live=min(global_peak*banks,certified.get('maximum_live_states',orbit))
     else:
         global_live=orbit
         global_peak=orbit
@@ -112,21 +121,20 @@ def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL
     rows=segment_rows if segment_rows is not None else min(target_rows,max(32,peak_estimate or target_rows))
     count=rows*banks; elements=int(plan.get('elements',len(graph.start)))
     width=int(plan.get('state_bytes',1 if all(0<=v<=255 for v in graph.start) else 8))
+    row_bytes=bitmap_frontier_row_bytes(elements,width,env.get('MGBFS_SEGMENT_PACK4')=='1') if bitmap else elements*width
     slots=0 if bitmap else 1<<(2*count-1).bit_length()
-    segment_bytes=count*elements*width + (0 if bitmap or banks==1 else count*8) + slots*8 + 24
+    segment_bytes=count*row_bytes + (0 if bitmap or banks==1 else count*8) + slots*8 + 24
     reserve=int(admission.get('additional_reserve_bytes',2<<30))
-    free=[int(item['free_bytes']) for item in admission.get('inventory',[]) if type(item.get('free_bytes')) is int]
+    budgets=[max(0,item['free_bytes']-item.get('additional_reserve_bytes',reserve))
+             for item in admission.get('inventory',[]) if type(item.get('free_bytes')) is int]
     memory_limit=None
     shard_budget=MAX_LOGICAL_SHARDS
-    if free:
-        # The bitmap covers the full multiset domain even if only a cyclic
-        # subgroup is reachable. A cyclic orbit bound must not reduce it.
-        bitmap_domain=1; used=0
+    if budgets:
+        bitmap_bytes=0
         if bitmap:
-            for frequency in Counter(graph.start).values():
-                bitmap_domain*=comb(used+frequency,frequency); used+=frequency
-        bitmap_bytes=0 if not bitmap else _ceil_div(_ceil_div(bitmap_domain,world),8)
-        available=[max(0,v-reserve-bitmap_bytes)//segment_bytes for v in free]
+            domain=bitmap_domain(graph,position_orbits=env.get('_MGBFS_BITMAP_POSITION_ORBITS_CAPABLE')=='1')
+            bitmap_bytes=max(bitmap_bytes_by_rank(domain if domain is not None else 1<<64,world))
+        available=[max(0,budget-bitmap_bytes)//segment_bytes for budget in budgets]
         memory_limit=min(available)*count
         # Every active shard owns at least one whole segment. This is a
         # necessary bound, not a complete workspace or production admission.
@@ -134,8 +142,8 @@ def choose_segmented_shards(graph, admission, *, bitmap=False, target_rows=LOCAL
         # by minimum allocation, not the single-shard allocation above.
         minimum_rows=min(32,target_rows,segment_rows or target_rows)
         minimum_slots=0 if bitmap else 1<<(2*minimum_rows*banks-1).bit_length()
-        minimum_bytes=minimum_rows*banks*(elements*width+(0 if bitmap or banks==1 else 8))+minimum_slots*8+24
-        shard_budget=min(MAX_LOGICAL_SHARDS,max(1,min(max(0,v-reserve-bitmap_bytes)//minimum_bytes for v in free)))
+        minimum_bytes=minimum_rows*banks*(row_bytes+(0 if bitmap or banks==1 else 8))+minimum_slots*8+24
+        shard_budget=min(MAX_LOGICAL_SHARDS,max(1,min(max(0,budget-bitmap_bytes)//minimum_bytes for budget in budgets)))
 
     memory_limited=memory_limit is not None and (estimated is None or estimated>memory_limit)
     effective=memory_limit if estimated is None else estimated

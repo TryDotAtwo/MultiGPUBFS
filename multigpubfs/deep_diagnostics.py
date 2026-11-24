@@ -113,7 +113,7 @@ def oracle(graph):
  return sizes,sorted(last)
 
 def api_probe(config,root):
- from .diagnostics import _paths,_kernel
+ from .diagnostics import _cudart_path,_paths,_kernel
  state={'schema':1,'pid':os.getpid(),'config':config,'environment':{k:os.environ.get(k) for k in ('CUDA_MODULE_LOADING','CUDA_MODULE_DATA_LOADING','CUDA_VISIBLE_DEVICES','CUDA_DISABLE_PTX_JIT','CUDA_FORCE_PTX_JIT','CUDA_CACHE_DISABLE','CUDA_CACHE_MAXSIZE','CUDA_CACHE_PATH')},'operations':[]}
  def phase(name):
   state['last_operation']=name;state['operations'].append({'name':name,'status':'ENTERED','monotonic':time.monotonic()});write(root/'probe.json',state);print('PHASE '+name,flush=True)
@@ -128,7 +128,7 @@ def api_probe(config,root):
    while not stop.wait(.005):(root/'cancel').exists()
   worker=threading.Thread(target=poll);worker.start();done()
  try:
-  phase('load CUDA runtime');cuda=C.CDLL(paths['libcudart.so.12'],mode=C.RTLD_GLOBAL);done()
+  phase('load CUDA runtime');cuda=C.CDLL(_cudart_path(paths),mode=C.RTLD_GLOBAL);done()
   cuda.cudaSetDevice.argtypes=[C.c_int];cuda.cudaSetDevice.restype=C.c_int;cuda.cudaFree.argtypes=[C.c_void_p];cuda.cudaFree.restype=C.c_int
   def engine():
    phase('load NCCL');loaded['nccl']=C.CDLL(paths['libnccl.so.2'],mode=C.RTLD_GLOBAL);done()

@@ -30,7 +30,7 @@ int main(){
  using Key=std::tuple<int,size_t,size_t,int>;
  int cases=0;
  for(unsigned world:{1u,2u,8u,128u})for(unsigned shards:{1u,128u,256u})
- for(unsigned width:{0u,16u})for(unsigned state_bytes:{1u,8u})for(unsigned used:{0u,2u}){
+ for(unsigned width:{0u,16u})for(unsigned state_bytes:{1u,8u})for(unsigned used:{0u,2u,4u}){
   unsigned cap=4,payload=width*state_bytes;
   test::stride[0]=shards*4;test::stride[1]=size_t(shards)*cap*32;test::stride[2]=size_t(shards)*cap*payload;
   for(int k=0;k<6;k++)test::a[k].resize(std::max(size_t(1),world*test::stride[k%3]));
@@ -42,14 +42,51 @@ int main(){
    assert(result==0);assert(test::depth==0);
    if(!used && world>1)assert(test::groups==1);
    if(test::peak>256){std::fprintf(stderr,"UNBOUNDED_GROUP world=%u shards=%u width=%u calls=%d\n",world,shards,width,test::peak);return 2;}
-   const size_t per_peer=1+(used?size_t(shards)*(1+width):0);
+   const size_t per_peer=1+(used==cap?1+size_t(width!=0):used?size_t(shards)*(1+width):0);
    assert(test::sent.size()==(world-1)*per_peer);assert(test::sent.size()==test::received.size());
+   if(used==cap){
+    for(const auto& e:test::sent){assert(e.off==0);assert(e.count==test::stride[e.kind]);}
+    for(const auto& e:test::received){assert(e.off==0);assert(e.count==test::stride[e.kind]);}
+   }
    for(auto e:test::sent)sends[{rank,e.peer}].emplace_back(e.kind,e.off,e.count,e.group);
    for(auto e:test::received)recvs[{e.peer,rank}].emplace_back(e.kind,e.off,e.count,e.group);
    comm->value=nullptr;delete comm;
   }
   if(world<=8)assert(sends==recvs);
   cases++;
+ }
+
+ // Sparse exact exchanges may skip different empty groups on each rank.
+ // Compare the actual order, lengths and offsets of matching messages.
+ int exact_cases=0;
+ for(unsigned world:{2u,8u})for(unsigned shards:{1u,64u,129u})
+ for(unsigned width:{0u,17u,131u}){
+  const unsigned cap=4,payload=width*8;
+  test::stride[0]=shards*4;test::stride[1]=size_t(shards)*cap*32;test::stride[2]=size_t(shards)*cap*payload;
+  for(int k=0;k<6;k++)test::a[k].resize(std::max(size_t(1),world*test::stride[k%3]));
+  std::map<std::pair<unsigned,unsigned>,std::vector<Key>> sends,recvs;
+  auto rows=[&](unsigned from,unsigned to,unsigned shard){
+   if(from==to||(from+2*to)%4==0||shard%11==3)return 0u;
+   return shard%13==5?cap-1:cap;
+  };
+  for(unsigned rank=0;rank<world;rank++){
+   std::vector<uint32_t> outgoing(world*shards),incoming(world*shards);
+   for(unsigned peer=0;peer<world;peer++)for(unsigned shard=0;shard<shards;shard++){
+    outgoing[peer*shards+shard]=rows(rank,peer,shard);
+    incoming[peer*shards+shard]=rows(peer,rank,shard);
+   }
+   Comm comm;comm.value=reinterpret_cast<ncclComm_t>(1);comm.rank=rank;comm.world=world;
+   test::sent.clear();test::received.clear();test::groups=test::peak=0;
+   assert(mgbfs_nccl_exchange_exact_payload(&comm,rank,world,shards,cap,payload,8,
+    outgoing.data(),incoming.data(),test::a[1].data(),test::a[2].data(),
+    test::a[4].data(),test::a[5].data(),nullptr)==0);
+   assert(test::depth==0&&test::peak<=256);
+   for(auto e:test::sent)sends[{rank,e.peer}].emplace_back(e.kind,e.off,e.count,0);
+   for(auto e:test::received)recvs[{e.peer,rank}].emplace_back(e.kind,e.off,e.count,0);
+   comm.value=nullptr;
+  }
+  assert(sends==recvs);
+  exact_cases++;
  }
 
  // Error paths must close the active group; cancellation stops between groups.
@@ -62,5 +99,5 @@ int main(){
   int code=mgbfs_nccl_exchange_bounded_triplets(&comm,0,2,256,4,2,16,1,test::a[0].data(),test::a[1].data(),test::a[2].data(),test::a[3].data(),test::a[4].data(),test::a[5].data(),nullptr);
   assert(code==(mode==1?3:mode==2?5:mode==3?4:7));assert(test::depth==0);assert(test::groups==1);comm.value=nullptr;
  }
- std::printf("PASS %d geometry cases and 4 error/cancel cases; peer payloads matched; group cap 256\n",cases);
+ std::printf("PASS %d bounded geometries, %d exact geometries and 4 error/cancel cases; group cap 256\n",cases,exact_cases);
 }

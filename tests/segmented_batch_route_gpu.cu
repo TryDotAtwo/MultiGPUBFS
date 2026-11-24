@@ -22,6 +22,11 @@ extern "C" int mgbfs_segmented_batch_route(uint32_t,uint32_t,BitmapDeviceDomain,
  const uint32_t*,const int64_t*,const uint32_t*,uint64_t,uint32_t,uint32_t,uint32_t,
  uint32_t,uint32_t,uint64_t,const uint32_t*,const uint64_t*,GenericRouteRecord*,
  uint32_t*,uint32_t*,void*,void*,size_t,void*);
+extern "C" int mgbfs_segmented_compact_route_v1(uint32_t,uint32_t,BitmapDeviceDomain,
+ uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,const void*,uint32_t,uint64_t,
+ const uint32_t*,const int64_t*,const uint32_t*,uint64_t,uint32_t,uint32_t,uint32_t,
+ uint32_t,uint32_t,uint64_t,const uint32_t*,const uint64_t*,GenericRouteRecord*,
+ uint32_t*,uint32_t*,void*,void*,size_t,void*,uint32_t,uint64_t,uint32_t);
 template<class T> static T* alloc(size_t n){T* x=nullptr;C(cudaMalloc((void**)&x,std::max<size_t>(n,1)*sizeof(T)));return x;}
 template<class T> static void upload(T* p,const std::vector<T>& h){if(!h.empty())C(cudaMemcpy(p,h.data(),h.size()*sizeof(T),cudaMemcpyHostToDevice));}
 using Bytes=std::array<unsigned char,sizeof(GenericRouteRecord)>;
@@ -40,27 +45,37 @@ static Result call(bool bitmap,int mode,uint32_t bytes,uint32_t world,uint32_t s
  auto* dv=alloc<int64_t>(values.size());upload(dv,values);auto* df=alloc<uint32_t>(freq.size());upload(df,freq);
  void* parent=nullptr;if(bytes==1){auto* x=alloc<uint8_t>(parents8.size());upload(x,parents8);parent=x;}else{auto* x=alloc<int64_t>(parents64.size());upload(x,parents64);parent=x;}
  const uint32_t nq=world*shards;auto* counts=alloc<uint32_t>(nq);auto* error=alloc<uint32_t>(1);C(cudaMemset(counts,0,nq*4));C(cudaMemset(error,0,4));
+ const bool compact=mode==3;
+ const uint64_t allocated_rows=compact?uint64_t(count)*G:uint64_t(nq)*capacity;
  // Red zones around the output detect a write past the queue allocation.
- auto* guarded=alloc<GenericRouteRecord>(uint64_t(nq)*capacity+2);C(cudaMemset(guarded,0xa5,(uint64_t(nq)*capacity+2)*sizeof(GenericRouteRecord)));
+ auto* guarded=alloc<GenericRouteRecord>(allocated_rows+2);C(cudaMemset(guarded,0xa5,(allocated_rows+2)*sizeof(GenericRouteRecord)));
  auto* records=guarded+1;
  int status=0;
  BitmapDeviceDomain domain{dv,df,N,N,720};
- if(mode==2){
+ if(mode>=2){
   size_t scratch_bytes=0;C(static_cast<cudaError_t>(mgbfs_segmented_batch_route_scratch_bytes(count*G,nq,&scratch_bytes)));
   void* scratch=nullptr;C(cudaMalloc(&scratch,std::max<size_t>(scratch_bytes,1)));
-  void* routed_states=nullptr;C(cudaMalloc(&routed_states,std::max<size_t>(uint64_t(nq)*capacity*N*bytes,1)));C(cudaMemset(routed_states,0xa5,std::max<size_t>(uint64_t(nq)*capacity*N*bytes,1)));
-  status=mgbfs_segmented_batch_route(uint32_t(bitmap),uint32_t(word_shard),domain,bytes,0,N,N,1,G,parent,count,count,dp,nullptr,nullptr,123,64,world,0,shards,capacity,begin,dm,nullptr,records,counts,error,routed_states,scratch,scratch_bytes,nullptr);
+  void* routed_states=nullptr;C(cudaMalloc(&routed_states,std::max<size_t>(allocated_rows*N*bytes,1)));C(cudaMemset(routed_states,0xa5,std::max<size_t>(allocated_rows*N*bytes,1)));
+  if(compact){
+   status=mgbfs_segmented_compact_route_v1(uint32_t(bitmap),uint32_t(word_shard),domain,bytes,0,N,N,1,G,parent,count,count,dp,nullptr,nullptr,123,64,world,0,shards,capacity,begin,dm,nullptr,records,counts,error,routed_states,scratch,scratch_bytes,nullptr,0,0,count*G);
+  }else{
+   status=mgbfs_segmented_batch_route(uint32_t(bitmap),uint32_t(word_shard),domain,bytes,0,N,N,1,G,parent,count,count,dp,nullptr,nullptr,123,64,world,0,shards,capacity,begin,dm,nullptr,records,counts,error,routed_states,scratch,scratch_bytes,nullptr);
+  }
   C(static_cast<cudaError_t>(status));C(cudaDeviceSynchronize());
   if(bytes==8){
    uint32_t route_error=0;C(cudaMemcpy(&route_error,error,4,cudaMemcpyDeviceToHost));
-   std::vector<int64_t> payload(uint64_t(nq)*capacity*N);C(cudaMemcpy(payload.data(),routed_states,payload.size()*8,cudaMemcpyDeviceToHost));
+   std::vector<int64_t> payload(allocated_rows*N);if(!payload.empty())C(cudaMemcpy(payload.data(),routed_states,payload.size()*8,cudaMemcpyDeviceToHost));
    if(route_error==0){
-    std::vector<uint32_t> c(nq);std::vector<GenericRouteRecord> r(uint64_t(nq)*capacity);
-    C(cudaMemcpy(c.data(),counts,nq*4,cudaMemcpyDeviceToHost));C(cudaMemcpy(r.data(),records,r.size()*sizeof(r[0]),cudaMemcpyDeviceToHost));
-    for(uint32_t q=0;q<nq;q++)for(uint32_t i=0;i<c[q];i++)for(uint32_t e=0;e<N;e++){
-     const auto& rec=r[uint64_t(q)*capacity+i];CHECK(rec.parent>=begin&&rec.parent-begin<count&&rec.generator<G);
+    std::vector<uint32_t> c(nq);std::vector<GenericRouteRecord> r(allocated_rows);
+    C(cudaMemcpy(c.data(),counts,nq*4,cudaMemcpyDeviceToHost));if(!r.empty())C(cudaMemcpy(r.data(),records,r.size()*sizeof(r[0]),cudaMemcpyDeviceToHost));
+    uint64_t prefix=0;
+    for(uint32_t q=0;q<nq;q++){
+    uint64_t first=compact?prefix:uint64_t(q)*capacity,stride=compact?c[q]:capacity;prefix+=c[q];
+    for(uint32_t i=0;i<c[q];i++)for(uint32_t e=0;e<N;e++){
+     const auto& rec=r[first+i];CHECK(rec.parent>=begin&&rec.parent-begin<count&&rec.generator<G);
      auto expected=parents64[uint64_t(perms[uint64_t(rec.generator)*N+e])*count+(rec.parent-begin)];
-     CHECK(payload[(uint64_t(q)*N+e)*capacity+i]==expected);
+     CHECK(payload[first*N+e*stride+i]==expected);
+    }
     }
    }else for(auto x:payload)CHECK(uint64_t(x)==0xa5a5a5a5a5a5a5a5ULL);
   }
@@ -72,19 +87,29 @@ static Result call(bool bitmap,int mode,uint32_t bytes,uint32_t world,uint32_t s
  }
  C(static_cast<cudaError_t>(status));C(cudaDeviceSynchronize());
  Result out;out.counts.resize(nq);out.queues.resize(nq);C(cudaMemcpy(out.counts.data(),counts,nq*4,cudaMemcpyDeviceToHost));C(cudaMemcpy(&out.error,error,4,cudaMemcpyDeviceToHost));
- std::vector<GenericRouteRecord> all(uint64_t(nq)*capacity+2);C(cudaMemcpy(all.data(),guarded,all.size()*sizeof(all[0]),cudaMemcpyDeviceToHost));
+ std::vector<GenericRouteRecord> all(allocated_rows+2);C(cudaMemcpy(all.data(),guarded,all.size()*sizeof(all[0]),cudaMemcpyDeviceToHost));
  Bytes guard{};guard.fill(0xa5);CHECK(std::memcmp(&all.front(),guard.data(),guard.size())==0);CHECK(std::memcmp(&all.back(),guard.data(),guard.size())==0);
- if(mode==2 && (out.error&1u))for(size_t i=1;i+1<all.size();i++)CHECK(std::memcmp(&all[i],guard.data(),guard.size())==0);
- if(mode==2&&bitmap&&word_shard&&out.error==0){
+ if(mode>=2 && (out.error&1u))for(size_t i=1;i+1<all.size();i++)CHECK(std::memcmp(&all[i],guard.data(),guard.size())==0);
+ if(mode>=2&&bitmap&&word_shard&&out.error==0){
   auto mix=[](uint64_t x){x^=x>>30;x*=0xbf58476d1ce4e5b9ULL;x^=x>>27;x*=0x94d049bb133111ebULL;return x^(x>>31);};
-  for(uint32_t q=0;q<nq;q++)for(uint32_t i=0;i<out.counts[q];i++){
-   uint64_t id=all[1+uint64_t(q)*capacity+i].hash,local=id/world;
+  uint64_t prefix=0;
+  for(uint32_t q=0;q<nq;q++){
+   uint64_t first=compact?prefix:uint64_t(q)*capacity;prefix+=out.counts[q];
+   for(uint32_t i=0;i<out.counts[q];i++){
+   uint64_t id=all[1+first+i].hash,local=id/world;
    uint32_t owner=uint32_t(id%world),rank=world-1-owner;
    uint32_t shard=uint32_t((uint64_t(uint32_t(mix(local>>6)))*shards)>>32);
    CHECK(q==rank*shards+shard);
+   }
   }
  }
- for(uint32_t q=0;q<nq;q++){uint32_t take=std::min(capacity,out.counts[q]);for(uint32_t i=0;i<take;i++){Bytes x;std::memcpy(x.data(),&all[1+uint64_t(q)*capacity+i],x.size());out.queues[q].push_back(x);}std::sort(out.queues[q].begin(),out.queues[q].end());}
+ uint64_t prefix=0;
+ for(uint32_t q=0;q<nq;q++){
+  uint64_t first=compact?prefix:uint64_t(q)*capacity;prefix+=out.counts[q];
+  uint32_t take=(compact&&out.error)?0:std::min(capacity,out.counts[q]);
+  for(uint32_t i=0;i<take;i++){Bytes x;std::memcpy(x.data(),&all[1+first+i],x.size());out.queues[q].push_back(x);}
+  std::sort(out.queues[q].begin(),out.queues[q].end());
+ }
  C(cudaFree(dp));C(cudaFree(dm));C(cudaFree(dv));C(cudaFree(df));C(cudaFree(parent));C(cudaFree(counts));C(cudaFree(error));C(cudaFree(guarded));return out;
 }
 
@@ -103,13 +128,13 @@ static void retry(bool bitmap,uint32_t width,uint32_t world,uint32_t shards,int 
 }
 int main(){int devices=0;C(cudaGetDeviceCount(&devices));CHECK(devices>=2);
  for(int device=0;device<2;device++){C(cudaSetDevice(device));for(bool bitmap:{false,true})for(uint32_t width:{1u,8u})for(uint32_t world:{1u,2u,8u})for(uint32_t shards:{1u,4u})for(uint32_t count:{0u,1u,31u,32u,33u,513u})for(uint32_t capacity:{1u,4096u}){
-  Result a=call(bitmap,0,width,world,shards,capacity,count),b=call(bitmap,1,width,world,shards,capacity,count),c=call(bitmap,2,width,world,shards,capacity,count);
-  CHECK(a.counts==b.counts&&a.counts==c.counts);uint64_t total=0;for(auto n:a.counts)total+=n;CHECK(total==uint64_t(count)*4);
+  Result a=call(bitmap,0,width,world,shards,capacity,count),b=call(bitmap,1,width,world,shards,capacity,count),c=call(bitmap,2,width,world,shards,capacity,count),d=call(bitmap,3,width,world,shards,capacity,count);
+  CHECK(a.counts==b.counts&&a.counts==c.counts&&a.counts==d.counts);uint64_t total=0;for(auto n:a.counts)total+=n;CHECK(total==uint64_t(count)*4);
   bool over=false;for(auto n:a.counts)over|=n>capacity;CHECK((a.error&1u)==uint32_t(over));CHECK((b.error&1u)==uint32_t(over));CHECK((c.error&1u)==uint32_t(over));
-  CHECK((a.error&~1u)==0&&(b.error&~1u)==0&&(c.error&~1u)==0);if(!over)CHECK(a.queues==b.queues&&a.queues==c.queues);
+  CHECK((a.error&~1u)==0&&(b.error&~1u)==0&&(c.error&~1u)==0&&c.error==d.error);if(!over)CHECK(a.queues==b.queues&&a.queues==c.queues&&a.queues==d.queues);
  }
- for(bool bitmap:{false,true})for(uint32_t width:{1u,8u})for(uint32_t world:{1u,2u})for(int mode:{1,2})retry(bitmap,width,world,world==1?1:4,mode);
- for(uint32_t width:{1u,8u})for(uint32_t world:{1u,2u,8u})call(true,2,width,world,4,4096,513,0,true);
+ for(bool bitmap:{false,true})for(uint32_t width:{1u,8u})for(uint32_t world:{1u,2u})for(int mode:{1,2,3})retry(bitmap,width,world,world==1?1:4,mode);
+ for(uint32_t width:{1u,8u})for(uint32_t world:{1u,2u,8u})for(int mode:{2,3})call(true,mode,width,world,4,4096,513,0,true);
  printf("PASS batch route/count/overflow/retry/word-shard device=%d\n",device);fflush(stdout);
  }
  puts("BATCH_ROUTE_TWO_GPU_PASS");return 0;

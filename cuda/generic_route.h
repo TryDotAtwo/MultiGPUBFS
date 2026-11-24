@@ -67,4 +67,5 @@ int mgbfs_generic_regenerate_routes_count_u8(uint32_t kind,uint32_t elements,uin
 }
 #endif
 
-extern "C" int mgbfs_generic_route_retry_vote(const uint32_t*,const uint32_t*,uint32_t*,void*);
+extern "C" int mgbfs_generic_route_retry_vote_v2(const uint32_t*,const uint32_t*,uint32_t*,uint32_t,void*);
+extern "C" int mgbfs_generic_route_retry_vote_v3(const uint32_t*,const uint32_t*,uint32_t*,uint32_t,void*);

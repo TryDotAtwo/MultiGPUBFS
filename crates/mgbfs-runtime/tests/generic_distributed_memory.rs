@@ -91,3 +91,17 @@ use mgbfs_runtime::generic_distributed_memory::GenericDistributedMemoryPlan as P
   assert!(legacy.clone().with_sorted_admission(0,owner,reserve).is_err());assert!(legacy.with_sorted_admission(4,owner,0).is_err());
  }
 }
+
+#[test]
+fn append_only_path_admission_includes_parent_rows() {
+    let free = 3u64 << 30;
+    let plan = Plan::automatic_storage_fixed_batch_history_with_row_bytes(
+        16, 2, 4, 3, 4096, free, None, 8, 32, 1, 8,
+    ).unwrap();
+    let budget = free - (2u64 << 30);
+    assert!(plan.device_bytes + 8 * u64::from(plan.capacity) <= budget);
+    let larger = Plan::with_storage_history(
+        16, 2, 4, plan.capacity + 1, 32, 3, 4096, 8, 1,
+    ).unwrap();
+    assert!(larger.device_bytes + 8 * u64::from(larger.capacity) > budget);
+}
