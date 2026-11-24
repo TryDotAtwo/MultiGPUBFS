@@ -375,7 +375,7 @@ impl OwnerBatch<'_> {
                     }
                     tile.transitions.clear();
                     tile.transitions.extend(edges.iter().map(|edge| Transition {
-                        child: edge.child,
+                        child: u64::from(edge.child),
                         parent_rank: run.source_rank,
                         parent: edge.parent,
                         generator: edge.generator,

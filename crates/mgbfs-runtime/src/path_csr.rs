@@ -8,7 +8,7 @@ use mgbfs_core::Result;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Transition {
-    pub child: u32,
+    pub child: u64,
     pub parent_rank: u32,
     pub parent: u64,
     pub generator: u32,
@@ -16,27 +16,27 @@ pub(crate) struct Transition {
 
 const RUN_ROWS: usize = 8192;
 const FAN_IN: u64 = 16;
-// Run files are private to one expansion. The child is a rank-local u32 row.
-const RECORD_BYTES: usize = 20;
+// Run files are private to one expansion. Child and parent are logical rows.
+const RECORD_BYTES: usize = 24;
 const CSR_EDGE_BYTES: u64 = 16;
 const CHECK_ROWS: usize = 4096;
 
 impl Transition {
     fn write(self, writer: &mut impl Write) -> Result<()> {
         let mut record = [0; RECORD_BYTES];
-        record[..4].copy_from_slice(&self.child.to_le_bytes());
-        record[4..12].copy_from_slice(&self.parent.to_le_bytes());
-        record[12..16].copy_from_slice(&self.parent_rank.to_le_bytes());
-        record[16..20].copy_from_slice(&self.generator.to_le_bytes());
+        record[..8].copy_from_slice(&self.child.to_le_bytes());
+        record[8..16].copy_from_slice(&self.parent.to_le_bytes());
+        record[16..20].copy_from_slice(&self.parent_rank.to_le_bytes());
+        record[20..].copy_from_slice(&self.generator.to_le_bytes());
         writer.write_all(&record).map_err(io_error)
     }
 
     fn from_record(record: &[u8]) -> Self {
         Self {
-            child: u32::from_le_bytes(record[..4].try_into().unwrap()),
-            parent: u64::from_le_bytes(record[4..12].try_into().unwrap()),
-            parent_rank: u32::from_le_bytes(record[12..16].try_into().unwrap()),
-            generator: u32::from_le_bytes(record[16..20].try_into().unwrap()),
+            child: u64::from_le_bytes(record[..8].try_into().unwrap()),
+            parent: u64::from_le_bytes(record[8..16].try_into().unwrap()),
+            parent_rank: u32::from_le_bytes(record[16..20].try_into().unwrap()),
+            generator: u32::from_le_bytes(record[20..].try_into().unwrap()),
         }
     }
 
@@ -342,7 +342,7 @@ pub(crate) fn write_owner_csr(
                 checkpoint()?;
             }
             let edge = item?;
-            let child = u64::from(edge.child);
+            let child = edge.child;
             if child >= rows || child > next_child || child + 1 < next_child
             {
                 return Err("PATH_LINEAGE_CHILD_ORDER".into());
@@ -513,6 +513,38 @@ mod tests {
     }
 
     #[test]
+    fn spilled_runs_keep_distinct_children_with_equal_low_words() {
+        let root = std::env::temp_dir().join(format!("mgbfs-csr-wide-child-{}", std::process::id()));
+        let mut spool = TransitionSpool::new(root.clone(), (RUN_ROWS * RECORD_BYTES) as u64).unwrap();
+        let low = Transition {
+            child: 3,
+            parent_rank: 2,
+            parent: (1 << 41) + 11,
+            generator: 7,
+        };
+        let high = Transition { child: (1 << 32) + 3, ..low };
+        let parallel = Transition { generator: 9, ..high };
+        let mut run = vec![high; RUN_ROWS];
+        run[0] = parallel;
+        spool.add(&mut run).unwrap();
+        spool.add(&mut [low]).unwrap();
+        let path = spool.path(0, 0);
+        assert_eq!(path.metadata().unwrap().len(), (RUN_ROWS * 24) as u64);
+        let mut merge = Merge::new(&[path])
+            .unwrap()
+            .with_tail(std::mem::take(&mut spool.pending));
+        assert_eq!(merge.next().unwrap().unwrap(), low);
+        for _ in 1..RUN_ROWS {
+            assert_eq!(merge.next().unwrap().unwrap(), high);
+        }
+        assert_eq!(merge.next().unwrap().unwrap(), parallel);
+        assert!(merge.next().is_none());
+        drop(merge);
+        drop(spool);
+        assert!(!root.exists());
+    }
+
+    #[test]
     fn short_input_batches_write_direct_csr_and_preserve_every_edge() {
         let root = std::env::temp_dir().join(format!("mgbfs-path-sort-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
@@ -524,7 +556,7 @@ mod tests {
             for generator in (0..17).rev() {
                 spool
                     .add(&mut [Transition {
-                        child: generator % 2,
+                        child: u64::from(generator % 2),
                         parent_rank: 0,
                         parent: 9,
                         generator,

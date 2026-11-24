@@ -912,7 +912,7 @@ impl WindowTile {
    // child in this layer before any edge from this tile reaches the spool.
    if edge.child>=child_count{return Err("NATIVE_WINDOW_UNRESOLVED_EDGE".into());}
    if edge.generator>=b.generators{return Err("NATIVE_WINDOW_ROUTE_METADATA".into());}
-   transitions.push(Transition{child:edge.child,parent_rank:sender,parent:edge.parent,generator:edge.generator});
+   transitions.push(Transition{child:u64::from(edge.child),parent_rank:sender,parent:edge.parent,generator:edge.generator});
   }
   spool.add(transitions)?;
   transitions.clear();
