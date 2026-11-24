@@ -349,6 +349,10 @@ def test_owner_csr_output(tmp_path, monkeypatch, direction):
     from multigpubfs import launch, native_distribution
     from multigpubfs.path_search import _agree_window_receipts
 
+    if os.name == "nt" and tmp_path.drive.endswith(":"):
+        # The mocked native worker creates nested CSR directories under pytest's temp root.
+        tmp_path = Path(f"\\\\?\\{tmp_path}")
+
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("native", {}))
     monkeypatch.setattr(launch, "_require_memory_backend",
