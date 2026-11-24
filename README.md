@@ -21,4 +21,4 @@ Exact breadth-first traversal on NVIDIA GPUs for implicit Cayley graphs and supp
 
 Build CPU contracts with `cargo test --locked` and see the [reference CLI](docs/reference-cli.md) for the reference benchmarks. Native GPU execution requires the matching executable and CUDA library.
 
-[Development history, reports and experiments](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/README.md)
+[Development history, reports and experiments](https://github.com/TryDotAtwo/MultiGPUBFS-archive)
