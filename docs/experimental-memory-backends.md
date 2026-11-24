@@ -159,7 +159,7 @@ segments of 1,048,576 rows per bank were:
 Per-rank segment allocations at completion were 5.327 GB for segmented and
 1.636 GB for bitmap plus 0.097 GB for its bitmap; these figures exclude other
 allocations and are not total or peak VRAM measurements. See [the full comparison](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented32-20261120/rtx3090-complete-s13.json)
-and [receipts](acceptance/segmented32-20261120/rtx3090-complete-receipts.tar.gz).
+and [receipts](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented32-20261120/rtx3090-complete-receipts.tar.gz).
 This is not a test of more than 2^32 states on one rank or evidence of B200 speed.
 
 The current 32-bit-row ABI was compared on 2x RTX 3060 with identical fixed
@@ -193,7 +193,7 @@ specific S14 adjacent-transposition (Coxeter) memory model estimates around
 25% for distribution imbalance but excluding several runtime allocations.
 It is not a measured fit or a bound for other generators. Current
 uncompressed frontier storage alone exceeds 8x180 GB for Coxeter S15. See
-[the calculation and test results](acceptance/segmented32-20261120/summary.json).
+[the calculation and test results](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented32-20261120/summary.json).
 
 The following historical dev36 24-bit-row measurements used eight RTX 3090
 GPUs, fixed 8 logical shards, 8 owner lanes, 8192 batch, and 1,048,576 rows
@@ -225,7 +225,7 @@ The older dev36 installed SM86 candidate and selective offline-cache layout
 passed CayleyPy persistent S3-S5 on 2x RTX 3060 with both modes. Compiling and
 inventory-checking CUDA components is not B200 or B300 runtime acceptance.
 
-[Reports, hashes and acceptance boundaries](acceptance/segmented-memory-20261119/manifest.json).
+[Reports, hashes and acceptance boundaries](https://github.com/TryDotAtwo/MultiGPUBFS/blob/72a3e2a0b0521985229823cc6c4c959ec22d81fd/docs/acceptance/segmented-memory-20261119/manifest.json).
 
 The released dev37 wheel was installed and the SM86 runtime was prefetched
 without GPU access. With `MGBFS_NATIVE_OFFLINE=1`, the installed package then
