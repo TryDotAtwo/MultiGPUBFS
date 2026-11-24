@@ -252,24 +252,31 @@ class Cluster:
             inventory = self.store.get(prefix + "inventory")
             return inventory
 
-        recipe = profile_status = None
+        recipe = profile_status = expected = None
         registry = job.get("profile_registry")
         if registry is not None and network:
-            from .process_control import ProfileBudgetExpired, profile_budget
-            from .profile_selection import cluster_hardware, cluster_rank_hardware, select_registry_recipe
+            from .process_control import ProfileBudgetExpired, profile_budget, profile_timeout
+            from .profile_selection import (cluster_hardware, cluster_rank_hardware, registry_run_receipt,
+                                            select_registry_recipe)
 
-            deadline = time.monotonic() + 5
-            # The same live snapshot is also used by the fallback storage policy.
+            # Inventory is required by either policy. Bound the optional phase separately.
             inventory = load_inventory()
+            deadline = time.monotonic() + 5
             try:
                 with profile_budget(deadline):
                     metadata = cluster_rank_hardware(env, socket.gethostname())
-            except ProfileBudgetExpired:
-                metadata = None
-            self.store.put(prefix + f"profile-hardware/{rank}", metadata)
+                    self.store.put(prefix + f"profile-hardware/{rank}", metadata,
+                                   deadline=time.perf_counter() + profile_timeout(5))
+            except (ProfileBudgetExpired, TimeoutError):
+                pass
             if rank == 0:
                 def hardware():
-                    metadata = [self.store.get(prefix + f"profile-hardware/{peer}") for peer in range(world)]
+                    control_deadline = time.perf_counter() + profile_timeout(5)
+                    try:
+                        metadata = [self.store.get(prefix + f"profile-hardware/{peer}", deadline=control_deadline)
+                                    for peer in range(world)]
+                    except TimeoutError as error:
+                        raise ProfileBudgetExpired("REGISTRY_RANK_HARDWARE_DEADLINE") from error
                     return cluster_hardware(metadata, inventory)
 
                 recipe, profile_status = select_registry_recipe(
@@ -277,22 +284,26 @@ class Cluster:
                     hardware=hardware, inventory=load_inventory,
                     packet_address=self._packet_address if self.placement.packet_port is not None else None,
                 )
-                resolved = None if recipe is None else {"memory": vars(recipe[0]), "settings": recipe[1]}
+                resolved = None if recipe is None else {
+                    "memory": vars(recipe[0]), "settings": recipe[1], "geometry": recipe[2],
+                }
                 self.store.put(prefix + "profile-selection", {"recipe": resolved, "receipt": profile_status})
             else:
+                # Only the coordinator may choose a recipe or the fallback for this job.
                 profile = self.store.get(prefix + "profile-selection")
                 profile_status = profile["receipt"]
                 if profile["recipe"] is not None:
                     from .memory_admission import TraversalMemory
 
-                    recipe = TraversalMemory(**profile["recipe"]["memory"]), profile["recipe"]["settings"]
+                    payload = profile["recipe"]
+                    recipe = TraversalMemory(**payload["memory"]), payload["settings"], payload["geometry"]
         if recipe is None:
             memory = resolve_traversal_memory(
                 graph, preset, capabilities if network else {}, env, manual, load_inventory,
                 default_backend="segmented24" if network else "legacy",
             )
         else:
-            memory, settings = recipe
+            memory, settings, expected = recipe
             env = dict(env, **settings)
             autotune = False
         if network:
@@ -307,7 +318,7 @@ class Cluster:
         report["cluster_memory_backend"] = memory.backend
         report["cluster_memory_selection_reason"] = memory.reason
         if profile_status is not None:
-            report["cluster_profile_registry"] = profile_status
+            report["cluster_profile_registry"] = registry_run_receipt(profile_status, expected, report)
         return report
 
     def _run_external_nearest(self, job, graph, output):

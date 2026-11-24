@@ -2,6 +2,8 @@
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -180,21 +182,60 @@ def _live_admit(graph, preset, native, env, capabilities, inventory, memory, set
     return None
 
 
+def registry_run_receipt(status, expected, report):
+    from .profile_registry import SCHEMA, _COMMON, _PLAN, _case_profile
+
+    if expected is None:
+        return status
+    try:
+        actual = _case_profile(report, report["devices"], SCHEMA)
+    except (ValueError, TypeError, KeyError, IndexError):
+        return dict(status, runtime_geometry="UNVERIFIED")
+    fields = (*_COMMON, *_PLAN, "memory_backend", "owner_cuts")
+    rank_fields = ("admitted_batch", "rows_per_bank", "capacity_limit_per_rank", "reserve_bytes")
+    matches = (len(actual["rank_geometry"]) == len(expected["rank_geometry"])
+               and all(actual[field] == expected[field] for field in fields)
+               and all(left[field] == right[field] for left, right in
+                       zip(actual["rank_geometry"], expected["rank_geometry"]) for field in rank_fields))
+    return dict(status, runtime_geometry="MATCHED" if matches else "CHANGED")
+
+
+def _load_catalog(spec, env):
+    from .profile_registry import read_profile_registry
+
+    source, digest = spec["source"], spec["sha256"]
+    cache = artifact_path("profile-registry", env=env, override="MGBFS_PROFILE_REGISTRY_CACHE")
+    offline = env.get("MGBFS_NATIVE_OFFLINE") == "1" or env.get("MGBFS_PROFILE_REGISTRY_OFFLINE") == "1"
+    try:
+        return read_profile_registry(source, sha256=digest, offline=True, cache_dir=cache)
+    except (OSError, ValueError):
+        if offline or not source.startswith("https://") or digest is None:
+            raise
+    # A process deadline bounds DNS and reads from a stalled server, including redirects.
+    with tempfile.TemporaryDirectory(prefix="mgbfs-registry-import-") as folder:
+        catalog = Path(folder) / "catalog.json"
+        command = [sys.executable, "-m", "multigpubfs.profile_registry", "import", source,
+                   "--sha256", digest, "--cache-dir", str(cache), "--output", str(catalog)]
+        try:
+            result = subprocess.run(command, timeout=profile_timeout(5), capture_output=True)
+        except subprocess.TimeoutExpired as error:
+            raise ProfileBudgetExpired("REGISTRY_DOWNLOAD_DEADLINE") from error
+        if result.returncode:
+            raise ValueError("PROFILE_REGISTRY_IMPORT_FAILED")
+        return read_profile_registry(catalog)
+
+
 def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadline, *,
                            hardware, inventory, packet_address):
     from .native_distribution import runtime_identity
-    from .profile_registry import hardware_key, matching_profiles, read_profile_registry
+    from .profile_registry import hardware_key, matching_profiles
 
     status = {"status": "NO_COMPATIBLE_PROFILE"}
     if spec is None:
         return None, None
     try:
         with profile_budget(deadline):
-            catalog = read_profile_registry(
-                spec["source"], sha256=spec["sha256"], timeout=profile_timeout(5),
-                offline=env.get("MGBFS_NATIVE_OFFLINE") == "1" or env.get("MGBFS_PROFILE_REGISTRY_OFFLINE") == "1",
-                cache_dir=artifact_path("profile-registry", env=env, override="MGBFS_PROFILE_REGISTRY_CACHE"),
-            )
+            catalog = _load_catalog(spec, env)
             if not catalog["entries"] or catalog["schema"] < 2:
                 return None, status
             supported = hardware()
@@ -213,10 +254,13 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                        and entry["profiles"]["balanced"]["pressure_namespace"] in acceptable]
             if not matches:
                 return None, status
-            fastest_balanced = matches[0]["profiles"]["balanced"]["bfs_seconds"]
+            baseline = matches[0]["profiles"]["balanced"]
+            fastest_balanced = baseline["bfs_seconds"]
+            baseline_peaks = baseline["peak_vram_bytes_by_rank"]
             if preset == "maxmemory":
                 matches = [entry for entry in matches
-                           if entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+                           if baseline_peaks and entry["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
+                           and max(entry["profiles"]["max_capacity"]["peak_vram_bytes_by_rank"]) < max(baseline_peaks)
                            and entry["profiles"]["max_capacity"]["bfs_seconds"] <= 4 * fastest_balanced]
                 matches.sort(key=lambda entry: (
                     max(entry["profiles"]["max_capacity"]["peak_vram_bytes_by_rank"]),
@@ -242,7 +286,7 @@ def select_registry_recipe(spec, graph, preset, native, env, capabilities, deadl
                     "scope": "FULL_BFS_HISTORICAL_PROFILE",
                 }
                 profile_timeout(5)
-                return (memory, settings), status
+                return (memory, settings, profile), status
             return None, status
     except ProfileBudgetExpired:
         return None, {"status": "REGISTRY_STARTUP_DEADLINE"}

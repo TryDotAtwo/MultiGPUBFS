@@ -3,7 +3,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
+import time
 
 import pytest
 
@@ -62,12 +63,29 @@ def registry_case(tmp_path):
     return {
         "graph": graph, "devices": devices, "topology": topology, "driver": driver, "inventory": inventory,
         "runtime": runtime, "plan": benchmark_plan, "cuts": cuts, "evidence": evidence_digest, "reserve": reserve,
-        "catalog": catalog, "pin": hashlib.sha256(data).hexdigest(),
+        "catalog": catalog, "pin": hashlib.sha256(data).hexdigest(), "profile": profile,
         "capabilities": {
             "segmented24_v1": True, "segmented_strategies_v1": {"batch": True},
             "segmented_hash_series_v1": True, "segmented_exact_exchange_v1": True,
         },
     }
+
+
+def _native_receipt(case):
+    from multigpubfs.profile_registry import _COMMON
+
+    profile = case["profile"]
+    names = {"strategy": "segment_strategy", "queue_capacity": "actual_queue_capacity",
+             "segment_rows": "configured_segment_rows", "packet_wire": "packet_transport"}
+    common = {names.get(field, field): profile[field] for field in _COMMON}
+    rank_plans, ranks = [], []
+    for rank, (device, geometry) in enumerate(zip(case["devices"], profile["rank_geometry"])):
+        rank_plans.append(dict(case["plan"], capacity=geometry["capacity"]))
+        ranks.append(dict(common, **geometry, rank=rank, device=device, peak_live_rows=1))
+    return {"status": "COMPLETE", "backend": "EXPERIMENTAL_SEGMENTED24", "bfs_seconds": 2.0,
+            "devices": case["devices"], "segment_memory_by_rank": ranks,
+            "size_profile_count": 0, "plan": rank_plans[0], "rank_plans": rank_plans,
+            "owner_cuts": case["cuts"], "layer_sizes": [1, 1], "graph_digest": case["graph"].digest()}
 
 
 def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_paths(tmp_path, monkeypatch, registry_case):
@@ -85,7 +103,7 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
 
     def live_inventory(pool, native, selected, env, timeout):
         assert native == "test-native" and selected == devices
-        assert env["MGBFS_GENERIC_HISTORY"] == "hash" and 0 < timeout <= 5
+        assert env["MGBFS_GENERIC_HISTORY"] == "hash" and timeout > 0
         inventory_calls.append(selected)
         return inventory
 
@@ -106,7 +124,7 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
         (output / "states.json").write_text(
             json.dumps({"current": [[1, 0]], "previous_small": [[0, 1]]}), encoding="utf-8",
         )
-        return {"status": "COMPLETE", "layer_sizes": [1, 1], "graph_digest": graph.digest()}
+        return _native_receipt(case)
 
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     monkeypatch.setattr(api, "native_runtime", lambda executable: ("test-native", {}))
@@ -132,6 +150,7 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert selected.bfs_completed and selected.layer_sizes == [1, 1]
     receipt = selected.report["session_policy"]["profile_registry"]
     assert (receipt["status"], receipt["evidence_sha256"]) == ("LIVE_ADMITTED_REGISTRY_PROFILE", case["evidence"])
+    assert receipt["runtime_geometry"] == "MATCHED"
     assert (admitted["devices"], admitted["memory_backend"], admitted["segment_strategy"],
             admitted["shards"], admitted["_batch"], admitted["owner_lanes"],
             admitted["queue_capacity"], admitted["segment_rows"], admitted["autotune"]) == (
@@ -154,7 +173,8 @@ def test_public_session_replays_pinned_recipe_and_keeps_manual_and_fallback_path
     assert (len(topology_calls), len(inventory_calls), len(plans)) == (4, 2, 1)
 
 
-def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypatch, registry_case):
+@pytest.mark.parametrize("metadata_timeout", [False, True])
+def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypatch, registry_case, metadata_timeout):
     case = registry_case
     messages = defaultdict(Future)
 
@@ -162,7 +182,11 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
         def put(self, key, value, **_):
             messages[key].set_result(json.loads(json.dumps(value)))
 
-        def get(self, key, **_):
+        def get(self, key, *, deadline=None):
+            if "profile-hardware/" in key:
+                assert deadline is not None
+                if metadata_timeout:
+                    raise TimeoutError("RANK_METADATA_NOT_READY")
             return messages[key].result(timeout=3)
 
     peers = [
@@ -187,7 +211,10 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
 
     def native_launch(graph, output, **options):
         runs[options["device"]] = options
-        return {"status": "COMPLETE"}
+        report = _native_receipt(case)
+        for rank in report["segment_memory_by_rank"]:
+            rank["owner_lanes"] = 1
+        return report
 
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setattr(native_distribution, "native_runtime", lambda _: ("test-native", {}))
@@ -202,8 +229,55 @@ def test_cluster_coordinator_admits_one_recipe_for_all_ranks(tmp_path, monkeypat
 
     session = open_session(gpus=2, profile_registry=case["catalog"], profile_registry_sha256=case["pin"])
     reports = peers[0].traverse(session, case["graph"], tmp_path / "cluster", "balanced", None)
-    assert len(plans) == 1 and set(runs) == set(case["devices"])
+    assert set(runs) == set(case["devices"])
+    if metadata_timeout:
+        assert not plans
+        assert all(report["cluster_profile_registry"]["status"] == "REGISTRY_STARTUP_DEADLINE" for report in reports)
+        assert all(run["autotune"] and "queue_capacity" not in run for run in runs.values())
+        return
+    assert len(plans) == 1
     for report, run in zip(reports, (runs[device] for device in case["devices"])):
         assert report["cluster_profile_registry"]["evidence_sha256"] == case["evidence"]
+        assert report["cluster_profile_registry"]["runtime_geometry"] == "CHANGED"
         assert (run["autotune"], run["shards"], run["_batch"], run["segment_strategy"]) == (False, 3, 2, "batch")
         assert run["_native_env"]["MGBFS_SEGMENT_OWNER_LANES"] == plans[0]["MGBFS_SEGMENT_OWNER_LANES"] == "2"
+
+
+def test_registry_capacity_requires_a_lower_peak_than_fastest_balanced(monkeypatch, registry_case):
+    case = registry_case
+    catalog = json.loads(case["catalog"].read_bytes())
+    first = catalog["entries"][0]
+    profile = dict(case["profile"], pressure_namespace="ambient")
+
+    def arm(seconds, peak):
+        return dict(profile, bfs_seconds=seconds, peak_vram_bytes_by_rank=[peak] * 2)
+
+    first["profiles"] = {"balanced": arm(1, 100), "max_capacity": arm(1.5, 105)}
+    catalog["entries"].append(dict(first, evidence_sha256="d" * 64,
+                                   profiles={"balanced": arm(2, 200), "max_capacity": arm(3, 120)},
+                                   capacity_verification="LOWER_PHYSICAL_PEAK"))
+    case["catalog"].write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setattr(native_distribution, "runtime_identity", lambda *_: case["runtime"])
+    recipe, status = profile_selection.select_registry_recipe(
+        {"source": str(case["catalog"]), "sha256": None}, case["graph"], "maxmemory", "fake-native",
+        {}, case["capabilities"], time.monotonic() + 5,
+        hardware=lambda: (case["inventory"], case["devices"], case["topology"], case["driver"]),
+        inventory=lambda: case["inventory"], packet_address=None,
+    )
+    assert recipe is None and status["status"] == "NO_COMPATIBLE_PROFILE"
+
+
+def test_stalled_remote_catalog_returns_to_startup_fallback(tmp_path, monkeypatch, registry_case):
+    def stopped_import(command, *, timeout, capture_output):
+        assert command[1:4] == ["-m", "multigpubfs.profile_registry", "import"]
+        assert 0 < timeout <= 0.5 and capture_output
+        raise TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(profile_selection.subprocess, "run", stopped_import)
+    recipe, status = profile_selection.select_registry_recipe(
+        {"source": "https://github.com/test/profiles/releases/download/v1/catalog.json", "sha256": "a" * 64},
+        registry_case["graph"], "balanced", "fake-native", {"MGBFS_PROFILE_REGISTRY_CACHE": str(tmp_path)},
+        registry_case["capabilities"], time.monotonic() + 0.5, hardware=lambda: pytest.fail("no catalog"),
+        inventory=lambda: pytest.fail("no catalog"), packet_address=None,
+    )
+    assert recipe is None and status["status"] == "REGISTRY_STARTUP_DEADLINE"

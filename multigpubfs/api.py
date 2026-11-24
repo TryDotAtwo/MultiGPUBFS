@@ -245,22 +245,19 @@ class BfsSession:
                 self._packet_address = f"127.0.0.1:{reserve.getsockname()[1]}"
         return self._packet_address
 
-    def _live_inventory(self, native, devices, env, *, optional=False):
-        from .process_control import profile_timeout
-
+    def _live_inventory(self, native, devices, env):
         probe_env = dict(env, MGBFS_EXPERIMENTAL_SEGMENTED24="1", MGBFS_GENERIC_HISTORY="hash")
         timeout = startup_timeout(probe_env)
         try:
-            return self._pool.inventory(native, devices, probe_env,
-                                        profile_timeout(timeout) if optional else timeout)
+            return self._pool.inventory(native, devices, probe_env, timeout)
         except subprocess.TimeoutExpired as error:
             raise startup_timeout_error(error) from error
 
-    def _memory_policy(self, graph, devices, native, env, preset, options):
+    def _memory_policy(self, graph, devices, native, env, preset, options, *, inventory=None):
         capabilities = _require_memory_backend(native, env, options.get("memory_backend", "segmented24"))
         memory = resolve_traversal_memory(
             graph, preset, capabilities, env, options,
-            lambda: self._live_inventory(native, devices, env),
+            lambda: inventory if inventory is not None else self._live_inventory(native, devices, env),
         )
         return memory, capabilities
 
@@ -375,34 +372,31 @@ class BfsSession:
                 env.pop(_PATH_SEGMENTED_NEAREST, None)
                 env.pop(_PATH_SEGMENTED_WINDOW, None)
             devices = self._native_devices(native, env)
-            from .profile_selection import local_hardware, registry_source, select_registry_recipe
+            from .profile_selection import local_hardware, registry_run_receipt, registry_source, select_registry_recipe
 
             registry = registry_source(self._profile_registry, self._profile_registry_sha256, env) if not manual else None
             deadline = None
+            inventory = expected = None
             recipe, profile_status = None, None
             if registry is not None:
                 capabilities = _require_memory_backend(native, env, "segmented24")
+                # The worker inventory is required for native memory admission.
+                inventory = self._live_inventory(native, devices, env)
                 deadline = time.monotonic() + 5
-                inventory = None
-
-                def all_ranks():
-                    nonlocal inventory
-                    if inventory is None:
-                        inventory = self._live_inventory(native, devices, env, optional=True)
-                    return inventory
 
                 def hardware():
                     identity = local_hardware()
-                    return (all_ranks(), devices, *identity) if identity is not None else None
+                    return (inventory, devices, *identity) if identity is not None else None
 
                 recipe, profile_status = select_registry_recipe(
                     registry, graph, preset, native, env, capabilities, deadline,
-                    hardware=hardware, inventory=all_ranks, packet_address=self._local_packet_address,
+                    hardware=hardware, inventory=lambda: inventory, packet_address=self._local_packet_address,
                 )
             if recipe is None:
-                memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual)
+                memory, capabilities = self._memory_policy(graph, devices, native, env, preset, manual,
+                                                           inventory=inventory)
             else:
-                memory, settings = recipe
+                memory, settings, expected = recipe
                 env = dict(env, **settings)
             backend = memory.backend
             manual = memory.launch_options
@@ -424,7 +418,7 @@ class BfsSession:
             )
             policy = {"preset": preset, "memory_backend": backend, "selection_reason": memory.reason}
             if profile_status is not None:
-                policy["profile_registry"] = profile_status
+                policy["profile_registry"] = registry_run_receipt(profile_status, expected, report)
             if preset == "maxmemory":
                 slowdown = report.get("autotune", {}).get("capacity_slowdown", {})
                 if slowdown:
