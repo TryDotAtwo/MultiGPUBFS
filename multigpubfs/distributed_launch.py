@@ -146,12 +146,11 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
     report=_receipt(folder/f'rank-{rank}',digest);states=json.loads((folder/f'rank-{rank}/states.json').read_text());store.put(label+f'/receipt/{rank}',{'report':report,'states':states})
     if rank==0:
      parts=[store.get(label+f'/receipt/{i}') for i in range(world)];reports=[v['report'] for v in parts]
-     for i,v in enumerate(reports):
-      if v['rank']!=i or v['world']!=world or v['device']!=config['devices'][i] or v['plan']!=config['rank_plans'][i]:raise RuntimeError('EXTERNAL_RANK_GEOMETRY_MISMATCH')
-      if any(v[k]!=reports[0][k] for k in ('status','reason','layer_sizes')):raise RuntimeError('EXTERNAL_LAYER_CONSENSUS_MISMATCH')
-     current=[row for v in parts for row in v['states']['current']];previous=[row for v in parts for row in v['states']['previous_small']]
-     if len(current)>1000 or len(previous)>=1000:raise RuntimeError('EXTERNAL_RETENTION_BOUND')
-     states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous};raw=json.dumps(states).encode();result=dict(reports[0]);result.pop('rank');result.pop('device');result.update(layer_seconds=[max(v['layer_seconds'][i] for v in reports) for i in range(len(reports[0]['layer_seconds']))],devices=config['devices'],rank_plans=config['rank_plans'],owner_cuts=config['owner_cuts'],bfs_seconds=max(v['bfs_seconds'] for v in reports),setup_seconds=max(v['setup_seconds'] for v in reports),states_sha256=hashlib.sha256(raw).hexdigest(),host_memory=[store.get(f'host-memory/{i}') for i in range(world)],scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
+     from .traversal_receipt import merge_rank_traversal
+     result,states=merge_rank_traversal(reports,[part['states'] for part in parts],config,error_prefix='EXTERNAL',
+         segmented=False,bitmap=False)
+     result.update(host_memory=[store.get(f'host-memory/{i}') for i in range(world)],
+                   scope='network external-rank exact path; actual multi-host hardware acceptance separately required')
      store.put(label+'/result',{'report':result,'states':states})
     result=store.get(label+'/result');(folder/'states.json').write_bytes(json.dumps(result['states']).encode());(folder/'report.json').write_text(json.dumps(result['report'],indent=2))
     store.put(label+f'/consumed/{rank}',True)

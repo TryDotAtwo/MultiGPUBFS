@@ -395,18 +395,16 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    if cleanup_error is not None:raise cleanup_error
   try:
    parts=[_receipt(output/f'rank-{rank}',digest) for rank in range(len(devices))]
-   for rank,p in enumerate(parts):
-    if p['rank']!=rank or p['world']!=len(devices) or p['device']!=devices[rank] or p['plan']!=admission.get('rank_plans',[admission['plan']]*len(devices))[rank]:raise RuntimeError('DISTRIBUTED_RANK_GEOMETRY_MISMATCH')
-    if any(p[key]!=parts[0][key] for key in ('status','reason','layer_sizes')):raise RuntimeError('DISTRIBUTED_LAYER_CONSENSUS_MISMATCH')
+   from .traversal_receipt import merge_rank_traversal
    snapshots=[json.loads((output/f'rank-{rank}'/'states.json').read_text()) for rank in range(len(devices))]
-   current=[v for p in snapshots for v in p['current']];previous=[v for p in snapshots for v in p['previous_small']]
-   if len(current)>1000 or len(previous)>=1000:raise RuntimeError('DISTRIBUTED_RETENTION_BOUND')
-   states={'schema':2,'state_encoding':'signed_int64_vectors','current':current,'previous_small':previous,'current_sample_limit':1000};raw=json.dumps(states).encode();(output/'states.json').write_bytes(raw)
-   report=dict(parts[0]);report.update(rank_plans=[p['plan'] for p in parts],owner_cuts=admission.get('owner_cuts'));report.pop('rank');report.pop('device')
-   if segmented:
-    report['segment_memory_by_rank']=[dict(p['segment_memory'],rank=i,device=devices[i]) for i,p in enumerate(parts)]
-    report['segment_memory_scope']='rank 0 only; see segment_memory_by_rank for every selected GPU'
-   report.update(devices=devices,states_sha256=hashlib.sha256(raw).hexdigest(),rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],bfs_seconds=max(p['bfs_seconds'] for p in parts),setup_seconds=max(p['setup_seconds'] for p in parts),launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
+   receipt_plan=dict(devices=devices,rank_plans=admission.get('rank_plans',[admission['plan']]*len(devices)),
+                     owner_cuts=admission.get('owner_cuts'))
+   report,states=merge_rank_traversal(parts,snapshots,receipt_plan,error_prefix='DISTRIBUTED',
+      segmented=segmented,bitmap=native_env.get('MGBFS_EXPERIMENTAL_BITMAP')=='1',sample_limit_field=True)
+   (output/'states.json').write_bytes(json.dumps(states).encode())
+   report.update(rank_receipts=[f'rank-{r}/report.json' for r in range(len(devices))],
+                 launch_wall_seconds=time.monotonic()-started,rank_worker_pids=[p.pid for p in jobs],
+                 scope='single host general exact retained-history path; bounded profile evidence in autotune receipt when enabled; larger hardware not verified')
    if profile:report['autotune']=profile;report['profile_status']=profile['status']
    (output/'report.json.tmp').write_text(json.dumps(report,indent=2));(output/'report.json.tmp').replace(output/'report.json')
    return finish(_receipt(output,digest))
