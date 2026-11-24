@@ -51,7 +51,7 @@ def _case(path, graph, layers, *, seconds, pack4=False, full=False, compact=None
                   "tx_exchange_slots": 3, "rx_exchange_slots": 3}
     rows = [{"rank": i, "device": device, "segment_strategy": "atomic", "owner_lanes": 2,
              "exact_exchange": not pack4, "actual_queue_capacity": 3072 if pack4 else 4096,
-             "banks": 2 if pack4 else 1,
+             "banks": 2 if pack4 else 1, "bitmap_owner_page": 0 if pack4 else None,
              "resident_codec": "pack4-v1" if pack4 else "unpacked-soa", "configured_segment_rows": 2048,
              "compact_positions": False, "batch_hash_prefix_probe": False,
              "admitted_batch": 128 if pack4 else 64, "rows_per_bank": 512 + i,
@@ -118,6 +118,7 @@ def test_pair_export_pin_cache_and_exact_matching(tmp_path, monkeypatch):
     assert preferred["capacity_verification"] == "LOWER_PHYSICAL_PEAK"
     assert preferred["profiles"]["max_capacity"]["packet_wire"]["wire_state_bytes_per_row"] == 0
     assert preferred["profiles"]["max_capacity"]["compact_receive_slots"] == 3
+    assert preferred["profiles"]["max_capacity"]["bitmap_owner_page"] == 0
     assert preferred["profiles"]["max_capacity"]["queue_capacity"] == 3072
     assert preferred["profiles"]["balanced"]["rank_geometry"][1]["admitted_batch"] == 64
     asset = {"name": f"profiles-{digest}.json", "digest": f"sha256:{digest}",

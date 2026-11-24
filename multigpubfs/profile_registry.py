@@ -151,6 +151,7 @@ def _validate_profile(value, nranks, schema):
         return
     codec, wire = value["resident_codec"], value["packet_wire"]
     tx, rx = value["compact_packet_slots"], value["compact_receive_slots"]
+    bitmap_page = value["bitmap_owner_page"]
     if (not _int(value["batch"], 1, (1 << 32) - 1)
             or not _int(value["state_bytes"], 1, (1 << 32) - 1)
             or not _int(value["history_layers"], 1, 3)
@@ -162,9 +163,10 @@ def _validate_profile(value, nranks, schema):
                                                            "compact_positions", "batch_hash_prefix_probe"))
             or not _int(tx, 1, 3) or tx not in (1, 3) or not _int(rx, 1, tx) or rx not in (1, 3)
             or (not value["compact_transport"] and (tx != 1 or rx != 1 or value["compact_route_lookahead"]))
+            or (bitmap_page is not None and (not _int(bitmap_page, 0, 1 << 20)
+                or bitmap_page & (bitmap_page - 1)))
             or any(value[key] is not None and not _int(value[key])
-                   for key in ("bitmap_owner_page", "hash_lookup_series_limit", "batch_owner_tile",
-                               "batch_hash_merge_rows"))
+                   for key in ("hash_lookup_series_limit", "batch_owner_tile", "batch_hash_merge_rows"))
             or (value["compact_transport"] != (wire is not None))
             or (wire is not None and (nranks == 1 or not _mapping(wire, " ".join(_WIRE))
                 or wire["protocol"] != ("nccl_compact_credit_v2" if rx == 3 else "nccl_compact_credit_v1")
