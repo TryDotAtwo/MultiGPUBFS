@@ -111,8 +111,15 @@ class GraphDefinition:
   seen={tuple(self.start)};frontier={tuple(self.start)};layers=[]
   while frontier:
    layers.append([list(x) for x in sorted(frontier)])
-   future={tuple(self.successor(list(x),g)) for x in frontier for g in range(self.generator_count)}-seen
-   if len(seen)+len(future)>maximum_states:raise ValueError('ORACLE_CAPACITY')
+   future=set()
+   remaining=maximum_states-len(seen)
+   for parent in frontier:
+    state=list(parent)
+    for generator in range(self.generator_count):
+     child=tuple(self.successor(state,generator))
+     if child in seen or child in future:continue
+     if len(future)==remaining:raise ValueError('ORACLE_CAPACITY')
+     future.add(child)
    seen.update(future);frontier=future
   return layers
 

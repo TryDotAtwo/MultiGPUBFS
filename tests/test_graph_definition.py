@@ -1,5 +1,6 @@
 import json,unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from multigpubfs.graph_definition import GraphDefinition,from_cayleypy
 
 class GraphDefinitionTests(unittest.TestCase):
@@ -34,8 +35,11 @@ class GraphDefinitionTests(unittest.TestCase):
   x=SimpleNamespace(generators_type=SimpleNamespace(name='MATRIX'),generators_matrices=[SimpleNamespace(matrix=[[1,1],[0,1]],modulo=257)],central_state=[1,2],name='rect',generator_names=['t'])
   self.assertEqual(from_cayleypy(x).successor([1,2],0),[3,2])
  def test_bounded_oracle_stops_without_claiming_complete(self):
-  g=GraphDefinition.permutation([[1,2,0]],[0,1,2])
-  with self.assertRaises(ValueError):g.exact_layers(2)
+  g=GraphDefinition.permutation([[1,0,2],[0,2,1]],[0,1,2])
+  with patch.object(g,'successor',wraps=g.successor) as successor:
+   with self.assertRaisesRegex(ValueError,'ORACLE_CAPACITY'):g.exact_layers(1)
+   self.assertEqual(successor.call_count,1)
+  self.assertEqual(list(map(len,g.exact_layers(6))),[1,2,2,1])
 if __name__=='__main__':unittest.main()
 
 class OverflowInverseGuard(unittest.TestCase):
