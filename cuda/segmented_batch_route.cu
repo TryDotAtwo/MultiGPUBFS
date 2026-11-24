@@ -2,6 +2,7 @@
 // readback. A completed tile is scattered only after every queue fits.
 #include "generic_route.h"
 #include "generic_action.cuh"
+#include "packed_route_record.cuh"
 #include "permutation_bitmap.cuh"
 #include "bitmap_owner_page.cuh"
 #include <cub/device/device_radix_sort.cuh>
@@ -108,12 +109,7 @@ __global__ void scatter_exact(ActionT<T> action,uint32_t source,uint32_t shards,
  for(uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x){
   uint32_t queue=sorted_keys[i],child=sorted_origins[i],row=i-begins[queue];
   if constexpr(Packed){
-   uint64_t lo=0,hi=0,tail=0;
-   for(uint32_t e=0;e<action.elements;e++){
-    uint64_t v=uint64_t(action.value(child,e));
-    if(e<8)lo|=v<<(8*e);else if(e<16)hi|=v<<(8*(e-8));else tail|=v<<(8*(e-16));
-   }
-   output[uint64_t(queue)*capacity+row]={identity[child],lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(tail),uint32_t(tail>>32)};
+   output[uint64_t(queue)*capacity+row]=pack_route_state(action,child,identity[child]);
   }else{
    output[uint64_t(queue)*capacity+row]={identity[child],begin+child/action.generators,source,child%action.generators,queue%shards,0};
    for(uint32_t e=0;e<action.elements;e++)states[(uint64_t(queue)*action.elements+e)*capacity+row]=T(action.value(child,e));
@@ -168,7 +164,7 @@ static int mgbfs_segmented_batch_route_impl(uint32_t bitmap,uint32_t word_shard,
   kind>1||(state_bytes==1&&kind!=0)||!elements||!n||!m||!generators||count>stride||
   uint64_t(count)*generators>=0x7fffffffULL||bits>64||!world||world>128||source>=world||
   !shards||shards>4096||!capacity||begin>UINT64_MAX-count||!parents||!queues||!counts||!error||
-  ((state_bytes!=1||elements>24)&&!states)||
+  ((state_bytes!=1||elements>packed_route_max_elements)&&!states)||
   (kind==0&&(!permutations||elements!=n||m!=1))||
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements))||
   (bitmap&&(kind!=0||domain.elements!=elements||!domain.symbols||!domain.counts||!domain.total))||
@@ -180,10 +176,10 @@ static int mgbfs_segmented_batch_route_impl(uint32_t bitmap,uint32_t word_shard,
  if(state_bytes==1){
   ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
   if(bitmap){
-   if(elements<=24)return launch<uint8_t,true,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
+   if(elements<=packed_route_max_elements)return launch<uint8_t,true,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
    return launch<uint8_t,true,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
   }
-  if(elements<=24)return launch<uint8_t,false,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
+  if(elements<=packed_route_max_elements)return launch<uint8_t,false,true,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
   return launch<uint8_t,false,false,Immutable>(a,domain,word_shard,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,states,scratch,w,st,layout_page,layout_boundary);
  }
  ActionT<int64_t> a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};

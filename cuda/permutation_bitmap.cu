@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "generic_route.h"
 #include "generic_action.cuh"
+#include "packed_route_record.cuh"
 #include "segmented_incoming.cuh"
 #include "permutation_bitmap.cuh"
 #include "bitmap_owner_page.cuh"
@@ -40,9 +41,7 @@ __global__ void bitmap_route(ActionT<T> action,BitmapDeviceDomain domain,uint32_
   if constexpr(Grouped)row=mgbfs_warp_route_reserve(counts,queue);else row=atomicAdd(counts+queue,1u);
   if(row>=capacity){atomicOr(error,1u);continue;}
   if constexpr(Packed){
-   uint64_t lo=0,hi=0,tail=0;
-   for(uint32_t e=0;e<action.elements;e++){uint64_t v=uint64_t(action.value(child,e));if(e<8)lo|=v<<(8*e);else if(e<16)hi|=v<<(8*(e-8));else tail|=v<<(8*(e-16));}
-   output[uint64_t(queue)*capacity+row]={id,lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(tail),uint32_t(tail>>32)};
+   output[uint64_t(queue)*capacity+row]=pack_route_state(action,child,id);
   }else output[uint64_t(queue)*capacity+row]={id,begin+child/action.generators,source,child%action.generators,shard,0};
  }
 }
@@ -55,7 +54,7 @@ int launch_route(BitmapDeviceDomain domain,uint32_t elements,uint32_t generators
  }
  if(!elements||elements!=domain.elements||!generators||!parents||count>stride||!permutations||
   !world||world>128||source>=world||!shards||shards>4096||!capacity||!output||!counts||!error||
-  uint64_t(count)*generators>=0x7fffffffULL||begin>UINT64_MAX-count||(Packed&&elements>24))return int(cudaErrorInvalidValue);
+  uint64_t(count)*generators>=0x7fffffffULL||begin>UINT64_MAX-count||(Packed&&elements>packed_route_max_elements))return int(cudaErrorInvalidValue);
  if(!count)return 0;
  ActionT<T> action{0,elements,elements,1,generators,count,stride,parents,permutations,nullptr,nullptr};
  uint64_t blocks=(uint64_t(count)*generators+255)/256;
@@ -66,7 +65,7 @@ extern "C" int mgbfs_bitmap_route(uint32_t state_bytes,BitmapDeviceDomain domain
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+  if(elements<=packed_route_max_elements)return launch_route<uint8_t,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
   return launch_route<uint8_t,false>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
  }
  if(state_bytes==8)return launch_route<int64_t,false>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
@@ -77,7 +76,7 @@ extern "C" int mgbfs_bitmap_route_v2(uint32_t state_bytes,BitmapDeviceDomain dom
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream,uint32_t layout_page,uint64_t layout_boundary){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+  if(elements<=packed_route_max_elements)return launch_route<uint8_t,true,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
   return launch_route<uint8_t,false,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
  }
  if(state_bytes==8)return launch_route<int64_t,false,false,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
@@ -210,7 +209,7 @@ int launch_accept(uint32_t elements,const T* local,const T* remote,const Generic
  uint32_t shard,uint32_t shards,uint32_t q,uint32_t visible,const uint32_t* selection,uint32_t selected,MgbfsSegment active,uint32_t bank,
  uint64_t* accepted,uint32_t* spill,uint32_t* spill_count,uint32_t* error,uint64_t* global_count,uint64_t limit,void* stream){
  uint64_t bound=uint64_t(world)*q;
- if(!elements||(Packed&&elements>24)||!world||world>128||rank>=world||owner>=world||!total||!bits||!shards||shard>=shards||!q||
+ if(!elements||(Packed&&elements>packed_route_max_elements)||!world||world>128||rank>=world||owner>=world||!total||!bits||!shards||shard>=shards||!q||
   bound>=0x80000000ULL||visible>q||selected>bound||(!selection&&selected!=uint64_t(world)*visible)||!lm||!rm||!lc||!rc||(!Packed&&(!local||!remote))||
   !active.states||!(active.banks==2||active.banks==3)||!active.capacity||active.capacity>(uint64_t(1)<<32)||bank>=active.banks||!accepted||!spill||!spill_count||!error)return int(cudaErrorInvalidValue);
  if(!selected)return 0;
@@ -247,7 +246,7 @@ extern "C" int mgbfs_bitmap_route_grouped(uint32_t state_bytes,BitmapDeviceDomai
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
+  if(elements<=packed_route_max_elements)return launch_route<uint8_t,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
   return launch_route<uint8_t,false,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
  }
  if(state_bytes==8)return launch_route<int64_t,false,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,0,0);
@@ -258,7 +257,7 @@ extern "C" int mgbfs_bitmap_route_grouped_v2(uint32_t state_bytes,BitmapDeviceDo
  uint32_t count,uint64_t stride,const uint32_t* permutations,uint32_t world,uint32_t source,uint32_t shards,uint32_t capacity,uint64_t begin,
  const uint32_t* map,GenericRouteRecord* output,uint32_t* counts,uint32_t* error,void* stream,uint32_t layout_page,uint64_t layout_boundary){
  if(state_bytes==1){
-  if(elements<=24)return launch_route<uint8_t,true,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
+  if(elements<=packed_route_max_elements)return launch_route<uint8_t,true,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
   return launch_route<uint8_t,false,true,true>(domain,elements,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);
  }
  if(state_bytes==8)return launch_route<int64_t,false,true,true>(domain,elements,generators,static_cast<const int64_t*>(parents),count,stride,permutations,world,source,shards,capacity,begin,map,output,counts,error,stream,layout_page,layout_boundary);

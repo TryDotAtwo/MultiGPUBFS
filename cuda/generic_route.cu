@@ -1,5 +1,6 @@
 #include "generic_route.h"
 #include "generic_action.cuh"
+#include "packed_route_record.cuh"
 #include <limits>
 #include "generic_gemm.cuh"
 #include "segmented_warp_route.cuh"
@@ -9,12 +10,13 @@ template<class State,bool Packed=false,bool Grouped=false> __global__ void route
  GenericRouteRecord* output,uint32_t* counts,uint32_t* error){
  uint32_t children=action.count*action.generators;
  for(uint32_t child=blockIdx.x*blockDim.x+threadIdx.x;child<children;child+=blockDim.x*gridDim.x){
-  uint64_t hash,lo=0,hi=0,tail=0;
+  uint64_t hash;
+  [[maybe_unused]] PackedRouteState packed;
   if constexpr(Packed){
    uint64_t h=seed;
    for(uint32_t e=0;e<action.elements;e++){
     const uint64_t v=uint64_t(action.value(child,e));h=mix64(h^v^uint64_t(e));
-    if(e<8)lo|=v<<(8*e);else if(e<16)hi|=v<<(8*(e-8));else tail|=v<<(8*(e-16));
+    packed.append(e,v);
    }
    hash=finish_hash(h,bits);
   }else hash=action.hash(child,seed,bits);
@@ -29,9 +31,7 @@ template<class State,bool Packed=false,bool Grouped=false> __global__ void route
   uint32_t shard=(uint64_t(uint32_t(hash))*shards)>>32;uint32_t queue=rank*shards+shard;
   uint32_t row;if constexpr(Grouped)row=mgbfs_warp_route_reserve(counts,queue);else row=atomicAdd(counts+queue,1u);if(row>=capacity){atomicOr(error,1u);continue;}
   if constexpr(Packed){
-   // Exact bytes, not a probabilistic identity. Origin is diagnostic only.
-   const uint64_t origin=(begin+child/action.generators)*action.generators+child%action.generators;
-   output[uint64_t(queue)*capacity+row]={hash,lo,uint32_t(hi),uint32_t(hi>>32),uint32_t(tail),uint32_t(tail>>32)};
+   output[uint64_t(queue)*capacity+row]=packed.record(hash);
   }else output[uint64_t(queue)*capacity+row]={hash,begin+child/action.generators,source,child%action.generators,shard,0};
  }
 }
@@ -187,7 +187,7 @@ extern "C" int mgbfs_generic_route_packed_u8(uint32_t kind,uint32_t elements,uin
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
  uint32_t* counts,uint32_t* error,void* stream){
- if(kind>0||elements>24||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+ if(kind>0||elements>packed_route_max_elements||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
   bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
   !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
@@ -238,7 +238,7 @@ extern "C" int mgbfs_generic_route_gemm_u8(void* context,uint32_t kind,uint32_t 
  auto*x=static_cast<GenericGemmContext*>(context);if(kind>1||!x||x->n!=n||x->m!=m||x->g!=generators)return int(cudaErrorInvalidValue);
  if(!count)return 0;int gemm=generic_gemm_compute(x,parents,count,stride,static_cast<cudaStream_t>(stream));if(gemm)return gemm;uint64_t blocks=(uint64_t(count)*generators+255)/256;
  ActionT<uint8_t> action{kind,elements,n,m,generators,count,stride,parents,permutations,matrices,moduli,x->c,x->ld};action.byte_products=x->byte_output?reinterpret_cast<const uint8_t*>(x->c):nullptr;
- if(kind==0&&elements<=24)route<uint8_t,true><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);else route<uint8_t><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+ if(kind==0&&elements<=packed_route_max_elements)route<uint8_t,true><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);else route<uint8_t><<<uint32_t(blocks>65535?65535:blocks),256,0,static_cast<cudaStream_t>(stream)>>>(action,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
  return int(cudaGetLastError());
 }
 extern "C" int mgbfs_generic_regenerate_gemm_routes_count_u8(void* context,uint32_t kind,uint32_t elements,uint32_t n,uint32_t m,uint32_t generators,
@@ -329,7 +329,7 @@ extern "C" int mgbfs_generic_route_packed_u8_wide_stride(uint32_t kind,uint32_t 
  const uint32_t* moduli,uint64_t seed,uint32_t bits,uint32_t world,uint32_t source,uint32_t shards,
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
  uint32_t* counts,uint32_t* error,void* stream){
- if(kind>0||elements>24||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
+ if(kind>0||elements>packed_route_max_elements||!elements||!n||!m||!generators||count>stride||uint64_t(count)*generators>=0x7fffffffULL||
   bits>64||!world||world>128||source>=world||!shards||shards>4096||!capacity||begin>UINT64_MAX-count||
   !parents||!queues||!counts||!error||(kind==0&&(!permutations||elements!=n||m!=1))||
   (kind==1&&(!matrices||!moduli||uint64_t(n)*m!=elements)))return int(cudaErrorInvalidValue);
@@ -371,7 +371,7 @@ extern "C" int mgbfs_segmented_route_storage(
  uint32_t capacity,uint64_t begin,const uint32_t* map,const uint64_t* cuts,GenericRouteRecord* queues,
  uint32_t* counts,uint32_t* error,void* stream){
  if(state_bytes==1){
-  auto fn=elements<=24?mgbfs_generic_route_packed_u8_wide_stride:mgbfs_generic_route_u8_wide_stride;
+  auto fn=elements<=packed_route_max_elements?mgbfs_generic_route_packed_u8_wide_stride:mgbfs_generic_route_u8_wide_stride;
   return fn(kind,elements,n,m,generators,static_cast<const uint8_t*>(parents),count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,stream);
  }
  if(state_bytes==8)return mgbfs_generic_route_i64_wide_stride(kind,elements,n,m,generators,static_cast<const int64_t*>(parents),count,stride,permutations,matrices,moduli,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error,stream);
@@ -396,7 +396,7 @@ extern "C" int mgbfs_segmented_route_storage_grouped(
  cudaStream_t st=static_cast<cudaStream_t>(stream);
  if(state_bytes==1){
   ActionT<uint8_t> a{kind,elements,n,m,generators,count,stride,static_cast<const uint8_t*>(parents),permutations,matrices,moduli};
-  if(elements<=24)route<uint8_t,true,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
+  if(elements<=packed_route_max_elements)route<uint8_t,true,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
   else route<uint8_t,false,true><<<grid,256,0,st>>>(a,seed,bits,world,source,shards,capacity,begin,map,cuts,queues,counts,error);
  }else{
   ActionT<int64_t> a{kind,elements,n,m,generators,count,stride,static_cast<const int64_t*>(parents),permutations,matrices,moduli};
