@@ -13,7 +13,7 @@ import threading
 from . import generic_session
 from .artifact_paths import artifact_path
 from .graph_definition import GraphDefinition, _flatten, _normalize_graph
-from .launch import _PACKET_ADDR, _PATH_COMPACT, _require_memory_backend, run_graph
+from .launch import _PACKET_ADDR, _PATH_COMPACT, _compact_path_capability, _require_memory_backend, run_graph
 from .memory_admission import resolve_traversal_memory
 from .native_distribution import native_runtime
 from .process_control import query as native_query
@@ -32,19 +32,19 @@ def _preset(value):
     return value
 
 
-def _validate_compact_path_request(direction, world, distributed_enabled):
-    if direction != "forward":
-        raise ValueError("NATIVE_PATH_COMPACT_FORWARD_ONLY")
+def _validate_compact_path_request(world, distributed_enabled):
     if world is not None and world < 2:
         raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS")
     if not distributed_enabled:
         raise ValueError("NATIVE_PATH_COMPACT_DISTRIBUTED_DISABLED")
 
 
-def _require_compact_path_capabilities(capabilities, *, window):
-    required = ("graph_path_compact_forward_v1", "graph_path_nearest_distributed_v1")
+def _require_compact_path_capabilities(capabilities, *, direction, window):
+    bidirectional = direction == "bidirectional"
+    nearest = "graph_path_nearest_bidirectional_v1" if bidirectional else "graph_path_nearest_distributed_v1"
+    required = (_compact_path_capability(bidirectional), nearest)
     if window:
-        required += ("graph_path_window_forward_v1",)
+        required += (f"graph_path_window_{direction}_v1",)
     if any(capabilities.get(key) is not True for key in required):
         raise RuntimeError("NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library")
 
@@ -254,7 +254,7 @@ class BfsSession:
         distributed_enabled = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST") != "0"
         compact = os.environ.get(_PATH_COMPACT) == "1"
         if compact:
-            _validate_compact_path_request(direction, None if devices is None else len(devices), distributed_enabled)
+            _validate_compact_path_request(None if devices is None else len(devices), distributed_enabled)
         elif not distributed_enabled and (
             direction == "bidirectional" or window or maxmemory or devices is not None and len(devices) != 1
         ):
@@ -271,8 +271,8 @@ class BfsSession:
                 raise
             return None
         if compact:
-            _validate_compact_path_request(direction, len(devices), distributed_enabled)
-            _require_compact_path_capabilities(capabilities, window=window)
+            _validate_compact_path_request(len(devices), distributed_enabled)
+            _require_compact_path_capabilities(capabilities, direction=direction, window=window)
             if _PACKET_ADDR not in env:
                 env = dict(env, **{_PACKET_ADDR: self._local_packet_address()})
             return native, env, tuple(devices), True

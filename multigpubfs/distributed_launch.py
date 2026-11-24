@@ -58,7 +58,7 @@ def _native_artifact_hashes(native,env):
 
 def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,shards,autotune,batch=None,path_targets=None,path_bidirectional=False,path_window=None):
  from .launch import (_PACKET_ADDR,_PACKET_RING,_PACKET_RX,_PATH_COMPACT,_PATH_PACKET_ENV,
-                      _compact_forward_path_env,_rank_launch_config,_receipt,_with_packet_job_token)
+                      _compact_path_env,_rank_launch_config,_receipt,_with_packet_job_token)
  from .cluster import current_cluster
  cluster=current_cluster()
  segmented=native_env.get('MGBFS_SEGMENT_EXTERNAL_LINK')=='1'
@@ -76,7 +76,7 @@ def run_external(graph,output,*,devices,capacity,max_seconds,native,native_env,s
  try:
   path_compact=path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
   if path_compact:
-   native_env=_compact_forward_path_env(native,native_env,world,path_bidirectional,external=True)
+   native_env=_compact_path_env(native,native_env,world,path_bidirectional,external=True)
   from .host_memory import admit as admit_host
   host_memory=admit_host(graph,world,True,output)
   store.put(f'host-memory/{rank}',host_memory)

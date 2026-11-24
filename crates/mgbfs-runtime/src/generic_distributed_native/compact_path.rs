@@ -1,4 +1,4 @@
-//! Forward path candidate generation and owner consumption on compact packets.
+//! Native path candidate generation and owner consumption on compact packets.
 use super::{Event, GenericDistributedBfs, WindowEdge};
 use crate::generic_distributed_memory::GenericDistributedMemoryPlan as Plan;
 use crate::generic_native::{Buffer, GenericNativeBfs, Stream};
@@ -484,12 +484,15 @@ impl Workspace {
         let b = &bfs.bfs;
         let mut path_error = None;
         let window = lineage.is_some();
-        let depth = bfs.depth;
+        // Both directions share the wire. A side's BFS depth can repeat
+        // while the packet epoch advances once per drained expansion.
+        let epoch = self.transport.epoch();
         let rank = bfs.rank;
         let Self {
             transport,
             producer,
             kernels,
+            ..
         } = self;
         let mut owner = OwnerBatch {
             kernels: *kernels,
@@ -508,7 +511,7 @@ impl Workspace {
                 break;
             }
             while transport.has_pending_local(0)? {
-                service(transport, depth, &mut owner)?;
+                service(transport, epoch, &mut owner)?;
             }
             transport.wait_source_read(0, &producer.stream)?;
             let rows = (b.count - begin).min(producer.geometry.parent_rows);
@@ -544,34 +547,34 @@ impl Workspace {
                             states: states.at(offset * width),
                         };
                         while !unsafe { transport.offer_local(0, span) }? {
-                            service(transport, depth, &mut owner)?;
+                            service(transport, epoch, &mut owner)?;
                         }
                         offset += run.rows as usize;
                     }
                 } else {
                     while !unsafe {
                         transport.stage(
-                            depth,
+                            epoch,
                             peer as u32,
                             &runs,
                             records.at(offset * size_of::<GenericRouteRecord>()),
                             states.at(offset * width),
                         )
                     }? {
-                        service(transport, depth, &mut owner)?;
+                        service(transport, epoch, &mut owner)?;
                     }
                     offset += count as usize;
                 }
             }
             transport.record_source_read(0)?;
-            service(transport, depth, &mut owner)?;
+            service(transport, epoch, &mut owner)?;
             begin += rows;
         }
-        while !transport.seal(depth).map_err(wire_error)? {
-            service(transport, depth, &mut owner)?;
+        while !transport.seal(epoch).map_err(wire_error)? {
+            service(transport, epoch, &mut owner)?;
         }
-        while !transport.committed(depth).map_err(wire_error)? {
-            service(transport, depth, &mut owner)?;
+        while !transport.committed(epoch).map_err(wire_error)? {
+            service(transport, epoch, &mut owner)?;
         }
         Ok(path_error)
     }

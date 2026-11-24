@@ -1,6 +1,6 @@
 //! General exact distributed engine: preallocated queues and independent owner streams.
 //! Fixed-capacity transport is a correctness fallback, not an optimal bandwidth claim.
-use std::{ffi::c_void,ptr,rc::Rc};
+use std::{cell::RefCell,ffi::c_void,ptr,rc::Rc};
 use crate::generic_sorted_native::{Input as SortedInput,Destination as SortedDestination,OwnerShape,SortedOwner};
 use crate::generic_route::RoundVote;
 use crate::segmented_packet_transport::PacketEndpoint;
@@ -170,7 +170,7 @@ impl PathCommunicator {
  }
 }
 pub struct GenericDistributedBfs{
- compact_path:Option<compact_path::Workspace>,
+ compact_path:Option<Rc<RefCell<compact_path::Workspace>>>,
  online_size_tuning:bool,online_bucket:Option<u32>,online_choices:std::collections::BTreeMap<u32,(u32,bool)>,profile_events:Vec<serde_json::Value>,active_batch:u32,use_gemm:bool,gemm:Option<crate::generic_gemm::Context>,bfs:GenericNativeBfs,plan:GenericDistributedMemoryPlan,rank:u32,comm:Rc<PathCommunicator>,
  sorted_owner:Option<SortedOwner>,sort_cache:Option<SortCache>,parent_cache:Option<ParentCache>,queues:Option<Rc<QueueWorkspace>>,control:Buffer,owner_map:Buffer,owner_cuts:Option<Buffer>,
  host_owner_map:Vec<u32>,host_owner_cuts:Option<Vec<u64>>,
@@ -242,7 +242,7 @@ impl GenericDistributedBfs{
  pub fn new_with_cuts(graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],seed:u64,hash_bits:u32,cuts:Option<&[u64]>)->Result<Self>{
   Self::new_with_roots(graph,device,rank,plan,id,seed,hash_bits,cuts,None,None,None)
  }
- pub(crate) fn new_compact_forward(
+ pub(crate) fn new_with_packet_endpoint(
   graph:&GraphDefinitionV2,device:u32,rank:u32,plan:GenericDistributedMemoryPlan,id:&[u8;128],
   seed:u64,hash_bits:u32,cuts:Option<&[u64]>,endpoint:PacketEndpoint,
  )->Result<Self>{
@@ -257,7 +257,10 @@ impl GenericDistributedBfs{
  ) -> Result<Self> {
   if let Some(c)=cuts{if c.len()!=plan.world as usize+1||c[0]!=0||c[c.len()-1]!=(1u64<<32)||c.windows(2).any(|v|v[0]>=v[1]){return Err("GENERIC_OWNER_CUTS".into());}}
   plan.validate(graph.generator_count() as u32)?;if rank>=plan.world||hash_bits>64{return Err("GENERIC_DISTRIBUTED_RANK".into());}
-  if plan.compact_transport!=endpoint.is_some(){return Err("NATIVE_PATH_COMPACT_ENDPOINT".into());}
+  let shared_packet=shared.and_then(|engine|engine.compact_path.clone());
+  if plan.compact_transport!=(endpoint.is_some()||shared_packet.is_some()){
+   return Err("NATIVE_PATH_COMPACT_ENDPOINT".into());
+  }
   if crate::generic_gemm::requested()?&&!crate::generic_gemm::eligible(graph){return Err("GEMM_GRAPH_NOT_EXACTLY_SUPPORTED".into());}
   let use_sorted=plan.history_algorithm=="SORTED_RUNS";
   if !use_sorted&&std::env::var("MGBFS_GENERIC_HISTORY").as_deref()==Ok("sorted"){return Err("SORTED_HISTORY_REQUIRES_SERIALIZED_ADMISSION".into());}
@@ -339,9 +342,14 @@ impl GenericDistributedBfs{
    None if endpoint.is_some()=>None,
    None=>Some(Rc::new(QueueWorkspace::new(&plan,d)?)),
   };
-  let mut compact_path=endpoint.map(|endpoint|
-   compact_path::Workspace::new(&plan,bfs.generators,rank,id,endpoint,d)
-  ).transpose()?;
+  let compact_path=match (shared_packet,endpoint) {
+   (Some(packet),None)=>Some(packet),
+   (None,Some(endpoint))=>Some(Rc::new(RefCell::new(
+    compact_path::Workspace::new(&plan,bfs.generators,rank,id,endpoint,d)?
+   ))),
+   (None,None)=>None,
+   (Some(_),Some(_))=>return Err("NATIVE_PATH_COMPACT_DUPLICATE_ENDPOINT".into()),
+  };
   let control=Buffer::new(64+plan.world as usize*8,d)?;
   // Raw paths share one exact table and consume runs in order on bfs.stream.
   let lanes=if compact_path.is_some(){0}else if use_sorted{plan.owner_lanes}else{plan.shards};
@@ -376,10 +384,12 @@ impl GenericDistributedBfs{
   let parent_cache=if plan.parent_transport{Some(ParentCache::new(&plan,d,&counts)?)}else{None};
   let rolling_counts=[bfs.count,0,0];
   let gemm=if crate::generic_gemm::requested()?{Some(crate::generic_gemm::Context::new(graph,plan.batch,d)?)}else{None};
-  if let Some(workspace)=compact_path.as_mut(){
-   if let Err(error)=unsafe{workspace.transport.connect(comm.ptr)}{
-    comm.abort(rank);
-    return Err(error);
+  if shared.is_none(){
+   if let Some(workspace)=compact_path.as_ref(){
+    if let Err(error)=unsafe{workspace.borrow_mut().transport.connect(comm.ptr)}{
+     comm.abort(rank);
+     return Err(error);
+    }
    }
   }
   Ok(Self{compact_path,online_size_tuning:false,online_bucket:None,online_choices:std::collections::BTreeMap::new(),profile_events:vec![],active_batch:plan.batch,use_gemm:gemm.is_some(),gemm,sorted_owner,sort_cache,parent_cache,positions,rolling_counts,retired_rows:0,bfs,plan,rank,comm,queues,control,owner_map,owner_cuts,host_owner_map:map,host_owner_cuts:cuts.map(<[u64]>::to_vec),streams,ready,done,depth:0,parent_cursor:0,max_frontier,counts,source_retries:0})
@@ -521,7 +531,8 @@ impl GenericDistributedBfs{
   let window=lineage.is_some();
   if self.bfs.terminal{return Err("GENERIC_DISTRIBUTED_TERMINAL".into());}
   self.bfs.terminal=true;
-  let mut workspace=self.compact_path.take().ok_or("NATIVE_PATH_COMPACT_WORKSPACE")?;
+  let workspace=Rc::clone(self.compact_path.as_ref().ok_or("NATIVE_PATH_COMPACT_WORKSPACE")?);
+  let mut workspace=workspace.borrow_mut();
   let expanded=(||{
    let b=&mut self.bfs;
    crate::generic_native::checked!(cudaSetDevice, unsafe{mgbfs_cuda::native_owner::cudaSetDevice(b.device)})?;
@@ -534,7 +545,6 @@ impl GenericDistributedBfs{
    self.comm.abort(self.rank);
    let _=workspace.transport.drain_after_abort();
   }
-  self.compact_path=Some(workspace);
   self.finish_layer(window,None,Some(checkpoint),expanded?)
  }
  fn advance_internal(

@@ -325,6 +325,10 @@ impl RawPacketTransport {
         Ok(true)
     }
 
+    pub(crate) fn epoch(&self) -> u64 {
+        self.ctx.depth
+    }
+
     pub(crate) fn notify_failure(&mut self) {
         if let Ok(client) = self.exchange.client() {
             if client.terminal_code() == 0 {

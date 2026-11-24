@@ -72,8 +72,8 @@ fn admit(g:&GraphDefinitionV2,devices:Vec<u32>,inventory:Vec<serde_json::Value>,
    .into_iter().try_fold(0u64,|total,size|total.checked_add(size as u64)).ok_or("NATIVE_PATH_GATHER_SIZE")?
  }else{0};
  if crate::generic_distributed_memory::compact_path_requested(){
-  if devices.len()<2||bidirectional||std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_none(){
-   return Err("NATIVE_PATH_COMPACT_FORWARD_LAYOUT".into());
+  if devices.len()<2||std::env::var_os("MGBFS_SEGMENT_PACKET_CONTROL_ADDR").is_none(){
+   return Err("NATIVE_PATH_COMPACT_LAYOUT".into());
   }
   if !crate::generic_distributed_native::compact_path_available(){return Err("NATIVE_PATH_COMPACT_CUDA_ABI_UNAVAILABLE".into());}
   let scratch=crate::generic_distributed_native::compact_path_scratch_bound(devices.len() as u32,shards,g.generator_count() as u32)?;
@@ -203,10 +203,10 @@ pub fn run(args:&[String])->Result<()>{
  if !segmented && launch.plan.compact_transport!=compact_path{
   return Err("NATIVE_PATH_COMPACT_ADMISSION_MODE_MISMATCH".into());
  }
- if compact_path&&(segmented||launch.path_targets.is_none()||launch.path_bidirectional||
+ if compact_path&&(segmented||launch.path_targets.is_none()||
   launch.plan.world<2||launch.plan.compact_packet_slots!=3||launch.plan.compact_receive_slots!=3||
   !crate::generic_distributed_native::compact_path_available()){
-  return Err("NATIVE_PATH_COMPACT_FORWARD_LAYOUT".into());
+  return Err("NATIVE_PATH_COMPACT_LAYOUT".into());
  }
  if segmented && launch.plan.state_bytes == 1
   && crate::generic_memory::preferred_state_bytes(&g) != 1
@@ -291,7 +291,7 @@ pub fn run(args:&[String])->Result<()>{
  let cuts=launch.owner_cuts.as_deref();
  let mut bfs=if rank_plan.compact_transport{
   let endpoint=PacketEndpoint::from_env(rank_plan.world,rank,packet_job_token)?.ok_or("NATIVE_PATH_COMPACT_ENDPOINT")?;
-  GenericDistributedBfs::new_compact_forward(&g,device,rank,rank_plan.clone(),&id,0x19f856a2,64,cuts,endpoint)?
+  GenericDistributedBfs::new_with_packet_endpoint(&g,device,rank,rank_plan.clone(),&id,0x19f856a2,64,cuts,endpoint)?
  }else{
   GenericDistributedBfs::new_with_cuts(&g,device,rank,rank_plan.clone(),&id,0x19f856a2,64,cuts)?
  };

@@ -199,10 +199,11 @@ impl GenericDistributedMemoryPlan {
   [rows * 32, boxes * 4, (rows * self.queue_payload_bytes()).max(1)]
  }
  pub(crate) fn shared_path_queue_bytes(&self) -> Result<u64> {
-  if self.history_layers != 1 || self.history_algorithm != "HASH" || self.compact_transport
+  if self.history_layers != 1 || self.history_algorithm != "HASH"
    || self.parent_transport || self.sort_candidates || self.packed_candidates() {
    return Err("NATIVE_PATH_SHARED_QUEUE_LAYOUT".into());
   }
+  if self.compact_transport { return Ok(self.transport_bytes()); }
   Ok(self.dense_queue_bank_count() as u64 *
    self.dense_queue_bank_extents().into_iter().map(|extent| extent as u64).sum::<u64>())
  }

@@ -427,8 +427,8 @@ class Cluster:
         setting = os.environ.get("MGBFS_NATIVE_DISTRIBUTED_NEAREST")
         compact = os.environ.get(_PATH_COMPACT) == "1"
         if compact:
-            _validate_compact_path_request(direction, self.placement.world, setting != "0")
-        elif direction == "bidirectional" and graph.action["kind"] == "matrix":
+            _validate_compact_path_request(self.placement.world, setting != "0")
+        if direction == "bidirectional" and graph.action["kind"] == "matrix":
             inverse_action(graph)
         use_native = False
         compact_address = None
@@ -440,7 +440,7 @@ class Cluster:
             if not compact_address:
                 raise ValueError("NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR")
             _require_compact_path_capabilities(
-                _require_memory_backend(native, env, "segmented24"), window=mode == "window",
+                _require_memory_backend(native, env, "segmented24"), direction=direction, window=mode == "window",
             )
             use_native = True
         elif (setting != "0" and mode in ("nearest", "window")

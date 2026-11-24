@@ -116,13 +116,16 @@ def _require_memory_backend(native,env,backend):
   raise RuntimeError('NATIVE_MEMORY_BACKEND_UNAVAILABLE: '+backend+' requires a matching native executable and CUDA library built from the segmented backend source')
  return info
 
-def _compact_forward_path_env(native,env,world,bidirectional,*,external):
- if bidirectional:raise ValueError('NATIVE_PATH_COMPACT_FORWARD_ONLY')
+def _compact_path_capability(bidirectional):
+ return 'graph_path_compact_bidirectional_v1' if bidirectional else 'graph_path_compact_forward_v1'
+
+
+def _compact_path_env(native,env,world,bidirectional,*,external):
  if world<2:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_MULTIPLE_GPUS')
  address=env.get(_PACKET_ADDR)
  if external and not address:raise ValueError('NATIVE_PATH_COMPACT_REQUIRES_EXTERNAL_PACKET_ADDR')
  if address=='':raise ValueError('NATIVE_PATH_COMPACT_PACKET_ADDR')
- if _native_key_info(native,env).get('graph_path_compact_forward_v1') is not True:
+ if _native_key_info(native,env).get(_compact_path_capability(bidirectional)) is not True:
   raise RuntimeError('NATIVE_PATH_COMPACT_UNAVAILABLE: rebuild the native executable and CUDA library')
  if address is None:
   with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as probe:
@@ -366,7 +369,7 @@ def run_graph(graph,output,*,device=None,devices=None,capacity=None,max_seconds=
    selected=list(range(int(count.stdout.strip())))
   path_compact=_path_targets is not None and native_env.get(_PATH_COMPACT)=='1'
   if path_compact:
-   native_env=_compact_forward_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
+   native_env=_compact_path_env(native,native_env,len(selected),_path_bidirectional,external=False)
    devices=selected
   from .nccl_preflight import prepare
   # The communication prefix uses its own admission. Request-local limits
