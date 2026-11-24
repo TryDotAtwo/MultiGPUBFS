@@ -14,6 +14,9 @@ use std::mem::{size_of, size_of_val};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+mod roots;
+pub(crate) use roots::RootSpec;
+
 const QUERY_BYTES: usize = 256 * 1024;
 const NO_ITEM: u64 = u64::MAX;
 const RESOURCE: u64 = 3;
@@ -157,6 +160,7 @@ pub(super) struct NearestState {
     workspace: Option<Workspace>,
     extents: Vec<Extent>,
     index_by_segment: HashMap<usize, Vec<usize>>,
+    root_targets: Vec<u32>,
     end: u64,
 }
 
@@ -174,6 +178,7 @@ impl NearestState {
             workspace: Some(workspace),
             extents: Vec::new(),
             index_by_segment: HashMap::new(),
+            root_targets: Vec::new(),
             end: 0,
         }
     }
