@@ -930,10 +930,11 @@ impl SegmentedDistributedBfs{
    let shards=u64::from(p.shards);
    let capacity_rows=capacity_limit.map_or(LOCAL_ROWS,|limit|limit.div_ceil(shards));
    let upper=configured_rows.min(estimated).min(capacity_rows);
-   // Paired histories grow from smaller extents. Both already consult live
-   // device headroom at every allocation, so unused space can serve either side.
+   // Path queries grow lazily. Window needs room for the next frontier
+   // while the current frontier is still routed. Each extent allocation
+   // consults live headroom, including memory used by the opposite side.
    let per_shard=remaining_bytes/u64::from(p.shards);
-   let per_shard=if paired{per_shard.min(64<<20)}else{per_shard};
+   let per_shard=if route_provenance{per_shard.min(64<<20)}else{per_shard};
    match fit_layout(upper,per_shard).map_err(str::to_owned)?{
     Some(v)=>v,
     None=>fit_layout(upper,remaining_bytes).map_err(str::to_owned)?.ok_or("SEGMENTED_NO_CAPACITY")?,
@@ -991,7 +992,8 @@ impl SegmentedDistributedBfs{
   if rank==root{
    let shard_hash=if bitmap_mode{if strategy==SegmentStrategy::Batch{mix((h/u64::from(p.world))>>6)}else{mix(h)}}else{h};
    let shard=(((shard_hash as u32 as u64)*u64::from(p.shards))>>32) as usize;
-   if result.make_segment_prepared(shard,false,0)?.is_none(){failed=1}else{
+   let seed_extent=if window{result.make_segment_prepared_bounded(shard,false,0,1)?}else{result.make_segment_prepared(shard,false,0)?};
+   if seed_extent.is_none(){failed=1}else{
     let input_bytes=(p.elements as usize).checked_mul(if pack4.is_some(){8}else{p.state_bytes as usize}).ok_or("BITMAP_SEED_SIZE")?;
     let input=Buffer::new(input_bytes,d)?;
     if p.state_bytes==1&&pack4.is_none(){input.upload(&g.start.iter().map(|&v|v as u8).collect::<Vec<_>>())?;}else{input.upload(&g.start)?;}
